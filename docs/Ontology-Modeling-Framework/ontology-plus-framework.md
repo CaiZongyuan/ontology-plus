@@ -4321,11 +4321,11 @@ screens:
       └────────────────────────────────────────────────────────────────────┘
 ```
 
-### 10\.6\.4  MFT 传输任务配置屏幕示例（逆向参考）
+### 10\.6\.4  MFT 传输任务配置屏幕示例（存量原型映射参考）
 
 
 
-以下示例来源于本项目 `screen/transfer_config.html` 原型，控件名按 MU 命名规范归一化；逆向建模时原型的 HTML `id` 与 MU `element.id` 应建立对照并在 `screenRef` 中记录出处：
+以下示例来源于本项目 `screen/transfer_config.html` 原型，控件名按 MU 命名规范归一化；存量系统本体萃取时原型的 HTML `id` 与 MU `element.id` 应建立对照并在 `screenRef` 中记录出处：
 
 
 
@@ -4362,7 +4362,7 @@ screens:
 
 3. 视觉样式（配色、字体、像素间距）不得写入布局。
 
-4. 逆向建模时，原型/设计稿可转换为布局草图，但必须回填 `elements` 定义、`dataBinding` 与 `callChain` 后再入库，不得只保留布局图。
+4. 存量系统本体萃取时，原型/设计稿可转换为布局草图，但必须回填 `elements` 定义、`dataBinding` 与 `callChain` 后再入库，不得只保留布局图。
 
 # 第十一章  MM 对象\-数据表映射模型
 
@@ -4539,16 +4539,16 @@ mappings:
             columnType: NUMBER(12,2)
 ```
 
-### 11\.4\.2  MFT 项目逆向示例（复合对象 → 多张表）
+### 11\.4\.2  MFT 存量系统映射示例（复合对象 → 多张表）
 
 
 
-以下示例来源于本项目逆向证据（`EsbMftTransfer`、`MftTransferTarget`、`MftTransferAttrs`、`MftTransferLog` 等），表名为推断结论（见 `doc/meta-model/database-model.md`）：
+以下示例来源于本项目存量表结构证据（`EsbMftTransfer`、`MftTransferTarget`、`MftTransferAttrs`、`MftTransferLog` 等），表名为推断结论（见 `doc/meta-model/database-model.md`）：
 
 
 
 ```YAML
-# MM 对象-数据表映射模型元文件 - m-mapping-model.yaml（MFT 逆向片段）
+# MM 对象-数据表映射模型元文件 - m-mapping-model.yaml（MFT 存量映射片段）
 model_type: MAPPING
 version: "1.0"
 domain: "MFT文件传输平台"
@@ -4613,7 +4613,7 @@ mappings:
             column: attr_value
             columnType: VARCHAR2(4000)
             mappingNote: 扩展属性键值（transfer/source/target 设计项），config_type 区分类型
-            # 逆向注：config_type ∈ {transfer, source, target}（Constants.MFT_TRANSFER_TYPE 等）
+            # 映射注：config_type ∈ {transfer, source, target}（Constants.MFT_TRANSFER_TYPE 等）
 
   # 传输日志（复合对象）：主日志 + 源/目标/消息明细表
   - id: M-MAP-TRANSFER-LOG-001
@@ -5926,7 +5926,7 @@ https://github\.com/sharptoolbox/ontology\-driven\-dev
 
 ![image\.png](assets/image%2031.webp)
 
-### Agnet Infra
+### 本体萃取（存量系统 Agent 化改造）
 
 
 
