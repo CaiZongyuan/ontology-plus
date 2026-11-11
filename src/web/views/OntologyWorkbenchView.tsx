@@ -21,6 +21,9 @@ import { usePreferences } from '../i18n.js';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas.js';
 import './ontology-workbench.css';
 import { Button } from '../components/beautifui/index.js';
+import { Crosshair,
+  Search,
+} from 'lucide-react';
 
 interface TreeElementSummary {
   id: string;
@@ -1017,7 +1020,7 @@ export function OntologyWorkbenchView() {
 
             <div className="owb-search">
               <span className="owb-search-icon" aria-hidden="true">
-                ⌕
+                <Search size={13} aria-hidden="true" />
               </span>
               <input
                 className="input"
@@ -1151,7 +1154,7 @@ export function OntologyWorkbenchView() {
                     onClick={() => setSelectedModel(selectedModel, null)}
                     title={t('点击取消高亮筛选', 'Clear active selection')}
                   >
-                    ⌖ {selectedElementId}
+                    <Crosshair size={12} aria-hidden="true" className="inline-block shrink-0 align-[-2px]" /> {selectedElementId}
                     <span className="owb-selection-chip-x" aria-hidden="true">
                       ✕
                     </span>
@@ -1328,7 +1331,7 @@ export function OntologyWorkbenchView() {
               : `${validation.errorCount} Consistency Errors`}
           </span>
           <span className="badge badge-warn" data-testid="validation-warning-badge">
-            {validation.warningCount} {t('阶段提示 (Stage Warnings)', 'Stage Warnings')}
+            {validation.warningCount} {t('阶段提示', 'Stage Warnings')}
           </span>
           <span className="owb-status-sep" aria-hidden="true" />
           <span className="owb-status-models" title={validation.presentModels.join(' · ')}>
@@ -1758,7 +1761,7 @@ function StructuredModelInspector({
           >
             {saving
               ? t('校验保存中...', 'Saving...')
-              : t('保存修改 (Save AST)', 'Save AST')}
+              : t('保存修改', 'Save AST')}
           </Button>
         </div>
       </div>
@@ -1821,7 +1824,7 @@ function StructuredModelInspector({
                 <div className="form-grid-2 owb-agg-grid" style={{ marginBottom: 10 }}>
                   <div className="form-field">
                     <label className="form-label">
-                      {t('聚合根英文符号 (Name)', 'Aggregate Name')}
+                      {t('聚合根英文符号', 'Aggregate Name')}
                     </label>
                     <input
                       className="input"
@@ -1836,7 +1839,7 @@ function StructuredModelInspector({
                     />
                   </div>
                   <div className="form-field">
-                    <label className="form-label">{t('业务中文别名 (Alias)', 'Alias')}</label>
+                    <label className="form-label">{t('业务中文别名', 'Alias')}</label>
                     <input
                       className="input"
                       value={agg.alias}
@@ -2135,7 +2138,7 @@ function StructuredModelInspector({
 
                 <div className="form-grid-3" style={{ marginBottom: 10 }}>
                   <div className="form-field">
-                    <label className="form-label">{t('行为方法名 (Name)', 'Method Name')}</label>
+                    <label className="form-label">{t('行为方法名', 'Method Name')}</label>
                     <input
                       className="input"
                       style={{ fontFamily: 'var(--mono)' }}
@@ -2148,7 +2151,7 @@ function StructuredModelInspector({
                     />
                   </div>
                   <div className="form-field">
-                    <label className="form-label">{t('行为中文名 (Alias)', 'Alias')}</label>
+                    <label className="form-label">{t('行为中文名', 'Alias')}</label>
                     <input
                       className="input"
                       value={b.alias}
@@ -2250,7 +2253,7 @@ function StructuredModelInspector({
                   }}
                 >
                   <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>
-                    {t('入参列表 (Input Parameters)', 'Input Parameters')} (
+                    {t('入参列表', 'Input Parameters')} (
                     {b.inputParameters.length})
                   </span>
                   <Button
@@ -2387,7 +2390,7 @@ function StructuredModelInspector({
 
                 <div className="form-grid-3" style={{ marginBottom: 10 }}>
                   <div className="form-field">
-                    <label className="form-label">{t('规则符号 (Name)', 'Rule Name')}</label>
+                    <label className="form-label">{t('规则符号', 'Rule Name')}</label>
                     <input
                       className="input"
                       style={{ fontFamily: 'var(--mono)' }}
@@ -2400,7 +2403,7 @@ function StructuredModelInspector({
                     />
                   </div>
                   <div className="form-field">
-                    <label className="form-label">{t('规则中文名 (Alias)', 'Alias')}</label>
+                    <label className="form-label">{t('规则中文名', 'Alias')}</label>
                     <input
                       className="input"
                       value={r.alias}
@@ -2469,7 +2472,7 @@ function StructuredModelInspector({
 
                 <div className="form-field">
                   <label className="form-label">
-                    {t('形式化规则表达式 (Expression)', 'Rule Expression')}
+                    {t('形式化规则表达式', 'Rule Expression')}
                   </label>
                   <textarea
                     className="textarea mono"
@@ -2627,7 +2630,7 @@ function StructuredModelInspector({
                   }}
                 >
                   <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>
-                    {t('事件载荷字段 (Payload)', 'Event Payload')} ({ev.payload.length})
+                    {t('事件载荷字段', 'Event Payload')} ({ev.payload.length})
                   </span>
                   <Button
                     type="button"
@@ -2819,7 +2822,7 @@ function StructuredModelInspector({
                   }}
                 >
                   <strong style={{ fontSize: 12 }}>
-                    {t('跨聚合编排步骤 (Steps)', 'Scenario Steps')} ({sc.steps.length})
+                    {t('跨聚合编排步骤', 'Scenario Steps')} ({sc.steps.length})
                   </strong>
                   <Button
                     type="button"
@@ -3035,7 +3038,7 @@ function StructuredModelInspector({
 
                 <div className="form-field">
                   <label className="form-label">
-                    {t('绑定权限集 (Permission IDs)', 'Assigned Permissions')}
+                    {t('绑定权限集', 'Assigned Permissions')}
                   </label>
                   <input
                     className="input"
@@ -3057,7 +3060,7 @@ function StructuredModelInspector({
             <div className="card">
               <div className="card-header">
                 <h4 className="card-title">
-                  {t('权限矩阵 (Permissions)', 'Permissions')} ({draft.M5.permissions.length})
+                  {t('权限矩阵', 'Permissions')} ({draft.M5.permissions.length})
                 </h4>
                 <Button
                   type="button"
@@ -3455,7 +3458,7 @@ function StructuredModelInspector({
 
                 <div className="form-grid-3" style={{ marginBottom: 10 }}>
                   <div className="form-field">
-                    <label className="form-label">{t('查询英文名 (Name)', 'Query Name')}</label>
+                    <label className="form-label">{t('查询英文名', 'Query Name')}</label>
                     <input
                       className="input"
                       style={{ fontFamily: 'var(--mono)' }}
@@ -3470,7 +3473,7 @@ function StructuredModelInspector({
                     />
                   </div>
                   <div className="form-field">
-                    <label className="form-label">{t('查询中文别名 (Alias)', 'Alias')}</label>
+                    <label className="form-label">{t('查询中文别名', 'Alias')}</label>
                     <input
                       className="input"
                       value={qr.alias}
@@ -3629,7 +3632,7 @@ function StructuredModelInspector({
                       </select>
                     </div>
                     <div className="form-field">
-                      <label className="form-label">{t('路由路径 (Route)', 'Route')}</label>
+                      <label className="form-label">{t('路由路径', 'Route')}</label>
                       <input
                         className="input"
                         style={{ fontFamily: 'var(--mono)' }}
@@ -3701,7 +3704,7 @@ function StructuredModelInspector({
 
                   {/* Semantic UI Elements */}
                   <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                    {t('语义化控件绑定 (Semantic UI Elements)', 'Semantic Elements')} (
+                    {t('语义化控件绑定', 'Semantic Elements')} (
                     {sc.elements.length})
                   </div>
                   <div
@@ -4063,8 +4066,8 @@ function StructuredModelInspector({
                   >
                     <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>
                       {kind === 'inputFields'
-                        ? t('入参契约字段 (Input)', 'Input Fields')
-                        : t('出参契约字段 (Output)', 'Output Fields')}{' '}
+                        ? t('入参契约字段', 'Input Fields')
+                        : t('出参契约字段', 'Output Fields')}{' '}
                       ({fields.length})
                     </span>
                     <Button

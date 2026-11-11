@@ -23,7 +23,7 @@ export const buttonVariants = cva(
         success: 'bg-green-tint border-green/30 text-green enabled:hover:border-green/60',
         // Segment / filter toggle: pair with aria-pressed (or aria-selected for tabs).
         toggle:
-          'bg-transparent border-transparent text-muted enabled:hover:text-ink enabled:hover:bg-hover aria-pressed:bg-surface aria-pressed:border-line aria-pressed:text-ink aria-pressed:shadow-xs aria-selected:bg-surface aria-selected:border-line aria-selected:text-ink aria-selected:shadow-xs',
+          'bg-transparent border-transparent text-ink-2 enabled:hover:text-ink enabled:hover:bg-hover aria-pressed:bg-surface aria-pressed:border-line aria-pressed:text-ink aria-pressed:shadow-xs aria-selected:bg-surface aria-selected:border-line aria-selected:text-ink aria-selected:shadow-xs',
         danger: 'bg-surface border-line text-red enabled:hover:bg-red-tint enabled:hover:border-red/40',
       },
       size: {

@@ -492,7 +492,7 @@
 }
 
 .platform-content > .view-frame {
-  animation: view-in var(--dur-med) var(--ease-out);
+  animation: none; /* children stagger in instead, see Motion at the end of this file */
 }
 
 .platform-content.flush {
@@ -666,6 +666,14 @@
 
 .select {
   cursor: pointer;
+  appearance: none;
+  padding-right: 28px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237c7a72' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
 }
 
 .textarea.mono,
@@ -1106,4 +1114,110 @@ dialog.cmdk[open] {
   .topbar-right .status-pill.domain {
     display: none;
   }
+}
+
+/* ─── Motion (ADR 0006) ───
+   Quiet, editorial motion: things settle into place, nothing bounces. Only opacity and
+   transform are animated so every effect stays on the compositor; durations sit under
+   320ms. The global prefers-reduced-motion rule in tokens.css switches all of it off. */
+
+/* Page sections arrive in reading order. */
+.platform-content > .view-frame > * {
+  animation: settle-in 320ms var(--ease-out) both;
+}
+.platform-content > .view-frame > :nth-child(2) { animation-delay: 40ms; }
+.platform-content > .view-frame > :nth-child(3) { animation-delay: 80ms; }
+.platform-content > .view-frame > :nth-child(4) { animation-delay: 120ms; }
+.platform-content > .view-frame > :nth-child(n + 5) { animation-delay: 160ms; }
+
+@keyframes settle-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The active-nav marker draws itself in, like a pen stroke. */
+.nav-item.active::before {
+  transform-origin: center;
+  animation: mark-in 240ms var(--ease-out) both;
+}
+
+@keyframes mark-in {
+  from {
+    opacity: 0;
+    transform: scaleY(0.2);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.nav-item .nav-icon {
+  transition: color var(--dur-fast) ease, transform var(--dur-med) var(--ease-out);
+}
+.nav-item:hover .nav-icon {
+  transform: translateX(1px);
+}
+
+.nav-group-label .chev {
+  transition: transform var(--dur-med) var(--ease-out);
+}
+
+/* Rows and list items answer the pointer softly. */
+.data-table tbody tr,
+.tree-element-row,
+.cmdk-item {
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+/* A healthy status breathes once every few seconds; errors stay still and loud. */
+.status-pill:not(.bad) .dot {
+  position: relative;
+}
+.status-pill:not(.bad) .dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: inherit;
+  animation: breathe 3.6s ease-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  60% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+/* Dialogs rise a few pixels out of the page rather than popping. */
+.modal-panel {
+  animation: rise-in 240ms var(--ease-out) both;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Chat turns and streamed blocks fade up as they land. */
+.msg-in {
+  animation: settle-in 260ms var(--ease-out) both;
 }

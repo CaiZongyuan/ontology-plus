@@ -592,9 +592,11 @@ function ShellInner() {
             )}
             {data && validation && (
               <>
-                <span className="status-pill domain" title={t('业务领域', 'Business domain')}>
-                  {t('领域', 'Domain')} · {data.activeProject.domain}
-                </span>
+                {data.activeProject.domain && data.activeProject.domain !== data.activeProject.name && (
+                  <span className="status-pill domain" title={t('业务领域', 'Business domain')}>
+                    {t('领域', 'Domain')} · {data.activeProject.domain}
+                  </span>
+                )}
                 <span
                   className={`status-pill ${hasErrors ? 'bad' : ''}`}
                   title={t('11 元模型一致性校验', '11-model consistency validation')}

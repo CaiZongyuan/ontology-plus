@@ -1186,7 +1186,7 @@ export function DataMetricsReportsView() {
               <div>
                 <h3 className="card-title">
                   {t(
-                    '核心业务本体指标库与 AI 异动洞察 (Metrics & AI Insights)',
+                    '指标库与 AI 异动洞察',
                     'Ontology Metrics & AI Anomaly Insights',
                   )}
                 </h3>
@@ -1317,7 +1317,7 @@ export function DataMetricsReportsView() {
               <div>
                 <h3 className="card-title">
                   {t(
-                    '业务专题场景分析与归因建模 (Scenario Analysis)',
+                    '场景分析与归因',
                     'Domain Scenario Analysis & Attribution',
                   )}
                 </h3>
@@ -1687,7 +1687,6 @@ export function DataReasoningView() {
         agentKind="REASONING"
         defaultReasoningMode="ASK_POLICY"
         defaultPromptWhenEmpty="为什么本季度高风险合同逾期未结算率上升到了 14.8%？应该采取什么策略并回写业务系统？"
-        height={560}
         title={t(
           '数据本体三阶流式推理引擎 (智能问数 ASK_DATA → 智能问因 ASK_WHY → 智能问策 ASK_POLICY)',
           'Data Ontology 3-Stage Streaming Reasoning Engine',
@@ -1893,7 +1892,7 @@ export function DataWritebackView() {
 
           <div className="form-field">
             <label className="form-label">
-              {t('可编辑回写指令 JSON 载荷 (Payload Override)', 'Editable Write-Back JSON Payload')}
+              {t('可编辑回写指令 JSON 载荷', 'Editable Write-Back JSON Payload')}
             </label>
             <textarea
               className="textarea mono"
@@ -2094,7 +2093,7 @@ export function LlmCenterView() {
         <div>
           <div className="flex items-center gap-2 text-[14px] font-semibold text-ink">
             <Cpu size={15} className="text-accent" />
-            {t('Pi AI 统一大模型网关中心 (LLM Gateway Registry)', 'Pi AI Unified LLM Gateway Hub')}
+            {t('大模型网关', 'Pi AI Unified LLM Gateway Hub')}
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)' }}>
             {t(
@@ -2189,7 +2188,7 @@ export function LlmCenterView() {
         title={
           editingId
             ? t('编辑大模型服务网关', 'Edit LLM Gateway Provider')
-            : t('新增大模型服务网关 (LLM Provider)', 'Add LLM Gateway Provider')
+            : t('新增大模型服务网关', 'Add LLM Gateway Provider')
         }
         confirmLabel={t('保存模型网关', 'Save Gateway')}
         onConfirm={() => void handleSaveProvider()}
@@ -2310,7 +2309,7 @@ export function SystemSettingsView() {
           <div>
             <strong>
               {t(
-                '智能体离线演示 Mock 模式 (Explicit Mock LLM Mode · ADR-0007)',
+                '智能体离线演示（Mock 模式）',
                 'Explicit Offline Demo Mock LLM Mode (ADR-0007)',
               )}
             </strong>
@@ -2362,7 +2361,7 @@ export function SystemSettingsView() {
           }}
         >
           <div>
-            <strong>{t('界面外观主题 (Spatial-Sync 三态切换)', 'Appearance Theme')}</strong>
+            <strong>{t('界面主题', 'Appearance Theme')}</strong>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>
               {t(
                 '支持跟随操作系统色温，或显式锁定暖纸亮色 (Warm Paper) / 胶片颗粒暗色 (Film Grain)',
@@ -2426,7 +2425,7 @@ export function SystemSettingsView() {
           }}
         >
           <div>
-            <strong>{t('界面双语切换 (Bilingual i18n)', 'Interface Language')}</strong>
+            <strong>{t('界面语言', 'Interface Language')}</strong>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>
               {t(
                 '支持简体中文 (zh-CN) 与英文 (en-US) 实时无刷切换',
@@ -2476,7 +2475,7 @@ export function SystemSettingsView() {
           <div>
             <strong>
               {t(
-                '两级一致性严格校验门禁 (Tier-1 Strict Validation Gate)',
+                '一致性校验门禁',
                 'Strict Consistency Validation Gate',
               )}
             </strong>
@@ -2517,7 +2516,7 @@ export function SystemSettingsView() {
         >
           <div>
             <strong>
-              {t('本地本体文件自动镜像同步 (Auto-Mirror 11 YAML)', 'Auto-Mirror Local YAML Files')}
+              {t('本体文件自动镜像', 'Auto-Mirror Local YAML Files')}
             </strong>
             <div style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
               {settings.workspaceDir}/model/{data.activeProject.id}/yaml/

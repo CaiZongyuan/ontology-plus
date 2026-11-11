@@ -422,16 +422,10 @@ export function OverviewSessionsView({
           <div>
             <h3 className="card-title">
               {t(
-                '应用中心全生命周期研发流水线 (End-to-End Ontology Pipeline)',
+                '研发流水线',
                 'End-to-End Application Ontology Lifecycle Pipeline',
               )}
             </h3>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-              {t(
-                '1.需求探索 -> 2.需求规格书 -> 3.界面原型(MU) -> 4.11模型本体 -> 5.四层装配与开发包',
-                '1. Requirement Explore -> 2. SRS Spec -> 3. Prototype (MU) -> 4. 11-Model Ontology -> 5. 4-Layer Dev Package',
-              )}
-            </div>
           </div>
           <span className="badge badge-accent">{active.domain}</span>
         </div>
@@ -481,7 +475,7 @@ export function OverviewSessionsView({
       {/* Ontology Project Management Hub Registry Table */}
       <RegistryTable<ProjectSummary>
         testId="project-hub-registry"
-        title={t('本体工程管理中心 (Ontology Project Hub)', 'Ontology Project Management Hub')}
+        title={t('本体工程', 'Ontology Project Management Hub')}
         subtitle={t(
           '管理所有业务本体工程的元数据、克隆副本、11 模型历史版本快照与生命周期（与单轮智能体会话严格解耦）',
           'Full lifecycle management for Ontology Projects: metadata, cloning, snapshots, and safe deletion',
@@ -552,7 +546,7 @@ export function OverviewSessionsView({
             width: '130px',
             render: (p) => (
               <span className="filter-status-done inline-block rounded-full px-2.5 py-0.5 font-mono text-[11px]">
-                {p.currentStage} / 11 Models
+                {p.currentStage}/11 {t('模型', 'models')}
               </span>
             ),
           },
@@ -977,7 +971,7 @@ export function RequirementExploreView({
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <h3 className="card-title">
               {t(
-                '交互式需求探索与 A/B 分级追问工作台 (Live Streaming + Scoped HITL)',
+                '需求探索与分级追问',
                 'Interactive Requirement Exploration & Scoped HITL',
               )}
             </h3>
@@ -1020,7 +1014,6 @@ export function RequirementExploreView({
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 350px', gap: 14 }}>
         <AgentSessionWorkbench
           agentKind="REQUIREMENT"
-          height={580}
           title={t('需求探索与边界澄清智能体', 'Requirement Discovery Agent')}
           subtitle={t(
             'A 类常规项自动补全；遇到 B 类模糊业务边界时自动弹出交互式确认卡片',
@@ -1033,7 +1026,7 @@ export function RequirementExploreView({
           <div className="card">
             <div className="card-header" style={{ marginBottom: 8 }}>
               <h4 className="card-title">
-                {t('A/B 分级决策清单 (Decisions)', 'A/B Classification Decisions')}
+                {t('A/B 分级决策清单', 'A/B Classification Decisions')}
               </h4>
               <span className="badge badge-accent">
                 {(session?.resolvedDecisions ?? []).length}
@@ -2234,7 +2227,7 @@ export function ModelFilesView() {
           style={{ borderColor: 'var(--bad)', background: 'var(--bad-soft)' }}
         >
           <div className="card-header" style={{ marginBottom: 6 }}>
-            <strong>{t('YAML 导入解析诊断 (Parse Errors)', 'YAML Import Parse Errors')}</strong>
+            <strong>{t('YAML 导入解析诊断', 'YAML Import Parse Errors')}</strong>
             <Button
               type="button"
               variant="secondary" size="sm"
@@ -3080,7 +3073,7 @@ export function ApplicationAssemblyDevView() {
               >
                 <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                    1. {t('业务本体层 (Ontology)', 'Ontology Layer')}
+                    1. {t('业务本体层', 'Ontology Layer')}
                   </div>
                   <select
                     className="select"
@@ -3117,7 +3110,7 @@ export function ApplicationAssemblyDevView() {
 
                 <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                    3. {t('技术底座层 (Foundation)', 'Tech Foundation Layer')}
+                    3. {t('技术底座层', 'Tech Foundation Layer')}
                   </div>
                   <select
                     className="select"
@@ -3136,7 +3129,7 @@ export function ApplicationAssemblyDevView() {
 
                 <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                    4. {t('技术架构层 (Architecture)', 'Tech Architecture Layer')}
+                    4. {t('技术架构层', 'Tech Architecture Layer')}
                   </div>
                   <select
                     className="select"
@@ -3241,10 +3234,10 @@ export function ApplicationAssemblyDevView() {
           {app && (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 12 }}>
               <AgentSessionWorkbench
+                height="max(480px, calc(100vh - 372px))"
                 agentKind="CODING"
                 targetId={app.id}
-                height={480}
-                title={t('四层架构 AI 研发智能体 (Coding Agent)', '4-Layer AI Coding Agent')}
+                title={t('四层架构 AI 研发智能体', '4-Layer AI Coding Agent')}
                 subtitle={t(
                   '基于渐进式《开发资料包》执行代码骨架生成、包编译与门禁校验',
                   'Generates domain repositories, routes, UI components & compiles dev packages',
@@ -3479,7 +3472,7 @@ export function OntologySkillsView() {
       {pageMode === 'REGISTRY' ? (
         <RegistryTable<GeneratedSkill>
           testId="skills-registry-table"
-          title={t('渐进式业务本体技能中心 (SKILL.md Registry)', 'Ontology Skills Registry')}
+          title={t('业务本体技能', 'Ontology Skills Registry')}
           subtitle={t(
             '管理由 11 模型自动编译或手工精修的 Agent SKILL.md 资产',
             'Manage compiled and custom-refined SKILL.md artifacts',

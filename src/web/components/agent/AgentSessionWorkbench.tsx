@@ -136,7 +136,7 @@ export function AgentSessionWorkbench({
   targetId,
   activeModelCode,
   compactRailByDefault = false,
-  height = 580,
+  height = 'max(520px, calc(100vh - 250px))',
   title,
   subtitle,
   placeholder,
@@ -599,7 +599,7 @@ export function AgentSessionWorkbench({
                         />
                       ) : (
                         <span className="truncate text-[12.5px] font-medium text-ink">
-                          {sess.pinned ? '📌 ' : ''}
+                          {sess.pinned && <Pin size={11} aria-hidden="true" className="mr-1 inline-block align-[-1px] text-accent" />}
                           {sess.title}
                         </span>
                       )}
@@ -671,11 +671,11 @@ export function AgentSessionWorkbench({
                 <span className="truncate text-[13px] font-semibold text-ink">
                   {title || activeSession?.title || t(meta.badgeZh, meta.badgeEn)}
                 </span>
-                <span className="rounded-full bg-accent-tint px-2 py-0.5 font-mono text-[10.5px] font-medium text-accent">
+                <span className="rounded-full bg-accent-tint px-2 py-0.5 text-[10.5px] font-medium text-accent">
                   {t(meta.badgeZh, meta.badgeEn)}
                 </span>
                 {mockLlmMode && (
-                  <span className="rounded-full bg-orange-tint px-2 py-0.5 font-mono text-[10px] text-orange">
+                  <span className="rounded-full bg-orange-tint px-2 py-0.5 text-[10.5px] font-medium text-orange">
                     Mock Engine
                   </span>
                 )}
@@ -883,7 +883,7 @@ export function AgentSessionWorkbench({
                       patchData({ agentSessions: res.agentSessions });
                     }
                   }}
-                  className="h-6 rounded-full border border-line bg-surface px-2.5 font-mono text-[11px] text-ink-2 focus:border-accent focus:outline-none"
+                  className="h-6 max-w-[280px] truncate rounded-[5px] border border-line bg-surface px-2 text-[11.5px] text-ink-2 focus:border-accent focus:outline-none"
                 >
                   {llmProviders.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -898,7 +898,7 @@ export function AgentSessionWorkbench({
               <button
                 type="button"
                 onClick={() => void executeStreamTurn({ mode: 'CONTINUE' })}
-                className="inline-flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 text-[11px] text-ink-3 hover:bg-hover hover:text-ink"
+                className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-[5px] px-2 text-[11.5px] text-ink-3 hover:bg-hover hover:text-ink"
                 title={t('让智能体继续推演下一步', 'Continue agent turn')}
               >
                 <RefreshCw size={11} />
@@ -925,8 +925,8 @@ export function AgentSessionWorkbench({
               placeholder={
                 placeholder ||
                 t(
-                  '输入指令，按 Enter 发送（Shift+Enter 换行；生成中发送将实时转向 Steer）…',
-                  'Enter instructions (Enter to send, Shift+Enter for newline)…',
+                  '输入指令，Enter 发送，Shift+Enter 换行',
+                  'Type an instruction. Enter to send, Shift+Enter for a new line',
                 )
               }
               className="min-h-[42px] max-h-32 flex-1 resize-none border-0 bg-transparent text-[12.5px] leading-relaxed text-ink placeholder:text-ink-3 focus:outline-none"
@@ -1027,7 +1027,7 @@ function MessageTurnItem({
 
   if (isUser) {
     return (
-      <div className="group flex flex-col items-end gap-1">
+      <div className="msg-in group flex flex-col items-end gap-1">
         <div className="max-w-[86%] rounded-window rounded-br-xs bg-ink px-3.5 py-2 text-[12.5px] leading-relaxed text-surface shadow-xs whitespace-pre-wrap">
           {message.content}
         </div>
@@ -1047,7 +1047,7 @@ function MessageTurnItem({
   }
 
   return (
-    <div className="group space-y-2.5 rounded-window border border-line bg-surface p-3.5 shadow-2xs">
+    <div className="msg-in group space-y-2.5 rounded-window border border-line bg-surface p-3.5 shadow-2xs">
       <div className="flex items-center justify-between gap-2 text-[11px] text-ink-3">
         <div className="flex items-center gap-1.5">
           <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent-tint text-accent">

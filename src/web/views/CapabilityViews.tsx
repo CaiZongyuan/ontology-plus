@@ -242,7 +242,7 @@ export function CapabilitySystemsView() {
       </div>
 
       <RegistryTable
-        title={t('存量业务系统接入注册表 (Legacy Systems Registry)', 'Connected Enterprise Systems')}
+        title={t('存量系统接入', 'Connected Enterprise Systems')}
         subtitle={t(
           '接入既有 ERP、MES、MFT、OA 等存量系统，进行本体萃取与 Agent 化升级',
           'Register existing ERP, MES, MFT, and OA systems for Ontology Extraction and MCP wrapping',
@@ -558,7 +558,7 @@ export function CapabilityExtractionView() {
           <div>
             <h3 className="card-title">
               {t(
-                '存量业务系统两轮本体萃取工作台 (Two-Round Ontology Extraction)',
+                '存量系统本体萃取',
                 'Legacy System Two-Round Ontology Extraction Workbench',
               )}
             </h3>
@@ -1680,7 +1680,6 @@ export function CapabilityAgentsView() {
       <AgentSessionWorkbench
         agentKind="CAPABILITY"
         targetId={activeAgent?.id}
-        height={580}
         title={
           activeAgent
             ? `${activeAgent.name} (${t('实时 MCP 工具流式对话', 'Live MCP Smart Chat')})`
@@ -1931,7 +1930,7 @@ export function CapabilityCrossFlowsView() {
         <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
           <Workflow size={15} className="text-accent" />
           {t(
-            '跨异构系统 MCP 协同编排工作流 (Cross-System MCP Orchestration)',
+            '跨系统 MCP 协同编排',
             'Cross-System MCP Orchestration Flows',
           )}{' '}
           <span className="badge badge-accent">{data.crossSystemFlows.length}</span>

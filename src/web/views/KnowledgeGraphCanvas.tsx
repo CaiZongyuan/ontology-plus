@@ -33,6 +33,7 @@ import {
   Layers,
   LocateFixed,
   Network,
+  Crosshair,
 } from 'lucide-react';
 import {
   MODEL_CODES,
@@ -986,7 +987,8 @@ function KnowledgeGraphInner({
   useEffect(() => {
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
     fitTimerRef.current = window.setTimeout(() => {
-      void rf.fitView({ padding: 0.14, duration: 220 });
+      // Open at a readable scale; "fit view" in the toolbar still shows the whole graph.
+      void rf.fitView({ padding: 0.08, duration: 320, minZoom: 0.5 });
     }, 60);
     return () => {
       if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
@@ -1227,7 +1229,7 @@ function KnowledgeGraphInner({
             <span>·</span>
             <span>
               {t(
-                '拖拽节点微调 · 双击定位编辑器 · 只读派生视图 (ADR-0008)',
+                '拖拽微调 · 双击定位编辑器 · 只读派生视图',
                 'Drag nodes · Double-click to open editor · Derived read-only view',
               )}
             </span>
@@ -1307,7 +1309,7 @@ function KnowledgeGraphInner({
             {selectedNode && (
               <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                 <span className="badge badge-accent">{selectedNode.model}</span>
-                <span className="badge" title={t('节点关联度 (Degree)', 'Node Degree')}>
+                <span className="badge" title={t('节点关联度', 'Node Degree')}>
                   deg:{selectedNode.degree}
                 </span>
               </div>
@@ -1389,7 +1391,7 @@ function KnowledgeGraphInner({
                       )
                     }
                   >
-                    ⌖ {t('定位编辑器', 'Open Editor')} ({selectedNode.model})
+                    <Crosshair size={12} aria-hidden="true" className="inline-block shrink-0 align-[-2px]" /> {t('定位编辑器', 'Open Editor')} ({selectedNode.model})
                   </Button>
                 )}
               </div>

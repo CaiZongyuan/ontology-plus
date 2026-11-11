@@ -9,6 +9,7 @@ import {
   Loader2,
   Sparkles,
   Wrench,
+  Crosshair,
 } from 'lucide-react';
 import type { AgentToolCallTrace } from '../../../packages/workspace-store/index.js';
 import type { ModelCode } from '../../../packages/ontology-core/index.js';
@@ -130,7 +131,7 @@ export function ToolChips({
                   }
                   className="cursor-pointer rounded-chip bg-accent-tint px-2 py-0.5 text-[11px] font-medium text-accent hover:opacity-85"
                 >
-                  ⌖ 定位 {active.targetModelCode}
+                  <Crosshair size={12} aria-hidden="true" className="inline-block shrink-0 align-[-2px]" /> 定位 {active.targetModelCode}
                   {active.targetElementId ? ` · ${active.targetElementId}` : ''}
                 </button>
               )}
