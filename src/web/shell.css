@@ -2136,4 +2136,141 @@ dialog.cmdk[open] {
   .pipeline-progress-bar::-webkit-progress-value {
     transition: none !important;
   }
+  .proto-inspector-popover {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ─── Prototype Visual Box-Select & Inline Refinement Composer ─── */
+.proto-inspector-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--surface);
+}
+
+.proto-inspector-stage.is-inspecting {
+  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: -2px;
+}
+
+.proto-inspector-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--surface-2));
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+}
+
+.proto-inspector-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  flex-shrink: 0;
+}
+
+.proto-inspector-popover {
+  position: absolute;
+  left: var(--pop-left, 16px);
+  top: var(--pop-top, 16px);
+  z-index: 30;
+  width: min(388px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-lg);
+  animation: proto-pop-in var(--dur-fast) var(--ease-out);
+}
+
+@keyframes proto-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.proto-pin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-block-size: 26px;
+  padding: 2px 6px 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: var(--text-xs);
+  color: var(--ink);
+  box-shadow: var(--shadow-xs);
+}
+
+.proto-pin-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.proto-pin-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 24px;
+  min-block-size: 24px;
+  margin: -2px -3px -2px 0;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+.proto-pin-remove:hover {
+  background: var(--ghost);
+  color: var(--bad);
+}
+
+.proto-quick-pill {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  transition: border-color var(--dur-fast) ease, background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+.proto-quick-pill:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--ink);
 }

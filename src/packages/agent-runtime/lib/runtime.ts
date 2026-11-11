@@ -90,6 +90,20 @@ export interface RequirementDocSynthesisResult {
   providerUsed: string;
 }
 
+export interface PrototypeRefinementSelection {
+  kind: 'ELEMENT' | 'REGION';
+  cssSelector: string;
+  tagName?: string;
+  label?: string;
+  screenId?: string;
+  elementId?: string;
+  binding?: string;
+  eventId?: string;
+  htmlSnippet?: string;
+  matchedElementsSummary?: string[];
+  note?: string;
+}
+
 export interface PrototypeGenerationResult {
   prototype: PrototypeArtifact;
   project: ProjectDetail;
@@ -3709,25 +3723,98 @@ export async function generatePrototypeFromDoc(
   };
 }
 
+function formatSelectionsForPrompt(
+  selections: PrototypeRefinementSelection[],
+  locale: AgentLocale,
+): string {
+  if (selections.length === 0) return '';
+  const header =
+    locale === 'en-US'
+      ? '--- Targeted Visual Selections & Annotations ---'
+      : '--- 用户在界面原型上框选/点选的目标区域与批注 ---';
+  const blocks = selections.map((sel, idx) => {
+    const anchors = [
+      sel.screenId ? `screen=${sel.screenId}` : '',
+      sel.elementId ? `element=${sel.elementId}` : '',
+      sel.binding ? `binding=${sel.binding}` : '',
+      sel.eventId ? `event=${sel.eventId}` : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+    const lines = [
+      `#${idx + 1} [${sel.kind}] selector="${sel.cssSelector}"${sel.tagName ? ` tag=<${sel.tagName}>` : ''}${sel.label ? ` label="${sel.label}"` : ''}${anchors ? ` (${anchors})` : ''}`,
+    ];
+    if (sel.note?.trim()) {
+      lines.push(`   Note: ${sel.note.trim()}`);
+    }
+    if (sel.matchedElementsSummary && sel.matchedElementsSummary.length > 0) {
+      lines.push(`   Box-selected controls: ${sel.matchedElementsSummary.join(' | ')}`);
+    }
+    if (sel.htmlSnippet?.trim()) {
+      lines.push(`   HTML snippet: ${sel.htmlSnippet.trim().slice(0, 600)}`);
+    }
+    return lines.join('\n');
+  });
+  return `${header}\n${blocks.join('\n')}\n\n`;
+}
+
+function findEnclosingSectionCloseIndex(
+  html: string,
+  sel?: PrototypeRefinementSelection,
+): number {
+  if (sel?.screenId) {
+    const escapedScreenId = sel.screenId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const screenOpenRe = new RegExp(
+      `<section\\b[^>]*\\bdata-screen-id=["']${escapedScreenId}["'][^>]*>`,
+      'i',
+    );
+    const match = screenOpenRe.exec(html);
+    if (match) {
+      const closeAfterScreen = html.indexOf('</section>', match.index + match[0].length);
+      if (closeAfterScreen >= 0) return closeAfterScreen;
+    }
+  }
+  if (sel?.elementId) {
+    const escapedElId = sel.elementId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const elRe = new RegExp(`\\bdata-element-id=["']${escapedElId}["']`, 'i');
+    const match = elRe.exec(html);
+    if (match) {
+      const closeAfterEl = html.indexOf('</section>', match.index);
+      if (closeAfterEl >= 0) return closeAfterEl;
+    }
+  }
+  return html.indexOf('</section>');
+}
+
 export async function refinePrototypeWithAi(
   store: WorkspaceStore,
   input: {
     projectId: string;
     prototypeId: string;
     instruction: string;
+    selections?: PrototypeRefinementSelection[];
     locale?: AgentLocale | string;
   },
 ): Promise<PrototypeGenerationResult> {
   const project = store.getProject(input.projectId);
   if (!project) throw new Error(`Project not found: ${input.projectId}`);
 
-  const locale = resolveEffectiveLocale(store, input.locale, input.instruction);
+  const selections = (input.selections ?? []).filter((s) => Boolean(s && s.cssSelector));
+  const combinedNotes = selections
+    .map((s) => s.note?.trim())
+    .filter((n): n is string => Boolean(n));
+  const effectiveInstruction =
+    input.instruction.trim() ||
+    combinedNotes.join('；') ||
+    (selections[0]?.label ? `精修 ${selections[0].label}` : '界面局部精修');
+
+  const locale = resolveEffectiveLocale(store, input.locale, effectiveInstruction);
   const protos = store.listPrototypes(input.projectId);
   const targetProto = protos.find((p) => p.id === input.prototypeId) ?? protos[0];
   if (!targetProto) {
     return generatePrototypeFromDoc(store, {
       projectId: input.projectId,
-      prompt: input.instruction,
+      prompt: effectiveInstruction,
       locale,
     });
   }
@@ -3735,7 +3822,8 @@ export async function refinePrototypeWithAi(
   const activeProvider = resolvePreferredProvider(store, input.projectId);
   let nextHtml: string | null = null;
   let modelUsed = activeProvider?.defaultModel || 'auto/glm-5.3-flash';
-  let summaryLabel = input.instruction.slice(0, 36);
+  let summaryLabel = effectiveInstruction.slice(0, 36);
+  const selectionPromptBlock = formatSelectionsForPrompt(selections, locale);
 
   if (!isMockLlmActive(store)) {
     const llmFullHtmlRes = await callOpenAiCompatibleChat(
@@ -3745,12 +3833,12 @@ export async function refinePrototypeWithAi(
           role: 'system',
           content:
             locale === 'en-US'
-              ? 'You are the Ontology Plus UI Prototype Refinement Engineer. Modify the provided HTML5 prototype to fulfill the user instruction while strictly preserving all existing `data-screen-id`, `data-element-id`, `data-binding`, and `data-event-id` semantic anchors (and adding valid semantic anchors on any newly added controls/buttons). Never use window.alert/confirm/prompt. Return ONLY the complete updated HTML document.'
-              : '你是 Ontology Plus 交互原型精修专家。请根据用户的修改指令，在提供的完整 HTML5 原型基础上直接完成真实的界面结构、控件、字段与交互脚本修改，同时严格保留既有 `data-screen-id`、`data-element-id`、`data-binding`、`data-event-id` 语义锚点（新增控件也必须补齐合法的语义锚点）。严禁使用 window.alert/confirm/prompt。直接返回修改后的完整 HTML 源码，不要包裹代码块。',
+              ? 'You are the Ontology Plus UI Prototype Refinement Engineer. Modify the provided HTML5 prototype to fulfill the user instruction (focusing precisely on the targeted visual selections/annotations when provided, without unintentionally altering unrelated screens) while strictly preserving all existing `data-screen-id`, `data-element-id`, `data-binding`, and `data-event-id` semantic anchors (and adding valid semantic anchors on any newly added controls/buttons). Never use window.alert/confirm/prompt. Return ONLY the complete updated HTML document.'
+              : '你是 Ontology Plus 交互原型精修专家。请根据用户的修改指令（若附带了用户框选/点选的目标区域与批注，请精准针对所选控件或屏幕区域完成局部精修，不要误伤其他未选中的业务屏幕），在完整 HTML5 原型基础上直接完成真实的界面结构、样式、控件、字段与交互脚本修改，同时严格保留既有 `data-screen-id`、`data-element-id`、`data-binding`、`data-event-id` 语义锚点（新增控件也必须补齐合法的语义锚点）。严禁使用 window.alert/confirm/prompt。直接返回修改后的完整 HTML 源码，不要包裹代码块。',
         },
         {
           role: 'user',
-          content: `Project: ${project.name} (${project.domain})\nRefinement Instruction: ${input.instruction}\n\n--- Current HTML Prototype ---\n${targetProto.htmlContent}`,
+          content: `Project: ${project.name} (${project.domain})\nRefinement Instruction: ${effectiveInstruction}\n\n${selectionPromptBlock}--- Current HTML Prototype ---\n${targetProto.htmlContent}`,
         },
       ],
       { store, maxTokens: 8192 },
@@ -3770,54 +3858,91 @@ export async function refinePrototypeWithAi(
         : undefined;
 
     const rawLabel =
-      input.instruction
+      effectiveInstruction
         .replace(/[<>&"'`\n]/g, ' ')
         .trim()
         .slice(0, 32) || pickLocaleText(locale, 'AI交互增强控件', 'AI Refined Control');
     summaryLabel = rawLabel;
-    const elSuffix = String(Date.now()).slice(-4);
 
-    const wantsButton =
-      /按钮|导出|催办|批处理|操作|动作|触发|提交|审批|button|export|action|submit|approve|trigger/i.test(
-        input.instruction,
-      );
-    const wantsInput =
-      /输入|筛选|搜索|字段|文本框|框|下拉|选择|filter|input|search|field|select/i.test(
-        input.instruction,
-      );
+    const itemsToApply: { sel?: PrototypeRefinementSelection; text: string }[] =
+      selections.length > 0
+        ? selections.map((sel) => ({
+            sel,
+            text:
+              [sel.note?.trim(), input.instruction.trim()].filter(Boolean).join(' · ') ||
+              rawLabel,
+          }))
+        : [{ text: effectiveInstruction }];
 
-    let injectedSemanticHtml: string;
-    if (wantsButton) {
-      injectedSemanticHtml = `\n    <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #d5d3cb;display:flex;align-items:center;justify-content:space-between;gap:12px;">
-      <span data-element-id="EL-AI-NOTE-${elSuffix}" data-element-name="aiRefinedBadge${elSuffix}" data-element-label="${rawLabel}" data-element-type="BADGE">${pickLocaleText(locale, 'AI 交互微调：', 'AI Refined: ')}${rawLabel}</span>
-      <button type="button" data-element-id="EL-AI-BTN-${elSuffix}" data-element-name="aiActionBtn${elSuffix}" data-element-label="${rawLabel}" data-element-type="BUTTON">${rawLabel.slice(0, 18)}</button>
-    </div>\n  </section>`;
-    } else if (wantsInput) {
-      const bindingAttr = validBinding ? ` data-binding="${validBinding}"` : '';
-      injectedSemanticHtml = `\n    <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #d5d3cb;display:grid;grid-template-columns:1fr 2fr;gap:10px;align-items:center;">
-      <span data-element-id="EL-AI-NOTE-${elSuffix}" data-element-name="aiRefinedBadge${elSuffix}" data-element-label="${rawLabel}" data-element-type="BADGE">${rawLabel}</span>
-      <input placeholder="${rawLabel}" data-element-id="EL-AI-INPUT-${elSuffix}" data-element-name="aiFilterInput${elSuffix}" data-element-label="${rawLabel}" data-element-type="INPUT"${bindingAttr} />
-    </div>\n  </section>`;
-    } else {
-      injectedSemanticHtml = `\n    <div style="margin-top:12px;padding:8px 12px;background:#f5f6ff;border-left:3px solid #4c50c4;border-radius:4px;">
-      <span data-element-id="EL-AI-NOTE-${elSuffix}" data-element-name="aiRefinedBadge${elSuffix}" data-element-label="${rawLabel}" data-element-type="BADGE">${pickLocaleText(locale, 'AI 微调已生效：', 'AI Refinement Applied: ')}${rawLabel}</span>
-    </div>\n  </section>`;
-    }
+    let workingHtml = targetProto.htmlContent;
+    const baseStamp = String(Date.now()).slice(-4);
 
-    const firstCloseIdx = targetProto.htmlContent.indexOf('</section>');
-    nextHtml =
-      firstCloseIdx >= 0
-        ? targetProto.htmlContent.slice(0, firstCloseIdx) +
-          injectedSemanticHtml +
-          targetProto.htmlContent.slice(firstCloseIdx + '</section>'.length)
-        : `${targetProto.htmlContent}\n<!-- Refined: ${rawLabel} -->`;
+    itemsToApply.forEach((item, idx) => {
+      const cleanItemLabel =
+        item.text
+          .replace(/[<>&"'`\n]/g, ' ')
+          .trim()
+          .slice(0, 32) || rawLabel;
+      const targetHint = item.sel?.elementId || item.sel?.screenId;
+      const badgePrefix = targetHint ? `[${targetHint}] ` : '';
+      const elSuffix = itemsToApply.length > 1 ? `${baseStamp}${idx + 1}` : baseStamp;
+
+      const wantsButton =
+        /按钮|导出|催办|批处理|操作|动作|触发|提交|审批|button|export|action|submit|approve|trigger/i.test(
+          item.text,
+        );
+      const wantsInput =
+        /输入|筛选|搜索|字段|文本框|框|下拉|选择|filter|input|search|field|select/i.test(
+          item.text,
+        );
+
+      let injectedSemanticHtml: string;
+      if (wantsButton) {
+        injectedSemanticHtml = `\n    <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #d5d3cb;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <span data-element-id="EL-AI-NOTE-${elSuffix}" data-element-name="aiRefinedBadge${elSuffix}" data-element-label="${cleanItemLabel}" data-element-type="BADGE">${pickLocaleText(locale, 'AI 交互微调：', 'AI Refined: ')}${badgePrefix}${cleanItemLabel}</span>
+      <button type="button" data-element-id="EL-AI-BTN-${elSuffix}" data-element-name="aiActionBtn${elSuffix}" data-element-label="${cleanItemLabel}" data-element-type="BUTTON">${cleanItemLabel.slice(0, 18)}</button>
+    </div>\n  </section>`;
+      } else if (wantsInput) {
+        const bindingAttr = item.sel?.binding
+          ? ` data-binding="${item.sel.binding.replace(/[<>&"']/g, '')}"`
+          : validBinding
+            ? ` data-binding="${validBinding}"`
+            : '';
+        injectedSemanticHtml = `\n    <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #d5d3cb;display:grid;grid-template-columns:1fr 2fr;gap:10px;align-items:center;">
+      <span data-element-id="EL-AI-NOTE-${elSuffix}" data-element-name="aiRefinedBadge${elSuffix}" data-element-label="${cleanItemLabel}" data-element-type="BADGE">${badgePrefix}${cleanItemLabel}</span>
+      <input placeholder="${cleanItemLabel}" data-element-id="EL-AI-INPUT-${elSuffix}" data-element-name="aiFilterInput${elSuffix}" data-element-label="${cleanItemLabel}" data-element-type="INPUT"${bindingAttr} />
+    </div>\n  </section>`;
+      } else {
+        injectedSemanticHtml = `\n    <div style="margin-top:12px;padding:8px 12px;background:#f5f6ff;border-left:3px solid #4c50c4;border-radius:4px;">
+      <span data-element-id="EL-AI-NOTE-${elSuffix}" data-element-name="aiRefinedBadge${elSuffix}" data-element-label="${cleanItemLabel}" data-element-type="BADGE">${pickLocaleText(locale, 'AI 微调已生效：', 'AI Refinement Applied: ')}${badgePrefix}${cleanItemLabel}</span>
+    </div>\n  </section>`;
+      }
+
+      const targetCloseIdx = findEnclosingSectionCloseIndex(workingHtml, item.sel);
+      workingHtml =
+        targetCloseIdx >= 0
+          ? workingHtml.slice(0, targetCloseIdx) +
+            injectedSemanticHtml +
+            workingHtml.slice(targetCloseIdx + '</section>'.length)
+          : `${workingHtml}\n<!-- Refined: ${cleanItemLabel} -->`;
+    });
+
+    nextHtml = workingHtml;
   }
+
+  const nextRevisionVersion = (() => {
+    const revMatch = /^(.*)-r(\d+)$/i.exec(targetProto.version.trim());
+    if (revMatch) {
+      return `${revMatch[1]}-r${Number.parseInt(revMatch[2]!, 10) + 1}`;
+    }
+    return `${targetProto.version}-r1`;
+  })();
 
   const hasDomainOntology = (project.suite.M1?.aggregates.length ?? 0) > 0;
   const saved = store.savePrototypeAndSyncMu(input.projectId, {
     id: targetProto.id,
     name: targetProto.name,
-    version: `${targetProto.version}-r1`,
+    version: nextRevisionVersion,
     htmlContent: nextHtml,
     syncMu: hasDomainOntology,
   });
@@ -3842,8 +3967,8 @@ export async function refinePrototypeWithAi(
     prototypes: store.listPrototypes(input.projectId),
     summary: pickLocaleText(
       locale,
-      `已根据指令「${input.instruction}」微调交互原型（${summaryLabel}）并同步更新 MU 屏幕控件模型`,
-      `Refined interactive prototype per "${input.instruction}" and synced MU screen elements`,
+      `已根据指令「${effectiveInstruction}」微调交互原型（${summaryLabel}）并同步更新 MU 屏幕控件模型`,
+      `Refined interactive prototype per "${effectiveInstruction}" and synced MU screen elements`,
     ),
     providerUsed: modelUsed,
   };

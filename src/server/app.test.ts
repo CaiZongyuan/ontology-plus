@@ -694,4 +694,57 @@ describe('server API & Cloudflare Worker integration', () => {
     expect(protos[0]!.htmlContent).toContain("addFlow('咖啡豆','扣减','-18g');");
     expect(protos[0]!.htmlContent).not.toContain("扣减addFlow");
   });
+
+  it('refines targeted screen/element via visual box-select annotations and preserves MU consistency', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const app = createApiApp(store);
+
+    const bootRes = await app.request('/api/bootstrap');
+    const bootJson = (await bootRes.json()) as {
+      activeProject: { id: string };
+      prototypes: { id: string; version: string; htmlContent: string }[];
+    };
+    const projectId = bootJson.activeProject.id;
+    const protoId = bootJson.prototypes[0]!.id;
+    const baseVersion = bootJson.prototypes[0]!.version;
+
+    // Submit visual selection targeting the 3rd screen (SCR-CONTRACT-APPROVAL / EL-BTN-APPROVE)
+    const refineRes = await app.request(`/api/projects/${projectId}/prototypes/${protoId}/refine`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instruction: '',
+        selections: [
+          {
+            kind: 'ELEMENT',
+            cssSelector: 'button[data-element-id="EL-BTN-APPROVE"]',
+            tagName: 'button',
+            label: '审批通过并触发签章结算',
+            screenId: 'SCR-CONTRACT-APPROVAL',
+            elementId: 'EL-BTN-APPROVE',
+            eventId: 'UIE-APPROVE-CONTRACT',
+            htmlSnippet: '<button data-element-id="EL-BTN-APPROVE">审批通过并触发签章结算</button>',
+            note: '在此处增加法务退回重审按钮',
+          },
+        ],
+      }),
+    });
+    expect(refineRes.status).toBe(200);
+    const refinedJson = (await refineRes.json()) as {
+      prototype: { version: string; htmlContent: string; extractedScreenCount: number };
+      project: { validation: { errorCount: number } };
+    };
+
+    expect(refinedJson.prototype.version).toBe(`${baseVersion}-r1`);
+    expect(refinedJson.prototype.extractedScreenCount).toBe(3);
+    expect(refinedJson.project.validation.errorCount).toBe(0);
+
+    // Verify deterministic refinement landed inside the 3rd screen (SCR-CONTRACT-APPROVAL) rather than SCR-CONTRACT-LIST
+    const approvalScreenIdx = refinedJson.prototype.htmlContent.indexOf(
+      'data-screen-id="SCR-CONTRACT-APPROVAL"',
+    );
+    const injectedIdx = refinedJson.prototype.htmlContent.indexOf('[EL-BTN-APPROVE]');
+    expect(approvalScreenIdx).toBeGreaterThan(0);
+    expect(injectedIdx).toBeGreaterThan(approvalScreenIdx);
+  });
 });

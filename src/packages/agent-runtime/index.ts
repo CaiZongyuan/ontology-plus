@@ -61,6 +61,7 @@ export {
   type SrsSynthesisProgressPhase,
   type SrsSynthesisProgressEvent,
   type PrototypeGenerationResult,
+  type PrototypeRefinementSelection,
   type OntologySynthesisFromPrototypeResult,
   type TechArchitectureGenerationResult,
   type AppCodingAgentResult,

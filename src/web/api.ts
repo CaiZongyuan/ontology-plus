@@ -49,6 +49,7 @@ import type {
   PipelineTaskProgressFrame,
   PipelineTaskSnapshot,
   PrototypeGenerationResult,
+  PrototypeRefinementSelection,
   RequirementDocSynthesisResult,
   ScenarioAttributionResult,
   SrsSynthesisProgressEvent,
@@ -1862,9 +1863,11 @@ export async function apiRefinePrototype(
   projectId: string,
   prototypeId: string,
   instruction: string,
+  selections?: PrototypeRefinementSelection[],
 ): Promise<PrototypeGenerationResult> {
   return apiPostJson(`/api/projects/${projectId}/prototypes/${prototypeId}/refine`, {
     instruction,
+    ...(selections && selections.length > 0 ? { selections } : {}),
   });
 }
 

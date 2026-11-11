@@ -720,6 +720,15 @@ progress.loading-spinner:indeterminate {
 }
 
 /* ─── Accessible Light-Dismiss Dialog (<dialog closedby="any">) ─── */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
 dialog.bui-dialog {
   margin: auto;
   padding: 0;
@@ -730,6 +739,10 @@ dialog.bui-dialog {
   box-shadow: var(--shadow-overlay);
   max-width: min(520px, calc(100vw - 32px));
   width: 100%;
+}
+
+dialog.bui-dialog.bui-dialog-wide {
+  max-width: min(620px, calc(100vw - 32px));
 }
 
 dialog.bui-dialog::backdrop {
