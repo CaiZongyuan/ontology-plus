@@ -272,16 +272,16 @@ export function DataResourcesView({
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="badge badge-ok">{db.status}</span>
-              <button
+              <Button
                 type="button"
-                className="btn btn-primary"
+                variant="accent" size="md"
                 disabled={extractingDataOntology}
                 onClick={() => void handleExtractDataOntology()}
               >
                 {extractingDataOntology
                   ? t('正在萃取...', 'Extracting...')
                   : t('从数据资源萃取数据本体 (M1+MM)', 'Extract Data Ontology (M1+MM)')}
-              </button>
+              </Button>
               {data.databaseResources.length > 1 && (
                 <Button variant="ghost" size="xs" onClick={() => setDeleteDbTarget(db)}>
                   <Trash2 size={12} className="text-red" />
@@ -305,15 +305,15 @@ export function DataResourcesView({
                   <strong style={{ fontFamily: 'var(--mono)' }}>{tb.tableName}</strong>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span className="badge badge-accent">{tb.rowCount} rows</span>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() =>
                         void handleRunSqlPreview(`SELECT * FROM ${tb.tableName} LIMIT 10`)
                       }
                     >
                       SQL
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <div style={{ fontSize: 11.5, color: 'var(--muted)', margin: '4px 0 8px 0' }}>
@@ -357,9 +357,9 @@ export function DataResourcesView({
               )}
             </div>
           </div>
-          <button
+          <Button
             type="button"
-            className="btn btn-primary"
+            variant="accent" size="md"
             data-testid="run-sql-preview-btn"
             disabled={runningSql}
             onClick={() => void handleRunSqlPreview()}
@@ -368,19 +368,19 @@ export function DataResourcesView({
             {runningSql
               ? t('查询中...', 'Running...')
               : t('执行只读 SQL 预览', 'Run SQL Preview')}
-          </button>
+          </Button>
         </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
           {SQL_SANDBOX_PRESETS.map((preset) => (
-            <button
+            <Button
               key={preset.labelEn}
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               onClick={() => void handleRunSqlPreview(preset.sql)}
             >
               {t(preset.labelZh, preset.labelEn)}
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -1116,23 +1116,23 @@ export function DataMetricsReportsView() {
       {/* Top Mode Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
         <div className="inline-flex items-center gap-1 rounded-control bg-inset p-1">
-          <button
+          <Button
             type="button"
-            className={`btn btn-sm ${viewMode === 'DASHBOARD' ? 'btn-primary' : ''}`}
+            variant="toggle" size="sm" aria-pressed={viewMode === 'DASHBOARD'}
             onClick={() => setViewMode('DASHBOARD')}
           >
             <BarChart3 size={13} />
             {t('指标监控与场景归因工作台', 'Metrics & Attribution Workbench')}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className={`btn btn-sm ${viewMode === 'REPORTS_EDITOR' ? 'btn-primary' : ''}`}
+            variant="toggle" size="sm" aria-pressed={viewMode === 'REPORTS_EDITOR'}
             onClick={() => setViewMode('REPORTS_EDITOR')}
             data-testid="reports-mode-editor-btn"
           >
             <FileText size={13} />
             {t('分析报告双向编辑与注册表', 'Reports Editor & Registry')} ({data.analyticsReports.length})
-          </button>
+          </Button>
         </div>
 
         <div className="flex items-center gap-2">
@@ -1253,9 +1253,9 @@ export function DataMetricsReportsView() {
                     </div>
 
                     <div style={{ marginTop: 4 }}>
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-sm btn-primary"
+                        variant="accent" size="sm"
                         data-testid={idx === 0 ? 'metric-insight-btn' : `metric-insight-btn-${m.id}`}
                         disabled={loadingMetricId === m.id}
                         onClick={() => void handleMetricInsight(m.id)}
@@ -1263,7 +1263,7 @@ export function DataMetricsReportsView() {
                         {loadingMetricId === m.id
                           ? t('洞察分析中...', 'Analyzing...')
                           : t('AI 异动洞察', 'AI Metric Insight')}
-                      </button>
+                      </Button>
                     </div>
 
                     {insight && (
@@ -1292,16 +1292,16 @@ export function DataMetricsReportsView() {
                           {insight.suggestedAction}
                         </div>
                         <div>
-                          <button
+                          <Button
                             type="button"
-                            className="btn btn-sm"
+                            variant="secondary" size="sm"
                             onClick={() => void handleQuickWriteback(insight.writebackInterfaceId)}
                           >
                             {t(
                               `触发闭环回写 (${insight.writebackInterfaceId})`,
                               `Trigger Write-Back (${insight.writebackInterfaceId})`,
                             )}
-                          </button>
+                          </Button>
                         </div>
                       </div>
                     )}
@@ -1369,9 +1369,9 @@ export function DataMetricsReportsView() {
                         </div>
                       </div>
                       <div className="inline-flex items-center gap-2">
-                        <button
+                        <Button
                           type="button"
-                          className="btn btn-primary"
+                          variant="accent" size="md"
                           data-testid={
                             idx === 0 ? 'scenario-attribute-btn' : `scenario-attribute-btn-${sc.id}`
                           }
@@ -1381,7 +1381,7 @@ export function DataMetricsReportsView() {
                           {loadingScenarioId === sc.id
                             ? t('归因生成中...', 'Attributing...')
                             : t('AI 归因分析并生成报告', 'AI Attribution & Save Report')}
-                        </button>
+                        </Button>
                         {data.analyticsScenarios.length > 1 && (
                           <Button
                             variant="ghost"
@@ -1744,9 +1744,9 @@ export function DataReasoningView() {
                   </div>
                 </div>
                 <div>
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-sm btn-primary"
+                    variant="accent" size="sm"
                     data-testid={
                       i === 0
                         ? 'trigger-policy-writeback-btn'
@@ -1759,7 +1759,7 @@ export function DataReasoningView() {
                       `立即调用回写接口 (${rec.writebackInterfaceId}) 执行闭环`,
                       `Execute Write-Back (${rec.writebackInterfaceId})`,
                     )}
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
@@ -1875,14 +1875,14 @@ export function DataWritebackView() {
               <span className="badge badge-ok">
                 {t('累计回写次数', 'Executions')}: {wb.executionCount}
               </span>
-              <button
+              <Button
                 type="button"
-                className="btn btn-primary"
+                variant="accent" size="md"
                 onClick={() => void handleExecute(wb.id, wb.payloadTemplate)}
               >
                 <Play size={12.5} />
                 {t('立即执行业务回写', 'Execute Write-Back')}
-              </button>
+              </Button>
               {data.writebackInterfaces.length > 1 && (
                 <Button variant="ghost" size="xs" onClick={() => setDeleteTarget(wb)}>
                   <Trash2 size={12} className="text-red" />
@@ -2139,9 +2139,9 @@ export function LlmCenterView() {
                   <Trash2 size={11.5} className="text-red" />
                 </Button>
               )}
-              <button
+              <Button
                 type="button"
-                className="btn btn-primary"
+                variant="accent" size="md"
                 data-testid={idx === 0 ? 'ping-llm-gateway-btn' : `ping-llm-gateway-btn-${idx}`}
                 disabled={testingId === p.id}
                 onClick={() => void handlePing(p.id)}
@@ -2149,7 +2149,7 @@ export function LlmCenterView() {
                 {testingId === p.id
                   ? t('正在探测网关...', 'Testing Gateway...')
                   : t('测试本地 Pi 网关连接 (glm-5.3-flash)', 'Test Local Pi Gateway')}
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -2383,33 +2383,33 @@ export function SystemSettingsView() {
               gap: 4,
             }}
           >
-            <button
+            <Button
               type="button"
               data-testid="theme-pref-system"
-              className={`btn btn-sm ${themePreference === 'system' ? 'btn-primary' : ''}`}
+              variant="toggle" size="sm" aria-pressed={themePreference === 'system'}
               onClick={() => handleSelectTheme('system')}
             >
               {t(
                 `跟随系统 (${theme === 'light' ? '当前亮色' : '当前暗色'})`,
                 `System (Currently ${theme})`,
               )}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               data-testid="theme-pref-light"
-              className={`btn btn-sm ${themePreference === 'light' ? 'btn-primary' : ''}`}
+              variant="toggle" size="sm" aria-pressed={themePreference === 'light'}
               onClick={() => handleSelectTheme('light')}
             >
               ☀ {t('亮色暖纸', 'Light')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               data-testid="theme-pref-dark"
-              className={`btn btn-sm ${themePreference === 'dark' ? 'btn-primary' : ''}`}
+              variant="toggle" size="sm" aria-pressed={themePreference === 'dark'}
               onClick={() => handleSelectTheme('dark')}
             >
               ☾ {t('暗色胶片', 'Dark')}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -2445,20 +2445,20 @@ export function SystemSettingsView() {
               gap: 4,
             }}
           >
-            <button
+            <Button
               type="button"
-              className={`btn btn-sm ${locale === 'zh-CN' ? 'btn-primary' : ''}`}
+              variant="toggle" size="sm" aria-pressed={locale === 'zh-CN'}
               onClick={() => handleSelectLocale('zh-CN')}
             >
               简体中文 (zh-CN)
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className={`btn btn-sm ${locale === 'en-US' ? 'btn-primary' : ''}`}
+              variant="toggle" size="sm" aria-pressed={locale === 'en-US'}
               onClick={() => handleSelectLocale('en-US')}
             >
               English (en-US)
-            </button>
+            </Button>
           </div>
         </div>
 

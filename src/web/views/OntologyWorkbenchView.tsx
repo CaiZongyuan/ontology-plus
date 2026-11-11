@@ -20,6 +20,7 @@ import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench
 import { usePreferences } from '../i18n.js';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas.js';
 import './ontology-workbench.css';
+import { Button } from '../components/beautifui/index.js';
 
 interface TreeElementSummary {
   id: string;
@@ -1107,9 +1108,9 @@ export function OntologyWorkbenchView() {
                               <span className="owb-tree-id">{el.id}</span>
                               <span>{el.label}</span>
                             </span>
-                            <button
+                            <Button
                               type="button"
-                              className="owb-impact-btn"
+                              variant="secondary" size="md" className="owb-impact-btn"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleOpenImpactModal(el.impactSymbol);
@@ -1118,7 +1119,7 @@ export function OntologyWorkbenchView() {
                               aria-label={t('扫描跨模型引用影响', 'Impact Analysis')}
                             >
                               ⇄
-                            </button>
+                            </Button>
                           </div>
                         );
                       })}
@@ -1186,45 +1187,45 @@ export function OntologyWorkbenchView() {
 
             <div className="owb-toolbar-row">
               <div className="owb-btn-group" role="group" aria-label={t('历史', 'History')}>
-                <button
+                <Button
                   type="button"
-                  className="btn btn-sm"
+                  variant="secondary" size="sm"
                   data-testid="undo-btn"
                   disabled={undoStack.length === 0}
                   onClick={() => undo()}
                   title="Undo"
                 >
                   ↶ {t('撤销', 'Undo')}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className="btn btn-sm"
+                  variant="secondary" size="sm"
                   data-testid="redo-btn"
                   disabled={redoStack.length === 0}
                   onClick={() => redo()}
                   title="Redo"
                 >
                   ↷ {t('重做', 'Redo')}
-                </button>
+                </Button>
               </div>
 
               <div className="owb-actions">
-                <button
+                <Button
                   type="button"
-                  className="btn btn-sm"
+                  variant="secondary" size="sm"
                   data-testid="open-cascade-rename-btn"
                   onClick={() => handleOpenImpactModal('Contract')}
                 >
                   ⇄ {t('级联重命名 / 影响分析', 'Cascade Rename')}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className="btn btn-sm btn-primary"
+                  variant="accent" size="sm"
                   data-testid="add-model-item-btn"
                   onClick={handleQuickAddItem}
                 >
                   + {t('新增模型项', 'Add Item')}
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -1258,13 +1259,13 @@ export function OntologyWorkbenchView() {
                   <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--muted)' }}>
                     .onto-cs/model/{project.id}/yaml/{MODEL_FILE_NAMES[selectedModel]}
                   </span>
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-sm btn-primary"
+                    variant="accent" size="sm"
                     onClick={handleSaveYaml}
                   >
                     {t('保存并校验 YAML', 'Save & Validate YAML')}
-                  </button>
+                  </Button>
                 </div>
                 <textarea
                   className="textarea mono"
@@ -1336,9 +1337,9 @@ export function OntologyWorkbenchView() {
           </span>
         </div>
 
-        <button
+        <Button
           type="button"
-          className="btn btn-sm"
+          variant="secondary" size="sm"
           data-testid="toggle-diagnostics-btn"
           aria-expanded={showDiagnosticsDrawer}
           onClick={() => setShowDiagnosticsDrawer((v) => !v)}
@@ -1349,7 +1350,7 @@ export function OntologyWorkbenchView() {
                 `查看校验明细 (${validation.diagnostics.length})`,
                 `Diagnostics (${validation.diagnostics.length})`,
               )}
-        </button>
+        </Button>
       </div>
 
       {showDiagnosticsDrawer && (
@@ -1441,16 +1442,16 @@ export function OntologyWorkbenchView() {
                       'Cross-Model Impact Analysis & Cascade Rename',
                     )}
               </h3>
-              <button
+              <Button
                 type="button"
-                className="btn btn-sm"
+                variant="secondary" size="sm"
                 onClick={() => {
                   setPendingDeleteAction(null);
                   setRenameModalOpen(false);
                 }}
               >
                 ✕
-              </button>
+              </Button>
             </div>
 
             {pendingDeleteAction && (
@@ -1502,16 +1503,16 @@ export function OntologyWorkbenchView() {
                   onChange={(e) => setNewSymbolName(e.target.value)}
                 />
               </div>
-              <button
+              <Button
                 type="button"
-                className="btn"
+                variant="secondary" size="md"
                 onClick={async () => {
                   const rep = await apiAnalyzeImpact(project.id, targetSymbol);
                   setImpactReport(rep);
                 }}
               >
                 {t('重新扫描引用', 'Scan Impact')}
-              </button>
+              </Button>
             </div>
 
             {impactReport && (
@@ -1571,34 +1572,34 @@ export function OntologyWorkbenchView() {
             )}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button
+              <Button
                 type="button"
-                className="btn"
+                variant="secondary" size="md"
                 onClick={() => {
                   setPendingDeleteAction(null);
                   setRenameModalOpen(false);
                 }}
               >
                 {t('取消', 'Cancel')}
-              </button>
+              </Button>
               {pendingDeleteAction && (
-                <button
+                <Button
                   type="button"
-                  className="btn"
+                  variant="secondary" size="md"
                   style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }}
                   onClick={() => pendingDeleteAction.execute()}
                 >
                   {t('强制删除此元素', 'Force Delete Element')}
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 type="button"
-                className="btn btn-primary"
+                variant="accent" size="md"
                 data-testid="confirm-cascade-rename-btn"
                 onClick={handleExecuteCascadeRename}
               >
                 {t('执行 11 模型原子级联重命名', 'Execute Atomic Cascade Rename')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1714,9 +1715,9 @@ function StructuredModelInspector({
           'Click below to scaffold the first validated structured AST element.',
         )}
       </div>
-      <button type="button" className="btn btn-primary" onClick={onQuickAdd}>
+      <Button type="button" variant="accent" size="md" onClick={onQuickAdd}>
         + {t(`创建首个 ${code} 模型项`, `Create First ${code} Item`)}
-      </button>
+      </Button>
     </div>
   );
 
@@ -1737,20 +1738,20 @@ function StructuredModelInspector({
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {dirty && (
-            <button
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               onClick={() => {
                 setDraft(JSON.parse(JSON.stringify(suite)));
                 setDirty(false);
               }}
             >
               {t('放弃更改', 'Reset')}
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             type="button"
-            className="btn btn-sm btn-primary"
+            variant="accent" size="sm"
             data-testid="structured-save-btn"
             disabled={saving}
             onClick={handleSaveAst}
@@ -1758,7 +1759,7 @@ function StructuredModelInspector({
             {saving
               ? t('校验保存中...', 'Saving...')
               : t('保存修改 (Save AST)', 'Save AST')}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1784,17 +1785,16 @@ function StructuredModelInspector({
                     </strong>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() => onInspectImpact(agg.name)}
                     >
                       {t('分析引用影响', 'Impact')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-sm"
-                      style={{ color: 'var(--bad)' }}
+                      variant="danger" size="sm"
                       onClick={() =>
                         onRequestDelete({
                           elementId: agg.id,
@@ -1809,7 +1809,7 @@ function StructuredModelInspector({
                       }
                     >
                       {t('删除', 'Delete')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -1890,9 +1890,9 @@ function StructuredModelInspector({
                     {t('聚合根属性定义', 'Attributes')}
                     <span className="owb-count">{agg.attributes.length}</span>
                   </span>
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-sm"
+                    variant="secondary" size="sm"
                     onClick={() =>
                       mutateDraft((nx) => {
                         const target = nx.M1?.aggregates[aggIdx];
@@ -1908,7 +1908,7 @@ function StructuredModelInspector({
                     }
                   >
                     + {t('新增属性', 'Add Attribute')}
-                  </button>
+                  </Button>
                 </div>
 
                 <div className="owb-attr-table-wrap">
@@ -2106,17 +2106,16 @@ function StructuredModelInspector({
                     <span className="badge">{b.triggerType}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() => onInspectImpact(b.id)}
                     >
                       {t('分析引用影响', 'Impact')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-sm"
-                      style={{ color: 'var(--bad)' }}
+                      variant="danger" size="sm"
                       onClick={() =>
                         onRequestDelete({
                           elementId: b.id,
@@ -2130,7 +2129,7 @@ function StructuredModelInspector({
                       }
                     >
                       {t('删除', 'Delete')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -2254,9 +2253,9 @@ function StructuredModelInspector({
                     {t('入参列表 (Input Parameters)', 'Input Parameters')} (
                     {b.inputParameters.length})
                   </span>
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-sm"
+                    variant="secondary" size="sm"
                     onClick={() =>
                       mutateDraft((nx) => {
                         const target = nx.M2?.behaviors[bIdx];
@@ -2272,7 +2271,7 @@ function StructuredModelInspector({
                     }
                   >
                     + {t('新增入参', 'Add Param')}
-                  </button>
+                  </Button>
                 </div>
 
                 {b.inputParameters.length > 0 && (
@@ -2312,9 +2311,9 @@ function StructuredModelInspector({
                             })
                           }
                         />
-                        <button
+                        <Button
                           type="button"
-                          className="btn btn-sm"
+                          variant="secondary" size="sm"
                           style={{ height: 20, padding: '0 4px' }}
                           onClick={() =>
                             mutateDraft((nx) => {
@@ -2323,7 +2322,7 @@ function StructuredModelInspector({
                           }
                         >
                           ✕
-                        </button>
+                        </Button>
                       </div>
                     ))}
                   </div>
@@ -2361,17 +2360,16 @@ function StructuredModelInspector({
                     <span className="badge">{r.scope}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() => onInspectImpact(r.id)}
                     >
                       {t('分析引用影响', 'Impact')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-sm"
-                      style={{ color: 'var(--bad)' }}
+                      variant="danger" size="sm"
                       onClick={() =>
                         onRequestDelete({
                           elementId: r.id,
@@ -2383,7 +2381,7 @@ function StructuredModelInspector({
                       }
                     >
                       {t('删除', 'Delete')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -2510,17 +2508,16 @@ function StructuredModelInspector({
                     <span className="badge badge-ok">{ev.orderingSemantic}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() => onInspectImpact(ev.id)}
                     >
                       {t('分析引用影响', 'Impact')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-sm"
-                      style={{ color: 'var(--bad)' }}
+                      variant="danger" size="sm"
                       onClick={() =>
                         onRequestDelete({
                           elementId: ev.id,
@@ -2532,7 +2529,7 @@ function StructuredModelInspector({
                       }
                     >
                       {t('删除', 'Delete')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -2632,9 +2629,9 @@ function StructuredModelInspector({
                   <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>
                     {t('事件载荷字段 (Payload)', 'Event Payload')} ({ev.payload.length})
                   </span>
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-sm"
+                    variant="secondary" size="sm"
                     onClick={() =>
                       mutateDraft((nx) => {
                         const item = nx.ME?.events[evIdx];
@@ -2650,7 +2647,7 @@ function StructuredModelInspector({
                     }
                   >
                     + {t('新增载荷字段', 'Add Payload Field')}
-                  </button>
+                  </Button>
                 </div>
 
                 {ev.payload.length > 0 && (
@@ -2690,9 +2687,9 @@ function StructuredModelInspector({
                             })
                           }
                         />
-                        <button
+                        <Button
                           type="button"
-                          className="btn btn-sm"
+                          variant="secondary" size="sm"
                           style={{ height: 20, padding: '0 4px' }}
                           onClick={() =>
                             mutateDraft((nx) => {
@@ -2701,7 +2698,7 @@ function StructuredModelInspector({
                           }
                         >
                           ✕
-                        </button>
+                        </Button>
                       </div>
                     ))}
                   </div>
@@ -2731,17 +2728,16 @@ function StructuredModelInspector({
                     <span className="badge badge-ok">Trigger: {sc.triggerEventRef}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() => onInspectImpact(sc.id)}
                     >
                       {t('分析引用影响', 'Impact')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-sm"
-                      style={{ color: 'var(--bad)' }}
+                      variant="danger" size="sm"
                       onClick={() =>
                         onRequestDelete({
                           elementId: sc.id,
@@ -2757,7 +2753,7 @@ function StructuredModelInspector({
                       }
                     >
                       {t('删除', 'Delete')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -2825,9 +2821,9 @@ function StructuredModelInspector({
                   <strong style={{ fontSize: 12 }}>
                     {t('跨聚合编排步骤 (Steps)', 'Scenario Steps')} ({sc.steps.length})
                   </strong>
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-sm"
+                    variant="secondary" size="sm"
                     onClick={() =>
                       mutateDraft((nx) => {
                         const target = nx.M4?.event_scenarios[scIdx];
@@ -2843,7 +2839,7 @@ function StructuredModelInspector({
                     }
                   >
                     + {t('新增步骤', 'Add Step')}
-                  </button>
+                  </Button>
                 </div>
 
                 <table className="data-table">
@@ -2918,9 +2914,9 @@ function StructuredModelInspector({
                           />
                         </td>
                         <td>
-                          <button
+                          <Button
                             type="button"
-                            className="btn btn-sm"
+                            variant="secondary" size="sm"
                             onClick={() =>
                               mutateDraft((nx) => {
                                 const target = nx.M4?.event_scenarios[scIdx];
@@ -2933,7 +2929,7 @@ function StructuredModelInspector({
                             }
                           >
                             ✕
-                          </button>
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -2966,17 +2962,16 @@ function StructuredModelInspector({
                     <span className="badge badge-ok">{r.dataScope}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() => onInspectImpact(r.id)}
                     >
                       {t('分析引用影响', 'Impact')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-sm"
-                      style={{ color: 'var(--bad)' }}
+                      variant="danger" size="sm"
                       onClick={() =>
                         onRequestDelete({
                           elementId: r.id,
@@ -2988,7 +2983,7 @@ function StructuredModelInspector({
                       }
                     >
                       {t('删除', 'Delete')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -3064,9 +3059,9 @@ function StructuredModelInspector({
                 <h4 className="card-title">
                   {t('权限矩阵 (Permissions)', 'Permissions')} ({draft.M5.permissions.length})
                 </h4>
-                <button
+                <Button
                   type="button"
-                  className="btn btn-sm"
+                  variant="secondary" size="sm"
                   onClick={() =>
                     mutateDraft((nx) => {
                       if (!nx.M5) return;
@@ -3086,7 +3081,7 @@ function StructuredModelInspector({
                   }
                 >
                   + {t('新增权限项', 'Add Permission')}
-                </button>
+                </Button>
               </div>
               <table className="data-table">
                 <thead>
@@ -3147,13 +3142,13 @@ function StructuredModelInspector({
                         />
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>
-                        <button
+                        <Button
                           type="button"
-                          className="btn btn-sm"
+                          variant="secondary" size="sm"
                           onClick={() => onInspectImpact(p.id)}
                         >
                           ⇄
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -3183,17 +3178,16 @@ function StructuredModelInspector({
                     <span className="badge badge-ok">{fl.flowType}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() => onInspectImpact(fl.id)}
                     >
                       {t('分析引用影响', 'Impact')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-sm"
-                      style={{ color: 'var(--bad)' }}
+                      variant="danger" size="sm"
                       onClick={() =>
                         onRequestDelete({
                           elementId: fl.id,
@@ -3205,7 +3199,7 @@ function StructuredModelInspector({
                       }
                     >
                       {t('删除', 'Delete')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -3302,9 +3296,9 @@ function StructuredModelInspector({
                   <strong style={{ fontSize: 12 }}>
                     {t('流程活动节点拓扑', 'Flow Activities')} ({fl.activities.length})
                   </strong>
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-sm"
+                    variant="secondary" size="sm"
                     onClick={() =>
                       mutateDraft((nx) => {
                         const target = nx.M6?.flows[flIdx];
@@ -3333,7 +3327,7 @@ function StructuredModelInspector({
                     }
                   >
                     + {t('在结束前插入节点', 'Insert Task Node')}
-                  </button>
+                  </Button>
                 </div>
 
                 <table className="data-table">
@@ -3425,17 +3419,16 @@ function StructuredModelInspector({
                     <span className="badge badge-ok">1:1 M2 Behavior: {qr.behaviorRef}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() => onInspectImpact(qr.id)}
                     >
                       {t('分析引用影响', 'Impact')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-sm"
-                      style={{ color: 'var(--bad)' }}
+                      variant="danger" size="sm"
                       onClick={() =>
                         onRequestDelete({
                           elementId: qr.id,
@@ -3456,7 +3449,7 @@ function StructuredModelInspector({
                       }
                     >
                       {t('删除', 'Delete')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -3573,17 +3566,16 @@ function StructuredModelInspector({
                       </span>
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-sm"
+                        variant="secondary" size="sm"
                         onClick={() => onInspectImpact(sc.screenId)}
                       >
                         {t('分析引用影响', 'Impact')}
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        className="btn btn-sm"
-                        style={{ color: 'var(--bad)' }}
+                        variant="danger" size="sm"
                         onClick={() =>
                           onRequestDelete({
                             elementId: sc.screenId,
@@ -3599,7 +3591,7 @@ function StructuredModelInspector({
                         }
                       >
                         {t('删除', 'Delete')}
-                      </button>
+                      </Button>
                     </div>
                   </div>
 
@@ -3666,9 +3658,9 @@ function StructuredModelInspector({
                         )}
                       </label>
                       {missingInElements.length > 0 && (
-                        <button
+                        <Button
                           type="button"
-                          className="btn btn-sm"
+                          variant="secondary" size="sm"
                           onClick={() =>
                             mutateDraft((nx) => {
                               const s = nx.MU?.screens[scIdx];
@@ -3692,7 +3684,7 @@ function StructuredModelInspector({
                         >
                           + {t('自动注册未声明布局控件', 'Sync Layout Elements')} (
                           {missingInElements.length})
-                        </button>
+                        </Button>
                       )}
                     </div>
                     <textarea
@@ -3841,17 +3833,16 @@ function StructuredModelInspector({
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() => onInspectImpact(mp.id)}
                     >
                       {t('分析引用影响', 'Impact')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="btn btn-sm"
-                      style={{ color: 'var(--bad)' }}
+                      variant="danger" size="sm"
                       onClick={() =>
                         onRequestDelete({
                           elementId: mp.id,
@@ -3863,7 +3854,7 @@ function StructuredModelInspector({
                       }
                     >
                       {t('删除', 'Delete')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -3938,9 +3929,9 @@ function StructuredModelInspector({
                         {t('对象属性 ↔ 物理字段映射', 'Column Mappings')} (
                         {tm.columnMappings.length})
                       </span>
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-sm"
+                        variant="secondary" size="sm"
                         onClick={() =>
                           mutateDraft((nx) => {
                             const tbl = nx.MM?.mappings[mpIdx]?.tableMappings[tmIdx];
@@ -3955,7 +3946,7 @@ function StructuredModelInspector({
                         }
                       >
                         + {t('新增字段映射', 'Add Column')}
-                      </button>
+                      </Button>
                     </div>
 
                     <table className="data-table">
@@ -4025,9 +4016,9 @@ function StructuredModelInspector({
                                 : cm.valueObjectStrategy || (cm.isPrimaryKey ? 'PK' : '-')}
                             </td>
                             <td>
-                              <button
+                              <Button
                                 type="button"
-                                className="btn btn-sm"
+                                variant="secondary" size="sm"
                                 onClick={() =>
                                   mutateDraft((nx) => {
                                     nx.MM?.mappings[mpIdx]?.tableMappings[
@@ -4037,7 +4028,7 @@ function StructuredModelInspector({
                                 }
                               >
                                 ✕
-                              </button>
+                              </Button>
                             </td>
                           </tr>
                         ))}
@@ -4076,9 +4067,9 @@ function StructuredModelInspector({
                         : t('出参契约字段 (Output)', 'Output Fields')}{' '}
                       ({fields.length})
                     </span>
-                    <button
+                    <Button
                       type="button"
-                      className="btn btn-sm"
+                      variant="secondary" size="sm"
                       onClick={() =>
                         mutateDraft((nx) => {
                           const target = nx.MI?.interfaces[iIdx];
@@ -4094,7 +4085,7 @@ function StructuredModelInspector({
                       }
                     >
                       + {t('新增字段', 'Add Field')}
-                    </button>
+                    </Button>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {fields.map((f, fIdx) => (
@@ -4140,9 +4131,9 @@ function StructuredModelInspector({
                             })
                           }
                         />
-                        <button
+                        <Button
                           type="button"
-                          className="btn btn-sm"
+                          variant="secondary" size="sm"
                           style={{ height: 22, padding: '0 5px' }}
                           onClick={() =>
                             mutateDraft((nx) => {
@@ -4151,7 +4142,7 @@ function StructuredModelInspector({
                           }
                         >
                           ✕
-                        </button>
+                        </Button>
                       </div>
                     ))}
                   </div>
@@ -4174,17 +4165,16 @@ function StructuredModelInspector({
                       <span className="badge">{intf.protocol}</span>
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-sm"
+                        variant="secondary" size="sm"
                         onClick={() => onInspectImpact(intf.interfaceId)}
                       >
                         {t('分析引用影响', 'Impact')}
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        className="btn btn-sm"
-                        style={{ color: 'var(--bad)' }}
+                        variant="danger" size="sm"
                         onClick={() =>
                           onRequestDelete({
                             elementId: intf.interfaceId,
@@ -4200,7 +4190,7 @@ function StructuredModelInspector({
                         }
                       >
                         {t('删除', 'Delete')}
-                      </button>
+                      </Button>
                     </div>
                   </div>
 

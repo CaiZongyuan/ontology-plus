@@ -851,14 +851,14 @@ export function AgentSessionWorkbench({
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-1.5">
               {agentKind === 'REASONING' && (
-                <div className="inline-flex items-center rounded-full border border-line bg-surface p-0.5">
+                <div className="inline-flex items-center rounded-[7px] border border-line bg-surface p-0.5">
                   {(['ASK_DATA', 'ASK_WHY', 'ASK_POLICY'] as const).map((m) => (
                     <button
                       key={m}
                       type="button"
                       onClick={() => setReasoningMode(m)}
                       className={cn(
-                        'cursor-pointer rounded-full px-2 py-0.5 font-mono text-[10.5px] font-semibold transition-colors',
+                        'cursor-pointer rounded-[5px] px-2 py-0.5 font-mono text-[10.5px] font-semibold transition-colors',
                         reasoningMode === m
                           ? 'bg-accent text-accent-ink'
                           : 'text-ink-3 hover:text-ink',

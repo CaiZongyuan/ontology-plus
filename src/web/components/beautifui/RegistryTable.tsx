@@ -160,9 +160,9 @@ export function RegistryTable<T>({
                     type="button"
                     onClick={() => setStatus(f.value)}
                     className={cn(
-                      'inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors duration-150',
+                      'inline-flex h-6 items-center gap-1.5 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors duration-150',
                       active
-                        ? 'bg-ink text-surface'
+                        ? 'bg-surface text-ink shadow-hairline'
                         : 'text-ink-3 hover:bg-hover hover:text-ink-2',
                     )}
                   >

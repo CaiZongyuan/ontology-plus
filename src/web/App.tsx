@@ -69,6 +69,7 @@ import {
 } from './views/CapabilityAndDataViews.js';
 import { KnowledgeGraphCanvas } from './views/KnowledgeGraphCanvas.js';
 import { OntologyWorkbenchView } from './views/OntologyWorkbenchView.js';
+import { Button } from './components/beautifui/index.js';
 
 const NAV_ICONS: Record<NavViewId, React.ReactNode> = {
   overview: <FolderKanban size={16} />,
@@ -431,15 +432,15 @@ function ShellInner() {
               </span>
             </div>
           )}
-          <button
+          <Button
             type="button"
-            className="icon-btn"
+            variant="secondary" size="md" className="icon-btn"
             onClick={toggleCollapsed}
             title={collapseLabel}
             aria-label={collapseLabel}
           >
             {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-          </button>
+          </Button>
         </div>
 
         <button
@@ -504,28 +505,28 @@ function ShellInner() {
 
         <div className="sidebar-footer">
           <div className="sidebar-footer-row">
-            <button
-              type="button"
-              className={collapsed ? 'icon-btn' : 'btn btn-sm btn-ghost'}
+            <Button
+              variant="ghost"
+              size="sm"
+              className={collapsed ? 'w-8 px-0' : 'flex-1'}
               data-testid="theme-toggle-btn"
-              style={collapsed ? undefined : { flex: 1 }}
               onClick={toggleTheme}
               title={theme === 'light' ? t('切换到深色', 'Switch to dark') : t('切换到浅色', 'Switch to light')}
             >
               {theme === 'light' ? <Sun size={14} /> : <Moon size={14} />}
               {!collapsed && (theme === 'light' ? t('浅色', 'Light') : t('深色', 'Dark'))}
-            </button>
-            <button
-              type="button"
-              className={collapsed ? 'icon-btn' : 'btn btn-sm btn-ghost'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={collapsed ? 'w-8 px-0' : 'flex-1'}
               data-testid="locale-toggle-btn"
-              style={collapsed ? undefined : { flex: 1 }}
               onClick={toggleLocale}
               title={locale === 'zh-CN' ? 'Switch to English' : '切换为中文'}
             >
               <Globe size={14} />
               {!collapsed && (locale === 'zh-CN' ? '中文' : 'English')}
-            </button>
+            </Button>
           </div>
         </div>
       </aside>

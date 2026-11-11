@@ -82,14 +82,14 @@ function ViewModeHeader({
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-3.5 py-2 shadow-2xs">
-      <div className="inline-flex items-center rounded-full border border-line bg-inset/60 p-0.5">
+      <div className="inline-flex items-center rounded-[7px] border border-line bg-inset p-0.5">
         <button
           type="button"
           data-testid={`${testIdPrefix}-mode-workspace`}
           onClick={() => onChange('WORKSPACE')}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium cursor-pointer transition-colors',
-            mode === 'WORKSPACE' ? 'bg-ink text-surface' : 'text-ink-2 hover:text-ink',
+            'inline-flex h-7 items-center gap-1.5 rounded-[5px] px-3 text-[12px] font-medium cursor-pointer transition-colors',
+            mode === 'WORKSPACE' ? 'bg-surface text-ink shadow-hairline' : 'text-ink-2 hover:text-ink',
           )}
         >
           <Edit3 size={12.5} />
@@ -100,8 +100,8 @@ function ViewModeHeader({
           data-testid={`${testIdPrefix}-mode-registry`}
           onClick={() => onChange('REGISTRY')}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium cursor-pointer transition-colors',
-            mode === 'REGISTRY' ? 'bg-ink text-surface' : 'text-ink-2 hover:text-ink',
+            'inline-flex h-7 items-center gap-1.5 rounded-[5px] px-3 text-[12px] font-medium cursor-pointer transition-colors',
+            mode === 'REGISTRY' ? 'bg-surface text-ink shadow-hairline' : 'text-ink-2 hover:text-ink',
           )}
         >
           <LayoutList size={12.5} />
@@ -384,13 +384,13 @@ export function OverviewSessionsView({
             {data.assembledApplications.length} {t('个应用', 'Apps')}
           </div>
           <div style={{ marginTop: 6 }}>
-            <button
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               onClick={() => onNavigate('app-assembly-dev')}
             >
               {t('进入四层装配与开发包编译 →', 'Open 4-Layer Assembly →')}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -465,13 +465,13 @@ export function OverviewSessionsView({
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
                 <span className="badge badge-ok">{st.meta}</span>
-                <button
+                <Button
                   type="button"
-                  className="btn btn-sm btn-primary"
+                  variant="accent" size="sm"
                   onClick={() => onNavigate(st.targetView)}
                 >
                   {t('进入', 'Open')} →
-                </button>
+                </Button>
               </div>
             </div>
           ))}
@@ -998,9 +998,9 @@ export function RequirementExploreView({
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
-            <button
+            <Button
               type="button"
-              className="btn btn-primary"
+              variant="accent" size="md"
               data-testid="synthesize-srs-btn"
               disabled={!session || synthesizingSrs}
               onClick={handleSynthesizeSrs}
@@ -1011,7 +1011,7 @@ export function RequirementExploreView({
                     '一键合成 9 章节《软件需求规格说明书》',
                     'Synthesize 9-Chapter SRS Document',
                   )}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -1123,20 +1123,20 @@ export function RequirementExploreView({
               {t('下一步转化动作', 'Next Actions')}
             </h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <button
+              <Button
                 type="button"
-                className="btn btn-primary"
+                variant="accent" size="md"
                 onClick={() => onNavigate('app-req-docs')}
               >
                 {t('查看/编辑《软件需求说明书》 →', 'Open SRS Document →')}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="btn"
+                variant="secondary" size="md"
                 onClick={() => onNavigate('app-ontology')}
               >
                 {t('打开 11 模型本体工作台 →', 'Open 11-Model Ontology →')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1352,16 +1352,16 @@ export function RequirementDocsView({
         testIdPrefix="srs"
         rightActions={
           <>
-            <button
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               onClick={() => mdUploadRef.current?.click()}
             >
               {t('上传本地 .md', 'Upload .md')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-sm btn-primary"
+              variant="accent" size="sm"
               data-testid="generate-prototype-btn"
               disabled={generatingProto}
               onClick={handleGeneratePrototype}
@@ -1369,7 +1369,7 @@ export function RequirementDocsView({
               {generatingProto
                 ? t('正在生成交互原型...', 'Generating Prototype...')
                 : t('基于此需求生成可交互 HTML 原型 →', 'Generate HTML Prototype →')}
-            </button>
+            </Button>
           </>
         }
       />
@@ -1732,24 +1732,24 @@ export function PrototypeStudioView({
         testIdPrefix="proto"
         rightActions={
           <>
-            <button
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               onClick={() => htmlUploadRef.current?.click()}
             >
               {t('上传 .html', 'Upload .html')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               data-testid="sync-prototype-mu-btn"
               onClick={handleSaveAndExtractMu}
             >
               {t('保存原型并提取同步至 MU 模型', 'Save & Extract to MU Model')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-sm btn-primary"
+              variant="accent" size="sm"
               data-testid="confirm-prototype-synthesize-btn"
               disabled={synthesizingOntology}
               onClick={handleConfirmAndSynthesizeOntology}
@@ -1757,7 +1757,7 @@ export function PrototypeStudioView({
               {synthesizingOntology
                 ? t('正在合成 11 模型...', 'Synthesizing 11 Models...')
                 : t('确认原型并一键合成 11 元模型本体', 'Confirm & Synthesize 11-Model')}
-            </button>
+            </Button>
           </>
         }
       />
@@ -1873,33 +1873,33 @@ export function PrototypeStudioView({
                     ))}
                   </select>
                 )}
-                <button type="button" className="btn btn-sm" onClick={handleDownloadHtml}>
+                <Button type="button" variant="secondary" size="sm" onClick={handleDownloadHtml}>
                   {t('下载 .html', 'Download .html')}
-                </button>
+                </Button>
               </div>
 
               <div className="flex items-center gap-1.5">
-                <button
+                <Button
                   type="button"
-                  className={`btn btn-sm ${viewMode === 'SPLIT' ? 'btn-primary' : ''}`}
+                  variant="toggle" size="sm" aria-pressed={viewMode === 'SPLIT'}
                   onClick={() => setViewMode('SPLIT')}
                 >
                   {t('分栏联调', 'Split View')}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className={`btn btn-sm ${viewMode === 'PREVIEW' ? 'btn-primary' : ''}`}
+                  variant="toggle" size="sm" aria-pressed={viewMode === 'PREVIEW'}
                   onClick={() => setViewMode('PREVIEW')}
                 >
                   {t('仅看原型', 'Preview Only')}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className={`btn btn-sm ${viewMode === 'HTML' ? 'btn-primary' : ''}`}
+                  variant="toggle" size="sm" aria-pressed={viewMode === 'HTML'}
                   onClick={() => setViewMode('HTML')}
                 >
                   {t('HTML 源码', 'HTML Source')}
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -1933,15 +1933,15 @@ export function PrototypeStudioView({
                   if (e.key === 'Enter') handleRefinePrototype();
                 }}
               />
-              <button
+              <Button
                 type="button"
-                className="btn btn-primary"
+                variant="accent" size="md"
                 data-testid="refine-prototype-btn"
                 disabled={refining || !refineInstruction.trim()}
                 onClick={handleRefinePrototype}
               >
                 {refining ? t('精修中...', 'Refining...') : t('AI 精修并同步 MU', 'Refine & Sync MU')}
-              </button>
+              </Button>
             </div>
 
             {synthesisSummary && (
@@ -1964,13 +1964,13 @@ export function PrototypeStudioView({
                   {synthesisSummary.modelCount}/11 Models · {synthesisSummary.errorCount}{' '}
                   Consistency Errors
                 </div>
-                <button
+                <Button
                   type="button"
-                  className="btn btn-sm btn-primary"
+                  variant="accent" size="sm"
                   onClick={() => onNavigate?.('app-ontology')}
                 >
                   {t('前往 11 模型本体工作台查看 →', 'Open 11-Model Ontology Workbench →')}
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -2190,40 +2190,40 @@ export function ModelFilesView() {
               style={{ display: 'none' }}
               onChange={handleImportYamlFiles}
             />
-            <button
+            <Button
               type="button"
-              className="btn"
+              variant="secondary" size="md"
               onClick={() => yamlImportRef.current?.click()}
             >
               {t('导入 YAML 文件', 'Import YAML Files')}
-            </button>
-            <button type="button" className="btn" onClick={handleDownloadCurrentFile}>
+            </Button>
+            <Button type="button" variant="secondary" size="md" onClick={handleDownloadCurrentFile}>
               {t('下载当前文件', 'Download Current File')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn"
+              variant="secondary" size="md"
               data-testid="export-owl-btn"
               onClick={handleExportOwl}
             >
               {t('导出 OWL 标准本体', 'Export OWL XML')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn"
+              variant="secondary" size="md"
               data-testid="generate-skill-btn"
               onClick={handleGenerateSkill}
             >
               {t('生成渐进式 SKILL.md', 'Generate SKILL.md')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-primary"
+              variant="accent" size="md"
               data-testid="publish-mcp-btn"
               onClick={handlePublishMcp}
             >
               {t('发布为在线 MCP Server', 'Publish MCP Server')}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -2235,13 +2235,13 @@ export function ModelFilesView() {
         >
           <div className="card-header" style={{ marginBottom: 6 }}>
             <strong>{t('YAML 导入解析诊断 (Parse Errors)', 'YAML Import Parse Errors')}</strong>
-            <button
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               onClick={() => setImportErrors([])}
             >
               {t('清除提示', 'Dismiss')}
-            </button>
+            </Button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {importErrors.map((err, i) => (
@@ -2305,9 +2305,9 @@ export function ModelFilesView() {
             <div className="card-header">
               <h3 className="card-title">W3C OWL/RDF XML — {project.name}</h3>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button
+                <Button
                   type="button"
-                  className="btn btn-sm"
+                  variant="secondary" size="sm"
                   onClick={() => {
                     triggerBrowserDownload(
                       owlFileName,
@@ -2318,10 +2318,10 @@ export function ModelFilesView() {
                   }}
                 >
                   {t('下载 OWL XML', 'Download OWL XML')}
-                </button>
-                <button type="button" className="btn btn-sm" onClick={() => setOwlPreview(null)}>
+                </Button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => setOwlPreview(null)}>
                   ✕
-                </button>
+                </Button>
               </div>
             </div>
             <pre
@@ -2517,18 +2517,18 @@ export function FourLayerAssetsView() {
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {(['ALL', 'UI_UE', 'TECH_FOUNDATION', 'TECH_ARCH'] as const).map((ly) => (
-              <button
+              <Button
                 key={ly}
                 type="button"
-                className={`btn btn-sm ${filterLayer === ly ? 'btn-primary' : ''}`}
+                variant="toggle" size="sm" aria-pressed={filterLayer === ly}
                 onClick={() => setFilterLayer(ly)}
               >
                 {t(layerLabels[ly].zh, layerLabels[ly].en)}
-              </button>
+              </Button>
             ))}
-            <button type="button" className="btn btn-sm btn-primary" onClick={openNewAssetModal}>
+            <Button type="button" variant="accent" size="sm" onClick={openNewAssetModal}>
               + {t('新建架构资产', 'New Asset')}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -2544,9 +2544,9 @@ export function FourLayerAssetsView() {
               )}
             </h4>
           </div>
-          <button
+          <Button
             type="button"
-            className="btn btn-primary"
+            variant="accent" size="md"
             data-testid="generate-tech-arch-btn"
             disabled={generatingArch}
             onClick={handleGenerateTechArch}
@@ -2554,7 +2554,7 @@ export function FourLayerAssetsView() {
             {generatingArch
               ? t('正在生成架构文档...', 'Generating Tech Arch...')
               : t('AI 技术栈生成《技术架构设计文档》', 'Generate Tech Architecture Doc')}
-          </button>
+          </Button>
         </div>
 
         <div className="form-grid-3">
@@ -2599,30 +2599,29 @@ export function FourLayerAssetsView() {
               </div>
               <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
                 <span className="badge badge-ok">{asset.version}</span>
-                <button
+                <Button
                   type="button"
-                  className="btn btn-sm"
+                  variant="secondary" size="sm"
                   onClick={() => openEditAssetModal(asset)}
                 >
                   {t('编辑规范', 'Edit')}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className="btn btn-sm"
+                  variant="secondary" size="sm"
                   onClick={() => void handleCloneAsset(asset)}
                   title={t('克隆副本', 'Clone')}
                 >
                   <Copy size={12} />
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className="btn btn-sm"
-                  style={{ color: 'var(--bad)' }}
+                  variant="danger" size="sm"
                   onClick={() => setDeletingAsset(asset)}
                   title={t('删除资产', 'Delete')}
                 >
                   <Trash2 size={12} />
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -2657,13 +2656,13 @@ export function FourLayerAssetsView() {
               <h3 className="card-title">
                 {t('编辑四层架构资产规范 (Tiptap Markdown)', 'Edit 4-Layer Architecture Asset')}
               </h3>
-              <button
+              <Button
                 type="button"
-                className="btn btn-sm"
+                variant="secondary" size="sm"
                 onClick={() => setEditingAsset(null)}
               >
                 ✕
-              </button>
+              </Button>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -2920,16 +2919,16 @@ export function ApplicationAssemblyDevView() {
         testIdPrefix="app-assembly"
         rightActions={
           <>
-            <button
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               onClick={() => setNewAppOpen(true)}
             >
               + {t('新建四层装配应用', 'New Assembled App')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               data-testid="download-package-zip-btn"
               disabled={!app || downloadingZip}
               onClick={handleDownloadPackageZip}
@@ -2937,16 +2936,16 @@ export function ApplicationAssemblyDevView() {
               {downloadingZip
                 ? t('正在打包...', 'Packaging...')
                 : t('下载 .zip 开发资料包', 'Download .zip Dev Package')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-sm btn-primary"
+              variant="accent" size="sm"
               data-testid="compile-dev-package-btn"
               disabled={!app}
               onClick={handleCompilePackage}
             >
               {t('一键编译生成《开发资料包》', 'Compile Development Package')}
-            </button>
+            </Button>
           </>
         }
       />
@@ -3205,9 +3204,9 @@ export function ApplicationAssemblyDevView() {
                     )}
                     <span className="badge badge-ok">{activeFile?.sizeBytes} bytes</span>
                     {activeFile && (
-                      <button
+                      <Button
                         type="button"
-                        className="btn btn-sm"
+                        variant="secondary" size="sm"
                         onClick={() =>
                           triggerBrowserDownload(
                             activeFile.relativePath.split('/').pop() || 'artifact.md',
@@ -3216,7 +3215,7 @@ export function ApplicationAssemblyDevView() {
                         }
                       >
                         {t('下载单文件', 'Download File')}
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -3467,13 +3466,13 @@ export function OntologySkillsView() {
         count={skills.length}
         testIdPrefix="skills"
         rightActions={
-          <button
+          <Button
             type="button"
-            className="btn btn-sm btn-primary"
+            variant="accent" size="sm"
             onClick={handleRequestCompile}
           >
             {t('编译当前工程 SKILL.md', 'Compile Current Project SKILL.md')}
-          </button>
+          </Button>
         }
       />
 
@@ -3716,16 +3715,16 @@ export function AppPublishView() {
                 setEndpointInputs((prev) => ({ ...prev, [app.id]: e.target.value }))
               }
             />
-            <button
+            <Button
               type="button"
-              className="btn btn-primary"
+              variant="accent" size="md"
               disabled={publishingId === app.id}
               onClick={() => handlePublishApp(app.id)}
             >
               {publishingId === app.id
                 ? t('正在执行 4A 核验...', 'Running 4A Gate...')
                 : t('执行 4A 门禁核验并发布新版本', 'Run 4A Gate & Publish Release')}
-            </button>
+            </Button>
           </div>
 
           <div>

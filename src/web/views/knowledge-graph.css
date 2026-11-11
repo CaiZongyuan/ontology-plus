@@ -62,7 +62,7 @@
   background: var(--surface-2);
 }
 
-.kg-zoom-group .btn-sm {
+.kg-zoom-group button {
   height: 22px;
   padding: 0 7px;
 }

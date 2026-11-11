@@ -211,16 +211,16 @@ export function TiptapMarkdownEditor({
           {badge}
 
           {/* 3-Mode Segmented Control */}
-          <div className="inline-flex items-center rounded-full border border-line bg-surface p-0.5 shadow-2xs">
+          <div className="inline-flex items-center rounded-[7px] border border-line bg-surface p-0.5 shadow-2xs">
             {!readOnly && (
               <button
                 type="button"
                 data-testid="md-mode-rich"
                 onClick={() => handleModeSwitch('RICH')}
                 className={cn(
-                  'inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                  'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                   mode === 'RICH'
-                    ? 'bg-ink text-surface'
+                    ? 'bg-surface text-ink shadow-hairline'
                     : 'text-ink-3 hover:text-ink',
                 )}
               >
@@ -234,9 +234,9 @@ export function TiptapMarkdownEditor({
                 data-testid="md-mode-source"
                 onClick={() => handleModeSwitch('SOURCE')}
                 className={cn(
-                  'inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                  'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                   mode === 'SOURCE'
-                    ? 'bg-ink text-surface'
+                    ? 'bg-surface text-ink shadow-hairline'
                     : 'text-ink-3 hover:text-ink',
                 )}
               >
@@ -249,9 +249,9 @@ export function TiptapMarkdownEditor({
               data-testid="md-mode-preview"
               onClick={() => handleModeSwitch('PREVIEW')}
               className={cn(
-                'inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 mode === 'PREVIEW'
-                  ? 'bg-ink text-surface'
+                  ? 'bg-surface text-ink shadow-hairline'
                   : 'text-ink-3 hover:text-ink',
               )}
             >

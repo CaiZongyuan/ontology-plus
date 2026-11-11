@@ -569,9 +569,9 @@ export function CapabilityExtractionView() {
               )}
             </div>
           </div>
-          <button
+          <Button
             type="button"
-            className="btn btn-primary"
+            variant="accent" size="md"
             data-testid="run-extraction-btn"
             disabled={busy}
             onClick={() => void handleRunExtraction()}
@@ -579,7 +579,7 @@ export function CapabilityExtractionView() {
             {busy
               ? t('正在执行本体萃取...', 'Extracting Ontology...')
               : t('执行本体萃取任务', 'Run Ontology Extraction')}
-          </button>
+          </Button>
         </div>
 
         <div
@@ -601,14 +601,14 @@ export function CapabilityExtractionView() {
               {t('快速载入萃取样例：', 'Load Sample Input:')}
             </span>
             {EXTRACTION_PRESETS.map((preset) => (
-              <button
+              <Button
                 key={preset.id}
                 type="button"
-                className="btn btn-sm"
+                variant="secondary" size="sm"
                 onClick={() => handleSelectPreset(preset.id)}
               >
                 {t(preset.labelZh, preset.labelEn)}
-              </button>
+              </Button>
             ))}
           </div>
 
@@ -826,16 +826,16 @@ export function CapabilityExtractionView() {
                       </div>
 
                       {!isApplied && (
-                        <button
+                        <Button
                           type="button"
-                          className="btn btn-sm btn-primary"
+                          variant="accent" size="sm"
                           disabled={applyingJobId === job.id}
                           onClick={() => void handleApplyCandidateJob(job.id)}
                         >
                           {applyingJobId === job.id
                             ? t('正在合并...', 'Merging...')
                             : t('合并候选本体至工程', 'Merge Candidate Ontology')}
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>
@@ -1145,23 +1145,23 @@ export function CapabilityMcpView() {
       {/* Top Mode Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
         <div className="inline-flex items-center gap-1 rounded-control bg-inset p-1">
-          <button
+          <Button
             type="button"
             onClick={() => setViewMode('DEBUGGER')}
-            className={`btn btn-sm ${viewMode === 'DEBUGGER' ? 'btn-primary' : ''}`}
+            variant="toggle" size="sm" aria-pressed={viewMode === 'DEBUGGER'}
           >
             <Activity size={13} />
             {t('MCP JSON-RPC 在线调试台', 'JSON-RPC Inspector')}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={() => setViewMode('REGISTRY')}
-            className={`btn btn-sm ${viewMode === 'REGISTRY' ? 'btn-primary' : ''}`}
+            variant="toggle" size="sm" aria-pressed={viewMode === 'REGISTRY'}
             data-testid="mcp-mode-registry-btn"
           >
             <Server size={13} />
             {t('MCP 服务管理注册表', 'MCP Server Registry')} ({data.mcpServers.length})
-          </button>
+          </Button>
         </div>
 
         <Button
@@ -1254,14 +1254,14 @@ export function CapabilityMcpView() {
                   </span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {(['ALL', 'M2', 'M7', 'MI', 'META'] as const).map((f) => (
-                      <button
+                      <Button
                         key={f}
                         type="button"
-                        className={`btn btn-sm ${toolFilter === f ? 'btn-primary' : ''}`}
+                        variant="toggle" size="sm" aria-pressed={toolFilter === f}
                         onClick={() => setToolFilter(f)}
                       >
                         {f}
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 </div>
@@ -1360,14 +1360,14 @@ export function CapabilityMcpView() {
                 <strong style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}>
                   tools/call → {selectedTool}
                 </strong>
-                <button
+                <Button
                   type="button"
-                  className="btn btn-sm btn-primary"
+                  variant="accent" size="sm"
                   data-testid="invoke-mcp-tool-btn"
                   onClick={() => void handleInvokeTool()}
                 >
                   {t('发送 JSON-RPC 调用请求', 'Invoke MCP Tool')}
-                </button>
+                </Button>
               </div>
 
               <textarea
@@ -1419,13 +1419,13 @@ export function CapabilityMcpView() {
                       'Client mcpServers Config JSON',
                     )}
                   </strong>
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-sm"
+                    variant="secondary" size="sm"
                     onClick={() => void handleCopyClientConfig()}
                   >
                     {t('复制配置 JSON', 'Copy JSON')}
-                  </button>
+                  </Button>
                 </div>
                 <CodeBlock code={caps?.clientConfigJson ?? '{}'} language="json" maxHeight={125} />
               </div>
@@ -1958,15 +1958,15 @@ export function CapabilityCrossFlowsView() {
               </div>
             </div>
             <div className="inline-flex items-center gap-2">
-              <button
+              <Button
                 type="button"
-                className="btn btn-primary"
+                variant="accent" size="md"
                 data-testid={idx === 0 ? 'execute-cross-flow-btn' : `execute-cross-flow-btn-${idx}`}
                 onClick={() => void handleRunFlow(fl.id)}
               >
                 <Play size={13} />
                 {t('演练执行跨系统协同流', 'Execute Cross-System Flow')}
-              </button>
+              </Button>
               <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(fl)}>
                 <Trash2 size={13} className="text-red" />
               </Button>
@@ -2256,22 +2256,22 @@ export function KnowledgeCenterView() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
         <div className="inline-flex items-center gap-1 rounded-control bg-inset p-1">
-          <button
+          <Button
             type="button"
-            className={`btn btn-sm ${viewMode === 'WORKSPACE' ? 'btn-primary' : ''}`}
+            variant="toggle" size="sm" aria-pressed={viewMode === 'WORKSPACE'}
             onClick={() => setViewMode('WORKSPACE')}
           >
             <BookOpen size={13} />
             {t('双向 Markdown 知识编辑台', 'Knowledge Editor')}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className={`btn btn-sm ${viewMode === 'REGISTRY' ? 'btn-primary' : ''}`}
+            variant="toggle" size="sm" aria-pressed={viewMode === 'REGISTRY'}
             onClick={() => setViewMode('REGISTRY')}
             data-testid="knowledge-mode-registry-btn"
           >
             {t('知识库管理列表', 'Knowledge Registry')} ({data.knowledgeEntries.length})
-          </button>
+          </Button>
         </div>
 
         <Button variant="accent" size="sm" onClick={() => setModalOpen(true)}>

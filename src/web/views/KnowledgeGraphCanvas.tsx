@@ -45,6 +45,7 @@ import {
 import { usePreferences } from '../i18n.js';
 import { cn } from '../lib/utils.js';
 import './knowledge-graph.css';
+import { Button } from '../components/beautifui/index.js';
 
 export type KnowledgeGraphPreset = 'GLOBAL_SWIMLANE' | 'WORKBENCH_EGO' | 'DATA_LINEAGE';
 export type KnowledgeGraphLayoutMode = 'STAGE_SWIMLANE' | 'EGO_FOCUS';
@@ -1030,15 +1031,15 @@ function KnowledgeGraphInner({
       <div className="kg-toolbar">
         <div className="kg-chips">
           {/* Layout Mode Switcher */}
-          <div className="mr-1 inline-flex items-center rounded-full border border-line bg-surface p-0.5 shadow-2xs">
+          <div className="mr-1 inline-flex items-center rounded-[7px] border border-line bg-surface p-0.5 shadow-2xs">
             <button
               type="button"
               data-testid="kg-mode-swimlane-btn"
               onClick={() => setLayoutMode('STAGE_SWIMLANE')}
               className={cn(
-                'inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 layoutMode === 'STAGE_SWIMLANE'
-                  ? 'bg-ink text-surface'
+                  ? 'bg-surface text-ink shadow-hairline'
                   : 'text-ink-3 hover:text-ink',
               )}
             >
@@ -1050,9 +1051,9 @@ function KnowledgeGraphInner({
               data-testid="kg-mode-ego-btn"
               onClick={() => setLayoutMode('EGO_FOCUS')}
               className={cn(
-                'inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 layoutMode === 'EGO_FOCUS'
-                  ? 'bg-ink text-surface'
+                  ? 'bg-surface text-ink shadow-hairline'
                   : 'text-ink-3 hover:text-ink',
               )}
             >
@@ -1063,48 +1064,48 @@ function KnowledgeGraphInner({
 
           {layoutMode === 'EGO_FOCUS' ? (
             <div className="inline-flex items-center gap-1">
-              <button
+              <Button
                 type="button"
-                className={`btn btn-sm ${egoHops === 1 ? 'btn-primary' : ''}`}
+                variant="toggle" size="sm" aria-pressed={egoHops === 1}
                 onClick={() => setEgoHops(1)}
               >
                 1-Hop
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className={`btn btn-sm ${egoHops === 2 ? 'btn-primary' : ''}`}
+                variant="toggle" size="sm" aria-pressed={egoHops === 2}
                 onClick={() => setEgoHops(2)}
               >
                 2-Hop
-              </button>
+              </Button>
             </div>
           ) : (
             <>
-              <button
+              <Button
                 type="button"
-                className={`btn btn-sm ${filterModel === 'ALL' ? 'btn-primary' : ''}`}
+                variant="toggle" size="sm" aria-pressed={filterModel === 'ALL'}
                 onClick={() => setFilterModel('ALL')}
               >
                 {t('全部模型', 'All Models')} ({graph.nodes.length})
-              </button>
+              </Button>
               {preset === 'DATA_LINEAGE' && (
-                <button
+                <Button
                   type="button"
-                  className={`btn btn-sm ${filterModel === 'LINEAGE' ? 'btn-primary' : ''}`}
+                  variant="toggle" size="sm" aria-pressed={filterModel === 'LINEAGE'}
                   onClick={() => setFilterModel('LINEAGE')}
                 >
                   <GitFork size={11.5} />
                   M1↔MM↔M7
-                </button>
+                </Button>
               )}
               {MODEL_CODES.map((code) => {
                 const cnt = graph.nodes.filter((n) => n.model === code).length;
                 if (cnt === 0) return null;
                 return (
-                  <button
+                  <Button
                     key={code}
                     type="button"
-                    className={`btn btn-sm ${filterModel === code ? 'btn-primary' : ''}`}
+                    variant="toggle" size="sm" aria-pressed={filterModel === code}
                     onClick={() => setFilterModel(code)}
                     title={t(
                       MODEL_LABELS.get(code)?.labelZh ?? code,
@@ -1119,7 +1120,7 @@ function KnowledgeGraphInner({
                       }}
                     />
                     {code} ({cnt})
-                  </button>
+                  </Button>
                 );
               })}
             </>
@@ -1128,15 +1129,15 @@ function KnowledgeGraphInner({
 
         <div className="kg-tools">
           {layoutMode === 'STAGE_SWIMLANE' && (
-            <button
+            <Button
               type="button"
-              className={`btn btn-sm ${bundleEdges ? 'btn-primary' : ''}`}
+              variant="toggle" size="sm" aria-pressed={bundleEdges}
               onClick={() => setBundleEdges((b) => !b)}
               title={t('折叠/展开非焦点跨模型关系束', 'Toggle inter-model edge bundling')}
             >
               <Network size={11.5} />
               {bundleEdges ? t('聚合关系束', 'Bundled') : t('展开明细边', 'All Edges')}
-            </button>
+            </Button>
           )}
 
           <select
@@ -1165,45 +1166,45 @@ function KnowledgeGraphInner({
           />
 
           <div className="kg-zoom-group">
-            <button
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               data-testid="kg-zoom-out-btn"
               onClick={() => void rf.zoomOut({ duration: 150 })}
               title={t('缩小画布', 'Zoom Out')}
               aria-label={t('缩小画布', 'Zoom Out')}
             >
               −
-            </button>
+            </Button>
             <span className="kg-zoom-label">{zoomPct}%</span>
-            <button
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               data-testid="kg-zoom-in-btn"
               onClick={() => void rf.zoomIn({ duration: 150 })}
               title={t('放大画布', 'Zoom In')}
               aria-label={t('放大画布', 'Zoom In')}
             >
               +
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               data-testid="kg-fit-btn"
               onClick={() => void rf.fitView({ padding: 0.14, duration: 220 })}
               title={t('适应视图', 'Fit to view')}
             >
               {t('适应视图', 'Fit')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-sm"
+              variant="secondary" size="sm"
               data-testid="kg-actual-size-btn"
               onClick={() => void rf.zoomTo(1, { duration: 180 })}
               title={t('缩放至 100%', 'Zoom to 100%')}
             >
               1:1
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -1360,9 +1361,9 @@ function KnowledgeGraphInner({
               </div>
 
               <div className="flex flex-wrap gap-1.5">
-                <button
+                <Button
                   type="button"
-                  className="btn btn-sm"
+                  variant="secondary" size="sm"
                   style={{ flex: 1 }}
                   onClick={() =>
                     setLayoutMode((m) =>
@@ -1374,12 +1375,12 @@ function KnowledgeGraphInner({
                   {layoutMode === 'EGO_FOCUS'
                     ? t('返回全域泳道', 'Back to Swimlanes')
                     : t('聚焦此节点邻域', 'Focus Ego Subgraph')}
-                </button>
+                </Button>
 
                 {onNavigateToElement && (
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-sm btn-primary"
+                    variant="accent" size="sm"
                     style={{ flex: 1 }}
                     onClick={() =>
                       onNavigateToElement(
@@ -1389,7 +1390,7 @@ function KnowledgeGraphInner({
                     }
                   >
                     ⌖ {t('定位编辑器', 'Open Editor')} ({selectedNode.model})
-                  </button>
+                  </Button>
                 )}
               </div>
 
@@ -1455,9 +1456,9 @@ function KnowledgeGraphInner({
                               gap: 6,
                             }}
                           >
-                            <button
+                            <Button
                               type="button"
-                              className="btn btn-sm"
+                              variant="secondary" size="sm"
                               style={{
                                 flex: 1,
                                 justifyContent: 'flex-start',
@@ -1495,12 +1496,12 @@ function KnowledgeGraphInner({
                                   ? ` · ${neighborNode.label}`
                                   : ''}
                               </span>
-                            </button>
+                            </Button>
 
                             {onNavigateToElement && neighborNode && (
-                              <button
+                              <Button
                                 type="button"
-                                className="btn btn-sm"
+                                variant="secondary" size="sm"
                                 style={{ padding: '0 6px', flexShrink: 0 }}
                                 title={t(
                                   `打开 ${neighborNode.model} 编辑器`,
@@ -1514,7 +1515,7 @@ function KnowledgeGraphInner({
                                 }
                               >
                                 ↗
-                              </button>
+                              </Button>
                             )}
                           </div>
                         </div>

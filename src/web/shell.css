@@ -516,100 +516,6 @@
   margin-top: 16px;
 }
 
-/* ─── Buttons ─── */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink);
-  font-family: var(--sans);
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 1;
-  cursor: pointer;
-  white-space: nowrap;
-  box-shadow: var(--shadow-xs);
-  transition:
-    background var(--dur-fast) ease,
-    border-color var(--dur-fast) ease,
-    color var(--dur-fast) ease,
-    box-shadow var(--dur-fast) ease,
-    transform var(--dur-fast) ease;
-}
-
-.btn:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--muted) 70%, var(--line));
-  background: var(--surface-2);
-}
-
-.btn:active:not(:disabled) {
-  transform: translateY(0.5px);
-  box-shadow: none;
-}
-
-.btn:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: var(--focus-ring);
-}
-
-.btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-.btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
-  box-shadow: var(--shadow-sm);
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 88%, var(--ink));
-  border-color: color-mix(in srgb, var(--accent) 88%, var(--ink));
-  color: var(--accent-ink);
-}
-
-.btn-ghost {
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-  color: var(--ink-2);
-}
-
-.btn-ghost:hover:not(:disabled) {
-  background: var(--ghost);
-  border-color: transparent;
-}
-
-.btn-danger {
-  color: var(--bad);
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: var(--bad-soft);
-  border-color: color-mix(in srgb, var(--bad) 40%, var(--line));
-}
-
-.btn-sm {
-  height: 27px;
-  padding: 0 9px;
-  font-size: 12px;
-  gap: 5px;
-}
-
-.btn-block {
-  width: 100%;
-}
-
 /* ─── Badges ─── */
 .badge {
   display: inline-flex;
@@ -691,6 +597,21 @@
   margin: 2px 0 0;
   font-size: 12.5px;
   color: var(--muted);
+}
+
+/* Nesting rule (ADR 0006): at most two card levels. The inner level is a flat inset
+   panel: no shadow, softer line, recessed fill. */
+.card .card {
+  background: var(--surface-2);
+  border-color: var(--line-2);
+  box-shadow: none;
+  padding: 14px;
+}
+
+.card .card .card {
+  background: transparent;
+  border: 0;
+  padding: 0;
 }
 
 /* ─── Form Controls ─── */

@@ -1,5 +1,42 @@
+@layer theme, base, utilities;
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
+
+/* Control reset. Tailwind preflight is intentionally not loaded (it would flatten
+   markdown headings and lists), so native control chrome is neutralised here. It sits
+   in the lowest author layer so utilities and shell.css classes always win. */
+@layer base {
+  button,
+  input,
+  select,
+  textarea {
+    margin: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+  }
+  button {
+    border: 0 solid var(--line);
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='color']),
+  select,
+  textarea {
+    border: 0 solid var(--line);
+    background: transparent;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    font-family: var(--sans);
+    color: var(--faint);
+    opacity: 1;
+  }
+}
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -73,6 +110,24 @@
     url("/textures/paper/cloud.png");
   --paper-grain-size: 260px 260px, 260px 260px, 900px 900px;
 
+  /* ─── Type & Spacing Scale (use these instead of ad-hoc px values) ─── */
+  --text-2xs: 10.5px; /* table headers, overlines */
+  --text-xs: 11.5px; /* badges, captions, meta */
+  --text-sm: 12.5px; /* secondary text, compact controls */
+  --text-base: 13px; /* body, controls */
+  --text-md: 14px; /* section titles (sans) */
+  --text-lg: 16px; /* card titles (serif) */
+  --text-xl: 20px; /* metrics (serif) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --control-h-xs: 24px;
+  --control-h-sm: 28px;
+  --control-h-md: 32px;
+
   /* ─── Shape, Elevation & Motion Scale ─── */
   --radius-xs: 4px;
   --radius-sm: 6px;
@@ -110,10 +165,10 @@
   :root:not([data-theme="light"]) {
     --ground: #121211;
     --ground-2: #0d0d0c;
-    --surface: #181816;
-    --surface-2: #1f1f1c;
-    --line: #2d2d29;
-    --line-2: #242420;
+    --surface: #1a1a18;
+    --surface-2: #222220;
+    --line: #33332e;
+    --line-2: #292925;
     --ghost: rgba(236, 234, 227, 0.055);
 
     --ink: #eceae3;
@@ -147,10 +202,10 @@
   color-scheme: dark;
   --ground: #121211;
   --ground-2: #0d0d0c;
-  --surface: #181816;
-  --surface-2: #1f1f1c;
-  --line: #2d2d29;
-  --line-2: #242420;
+  --surface: #1a1a18;
+  --surface-2: #222220;
+  --line: #33332e;
+  --line-2: #292925;
   --ghost: rgba(236, 234, 227, 0.055);
 
   --ink: #eceae3;
