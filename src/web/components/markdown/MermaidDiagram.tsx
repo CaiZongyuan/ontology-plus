@@ -70,7 +70,7 @@ export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
   if (errorMsg) {
     return (
       <div className={cn('my-2 rounded-card border border-line bg-inset p-3', className)}>
-        <div className="mb-1.5 flex items-center justify-between text-[11px] text-orange">
+        <div className="mb-1.5 flex items-center justify-between text-[11.5px] text-orange">
           <span>Mermaid 图表解析中 / 语法待完善</span>
         </div>
         <pre className="m-0 overflow-x-auto font-mono text-[11.5px] text-ink-2">
@@ -82,7 +82,7 @@ export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
 
   if (!svgHtml) {
     return (
-      <div className={cn('my-2 rounded-card border border-line bg-inset p-3 text-[12px] text-ink-3', className)}>
+      <div className={cn('my-2 rounded-card border border-line bg-inset p-3 text-[12.5px] text-ink-3', className)}>
         正在渲染图表…
       </div>
     );

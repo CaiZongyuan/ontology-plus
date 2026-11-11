@@ -529,7 +529,7 @@ export function AgentSessionWorkbench({
       {railOpen && (
         <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-inset/40">
           <div className="flex items-center justify-between gap-1.5 border-b border-line px-3 py-2.5">
-            <span className="text-[12px] font-semibold text-ink">
+            <span className="text-[12.5px] font-semibold text-ink">
               {t('智能体会话', 'Agent Sessions')} ({matchingSessions.length})
             </span>
             <div className="flex items-center gap-1">
@@ -559,7 +559,7 @@ export function AgentSessionWorkbench({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t('检索历史会话…', 'Filter sessions…')}
-              className="w-full rounded-control border border-line bg-surface px-2.5 py-1 text-[12px] text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
+              className="w-full rounded-control border border-line bg-surface px-2.5 py-1 text-[12.5px] text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
             />
           </div>
 
@@ -595,7 +595,7 @@ export function AgentSessionWorkbench({
                             if (e.key === 'Enter') void handleRenameConfirm(sess);
                             if (e.key === 'Escape') setRenamingId(null);
                           }}
-                          className="w-full rounded border border-accent bg-surface px-1.5 py-0.5 text-[12px] text-ink focus:outline-none"
+                          className="w-full rounded border border-accent bg-surface px-1.5 py-0.5 text-[12.5px] text-ink focus:outline-none"
                         />
                       ) : (
                         <span className="truncate text-[12.5px] font-medium text-ink">
@@ -736,10 +736,10 @@ export function AgentSessionWorkbench({
               <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-accent-tint text-accent">
                 <Sparkles size={17} />
               </div>
-              <div className="text-[13.5px] font-semibold text-ink">
+              <div className="text-[13px] font-semibold text-ink">
                 {t(meta.badgeZh, meta.badgeEn)}
               </div>
-              <p className="mt-1 max-w-md text-[12px] text-ink-3">
+              <p className="mt-1 max-w-md text-[12.5px] text-ink-3">
                 {t(
                   '基于 pi-durable 统一流式会话引擎：工具默认自动执行（由 11 模型校验器与撤销栈守护），仅在存在待确认业务分歧时弹出交互式确认卡。',
                   'Powered by pi-durable live SSE streaming with YOLO tool execution + validator self-repair and scoped HITL.',
@@ -1048,7 +1048,7 @@ function MessageTurnItem({
 
   return (
     <div className="msg-in group space-y-2.5 rounded-window border border-line bg-surface p-3.5 shadow-2xs">
-      <div className="flex items-center justify-between gap-2 text-[11px] text-ink-3">
+      <div className="flex items-center justify-between gap-2 text-[11.5px] text-ink-3">
         <div className="flex items-center gap-1.5">
           <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent-tint text-accent">
             <Wrench size={9.5} />
@@ -1136,14 +1136,14 @@ function DomainArtifactCard({
 
   if (artifact.kind === 'ONTOLOGY_DIFF') {
     return (
-      <div className="rounded-card border border-line bg-inset/45 p-2.5 text-[12px]">
+      <div className="rounded-card border border-line bg-inset/45 p-2.5 text-[12.5px]">
         <div className="mb-1.5 flex items-center justify-between">
           <span className="font-semibold text-ink">{artifact.title}</span>
           {artifact.modelCode && onJumpToOntology && (
             <button
               type="button"
               onClick={() => onJumpToOntology(artifact.modelCode!)}
-              className="cursor-pointer rounded bg-accent-tint px-2 py-0.5 font-mono text-[11px] text-accent"
+              className="cursor-pointer rounded bg-accent-tint px-2 py-0.5 font-mono text-[11.5px] text-accent"
             >
               打开 {artifact.modelCode} 视图 ↗
             </button>
@@ -1153,11 +1153,11 @@ function DomainArtifactCard({
           {artifact.changes.map((c, idx) => (
             <div
               key={`${c.id}-${idx}`}
-              className="flex items-center gap-2 rounded bg-surface px-2 py-1 font-mono text-[11px] shadow-hairline"
+              className="flex items-center gap-2 rounded bg-surface px-2 py-1 font-mono text-[11.5px] shadow-hairline"
             >
               <span
                 className={cn(
-                  'rounded px-1.5 py-0.2 text-[10px] font-semibold',
+                  'rounded px-1.5 py-0.2 text-[10.5px] font-semibold',
                   c.action === 'ADDED' && 'bg-green-tint text-green',
                   c.action === 'MODIFIED' && 'bg-accent-tint text-accent',
                   c.action === 'REMOVED' && 'bg-red-tint text-red',
@@ -1224,12 +1224,12 @@ function DomainArtifactCard({
 
   if (artifact.kind === 'REASONING_POLICY') {
     return (
-      <div className="space-y-2.5 rounded-card border border-accent/35 bg-accent-tint/20 p-3 text-[12px]">
+      <div className="space-y-2.5 rounded-card border border-accent/35 bg-accent-tint/20 p-3 text-[12.5px]">
         <div className="flex items-center justify-between">
           <span className="font-semibold text-ink">
             {t('三段式数据本体推理结论与闭环策略', '3-Stage Data Reasoning & Policy')}
           </span>
-          <span className="rounded-full bg-accent px-2 py-0.5 font-mono text-[10px] text-accent-ink">
+          <span className="rounded-full bg-accent px-2 py-0.5 font-mono text-[10.5px] text-accent-ink">
             {artifact.mode}
           </span>
         </div>
@@ -1251,7 +1251,7 @@ function DomainArtifactCard({
         )}
 
         {artifact.causalAnalysis.length > 0 && (
-          <ul className="m-0 list-disc space-y-1 pl-4 text-[12px] text-ink-2">
+          <ul className="m-0 list-disc space-y-1 pl-4 text-[12.5px] text-ink-2">
             {artifact.causalAnalysis.map((item, i) => (
               <li key={i}>{item}</li>
             ))}
@@ -1268,7 +1268,7 @@ function DomainArtifactCard({
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold text-ink">
                     {rec.actionTitle}{' '}
-                    <span className="font-mono text-[11px] text-accent">
+                    <span className="font-mono text-[11.5px] text-accent">
                       ({rec.targetObject})
                     </span>
                   </div>
@@ -1355,7 +1355,7 @@ function GatewayDiagnosticBanner({
   const { t } = usePreferences();
   return (
     <div
-      className="rounded-card border border-red/40 bg-red-tint/45 p-3 text-[12px]"
+      className="rounded-card border border-red/40 bg-red-tint/45 p-3 text-[12.5px]"
       data-testid="llm-gateway-error-banner"
     >
       <div className="flex items-start gap-2">

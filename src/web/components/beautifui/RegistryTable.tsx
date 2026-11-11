@@ -100,12 +100,12 @@ export function RegistryTable<T>({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="m-0 text-[14.5px] font-semibold text-ink">{title}</h3>
-            <span className="rounded-full bg-inset px-2 py-0.5 font-mono text-[11px] text-ink-3 tabular-nums">
+            <h3 className="m-0 text-[14px] font-semibold text-ink">{title}</h3>
+            <span className="rounded-full bg-inset px-2 py-0.5 font-mono text-[11.5px] text-ink-3 tabular-nums">
               {filtered.length}/{rows.length}
             </span>
           </div>
-          {subtitle && <p className="m-0 mt-0.5 text-[12px] text-ink-3">{subtitle}</p>}
+          {subtitle && <p className="m-0 mt-0.5 text-[12.5px] text-ink-3">{subtitle}</p>}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

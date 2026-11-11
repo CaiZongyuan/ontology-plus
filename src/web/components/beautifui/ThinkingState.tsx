@@ -82,7 +82,7 @@ export function ThinkingState({
                 </div>
               ))}
               {thinkingText && (
-                <div className="whitespace-pre-wrap text-[12px] text-ink-3">{thinkingText}</div>
+                <div className="whitespace-pre-wrap text-[12.5px] text-ink-3">{thinkingText}</div>
               )}
             </div>
           </div>

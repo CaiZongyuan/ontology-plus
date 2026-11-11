@@ -266,7 +266,7 @@ export function DataResourcesView({
           <div className="card-header">
             <div>
               <h3 className="card-title">{db.name}</h3>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--muted)' }}>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--muted)' }}>
                 {db.dialect} · {db.connectionUri}
               </div>
             </div>
@@ -350,7 +350,7 @@ export function DataResourcesView({
                 'Live Read-Only SQL Sandbox & M1 Dictionary Enrichment',
               )}
             </h3>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
               {t(
                 '仅允许执行只读 SELECT / WITH 分析查询，自动挂载 __dict 数据字典生成 <col>__label 中文语义列',
                 'Executes read-only SELECT / WITH queries against live SQLite tables with automatic <col>__label dictionary enrichment',
@@ -400,7 +400,7 @@ export function DataResourcesView({
               background: 'var(--bad-soft)',
               color: 'var(--bad)',
               fontFamily: 'var(--mono)',
-              fontSize: 12,
+              fontSize: 12.5,
             }}
           >
             {sqlError}
@@ -721,7 +721,7 @@ export function DataMappingsView() {
       key: 'physical',
       header: t('物理表.字段', 'Source Table.Column'),
       render: (m) => (
-        <span className="font-mono text-[12px]">
+        <span className="font-mono text-[12.5px]">
           {m.sourceTable}.{m.sourceColumn}
         </span>
       ),
@@ -765,7 +765,7 @@ export function DataMappingsView() {
                 'Data Ontology Semantic Lineage Graph (M1 ↔ MM ↔ M7)',
               )}
             </h3>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
               {t(
                 '基于 React Flow + ELK 正交分层透视 M1 聚合根、MM 物理数仓表与 M7 查询报表模型血缘',
                 'Interactive React Flow + ELK semantic lineage across M1 aggregates, MM tables, and M7 reports',
@@ -1072,7 +1072,7 @@ export function DataMetricsReportsView() {
       key: 'period',
       header: t('周期 / 作者', 'Period / Author'),
       render: (rp) => (
-        <span className="font-mono text-[12px]">
+        <span className="font-mono text-[12.5px]">
           {rp.period} · {rp.author}
         </span>
       ),
@@ -1190,7 +1190,7 @@ export function DataMetricsReportsView() {
                     'Ontology Metrics & AI Anomaly Insights',
                   )}
                 </h3>
-                <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
                   {t(
                     '基于 M1 聚合根与 MM 物理表实时聚合指标，支持一键触发 AI 异动根因洞察与业务回写',
                     'Metrics bound to M1 aggregates and MM tables with one-click AI anomaly driver insights',
@@ -1244,11 +1244,11 @@ export function DataMetricsReportsView() {
                     <div style={{ fontWeight: 600, fontSize: 14 }}>{m.name}</div>
                     <div style={{ fontFamily: 'var(--serif)', fontSize: 24, fontWeight: 600 }}>
                       {m.currentValue}{' '}
-                      <span style={{ fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--muted)' }}>
+                      <span style={{ fontSize: 12.5, fontFamily: 'var(--mono)', color: 'var(--muted)' }}>
                         ({m.yoYChange})
                       </span>
                     </div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)' }}>
+                    <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--muted)' }}>
                       {m.formula}
                     </div>
 
@@ -1274,7 +1274,7 @@ export function DataMetricsReportsView() {
                           borderRadius: 5,
                           background: 'var(--surface)',
                           border: '1px solid var(--line)',
-                          fontSize: 12,
+                          fontSize: 12.5,
                           display: 'flex',
                           flexDirection: 'column',
                           gap: 6,
@@ -1321,7 +1321,7 @@ export function DataMetricsReportsView() {
                     'Domain Scenario Analysis & Attribution',
                   )}
                 </h3>
-                <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
                   {t(
                     '围绕异常预警条件组织多指标联合归因，一键生成并归档结构化分析报告',
                     'Multi-metric causal attribution scenarios that synthesize and archive analytical reports',
@@ -1407,7 +1407,7 @@ export function DataMetricsReportsView() {
                           {t('预设本体归因链因子', 'Ontology Causal Factors')}
                         </div>
                         {sc.causalFactors.map((cf, i) => (
-                          <div key={i} style={{ fontSize: 12, marginBottom: 3 }}>
+                          <div key={i} style={{ fontSize: 12.5, marginBottom: 3 }}>
                             • {cf}
                           </div>
                         ))}
@@ -1424,7 +1424,7 @@ export function DataMetricsReportsView() {
                           {t('建议闭环处置策略', 'Recommended Actions')}
                         </div>
                         {sc.recommendedActions.map((act, i) => (
-                          <div key={i} style={{ fontSize: 12, marginBottom: 3 }}>
+                          <div key={i} style={{ fontSize: 12.5, marginBottom: 3 }}>
                             • {act}
                           </div>
                         ))}
@@ -1458,7 +1458,7 @@ export function DataMetricsReportsView() {
                                 display: 'flex',
                                 justifyContent: 'space-between',
                                 gap: 8,
-                                fontSize: 12,
+                                fontSize: 12.5,
                                 padding: '4px 6px',
                                 background: 'var(--surface-2)',
                                 borderRadius: 4,
@@ -1486,7 +1486,7 @@ export function DataMetricsReportsView() {
                 <div className="card-header">
                   <div>
                     <h3 className="card-title">{rp.title}</h3>
-                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
                       {rp.period} · {rp.author}
                     </div>
                   </div>
@@ -1708,7 +1708,7 @@ export function DataReasoningView() {
               <h4 className="card-title">
                 {t('智能问策：受治理业务闭环回写动作库', 'Governed Policy Write-Back Actions')}
               </h4>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+              <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
                 {t(
                   '将三阶数据本体推理产出的风控策略通过 MI / Writeback 接口一键回写存量业务系统',
                   'Execute policy recommendations via governed MI Write-Back interfaces',
@@ -1738,7 +1738,7 @@ export function DataReasoningView() {
                     <strong>{rec.actionTitle}</strong>
                     <span className="badge badge-accent">{rec.targetObject}</span>
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 4 }}>
                     {rec.expectedImpact}
                   </div>
                 </div>
@@ -1865,7 +1865,7 @@ export function DataWritebackView() {
               <h3 className="card-title">
                 {wb.id} · {wb.name}
               </h3>
-              <div style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
                 Protocol: {wb.protocol} · Target: {wb.targetSystem} ({wb.endpoint}) · Bound M2
                 Behavior: {wb.boundBehaviorRef}
               </div>
@@ -1915,7 +1915,7 @@ export function DataWritebackView() {
                 color: 'var(--ok)',
                 borderRadius: 5,
                 fontFamily: 'var(--mono)',
-                fontSize: 12,
+                fontSize: 12.5,
               }}
             >
               {wb.lastExecutionResult}
@@ -2095,7 +2095,7 @@ export function LlmCenterView() {
             <Cpu size={15} className="text-accent" />
             {t('大模型网关', 'Pi AI Unified LLM Gateway Hub')}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+          <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
             {t(
               '统一管理 OpenAI-Compatible、Anthropic 与 Google Gemini 端点；Live 模式下所有 5 类智能体会话均通过此网关进行真实流式推理',
               'Manage OpenAI-Compatible, Anthropic, and Google Gemini gateways powering all 5 Pi Durable agent surfaces',
@@ -2118,7 +2118,7 @@ export function LlmCenterView() {
                   {p.enabled ? 'ENABLED' : 'DISABLED'}
                 </span>
               </div>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--muted)' }}>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--muted)' }}>
                 [{p.providerType}] {p.baseUrl} · Default Model: {p.defaultModel}
               </div>
             </div>
@@ -2160,7 +2160,7 @@ export function LlmCenterView() {
                 background: 'var(--surface-2)',
                 borderRadius: 5,
                 fontFamily: 'var(--mono)',
-                fontSize: 12,
+                fontSize: 12.5,
                 marginBottom: 10,
               }}
             >
@@ -2169,7 +2169,7 @@ export function LlmCenterView() {
           )}
 
           <div>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
               {t('已发现可用模型列表', 'Discovered Models')} ({p.availableModels.length})
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -2313,7 +2313,7 @@ export function SystemSettingsView() {
                 'Explicit Offline Demo Mock LLM Mode (ADR-0007)',
               )}
             </strong>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 2 }}>
               {t(
                 '默认关闭（Live 模式强制连接真实 LLM 网关，失败时返回结构化诊断而绝不静默伪造回复）；开启后使用内置确定性 fauxProvider 演示完整 5 步工具流。',
                 'Off by default (Live mode strictly calls configured LLM gateways and reports LlmGatewayError when unreachable); turn on to run deterministic multi-step fauxProvider tool streams offline.',
@@ -2362,7 +2362,7 @@ export function SystemSettingsView() {
         >
           <div>
             <strong>{t('界面主题', 'Appearance Theme')}</strong>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
               {t(
                 '支持跟随操作系统色温，或显式锁定暖纸亮色 (Warm Paper) / 胶片颗粒暗色 (Film Grain)',
                 'Follow OS preference or pin Warm Paper Light / Film Grain Dark scheme',
@@ -2426,7 +2426,7 @@ export function SystemSettingsView() {
         >
           <div>
             <strong>{t('界面语言', 'Interface Language')}</strong>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
               {t(
                 '支持简体中文 (zh-CN) 与英文 (en-US) 实时无刷切换',
                 'Switch between Simplified Chinese (zh-CN) and English (en-US)',
@@ -2479,7 +2479,7 @@ export function SystemSettingsView() {
                 'Strict Consistency Validation Gate',
               )}
             </strong>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
               {t(
                 '存在跨模型引用断链或类型契约冲突时，自动拦截四层应用开发包编译导出',
                 'Block 4-layer development package compilation whenever Consistency Errors exist',
@@ -2518,7 +2518,7 @@ export function SystemSettingsView() {
             <strong>
               {t('本体文件自动镜像', 'Auto-Mirror Local YAML Files')}
             </strong>
-            <div style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
               {settings.workspaceDir}/model/{data.activeProject.id}/yaml/
             </div>
           </div>
@@ -2547,7 +2547,7 @@ export function SystemSettingsView() {
                 'Auto-Sync MU UI Model from HTML Prototypes',
               )}
             </strong>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
               {t(
                 '解析 HTML 原型中的 data-screen-id / data-element-id / data-event-id 锚点同步至 MU',
                 'Deterministically extract semantic data-* anchors into MU on prototype save',

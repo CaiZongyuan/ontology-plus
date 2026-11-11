@@ -84,7 +84,7 @@ export function ApprovalCard({
             {prompt.header || '需要补充业务决策 (Scoped HITL)'}
           </span>
         </div>
-        <span className="font-mono text-[11px] text-ink-3">
+        <span className="font-mono text-[11.5px] text-ink-3">
           {prompt.multiSelect ? '可多选' : '单选'}
         </span>
       </div>
@@ -146,7 +146,7 @@ export function ApprovalCard({
                 }
               }}
               placeholder="或输入补充说明 / 自定义参数..."
-              className="w-full rounded-control border border-line bg-field px-2.5 py-1.5 text-[12px] text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
+              className="w-full rounded-control border border-line bg-field px-2.5 py-1.5 text-[12.5px] text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
             />
           </div>
         )}

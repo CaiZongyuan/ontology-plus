@@ -88,7 +88,7 @@ function ViewModeHeader({
           data-testid={`${testIdPrefix}-mode-workspace`}
           onClick={() => onChange('WORKSPACE')}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-[5px] px-3 text-[12px] font-medium cursor-pointer transition-colors',
+            'inline-flex h-7 items-center gap-1.5 rounded-[5px] px-3 text-[12.5px] font-medium cursor-pointer transition-colors',
             mode === 'WORKSPACE' ? 'bg-surface text-ink shadow-hairline' : 'text-ink-2 hover:text-ink',
           )}
         >
@@ -100,7 +100,7 @@ function ViewModeHeader({
           data-testid={`${testIdPrefix}-mode-registry`}
           onClick={() => onChange('REGISTRY')}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-[5px] px-3 text-[12px] font-medium cursor-pointer transition-colors',
+            'inline-flex h-7 items-center gap-1.5 rounded-[5px] px-3 text-[12.5px] font-medium cursor-pointer transition-colors',
             mode === 'REGISTRY' ? 'bg-surface text-ink shadow-hairline' : 'text-ink-2 hover:text-ink',
           )}
         >
@@ -506,7 +506,7 @@ export function OverviewSessionsView({
             header: t('工程编码', 'Code'),
             width: '130px',
             render: (p) => (
-              <span className="font-mono text-[12px] font-semibold text-ink">{p.code}</span>
+              <span className="font-mono text-[12.5px] font-semibold text-ink">{p.code}</span>
             ),
           },
           {
@@ -518,7 +518,7 @@ export function OverviewSessionsView({
                   <FolderKanban size={13.5} className="text-accent" />
                   <span>{p.name}</span>
                   {p.id === active.id && (
-                    <span className="filter-status-done rounded-full px-2 py-0.2 text-[10px] font-semibold">
+                    <span className="filter-status-done rounded-full px-2 py-0.2 text-[10.5px] font-semibold">
                       {t('当前激活', 'Active')}
                     </span>
                   )}
@@ -533,8 +533,8 @@ export function OverviewSessionsView({
             width: '180px',
             render: (p) => (
               <div className="space-y-1">
-                <div className="text-[12px] text-ink">{p.domain}</div>
-                <span className="filter-status-accent inline-block rounded-full px-2 py-0.2 font-mono text-[10px]">
+                <div className="text-[12.5px] text-ink">{p.domain}</div>
+                <span className="filter-status-accent inline-block rounded-full px-2 py-0.2 font-mono text-[10.5px]">
                   {p.center}
                 </span>
               </div>
@@ -545,7 +545,7 @@ export function OverviewSessionsView({
             header: t('11 模型进度', 'Stage Progress'),
             width: '130px',
             render: (p) => (
-              <span className="filter-status-done inline-block rounded-full px-2.5 py-0.5 font-mono text-[11px]">
+              <span className="filter-status-done inline-block rounded-full px-2.5 py-0.5 text-[11.5px] whitespace-nowrap">
                 {p.currentStage}/11 {t('模型', 'models')}
               </span>
             ),
@@ -781,7 +781,7 @@ export function OverviewSessionsView({
         {snapshotProj && (
           <div className="space-y-3">
             <div className="rounded-card border border-line bg-inset/50 p-3 space-y-2">
-              <div className="text-[12px] font-semibold text-ink">
+              <div className="text-[12.5px] font-semibold text-ink">
                 {t('创建当前 11 模型快照', 'Create New Milestone Snapshot')}
               </div>
               <div className="flex gap-2">
@@ -811,7 +811,7 @@ export function OverviewSessionsView({
 
             <div className="max-h-60 space-y-2 overflow-y-auto">
               {snapshotsForModal.length === 0 ? (
-                <div className="py-4 text-center text-[12px] text-ink-3">
+                <div className="py-4 text-center text-[12.5px] text-ink-3">
                   {t('当前工程暂无历史快照', 'No snapshots yet for this project')}
                 </div>
               ) : (
@@ -822,7 +822,7 @@ export function OverviewSessionsView({
                   >
                     <div className="min-w-0">
                       <div className="font-semibold text-ink">{snap.label}</div>
-                      <div className="text-[11px] text-ink-3">
+                      <div className="text-[11.5px] text-ink-3">
                         {snap.presentModels.length}/11 Models · {snap.errorCount} Errors ·{' '}
                         {snap.createdAt.slice(0, 19).replace('T', ' ')}
                       </div>
@@ -1051,7 +1051,7 @@ export function RequirementExploreView({
                       borderRadius: 5,
                       background: 'var(--surface-2)',
                       border: '1px solid var(--line)',
-                      fontSize: 12,
+                      fontSize: 12.5,
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 4,
@@ -1066,7 +1066,7 @@ export function RequirementExploreView({
                       }}
                     >
                       <span className={`badge ${parsed.badgeClass}`}>{parsed.tag}</span>
-                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                      <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>
                         {t(parsed.categoryLabelZh, parsed.categoryLabelEn)}
                       </span>
                     </div>
@@ -1102,7 +1102,7 @@ export function RequirementExploreView({
                     padding: '6px 8px',
                     borderRadius: 4,
                     background: 'var(--surface-2)',
-                    fontSize: 12,
+                    fontSize: 12.5,
                   }}
                 >
                   {r}
@@ -1403,7 +1403,7 @@ export function RequirementDocsView({
               render: (d) => (
                 <div>
                   <div className="font-semibold text-ink">{d.title}</div>
-                  <div className="font-mono text-[11px] text-ink-3">{d.id}</div>
+                  <div className="font-mono text-[11.5px] text-ink-3">{d.id}</div>
                 </div>
               ),
             },
@@ -1787,7 +1787,7 @@ export function PrototypeStudioView({
               render: (p) => (
                 <div>
                   <div className="font-semibold text-ink">{p.name}</div>
-                  <div className="font-mono text-[11px] text-ink-3">{p.id}</div>
+                  <div className="font-mono text-[11.5px] text-ink-3">{p.id}</div>
                 </div>
               ),
             },
@@ -2169,7 +2169,7 @@ export function ModelFilesView() {
                 '11-Model YAML Repository & Multi-Format Export',
               )}
             </h3>
-            <div style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
               .onto-cs/model/{project.id}/
             </div>
           </div>
@@ -2238,7 +2238,7 @@ export function ModelFilesView() {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {importErrors.map((err, i) => (
-              <div key={i} style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+              <div key={i} style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}>
                 <strong>[{err.model}]</strong> {err.message}
               </div>
             ))}
@@ -2501,7 +2501,7 @@ export function FourLayerAssetsView() {
                 'Four-Layer Architecture Reusable Asset Library',
               )}
             </h3>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
               {t(
                 '与业务本体自由组合装配，支持 Tiptap 富文本编辑规范文档与引用保护删除',
                 'Freely assemble with any Ontology Suite, edit specs via Tiptap, or synthesize from tech stack',
@@ -2618,7 +2618,7 @@ export function FourLayerAssetsView() {
               </div>
             </div>
 
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>{asset.summary}</div>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{asset.summary}</div>
 
             {asset.tags.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -2978,7 +2978,7 @@ export function ApplicationAssemblyDevView() {
               render: (a) => (
                 <div>
                   <div className="font-semibold text-ink">{a.name}</div>
-                  <div className="font-mono text-[11px] text-ink-3">
+                  <div className="font-mono text-[11.5px] text-ink-3">
                     {a.publishedEndpoint || `/apps/${a.id}`}
                   </div>
                 </div>
@@ -3039,7 +3039,7 @@ export function ApplicationAssemblyDevView() {
           <div className="card">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2">
-                <strong className="text-[13.5px]">
+                <strong className="text-[13px]">
                   {t('当前装配应用：', 'Active Application: ')}
                 </strong>
                 {apps.length > 0 && (
@@ -3072,7 +3072,7 @@ export function ApplicationAssemblyDevView() {
                 }}
               >
                 <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
                     1. {t('业务本体层', 'Ontology Layer')}
                   </div>
                   <select
@@ -3092,7 +3092,7 @@ export function ApplicationAssemblyDevView() {
                 </div>
 
                 <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
                     2. {t('UI/UE 设计规范层', 'UI/UE Design Layer')}
                   </div>
                   <select
@@ -3109,7 +3109,7 @@ export function ApplicationAssemblyDevView() {
                 </div>
 
                 <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
                     3. {t('技术底座层', 'Tech Foundation Layer')}
                   </div>
                   <select
@@ -3128,7 +3128,7 @@ export function ApplicationAssemblyDevView() {
                 </div>
 
                 <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
                     4. {t('技术架构层', 'Tech Architecture Layer')}
                   </div>
                   <select
@@ -3500,12 +3500,12 @@ export function OntologySkillsView() {
                   <div className="flex items-center gap-1.5 font-semibold text-ink">
                     <span>{s.name}</span>
                     {s.isCustomRefined && (
-                      <span className="filter-status-progress rounded-full px-2 py-0.2 text-[10px]">
+                      <span className="filter-status-progress rounded-full px-2 py-0.2 text-[10.5px]">
                         {t('已手工精修', 'Custom Refined')}
                       </span>
                     )}
                   </div>
-                  <div className="font-mono text-[11px] text-ink-3">{s.slug}</div>
+                  <div className="font-mono text-[11.5px] text-ink-3">{s.slug}</div>
                 </div>
               ),
             },
@@ -3573,7 +3573,7 @@ export function OntologySkillsView() {
                 </span>
               )}
             </div>
-            <div className="text-[12px] text-ink-3">{activeSkill.description}</div>
+            <div className="text-[12.5px] text-ink-3">{activeSkill.description}</div>
           </div>
 
           <TiptapMarkdownEditor
@@ -3665,7 +3665,7 @@ export function AppPublishView() {
           <div className="card-header" style={{ marginBottom: 0, flexWrap: 'wrap' }}>
             <div>
               <h3 className="card-title">{app.name}</h3>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--muted)' }}>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--muted)' }}>
                 {app.publishedEndpoint || `/apps/${app.id}`} ·{' '}
                 {app.packageOutputDir || `.onto-cs/packages/${app.id}`}
               </div>
@@ -3721,7 +3721,7 @@ export function AppPublishView() {
           </div>
 
           <div>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
               {t('Agent 研发与发布流水日志', 'Agent Build & Release Logs')}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

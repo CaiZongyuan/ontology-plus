@@ -472,7 +472,7 @@ export function TiptapMarkdownEditor({
 
         {showOutline && outline.length > 0 && (
           <aside className="w-56 shrink-0 overflow-y-auto border-l border-line bg-inset/35 p-3">
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-3">
+            <div className="mb-2 text-[11.5px] font-semibold uppercase tracking-wider text-ink-3">
               文档目录大纲
             </div>
             <div className="space-y-1">
@@ -480,10 +480,10 @@ export function TiptapMarkdownEditor({
                 <div
                   key={`${item.line}-${idx}`}
                   style={{ paddingLeft: `${(item.level - 1) * 10}px` }}
-                  className="truncate text-[12px] text-ink-2"
+                  className="truncate text-[12.5px] text-ink-2"
                   title={item.text}
                 >
-                  <span className="mr-1 font-mono text-[10px] text-ink-3">
+                  <span className="mr-1 font-mono text-[10.5px] text-ink-3">
                     H{item.level}
                   </span>
                   {item.text}
@@ -495,7 +495,7 @@ export function TiptapMarkdownEditor({
       </div>
 
       {/* Footer Metrics Bar */}
-      <div className="flex items-center justify-between border-t border-line bg-inset/35 px-3 py-1.5 font-mono text-[11px] text-ink-3">
+      <div className="flex items-center justify-between border-t border-line bg-inset/35 px-3 py-1.5 font-mono text-[11.5px] text-ink-3">
         <span>
           模式: {mode === 'RICH' ? 'Tiptap WYSIWYG' : mode === 'SOURCE' ? 'Markdown Raw' : 'GFM Preview'}
         </span>

@@ -1259,7 +1259,7 @@ export function OntologyWorkbenchView() {
                     alignItems: 'center',
                   }}
                 >
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--muted)' }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--muted)' }}>
                     .onto-cs/model/{project.id}/yaml/{MODEL_FILE_NAMES[selectedModel]}
                   </span>
                   <Button
@@ -1465,7 +1465,7 @@ export function OntologyWorkbenchView() {
                   borderRadius: 6,
                   background: 'var(--warn-soft)',
                   color: 'var(--warn)',
-                  fontSize: 12,
+                  fontSize: 12.5,
                   fontWeight: 500,
                 }}
               >
@@ -1520,7 +1520,7 @@ export function OntologyWorkbenchView() {
 
             {impactReport && (
               <div style={{ marginBottom: 14 }}>
-                <div style={{ marginBottom: 8, fontSize: 12 }}>
+                <div style={{ marginBottom: 8, fontSize: 12.5 }}>
                   {t('扫描到跨模型引用数', 'Cross-Model References Found')}:{' '}
                   <strong style={{ fontFamily: 'var(--mono)' }}>
                     {impactReport.references.length}
@@ -1709,10 +1709,10 @@ function StructuredModelInspector({
 
   const renderEmptyModelBanner = (code: ModelCode) => (
     <div className="card" style={{ textAlign: 'center', padding: 28 }}>
-      <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
         {t(`${code} 元模型尚未初始化`, `${code} model is not yet authored`)}
       </div>
-      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14 }}>
+      <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 14 }}>
         {t(
           '点击下方按钮直接生成符合两级一致性校验规范的首个结构化元素。',
           'Click below to scaffold the first validated structured AST element.',
@@ -1728,13 +1728,13 @@ function StructuredModelInspector({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Sticky Structured AST Save Bar */}
       <div className="owb-savebar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
           <span className={`badge ${dirty ? 'badge-warn' : 'badge-ok'}`}>
             {dirty
               ? t('● 待保存 AST 变更', '● Unsaved AST Edits')
               : t('✓ AST 已同步', '✓ AST Synced')}
           </span>
-          <span style={{ color: 'var(--muted)', fontFamily: 'var(--mono)', fontSize: 11 }}>
+          <span style={{ color: 'var(--muted)', fontFamily: 'var(--mono)', fontSize: 11.5 }}>
             {MODEL_FILE_NAMES[modelCode]}
           </span>
         </div>
@@ -1858,7 +1858,7 @@ function StructuredModelInspector({
                     </label>
                     <input
                       className="input"
-                      style={{ fontFamily: 'var(--mono)', fontSize: 12 }}
+                      style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}
                       value={agg.lifecycle.join(', ')}
                       onChange={(e) =>
                         mutateDraft((nx) => {
@@ -2294,7 +2294,7 @@ function StructuredModelInspector({
                       >
                         <input
                           className="input"
-                          style={{ width: 95, height: 22, fontSize: 11, fontFamily: 'var(--mono)' }}
+                          style={{ width: 95, height: 22, fontSize: 11.5, fontFamily: 'var(--mono)' }}
                           value={p.name}
                           onChange={(e) =>
                             mutateDraft((nx) => {
@@ -2305,7 +2305,7 @@ function StructuredModelInspector({
                         />
                         <input
                           className="input"
-                          style={{ width: 70, height: 22, fontSize: 11, fontFamily: 'var(--mono)' }}
+                          style={{ width: 70, height: 22, fontSize: 11.5, fontFamily: 'var(--mono)' }}
                           value={p.type}
                           onChange={(e) =>
                             mutateDraft((nx) => {
@@ -2670,7 +2670,7 @@ function StructuredModelInspector({
                       >
                         <input
                           className="input"
-                          style={{ width: 95, height: 22, fontSize: 11, fontFamily: 'var(--mono)' }}
+                          style={{ width: 95, height: 22, fontSize: 11.5, fontFamily: 'var(--mono)' }}
                           value={pf.name}
                           onChange={(e) =>
                             mutateDraft((nx) => {
@@ -2681,7 +2681,7 @@ function StructuredModelInspector({
                         />
                         <input
                           className="input"
-                          style={{ width: 70, height: 22, fontSize: 11, fontFamily: 'var(--mono)' }}
+                          style={{ width: 70, height: 22, fontSize: 11.5, fontFamily: 'var(--mono)' }}
                           value={pf.type}
                           onChange={(e) =>
                             mutateDraft((nx) => {
@@ -2821,7 +2821,7 @@ function StructuredModelInspector({
                     marginBottom: 6,
                   }}
                 >
-                  <strong style={{ fontSize: 12 }}>
+                  <strong style={{ fontSize: 12.5 }}>
                     {t('跨聚合编排步骤', 'Scenario Steps')} ({sc.steps.length})
                   </strong>
                   <Button
@@ -3103,7 +3103,7 @@ function StructuredModelInspector({
                       <td>
                         <input
                           className="input"
-                          style={{ height: 26, fontSize: 12 }}
+                          style={{ height: 26, fontSize: 12.5 }}
                           value={p.name}
                           onChange={(e) =>
                             mutateDraft((nx) => {
@@ -3117,7 +3117,7 @@ function StructuredModelInspector({
                       <td>
                         <input
                           className="input"
-                          style={{ height: 26, fontSize: 12, fontFamily: 'var(--mono)' }}
+                          style={{ height: 26, fontSize: 12.5, fontFamily: 'var(--mono)' }}
                           value={p.targetAggregate}
                           onChange={(e) =>
                             mutateDraft((nx) => {
@@ -3131,7 +3131,7 @@ function StructuredModelInspector({
                       <td>
                         <input
                           className="input"
-                          style={{ height: 26, fontSize: 12, fontFamily: 'var(--mono)' }}
+                          style={{ height: 26, fontSize: 12.5, fontFamily: 'var(--mono)' }}
                           value={p.allowedBehaviors.join(', ')}
                           onChange={(e) =>
                             mutateDraft((nx) => {
@@ -3296,7 +3296,7 @@ function StructuredModelInspector({
                     marginBottom: 6,
                   }}
                 >
-                  <strong style={{ fontSize: 12 }}>
+                  <strong style={{ fontSize: 12.5 }}>
                     {t('流程活动节点拓扑', 'Flow Activities')} ({fl.activities.length})
                   </strong>
                   <Button
@@ -3350,7 +3350,7 @@ function StructuredModelInspector({
                         <td>
                           <input
                             className="input"
-                            style={{ height: 26, fontSize: 12 }}
+                            style={{ height: 26, fontSize: 12.5 }}
                             value={a.name}
                             onChange={(e) =>
                               mutateDraft((nx) => {
@@ -3370,7 +3370,7 @@ function StructuredModelInspector({
                         </td>
                         <td>
                           {a.branches.length > 0 ? (
-                            <span style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}>
                               {a.branches
                                 .map((b) => `${b.label || b.condition || 'default'} -> ${b.targetActivity}`)
                                 .join(' | ')}
@@ -3703,7 +3703,7 @@ function StructuredModelInspector({
                   </div>
 
                   {/* Semantic UI Elements */}
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
                     {t('语义化控件绑定', 'Semantic Elements')} (
                     {sc.elements.length})
                   </div>
@@ -3734,7 +3734,7 @@ function StructuredModelInspector({
                         </span>
                         <input
                           className="input"
-                          style={{ width: 95, height: 22, fontSize: 11 }}
+                          style={{ width: 95, height: 22, fontSize: 11.5 }}
                           value={el.label}
                           onChange={(e) =>
                             mutateDraft((nx) => {
@@ -3760,7 +3760,7 @@ function StructuredModelInspector({
                   </div>
 
                   {/* UI Event Call Chains */}
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
                     {t('UI 事件调用链 (VALIDATE → BEHAVIOR → EVENT)', 'UI Event Call Chains')} (
                     {sc.events.length})
                   </div>
@@ -3788,7 +3788,7 @@ function StructuredModelInspector({
                           style={{
                             width: 120,
                             height: 22,
-                            fontSize: 11,
+                            fontSize: 11.5,
                             display: 'inline-block',
                           }}
                           value={ev.name}
@@ -4013,7 +4013,7 @@ function StructuredModelInspector({
                                 }
                               />
                             </td>
-                            <td style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>
+                            <td style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}>
                               {cm.fkTargetTable
                                 ? `FK -> ${cm.fkTargetTable}.${cm.fkTargetColumn}`
                                 : cm.valueObjectStrategy || (cm.isPrimaryKey ? 'PK' : '-')}
@@ -4103,7 +4103,7 @@ function StructuredModelInspector({
                       >
                         <input
                           className="input"
-                          style={{ height: 24, fontSize: 11, fontFamily: 'var(--mono)' }}
+                          style={{ height: 24, fontSize: 11.5, fontFamily: 'var(--mono)' }}
                           value={f.name}
                           onChange={(e) =>
                             mutateDraft((nx) => {
@@ -4114,7 +4114,7 @@ function StructuredModelInspector({
                         />
                         <input
                           className="input"
-                          style={{ height: 24, fontSize: 11 }}
+                          style={{ height: 24, fontSize: 11.5 }}
                           value={f.label}
                           onChange={(e) =>
                             mutateDraft((nx) => {
@@ -4125,7 +4125,7 @@ function StructuredModelInspector({
                         />
                         <input
                           className="input"
-                          style={{ height: 24, fontSize: 11, fontFamily: 'var(--mono)' }}
+                          style={{ height: 24, fontSize: 11.5, fontFamily: 'var(--mono)' }}
                           value={f.type}
                           onChange={(e) =>
                             mutateDraft((nx) => {

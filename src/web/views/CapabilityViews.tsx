@@ -159,9 +159,9 @@ export function CapabilitySystemsView() {
       key: 'category',
       header: t('分类 / 方言', 'Category / DB'),
       render: (sys) => (
-        <div className="text-[12px]">
+        <div className="text-[12.5px]">
           <div>{sys.category}</div>
-          <div className="font-mono text-[11px] text-ink-3">{sys.dbDialect}</div>
+          <div className="font-mono text-[11.5px] text-ink-3">{sys.dbDialect}</div>
         </div>
       ),
     },
@@ -562,7 +562,7 @@ export function CapabilityExtractionView() {
                 'Legacy System Two-Round Ontology Extraction Workbench',
               )}
             </h3>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
               {t(
                 '融合存量系统数据库表结构 (DDL)、OpenAPI 接口规范与领域文档，通过结构扫描与语义对齐两轮提炼 M1~MI 领域本体模型',
                 'Two-round structural scan and semantic alignment over SQL DDL, OpenAPI specs, and domain docs to extract M1-MI ontology models',
@@ -617,7 +617,7 @@ export function CapabilityExtractionView() {
               display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
-              fontSize: 12,
+              fontSize: 12.5,
               cursor: 'pointer',
               fontWeight: 500,
             }}
@@ -764,7 +764,7 @@ export function CapabilityExtractionView() {
                         <strong>{job.title}</strong>
                         <div
                           style={{
-                            fontSize: 11,
+                            fontSize: 11.5,
                             color: 'var(--muted)',
                             fontFamily: 'var(--mono)',
                           }}
@@ -792,7 +792,7 @@ export function CapabilityExtractionView() {
                       </div>
                     </div>
 
-                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>{job.summary}</div>
+                    <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{job.summary}</div>
 
                     <div
                       style={{
@@ -1085,7 +1085,7 @@ export function CapabilityMcpView() {
       render: (srv) => (
         <div>
           <div className="font-semibold text-ink">{srv.name}</div>
-          <div className="font-mono text-[11px] text-ink-3">{srv.endpoint}</div>
+          <div className="font-mono text-[11.5px] text-ink-3">{srv.endpoint}</div>
         </div>
       ),
     },
@@ -1098,7 +1098,7 @@ export function CapabilityMcpView() {
       key: 'caps',
       header: t('Tools / Resources', 'Capabilities'),
       render: (srv) => (
-        <span className="font-mono text-[12px]">
+        <span className="font-mono text-[12.5px]">
           {srv.toolsCount} tools · {srv.resourcesCount} resources
         </span>
       ),
@@ -1211,7 +1211,7 @@ export function CapabilityMcpView() {
                   'Dynamic Ontology MCP Server Hub & Inspector',
                 )}
               </h3>
-              <div style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
                 POST /api/mcp/{projectId} · Tools: {caps?.tools.length ?? 0} · Resources:{' '}
                 {caps?.resources.length ?? 0}
               </div>
@@ -1289,7 +1289,7 @@ export function CapabilityMcpView() {
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
-                        <strong style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+                        <strong style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}>
                           {tool.name}
                         </strong>
                         <span className="badge badge-accent">
@@ -1344,7 +1344,7 @@ export function CapabilityMcpView() {
                         </span>
                         <span className="badge">{resItem.mimeType}</span>
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
                         {resItem.name} — {resItem.description}
                       </div>
                     </button>
@@ -1413,7 +1413,7 @@ export function CapabilityMcpView() {
                     marginBottom: 6,
                   }}
                 >
-                  <strong style={{ fontSize: 12 }}>
+                  <strong style={{ fontSize: 12.5 }}>
                     {t(
                       '标准 mcpServers 客户端接入配置 (Client Config JSON)',
                       'Client mcpServers Config JSON',
@@ -1773,7 +1773,7 @@ export function CapabilityAgentsView() {
                   borderRadius: 5,
                   background: 'var(--surface-2)',
                   border: '1px solid var(--line)',
-                  fontSize: 12,
+                  fontSize: 12.5,
                   cursor: 'pointer',
                 }}
               >
@@ -1806,7 +1806,7 @@ export function CapabilityAgentsView() {
                   borderRadius: 5,
                   background: 'var(--surface-2)',
                   border: '1px solid var(--line)',
-                  fontSize: 12,
+                  fontSize: 12.5,
                   cursor: 'pointer',
                 }}
               >
@@ -1946,7 +1946,7 @@ export function CapabilityCrossFlowsView() {
           <div className="card-header">
             <div>
               <h3 className="card-title">{fl.name}</h3>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>{fl.description}</div>
+              <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{fl.description}</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
                 <span className="badge badge-accent">Trigger: {fl.triggerEvent}</span>
                 {fl.involvedSystems.map((sys) => (
@@ -1998,7 +1998,7 @@ export function CapabilityCrossFlowsView() {
                 <div
                   style={{
                     fontFamily: 'var(--mono)',
-                    fontSize: 11,
+                    fontSize: 11.5,
                     color: 'var(--accent)',
                     margin: '4px 0',
                   }}

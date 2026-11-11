@@ -161,7 +161,7 @@ function SwimlaneGroupNode({ data }: NodeProps<Node<SwimlaneNodeData>>) {
         </div>
       </div>
       {data.collapsed && (
-        <div className="px-3 py-2 text-[11px] text-ink-3">
+        <div className="px-3 py-2 text-[11.5px] text-ink-3">
           已折叠 {data.count} 个实体节点（点击展开明细）
         </div>
       )}
@@ -218,7 +218,7 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
         </span>
         <span
           className={cn(
-            'shrink-0 rounded px-1 font-mono text-[9.5px]',
+            'shrink-0 rounded px-1 font-mono text-[10.5px]',
             data.isFocal ? 'bg-accent text-accent-ink' : 'bg-inset text-ink-3',
           )}
         >
@@ -228,12 +228,12 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
 
       <div className="flex items-center justify-between gap-1 pl-1">
         <span
-          className="truncate text-[12px] font-medium text-ink"
+          className="truncate text-[12.5px] font-medium text-ink"
           title={data.node.label}
         >
           {data.node.label || data.node.id}
         </span>
-        <span className="shrink-0 font-mono text-[9.5px] text-ink-3">
+        <span className="shrink-0 font-mono text-[10.5px] text-ink-3">
           {data.node.model}
         </span>
       </div>
@@ -737,7 +737,7 @@ function KnowledgeGraphInner({
           animated: isIncident,
           label: edge.relation,
           labelStyle: {
-            fontSize: 10,
+            fontSize: 10.5,
             fontFamily: 'var(--mono)',
             fill: isIncident ? 'var(--accent)' : 'var(--muted)',
             fontWeight: 600,
@@ -891,7 +891,7 @@ function KnowledgeGraphInner({
         animated: isIncident,
         label: isIncident || filterRelation !== 'ALL' ? edge.relation : undefined,
         labelStyle: {
-          fontSize: 9.5,
+          fontSize: 10.5,
           fontFamily: 'var(--mono)',
           fill: 'var(--accent)',
           fontWeight: 600,
@@ -926,7 +926,7 @@ function KnowledgeGraphInner({
         type: 'smoothstep',
         label: b.count > 1 ? `×${b.count}` : b.sampleRel,
         labelStyle: {
-          fontSize: 9.5,
+          fontSize: 10.5,
           fontFamily: 'var(--mono)',
           fill: 'var(--muted)',
           fontWeight: 600,
@@ -1319,14 +1319,14 @@ function KnowledgeGraphInner({
           {selectedNode ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div>
-                <div style={{ fontSize: 11, color: 'var(--muted)' }}>ID / Symbol</div>
+                <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>ID / Symbol</div>
                 <div style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>
                   {selectedNode.id}
                 </div>
               </div>
 
               <div>
-                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
                   {t('名称 / 子标签', 'Label / SubLabel')}
                 </div>
                 <div style={{ fontWeight: 600 }}>{selectedNode.label}</div>
@@ -1345,7 +1345,7 @@ function KnowledgeGraphInner({
 
               <div className="form-grid-2">
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
                     {t('元模型分类', 'Category')}
                   </div>
                   <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}>
@@ -1353,7 +1353,7 @@ function KnowledgeGraphInner({
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
                     {t('连接度', 'Degree')}
                   </div>
                   <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, fontWeight: 600 }}>
@@ -1465,7 +1465,7 @@ function KnowledgeGraphInner({
                                 flex: 1,
                                 justifyContent: 'flex-start',
                                 fontFamily: 'var(--mono)',
-                                fontSize: 11,
+                                fontSize: 11.5,
                                 overflow: 'hidden',
                               }}
                               onClick={() => handleSelectNeighbor(neighborId)}
@@ -1479,7 +1479,7 @@ function KnowledgeGraphInner({
                                     background:
                                       MODEL_COLORS[neighborNode.model] || 'var(--accent)',
                                     color: '#fff',
-                                    fontSize: 9.5,
+                                    fontSize: 10.5,
                                     flexShrink: 0,
                                   }}
                                 >

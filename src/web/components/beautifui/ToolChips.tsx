@@ -76,18 +76,18 @@ export function ToolChips({
               )}
               <span>{trace.toolName}</span>
               {trace.targetModelCode && (
-                <span className="rounded bg-inset px-1 py-0.2 text-[10px] text-ink-3">
+                <span className="rounded bg-inset px-1 py-0.2 text-[10.5px] text-ink-3">
                   {trace.targetModelCode}
                   {trace.targetElementId ? `:${trace.targetElementId}` : ''}
                 </span>
               )}
               {trace.validatorRepair && (
-                <span className="rounded bg-orange-tint px-1 text-[10px] text-orange">
+                <span className="rounded bg-orange-tint px-1 text-[10.5px] text-orange">
                   Auto-Repair
                 </span>
               )}
               {typeof trace.durationMs === 'number' && !running && (
-                <span className="text-[10px] text-ink-3">{trace.durationMs}ms</span>
+                <span className="text-[10.5px] text-ink-3">{trace.durationMs}ms</span>
               )}
               {!running && !isError && (
                 <Check
@@ -129,7 +129,7 @@ export function ToolChips({
                       active.targetElementId,
                     )
                   }
-                  className="cursor-pointer rounded-chip bg-accent-tint px-2 py-0.5 text-[11px] font-medium text-accent hover:opacity-85"
+                  className="cursor-pointer rounded-chip bg-accent-tint px-2 py-0.5 text-[11.5px] font-medium text-accent hover:opacity-85"
                 >
                   <Crosshair size={12} aria-hidden="true" className="inline-block shrink-0 align-[-2px]" /> 定位 {active.targetModelCode}
                   {active.targetElementId ? ` · ${active.targetElementId}` : ''}
@@ -139,13 +139,13 @@ export function ToolChips({
             <div className="grid gap-2 md:grid-cols-2">
               <div>
                 <div className="mb-0.5 text-[10.5px] text-ink-3">Arguments</div>
-                <pre className="max-h-36 overflow-auto rounded bg-surface p-2 font-mono text-[11px] text-ink-2 shadow-hairline">
+                <pre className="max-h-36 overflow-auto rounded bg-surface p-2 font-mono text-[11.5px] text-ink-2 shadow-hairline">
                   {JSON.stringify(active.arguments ?? {}, null, 2)}
                 </pre>
               </div>
               <div>
                 <div className="mb-0.5 text-[10.5px] text-ink-3">Result / Validator Feedback</div>
-                <pre className="max-h-36 overflow-auto rounded bg-surface p-2 font-mono text-[11px] text-ink-2 shadow-hairline whitespace-pre-wrap">
+                <pre className="max-h-36 overflow-auto rounded bg-surface p-2 font-mono text-[11.5px] text-ink-2 shadow-hairline whitespace-pre-wrap">
                   {active.output || 'Executing...'}
                 </pre>
               </div>

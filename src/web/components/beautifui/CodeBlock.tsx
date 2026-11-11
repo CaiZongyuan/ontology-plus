@@ -87,7 +87,7 @@ export function CodeBlock({
           {filename || language || 'text'}
         </span>
         {(adds > 0 || dels > 0) && (
-          <span className="inline-flex items-center gap-1.5 font-mono text-[11px] tabular-nums">
+          <span className="inline-flex items-center gap-1.5 font-mono text-[11.5px] tabular-nums">
             {adds > 0 && <span className="text-green">+{adds}</span>}
             {dels > 0 && <span className="text-red">-{dels}</span>}
           </span>
@@ -120,7 +120,7 @@ export function CodeBlock({
       </div>
 
       <div
-        className="overflow-auto py-2 font-mono text-[12px] leading-[1.6]"
+        className="overflow-auto py-2 font-mono text-[12.5px] leading-[1.6]"
         style={{ maxHeight }}
       >
         {lines.map((line, i) => {
