@@ -90,49 +90,98 @@ interface StreamingDraftState {
 
 const KIND_META: Record<
   AgentSessionKind,
-  { badgeZh: string; badgeEn: string; starterPrompts: string[] }
+  { badgeZh: string; badgeEn: string }
 > = {
   REQUIREMENT: {
     badgeZh: '需求启发 Agent',
     badgeEn: 'Requirement Explorer',
-    starterPrompts: [
-      '梳理大额采购合同审批与履约里程碑的核心聚合、行为和风控规则',
-      '帮我检查当前需求是否存在边界模糊的业务决策点并让我确认',
-    ],
   },
   COPILOT: {
     badgeZh: '本体建模 Copilot',
     badgeEn: 'Ontology Copilot',
-    starterPrompts: [
-      '请新增一条超额采购合同双重风控校验规则',
-      '检查当前 11 模型一致性状态并给出补全建议',
-    ],
   },
   CODING: {
     badgeZh: '四层研发 Coding Agent',
     badgeEn: '4-Layer Coding Agent',
-    starterPrompts: [
-      '生成合同风控审批接口、前端表单组件与单元测试骨架',
-      '编译并检查当前四层装配研发工程包目录结构',
-    ],
   },
   CAPABILITY: {
     badgeZh: '能力中心智能问答',
     badgeEn: 'Capability Smart Agent',
-    starterPrompts: [
-      '请查询当前合同台账并核对大额合同资信准入规则',
-      '盘点当前已挂载的本体技能与 MCP 工具清单',
-    ],
   },
   REASONING: {
     badgeZh: '三段式数据本体推理',
     badgeEn: '3-Stage Data Reasoning',
-    starterPrompts: [
-      '分析高风险采购合同履约延期根因，并输出闭环写回策略建议',
-      '统计各业务部门合同金额分布与履约风险敞口',
-    ],
   },
 };
+
+function buildDynamicStarterPrompts(
+  agentKind: AgentSessionKind,
+  projectName: string,
+  domainName: string,
+  primaryAggLabel: string,
+  t: (zh: string, en: string) => string,
+): string[] {
+  const scopeZh = primaryAggLabel || domainName || projectName || '当前业务域';
+  const scopeEn = primaryAggLabel || domainName || projectName || 'current domain';
+
+  switch (agentKind) {
+    case 'REQUIREMENT':
+      return [
+        t(
+          `梳理「${projectName || scopeZh}」的核心领域聚合、业务行为与关键规则`,
+          `Discover core domain aggregates, behaviors, and business rules for "${projectName || scopeEn}"`,
+        ),
+        t(
+          `帮我识别「${scopeZh}」中边界模糊的 B 类关键业务决策点并让我确认`,
+          `Identify ambiguous Class-B business boundaries in "${scopeEn}" and ask me to confirm`,
+        ),
+      ];
+    case 'COPILOT':
+      return [
+        t(
+          `围绕「${scopeZh}」补充核心聚合根或跨对象校验规则`,
+          `Add core domain aggregates or cross-object validation rules for "${scopeEn}"`,
+        ),
+        t(
+          '检查当前 11 模型一致性状态并给出补全建议',
+          'Check 11-model consistency status and suggest next modeling steps',
+        ),
+      ];
+    case 'CODING':
+      return [
+        t(
+          `围绕「${scopeZh}」生成领域服务、接口契约与单元测试代码`,
+          `Generate domain services, API handlers, and unit tests for "${scopeEn}"`,
+        ),
+        t(
+          '编译并检查当前四层装配研发工程包目录结构',
+          'Compile and inspect the 4-layer assembled development package',
+        ),
+      ];
+    case 'CAPABILITY':
+      return [
+        t(
+          `查询「${scopeZh}」核心业务数据并核对关联业务规则`,
+          `Query "${scopeEn}" domain records and verify business compliance rules`,
+        ),
+        t(
+          '盘点当前已挂载的本体技能与 MCP 工具清单',
+          'List mounted Ontology Skills and MCP tools for this agent',
+        ),
+      ];
+    case 'REASONING':
+      return [
+        t(
+          `分析「${scopeZh}」异常波动或风险根因，并输出闭环写回策略建议`,
+          `Analyze root causes and anomalies in "${scopeEn}" and propose closed-loop writeback policies`,
+        ),
+        t(
+          `统计「${projectName || scopeZh}」关键业务指标分布与风险敞口`,
+          `Summarize key metric distributions and risk exposure for "${projectName || scopeEn}"`,
+        ),
+      ];
+  }
+}
 
 export function AgentSessionWorkbench({
   agentKind,
@@ -392,10 +441,10 @@ export function AgentSessionWorkbench({
         (s) =>
           s.id === targetSession!.id
             ? {
-                ...s,
-                status: 'RUNNING' as const,
-                messages: [...s.messages, optimisticUserMsg],
-              }
+              ...s,
+              status: 'RUNNING' as const,
+              messages: [...s.messages, optimisticUserMsg],
+            }
             : s,
       );
       patchData({ agentSessions: updatedSessions });
@@ -562,7 +611,19 @@ export function AgentSessionWorkbench({
   );
 
   const meta = KIND_META[agentKind];
-  const starters = quickPrompts ?? meta.starterPrompts;
+  const primaryAgg = data?.activeProject.suite.M1?.aggregates[0];
+  const primaryAggLabel = primaryAgg
+    ? t(primaryAgg.alias || primaryAgg.name, primaryAgg.name)
+    : '';
+  const starters =
+    quickPrompts ??
+    buildDynamicStarterPrompts(
+      agentKind,
+      data?.activeProject.name ?? '',
+      data?.activeProject.domain ?? '',
+      primaryAggLabel,
+      t,
+    );
 
   return (
     <div
@@ -841,30 +902,30 @@ export function AgentSessionWorkbench({
                 activeLabel={
                   streaming.phase === 'THINKING'
                     ? t(
-                        `正在深度思考${streaming.step > 1 ? `（第 ${streaming.step} 轮）` : ''} · ${elapsedSec}s…`,
-                        `Thinking${streaming.step > 1 ? ` (round ${streaming.step})` : ''} · ${elapsedSec}s…`,
-                      )
+                      `正在深度思考${streaming.step > 1 ? `（第 ${streaming.step} 轮）` : ''} · ${elapsedSec}s…`,
+                      `Thinking${streaming.step > 1 ? ` (round ${streaming.step})` : ''} · ${elapsedSec}s…`,
+                    )
                     : streaming.phase === 'TOOL_CALLING'
                       ? t(
-                          `正在调用工具 ${streaming.activeToolName ?? ''} · ${elapsedSec}s…`,
-                          `Running tool ${streaming.activeToolName ?? ''} · ${elapsedSec}s…`,
-                        )
+                        `正在调用工具 ${streaming.activeToolName ?? ''} · ${elapsedSec}s…`,
+                        `Running tool ${streaming.activeToolName ?? ''} · ${elapsedSec}s…`,
+                      )
                       : streaming.toolCalls.length > 0
                         ? t(
-                            `已完成工具调用，正在继续推理 · ${elapsedSec}s…`,
-                            `Tool completed, continuing · ${elapsedSec}s…`,
-                          )
+                          `已完成工具调用，正在继续推理 · ${elapsedSec}s…`,
+                          `Tool completed, continuing · ${elapsedSec}s…`,
+                        )
                         : t(
-                            `正在连接网关并启动推理 · ${elapsedSec}s…`,
-                            `Connecting & starting · ${elapsedSec}s…`,
-                          )
+                          `正在连接网关并启动推理 · ${elapsedSec}s…`,
+                          `Connecting & starting · ${elapsedSec}s…`,
+                        )
                 }
                 doneLabel={
                   streaming.thinking
                     ? t(
-                        `已深度思考 ${elapsedSec}s（点击查看思维链）`,
-                        `Thought for ${elapsedSec}s (view trace)`,
-                      )
+                      `已深度思考 ${elapsedSec}s（点击查看思维链）`,
+                      `Thought for ${elapsedSec}s (view trace)`,
+                    )
                     : t('已完成当前推理步骤', 'Reasoning step complete')
                 }
                 thinkingText={streaming.thinking}
@@ -968,7 +1029,7 @@ export function AgentSessionWorkbench({
                 >
                   {llmProviders.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} · {p.defaultModel} {p.enabled ? '' : '(已停用)'}
+                      {p.name} · {p.defaultModel} {p.enabled ? '' : t('(已停用)', '(Disabled)')}
                     </option>
                   ))}
                 </select>
@@ -1064,9 +1125,9 @@ export function AgentSessionWorkbench({
         description={
           deleteTarget
             ? t(
-                `确认删除会话「${deleteTarget.title}」及其中的 ${deleteTarget.messages.length} 条消息记录吗？该操作不会回滚已写入 11 模型的资产。`,
-                `Delete session "${deleteTarget.title}" (${deleteTarget.messages.length} messages)? Committed ontology mutations remain intact.`,
-              )
+              `确认删除会话「${deleteTarget.title}」及其中的 ${deleteTarget.messages.length} 条消息记录吗？该操作不会回滚已写入 11 模型的资产。`,
+              `Delete session "${deleteTarget.title}" (${deleteTarget.messages.length} messages)? Committed ontology mutations remain intact.`,
+            )
             : ''
         }
         confirmLabel={t('确认删除', 'Delete')}
@@ -1171,9 +1232,9 @@ function MessageTurnItem({
           doneLabel={
             message.thinkingDurationMs
               ? t(
-                  `已深度思考 ${(message.thinkingDurationMs / 1000).toFixed(1)}s（点击查看思维链）`,
-                  `Thought for ${(message.thinkingDurationMs / 1000).toFixed(1)}s (view trace)`,
-                )
+                `已深度思考 ${(message.thinkingDurationMs / 1000).toFixed(1)}s（点击查看思维链）`,
+                `Thought for ${(message.thinkingDurationMs / 1000).toFixed(1)}s (view trace)`,
+              )
               : t('查看模型推理思维链', 'View reasoning trace')
           }
           thinkingText={message.thinking}
@@ -1244,7 +1305,7 @@ function DomainArtifactCard({
               onClick={() => onJumpToOntology(artifact.modelCode!)}
               className="cursor-pointer rounded bg-accent-tint px-2 py-0.5 font-mono text-[11.5px] text-accent"
             >
-              打开 {artifact.modelCode} 视图 ↗
+              {t(`打开 ${artifact.modelCode} 视图 ↗`, `Open ${artifact.modelCode} View ↗`)}
             </button>
           )}
         </div>
@@ -1279,7 +1340,10 @@ function DomainArtifactCard({
         <div className="flex items-center justify-between text-[11.5px]">
           <span className="inline-flex items-center gap-1.5 font-semibold text-ink">
             <Database size={12.5} className="text-accent" />
-            SQL 沙箱执行结果 ({artifact.rows.length} rows)
+            {t(
+              `SQL 沙箱执行结果 (${artifact.rows.length} rows)`,
+              `SQL Sandbox Result (${artifact.rows.length} rows)`,
+            )}
           </span>
           <span className="font-mono text-[10.5px] text-ink-3">
             {artifact.elapsedMs}ms
@@ -1488,7 +1552,10 @@ function DomainArtifactCard({
       <div className="rounded-card border border-line bg-inset/45 p-2.5 text-[11.5px]">
         <div className="mb-1 flex items-center justify-between">
           <span className="font-semibold text-ink">
-            已更新研发工程包 ({artifact.files.length} files)
+            {t(
+              `已更新研发工程包 (${artifact.files.length} files)`,
+              `Updated Dev Package (${artifact.files.length} files)`,
+            )}
           </span>
           <span className="font-mono text-[10.5px] text-ink-3">{artifact.outputDir}</span>
         </div>

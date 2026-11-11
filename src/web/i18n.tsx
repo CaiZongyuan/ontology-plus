@@ -86,7 +86,6 @@ export const NAV_ITEMS: NavItemSpec[] = [
     group: 'APPLICATION',
     labelZh: '业务本体',
     labelEn: '11-Model Ontology',
-    badge: '11',
   },
   {
     id: 'app-model-files',

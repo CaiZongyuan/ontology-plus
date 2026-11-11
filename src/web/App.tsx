@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  ArrowRight,
   Blocks,
   BookOpen,
   Bot,
@@ -17,6 +18,7 @@ import {
   Globe,
   Layers,
   LayoutTemplate,
+  Loader2,
   MessageSquare,
   Network,
   PackageCheck,
@@ -32,7 +34,12 @@ import {
   Workflow,
   BarChart3,
 } from 'lucide-react';
-import { readUrlNavState, useWorkbenchStore, writeUrlNavState } from './api.js';
+import {
+  getProjectLifecycleState,
+  readUrlNavState,
+  useWorkbenchStore,
+  writeUrlNavState,
+} from './api.js';
 import {
   NAV_GROUPS,
   NAV_ITEMS,
@@ -70,6 +77,7 @@ import {
 import { KnowledgeGraphCanvas } from './views/KnowledgeGraphCanvas.js';
 import { OntologyWorkbenchView } from './views/OntologyWorkbenchView.js';
 import { Button } from './components/beautifui/index.js';
+import { GlobalPipelineTaskTray } from './components/pipeline/PipelineTaskCard.js';
 
 const NAV_ICONS: Record<NavViewId, React.ReactNode> = {
   overview: <FolderKanban size={16} />,
@@ -292,11 +300,18 @@ function ShellInner() {
     loading,
     toast,
     activeNav,
+    backgroundTasks,
+    liveAnnouncement,
     setActiveNav,
     setSelectedModel,
     bootstrap,
     switchProject,
+    saveSuiteWithUndo,
+    showToast,
+    openBackgroundTaskResult,
   } = useWorkbenchStore();
+  const lifecycle = data ? getProjectLifecycleState(data) : null;
+  const runningTopbarTask = backgroundTasks.find((tk) => tk.status === 'RUNNING');
   const activeView: NavViewId = NAV_ITEMS.some((i) => i.id === activeNav)
     ? (activeNav as NavViewId)
     : 'app-ontology';
@@ -495,7 +510,44 @@ function ShellInner() {
                         <span className="nav-icon">{NAV_ICONS[item.id]}</span>
                         {!collapsed && <span>{t(item.labelZh, item.labelEn)}</span>}
                       </span>
-                      {!collapsed && item.badge && <span className="nav-badge">{item.badge}</span>}
+                      <span className="nav-item-right">
+                        {backgroundTasks.some(
+                          (tk) =>
+                            tk.status === 'RUNNING' &&
+                            tk.projectId === data?.activeProject.id &&
+                            (tk.targetNav === item.id || tk.originNav === item.id),
+                        ) && (
+                          <span
+                            className="nav-task-dot is-running"
+                            title={t('后台任务正在运行', 'Background task running')}
+                            aria-hidden="true"
+                          />
+                        )}
+                        {backgroundTasks.some(
+                          (tk) =>
+                            tk.unreadCompletion &&
+                            tk.projectId === data?.activeProject.id &&
+                            tk.targetNav === item.id,
+                        ) && (
+                          <span
+                            className="nav-task-dot is-done"
+                            title={t('新成果已生成完成，点击查看', 'New artifact ready')}
+                            aria-hidden="true"
+                          />
+                        )}
+                        {!collapsed &&
+                          (item.id === 'app-ontology' && lifecycle ? (
+                            <span
+                              className={`nav-badge ${!lifecycle.hasOntology ? 'opacity-65' : ''}`}
+                            >
+                              {lifecycle.hasOntology
+                                ? `${lifecycle.presentModelCount}/11`
+                                : t('待生成', 'Pending')}
+                            </span>
+                          ) : (
+                            item.badge && <span className="nav-badge">{item.badge}</span>
+                          ))}
+                      </span>
                     </button>
                   ))}
               </div>
@@ -579,6 +631,32 @@ function ShellInner() {
           </div>
 
           <div className="topbar-right">
+            {runningTopbarTask && (
+              <button
+                type="button"
+                className="status-pill pipeline-topbar-pill"
+                data-testid="topbar-running-task-pill"
+                onClick={() => void openBackgroundTaskResult(runningTopbarTask.id)}
+                title={t(
+                  `${runningTopbarTask.titleZh} — 点击前往查看实时进度`,
+                  `${runningTopbarTask.titleEn} — Click to view live progress`,
+                )}
+              >
+                <Loader2 size={12} className="pipeline-spin" aria-hidden="true" />
+                <span>
+                  {runningTopbarTask.kind === 'SRS_SYNTHESIS'
+                    ? runningTopbarTask.completedChapters > 0
+                      ? t(
+                          `后台合成需求书 (${runningTopbarTask.completedChapters}/9 章)`,
+                          `SRS Synthesis (${runningTopbarTask.completedChapters}/9)`,
+                        )
+                      : t('后台合成需求规格书…', 'Synthesizing SRS…')
+                    : runningTopbarTask.kind === 'PROTOTYPE_GEN'
+                      ? t('后台生成交互原型…', 'Generating Prototype…')
+                      : t('后台合成 11 模型…', 'Synthesizing 11 Models…')}
+                </span>
+              </button>
+            )}
             {data?.systemSettings.mockLlmMode && (
               <button
                 type="button"
@@ -602,11 +680,17 @@ function ShellInner() {
                   title={t('11 元模型一致性校验', '11-model consistency validation')}
                 >
                   <span className="dot" />
-                  <strong>{validation.presentModels.length}/11</strong>
-                  {t('模型', 'Models')}
-                  <span className="text-[var(--line)]">|</span>
-                  <strong>{validation.errorCount}</strong>
-                  {t('错误', 'Errors')}
+                  {validation.presentModels.length === 0 ? (
+                    <span>{t('本体待推导（前置阶段进行中）', 'Ontology Pending')}</span>
+                  ) : (
+                    <>
+                      <strong>{validation.presentModels.length}/11</strong>
+                      {t('模型', 'Models')}
+                      <span className="text-[var(--line)]">|</span>
+                      <strong>{validation.errorCount}</strong>
+                      {t('错误', 'Errors')}
+                    </>
+                  )}
                 </span>
               </>
             )}
@@ -630,30 +714,121 @@ function ShellInner() {
               {activeView === 'app-prototype' && (
                 <PrototypeStudioView onNavigate={setActiveView} />
               )}
-              {activeView === 'app-ontology' && <OntologyWorkbenchView />}
-              {activeView === 'app-model-files' && <ModelFilesView />}
-              {activeView === 'app-knowledge-graph' && (
-                <div className="card">
-                  <div className="card-header">
-                    <h3 className="card-title">
-                      {t('11 元模型全域业务本体知识图谱', '11-Model Business Ontology Knowledge Graph')}
-                    </h3>
-                  </div>
-                  <KnowledgeGraphCanvas
-                    graph={data.activeProject.knowledgeGraph}
-                    preset="GLOBAL_SWIMLANE"
-                    height={Math.max(600, (typeof window !== 'undefined' ? window.innerHeight : 900) - 250)}
-                    onNavigateToElement={(model, elementId) => {
-                      setSelectedModel(model, elementId);
-                      setActiveView('app-ontology');
-                    }}
-                  />
-                </div>
+              {activeView === 'app-ontology' && (
+                <OntologyWorkbenchView onNavigate={setActiveView} />
               )}
+              {activeView === 'app-model-files' && (
+                <ModelFilesView onNavigate={setActiveView} />
+              )}
+              {activeView === 'app-knowledge-graph' &&
+                (!lifecycle?.hasOntology || data.activeProject.knowledgeGraph.nodes.length === 0 ? (
+                  <div className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-6">
+                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-accent">
+                      <Network size={20} />
+                    </div>
+                    <span className="badge badge-warn">
+                      {t('尚未到达此阶段 · 暂无图谱节点', 'Stage Not Yet Reached · No Graph Nodes')}
+                    </span>
+                    <h3 className="font-serif text-[18px] font-semibold text-ink m-0">
+                      {t(
+                        `「${data.activeProject.name}」尚未生成业务本体`,
+                        `"${data.activeProject.name}" has not synthesized its ontology yet`,
+                      )}
+                    </h3>
+                    <p className="text-[13px] text-ink-3 max-w-[520px] leading-relaxed m-0">
+                      {t(
+                        '知识图谱会根据第 4 步「业务本体」中的对象、行为、规则、事件与界面引用关系自动绘制，无需手工连线。当前工程仍在推进前置阶段，保持空白可避免示例模板干扰。',
+                        'The Knowledge Graph is automatically rendered from your project ontology once Step 4 (Business Ontology) is generated.',
+                      )}
+                    </p>
+                    {lifecycle && (
+                      <p className="text-[12.5px] text-ink-2 bg-inset border border-line rounded-[6px] px-3.5 py-2 m-0">
+                        {t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
+                      </p>
+                    )}
+                    {lifecycle && (
+                      <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
+                        <Button
+                          type="button"
+                          variant="accent"
+                          size="md"
+                          onClick={() => setActiveView(lifecycle.nextStep.targetView)}
+                        >
+                          {t(lifecycle.nextStep.labelZh, lifecycle.nextStep.labelEn)}
+                          <ArrowRight size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="md"
+                          onClick={() => setActiveView('app-ontology')}
+                        >
+                          {t('进入业务本体手工建模', 'Manual Ontology Authoring')}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {lifecycle?.hasForeignDemoTemplate && (
+                      <div
+                        className="card flex flex-wrap items-center justify-between gap-3"
+                        style={{ borderColor: 'var(--warn)', background: 'var(--warn-soft, var(--inset))' }}
+                      >
+                        <div className="text-[12.5px] text-ink">
+                          <strong>{t('提示：当前图谱来自创建工程时的示例模板', 'Notice: Graph shows preloaded demo template')}</strong>
+                          {' — '}
+                          {t(
+                            `当前展示的是「${lifecycle.foreignTemplateNameZh}」演示数据，并非由「${data.activeProject.name}」推导生成。`,
+                            `Showing "${lifecycle.foreignTemplateNameEn}" demo data rather than "${data.activeProject.name}".`,
+                          )}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={async () => {
+                            await saveSuiteWithUndo({}, 'Cleared preloaded demo template');
+                            showToast(
+                              t(
+                                '已清空预置示例模板，完成前置界面原型后即可推导本工程专属本体',
+                                'Cleared demo template; ready for clean synthesis from prototype',
+                              ),
+                            );
+                          }}
+                        >
+                          {t('清空示例模板数据', 'Clear Demo Template')}
+                        </Button>
+                      </div>
+                    )}
+                    <div className="card">
+                      <div className="card-header">
+                        <h3 className="card-title">
+                          {t('11 元模型全域业务本体知识图谱', '11-Model Business Ontology Knowledge Graph')}
+                        </h3>
+                      </div>
+                      <KnowledgeGraphCanvas
+                        graph={data.activeProject.knowledgeGraph}
+                        preset="GLOBAL_SWIMLANE"
+                        height={Math.max(600, (typeof window !== 'undefined' ? window.innerHeight : 900) - 250)}
+                        onNavigateToElement={(model, elementId) => {
+                          setSelectedModel(model, elementId);
+                          setActiveView('app-ontology');
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
               {activeView === 'app-four-layer-assets' && <FourLayerAssetsView />}
-              {activeView === 'app-assembly-dev' && <ApplicationAssemblyDevView />}
-              {activeView === 'app-skills' && <OntologySkillsView />}
-              {activeView === 'app-publish' && <AppPublishView />}
+              {activeView === 'app-assembly-dev' && (
+                <ApplicationAssemblyDevView onNavigate={setActiveView} />
+              )}
+              {activeView === 'app-skills' && (
+                <OntologySkillsView onNavigate={setActiveView} />
+              )}
+              {activeView === 'app-publish' && (
+                <AppPublishView onNavigate={setActiveView} />
+              )}
 
               {activeView === 'cap-systems' && <CapabilitySystemsView />}
               {activeView === 'cap-extraction' && <CapabilityExtractionView />}
@@ -676,6 +851,12 @@ function ShellInner() {
           )}
         </div>
       </main>
+
+      <div className="visually-hidden" aria-live="polite" aria-atomic="true">
+        {liveAnnouncement}
+      </div>
+
+      <GlobalPipelineTaskTray hasActiveToast={Boolean(toast)} />
 
       {toast && (
         <div className="toast-banner" data-testid="toast-banner" role="status" aria-live="polite">

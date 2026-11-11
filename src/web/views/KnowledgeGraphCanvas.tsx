@@ -691,41 +691,276 @@ function KnowledgeGraphInner({
     };
   }, [layoutMode, groupedByStage, collapsedLanes, visibleEdges, nodeById, topologyKey]);
 
-  // Build React Flow Nodes & Edges
-  const { computedNodes, computedEdges } = useMemo(() => {
-    const rfNodes: Node[] = [];
-    const rfEdges: Edge[] = [];
+  // Clear stale hover state if the hovered node disappears due to filtering or lane collapse
+  useEffect(() => {
+    if (!hoveredNodeId) return;
+    const hoveredNode = nodeById.get(hoveredNodeId);
+    const stillVisible =
+      Boolean(hoveredNode) &&
+      (layoutMode === 'EGO_FOCUS' || !collapsedLanes.has(hoveredNode!.model)) &&
+      visibleNodes.some((n) => n.id === hoveredNodeId);
+    if (!stillVisible) {
+      setHoveredNodeId(null);
+    }
+  }, [hoveredNodeId, nodeById, layoutMode, collapsedLanes, visibleNodes]);
+
+  // 1. Structural node layout (strictly independent of hover / search / selection-highlight state
+  //    so hovering never wipes React Flow v12 `measured` dimensions or user drag positions)
+  const structuralLayout = useMemo(() => {
+    interface StructuralSwimlaneSpec {
+      kind: 'swimlane';
+      id: string;
+      model: ModelCode;
+      count: number;
+      collapsed: boolean;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+    }
+    interface StructuralEntitySpec {
+      kind: 'entity';
+      id: string;
+      rawNode: KnowledgeGraphNode;
+      parentId?: string;
+      x: number;
+      y: number;
+      egoFocalId?: string;
+    }
+    type StructuralSpec = StructuralSwimlaneSpec | StructuralEntitySpec;
+
+    const specs: StructuralSpec[] = [];
 
     if (layoutMode === 'EGO_FOCUS') {
       const focal = selectedNodeId ?? visibleNodes[0]?.id ?? '';
       const egoPositions = buildEgoForcePositions(focal, visibleNodes, visibleEdges);
-
       for (const n of visibleNodes) {
         const pos = egoPositions.get(n.id) ?? { x: 0, y: 0 };
+        specs.push({
+          kind: 'entity',
+          id: n.id,
+          rawNode: n,
+          x: pos.x,
+          y: pos.y,
+          egoFocalId: focal,
+        });
+      }
+      const layoutKey = `ego:${focal}:${egoHops}:${filterRelation}:${visibleNodes.map((n) => n.id).join(',')}:${visibleEdges.length}`;
+      return { layoutKey, specs };
+    }
+
+    const fallback = buildFallbackSwimlanePositions(groupedByStage, collapsedLanes);
+    const isElkReady = Boolean(elkCoords && elkCoords.key === topologyKey);
+    const activeCoords = isElkReady
+      ? { laneRects: elkCoords!.lanePos, entityLocalPos: elkCoords!.entityPos }
+      : fallback;
+
+    for (const group of groupedByStage) {
+      const rect = activeCoords.laneRects.get(group.code) ?? {
+        x: 0,
+        y: 0,
+        w: 230,
+        h: 120,
+      };
+      const isCollapsed = collapsedLanes.has(group.code);
+      specs.push({
+        kind: 'swimlane',
+        id: `lane-${group.code}`,
+        model: group.code,
+        count: group.items.length,
+        collapsed: isCollapsed,
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
+      });
+
+      if (!isCollapsed) {
+        for (const item of group.items) {
+          const local = activeCoords.entityLocalPos.get(item.id) ?? {
+            x: LANE_PAD_X,
+            y: LANE_PAD_TOP,
+          };
+          specs.push({
+            kind: 'entity',
+            id: item.id,
+            rawNode: item,
+            parentId: `lane-${group.code}`,
+            x: local.x,
+            y: local.y,
+          });
+        }
+      }
+    }
+
+    const layoutKey = `swimlane:${topologyKey}:${isElkReady ? 'elk' : 'fb'}`;
+    return { layoutKey, specs };
+  }, [
+    layoutMode,
+    selectedNodeId,
+    visibleNodes,
+    visibleEdges,
+    egoHops,
+    filterRelation,
+    groupedByStage,
+    collapsedLanes,
+    elkCoords,
+    topologyKey,
+  ]);
+
+  const materializeNodes = useCallback(
+    (prevNodes: Node[], preservePositions: boolean): Node[] => {
+      const prevById = new Map<string, Node>();
+      for (const pn of prevNodes) prevById.set(pn.id, pn);
+
+      return structuralLayout.specs.map((spec) => {
+        const prev = prevById.get(spec.id);
+
+        if (spec.kind === 'swimlane') {
+          const meta = MODEL_LABELS.get(spec.model);
+          const title = meta ? t(meta.labelZh, meta.labelEn) : spec.model;
+          const color = MODEL_COLORS[spec.model] || '#4c50c4';
+
+          if (preservePositions && prev && prev.type === 'swimlaneGroup') {
+            const prevData = prev.data as SwimlaneNodeData;
+            if (
+              prevData.title === title &&
+              prevData.count === spec.count &&
+              prevData.collapsed === spec.collapsed &&
+              prevData.onToggleCollapse === toggleLaneCollapse
+            ) {
+              return prev;
+            }
+            return {
+              ...prev,
+              data: {
+                ...prevData,
+                title,
+                count: spec.count,
+                collapsed: spec.collapsed,
+                onToggleCollapse: toggleLaneCollapse,
+              } satisfies SwimlaneNodeData,
+            };
+          }
+
+          const sameSize =
+            prev?.type === 'swimlaneGroup' &&
+            prev.measured?.width === spec.w &&
+            prev.measured?.height === spec.h;
+
+          return {
+            id: spec.id,
+            type: 'swimlaneGroup',
+            position: { x: spec.x, y: spec.y },
+            style: { width: spec.w, height: spec.h },
+            initialWidth: spec.w,
+            initialHeight: spec.h,
+            ...(sameSize && prev?.measured ? { measured: prev.measured } : {}),
+            zIndex: 0,
+            draggable: true,
+            selectable: false,
+            data: {
+              model: spec.model,
+              title,
+              count: spec.count,
+              color,
+              collapsed: spec.collapsed,
+              onToggleCollapse: toggleLaneCollapse,
+            } satisfies SwimlaneNodeData,
+          };
+        }
+
+        const n = spec.rawNode;
         const isSelected = n.id === selectedNodeId;
+        const isFocal =
+          layoutMode === 'EGO_FOCUS' ? n.id === spec.egoFocalId : isSelected;
         const isNeighbor = connectedNeighborIds.has(n.id);
+        const isDimmed =
+          layoutMode === 'STAGE_SWIMLANE' &&
+          Boolean(hoveredNodeId) &&
+          n.id !== hoveredNodeId &&
+          !isNeighbor &&
+          !isSelected;
         const isSearchHit =
           Boolean(searchLower) &&
           (n.id.toLowerCase().includes(searchLower) ||
             n.label.toLowerCase().includes(searchLower));
+        const degree = degreeOf(n);
+        const color = MODEL_COLORS[n.model] || '#4c50c4';
 
-        rfNodes.push({
-          id: n.id,
+        if (preservePositions && prev && prev.type === 'ontologyEntity') {
+          const prevData = prev.data as EntityNodeData;
+          if (
+            prevData.node === n &&
+            prevData.degree === degree &&
+            prevData.color === color &&
+            prevData.isSelected === isSelected &&
+            prevData.isFocal === isFocal &&
+            prevData.isNeighbor === isNeighbor &&
+            prevData.isDimmed === isDimmed &&
+            prevData.isSearchHit === isSearchHit
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            data: {
+              node: n,
+              degree,
+              color,
+              isSelected,
+              isFocal,
+              isNeighbor,
+              isDimmed,
+              isSearchHit,
+            } satisfies EntityNodeData,
+          };
+        }
+
+        return {
+          id: spec.id,
           type: 'ontologyEntity',
-          position: pos,
+          ...(spec.parentId
+            ? { parentId: spec.parentId, extent: 'parent' as const }
+            : {}),
+          position: { x: spec.x, y: spec.y },
+          initialWidth: ENTITY_W,
+          initialHeight: ENTITY_H,
+          ...(prev?.type === 'ontologyEntity' && prev.measured
+            ? { measured: prev.measured }
+            : {}),
+          zIndex: 3,
           data: {
             node: n,
-            degree: degreeOf(n),
-            color: MODEL_COLORS[n.model] || '#4c50c4',
+            degree,
+            color,
             isSelected,
-            isFocal: n.id === focal,
+            isFocal,
             isNeighbor,
-            isDimmed: false,
+            isDimmed,
             isSearchHit,
           } satisfies EntityNodeData,
-        });
-      }
+        };
+      });
+    },
+    [
+      structuralLayout,
+      t,
+      toggleLaneCollapse,
+      selectedNodeId,
+      layoutMode,
+      connectedNeighborIds,
+      hoveredNodeId,
+      searchLower,
+      degreeOf,
+    ],
+  );
 
+  // 2. Build React Flow Edges
+  const computedEdges = useMemo(() => {
+    const rfEdges: Edge[] = [];
+
+    if (layoutMode === 'EGO_FOCUS') {
       for (const edge of visibleEdges) {
         const isIncident =
           edge.source === activeFocusId || edge.target === activeFocusId;
@@ -734,6 +969,8 @@ function KnowledgeGraphInner({
           source: edge.source,
           target: edge.target,
           type: 'smoothstep',
+          interactionWidth: 0,
+          zIndex: isIncident ? 2 : 1,
           animated: isIncident,
           label: edge.relation,
           labelStyle: {
@@ -762,85 +999,10 @@ function KnowledgeGraphInner({
           },
         });
       }
-
-      return { computedNodes: rfNodes, computedEdges: rfEdges };
+      return rfEdges;
     }
 
-    // STAGE_SWIMLANE mode
-    const fallback = buildFallbackSwimlanePositions(groupedByStage, collapsedLanes);
-    const activeCoords =
-      elkCoords && elkCoords.key === topologyKey
-        ? { laneRects: elkCoords.lanePos, entityLocalPos: elkCoords.entityPos }
-        : fallback;
-
-    for (const group of groupedByStage) {
-      const rect = activeCoords.laneRects.get(group.code) ?? {
-        x: 0,
-        y: 0,
-        w: 230,
-        h: 120,
-      };
-      const meta = MODEL_LABELS.get(group.code);
-      const title = meta ? t(meta.labelZh, meta.labelEn) : group.code;
-      const isCollapsed = collapsedLanes.has(group.code);
-
-      rfNodes.push({
-        id: `lane-${group.code}`,
-        type: 'swimlaneGroup',
-        position: { x: rect.x, y: rect.y },
-        style: { width: rect.w, height: rect.h },
-        draggable: true,
-        selectable: false,
-        data: {
-          model: group.code,
-          title,
-          count: group.items.length,
-          color: MODEL_COLORS[group.code] || '#4c50c4',
-          collapsed: isCollapsed,
-          onToggleCollapse: toggleLaneCollapse,
-        } satisfies SwimlaneNodeData,
-      });
-
-      if (!isCollapsed) {
-        for (const item of group.items) {
-          const local = activeCoords.entityLocalPos.get(item.id) ?? {
-            x: LANE_PAD_X,
-            y: LANE_PAD_TOP,
-          };
-          const isSelected = item.id === selectedNodeId;
-          const isNeighbor = connectedNeighborIds.has(item.id);
-          const isDimmed =
-            Boolean(hoveredNodeId) &&
-            item.id !== hoveredNodeId &&
-            !connectedNeighborIds.has(item.id) &&
-            !isSelected;
-          const isSearchHit =
-            Boolean(searchLower) &&
-            (item.id.toLowerCase().includes(searchLower) ||
-              item.label.toLowerCase().includes(searchLower));
-
-          rfNodes.push({
-            id: item.id,
-            type: 'ontologyEntity',
-            parentId: `lane-${group.code}`,
-            extent: 'parent',
-            position: local,
-            data: {
-              node: item,
-              degree: degreeOf(item),
-              color: MODEL_COLORS[item.model] || '#4c50c4',
-              isSelected,
-              isFocal: isSelected,
-              isNeighbor,
-              isDimmed,
-              isSearchHit,
-            } satisfies EntityNodeData,
-          });
-        }
-      }
-    }
-
-    // Build edges (supporting collapsed lanes + optional edge bundling)
+    // Build STAGE_SWIMLANE edges (supporting collapsed lanes + optional edge bundling)
     const bundleCounter = new Map<
       string,
       { sourceId: string; targetId: string; count: number; sampleRel: string }
@@ -888,6 +1050,7 @@ function KnowledgeGraphInner({
         source: sEndpoint,
         target: tEndpoint,
         type: 'smoothstep',
+        interactionWidth: 0,
         animated: isIncident,
         label: isIncident || filterRelation !== 'ALL' ? edge.relation : undefined,
         labelStyle: {
@@ -903,7 +1066,7 @@ function KnowledgeGraphInner({
         },
         labelBgPadding: [4, 2],
         labelBgBorderRadius: 4,
-        zIndex: isIncident ? 20 : 1,
+        zIndex: isIncident ? 2 : 1,
         style: {
           stroke: isIncident ? 'var(--accent)' : 'var(--muted)',
           strokeWidth: isIncident ? 2 : 1.15,
@@ -924,6 +1087,8 @@ function KnowledgeGraphInner({
         source: b.sourceId,
         target: b.targetId,
         type: 'smoothstep',
+        interactionWidth: 0,
+        zIndex: 1,
         label: b.count > 1 ? `×${b.count}` : b.sampleRel,
         labelStyle: {
           fontSize: 10.5,
@@ -953,35 +1118,35 @@ function KnowledgeGraphInner({
       });
     }
 
-    return { computedNodes: rfNodes, computedEdges: rfEdges };
+    return rfEdges;
   }, [
     layoutMode,
-    selectedNodeId,
-    visibleNodes,
     visibleEdges,
-    connectedNeighborIds,
-    searchLower,
-    degreeOf,
     activeFocusId,
-    groupedByStage,
     collapsedLanes,
-    elkCoords,
-    topologyKey,
-    t,
-    toggleLaneCollapse,
     hoveredNodeId,
     bundleEdges,
     filterRelation,
     nodeById,
   ]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(computedNodes);
+  const appliedLayoutKeyRef = useRef<string>(structuralLayout.layoutKey);
+  const initialNodesRef = useRef<Node[] | null>(null);
+  if (initialNodesRef.current === null) {
+    initialNodesRef.current = materializeNodes([], false);
+  }
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodesRef.current);
   const [edges, setEdges, onEdgesChange] = useEdgesState(computedEdges);
 
   useEffect(() => {
-    setNodes(computedNodes);
+    const layoutChanged = appliedLayoutKeyRef.current !== structuralLayout.layoutKey;
+    appliedLayoutKeyRef.current = structuralLayout.layoutKey;
+    setNodes((prevNodes) => materializeNodes(prevNodes, !layoutChanged));
+  }, [structuralLayout.layoutKey, materializeNodes, setNodes]);
+
+  useEffect(() => {
     setEdges(computedEdges);
-  }, [computedNodes, computedEdges, setNodes, setEdges]);
+  }, [computedEdges, setEdges]);
 
   const fitTimerRef = useRef<number | null>(null);
   useEffect(() => {
@@ -1248,6 +1413,8 @@ function KnowledgeGraphInner({
             onEdgesChange={onEdgesChange}
             nodeTypes={NODE_TYPES}
             nodesConnectable={false}
+            edgesFocusable={false}
+            edgesReconnectable={false}
             elementsSelectable
             minZoom={0.18}
             maxZoom={2.4}
@@ -1270,9 +1437,15 @@ function KnowledgeGraphInner({
               }
             }}
             onNodeMouseEnter={(_, node) => {
-              if (node.type === 'ontologyEntity') setHoveredNodeId(node.id);
+              if (node.type === 'ontologyEntity') {
+                setHoveredNodeId((prev) => (prev === node.id ? prev : node.id));
+              }
             }}
-            onNodeMouseLeave={() => setHoveredNodeId(null)}
+            onNodeMouseLeave={(_, node) => {
+              if (node.type === 'ontologyEntity') {
+                setHoveredNodeId((prev) => (prev === node.id ? null : prev));
+              }
+            }}
           >
             <Background
               variant={BackgroundVariant.Dots}

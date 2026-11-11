@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:server": "tsx watch src/server/node-server.ts",
+    "dev:server": "tsx watch --ignore \".onto-cs/**\" --ignore \".scratch/**\" --ignore \"docs/**\" --ignore \"src/web/**\" --ignore \"**/*.test.ts\" src/server/node-server.ts",
     "dev:web": "vite --host 127.0.0.1 --port 5173",
     "dev": "tsx src/server/dev-runner.ts",
     "build": "tsc --noEmit && vite build",

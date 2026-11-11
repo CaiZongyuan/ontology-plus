@@ -1,4 +1,12 @@
 export {
+  type AgentLocale,
+  normalizeAgentLocale,
+  detectTextLocale,
+  resolveEffectiveLocale,
+  pickLocaleText,
+} from './lib/locale.js';
+
+export {
   ONTOLOGY_TOOL_NAMES,
   OPENAI_ONTOLOGY_TOOLS,
   ONTOLOGY_DURABLE_TOOLS,
@@ -17,6 +25,7 @@ export {
   agentWorkbenchRegistry,
   abortActiveAgentSession,
   compactAgentSession,
+  compactAgentSessionWithLlm,
   buildPiModelsForStore,
   runUnifiedAgentSessionStream,
   collectUnifiedAgentTurn,
@@ -28,6 +37,7 @@ export {
 
 export {
   SSE_RESPONSE_HEADERS,
+  stitchContinuationText,
   testLlmGatewayConnection,
   runOntologyCopilotTurn,
   runRequirementGrillingTurn,
@@ -37,6 +47,7 @@ export {
   synthesizeOntologyFromPrototype,
   generateTechArchitectureDoc,
   runAppCodingAgentTurn,
+  runSmartOntologyExtractionJob,
   runCapabilitySmartChatTurn,
   runDataOntologyReasoning,
   generateMetricInsight,
@@ -47,6 +58,8 @@ export {
   type OntologyCopilotResult,
   type LlmPingResult,
   type RequirementDocSynthesisResult,
+  type SrsSynthesisProgressPhase,
+  type SrsSynthesisProgressEvent,
   type PrototypeGenerationResult,
   type OntologySynthesisFromPrototypeResult,
   type TechArchitectureGenerationResult,
@@ -57,3 +70,22 @@ export {
   type SseEventType,
   type SseAgentEvent,
 } from './lib/runtime.js';
+
+export {
+  startServerPipelineTask,
+  resumeServerPipelineTask,
+  flushRunningPipelineCheckpoints,
+  autoResumeInterruptedPipelineTasks,
+  listServerPipelineTasks,
+  getServerPipelineTask,
+  cancelServerPipelineTask,
+  dismissServerPipelineTask,
+  markServerPipelineTaskRead,
+  createPipelineTaskSseStream,
+  type PipelineTaskKind,
+  type PipelineTaskStatus,
+  type PipelineStageLogEntry,
+  type PipelineTaskSnapshot,
+  type StartPipelineTaskInput,
+  type PipelineTaskProgressFrame,
+} from './lib/pipeline-tasks.js';

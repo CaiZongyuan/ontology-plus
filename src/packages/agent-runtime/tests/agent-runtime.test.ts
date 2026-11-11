@@ -152,6 +152,8 @@ describe('agent-runtime deep module', () => {
       domain: '采购与供应链协同',
       template: 'EMPTY',
     });
+    expect(emptyProj.currentStage).toBe(0);
+    expect(emptyProj.validation.presentModels).toEqual([]);
 
     const protoRes = await generatePrototypeFromDoc(store, {
       projectId: emptyProj.id,
@@ -163,6 +165,8 @@ describe('agent-runtime deep module', () => {
     expect(protoRes.prototype.htmlContent).toContain('data-binding=');
     expect(protoRes.prototype.htmlContent).toContain('data-event-id=');
     expect(protoRes.prototype.extractedScreenCount).toBeGreaterThanOrEqual(3);
+    // Step 3 must NOT prematurely populate ontology models before Step 4
+    expect(protoRes.project.validation.presentModels).toEqual([]);
     expect(protoRes.project.validation.errorCount).toBe(0);
 
     const refined = await refinePrototypeWithAi(store, {
@@ -170,6 +174,7 @@ describe('agent-runtime deep module', () => {
       prototypeId: protoRes.prototype.id,
       instruction: '在台账页顶部补充紧急采购交期红线提示徽章',
     });
+    expect(refined.project.validation.presentModels).toEqual([]);
     expect(refined.project.validation.errorCount).toBe(0);
 
     const synth = await synthesizeOntologyFromPrototype(store, {
@@ -177,8 +182,35 @@ describe('agent-runtime deep module', () => {
       prototypeId: refined.prototype.id,
     });
     expect(synth.synthesizedModels).toHaveLength(11);
+    expect(synth.project.validation.presentModels).toHaveLength(11);
     expect(synth.validation.errorCount).toBe(0);
     expect(synth.validation.valid).toBe(true);
+
+    // Custom project accidentally created with CONTRACT template strips foreign Contract aggregate on Step 4 synthesis
+    const accidentalDemoProj = store.createProject({
+      name: '咖啡店管理系统',
+      code: 'COFFEE-POS',
+      domain: '餐饮门店运营',
+      template: 'CONTRACT',
+    });
+    expect(accidentalDemoProj.suite.M1?.aggregates[0]?.name).toBe('Contract');
+    const coffeeProto = store.savePrototypeAndSyncMu(accidentalDemoProj.id, {
+      name: '咖啡店点单与出杯原型',
+      syncMu: false,
+      htmlContent:
+        '<section data-screen-id="SCR-COFFEE-POS" data-screen-name="门店点单台"><input data-element-id="EL-DRINK" data-binding="CoffeeOrder.drinkCode" /><button data-element-id="EL-SUBMIT" data-event-id="EVT-ORDER-PAID">下单出杯</button></section>',
+    }).prototype;
+    const coffeeSynth = await synthesizeOntologyFromPrototype(store, {
+      projectId: accidentalDemoProj.id,
+      prototypeId: coffeeProto.id,
+    });
+    expect(coffeeSynth.validation.errorCount).toBe(0);
+    expect(
+      coffeeSynth.project.suite.M1?.aggregates.some((a) => a.name === 'Contract'),
+    ).toBe(false);
+    expect(
+      coffeeSynth.project.suite.M1?.aggregates.some((a) => a.name === 'CoffeeOrder'),
+    ).toBe(true);
 
     const arch = await generateTechArchitectureDoc(store, {
       name: 'SRM 11模型深模块云原生架构',
@@ -553,4 +585,212 @@ describe('agent-runtime deep module', () => {
       server.close();
     }
   }, 20000);
+
+  it('keeps custom EMPTY projects domain-authentic with zero Contract leakage across tools and AgentSession SRS synthesis', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const coffeeProj = store.createProject({
+      name: '精品咖啡门店管理系统',
+      code: 'COFFEE_SHOP',
+      center: 'APPLICATION',
+      domain: '餐饮门店零售',
+      description: '堂食+外带点单、配方扣减与会员积分营销',
+      template: 'EMPTY',
+    });
+
+    // 1. Mutating an empty suite via ontology tools never injects hardcoded "Contract"
+    let working = coffeeProj.suite;
+    working = applyOntologyToolCall(
+      working,
+      'upsert_aggregate',
+      { name: 'CoffeeOrder', alias: '咖啡订单', lifecycle: ['CREATED', 'PAID', 'READY'] },
+      coffeeProj.domain,
+    ).nextSuite;
+    working = applyOntologyToolCall(
+      working,
+      'upsert_behavior',
+      { alias: '门店扫码下单', behaviorType: 'COMMAND' },
+      coffeeProj.domain,
+    ).nextSuite;
+    working = applyOntologyToolCall(
+      working,
+      'upsert_rule',
+      { alias: '饮品出杯自动扣减咖啡豆配方库存' },
+      coffeeProj.domain,
+    ).nextSuite;
+    working = applyOntologyToolCall(
+      working,
+      'upsert_flow',
+      { name: '门店点单制作履约流' },
+      coffeeProj.domain,
+    ).nextSuite;
+
+    const validation = validateOntologySuite(working);
+    expect(validation.errorCount).toBe(0);
+    expect(JSON.stringify(working)).not.toContain('Contract');
+    expect(working.M6?.flows[0]?.flowType).toBe('COLLABORATION');
+
+    // 2. Synthesizing SRS directly from a REQUIREMENT AgentSession preserves multi-turn + HITL context
+    const reqAgentSess = store.createAgentSession({
+      projectId: coffeeProj.id,
+      agentKind: 'REQUIREMENT',
+      title: '咖啡店需求探索',
+    });
+    store.saveAgentSession({
+      ...reqAgentSess,
+      messages: [
+        {
+          id: 'u-1',
+          role: 'user',
+          content: '我们要做精品咖啡馆堂食+外带系统，包含饮品配方扣减与完整会员积分优惠券。',
+          timestamp: new Date().toISOString(),
+        },
+        {
+          id: 'a-1',
+          role: 'assistant',
+          content: '已记录核心领域要素，请确认定制规格方案。',
+          timestamp: new Date().toISOString(),
+          artifacts: [
+            {
+              kind: 'REQUIREMENT_HINTS',
+              aggregates: ['咖啡订单 CoffeeOrder', '饮品配方 DrinkRecipe', '会员档案 MemberProfile'],
+              rules: ['每杯饮品出杯后按配方比例自动扣减原料库存'],
+              decisions: ['[已确认] 经营模式：堂食 + 外带（经典门店模式）'],
+              openQuestions: [],
+            },
+          ],
+          askUser: {
+            id: 'hitl-cup',
+            header: '定制规格',
+            question: '饮品定制选项需要支持到什么程度？',
+            options: ['标准三维定制（杯型/温度/甜度）', '深度客制（加浓/燕麦奶/风味糖浆加价）'],
+            answered: true,
+            selectedAnswers: ['深度客制（加浓/燕麦奶/风味糖浆加价）'],
+          },
+        },
+      ],
+    });
+
+    const srsRes = await synthesizeRequirementDocFromSession(store, {
+      sessionId: reqAgentSess.id,
+      projectId: coffeeProj.id,
+    });
+    expect(srsRes.doc.content).toContain('## 1.');
+    expect(srsRes.doc.content).toContain('## 9.');
+    expect(srsRes.doc.content).toContain('### 9.7');
+    expect(srsRes.doc.content).toContain('CoffeeOrder');
+    expect(srsRes.doc.content).toContain('深度客制');
+    expect(srsRes.doc.content).not.toContain('采购合同');
+    expect(srsRes.doc.content).not.toContain('风控主管');
+  });
+
+  it('supports end-to-end en-US locale across unified streaming, tool traces, HITL, SRS, and gateway diagnostics', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const enProj = store.createProject({
+      name: 'Specialty Roastery POS',
+      code: 'ROASTERY_POS',
+      center: 'APPLICATION',
+      domain: 'Retail & Hospitality',
+      template: 'EMPTY',
+    });
+
+    // 1. Unified COPILOT turn in en-US emits English tool trace summaryEn
+    const copilotSess = store.createAgentSession({
+      projectId: enProj.id,
+      agentKind: 'COPILOT',
+      title: 'English Modeling Session',
+    });
+    const turn1 = await collectUnifiedAgentTurn(store, {
+      sessionId: copilotSess.id,
+      prompt: 'Please add an aggregate BrewBatch for specialty coffee roasting',
+      mockMode: true,
+      locale: 'en-US',
+    });
+    const lastCopilotMsg = turn1.session.messages.at(-1)!;
+    expect(lastCopilotMsg.toolCalls?.length).toBeGreaterThan(0);
+    expect(lastCopilotMsg.toolCalls?.[0]?.output).toMatch(/Upserted|Inspected/i);
+    expect(lastCopilotMsg.content).not.toMatch(/[\u4e00-\u9fa5]{4,}/);
+
+    // 2. Unified REQUIREMENT turn with English ambiguity prompt triggers English Scoped HITL card
+    const reqSess = store.createAgentSession({
+      projectId: enProj.id,
+      agentKind: 'REQUIREMENT',
+      title: 'English Requirement Discovery',
+    });
+    const turn2 = await collectUnifiedAgentTurn(store, {
+      sessionId: reqSess.id,
+      prompt: 'We are not sure about loyalty tier expiration rules, please give me options',
+      mockMode: true,
+      locale: 'en-US',
+    });
+    const hitlMsg = turn2.session.messages.at(-1)!;
+    expect(hitlMsg.askUser).toBeDefined();
+    expect(hitlMsg.askUser?.question).toMatch(/[A-Za-z]/);
+
+    // 3. Synthesizing SRS in en-US produces English 9-chapter SRS with zero Chinese tag leaks
+    const enSrs = await synthesizeRequirementDocFromSession(store, {
+      sessionId: reqSess.id,
+      projectId: enProj.id,
+      locale: 'en-US',
+    });
+    expect(enSrs.doc.content).toContain('## 1. Project Background, Goals & Scope Boundaries');
+    expect(enSrs.doc.content).toContain('BrewBatch');
+    expect(enSrs.doc.content).toContain(
+      '## 9. Non-Functional Requirements, Integration & Governance Checklist',
+    );
+    expect(enSrs.doc.content).toContain('### 9.7');
+    expect(enSrs.doc.content).toContain('[Pending]');
+    expect(enSrs.doc.content).not.toContain('[待确认]');
+
+    // 4. LlmGatewayError produces English remediation when locale is en-US
+    const gwErr = new LlmGatewayError({
+      providerName: 'Primary Gateway',
+      baseUrl: 'http://127.0.0.1:3425/v1',
+      model: 'auto/glm-5.3-flash',
+      message: 'Connection refused',
+      locale: 'en-US',
+    });
+    const diag = gwErr.toDiagnostic('en-US');
+    expect(diag.remediation).toContain('LLM Center');
+    expect(diag.remediation).not.toMatch(/[\u4e00-\u9fa5]/);
+  });
+
+  it('emits 4-stage onProgress events during SRS synthesis and respects AbortSignal without saving partial docs', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const proj = store.createProject({
+      name: '茶饮门店工单平台',
+      code: 'TEA-OPS',
+      domain: '新茶饮门店运营',
+      template: 'EMPTY',
+    });
+    const reqSess = store.createRequirementSession({
+      projectId: proj.id,
+      title: '茶饮需求探索',
+    });
+
+    const phases: string[] = [];
+    const res = await synthesizeRequirementDocFromSession(store, {
+      sessionId: reqSess.id,
+      projectId: proj.id,
+      onProgress: (ev) => {
+        phases.push(ev.phase);
+        expect(ev.messageZh.length).toBeGreaterThan(0);
+        expect(ev.messageEn.length).toBeGreaterThan(0);
+      },
+    });
+    expect(phases).toEqual(['CONTEXT', 'MODEL_ALIGN', 'GENERATING', 'VALIDATING']);
+    expect(res.doc.content).toContain('## 9.');
+
+    const docsBeforeAbort = store.listRequirementDocs(proj.id).length;
+    const aborter = new AbortController();
+    aborter.abort();
+    await expect(
+      synthesizeRequirementDocFromSession(store, {
+        sessionId: reqSess.id,
+        projectId: proj.id,
+        signal: aborter.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(store.listRequirementDocs(proj.id).length).toBe(docsBeforeAbort);
+  });
 });

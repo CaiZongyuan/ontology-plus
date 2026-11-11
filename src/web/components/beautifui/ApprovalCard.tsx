@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Check, CornerDownLeft, Sparkles } from 'lucide-react';
 import type { AgentAskUserPrompt } from '../../../packages/workspace-store/index.js';
+import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { Button } from './Button.js';
 import { GlideMenu } from './GlideMenu.js';
@@ -18,6 +19,7 @@ export function ApprovalCard({
   onSubmit,
   className,
 }: ApprovalCardProps) {
+  const { t } = usePreferences();
   const [selected, setSelected] = useState<string[]>(
     prompt.selectedAnswers && prompt.selectedAnswers.length > 0
       ? prompt.selectedAnswers
@@ -39,10 +41,10 @@ export function ApprovalCard({
           <Check size={10} strokeWidth={2.75} />
         </span>
         <span className="font-medium text-ink">
-          {prompt.header || '已确认业务决策'}
+          {prompt.header || t('已确认业务决策', 'Decision Confirmed')}
         </span>
         <span className="text-ink-3">
-          {(prompt.selectedAnswers ?? []).join(' · ') || 'Submitted'}
+          {(prompt.selectedAnswers ?? []).join(' · ') || t('已提交', 'Submitted')}
         </span>
       </div>
     );
@@ -81,11 +83,12 @@ export function ApprovalCard({
         <div className="flex items-center gap-1.5">
           <Sparkles size={13} className="text-accent" />
           <span className="text-[11.5px] font-semibold text-accent">
-            {prompt.header || '需要补充业务决策 (Scoped HITL)'}
+            {prompt.header ||
+              t('需要补充业务决策 (Scoped HITL)', 'Business Decision Required (Scoped HITL)')}
           </span>
         </div>
         <span className="font-mono text-[11.5px] text-ink-3">
-          {prompt.multiSelect ? '可多选' : '单选'}
+          {prompt.multiSelect ? t('可多选', 'Multi-select') : t('单选', 'Single-select')}
         </span>
       </div>
 
@@ -145,7 +148,10 @@ export function ApprovalCard({
                   handleConfirm();
                 }
               }}
-              placeholder="或输入补充说明 / 自定义参数..."
+              placeholder={t(
+                '或输入补充说明 / 自定义参数...',
+                'Or enter custom details / parameters...',
+              )}
               className="w-full rounded-control border border-line bg-field px-2.5 py-1.5 text-[12.5px] text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
             />
           </div>
@@ -160,7 +166,7 @@ export function ApprovalCard({
           onClick={handleConfirm}
           data-testid="agent-hitl-submit-btn"
         >
-          确认并继续推理
+          {t('确认并继续推理', 'Confirm & Continue')}
           <CornerDownLeft size={11} strokeWidth={2} className="opacity-80" />
         </Button>
       </div>

@@ -99,6 +99,15 @@
   background-size: 18px 18px;
 }
 
+/* Edges and dynamically-revealed relation badges are derived read-only projections;
+   prevent them from intercepting pointer hover over entity cards. */
+.kg-canvas .react-flow__edges,
+.kg-canvas .react-flow__edge,
+.kg-canvas .react-flow__edgelabel-renderer,
+.kg-canvas .react-flow__edgelabel-renderer * {
+  pointer-events: none !important;
+}
+
 .kg-svg {
   display: block;
   width: 100%;

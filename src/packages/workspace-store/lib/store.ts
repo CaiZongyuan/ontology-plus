@@ -708,6 +708,72 @@ function parseCreateTablesFromSnippet(snippet: string): ParsedDdlTable[] {
     });
   }
 
+  // Fallback for SOURCE_CODE snippets (TypeScript interface/type/class or Prisma model blocks)
+  if (results.length === 0) {
+    const codeEntityRegex =
+      /(?:export\s+)?(?:interface|class|model|type)\s+([A-Z][A-Za-z0-9_]*)\s*(?:=\s*)?\{([\s\S]*?)\}/g;
+    let codeMatch: RegExpExecArray | null;
+    while ((codeMatch = codeEntityRegex.exec(snippet)) !== null) {
+      const entityName = codeMatch[1];
+      const body = codeMatch[2] ?? '';
+      const tableName = `t_${entityName
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .toLowerCase()}`;
+      const columns: ParsedDdlColumn[] = [];
+      for (const rawLine of body.split(/\r?\n|;/)) {
+        const line = rawLine.replace(/\/\/.*$/, '').trim();
+        if (!line) continue;
+        // TypeScript `field?: string` or Prisma `field String`
+        const tsField = line.match(
+          /^(?:readonly\s+|public\s+|private\s+)?([a-zA-Z_][a-zA-Z0-9_]*)(\?)?\s*:\s*([A-Za-z0-9_[\]|<>'" ]+)/,
+        );
+        const prismaField = !tsField
+          ? line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s+(String|Int|Float|Decimal|Boolean|DateTime)\b(\?)?/)
+          : null;
+        if (!tsField && !prismaField) continue;
+        const rawFieldName = (tsField?.[1] ?? prismaField?.[1])!;
+        const optional = Boolean(tsField?.[2] || prismaField?.[3]);
+        const rawType = (tsField?.[3] ?? prismaField?.[2] ?? 'string').toLowerCase();
+        const colSnake = rawFieldName
+          .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+          .toLowerCase();
+        const sqlType = rawType.includes('number') || rawType.includes('decimal') || rawType.includes('float')
+          ? 'DECIMAL(18,2)'
+          : rawType.includes('int')
+            ? 'INTEGER'
+            : rawType.includes('bool')
+              ? 'BOOLEAN'
+              : rawType.includes('date')
+                ? 'TIMESTAMP'
+                : 'VARCHAR(128)';
+        columns.push({
+          name: colSnake,
+          sqlType,
+          nullable: optional,
+          unique: colSnake === 'id' || colSnake.endsWith('_no') || colSnake.endsWith('_code'),
+          isPrimaryKey: colSnake === 'id',
+        });
+      }
+      if (columns.length > 0) {
+        if (!columns.some((c) => c.isPrimaryKey)) {
+          columns.unshift({
+            name: 'id',
+            sqlType: 'VARCHAR(36)',
+            nullable: false,
+            unique: true,
+            isPrimaryKey: true,
+          });
+        }
+        results.push({
+          tableName,
+          primaryKey: 'id',
+          columns,
+          foreignKeys: [],
+        });
+      }
+    }
+  }
+
   return results;
 }
 
@@ -981,12 +1047,31 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     try {
       const modelRoot = path.join(workspaceRoot, 'model', projectId);
       const yamlDir = path.join(modelRoot, 'yaml');
-      fs.mkdirSync(yamlDir, { recursive: true });
-
       const files = serializeSuiteToYamlFiles(suite);
-      for (const entry of Object.values(files)) {
-        if (!entry) continue;
+      const activeEntries = Object.values(files).filter(
+        (entry): entry is NonNullable<typeof entry> => Boolean(entry),
+      );
+
+      if (activeEntries.length === 0) {
+        if (fs.existsSync(yamlDir)) {
+          fs.rmSync(yamlDir, { recursive: true, force: true });
+        }
+        if (fs.existsSync(modelRoot)) {
+          fs.writeFileSync(path.join(modelRoot, 'CHANGELOG.md'), changelog, 'utf-8');
+        }
+        return;
+      }
+
+      fs.mkdirSync(yamlDir, { recursive: true });
+      const activeFileNames = new Set<string>(['manifest.json']);
+      for (const entry of activeEntries) {
+        activeFileNames.add(entry.fileName);
         fs.writeFileSync(path.join(yamlDir, entry.fileName), entry.content, 'utf-8');
+      }
+      for (const existingName of fs.readdirSync(yamlDir)) {
+        if (!activeFileNames.has(existingName)) {
+          fs.rmSync(path.join(yamlDir, existingName), { force: true });
+        }
       }
       const manifestJson = buildManifestForSuite(projectId, domain, suite);
       fs.writeFileSync(path.join(yamlDir, 'manifest.json'), manifestJson, 'utf-8');
@@ -1371,16 +1456,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       } else if (input.template === 'MFT') {
         baseSuite = JSON.parse(JSON.stringify(MFT_ENTERPRISE_SUITE));
       } else {
-        baseSuite = {
-          M1: {
-            model_type: 'OBJECT',
-            version: '5.0',
-            domain: input.domain,
-            aggregates: [],
-            data_dictionaries: [],
-            aggregate_associations: [],
-          },
-        };
+        baseSuite = {};
       }
       const changelog = `# Ontology Change Log - ${input.name}\n\n## [${now}] Project Created\n- Domain: ${input.domain}\n`;
       const desc = input.description ?? `${input.domain}本体工程`;
@@ -1988,6 +2064,46 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     runOntologyExtractionJob(input) {
       const project = this.getProject(input.projectId);
       if (!project) throw new Error(`Project not found: ${input.projectId}`);
+
+      if (input.synthesizedSuite) {
+        const shouldApply = input.applyImmediately !== false;
+        const extractedModels = MODEL_CODES.filter((c) => Boolean(input.synthesizedSuite![c]));
+        const entitiesCount =
+          input.synthesizedEntitiesCount ?? input.synthesizedSuite.M1?.aggregates.length ?? 0;
+        const tablesCount = input.synthesizedSuite.MM?.mappings.length ?? 0;
+        const interfacesCount =
+          input.synthesizedInterfacesCount ?? input.synthesizedSuite.MI?.interfaces.length ?? 0;
+
+        const job: ExtractionJob = {
+          id: nextUniqueId('ext-job'),
+          systemId: input.systemId,
+          projectId: input.projectId,
+          title: input.title,
+          sourceType: input.sourceType,
+          sourceSnippet: input.sourceSnippet,
+          extractedModels,
+          confidenceScore: 0.94,
+          status: 'COMPLETED',
+          summary:
+            input.synthesizedSummary ||
+            `本体萃取完成：AI 语义解析提炼 ${entitiesCount} 个领域聚合根、${interfacesCount} 个服务接口契约，并通过一致性门禁校验。`,
+          candidateSuite: input.synthesizedSuite,
+          extractedEntitiesCount: entitiesCount,
+          extractedTablesCount: tablesCount,
+          extractedInterfacesCount: interfacesCount,
+          appliedToProject: shouldApply,
+          createdAt: new Date().toISOString(),
+        };
+        putItem('extraction_jobs', job.id, job, input.projectId);
+        const finalProject = shouldApply
+          ? this.updateSuite(
+              input.projectId,
+              input.synthesizedSuite,
+              `Applied AI semantic ontology extraction job: ${input.title}`,
+            )
+          : project;
+        return { job, project: finalProject };
+      }
 
       const parsedTables = parseCreateTablesFromSnippet(input.sourceSnippet);
       const parsedOps = parseOpenApiOperationsFromSnippet(input.sourceSnippet);

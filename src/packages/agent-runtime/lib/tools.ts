@@ -1369,8 +1369,39 @@ export function applyOntologyToolCall(
         typeof args.primaryAggregate === 'string' ? args.primaryAggregate : undefined,
       );
       const primaryAggregate = primaryAgg.name;
-      const validRoles = (nextSuite.M5?.roles ?? []).map((r) => r.id);
-      const firstRole = validRoles[0];
+      if (!nextSuite.M5) {
+        nextSuite.M5 = {
+          model_type: 'ACTOR',
+          version: '5.0',
+          domain,
+          actors: [],
+          roles: [],
+          permissions: [],
+        };
+      }
+      if (nextSuite.M5.roles.length === 0) {
+        const autoRoleId = 'ROLE-01';
+        nextSuite.M5.roles.push({
+          id: autoRoleId,
+          name: `${cleanDomain}操作员`,
+          code: 'DOMAIN_OPERATOR_01',
+          inheritsFrom: [],
+          permissions: [],
+          dataScope: 'ALL',
+          description: `${cleanDomain}核心业务流程默认执行角色`,
+        });
+        if (nextSuite.M5.actors.length === 0) {
+          nextSuite.M5.actors.push({
+            id: 'ACT-01',
+            name: `${cleanDomain}操作员`,
+            actorType: 'HUMAN',
+            roles: [autoRoleId],
+            description: `${cleanDomain}业务经办主体`,
+          });
+        }
+      }
+      const validRoles = nextSuite.M5.roles.map((r) => r.id);
+      const firstRole = validRoles[0]!;
       const secondRole = validRoles[1] ?? firstRole;
       const firstBeh = nextSuite.M2?.behaviors.find((b) => b.behaviorType === 'COMMAND') ?? nextSuite.M2?.behaviors[0];
 

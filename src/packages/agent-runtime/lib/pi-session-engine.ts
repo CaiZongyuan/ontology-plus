@@ -46,6 +46,11 @@ import type {
   WorkspaceStore,
 } from '../../workspace-store/index.js';
 import {
+  type AgentLocale,
+  pickLocaleText,
+  resolveEffectiveLocale,
+} from './locale.js';
+import {
   ONTOLOGY_DURABLE_TOOLS,
   ONTOLOGY_TOOL_NAMES,
   OPENAI_ONTOLOGY_TOOLS,
@@ -72,28 +77,40 @@ export class LlmGatewayError extends Error {
     model: string;
     remediation?: string;
     statusCode?: number;
+    locale?: AgentLocale;
   }) {
     super(input.message);
     this.name = 'LlmGatewayError';
     this.providerName = input.providerName;
     this.baseUrl = input.baseUrl;
     this.model = input.model;
+    const loc = input.locale ?? 'zh-CN';
     this.remediation =
       input.remediation ??
-      '请前往「基础设施 → LLM 中心」检查网关地址、API Key 与在线状态，或在「系统设置」中显式开启「离线演示 Mock 模式」。';
+      pickLocaleText(
+        loc,
+        '请前往「基础设施 → LLM 中心」检查网关地址、API Key 与在线状态，或在「系统设置」中显式开启「离线演示 Mock 模式」。',
+        'Check the gateway URL, API key, and online status in Platform Governance → LLM Center, or enable Offline Demo Mock Mode in System Settings.',
+      );
     if (input.statusCode !== undefined) {
       this.statusCode = input.statusCode;
     }
   }
 
-  toDiagnostic() {
+  toDiagnostic(locale?: AgentLocale) {
+    const defaultZh =
+      '请前往「基础设施 → LLM 中心」检查网关地址、API Key 与在线状态，或在「系统设置」中显式开启「离线演示 Mock 模式」。';
+    const remediation =
+      locale === 'en-US' && this.remediation === defaultZh
+        ? 'Check the gateway URL, API key, and online status in Platform Governance → LLM Center, or enable Offline Demo Mock Mode in System Settings.'
+        : this.remediation;
     return {
       code: this.code,
       providerName: this.providerName,
       baseUrl: this.baseUrl,
       model: this.model,
       message: this.message,
-      remediation: this.remediation,
+      remediation,
       ...(this.statusCode !== undefined ? { statusCode: this.statusCode } : {}),
     };
   }
@@ -223,7 +240,7 @@ export const UNIFIED_AGENT_EXTRA_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'run_readonly_sql',
       description:
-        'Execute a safe read-only SQLite SELECT query against business tables mapped in MM (t_contract, t_counterparty, t_payment_milestone, t_settlement_order).',
+        'Execute a safe read-only SQLite SELECT query against analytical and business tables mapped in MM or registered in the Data Analytics Center.',
       parameters: {
         type: 'object',
         properties: {
@@ -241,7 +258,7 @@ export const UNIFIED_AGENT_EXTRA_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'propose_policy_writeback',
       description:
-        'Propose a governed policy writeback action linked to an MI/Analytics WritebackInterface such as WB-01.',
+        'Propose a governed policy writeback action linked to an MI/Analytics WritebackInterface.',
       parameters: {
         type: 'object',
         properties: {
@@ -389,6 +406,7 @@ function buildFauxMockModels(
   store: WorkspaceStore,
   session: AgentSession,
   activeModelCode?: ModelCode,
+  explicitLocale?: AgentLocale,
 ): { models: MutableModels; selectedModel: Model<Api>; providerLabel: string } {
   const project = resolveProjectDetail(store, session.projectId);
   const modelId = session.modelOverride || 'faux/ontology-pi-durable-v1';
@@ -422,51 +440,94 @@ function buildFauxMockModels(
               .map((b) => b.text)
               .join('\n');
       const lower = userPrompt.toLowerCase();
+      const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
 
       // Explicit Scoped HITL ask_user trigger when ambiguous choice is requested
       const hasResolvedChoice =
-        userPrompt.includes('[用户已确认选择]') || userPrompt.includes('已选择：');
+        userPrompt.includes('[用户已确认选择]') ||
+        userPrompt.includes('[User Confirmed Choice]') ||
+        userPrompt.includes('已选择：');
       if (
         !hasResolvedChoice &&
         (userPrompt.includes('待确认选项') ||
           userPrompt.includes('让我选择') ||
           lower.includes('ask_user') ||
+          lower.includes('give me options') ||
+          lower.includes('let me choose') ||
           (session.agentKind === 'REQUIREMENT' &&
             (userPrompt.includes('不确定') ||
               userPrompt.includes('哪种方案') ||
-              userPrompt.includes('怎么处理'))))
+              userPrompt.includes('怎么处理') ||
+              lower.includes('not sure') ||
+              lower.includes('unsure') ||
+              lower.includes('which option'))))
       ) {
         return fauxAssistantMessage(
           [
             fauxThinking(
-              `识别到 B 类核心业务边界存在多方案分歧，按照 Scoped HITL 规范，常规只读与建模工具自动执行，针对业务分歧调用 ask_user 卡片邀请用户确认。`,
+              pickLocaleText(
+                loc,
+                `识别到 B 类核心业务边界存在多方案分歧，按照 Scoped HITL 规范，常规只读与建模工具自动执行，针对业务分歧调用 ask_user 卡片邀请用户确认。`,
+                `Detected a Class-B business boundary ambiguity. Following Scoped HITL rules, invoking ask_user so the user can choose the preferred policy.`,
+              ),
             ),
-            fauxToolCall('ask_user', {
-              header: 'B类业务边界待确认',
-              question: `针对「${userPrompt.slice(0, 36)}」，请选择异常处理与审批流转策略：`,
-              options: [
-                '同步前置阻断 (M2 Precondition)：提交时实时拦截零脏数据落库',
-                '进入 M6 特批会签流：保留草稿并自动升级至法务与财务总监双签',
-                '异步风控冻结 (WB-01)：允许登记单据但自动冻结下游结算批次',
-              ],
-              multiSelect: false,
-              allowFreeform: true,
-            }),
+            fauxToolCall(
+              'ask_user',
+              loc === 'en-US'
+                ? {
+                    header: 'Class-B Decision Pending',
+                    question: `For "${userPrompt.slice(0, 48)}", select the exception & approval policy:`,
+                    options: [
+                      'Synchronous Precondition Block (M2): reject invalid submissions immediately',
+                      'Escalated M6 Approval Flow: keep draft and route to dual sign-off',
+                      'Async Risk Hold (Writeback): accept order and hold downstream settlement',
+                    ],
+                    multiSelect: false,
+                    allowFreeform: true,
+                  }
+                : {
+                    header: 'B类业务边界待确认',
+                    question: `针对「${userPrompt.slice(0, 36)}」，请选择异常处理与审批流转策略：`,
+                    options: [
+                      '同步前置阻断 (M2 Precondition)：提交时实时拦截零脏数据落库',
+                      '进入 M6 特批会签流：保留草稿并自动升级至法务与财务总监双签',
+                      '异步风控冻结 (WB-01)：允许登记单据但自动冻结下游结算批次',
+                    ],
+                    multiSelect: false,
+                    allowFreeform: true,
+                  },
+            ),
           ],
           { stopReason: 'toolUse' },
         );
       }
 
       if (session.agentKind === 'REASONING') {
-        const sql =
-          userPrompt.includes('供应商') ||
-          userPrompt.includes('相对方') ||
-          lower.includes('counterparty')
+        const mappedTables = (project?.suite.MM?.mappings ?? []).flatMap((m) =>
+          m.tableMappings.map((tm) => tm.tableName),
+        );
+        const dbTables = store
+          .listDatabaseResources()
+          .flatMap((d) => d.tables.map((t) => t.tableName));
+        const primaryTable = mappedTables[0] ?? dbTables[0] ?? 't_contract';
+        const hasContractTables =
+          primaryTable === 't_contract' || dbTables.includes('t_contract');
+        const sql = hasContractTables
+          ? userPrompt.includes('供应商') ||
+            userPrompt.includes('相对方') ||
+            lower.includes('counterparty') ||
+            lower.includes('vendor')
             ? 'SELECT cp.company_name, cp.credit_rating, COUNT(c.id) AS contract_cnt, SUM(c.total_amount) AS total_amount FROM t_contract c JOIN t_counterparty cp ON c.counterparty_id = cp.id GROUP BY cp.id, cp.company_name, cp.credit_rating ORDER BY total_amount DESC'
-            : 'SELECT risk_level, status, COUNT(id) AS contract_count, SUM(total_amount) AS total_amount FROM t_contract GROUP BY risk_level, status ORDER BY total_amount DESC';
+            : 'SELECT risk_level, status, COUNT(id) AS contract_count, SUM(total_amount) AS total_amount FROM t_contract GROUP BY risk_level, status ORDER BY total_amount DESC'
+          : `SELECT * FROM ${primaryTable} LIMIT 20`;
+
         const blocks = [
           fauxThinking(
-            `正在沿数据本体映射链路 M1 -> MM -> SQLite 执行实时穿透查询，并结合 M3 规则评估策略回写接口。`,
+            pickLocaleText(
+              loc,
+              `正在沿数据本体映射链路 M1 -> MM -> SQLite 执行实时穿透查询，并结合 M3 规则评估策略回写接口。`,
+              `Querying live SQLite data along the M1 -> MM ontology mapping chain and evaluating M3 policy writeback options.`,
+            ),
           ),
           fauxToolCall('run_readonly_sql', { sql }),
         ];
@@ -475,14 +536,25 @@ function buildFauxMockModels(
           userPrompt.includes('问策') ||
           userPrompt.includes('回写') ||
           userPrompt.includes('冻结') ||
-          lower.includes('policy')
+          lower.includes('policy') ||
+          lower.includes('writeback')
         ) {
+          const wb = store.listWritebackInterfaces()[0];
+          const primaryAgg = project?.suite.M1?.aggregates[0]?.name ?? 'PrimaryAggregate';
           blocks.push(
             fauxToolCall('propose_policy_writeback', {
-              writebackInterfaceId: 'WB-01',
-              actionTitle: '冻结高风险逾期合同关联结算单批次',
-              targetObject: 'Contract / SettlementOrder',
-              expectedImpact: '实时拦截高风险外包合同资金超付敞口并通知法务复核',
+              writebackInterfaceId: wb?.id ?? 'WB-01',
+              actionTitle: pickLocaleText(
+                loc,
+                wb?.name ?? `执行 ${primaryAgg} 风险策略回写管控`,
+                wb?.name ?? `Execute ${primaryAgg} policy writeback control`,
+              ),
+              targetObject: primaryAgg,
+              expectedImpact: pickLocaleText(
+                loc,
+                `针对高风险 ${primaryAgg} 实例执行受控状态更新并写入审计日志`,
+                `Apply governed state update on high-risk ${primaryAgg} records with audit logging`,
+              ),
             }),
           );
         }
@@ -493,7 +565,7 @@ function buildFauxMockModels(
         const caps = project ? inspectOntologyMcpCapabilities(project) : null;
         const matchedTool =
           caps?.tools.find((t) =>
-            userPrompt.includes('规则')
+            userPrompt.includes('规则') || lower.includes('rule')
               ? t.sourceModel === 'M3'
               : t.sourceModel === 'M7' || t.sourceModel === 'M2',
           ) ?? caps?.tools[0];
@@ -501,7 +573,11 @@ function buildFauxMockModels(
           return fauxAssistantMessage(
             [
               fauxThinking(
-                `正在根据业务语义匹配当前工程编译出的 MCP 工具 \`${matchedTool.name}\` 并自动执行。`,
+                pickLocaleText(
+                  loc,
+                  `正在根据业务语义匹配当前工程编译出的 MCP 工具 \`${matchedTool.name}\` 并自动执行。`,
+                  `Matching compiled Ontology MCP tool \`${matchedTool.name}\` against user intent and invoking automatically.`,
+                ),
               ),
               fauxToolCall('invoke_mcp_tool', {
                 toolName: matchedTool.name,
@@ -518,7 +594,11 @@ function buildFauxMockModels(
         return fauxAssistantMessage(
           [
             fauxThinking(
-              `正在读取四层架构资产与 11 模型本体快照，重编译应用「${appId}」的渐进式披露开发包。`,
+              pickLocaleText(
+                loc,
+                `正在读取四层架构资产与 11 模型本体快照，重编译应用「${appId}」的渐进式披露开发包。`,
+                `Reading 4-layer architecture assets and 11-model ontology snapshot to recompile progressive-disclosure dev package for "${appId}".`,
+              ),
             ),
             fauxToolCall('compile_dev_package', { applicationId: appId }),
           ],
@@ -531,20 +611,35 @@ function buildFauxMockModels(
         return fauxAssistantMessage(
           [
             fauxThinking(
-              `正在按 A/B 分级追问策略拆解用户需求，自动补全常规审计默认项并沉淀候选规则。`,
+              pickLocaleText(
+                loc,
+                `正在按 A/B 分级追问策略拆解用户需求，自动补全常规审计默认项并沉淀候选规则。`,
+                `Decomposing requirements using Class-A/B progressive grilling, auto-completing standard audit defaults, and recording candidate domain rules.`,
+              ),
             ),
             fauxToolCall('record_requirement_insights', {
               discoveredAggregates: (project?.suite.M1?.aggregates ?? [])
                 .slice(0, 2)
                 .map((a) => `${a.name} (${a.alias})`),
               discoveredRules: [`${ruleCode}: ${userPrompt.slice(0, 48)}`],
-              resolvedDecisions: [
-                `[AI自动补全] 自动补充 createdAt/updatedAt 审计字段与幂等乐观锁版本号`,
-                `[已确认] ${userPrompt.slice(0, 64)}`,
-              ],
-              openQuestions: [
-                `[待确认] 当触发「${userPrompt.slice(0, 24)}」阈值时是否同步联动冻结下游结算单？`,
-              ],
+              resolvedDecisions:
+                loc === 'en-US'
+                  ? [
+                      `[AI Auto-Completed] Automatically include createdAt/updatedAt audit fields and optimistic locking version`,
+                      `[Confirmed] ${userPrompt.slice(0, 64)}`,
+                    ]
+                  : [
+                      `[AI自动补全] 自动补充 createdAt/updatedAt 审计字段与幂等乐观锁版本号`,
+                      `[已确认] ${userPrompt.slice(0, 64)}`,
+                    ],
+              openQuestions:
+                loc === 'en-US'
+                  ? [
+                      `[Pending] When "${userPrompt.slice(0, 28)}" threshold triggers, should downstream fulfillment also pause?`,
+                    ]
+                  : [
+                      `[待确认] 当触发「${userPrompt.slice(0, 24)}」阈值时是否同步联动管控下游单据？`,
+                    ],
             }),
           ],
           { stopReason: 'toolUse' },
@@ -552,26 +647,41 @@ function buildFauxMockModels(
       }
 
       // COPILOT default: inspect or mutate Ontology Suite
+      const firstAgg = project?.suite.M1?.aggregates[0];
       if (
-        userPrompt.includes('删除') &&
-        (userPrompt.includes('Contract') || userPrompt.includes('AGG-01'))
+        (userPrompt.includes('删除') || lower.includes('delete')) &&
+        (userPrompt.includes('Contract') ||
+          userPrompt.includes('AGG-01') ||
+          (firstAgg && userPrompt.includes(firstAgg.name)))
       ) {
         return fauxAssistantMessage(
           [
             fauxThinking(
-              `用户请求删除核心聚合根 AGG-01 (Contract)，尝试调用 delete_element 并交由 11 模型一致性门禁校验。`,
+              pickLocaleText(
+                loc,
+                `用户请求删除核心聚合根 ${firstAgg?.id ?? 'AGG-01'}，尝试调用 delete_element 并交由 11 模型一致性门禁校验。`,
+                `User requested deleting aggregate ${firstAgg?.id ?? 'AGG-01'}; calling delete_element under 11-model consistency gate.`,
+              ),
             ),
-            fauxToolCall('delete_element', { modelCode: 'M1', elementId: 'AGG-01' }),
+            fauxToolCall('delete_element', {
+              modelCode: 'M1',
+              elementId: firstAgg?.id ?? 'AGG-01',
+            }),
           ],
           { stopReason: 'toolUse' },
         );
       }
 
       if (userPrompt.includes('悬空自修复测试') || lower.includes('self-repair')) {
-        // Attempt an unsafe deletion of AGG-01 first -> rejected by 11-model validator -> Step 2 self-repairs via upsert_rule!
         return fauxAssistantMessage(
           [
-            fauxThinking(`尝试直接移除 AGG-01 以重建场景，交由 11 模型一致性门禁验证安全性。`),
+            fauxThinking(
+              pickLocaleText(
+                loc,
+                `尝试直接移除 AGG-01 以重建场景，交由 11 模型一致性门禁验证安全性。`,
+                `Attempting to delete AGG-01 directly to verify 11-model validator gate and automatic self-repair.`,
+              ),
+            ),
             fauxToolCall('delete_element', {
               modelCode: 'M1',
               elementId: 'AGG-01',
@@ -597,25 +707,52 @@ function buildFauxMockModels(
           !explicitlyRule &&
           (userPrompt.includes('聚合') ||
             userPrompt.includes('实体') ||
+            lower.includes('aggregate') ||
+            lower.includes('entity') ||
             (activeModelCode === 'M1' &&
               !userPrompt.includes('行为') &&
               !userPrompt.includes('流程') &&
               !userPrompt.includes('事件') &&
-              !userPrompt.includes('屏幕')))
+              !userPrompt.includes('屏幕') &&
+              !lower.includes('behavior') &&
+              !lower.includes('flow') &&
+              !lower.includes('event') &&
+              !lower.includes('screen')))
         ) {
-          const nextIdx = (project?.suite.M1?.aggregates.length ?? 3) + 1;
+          const nextIdx = (project?.suite.M1?.aggregates.length ?? 0) + 1;
+          const explicitPascal =
+            /\b(?:aggregate|entity)\s+([A-Z][A-Za-z0-9]+)/.exec(userPrompt)?.[1] ??
+            /\b([A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*)\b/.exec(userPrompt)?.[1];
+          const derivedName = explicitPascal || `DomainEntity0${nextIdx}`;
+          const derivedAlias =
+            explicitPascal ||
+            userPrompt
+              .replace(
+                /^(?:please\s+)?(?:请|帮我|新增|添加|创建|一个|一条|add|create|an?|the|aggregate|entity)\s*/gi,
+                '',
+              )
+              .replace(/^(?:an?\s+|the\s+)?(?:aggregate|entity)\s*/i, '')
+              .trim()
+              .slice(0, 22) ||
+            pickLocaleText(loc, `业务实体0${nextIdx}`, `Domain Entity 0${nextIdx}`);
           return fauxAssistantMessage(
             [
               fauxThinking(
-                `解析到 M1 领域对象建模意图，调用 upsert_aggregate 写入 AST 并触发两级校验门禁。`,
+                pickLocaleText(
+                  loc,
+                  `解析到 M1 领域对象建模意图，调用 upsert_aggregate 写入 AST 并触发两级校验门禁。`,
+                  `Parsed M1 domain aggregate modeling intent; calling upsert_aggregate via typed AST and two-tier validator.`,
+                ),
               ),
               fauxToolCall('upsert_aggregate', {
                 id: `AGG-0${nextIdx}`,
-                name: `GuaranteeLetter0${nextIdx}`,
-                alias:
-                  userPrompt.replace(/^(请|帮我|新增|添加|创建|一个|一条)+/g, '').slice(0, 18) ||
-                  `履约保函0${nextIdx}`,
-                description: `由 Pi Durable 本体助手根据「${userPrompt}」建模的聚合根`,
+                name: derivedName,
+                alias: derivedAlias,
+                description: pickLocaleText(
+                  loc,
+                  `由 Pi Durable 本体助手根据「${userPrompt}」建模的聚合根`,
+                  `Aggregate root modeled by Pi Durable assistant from "${userPrompt}"`,
+                ),
               }),
             ],
             { stopReason: 'toolUse' },
@@ -623,21 +760,32 @@ function buildFauxMockModels(
         }
 
         const nextRuleIdx = (project?.suite.M3?.rules.length ?? 3) + 1;
+        const refObj = project?.suite.M1?.aggregates[0]?.name ?? 'DomainEntity';
         return fauxAssistantMessage(
           [
             fauxThinking(
-              `解析到 M3 跨对象业务规则建模意图，调用 upsert_rule 写入结构化规则并执行一致性门禁检查。`,
+              pickLocaleText(
+                loc,
+                `解析到 M3 跨对象业务规则建模意图，调用 upsert_rule 写入结构化规则并执行一致性门禁检查。`,
+                `Parsed M3 cross-object business rule intent; calling upsert_rule and validating 11-model consistency.`,
+              ),
             ),
             fauxToolCall('upsert_rule', {
               id: `RULE-0${nextRuleIdx}`,
-              name: `ComplianceGuardRule0${nextRuleIdx}`,
+              name: `DomainGuardRule0${nextRuleIdx}`,
               alias:
-                userPrompt.replace(/^(请|帮我|新增|添加|创建|一条|一个)+/g, '').slice(0, 22) ||
-                `逾期自动管控规则0${nextRuleIdx}`,
+                userPrompt
+                  .replace(/^(请|帮我|新增|添加|创建|一条|一个|add|create|an?|the)\s*/gi, '')
+                  .slice(0, 24) ||
+                pickLocaleText(loc, `业务管控规则0${nextRuleIdx}`, `Domain Guard Rule 0${nextRuleIdx}`),
               ruleType: 'VALIDATION',
-              referencedObjects: [project?.suite.M1?.aggregates[0]?.name ?? 'Contract'],
-              expression: 'Contract.totalAmount > 0 && overdueDays <= 30',
-              violationMessage: '触发 M3 规则拦截：逾期超过阈值禁止继续流转',
+              referencedObjects: [refObj],
+              expression: `${refObj}.id != null`,
+              violationMessage: pickLocaleText(
+                loc,
+                '触发 M3 规则拦截：不满足业务准入约束禁止继续流转',
+                'M3 rule violation: guard condition failed; transition blocked',
+              ),
             }),
           ],
           { stopReason: 'toolUse' },
@@ -647,7 +795,11 @@ function buildFauxMockModels(
       return fauxAssistantMessage(
         [
           fauxThinking(
-            `正在检索当前工程「${project?.name ?? session.projectId}」的 11 模型结构与两级校验状态。`,
+            pickLocaleText(
+              loc,
+              `正在检索当前工程「${project?.name ?? session.projectId}」的 11 模型结构与两级校验状态。`,
+              `Inspecting 11-model ontology snapshot and validation diagnostics for project "${project?.name ?? session.projectId}".`,
+            ),
           ),
           fauxToolCall('inspect_ontology_model', {
             modelCode: activeModelCode ?? 'ALL',
@@ -658,6 +810,13 @@ function buildFauxMockModels(
     },
     // Step 2: Check toolResult; if validator rejected a repairable call, self-repair! Otherwise synthesize final Markdown!
     (context) => {
+      const lastUserMsg = [...context.messages]
+        .reverse()
+        .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
+      const userPrompt =
+        typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
+
       const toolResults = context.messages.filter(
         (m): m is ToolResultMessage => m.role === 'toolResult',
       );
@@ -675,17 +834,26 @@ function buildFauxMockModels(
         lastResultText.includes('REJECTED_BY_VALIDATOR')
       ) {
         const validEvtId = project?.suite.ME?.events[0]?.id ?? 'EVT-01';
+        const targetAgg = project?.suite.M1?.aggregates[0]?.name ?? 'DomainEntity';
         return fauxAssistantMessage(
           [
             fauxThinking(
-              `检测到上一轮 delete_element 因跨模型引用约束被 11 模型一致性校验器拦截，自动自修复改为调用 upsert_scenario 安全挂载在现有事件 ${validEvtId} 上。`,
+              pickLocaleText(
+                loc,
+                `检测到上一轮 delete_element 因跨模型引用约束被 11 模型一致性校验器拦截，自动自修复改为调用 upsert_scenario 安全挂载在现有事件 ${validEvtId} 上。`,
+                `Previous delete_element was blocked by the 11-model consistency gate due to cross-model references; self-repairing via upsert_scenario bound to ${validEvtId}.`,
+              ),
             ),
             fauxToolCall('upsert_scenario', {
               id: 'SCN-99',
-              name: '逾期结算联动冻结场景',
+              name: pickLocaleText(loc, '跨聚合联动管控场景', 'Cross-Aggregate Coordination Scenario'),
               triggerEventRef: validEvtId,
-              involvedAggregates: [project?.suite.M1?.aggregates[0]?.name ?? 'Contract'],
-              description: '经 11 模型校验器反馈自动自修复创建的跨聚合场景',
+              involvedAggregates: [targetAgg],
+              description: pickLocaleText(
+                loc,
+                '经 11 模型校验器反馈自动自修复创建的跨聚合场景',
+                'Cross-aggregate scenario created via automatic 11-model validator self-repair',
+              ),
             }),
           ],
           { stopReason: 'toolUse' },
@@ -698,37 +866,74 @@ function buildFauxMockModels(
           .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
           .map((c) => c.text)
           .join(' ');
-        return `- **\`${tr.toolName}\`** (${tr.isError ? '一致性门禁拦截' : '执行成功'})：${txt.slice(0, 180)}`;
+        const statusTxt = tr.isError
+          ? pickLocaleText(loc, '一致性门禁拦截', 'Blocked by Validator')
+          : pickLocaleText(loc, '执行成功', 'Applied');
+        return `- **\`${tr.toolName}\`** (${statusTxt}): ${txt.slice(0, 180)}`;
       });
 
       return fauxAssistantMessage([
-        fauxThinking(`工具执行与一致性校验已完成，正在汇总结构化结论与下一步指引。`),
+        fauxThinking(
+          pickLocaleText(
+            loc,
+            `工具执行与一致性校验已完成，正在汇总结构化结论与下一步指引。`,
+            `Tool execution and consistency validation finished; summarizing structured results.`,
+          ),
+        ),
         fauxText(
-          [
-            `### 处理完成（${freshProject?.name ?? '当前本体工程'}）`,
-            '',
-            ...(summaryLines.length > 0 ? summaryLines : ['- 已完成上下文分析。']),
-            '',
-            `> 当前 11 模型门禁状态：**${freshProject?.validation.errorCount ?? 0} 个一致性错误** · **${freshProject?.validation.warningCount ?? 0} 个阶段提示**（*离线演示 Mock 引擎*）。`,
-          ].join('\n'),
+          loc === 'en-US'
+            ? [
+                `### Completed (${freshProject?.name ?? 'Current Project'})`,
+                '',
+                ...(summaryLines.length > 0 ? summaryLines : ['- Context analysis complete.']),
+                '',
+                `> 11-Model Gate Status: **${freshProject?.validation.errorCount ?? 0} Consistency Errors** · **${freshProject?.validation.warningCount ?? 0} Stage Warnings** (*Offline Demo Mock Engine*).`,
+              ].join('\n')
+            : [
+                `### 处理完成（${freshProject?.name ?? '当前本体工程'}）`,
+                '',
+                ...(summaryLines.length > 0 ? summaryLines : ['- 已完成上下文分析。']),
+                '',
+                `> 当前 11 模型门禁状态：**${freshProject?.validation.errorCount ?? 0} 个一致性错误** · **${freshProject?.validation.warningCount ?? 0} 个阶段提示**（*离线演示 Mock 引擎*）。`,
+              ].join('\n'),
         ),
       ]);
     },
     // Step 3 (if Step 2 performed self-repair tool call): Final summary after repair!
     (context) => {
+      const lastUserMsg = [...context.messages]
+        .reverse()
+        .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
+      const userPrompt =
+        typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
+
       const toolResults = context.messages.filter(
         (m): m is ToolResultMessage => m.role === 'toolResult',
       );
       const freshProject = resolveProjectDetail(store, session.projectId) ?? project;
       return fauxAssistantMessage([
-        fauxThinking(`自修复工具调用已通过 11 模型门禁校验，输出最终确认报告。`),
+        fauxThinking(
+          pickLocaleText(
+            loc,
+            `自修复工具调用已通过 11 模型门禁校验，输出最终确认报告。`,
+            `Self-repair tool call passed the 11-model consistency gate; emitting final report.`,
+          ),
+        ),
         fauxText(
-          [
-            `### 自修复与一致性门禁验证通过`,
-            '',
-            `- 首轮提交因悬空事件引用被校验器拦截后，已在同一轮对话内自动改绑合法 \`ME\` 领域事件并成功落库（共执行 **${toolResults.length}** 步工具闭环）。`,
-            `- 当前工程一致性状态：**${freshProject?.validation.errorCount ?? 0} 个一致性错误**。`,
-          ].join('\n'),
+          loc === 'en-US'
+            ? [
+                `### Self-Repair & Consistency Gate Passed`,
+                '',
+                `- After the initial call was blocked by dangling references, the agent automatically rebound to a valid \`ME\` event and persisted cleanly (**${toolResults.length}** tool steps).`,
+                `- Project Consistency Status: **${freshProject?.validation.errorCount ?? 0} Consistency Errors**.`,
+              ].join('\n')
+            : [
+                `### 自修复与一致性门禁验证通过`,
+                '',
+                `- 首轮提交因悬空事件引用被校验器拦截后，已在同一轮对话内自动改绑合法 \`ME\` 领域事件并成功落库（共执行 **${toolResults.length}** 步工具闭环）。`,
+                `- 当前工程一致性状态：**${freshProject?.validation.errorCount ?? 0} 个一致性错误**。`,
+              ].join('\n'),
         ),
       ]);
     },
@@ -750,6 +955,7 @@ export function buildPiModelsForStore(
   options?: {
     mockMode?: boolean;
     activeModelCode?: ModelCode;
+    locale?: AgentLocale;
   },
 ): {
   models: MutableModels;
@@ -758,9 +964,10 @@ export function buildPiModelsForStore(
   providerLabel: string;
   isMock: boolean;
 } {
+  const loc = resolveEffectiveLocale(store, options?.locale);
   const isMock = isMockLlmActive(store, options?.mockMode);
   if (isMock) {
-    const built = buildFauxMockModels(store, session, options?.activeModelCode);
+    const built = buildFauxMockModels(store, session, options?.activeModelCode, loc);
     return { ...built, isMock: true };
   }
 
@@ -774,10 +981,15 @@ export function buildPiModelsForStore(
   );
   if (enabledProviders.length === 0) {
     throw new LlmGatewayError({
-      message: '当前没有已启用的 LLM 网关提供商（Live 模式禁止静默伪造回复）。',
-      providerName: '未配置网关',
+      message: pickLocaleText(
+        loc,
+        '当前没有已启用的 LLM 网关提供商（Live 模式禁止静默伪造回复）。',
+        'No enabled LLM gateway provider is configured (silent fake fallback is forbidden in Live mode).',
+      ),
+      providerName: pickLocaleText(loc, '未配置网关', 'No Provider Configured'),
       baseUrl: '(none)',
       model: session.modelOverride || '(none)',
+      locale: loc,
     });
   }
 
@@ -851,10 +1063,15 @@ export function buildPiModelsForStore(
 
   if (!selectedModel) {
     throw new LlmGatewayError({
-      message: `提供商「${preferredProvider.name}」未声明可用模型。`,
+      message: pickLocaleText(
+        loc,
+        `提供商「${preferredProvider.name}」未声明可用模型。`,
+        `Provider "${preferredProvider.name}" has no declared models.`,
+      ),
       providerName: preferredProvider.name,
       baseUrl: preferredProvider.baseUrl,
       model: preferredModelId || '(empty)',
+      locale: loc,
     });
   }
 
@@ -921,10 +1138,75 @@ function buildSystemPromptForSession(
   store: WorkspaceStore,
   session: AgentSession,
   activeModelCode?: ModelCode,
+  locale: AgentLocale = 'zh-CN',
 ): string {
   const project = resolveProjectDetail(store, session.projectId);
+
+  if (locale === 'en-US') {
+    const baseHeaderEn = [
+      `You are the Pi Durable Agent of the Ontology Plus workbench (session kind: ${session.agentKind}).`,
+      `LANGUAGE RULE: Always respond in English (matching the user's English interface/input), unless the user explicitly writes in Chinese.`,
+      project
+        ? `Active Ontology Project: ${project.name} (ID: ${project.id}, Domain: ${project.domain}, Present Models: ${project.validation.presentModels.join(', ')}, Consistency Errors: ${project.validation.errorCount}, Stage Warnings: ${project.validation.warningCount}).`
+        : '',
+      activeModelCode ? `Currently focused model tab: ${activeModelCode}.` : '',
+      session.compactedSummary ? `[Compacted Conversation Summary]\n${session.compactedSummary}` : '',
+      `Execution Rules (YOLO + Scoped HITL):`,
+      `1. Execute routine modeling, read-only inspection, SQL queries, MCP calls, and dev-package compilation tools automatically (YOLO). Never ask permission before calling routine tools.`,
+      `2. ONLY call \`ask_user\` when required business parameters are missing or a Class-B business boundary ambiguity requires a human decision.`,
+      `3. If an ontology mutation returns an 11-model consistency error (isError=true), read the diagnostics and self-repair in the same turn.`,
+      `4. Always use the term "Ontology Extraction" — never "reverse engineering".`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    if (session.agentKind === 'REASONING') {
+      const dbTables = store
+        .listDatabaseResources()
+        .flatMap((db) =>
+          db.tables.map(
+            (tbl) => `${tbl.tableName}(${tbl.columns.slice(0, 6).map((c) => c.name).join(', ')})`,
+          ),
+        );
+      const mmTables = (project?.suite.MM?.mappings ?? []).flatMap((m) =>
+        m.tableMappings.map(
+          (tm) => `${tm.tableName}(${tm.columnMappings.slice(0, 6).map((c) => c.column).join(', ')})`,
+        ),
+      );
+      const availableTables = Array.from(new Set([...mmTables, ...dbTables]));
+      const writebacks = store
+        .listWritebackInterfaces()
+        .map((wb) => `${wb.id}(${wb.name} -> ${wb.boundBehaviorRef})`)
+        .join(', ');
+      return [
+        baseHeaderEn,
+        `Current reasoning mode: ${session.reasoningMode ?? 'ASK_DATA'} (ASK_DATA=data query, ASK_WHY=root-cause attribution, ASK_POLICY=policy writeback).`,
+        availableTables.length > 0
+          ? `Available analytics tables & columns: ${availableTables.join('; ')} (plus dictionary table __dict).`
+          : '',
+        writebacks ? `Registered writeback interfaces: ${writebacks}.` : '',
+        `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; in ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+    if (session.agentKind === 'CAPABILITY') {
+      const caps = project ? inspectOntologyMcpCapabilities(project) : null;
+      const toolNames = caps?.tools.map((t) => `${t.name}(${t.sourceModel})`).join(', ') ?? 'none';
+      return `${baseHeaderEn}\nCompiled Ontology MCP tools: ${toolNames}. Prefer calling invoke_mcp_tool to execute domain queries or behaviors.`;
+    }
+    if (session.agentKind === 'CODING') {
+      return `${baseHeaderEn}\nTarget assembled application ID: ${session.targetId ?? 'app-01'}. Call compile_dev_package to compile progressive-disclosure engineering artifacts or refine ontology elements.`;
+    }
+    if (session.agentKind === 'REQUIREMENT') {
+      return `${baseHeaderEn}\nFollow Class-A/B progressive grilling: tag standard audit/engineering defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], call ask_user for unresolved Class-B decisions (or tag [Pending]), and call record_requirement_insights to persist candidate aggregates and rules.`;
+    }
+    return `${baseHeaderEn}\nCurrent M1 aggregates: ${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || 'none'}; M3 rules count: ${project?.suite.M3?.rules.length ?? 0}.`;
+  }
+
   const baseHeader = [
     `你是 Ontology Plus 工作台的 Pi Durable 智能体（会话类型：${session.agentKind}）。`,
+    `语言准则：请始终与用户最新输入保持同一语言回复（中文提问用中文，英文提问用英文）。`,
     project
       ? `当前激活本体工程：${project.name}（ID: ${project.id}，领域：${project.domain}，已建模型：${project.validation.presentModels.join(', ')}，一致性错误：${project.validation.errorCount}，阶段提示：${project.validation.warningCount}）。`
       : '',
@@ -940,7 +1222,34 @@ function buildSystemPromptForSession(
     .join('\n');
 
   if (session.agentKind === 'REASONING') {
-    return `${baseHeader}\n当前分析推理模式：${session.reasoningMode ?? 'ASK_DATA'}（ASK_DATA=智能问数，ASK_WHY=智能问因，ASK_POLICY=智能问策）。优先调用 run_readonly_sql 获取真实表数据后再输出结论。`;
+    const dbTables = store
+      .listDatabaseResources()
+      .flatMap((db) =>
+        db.tables.map(
+          (tbl) => `${tbl.tableName}(${tbl.columns.slice(0, 6).map((c) => c.name).join(', ')})`,
+        ),
+      );
+    const mmTables = (project?.suite.MM?.mappings ?? []).flatMap((m) =>
+      m.tableMappings.map(
+        (tm) => `${tm.tableName}(${tm.columnMappings.slice(0, 6).map((c) => c.column).join(', ')})`,
+      ),
+    );
+    const availableTables = Array.from(new Set([...mmTables, ...dbTables]));
+    const writebacks = store
+      .listWritebackInterfaces()
+      .map((wb) => `${wb.id}(${wb.name} -> ${wb.boundBehaviorRef})`)
+      .join(', ');
+    return [
+      baseHeader,
+      `当前分析推理模式：${session.reasoningMode ?? 'ASK_DATA'}（ASK_DATA=智能问数，ASK_WHY=智能问因，ASK_POLICY=智能问策）。`,
+      availableTables.length > 0
+        ? `当前可用分析数据表与核心列：${availableTables.join('；')}（及数据字典表 __dict）。`
+        : '',
+      writebacks ? `当前已注册闭环回写接口：${writebacks}。` : '',
+      `优先调用 run_readonly_sql 获取真实表数据后再输出结论；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
   if (session.agentKind === 'CAPABILITY') {
     const caps = project ? inspectOntologyMcpCapabilities(project) : null;
@@ -971,6 +1280,7 @@ function executeUnifiedToolCall(
   session: AgentSession,
   tc: ToolCall,
   hadPreviousValidatorError: boolean,
+  locale: AgentLocale = 'zh-CN',
 ): ExecutedToolStep {
   const started = Date.now();
   const args = (tc.arguments ?? {}) as Record<string, unknown>;
@@ -983,7 +1293,9 @@ function executeUnifiedToolCall(
       .map((item) => {
         if (item && typeof item === 'object') {
           const obj = item as Record<string, unknown>;
-          const lbl = String(obj.label || obj.id || '默认选项');
+          const lbl = String(
+            obj.label || obj.id || pickLocaleText(locale, '默认选项', 'Default option'),
+          );
           const desc = typeof obj.description === 'string' ? ` — ${obj.description}` : '';
           return `${lbl}${desc}`;
         }
@@ -994,12 +1306,20 @@ function executeUnifiedToolCall(
 
     const promptCard: AgentAskUserPrompt = {
       id: `ask-${Date.now().toString(36)}`,
-      header: typeof args.header === 'string' ? args.header : '待确认业务决策',
-      question: String(args.question || '请确认以下业务选项：'),
+      header:
+        typeof args.header === 'string'
+          ? args.header
+          : pickLocaleText(locale, '待确认业务决策', 'Decision Pending'),
+      question: String(
+        args.question ||
+          pickLocaleText(locale, '请确认以下业务选项：', 'Please select your preferred business option:'),
+      ),
       options:
         options.length > 0
           ? options
-          : ['采用推荐默认方案', '转交特批审批流处理'],
+          : locale === 'en-US'
+            ? ['Use recommended default option', 'Escalate to custom approval flow']
+            : ['采用推荐默认方案', '转交特批审批流处理'],
       multiSelect: Boolean(args.multiSelect),
       allowFreeform: args.allowFreeform !== false,
       answered: false,
@@ -1010,7 +1330,11 @@ function executeUnifiedToolCall(
         id: tc.id,
         toolName: tc.name,
         arguments: args,
-        output: `等待用户确认：${promptCard.question}`,
+        output: pickLocaleText(
+          locale,
+          `等待用户确认：${promptCard.question}`,
+          `Awaiting user confirmation: ${promptCard.question}`,
+        ),
         isError: false,
         durationMs: Date.now() - started,
       },
@@ -1033,7 +1357,11 @@ function executeUnifiedToolCall(
           id: tc.id,
           toolName: tc.name,
           arguments: args,
-          output: `未找到工程 ${session.projectId}`,
+          output: pickLocaleText(
+            locale,
+            `未找到工程 ${session.projectId}`,
+            `Project not found: ${session.projectId}`,
+          ),
           isError: true,
           durationMs: Date.now() - started,
         },
@@ -1057,14 +1385,21 @@ function executeUnifiedToolCall(
       if (candidateReport.errorCount > baselineReport.errorCount) {
         const addedErrors = candidateReport.diagnostics
           .filter((d) => d.tier === 'ERROR')
-          .map((d) => `[${d.code}@${d.model}] ${d.messageZh} (${d.elementId ?? 'root'})`);
+          .map(
+            (d) =>
+              `[${d.code}@${d.model}] ${locale === 'en-US' ? d.messageEn : d.messageZh} (${d.elementId ?? 'root'})`,
+          );
 
         return {
           trace: {
             id: tc.id,
             toolName: tc.name,
             arguments: args,
-            output: `被 11 模型一致性门禁拦截（错误 ${baselineReport.errorCount} -> ${candidateReport.errorCount}）：${addedErrors[0] ?? '跨模型引用不一致'}`,
+            output: pickLocaleText(
+              locale,
+              `被 11 模型一致性门禁拦截（错误 ${baselineReport.errorCount} -> ${candidateReport.errorCount}）：${addedErrors[0] ?? '跨模型引用不一致'}`,
+              `Blocked by 11-model consistency gate (errors ${baselineReport.errorCount} -> ${candidateReport.errorCount}): ${addedErrors[0] ?? 'cross-model reference inconsistency'}`,
+            ),
             isError: true,
             targetModelCode: mutation.modelCode,
             targetElementId: mutation.elementId,
@@ -1075,7 +1410,11 @@ function executeUnifiedToolCall(
             baselineErrors: baselineReport.errorCount,
             candidateErrors: candidateReport.errorCount,
             diagnostics: addedErrors,
-            hint: '请根据 diagnostics 修正悬空引用或改用已存在的聚合根/行为/事件 ID 后重试。',
+            hint: pickLocaleText(
+              locale,
+              '请根据 diagnostics 修正悬空引用或改用已存在的聚合根/行为/事件 ID 后重试。',
+              'Fix dangling references per diagnostics or bind to existing Aggregate/Behavior/Event IDs and retry.',
+            ),
           }),
           isError: true,
         };
@@ -1089,6 +1428,7 @@ function executeUnifiedToolCall(
 
       const actionType: 'ADDED' | 'MODIFIED' | 'REMOVED' =
         tc.name === 'delete_element' ? 'REMOVED' : 'ADDED';
+      const localizedSummary = locale === 'en-US' ? mutation.summaryEn : mutation.summaryZh;
 
       const artifact: AgentDomainArtifact = {
         kind: 'ONTOLOGY_DIFF',
@@ -1098,7 +1438,7 @@ function executeUnifiedToolCall(
           {
             id: mutation.elementId,
             category: mutation.modelCode,
-            detail: mutation.summaryZh,
+            detail: localizedSummary,
             action: actionType,
           },
         ],
@@ -1109,7 +1449,7 @@ function executeUnifiedToolCall(
           id: tc.id,
           toolName: tc.name,
           arguments: { ...args, id: mutation.elementId },
-          output: mutation.summaryZh,
+          output: localizedSummary,
           isError: false,
           ...(hadPreviousValidatorError ? { validatorRepair: true } : {}),
           targetModelCode: mutation.modelCode,
@@ -1120,7 +1460,7 @@ function executeUnifiedToolCall(
           status: 'APPLIED',
           modelCode: mutation.modelCode,
           elementId: mutation.elementId,
-          summary: mutation.summaryZh,
+          summary: localizedSummary,
           errorCount: saved.validation.errorCount,
           warningCount: saved.validation.warningCount,
         }),
@@ -1134,7 +1474,11 @@ function executeUnifiedToolCall(
           id: tc.id,
           toolName: tc.name,
           arguments: args,
-          output: `本体变更被拦截：${msg}`,
+          output: pickLocaleText(
+            locale,
+            `本体变更被拦截：${msg}`,
+            `Ontology mutation rejected: ${msg}`,
+          ),
           isError: true,
           durationMs: Date.now() - started,
         },
@@ -1156,7 +1500,7 @@ function executeUnifiedToolCall(
           id: tc.id,
           toolName: tc.name,
           arguments: args,
-          output: '当前无可用本体工程',
+          output: pickLocaleText(locale, '当前无可用本体工程', 'No active ontology project found'),
           isError: true,
           durationMs: Date.now() - started,
         },
@@ -1193,7 +1537,11 @@ function executeUnifiedToolCall(
         id: tc.id,
         toolName: tc.name,
         arguments: args,
-        output: `已检视本体快照（${requested}）：${project.validation.errorCount} 错误 / ${project.validation.warningCount} 提示`,
+        output: pickLocaleText(
+          locale,
+          `已检视本体快照（${requested}）：${project.validation.errorCount} 错误 / ${project.validation.warningCount} 提示`,
+          `Inspected ontology snapshot (${requested}): ${project.validation.errorCount} errors / ${project.validation.warningCount} warnings`,
+        ),
         isError: false,
         ...(isSpecific ? { targetModelCode: requested as ModelCode } : {}),
         durationMs: Date.now() - started,
@@ -1211,7 +1559,8 @@ function executeUnifiedToolCall(
       reqSessions[0] ??
       store.createRequirementSession({
         projectId: session.projectId,
-        title: session.title || '需求探索会话',
+        title:
+          session.title || pickLocaleText(locale, '需求探索会话', 'Requirement Session'),
       });
     const discoveredAggregates = Array.isArray(args.discoveredAggregates)
       ? args.discoveredAggregates.map(String)
@@ -1241,7 +1590,11 @@ function executeUnifiedToolCall(
         {
           id: `rmsg-${Date.now().toString(36)}`,
           role: 'assistant',
-          content: `已从统一会话同步 ${discoveredRules.length} 条候选规则与 ${resolvedDecisions.length} 项决策。`,
+          content: pickLocaleText(
+            locale,
+            `已从统一会话同步 ${discoveredRules.length} 条候选规则与 ${resolvedDecisions.length} 项决策。`,
+            `Synced ${discoveredRules.length} candidate rules and ${resolvedDecisions.length} decisions from unified session.`,
+          ),
           timestamp: new Date().toISOString(),
           extractedHints: {
             aggregates: discoveredAggregates,
@@ -1262,7 +1615,11 @@ function executeUnifiedToolCall(
         id: tc.id,
         toolName: tc.name,
         arguments: args,
-        output: `已沉淀 ${discoveredRules.length} 条候选规则、${resolvedDecisions.length} 项分级决策`,
+        output: pickLocaleText(
+          locale,
+          `已沉淀 ${discoveredRules.length} 条候选规则、${resolvedDecisions.length} 项分级决策`,
+          `Recorded ${discoveredRules.length} candidate rules and ${resolvedDecisions.length} tiered decisions`,
+        ),
         isError: false,
         durationMs: Date.now() - started,
       },
@@ -1275,6 +1632,7 @@ function executeUnifiedToolCall(
         kind: 'REQUIREMENT_HINTS',
         aggregates: discoveredAggregates,
         rules: discoveredRules,
+        decisions: resolvedDecisions,
         openQuestions,
       },
     };
@@ -1294,7 +1652,11 @@ function executeUnifiedToolCall(
           id: tc.id,
           toolName: tc.name,
           arguments: args,
-          output: `未找到装配应用 ${appId}`,
+          output: pickLocaleText(
+            locale,
+            `未找到装配应用 ${appId}`,
+            `Assembled application not found: ${appId}`,
+          ),
           isError: true,
           durationMs: Date.now() - started,
         },
@@ -1335,7 +1697,11 @@ function executeUnifiedToolCall(
         {
           timestamp: new Date().toISOString(),
           phase: 'PI_SESSION_COMPILE',
-          detail: `通过统一会话编译生成 ${pkg.files.length} 份渐进式披露开发包文件`,
+          detail: pickLocaleText(
+            locale,
+            `通过统一会话编译生成 ${pkg.files.length} 份渐进式披露开发包文件`,
+            `Compiled ${pkg.files.length} progressive-disclosure dev package files via unified session`,
+          ),
         },
       ],
     });
@@ -1345,7 +1711,11 @@ function executeUnifiedToolCall(
         id: tc.id,
         toolName: tc.name,
         arguments: args,
-        output: `已重编译应用「${updatedApp.name}」渐进式披露开发包（共 ${pkg.files.length} 个产物文件）`,
+        output: pickLocaleText(
+          locale,
+          `已重编译应用「${updatedApp.name}」渐进式披露开发包（共 ${pkg.files.length} 个产物文件）`,
+          `Recompiled progressive-disclosure dev package for "${updatedApp.name}" (${pkg.files.length} files)`,
+        ),
         isError: false,
         durationMs: Date.now() - started,
       },
@@ -1373,7 +1743,7 @@ function executeUnifiedToolCall(
           id: tc.id,
           toolName: tc.name,
           arguments: args,
-          output: '未找到本体工程',
+          output: pickLocaleText(locale, '未找到本体工程', 'Ontology project not found'),
           isError: true,
           durationMs: Date.now() - started,
         },
@@ -1406,8 +1776,16 @@ function executeUnifiedToolCall(
         toolName: tc.name,
         arguments: args,
         output: isErr
-          ? `MCP 工具 ${toolName} 调用失败：${rpcRes.error?.message}`
-          : `已调用 MCP 工具 ${toolName}：${JSON.stringify(rpcRes.result).slice(0, 160)}`,
+          ? pickLocaleText(
+              locale,
+              `MCP 工具 ${toolName} 调用失败：${rpcRes.error?.message}`,
+              `MCP tool ${toolName} failed: ${rpcRes.error?.message}`,
+            )
+          : pickLocaleText(
+              locale,
+              `已调用 MCP 工具 ${toolName}：${JSON.stringify(rpcRes.result).slice(0, 160)}`,
+              `Invoked MCP tool ${toolName}: ${JSON.stringify(rpcRes.result).slice(0, 160)}`,
+            ),
         isError: isErr,
         durationMs: Date.now() - started,
       },
@@ -1418,7 +1796,12 @@ function executeUnifiedToolCall(
 
   // 7. Run Read-Only SQLite Analytics Query
   if (tc.name === 'run_readonly_sql') {
-    const sql = String(args.sql || 'SELECT * FROM t_contract LIMIT 10');
+    const project = resolveProjectDetail(store, session.projectId);
+    const firstMappedTable =
+      project?.suite.MM?.mappings[0]?.tableMappings[0]?.tableName ??
+      store.listDatabaseResources()[0]?.tables[0]?.tableName ??
+      't_contract';
+    const sql = String(args.sql || `SELECT * FROM ${firstMappedTable} LIMIT 10`);
     try {
       const queryResult = store.executeReadOnlyAnalyticsSql(sql);
       return {
@@ -1426,7 +1809,11 @@ function executeUnifiedToolCall(
           id: tc.id,
           toolName: tc.name,
           arguments: args,
-          output: `SQLite 实查返回 ${queryResult.rowCount} 行（${queryResult.columns.join(', ')}）`,
+          output: pickLocaleText(
+            locale,
+            `SQLite 实查返回 ${queryResult.rowCount} 行（${queryResult.columns.join(', ')}）`,
+            `SQLite query returned ${queryResult.rowCount} rows (${queryResult.columns.join(', ')})`,
+          ),
           isError: false,
           durationMs: Date.now() - started,
         },
@@ -1447,7 +1834,11 @@ function executeUnifiedToolCall(
           id: tc.id,
           toolName: tc.name,
           arguments: args,
-          output: `SQL 查询被拦截或语法错误：${msg}`,
+          output: pickLocaleText(
+            locale,
+            `SQL 查询被拦截或语法错误：${msg}`,
+            `SQL query rejected or syntax error: ${msg}`,
+          ),
           isError: true,
           durationMs: Date.now() - started,
         },
@@ -1459,11 +1850,21 @@ function executeUnifiedToolCall(
 
   // 8. Propose Policy Writeback
   if (tc.name === 'propose_policy_writeback') {
-    const wbId = String(args.writebackInterfaceId || 'WB-01');
-    const actionTitle = String(args.actionTitle || '执行策略回写闭环');
-    const targetObject = String(args.targetObject || 'Contract');
+    const project = resolveProjectDetail(store, session.projectId);
+    const defaultWb = store.listWritebackInterfaces()[0]?.id ?? 'WB-01';
+    const defaultTarget = project?.suite.M1?.aggregates[0]?.name ?? 'PrimaryAggregate';
+    const wbId = String(args.writebackInterfaceId || defaultWb);
+    const actionTitle = String(
+      args.actionTitle || pickLocaleText(locale, '执行策略回写闭环', 'Execute Policy Writeback'),
+    );
+    const targetObject = String(args.targetObject || defaultTarget);
     const expectedImpact = String(
-      args.expectedImpact || '触发受控业务状态更新并记录回写审计流水',
+      args.expectedImpact ||
+        pickLocaleText(
+          locale,
+          '触发受控业务状态更新并记录回写审计流水',
+          'Trigger governed state update with audit trail logging',
+        ),
     );
 
     return {
@@ -1471,7 +1872,11 @@ function executeUnifiedToolCall(
         id: tc.id,
         toolName: tc.name,
         arguments: args,
-        output: `已生成策略回写建议：${actionTitle} (${wbId})`,
+        output: pickLocaleText(
+          locale,
+          `已生成策略回写建议：${actionTitle} (${wbId})`,
+          `Generated policy writeback proposal: ${actionTitle} (${wbId})`,
+        ),
         isError: false,
         durationMs: Date.now() - started,
       },
@@ -1485,8 +1890,16 @@ function executeUnifiedToolCall(
       artifact: {
         kind: 'REASONING_POLICY',
         mode: session.reasoningMode ?? 'ASK_POLICY',
-        dataSummary: [{ label: '绑定回写接口', value: wbId }],
-        causalAnalysis: [`针对核心对象 ${targetObject} 触发闭环回写动作`],
+        dataSummary: [
+          { label: pickLocaleText(locale, '绑定回写接口', 'Writeback Interface'), value: wbId },
+        ],
+        causalAnalysis: [
+          pickLocaleText(
+            locale,
+            `针对核心对象 ${targetObject} 触发闭环回写动作`,
+            `Trigger closed-loop writeback action against ${targetObject}`,
+          ),
+        ],
         policyRecommendations: [
           {
             actionTitle,
@@ -1504,7 +1917,7 @@ function executeUnifiedToolCall(
       id: tc.id,
       toolName: tc.name,
       arguments: args,
-      output: `未知工具：${tc.name}`,
+      output: pickLocaleText(locale, `未知工具：${tc.name}`, `Unknown tool: ${tc.name}`),
       isError: true,
       durationMs: Date.now() - started,
     },
@@ -1563,9 +1976,36 @@ function estimateSessionTokens(session: AgentSession): number {
 
 // ─── Session Compaction ──────────────────────────────────────────────────────
 
+function buildDeterministicCompactionBullets(
+  older: AgentSession['messages'],
+  locale: AgentLocale = 'zh-CN',
+): string[] {
+  return older.slice(-14).map((m) => {
+    const snippet = m.content.replace(/\s+/g, ' ').trim().slice(0, 240);
+    const answeredChoice =
+      m.askUser?.answered && m.askUser.selectedAnswers?.length
+        ? pickLocaleText(
+            locale,
+            ` [已确认选择: ${m.askUser.selectedAnswers.join(' / ')}]`,
+            ` [Confirmed choice: ${m.askUser.selectedAnswers.join(' / ')}]`,
+          )
+        : '';
+    const tools = (m.toolCalls ?? [])
+      .map((t) => `${t.toolName}:${t.isError ? 'ERR' : 'OK'}`)
+      .join(', ');
+    const roleLabel =
+      m.role === 'user' ? pickLocaleText(locale, '用户', 'User') : 'AI';
+    const toolsSuffix = tools
+      ? pickLocaleText(locale, ` (工具: ${tools})`, ` (Tools: ${tools})`)
+      : '';
+    return `- [${roleLabel}] ${snippet}${answeredChoice}${toolsSuffix}`;
+  });
+}
+
 export function compactAgentSession(
   store: WorkspaceStore,
   sessionId: string,
+  explicitLocale?: string,
 ): AgentSession {
   const session = store.getAgentSession(sessionId);
   if (!session) throw new Error(`Agent session not found: ${sessionId}`);
@@ -1573,19 +2013,23 @@ export function compactAgentSession(
     return session;
   }
 
+  const sample = session.messages
+    .filter((m) => m.role === 'user')
+    .map((m) => m.content)
+    .join('\n');
+  const locale = resolveEffectiveLocale(store, explicitLocale, sample);
+
   const older = session.messages.slice(0, -4);
   const kept = session.messages.slice(-4);
-  const bulletLines = older.slice(-10).map((m) => {
-    const snippet = m.content.replace(/\s+/g, ' ').trim().slice(0, 90);
-    const tools = (m.toolCalls ?? [])
-      .map((t) => `${t.toolName}:${t.isError ? 'ERR' : 'OK'}`)
-      .join(', ');
-    return `- [${m.role === 'user' ? '用户' : 'AI'}] ${snippet}${tools ? ` (工具: ${tools})` : ''}`;
-  });
+  const bulletLines = buildDeterministicCompactionBullets(older, locale);
 
   const nextSummary = [
     session.compactedSummary ? `${session.compactedSummary}\n` : '',
-    `已压缩 ${older.length} 条早期对话消息（${new Date().toISOString()}）：`,
+    pickLocaleText(
+      locale,
+      `已压缩 ${older.length} 条早期对话消息（${new Date().toISOString()}）：`,
+      `Compacted ${older.length} earlier messages (${new Date().toISOString()}):`,
+    ),
     ...bulletLines,
   ]
     .filter(Boolean)
@@ -1606,6 +2050,118 @@ export function compactAgentSession(
   return store.saveAgentSession(updated);
 }
 
+export async function compactAgentSessionWithLlm(
+  store: WorkspaceStore,
+  sessionId: string,
+  explicitLocale?: string,
+): Promise<AgentSession> {
+  const session = store.getAgentSession(sessionId);
+  if (!session) throw new Error(`Agent session not found: ${sessionId}`);
+  if (session.messages.length <= 4) {
+    return session;
+  }
+  const sample = session.messages
+    .filter((m) => m.role === 'user')
+    .map((m) => m.content)
+    .join('\n');
+  const locale = resolveEffectiveLocale(store, explicitLocale, sample);
+
+  if (isMockLlmActive(store)) {
+    return compactAgentSession(store, sessionId, locale);
+  }
+
+  const older = session.messages.slice(0, -4);
+  const kept = session.messages.slice(-4);
+  const transcript = older
+    .map((m) => {
+      const choice =
+        m.askUser?.answered && m.askUser.selectedAnswers?.length
+          ? pickLocaleText(
+              locale,
+              `\n  用户确认选项：${m.askUser.selectedAnswers.join('；')}`,
+              `\n  User confirmed choices: ${m.askUser.selectedAnswers.join('; ')}`,
+            )
+          : '';
+      const tools = (m.toolCalls ?? []).map((t) => `${t.toolName}(${t.output})`).join('; ');
+      const roleLabel =
+        m.role === 'user' ? pickLocaleText(locale, '用户', 'User') : 'AI';
+      return `[${roleLabel}] ${m.content}${choice}${tools ? `\n  Tools: ${tools}` : ''}`;
+    })
+    .join('\n\n');
+
+  try {
+    const built = buildPiModelsForStore(store, session, { mockMode: false, locale });
+    const stream = built.models.streamSimple(
+      built.selectedModel,
+      {
+        systemPrompt: pickLocaleText(
+          locale,
+          '你是 Ontology Plus 会话上下文压缩器。请将以下早期多轮对话提炼为高信息密度的结构化 Markdown 摘要（包含：1. 已确认业务目标与核心决策；2. 已识别领域对象/角色/业务规则；3. 已执行的工具变更与待推进事项）。严禁遗漏用户确认的具体业务参数，控制在 450 字以内。',
+          'You are the Ontology Plus conversation context compactor. Condense the earlier multi-turn dialogue into a dense structured Markdown summary covering: (1) confirmed business goals & decisions, (2) discovered domain entities/roles/rules, and (3) executed tool mutations & open next steps. Never omit specific user-confirmed parameters; keep within 350 words.',
+        ),
+        messages: [
+          {
+            role: 'user',
+            content: [
+              session.compactedSummary
+                ? pickLocaleText(
+                    locale,
+                    `既有历史摘要：\n${session.compactedSummary}\n`,
+                    `Existing summary:\n${session.compactedSummary}\n`,
+                  )
+                : '',
+              pickLocaleText(
+                locale,
+                `待压缩早期对话（共 ${older.length} 条）：\n${transcript}`,
+                `Earlier messages to compact (${older.length} turns):\n${transcript}`,
+              ),
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      {
+        timeoutMs: 90_000,
+        temperature: 0.1,
+        maxTokens: 2048,
+      },
+    );
+
+    let llmSummary = '';
+    for await (const ev of stream) {
+      if (ev.type === 'text_delta') {
+        llmSummary += ev.delta;
+      }
+    }
+    const cleanSummary = llmSummary.trim();
+    if (!cleanSummary) {
+      return compactAgentSession(store, sessionId, locale);
+    }
+
+    const updated: AgentSession = {
+      ...session,
+      compactedSummary: pickLocaleText(
+        locale,
+        `【AI 结构化会话摘要 · 已压缩 ${older.length} 条早期消息】\n${cleanSummary}`,
+        `[AI Structured Summary · ${older.length} earlier messages compacted]\n${cleanSummary}`,
+      ),
+      messages: kept,
+      updatedAt: new Date().toISOString(),
+    };
+    const estimated = estimateSessionTokens(updated);
+    updated.tokenUsage = {
+      inputTokens: Math.floor(estimated * 0.65),
+      outputTokens: Math.ceil(estimated * 0.35),
+      totalTokens: estimated,
+    };
+    return store.saveAgentSession(updated);
+  } catch {
+    return compactAgentSession(store, sessionId, locale);
+  }
+}
+
 // ─── Unified Multi-Step Streaming Session Runner ─────────────────────────────
 
 export interface UnifiedAgentStreamInput {
@@ -1619,6 +2175,7 @@ export interface UnifiedAgentStreamInput {
   };
   activeModelCode?: ModelCode;
   reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+  locale?: AgentLocale | string;
   mockMode?: boolean;
   signal?: AbortSignal;
   idleTimeoutMs?: number;
@@ -1633,6 +2190,13 @@ export async function* runUnifiedAgentSessionStream(
   if (!existing) {
     throw new Error(`Agent session not found: ${input.sessionId}`);
   }
+
+  const lastUserText = existing.messages.filter((m) => m.role === 'user').at(-1)?.content;
+  const effectiveLocale = resolveEffectiveLocale(
+    store,
+    input.locale,
+    input.prompt || input.askUserAnswer?.freeformText || lastUserText,
+  );
 
   if (input.mode === 'STEER') {
     abortActiveAgentSession(existing.id, 'STEER_SUPERSEDED');
@@ -1655,7 +2219,11 @@ export async function* runUnifiedAgentSessionStream(
         const sec = Math.max(0.1, Math.round((idleTimeoutMs / 1000) * 10) / 10);
         const reason: SessionAbortReason = {
           kind: 'IDLE_TIMEOUT',
-          message: `大模型流式推理响应超时（超过 ${sec} 秒未收到新分片）`,
+          message: pickLocaleText(
+            effectiveLocale,
+            `大模型流式推理响应超时（超过 ${sec} 秒未收到新分片）`,
+            `LLM streaming response timed out (no new chunk received for ${sec}s)`,
+          ),
         };
         controller.abort(reason);
       }
@@ -1668,7 +2236,11 @@ export async function* runUnifiedAgentSessionStream(
     if (!controller.signal.aborted) {
       const reason: SessionAbortReason = {
         kind: 'CLIENT_DISCONNECT',
-        message: '客户端流式连接已断开',
+        message: pickLocaleText(
+          effectiveLocale,
+          '客户端流式连接已断开',
+          'Client SSE connection closed',
+        ),
       };
       controller.abort(reason);
     }
@@ -1685,18 +2257,24 @@ export async function* runUnifiedAgentSessionStream(
   }
   activeSessionAbortControllers.set(existing.id, controller);
 
+  const defaultAbortedMsg = pickLocaleText(
+    effectiveLocale,
+    '会话生成已中止',
+    'Session generation aborted',
+  );
+
   const toAbortedError = (): SessionStreamAbortedError => {
     const r = controller.signal.reason as Partial<SessionAbortReason> | Error | undefined;
     if (r && typeof r === 'object' && 'kind' in r && typeof r.kind === 'string') {
       return new SessionStreamAbortedError(
         r.kind as SessionAbortKind,
-        typeof r.message === 'string' && r.message ? r.message : '会话生成已中止',
+        typeof r.message === 'string' && r.message ? r.message : defaultAbortedMsg,
       );
     }
     if (r instanceof Error) {
       return new SessionStreamAbortedError('IDLE_TIMEOUT', r.message);
     }
-    return new SessionStreamAbortedError('USER_ABORT', '会话生成已中止');
+    return new SessionStreamAbortedError('USER_ABORT', defaultAbortedMsg);
   };
 
   let seq = 1;
@@ -1723,7 +2301,11 @@ export async function* runUnifiedAgentSessionStream(
             selectedAnswers: combinedAnswers,
           },
         };
-        const answerSummary = `[用户已确认选择] ${combinedAnswers.join('；')}`;
+        const answerSummary = pickLocaleText(
+          effectiveLocale,
+          `[用户已确认选择] ${combinedAnswers.join('；')}`,
+          `[User Confirmed Choice] ${combinedAnswers.join('; ')}`,
+        );
         synthesizedPrompt = synthesizedPrompt
           ? `${answerSummary}\n${synthesizedPrompt}`
           : answerSummary;
@@ -1744,7 +2326,9 @@ export async function* runUnifiedAgentSessionStream(
   const nextTitle =
     existing.messages.length === 0 &&
     synthesizedPrompt &&
-    (existing.title.startsWith('新会话') || existing.title.startsWith('New '))
+    (existing.title.startsWith('新会话') ||
+      existing.title.startsWith('新建') ||
+      existing.title.startsWith('New '))
       ? synthesizedPrompt.replace(/\s+/g, ' ').slice(0, 26)
       : existing.title;
 
@@ -1773,6 +2357,7 @@ export async function* runUnifiedAgentSessionStream(
     built = buildPiModelsForStore(store, sessionState, {
       ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
       ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
+      locale: effectiveLocale,
     });
 
     yield {
@@ -1801,6 +2386,7 @@ export async function* runUnifiedAgentSessionStream(
         store,
         sessionState,
         input.activeModelCode,
+        effectiveLocale,
       );
       const context: Context = {
         systemPrompt,
@@ -1872,11 +2458,20 @@ export async function* runUnifiedAgentSessionStream(
             throw toAbortedError();
           }
           const errText =
-            ev.error.errorMessage || `网关流式请求失败 (reason=${ev.reason})`;
+            ev.error.errorMessage ||
+            pickLocaleText(
+              effectiveLocale,
+              `网关流式请求失败 (reason=${ev.reason})`,
+              `Gateway streaming request failed (reason=${ev.reason})`,
+            );
           if (ev.reason === 'aborted' || /timed?\s*out|timeout/i.test(errText)) {
             throw new SessionStreamAbortedError(
               'IDLE_TIMEOUT',
-              `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
+              pickLocaleText(
+                effectiveLocale,
+                `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
+                `LLM single-step inference timed out (exceeded ${Math.round(stepTimeoutMs / 1000)}s)`,
+              ),
             );
           }
           throw new LlmGatewayError({
@@ -1884,6 +2479,7 @@ export async function* runUnifiedAgentSessionStream(
             providerName: built.providerConfig?.name ?? built.providerLabel,
             baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
             model: built.selectedModel.id,
+            locale: effectiveLocale,
           });
         }
       }
@@ -1925,6 +2521,7 @@ export async function* runUnifiedAgentSessionStream(
           sessionState,
           tc,
           hadValidatorError,
+          effectiveLocale,
         );
         if (executed.isError) {
           hadValidatorError = true;
@@ -1975,7 +2572,16 @@ export async function* runUnifiedAgentSessionStream(
 
       if (pendingAskUser) {
         if (!accumulatedText.trim()) {
-          accumulatedText = `请先在下方确认 **${pendingAskUser.header ?? '业务决策选项'}**，确认后我将立即继续执行。`;
+          const defaultHeader = pickLocaleText(
+            effectiveLocale,
+            '业务决策选项',
+            'Business Decision Options',
+          );
+          accumulatedText = pickLocaleText(
+            effectiveLocale,
+            `请先在下方确认 **${pendingAskUser.header ?? defaultHeader}**，确认后我将立即继续执行。`,
+            `Please confirm **${pendingAskUser.header ?? defaultHeader}** below so I can proceed immediately.`,
+          );
           yield {
             id: nextEventId(),
             event: 'delta',
@@ -1987,7 +2593,8 @@ export async function* runUnifiedAgentSessionStream(
     }
 
     if (!accumulatedText.trim() && allToolTraces.length > 0) {
-      accumulatedText = allToolTraces.map((t) => `- **${t.toolName}**：${t.output}`).join('\n');
+      const sep = effectiveLocale === 'en-US' ? ': ' : '：';
+      accumulatedText = allToolTraces.map((t) => `- **${t.toolName}**${sep}${t.output}`).join('\n');
       yield {
         id: nextEventId(),
         event: 'delta',
@@ -2133,7 +2740,7 @@ export async function* runUnifiedAgentSessionStream(
       built?.providerConfig?.name ?? built?.providerLabel ?? sessionState.modelOverride;
 
     const diagnostic: NonNullable<AgentSessionMessage['errorDiagnostic']> = isGatewayErr
-      ? err.toDiagnostic()
+      ? err.toDiagnostic(effectiveLocale)
       : isTimeoutErr
         ? {
             code: 'LLM_TIMEOUT',
@@ -2144,14 +2751,21 @@ export async function* runUnifiedAgentSessionStream(
                 }
               : {}),
             message: err.message,
-            remediation:
+            remediation: pickLocaleText(
+              effectiveLocale,
               '当前推理模型思考或生成耗时较长。可点击「重试 / 继续推演」恢复，或在底部切换响应更快的模型网关。',
+              'The model took too long to think or respond. Click "Retry / Continue" to resume, or switch to a faster provider/model below.',
+            ),
           }
         : {
             code: 'AGENT_RUNTIME_ERROR',
             ...(resolvedProviderName ? { providerName: resolvedProviderName } : {}),
             message: errMsg,
-            remediation: '可点击「重试 / 继续推演」恢复，或检查 LLM 中心配置。',
+            remediation: pickLocaleText(
+              effectiveLocale,
+              '可点击「重试 / 继续推演」恢复，或检查 LLM 中心配置。',
+              'Click "Retry / Continue" to resume, or inspect your gateway configuration in LLM Center.',
+            ),
           };
 
     const errorAssistantMsg: AgentSessionMessage = {

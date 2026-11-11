@@ -254,16 +254,29 @@ interface ParsedTaggedText {
 
 function parseTaggedListItem(raw: string): ParsedTaggedText {
   const trimmed = raw.trim();
-  const bracketMatch = /^\[([^\]]{1,16})\]\s*(.*)$/s.exec(trimmed);
+  const bracketMatch = /^\[([^\]]{1,24})\]\s*(.*)$/s.exec(trimmed);
   if (bracketMatch) {
     const tag = bracketMatch[1]!;
+    const tagLower = tag.toLowerCase();
     const rest = bracketMatch[2] || '';
     const tagTone: ParsedTaggedText['tagTone'] =
-      tag.includes('待确认') || tag.includes('风险') || tag.includes('拦截')
+      tag.includes('待确认') ||
+      tag.includes('风险') ||
+      tag.includes('拦截') ||
+      tagLower.includes('pending') ||
+      tagLower.includes('open') ||
+      tagLower.includes('risk') ||
+      tagLower.includes('block')
         ? 'warn'
-        : tag.includes('已确认') || tag.includes('通过')
+        : tag.includes('已确认') ||
+            tag.includes('通过') ||
+            tagLower.includes('confirmed') ||
+            tagLower.includes('passed')
           ? 'ok'
-          : tag.includes('AI') || tag.includes('自动') || tag.includes('补全')
+          : tag.includes('AI') ||
+              tag.includes('自动') ||
+              tag.includes('补全') ||
+              tagLower.includes('auto')
             ? 'accent'
             : 'neutral';
     return { tag, tagTone, body: rest || trimmed };

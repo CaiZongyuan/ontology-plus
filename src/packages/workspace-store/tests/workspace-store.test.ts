@@ -255,6 +255,33 @@ paths:
       expect(loadedCkpt!.workflow).toBe('ontology-assistant');
       expect(JSON.parse(loadedCkpt!.stateJson)).toEqual({ step: 2, pendingModel: 'M3' });
       expect(store.listAgentCheckpoints('ontology-assistant')).toHaveLength(1);
+
+      // Progressive lifecycle clean-slate project creation & YAML mirror hygiene
+      const cleanProj = store.createProject({
+        name: '咖啡店管理系统',
+        code: 'COFFEE-POS',
+        domain: '门店零售与饮品制作',
+      });
+      expect(cleanProj.currentStage).toBe(0);
+      expect(cleanProj.validation.presentModels).toEqual([]);
+      expect(cleanProj.validation.errorCount).toBe(0);
+      expect(cleanProj.knowledgeGraph.nodes).toEqual([]);
+      const cleanYamlDir = path.join(tmpDir, 'model', cleanProj.id, 'yaml');
+      expect(fs.existsSync(cleanYamlDir)).toBe(false);
+
+      // Resetting a pre-populated demo template project to {} removes mirrored yaml directory
+      const demoClone = store.createProject({
+        name: '临时模板验证工程',
+        code: 'TMP-DEMO',
+        domain: '临时模板测试',
+        template: 'CONTRACT',
+      });
+      const demoYamlDir = path.join(tmpDir, 'model', demoClone.id, 'yaml');
+      expect(fs.existsSync(path.join(demoYamlDir, 'm1-object-model.yaml'))).toBe(true);
+      const resetDemo = store.updateSuite(demoClone.id, {}, 'Reset demo template to clean slate');
+      expect(resetDemo.currentStage).toBe(0);
+      expect(resetDemo.validation.presentModels).toEqual([]);
+      expect(fs.existsSync(demoYamlDir)).toBe(false);
     } finally {
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true });

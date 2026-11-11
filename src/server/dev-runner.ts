@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process';
 
-const serverProc = spawn('npx', ['tsx', 'watch', 'src/server/node-server.ts'], {
-  stdio: 'inherit',
+const serverProc = spawn('pnpm', ['run', 'dev:server'], {
+  stdio: ['ignore', 'inherit', 'inherit'],
   shell: true,
 });
 
-const webProc = spawn('npx', ['vite', '--host', '127.0.0.1', '--port', '5173'], {
-  stdio: 'inherit',
+const webProc = spawn('pnpm', ['run', 'dev:web'], {
+  stdio: ['ignore', 'inherit', 'inherit'],
   shell: true,
 });
 

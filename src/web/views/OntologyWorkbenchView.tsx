@@ -14,15 +14,21 @@ import {
 import {
   apiAnalyzeImpact,
   apiRenameSymbol,
+  getProjectLifecycleState,
   useWorkbenchStore,
 } from '../api.js';
 import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
-import { usePreferences } from '../i18n.js';
+import { usePreferences, type NavViewId } from '../i18n.js';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas.js';
 import './ontology-workbench.css';
 import { Button } from '../components/beautifui/index.js';
-import { Crosshair,
+import {
+  ArrowRight,
+  Boxes,
+  CheckCircle2,
+  Crosshair,
   Search,
+  Sparkles,
 } from 'lucide-react';
 
 interface TreeElementSummary {
@@ -192,7 +198,11 @@ function LifecycleFlow({ states, label }: { states: string[]; label: string }) {
   );
 }
 
-export function OntologyWorkbenchView() {
+export function OntologyWorkbenchView({
+  onNavigate,
+}: {
+  onNavigate?: (view: NavViewId) => void;
+} = {}) {
   const { t } = usePreferences();
   const {
     data,
@@ -207,16 +217,18 @@ export function OntologyWorkbenchView() {
     redoStack,
     patchData,
     showToast,
+    startOntologySynthTask,
   } = useWorkbenchStore();
 
   const [activeTab, setActiveTab] = useState<'STRUCTURED' | 'GRAPH' | 'YAML'>('STRUCTURED');
   const [treeSearch, setTreeSearch] = useState('');
   const [yamlText, setYamlText] = useState('');
+  const [manualAuthoringMode, setManualAuthoringMode] = useState(false);
 
   // Non-blocking Cascade Rename, Impact Analysis & Referenced-Delete Guard Modal
   const [renameModalOpen, setRenameModalOpen] = useState(false);
-  const [targetSymbol, setTargetSymbol] = useState('Contract');
-  const [newSymbolName, setNewSymbolName] = useState('CommercialContract');
+  const [targetSymbol, setTargetSymbol] = useState('');
+  const [newSymbolName, setNewSymbolName] = useState('');
   const [impactReport, setImpactReport] = useState<ImpactAnalysisReport | null>(null);
   const [pendingDeleteAction, setPendingDeleteAction] = useState<{
     elementId: string;
@@ -226,6 +238,11 @@ export function OntologyWorkbenchView() {
   const [showDiagnosticsDrawer, setShowDiagnosticsDrawer] = useState(false);
 
   const project = data?.activeProject;
+  const lifecycle = data ? getProjectLifecycleState(data) : null;
+
+  useEffect(() => {
+    setManualAuthoringMode(false);
+  }, [project?.id]);
 
   useEffect(() => {
     if (!project) return;
@@ -801,7 +818,7 @@ export function OntologyWorkbenchView() {
         );
         const suffix = createdId.replace('MAP-', '');
         const agg = next.M1?.aggregates[0];
-        const objName = agg?.name ?? 'Contract';
+        const objName = agg?.name ?? 'DomainEntity';
         const firstAttr = agg?.attributes[0];
 
         next.MM.mappings.push({
@@ -923,12 +940,13 @@ export function OntologyWorkbenchView() {
     showToast(`已在 ${selectedModel} 新增元素 ${createdId}`);
   };
 
-  const handleOpenImpactModal = async (symbol = 'Contract') => {
+  const handleOpenImpactModal = async (symbol?: string) => {
+    const resolvedSymbol = symbol || suite.M1?.aggregates[0]?.name || 'DomainEntity';
     setPendingDeleteAction(null);
-    setTargetSymbol(symbol);
-    setNewSymbolName(`${symbol}V2`);
+    setTargetSymbol(resolvedSymbol);
+    setNewSymbolName(`${resolvedSymbol}V2`);
     setRenameModalOpen(true);
-    const report = await apiAnalyzeImpact(project.id, symbol);
+    const report = await apiAnalyzeImpact(project.id, resolvedSymbol);
     setImpactReport(report);
   };
 
@@ -1217,7 +1235,8 @@ export function OntologyWorkbenchView() {
                   type="button"
                   variant="secondary" size="sm"
                   data-testid="open-cascade-rename-btn"
-                  onClick={() => handleOpenImpactModal('Contract')}
+                  disabled={!lifecycle?.hasOntology}
+                  onClick={() => handleOpenImpactModal()}
                 >
                   ⇄ {t('级联重命名 / 影响分析', 'Cascade Rename')}
                 </Button>
@@ -1234,64 +1253,238 @@ export function OntologyWorkbenchView() {
           </div>
 
           <div className="owb-center-body">
-            {activeTab === 'GRAPH' && (
-              <KnowledgeGraphCanvas
-                graph={project.knowledgeGraph}
-                preset="WORKBENCH_EGO"
-                focusElementId={selectedElementId}
-                height={470}
-                onSelectElement={(m, id) => {
-                  setSelectedModel(m, id);
-                }}
-                onNavigateToElement={(m, id) => {
-                  setSelectedModel(m, id);
-                  setActiveTab('STRUCTURED');
-                }}
-              />
-            )}
-
-            {activeTab === 'YAML' && (
-              <div className="flex flex-col gap-2.5 h-full">
-                <div className="flex justify-between items-center"
-                >
-                  <span className="font-mono text-[12.5px] text-muted-foreground">
-                    .onto-cs/model/{project.id}/yaml/{MODEL_FILE_NAMES[selectedModel]}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="accent" size="sm"
-                    onClick={handleSaveYaml}
-                  >
-                    {t('保存并校验 YAML', 'Save & Validate YAML')}
-                  </Button>
+            {lifecycle?.hasForeignDemoTemplate && (
+              <div
+                className="card mb-3 flex flex-wrap items-center justify-between gap-3"
+                data-testid="foreign-template-warning"
+                style={{ borderColor: 'var(--warn)', background: 'var(--warn-soft, var(--inset))' }}
+              >
+                <div className="space-y-0.5 max-w-[680px]">
+                  <div className="text-[13px] font-semibold text-ink">
+                    {t(
+                      `提示：当前展示的是创建工程时预置的「${lifecycle.foreignTemplateNameZh}」示例模板数据`,
+                      `Notice: Showing preloaded "${lifecycle.foreignTemplateNameEn}" demo template models`,
+                    )}
+                  </div>
+                  <div className="text-[12px] text-ink-2">
+                    {t(
+                      `「${project.name}」尚未执行专属本体推导。您可以一键清空这些示例模板，消除干扰后再按【需求探索 → 需求文档 → 界面原型 → 业务本体】顺序自动生成。`,
+                      `"${project.name}" has not synthesized its own ontology yet. Clear the demo template to avoid confusion before running forward synthesis.`,
+                    )}
+                  </div>
                 </div>
-                <textarea
-                  className="textarea mono"
-                  style={{ flex: 1, minHeight: 440 }}
-                  value={yamlText}
-                  onChange={(e) => setYamlText(e.target.value)}
-                />
+                <Button
+                  type="button"
+                  variant="accent"
+                  size="sm"
+                  data-testid="clear-demo-template-btn"
+                  onClick={async () => {
+                    await saveSuiteWithUndo({}, 'Cleared preloaded demo template');
+                    showToast(
+                      t(
+                        '已清空预置示例模板，当前工程已恢复干净待生成状态',
+                        'Cleared demo template; project reset to clean pending state',
+                      ),
+                    );
+                  }}
+                >
+                  {t('清空示例模板数据', 'Clear Demo Template')}
+                </Button>
               </div>
             )}
 
-            {activeTab === 'STRUCTURED' && (
-              <StructuredModelInspector
-                modelCode={selectedModel}
-                suite={suite}
-                selectedElementId={selectedElementId}
-                onInspectImpact={handleOpenImpactModal}
-                onRequestDelete={handleSafeDeleteElement}
-                onSaveSuite={async (nextSuite, note) => {
-                  await saveSuiteWithUndo(nextSuite, note);
-                  showToast(
-                    t(
-                      `${selectedModel} 结构化 AST 修改已保存并通过一致性校验`,
-                      `${selectedModel} structured AST saved & validated`,
-                    ),
-                  );
-                }}
-                onQuickAdd={handleQuickAddItem}
-              />
+            {!lifecycle?.hasOntology && !manualAuthoringMode && activeTab === 'STRUCTURED' ? (
+              <div
+                className="card p-6 my-2 flex flex-col gap-4 max-w-[760px] mx-auto"
+                data-testid="ontology-stage-pending-guide"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-inset text-accent">
+                    <Boxes size={18} />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="badge badge-warn">
+                        {t('第 4 步 · 尚未到达此阶段', 'Step 4 · Stage Not Reached Yet')}
+                      </span>
+                      <span className="text-[12px] text-ink-3 font-mono">0 / 11 Models</span>
+                    </div>
+                    <h3 className="font-serif text-[17.5px] font-semibold text-ink m-0">
+                      {t(
+                        `「${project.name}」暂未生成业务本体（无预置无关内容）`,
+                        `"${project.name}" has no ontology models yet (clean slate)`,
+                      )}
+                    </h3>
+                    <p className="text-[13px] text-ink-2 leading-relaxed m-0">
+                      {t(
+                        '业务本体不是预先写死的静态模板，而是等您完成上游「需求探索 → 需求文档 → 界面原型」后，由 AI 根据您的真实业务规则与原型界面自动推导生成的结构化蓝图。',
+                        'Your business ontology is synthesized automatically after completing upstream Requirement Exploration, SRS Document, and UI Prototype.',
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    {
+                      step: '1',
+                      titleZh: '需求探索',
+                      titleEn: 'Explore',
+                      done: Boolean(lifecycle?.hasExploration),
+                      statusZh: lifecycle?.hasExploration
+                        ? `已建立 (${lifecycle.explorationCount})`
+                        : '待开始',
+                      statusEn: lifecycle?.hasExploration ? 'Done' : 'Pending',
+                    },
+                    {
+                      step: '2',
+                      titleZh: '需求文档 SRS',
+                      titleEn: 'SRS Doc',
+                      done: Boolean(lifecycle?.hasSrsDoc),
+                      statusZh: lifecycle?.hasSrsDoc
+                        ? `已生成 (${lifecycle.srsDocCount})`
+                        : '待合成',
+                      statusEn: lifecycle?.hasSrsDoc ? 'Ready' : 'Pending',
+                    },
+                    {
+                      step: '3',
+                      titleZh: '界面原型',
+                      titleEn: 'Prototype',
+                      done: Boolean(lifecycle?.hasPrototype),
+                      statusZh: lifecycle?.hasPrototype
+                        ? `已生成 (${lifecycle.prototypeCount})`
+                        : '待生成',
+                      statusEn: lifecycle?.hasPrototype ? 'Ready' : 'Pending',
+                    },
+                    {
+                      step: '4',
+                      titleZh: '业务本体',
+                      titleEn: 'Ontology',
+                      done: false,
+                      statusZh: '待自动推导',
+                      statusEn: 'Next',
+                    },
+                  ].map((item) => (
+                    <div
+                      key={item.step}
+                      className="rounded-[6px] border border-line bg-inset px-3 py-2.5 flex flex-col gap-1"
+                    >
+                      <div className="flex items-center justify-between text-[12px] font-semibold text-ink">
+                        <span>
+                          {item.step}. {t(item.titleZh, item.titleEn)}
+                        </span>
+                        {item.done && <CheckCircle2 size={13} className="text-green-600" />}
+                      </div>
+                      <span className={`badge ${item.done ? 'badge-ok' : 'badge-warn'} w-fit`}>
+                        {t(item.statusZh, item.statusEn)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {lifecycle && (
+                  <div className="rounded-[6px] border border-line bg-inset px-3.5 py-2.5 text-[12.5px] text-ink-2">
+                    {t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {lifecycle?.hasPrototype ? (
+                    <Button
+                      type="button"
+                      variant="accent"
+                      size="md"
+                      onClick={() => void startOntologySynthTask()}
+                    >
+                      <Sparkles size={14} />
+                      {t('从当前界面原型一键推导 11 模型本体', 'Synthesize 11-Model Ontology from Prototype')}
+                    </Button>
+                  ) : (
+                    lifecycle &&
+                    onNavigate && (
+                      <Button
+                        type="button"
+                        variant="accent"
+                        size="md"
+                        onClick={() => onNavigate(lifecycle.nextStep.targetView)}
+                      >
+                        {t(lifecycle.nextStep.labelZh, lifecycle.nextStep.labelEn)}
+                        <ArrowRight size={14} />
+                      </Button>
+                    )
+                  )}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="md"
+                    onClick={() => setManualAuthoringMode(true)}
+                  >
+                    {t('跳过上游，直接手工 / AI 从零建模', 'Skip Upstream & Model Manually')}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {activeTab === 'GRAPH' && (
+                  <KnowledgeGraphCanvas
+                    graph={project.knowledgeGraph}
+                    preset="WORKBENCH_EGO"
+                    focusElementId={selectedElementId}
+                    height={470}
+                    onSelectElement={(m, id) => {
+                      setSelectedModel(m, id);
+                    }}
+                    onNavigateToElement={(m, id) => {
+                      setSelectedModel(m, id);
+                      setActiveTab('STRUCTURED');
+                    }}
+                  />
+                )}
+
+                {activeTab === 'YAML' && (
+                  <div className="flex flex-col gap-2.5 h-full">
+                    <div className="flex justify-between items-center">
+                      <span className="font-mono text-[12.5px] text-muted-foreground">
+                        .onto-cs/model/{project.id}/yaml/{MODEL_FILE_NAMES[selectedModel]}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="accent"
+                        size="sm"
+                        onClick={handleSaveYaml}
+                      >
+                        {t('保存并校验 YAML', 'Save & Validate YAML')}
+                      </Button>
+                    </div>
+                    <textarea
+                      className="textarea mono"
+                      style={{ flex: 1, minHeight: 440 }}
+                      value={yamlText}
+                      onChange={(e) => setYamlText(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                {activeTab === 'STRUCTURED' && (
+                  <StructuredModelInspector
+                    modelCode={selectedModel}
+                    suite={suite}
+                    selectedElementId={selectedElementId}
+                    onInspectImpact={handleOpenImpactModal}
+                    onRequestDelete={handleSafeDeleteElement}
+                    onSaveSuite={async (nextSuite, note) => {
+                      await saveSuiteWithUndo(nextSuite, note);
+                      showToast(
+                        t(
+                          `${selectedModel} 结构化 AST 修改已保存并通过一致性校验`,
+                          `${selectedModel} structured AST saved & validated`,
+                        ),
+                      );
+                    }}
+                    onQuickAdd={handleQuickAddItem}
+                  />
+                )}
+              </>
             )}
           </div>
         </div>
