@@ -5,6 +5,7 @@ import {
   buildAlignmentSkeleton,
   buildExtractionCandidates,
   candidateKey,
+  checkSqlGrounding,
   extractMuFromPrototypeHtml,
   locateQuote,
   sanitizeAlignment,
@@ -12,6 +13,7 @@ import {
   validateOntologySuite,
   type AggregateRoot,
   type Attribute,
+  type DataGrounding,
   type ModelCode,
   type ExtractionEvidence,
   type OntologySuite,
@@ -62,6 +64,11 @@ import {
   type OpenAiFunctionTool,
 } from './tools.js';
 import { LlmGatewayError, isMockLlmActive } from './pi-session-engine.js';
+import {
+  buildProjectDataGrounding,
+  describeJoinWarnings,
+  describeMissingModels,
+} from './reasoning-grounding.js';
 
 export { ONTOLOGY_DURABLE_TOOLS, LlmGatewayError, isMockLlmActive };
 
@@ -5531,50 +5538,103 @@ function computeLiveAnalyticsStats(store: WorkspaceStore): LiveAnalyticsComputed
   };
 }
 
-function buildReadOnlyAnalyticsSqlCandidates(
+interface GroundedQueryResult {
+  sql: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  referenceQueryId?: string;
+  referencedTables: string[];
+  warnings: string[];
+}
+
+/**
+ * Queries the reasoning endpoint may run, most specific first: tables the
+ * question names, M7 reference queries that fit the question, then a plain
+ * read of the first mapped table. All of it comes from the grounding; nothing
+ * is written for a particular domain.
+ */
+function groundedSqlCandidates(
+  grounding: DataGrounding,
   question: string,
-  mode: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY',
-  project?: ProjectDetail,
-  store?: WorkspaceStore,
-): string[] {
-  const mappedTables = (project?.suite.MM?.mappings ?? []).flatMap((m) =>
-    m.tableMappings.map((tm) => tm.tableName),
-  );
-  const dbTables = (store?.listDatabaseResources() ?? []).flatMap((db) =>
-    db.tables.map((t) => t.tableName),
-  );
-
-  // If project explicitly maps to a non-contract table that exists in SQLite, prioritize it!
-  const customPrimaryTable = mappedTables.find((t) => t !== 't_contract');
-  const lower = question.toLowerCase();
-  const mentionsMilestone =
-    question.includes('里程碑') ||
-    question.includes('逾期') ||
-    lower.includes('milestone') ||
-    lower.includes('overdue') ||
-    mode !== 'ASK_DATA';
-
-  const primaryMilestoneSql =
-    'SELECT c.contract_no, c.contract_type, c.risk_level, cp.company_name, cp.credit_rating, c.total_amount, COUNT(pm.id) AS milestone_count, COALESCE(SUM(pm.planned_amount), 0) AS milestone_amount FROM t_contract c LEFT JOIN t_counterparty cp ON c.counterparty_id = cp.id LEFT JOIN t_payment_milestone pm ON pm.contract_id = c.id GROUP BY c.id, c.contract_no, c.contract_type, c.risk_level, cp.company_name, cp.credit_rating, c.total_amount ORDER BY c.total_amount DESC LIMIT 20';
-
-  const summaryContractSql =
-    'SELECT c.contract_type, c.risk_level, cp.credit_rating, COUNT(c.id) AS total_contracts, SUM(c.total_amount) AS contract_sum FROM t_contract c LEFT JOIN t_counterparty cp ON c.counterparty_id = cp.id GROUP BY c.contract_type, c.risk_level, cp.credit_rating ORDER BY contract_sum DESC LIMIT 20';
-
-  const candidates: string[] = [];
-  if (customPrimaryTable) {
-    candidates.push(`SELECT * FROM ${customPrimaryTable} LIMIT 20`);
-  }
-  for (const tbl of dbTables) {
-    if (tbl !== 't_contract' && question.toLowerCase().includes(tbl.toLowerCase())) {
-      candidates.unshift(`SELECT * FROM ${tbl} LIMIT 20`);
+): { sql: string; referenceQueryId?: string }[] {
+  const lowerQuestion = question.toLowerCase();
+  const candidates: { sql: string; referenceQueryId?: string }[] = [];
+  for (const table of grounding.tables) {
+    if (lowerQuestion.includes(table.table.toLowerCase())) {
+      candidates.push({ sql: `SELECT * FROM ${table.table} LIMIT 20` });
     }
   }
-  candidates.push(
-    ...(mentionsMilestone
-      ? [primaryMilestoneSql, summaryContractSql]
-      : [summaryContractSql, primaryMilestoneSql]),
-  );
+  for (const query of grounding.referenceQueries) {
+    if (query.score > 0) candidates.push({ sql: query.sql, referenceQueryId: query.id });
+  }
+  const firstMapped = grounding.tables.find((t) => t.mapped);
+  if (firstMapped) candidates.push({ sql: `SELECT * FROM ${firstMapped.table} LIMIT 20` });
   return candidates;
+}
+
+/** Run candidates in order; prefer the first that returns rows. Ungrounded SQL never runs. */
+function runGroundedCandidates(
+  store: WorkspaceStore,
+  grounding: DataGrounding,
+  candidates: { sql: string; referenceQueryId?: string }[],
+  locale: AgentLocale,
+): GroundedQueryResult | null {
+  let firstEmpty: GroundedQueryResult | null = null;
+  for (const candidate of candidates) {
+    const report = checkSqlGrounding(grounding, candidate.sql);
+    if (report.unknownTables.length > 0) continue;
+    let res: ReturnType<WorkspaceStore['executeReadOnlyAnalyticsSql']>;
+    try {
+      res = store.executeReadOnlyAnalyticsSql(candidate.sql);
+    } catch {
+      // The suite describes a table or column the workspace database does not hold.
+      continue;
+    }
+    const result: GroundedQueryResult = {
+      sql: res.sql || candidate.sql,
+      columns: res.columns,
+      rows: res.rows,
+      ...(candidate.referenceQueryId ? { referenceQueryId: candidate.referenceQueryId } : {}),
+      referencedTables: report.referencedTables,
+      warnings: describeJoinWarnings(report, locale),
+    };
+    if (res.rows.length > 0) return result;
+    firstEmpty ??= result;
+  }
+  return firstEmpty;
+}
+
+/** Figures read straight off the result rows: a row count and sums of numeric columns. */
+function summarizeQueryRows(
+  result: GroundedQueryResult,
+  locale: AgentLocale,
+): ReasoningSession['dataSummary'] {
+  const summary: ReasoningSession['dataSummary'] = [
+    {
+      label: pickLocaleText(locale, '实时命中数据行', 'Live Matched Rows'),
+      value: pickLocaleText(locale, `${result.rows.length} 行`, `${result.rows.length} rows`),
+      delta: pickLocaleText(locale, 'SQLite 实查', 'Live SQLite'),
+    },
+  ];
+  for (const column of result.columns) {
+    if (summary.length >= 3) break;
+    if (column === 'id' || column.endsWith('_id') || column.endsWith('__label')) continue;
+    const values = result.rows.map((row) => row[column]).filter((v) => v !== null && v !== undefined);
+    if (values.length === 0 || !values.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+      continue;
+    }
+    const total = (values as number[]).reduce((sum, v) => sum + v, 0);
+    summary.push({
+      label: pickLocaleText(locale, `${column} 合计`, `Sum of ${column}`),
+      value: Number.isInteger(total) ? String(total) : total.toFixed(2),
+      delta: pickLocaleText(
+        locale,
+        `${values.length} 行求和`,
+        `summed over ${values.length} rows`,
+      ),
+    });
+  }
+  return summary;
 }
 
 function executeSafeAnalyticsCandidates(
@@ -5597,6 +5657,12 @@ function executeSafeAnalyticsCandidates(
   return null;
 }
 
+/**
+ * One-shot Data Ontology Reasoning. Shares its grounding with the REASONING
+ * Agent Session: SQL comes from `M7` reference queries and `MM` tables, and
+ * every figure in the answer is read off rows that a query returned. With
+ * nothing to query it says which model is missing instead of filling in.
+ */
 export async function runDataOntologyReasoning(
   store: WorkspaceStore,
   input: {
@@ -5612,22 +5678,40 @@ export async function runDataOntologyReasoning(
     : store.getProject(store.listProjects()[0]?.id ?? 'proj-contract');
   const activeProvider = resolvePreferredProvider(store, project?.id);
 
-  const sqlCandidates = buildReadOnlyAnalyticsSqlCandidates(
-    input.question,
-    input.mode,
-    project,
+  const grounding = buildProjectDataGrounding(store, project, input.question);
+  const liveQuery = runGroundedCandidates(
     store,
+    grounding,
+    groundedSqlCandidates(grounding, input.question),
+    locale,
   );
-  const liveQuery = executeSafeAnalyticsCandidates(store, sqlCandidates);
-  const chosenSql = liveQuery?.sql ?? sqlCandidates[0];
-  const liveStats = computeLiveAnalyticsStats(store);
+  const missingNotes = describeMissingModels(grounding, locale);
+  const hasRows = Boolean(liveQuery && liveQuery.rows.length > 0);
 
-  const aggNames =
-    (project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.alias})`).join(', ') ||
-    'Contract, Counterparty, SettlementOrder';
+  const basis = !liveQuery
+    ? pickLocaleText(
+        locale,
+        '未能执行任何有据查询，因此不给出统计数字。',
+        'No grounded query could be run, so no figures are reported.',
+      )
+    : liveQuery.referenceQueryId
+      ? pickLocaleText(
+          locale,
+          `取数口径：复用 M7 参考查询 ${liveQuery.referenceQueryId}，涉及表 ${liveQuery.referencedTables.join(', ')}。`,
+          `Basis: M7 reference query ${liveQuery.referenceQueryId}, reading ${liveQuery.referencedTables.join(', ')}.`,
+        )
+      : pickLocaleText(
+          locale,
+          `取数口径：直接读取 ${liveQuery.referencedTables.join(', ')}（没有与问题匹配的 M7 参考查询）。`,
+          `Basis: a direct read of ${liveQuery.referencedTables.join(', ')} (no M7 reference query matches the question).`,
+        );
+  const causalAnalysis = [basis, ...(liveQuery?.warnings ?? []), ...missingNotes];
+
+  const aggNames = (project?.suite.M1?.aggregates ?? [])
+    .map((a) => `${a.name}(${a.alias})`)
+    .join(', ');
   const defaultWb = store.listWritebackInterfaces()[0];
-  const wbId = defaultWb?.id ?? 'WB-01';
-  const primaryAgg = project?.suite.M1?.aggregates[0]?.name ?? 'Contract';
+  const primaryAgg = project?.suite.M1?.aggregates[0]?.name;
 
   const llmRes = await callOpenAiCompatibleChat(
     activeProvider,
@@ -5636,90 +5720,89 @@ export async function runDataOntologyReasoning(
         role: 'system',
         content: pickLocaleText(
           locale,
-          `你是数据分析中心的数据本体推理引擎，支持智能问数(ASK_DATA)、智能问因(ASK_WHY)、智能问策(ASK_POLICY)。请基于实时 SQLite 查询结果与当前工程本体模型（${aggNames}）给出简洁、结构化的 Markdown 分析结论（控制在 220 字以内）。`,
-          `You are the Data Ontology Reasoning Engine supporting ASK_DATA, ASK_WHY, and ASK_POLICY modes. Ground your structured Markdown conclusion in the live SQLite query results and active domain aggregates (${aggNames}) within 200 words.`,
+          `你是数据分析中心的数据本体推理引擎，支持智能问数(ASK_DATA)、智能问因(ASK_WHY)、智能问策(ASK_POLICY)。只依据下面给出的查询结果${aggNames ? `与当前工程本体模型（${aggNames}）` : ''}作答，给出简洁、结构化的 Markdown 结论（220 字以内）。结论中的每个数字都必须出自查询结果；没有查询结果时，说明缺少哪个模型或哪份数据，不要给出任何数字。`,
+          `You are the Data Ontology Reasoning Engine supporting ASK_DATA, ASK_WHY, and ASK_POLICY modes. Answer only from the query result below${aggNames ? ` and the active domain aggregates (${aggNames})` : ''}, as a concise structured Markdown conclusion within 200 words. Every figure must come from the query result; with no query result, say which model or data is missing and state no figures.`,
         ),
       },
       {
         role: 'user',
-        content: `[Mode: ${input.mode}] ${input.question}${liveQuery ? `\nLive SQL (${chosenSql}) returned ${liveQuery.rows.length} rows: ${JSON.stringify(liveQuery.rows.slice(0, 5))}` : ''}`,
+        content: [
+          `[Mode: ${input.mode}] ${input.question}`,
+          liveQuery
+            ? `Query (${liveQuery.sql}) returned ${liveQuery.rows.length} rows: ${JSON.stringify(liveQuery.rows.slice(0, 5))}`
+            : 'No query was run.',
+          ...causalAnalysis,
+        ].join('\n'),
       },
     ],
     { store },
   );
 
-  const dataSummary: ReasoningSession['dataSummary'] = [
-    {
-      label: pickLocaleText(
-        locale,
-        liveQuery && liveQuery.rows.length > 0 ? '实时命中数据行' : '在管单据总数',
-        liveQuery && liveQuery.rows.length > 0 ? 'Live Matched Rows' : 'Managed Records',
-      ),
-      value:
-        liveQuery && liveQuery.rows.length > 0
-          ? pickLocaleText(locale, `${liveQuery.rows.length} 行`, `${liveQuery.rows.length} rows`)
-          : `${liveStats.totalContracts}`,
-      delta: pickLocaleText(locale, 'SQLite 实查', 'Live SQLite'),
-    },
-    {
-      label: pickLocaleText(locale, '履约核销达成率', 'Fulfillment Rate'),
-      value: liveStats.settlementCompletionRatePct,
-      delta: pickLocaleText(
-        locale,
-        `总额 ¥${(liveStats.totalAmount / 10000).toFixed(1)}万`,
-        `Total ¥${(liveStats.totalAmount / 10000).toFixed(1)}0k`,
-      ),
-    },
-    {
-      label: pickLocaleText(locale, '高风险单据占比', 'High-Risk Share'),
-      value: liveStats.highRiskOverdueRatePct,
-      delta: pickLocaleText(locale, '实时聚合计算', 'Live Aggregation'),
-    },
-  ];
+  const fallbackAnswer = [
+    pickLocaleText(
+      locale,
+      `### 本体推理结论 (${input.mode})\n针对问题「${input.question}」：`,
+      `### Ontology Reasoning Conclusion (${input.mode})\nFor **"${input.question}"**:`,
+    ),
+    liveQuery
+      ? pickLocaleText(
+          locale,
+          `- 有据查询返回 **${liveQuery.rows.length}** 行。${basis}`,
+          `- The grounded query returned **${liveQuery.rows.length}** rows. ${basis}`,
+        )
+      : `- ${basis}`,
+    ...[...(liveQuery?.warnings ?? []), ...missingNotes].map((note) => `- ${note}`),
+    ...(defaultWb && input.mode === 'ASK_POLICY'
+      ? [
+          pickLocaleText(
+            locale,
+            `- 如需处置，可调用回写接口 **\`${defaultWb.id}\`** 执行受控闭环。`,
+            `- To act on it, invoke writeback interface **\`${defaultWb.id}\`** for governed closed-loop handling.`,
+          ),
+        ]
+      : []),
+  ].join('\n');
 
   const session = store.saveReasoningSession({
     id: `reas-${Date.now().toString(36)}`,
     question: input.question,
     mode: input.mode,
-    sqlGenerated: chosenSql,
+    sqlGenerated: liveQuery?.sql ?? '',
     ...(liveQuery
       ? {
           queryColumns: liveQuery.columns,
           queryRows: liveQuery.rows,
         }
       : {}),
-    dataSummary,
-    causalAnalysis:
-      locale === 'en-US'
-        ? [
-            `Tracing along M1 domain associations (${aggNames}), primary risk concentration accounts for ${liveStats.outsourcingHighRiskSharePct}.`,
-            `Cross-checking against M3 rules (${(project?.suite.M3?.rules ?? []).map((r) => r.id).join(', ') || 'RULE-01'}), threshold-boundary records represent ${liveStats.midThresholdSharePct}.`,
-          ]
-        : [
-            `沿着 M1 对象关联链（${aggNames}）实查穿透，主风险类型占待核销敞口的 ${liveStats.outsourcingHighRiskSharePct}。`,
-            `对照 M3 规则模型（${(project?.suite.M3?.rules ?? []).map((r) => r.id).join('、') || 'RULE-01'}），阈值敏感区间单据占总额的 ${liveStats.midThresholdSharePct}。`,
-          ],
-    policyRecommendations: [
-      {
-        actionTitle: pickLocaleText(
-          locale,
-          defaultWb?.name ?? `执行高风险 ${primaryAgg} 闭环策略回写`,
-          defaultWb?.name ?? `Execute governed policy writeback on ${primaryAgg}`,
-        ),
-        targetObject: primaryAgg,
-        expectedImpact: pickLocaleText(
-          locale,
-          `覆盖当前 ${liveStats.highRiskOverdueRatePct} 高风险单据并写入受控审计流水`,
-          `Covers ${liveStats.highRiskOverdueRatePct} high-risk records with audited state writeback`,
-        ),
-        writebackInterfaceId: wbId,
-      },
-    ],
-    answerMarkdown:
-      llmRes?.content ||
-      (locale === 'en-US'
-        ? `### Ontology Reasoning Conclusion (${input.mode})\nFor **"${input.question}"**:\n1. **ASK_DATA**: Executed live SQL via \`MM\` mappings${liveQuery ? ` (returned **${liveQuery.rows.length}** rows)` : ''}; fulfillment rate is **${liveStats.settlementCompletionRatePct}**, high-risk share is **${liveStats.highRiskOverdueRatePct}**.\n2. **ASK_WHY**: Tracing across \`${aggNames}\`, primary risk drivers contribute **${liveStats.outsourcingHighRiskSharePct}** of exposure.\n3. **ASK_POLICY**: Recommend invoking writeback interface **\`${wbId}\`** to enforce closed-loop governance.`
-        : `### 本体推理结论 (${input.mode})\n针对问题「${input.question}」：\n1. **智能问数**：通过 \`MM\` 数据映射执行实时 SQL${liveQuery ? `（实查返回 **${liveQuery.rows.length}** 行）` : ''}，当前实查达成率为 **${liveStats.settlementCompletionRatePct}**，高风险占比 **${liveStats.highRiskOverdueRatePct}**。\n2. **智能问因**：沿 \`${aggNames}\` 穿透归因，核心风险因子贡献了 **${liveStats.outsourcingHighRiskSharePct}** 的风险暴露额。\n3. **智能问策**：建议调用回写接口 **\`${wbId}\`** 执行受控闭环处置。`),
+    dataSummary: liveQuery ? summarizeQueryRows(liveQuery, locale) : [],
+    causalAnalysis,
+    policyRecommendations: defaultWb
+      ? [
+          {
+            actionTitle: defaultWb.name,
+            targetObject: primaryAgg ?? defaultWb.boundBehaviorRef,
+            expectedImpact: hasRows
+              ? pickLocaleText(
+                  locale,
+                  `对本次查询命中的 ${liveQuery!.rows.length} 行记录执行受控回写并留存审计流水`,
+                  `Governed writeback over the ${liveQuery!.rows.length} rows this query matched, with an audit trail`,
+                )
+              : pickLocaleText(
+                  locale,
+                  '执行受控回写并留存审计流水（本次没有查询到可处置的记录）',
+                  'Governed writeback with an audit trail (this query matched no records to act on)',
+                ),
+            writebackInterfaceId: defaultWb.id,
+          },
+        ]
+      : [],
+    answerMarkdown: llmRes?.content || fallbackAnswer,
+    grounding: {
+      ...(liveQuery?.referenceQueryId ? { referenceQueryId: liveQuery.referenceQueryId } : {}),
+      tables: liveQuery?.referencedTables ?? [],
+      missingModels: grounding.missing,
+      warnings: liveQuery?.warnings ?? [],
+    },
   });
 
   saveCheckpointSafe(store, session.id, 'DATA_ONTOLOGY_REASONING', {

@@ -473,6 +473,14 @@ export interface ReasoningSession {
     writebackInterfaceId: string;
   }[];
   answerMarkdown: string;
+  /** What the answer was grounded on; absent on sessions saved before grounding existed. */
+  grounding?: {
+    referenceQueryId?: string;
+    tables: string[];
+    /** Models whose absence limited what could be queried. */
+    missingModels: ModelCode[];
+    warnings: string[];
+  };
   createdAt: string;
 }
 
