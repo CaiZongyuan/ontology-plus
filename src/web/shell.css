@@ -2274,3 +2274,195 @@ dialog.cmdk[open] {
   background: var(--accent-soft);
   color: var(--ink);
 }
+
+/* ─── Inspo Full-Viewport Native <dialog> Lightbox ─── */
+dialog.inspo-lightbox-dialog {
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--ink);
+  inline-size: min(1360px, 94dvw);
+  max-block-size: 92dvh;
+  box-shadow: var(--shadow-lg);
+}
+
+dialog.inspo-lightbox-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  animation: rise-in 200ms var(--ease-out) both;
+}
+
+dialog.inspo-lightbox-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.inspo-lightbox-dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: rgba(10, 12, 18, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+/* ─── Motion-Prompt Visual Schematic Stages (Stage 2 Alignment) ─── */
+.mp-stage-frame {
+  position: relative;
+  inline-size: 100%;
+  aspect-ratio: 16 / 10;
+  background: #0f1830;
+  overflow: clip;
+  border-bottom: 1px solid var(--line);
+}
+
+.mp-stage-svg {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+@keyframes mp-drawer-slide {
+  0%, 14% { transform: translateX(88px); opacity: 0; }
+  28%, 74% { transform: translateX(0); opacity: 1; }
+  88%, 100% { transform: translateX(88px); opacity: 0; }
+}
+
+@keyframes mp-backdrop-dim {
+  0%, 14% { opacity: 0; }
+  26%, 74% { opacity: 0.52; }
+  88%, 100% { opacity: 0; }
+}
+
+@keyframes mp-modal-pop {
+  0%, 15% { transform: scale(0.84) translateY(6px); opacity: 0; }
+  28%, 74% { transform: scale(1) translateY(0); opacity: 1; }
+  88%, 100% { transform: scale(0.9) translateY(4px); opacity: 0; }
+}
+
+@keyframes mp-cursor-click {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  12% { transform: translate(-2px, -2px) scale(0.82); }
+  22% { transform: translate(0, 0) scale(1); }
+}
+
+@keyframes mp-split-row {
+  0%, 28% { transform: translateY(0); }
+  33%, 62% { transform: translateY(20px); }
+  68%, 94% { transform: translateY(40px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes mp-split-detail {
+  0%, 28% { opacity: 1; transform: scaleX(1); }
+  31% { opacity: 0.45; transform: scaleX(0.76); }
+  36%, 62% { opacity: 1; transform: scaleX(0.9); }
+  66% { opacity: 0.45; transform: scaleX(0.72); }
+  71%, 94% { opacity: 1; transform: scaleX(1.04); }
+  100% { opacity: 1; transform: scaleX(1); }
+}
+
+@keyframes mp-tab-pill {
+  0%, 42% { transform: translateX(0); }
+  52%, 90% { transform: translateX(68px); }
+  100% { transform: translateX(0); }
+}
+
+@keyframes mp-tab-view-a {
+  0%, 42% { opacity: 1; transform: translateX(0); }
+  50%, 92% { opacity: 0; transform: translateX(-10px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes mp-tab-view-b {
+  0%, 44% { opacity: 0; transform: translateX(10px); }
+  52%, 90% { opacity: 1; transform: translateX(0); }
+  100% { opacity: 0; transform: translateX(10px); }
+}
+
+@keyframes mp-ledger-scan {
+  0%, 18% { transform: translateY(0); }
+  25%, 43% { transform: translateY(15px); }
+  50%, 68% { transform: translateY(30px); }
+  75%, 92% { transform: translateY(45px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes mp-card-hover-lift {
+  0%, 20%, 100% { transform: translateY(0); filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.2)); }
+  40%, 75% { transform: translateY(-5px); filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.45)); }
+}
+
+@keyframes mp-kpi-bar {
+  0%, 12% { transform: scaleY(0.18); opacity: 0.4; }
+  38%, 85% { transform: scaleY(1); opacity: 1; }
+  100% { transform: scaleY(0.18); opacity: 0.4; }
+}
+
+@keyframes mp-chip-active {
+  0%, 18%, 90%, 100% { opacity: 0.25; }
+  28%, 78% { opacity: 1; }
+}
+
+@keyframes mp-row-fade-out {
+  0%, 18%, 90%, 100% { opacity: 0.9; }
+  30%, 78% { opacity: 0.16; }
+}
+
+@keyframes mp-accordion-body {
+  0%, 18%, 88%, 100% { opacity: 0; transform: scaleY(0.1); }
+  32%, 74% { opacity: 1; transform: scaleY(1); }
+}
+
+@keyframes mp-accordion-push {
+  0%, 18%, 88%, 100% { transform: translateY(0); }
+  32%, 74% { transform: translateY(28px); }
+}
+
+@keyframes mp-step-line {
+  0%, 12% { transform: scaleX(0.05); }
+  34% { transform: scaleX(0.36); }
+  60% { transform: scaleX(0.68); }
+  82%, 94% { transform: scaleX(1); }
+  100% { transform: scaleX(0.05); }
+}
+
+@keyframes mp-toast-pop {
+  0%, 16% { transform: translateY(28px); opacity: 0; }
+  26%, 78% { transform: translateY(0); opacity: 1; }
+  90%, 100% { transform: translateY(28px); opacity: 0; }
+}
+
+@keyframes mp-toast-bar {
+  0%, 24% { transform: scaleX(1); }
+  78%, 100% { transform: scaleX(0); }
+}
+
+@keyframes mp-shimmer-wave {
+  0% { transform: translateX(-140px); }
+  60%, 100% { transform: translateX(240px); }
+}
+
+@keyframes mp-skeleton-swap {
+  0%, 52% { opacity: 0; }
+  66%, 90% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes mp-stagger-enter {
+  0%, 12% { opacity: 0; transform: translateY(8px); }
+  34%, 84% { opacity: 1; transform: translateY(0); }
+  96%, 100% { opacity: 0; transform: translateY(6px); }
+}
+
+[data-motion-paused="true"] .mp-stage-svg *,
+[data-motion-paused="true"] .mp-anim {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.inspo-lightbox-dialog[open],
+  .mp-stage-svg *,
+  .mp-anim {
+    animation: none !important;
+  }
+}

@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   Code2,
   Copy,
-  Crosshair,
   Edit3,
   Eye,
   FileCode,
@@ -23,10 +22,8 @@ import {
   Sparkles,
   Trash2,
   Upload,
-  X,
 } from 'lucide-react';
 import {
-  extractMuFromPrototypeHtml,
   MODEL_CODES,
   MODEL_FILE_NAMES,
   MODEL_STAGE_ORDER,
@@ -43,7 +40,6 @@ import type {
   ProjectSummary,
   PrototypeArtifact,
   RequirementDoc,
-  RequirementSession,
 } from '../../packages/workspace-store/index.js';
 import {
   apiCloneProject,
@@ -57,7 +53,6 @@ import {
   apiPutJson,
   apiRefinePrototype,
   apiRestoreProjectSnapshot,
-  apiSynthesizeOntologyFromPrototype,
   apiSynthesizeSrsDoc,
   apiUpdateProjectMeta,
   getProjectLifecycleState,
@@ -70,12 +65,9 @@ import {
   CodeBlock,
   ConfirmDialog,
   RegistryTable,
-  readVariantSearchParam,
-  syncVariantSearchParam,
 } from '../components/beautifui/index.js';
-import { PrototypeInspoRouteHost } from './PrototypeInspoVariants.prototype.js';
+import { PrototypeCoDesignStudio } from '../components/prototype/PrototypeCoDesignStudio.js';
 import {
-  PrototypeVisualPreviewStage,
   toRefinementSelections,
   type PrototypeSelectionTarget,
   type PrototypeVisualAnnotation,
@@ -2149,444 +2141,13 @@ export function RequirementDocsView({
   );
 }
 
-// ─── Helper: Domain-Tailored Semantic HTML5 Starter Skeleton ──────────────────
-function buildStarterPrototypeTemplate(
-  project: {
-    name: string;
-    domain: string;
-    suite: {
-      M1?: {
-        aggregates: {
-          name: string;
-          alias: string;
-          uiBindings?: string[];
-          lifecycle?: string[];
-          attributes: { name: string; label: string; type: string }[];
-        }[];
-      };
-      M2?: { behaviors: { id: string; behaviorType: string }[] };
-      M3?: { rules: { id: string }[] };
-      M5?: { roles: { id: string }[] };
-      M7?: { query_reports: { id: string; behaviorRef?: string }[] };
-    };
-  },
-  locale: 'zh-CN' | 'en-US',
-): string {
-  const safeText = (s: string) => s.replace(/[<>&"]/g, '');
-  const isContractProject = /合同|contract|clm/i.test(`${project.name} ${project.domain}`);
-  const hasStaleContractTemplate =
-    !isContractProject &&
-    Boolean(
-      project.suite.M1?.aggregates.some(
-        (a) => a.name === 'Contract' && a.uiBindings?.includes('SCR-CONTRACT-LIST'),
-      ),
-    );
-  const authenticAggs = hasStaleContractTemplate ? [] : (project.suite.M1?.aggregates ?? []);
-  const primaryAgg = authenticAggs[0];
-  const aggName = primaryAgg?.name ?? 'DomainRecord';
-  const cleanSubject = safeText(
-    primaryAgg?.alias ||
-      project.name.replace(/管理系统|平台|工作台|系统|工程/g, '').trim() ||
-      (locale === 'en-US' ? 'Order' : '业务单据'),
-  );
-  const attrs = primaryAgg?.attributes ?? [];
-  const codeAttr = attrs[0]?.name ?? 'recordNo';
-  const codeLabel = safeText(
-    attrs[0]?.label ?? (locale === 'en-US' ? `${cleanSubject} No.` : `${cleanSubject}编号`),
-  );
-  const titleAttr = attrs[1]?.name ?? 'title';
-  const titleLabel = safeText(
-    attrs[1]?.label ?? (locale === 'en-US' ? `${cleanSubject} Name` : `${cleanSubject}名称`),
-  );
-  const statusAttr =
-    attrs.find((a) => a.name === 'status' || a.type === 'Enum')?.name ?? 'status';
-  const lifecycle =
-    primaryAgg?.lifecycle && primaryAgg.lifecycle.length > 0
-      ? primaryAgg.lifecycle
-      : ['DRAFT', 'ACTIVE', 'COMPLETED'];
-
-  const roleRef = project.suite.M5?.roles[0]?.id ?? 'ROLE-01';
-  const cmdBehId =
-    project.suite.M2?.behaviors.find((b) => b.behaviorType === 'COMMAND')?.id ?? 'BHV-01';
-  const qryId = project.suite.M7?.query_reports[0]?.id ?? 'QRY-01';
-  const qryBehId = project.suite.M7?.query_reports[0]?.behaviorRef ?? 'BHV-QRY-01';
-  const ruleId = project.suite.M3?.rules[0]?.id ?? 'RULE-01';
-  const routeSlug = aggName.toLowerCase();
-  const projTitle = safeText(project.name);
-
-  const listScreenTitle =
-    locale === 'en-US' ? `${cleanSubject} Ledger` : `${cleanSubject}台账列表`;
-  const formScreenTitle =
-    locale === 'en-US' ? `Create ${cleanSubject}` : `新建${cleanSubject}`;
-
-  return `<!DOCTYPE html>
-<html lang="${locale}">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${projTitle} · 界面原型.html</title>
-  <style>
-    :root {
-      --bg: #f3f2ee;
-      --surface: #fdfdfb;
-      --surface-2: #f6f5f1;
-      --ink: #1a1a18;
-      --muted: #5a5953;
-      --line: #d5d3cb;
-      --accent: #4c50c4;
-      --ok: #287452;
-      --ok-soft: rgba(40, 116, 82, 0.12);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 20px;
-      font-family: "IBM Plex Sans", "Noto Sans SC", system-ui, sans-serif;
-      font-size: 13px;
-      background: var(--bg);
-      color: var(--ink);
-    }
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding-bottom: 12px;
-      margin-bottom: 16px;
-      border-bottom: 1px solid var(--line);
-    }
-    .tabs { display: flex; gap: 6px; }
-    .tab-btn {
-      padding: 6px 12px;
-      border-radius: 6px;
-      border: 1px solid var(--line);
-      background: var(--surface);
-      color: var(--ink);
-      cursor: pointer;
-      font: inherit;
-    }
-    .tab-btn[aria-selected="true"] {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-    }
-    .status-toast {
-      display: none;
-      margin-bottom: 12px;
-      padding: 8px 12px;
-      border-radius: 6px;
-      background: var(--ok-soft);
-      color: var(--ok);
-      font-weight: 500;
-    }
-    .screen-card {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 16px;
-    }
-    .screen-card[hidden] { display: none; }
-    .grid-3 {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-    input, select {
-      width: 100%;
-      padding: 7px 10px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--surface);
-      font: inherit;
-    }
-    .btn {
-      padding: 7px 14px;
-      border-radius: 6px;
-      border: 1px solid var(--line);
-      background: var(--surface-2);
-      color: var(--ink);
-      cursor: pointer;
-      font: inherit;
-      white-space: nowrap;
-    }
-    .btn-primary {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-    }
-    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
-    th { font-size: 11.5px; color: var(--muted); background: var(--surface-2); }
-  </style>
-</head>
-<body>
-  <header class="topbar">
-    <div>
-      <strong>${projTitle}</strong>
-      <span style="color: var(--muted); margin-left: 8px;">MU Semantic Prototype</span>
-    </div>
-    <nav class="tabs" role="tablist">
-      <button type="button" class="tab-btn" role="tab" aria-selected="true" onclick="switchScreen('SCR-MAIN-LIST')">1. ${listScreenTitle}</button>
-      <button type="button" class="tab-btn" role="tab" aria-selected="false" onclick="switchScreen('SCR-MAIN-FORM')">2. ${formScreenTitle}</button>
-    </nav>
-  </header>
-
-  <div id="statusToast" class="status-toast" role="status" aria-live="polite"></div>
-
-  <!-- Screen 1: data-screen-id defines an MU Screen -->
-  <section
-    id="SCR-MAIN-LIST"
-    class="screen-card"
-    data-screen-id="SCR-MAIN-LIST"
-    data-screen-name="${listScreenTitle}"
-    data-screen-type="LIST"
-    data-route="/${routeSlug}/list"
-    data-role-refs="${roleRef}"
-  >
-    <h3 style="margin-top: 0;">${listScreenTitle}</h3>
-    <div class="grid-3">
-      <div>
-        <label for="filterKeyword">${codeLabel}</label>
-        <input
-          id="filterKeyword"
-          placeholder="${codeLabel}..."
-          data-element-id="EL-FILTER-KEYWORD"
-          data-element-name="filterKeyword"
-          data-element-label="${codeLabel}"
-          data-element-type="INPUT"
-          data-binding="${aggName}.${codeAttr}"
-        />
-      </div>
-      <div>
-        <label for="filterStatus">Status</label>
-        <select
-          id="filterStatus"
-          data-element-id="EL-FILTER-STATUS"
-          data-element-name="filterStatus"
-          data-element-label="状态筛选"
-          data-element-type="SELECT"
-          data-binding="${aggName}.${statusAttr}"
-        >
-          <option value="">ALL</option>
-${lifecycle.map((st) => `          <option value="${st}">${st}</option>`).join('\n')}
-        </select>
-      </div>
-      <div style="display: flex; align-items: flex-end; gap: 8px;">
-        <button
-          type="button"
-          class="btn"
-          onclick="filterRows()"
-          data-element-id="EL-BTN-QUERY"
-          data-element-name="queryBtn"
-          data-element-label="检索"
-          data-element-type="BUTTON"
-          data-event-id="UIE-QUERY-LIST"
-          data-event-name="检索台账"
-          data-behavior-ref="${qryBehId}"
-          data-report-ref="${qryId}"
-        >${locale === 'en-US' ? 'Search' : '检索'}</button>
-        <button
-          type="button"
-          class="btn btn-primary"
-          onclick="switchScreen('SCR-MAIN-FORM')"
-          data-element-id="EL-BTN-OPEN-FORM"
-          data-element-name="openFormBtn"
-          data-element-label="${formScreenTitle}"
-          data-element-type="BUTTON"
-          data-event-id="UIE-OPEN-FORM"
-          data-event-name="跳转${formScreenTitle}"
-          data-navigate-to="SCR-MAIN-FORM"
-        >+ ${formScreenTitle}</button>
-      </div>
-    </div>
-
-    <table
-      id="ledgerTable"
-      data-element-id="EL-MAIN-TABLE"
-      data-element-name="mainLedgerTable"
-      data-element-label="${listScreenTitle}"
-      data-element-type="TABLE"
-      data-source="${qryId}"
-    >
-      <thead>
-        <tr>
-          <th>${codeLabel}</th>
-          <th>${titleLabel}</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>DOC-2026-001</td>
-          <td>${cleanSubject} #1</td>
-          <td>${lifecycle[0]}</td>
-        </tr>
-      </tbody>
-    </table>
-  </section>
-
-  <!-- Screen 2: Form bound to M1 Aggregate attributes & M2/M3 behavior/rule refs -->
-  <section
-    id="SCR-MAIN-FORM"
-    class="screen-card"
-    hidden
-    data-screen-id="SCR-MAIN-FORM"
-    data-screen-name="${formScreenTitle}"
-    data-screen-type="FORM"
-    data-route="/${routeSlug}/create"
-    data-role-refs="${roleRef}"
-  >
-    <h3 style="margin-top: 0;">${formScreenTitle}</h3>
-    <div class="grid-3">
-      <div>
-        <label for="inputCode">${codeLabel} *</label>
-        <input
-          id="inputCode"
-          required
-          value="DOC-2026-002"
-          data-element-id="EL-INPUT-CODE"
-          data-element-name="inputCode"
-          data-element-label="${codeLabel}"
-          data-element-type="INPUT"
-          data-binding="${aggName}.${codeAttr}"
-        />
-      </div>
-      <div>
-        <label for="inputTitle">${titleLabel} *</label>
-        <input
-          id="inputTitle"
-          required
-          placeholder="${titleLabel}"
-          data-element-id="EL-INPUT-TITLE"
-          data-element-name="inputTitle"
-          data-element-label="${titleLabel}"
-          data-element-type="INPUT"
-          data-binding="${aggName}.${titleAttr}"
-        />
-      </div>
-    </div>
-    <div style="display: flex; gap: 8px;">
-      <button
-        type="button"
-        class="btn btn-primary"
-        onclick="submitRecord()"
-        data-element-id="EL-BTN-SUBMIT"
-        data-element-name="submitBtn"
-        data-element-label="提交保存"
-        data-element-type="BUTTON"
-        data-event-id="UIE-SUBMIT-FORM"
-        data-event-name="提交${cleanSubject}"
-        data-behavior-ref="${cmdBehId}"
-        data-validate-ref="${ruleId}"
-        data-navigate-to="SCR-MAIN-LIST"
-      >${locale === 'en-US' ? 'Save & Submit' : '提交保存'}</button>
-      <button type="button" class="btn" onclick="switchScreen('SCR-MAIN-LIST')">${locale === 'en-US' ? 'Back' : '返回列表'}</button>
-    </div>
-  </section>
-
-  <script>
-    function showNotice(msg) {
-      var el = document.getElementById('statusToast');
-      el.textContent = msg;
-      el.style.display = 'block';
-    }
-    function switchScreen(id) {
-      document.querySelectorAll('[data-screen-id]').forEach(function (sec) {
-        sec.hidden = sec.id !== id;
-      });
-      var tabs = document.querySelectorAll('.tab-btn');
-      tabs[0].setAttribute('aria-selected', String(id === 'SCR-MAIN-LIST'));
-      tabs[1].setAttribute('aria-selected', String(id === 'SCR-MAIN-FORM'));
-    }
-    function filterRows() {
-      var kw = document.getElementById('filterKeyword').value.trim().toLowerCase();
-      var st = document.getElementById('filterStatus').value;
-      document.querySelectorAll('#ledgerTable tbody tr').forEach(function (tr) {
-        var text = tr.textContent.toLowerCase();
-        var okKw = !kw || text.indexOf(kw) !== -1;
-        var okSt = !st || tr.cells[2].textContent === st;
-        tr.style.display = okKw && okSt ? '' : 'none';
-      });
-    }
-    function submitRecord() {
-      var code = document.getElementById('inputCode').value.trim() || 'DOC-NEW';
-      var title = document.getElementById('inputTitle').value.trim() || '${cleanSubject}';
-      var tbody = document.querySelector('#ledgerTable tbody');
-      var tr = document.createElement('tr');
-      [code, title, '${lifecycle[0]}'].forEach(function (val) {
-        var td = document.createElement('td');
-        td.textContent = val;
-        tr.appendChild(td);
-      });
-      tbody.insertBefore(tr, tbody.firstChild);
-      showNotice('${locale === 'en-US' ? 'Saved record: ' : '已提交单据：'}' + code);
-      switchScreen('SCR-MAIN-LIST');
-    }
-  </script>
-</body>
-</html>`;
-}
-
-// ─── 4. UI Prototype & MU Sync (界面原型: Registry + Studio) ──────────────────
+// ─── 4. UI Prototype & MU Sync (界面原型: 3-Stage Reference + Schematic + Studio) ─
 export function PrototypeStudioView({
   onNavigate,
 }: {
   onNavigate?: (view: NavViewId) => void;
 }) {
   const { t } = usePreferences();
-  const [showProtoVariants, setShowProtoVariants] = useState<boolean>(() => {
-    if (!import.meta.env.DEV) return false;
-    return readVariantSearchParam('A') !== 'baseline';
-  });
-
-  if (import.meta.env.DEV && showProtoVariants) {
-    return (
-      <PrototypeInspoRouteHost
-        onNavigate={onNavigate}
-        onExitToBaseline={() => {
-          syncVariantSearchParam('baseline');
-          setShowProtoVariants(false);
-        }}
-      />
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      {import.meta.env.DEV && (
-        <div className="flex items-center justify-between gap-2 rounded-window border border-accent/30 bg-accent-tint/35 px-3.5 py-2 text-[12px]">
-          <span>
-            {t(
-              '当前显示原版界面原型工作台（Baseline）。可随时切换回 Inspo 视觉参考 + Agent 对齐三方案小样（A/B/C）。',
-              'Showing baseline Prototype Studio. Switch back to Inspo Visual + Agent prototype variants anytime.',
-            )}
-          </span>
-          <Button
-            type="button"
-            variant="accent"
-            size="xs"
-            onClick={() => {
-              syncVariantSearchParam('A');
-              setShowProtoVariants(true);
-            }}
-          >
-            {t('打开 Inspo 视觉选型小样 (A / B / C)', 'Open Inspo Variants (A / B / C)')}
-          </Button>
-        </div>
-      )}
-      <PrototypeStudioBaselineView onNavigate={onNavigate} />
-    </div>
-  );
-}
-
-function PrototypeStudioBaselineView({
-  onNavigate,
-}: {
-  onNavigate?: (view: NavViewId) => void;
-}) {
-  const { locale, t } = usePreferences();
   const {
     data,
     activeItemId,
@@ -2596,13 +2157,17 @@ function PrototypeStudioBaselineView({
     startPrototypeGenTask,
     startOntologySynthTask,
   } = useWorkbenchStore();
+
   const [pageMode, setPageMode] = useState<'WORKSPACE' | 'REGISTRY'>('WORKSPACE');
+  const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
+  const [previewSource, setPreviewSource] = useState<'REFERENCE_DRAFT' | 'SAVED_PROTO'>(() =>
+    (data?.prototypes.length ?? 0) > 0 ? 'SAVED_PROTO' : 'REFERENCE_DRAFT',
+  );
   const [selectedProtoId, setSelectedProtoId] = useState<string>('');
-  const [htmlContent, setHtmlContent] = useState<string>('');
-  const [viewMode, setViewMode] = useState<'SPLIT' | 'PREVIEW' | 'HTML'>('SPLIT');
-  const [scratchMode, setScratchMode] = useState(false);
+  const [savedHtmlContent, setSavedHtmlContent] = useState<string>('');
+  const [draftHtml, setDraftHtml] = useState<string>('');
+  const [draftRefSummary, setDraftRefSummary] = useState<string>('Inspo');
   const [selectedDocId, setSelectedDocId] = useState<string>('');
-  const [isDragOver, setIsDragOver] = useState(false);
 
   const [refineInstruction, setRefineInstruction] = useState<string>('');
   const [refining, setRefining] = useState(false);
@@ -2622,13 +2187,6 @@ function PrototypeStudioBaselineView({
   const [cloningVersion, setCloningVersion] = useState(false);
 
   const htmlUploadRef = useRef<HTMLInputElement | null>(null);
-  const htmlTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const lastCompositionEndRef = useRef<number | null>(null);
-
-  const srsSelectId = useId();
-  const promptInputId = useId();
-  const studioRefineInputId = useId();
-  const htmlEditorId = useId();
   const modalSrsSelectId = useId();
   const modalPromptId = useId();
   const modalCloneVersionId = useId();
@@ -2637,7 +2195,6 @@ function PrototypeStudioBaselineView({
   const prototypes = data?.prototypes ?? [];
   const proto = prototypes.find((p) => p.id === selectedProtoId) ?? prototypes[0];
   const docs = data?.requirementDocs ?? [];
-  const sessions = data?.requirementSessions ?? [];
 
   const nextVersionLabel = useMemo(() => {
     let maxMinor = prototypes.length - 1;
@@ -2666,12 +2223,12 @@ function PrototypeStudioBaselineView({
 
   // Reset transient studio state when switching projects
   useEffect(() => {
-    setScratchMode(false);
     setSynthesisSummary(null);
     setRefineInstruction('');
     setInspectMode(false);
     setVisualAnnotations([]);
     setNewVersionModalOpen(false);
+    setPreviewSource((data?.prototypes.length ?? 0) > 0 ? 'SAVED_PROTO' : 'REFERENCE_DRAFT');
     lastHandledProtoResultRef.current =
       activeProtoForEffect?.status === 'COMPLETED'
         ? (activeProtoForEffect.resultItemId ?? null)
@@ -2690,7 +2247,8 @@ function PrototypeStudioBaselineView({
       if (created) {
         lastHandledProtoResultRef.current = created.id;
         setSelectedProtoId(created.id);
-        setScratchMode(false);
+        setPreviewSource('SAVED_PROTO');
+        setActiveStep(3);
         setRefineInstruction('');
         setPageMode('WORKSPACE');
       }
@@ -2703,7 +2261,7 @@ function PrototypeStudioBaselineView({
       return;
     }
     if (!docs.some((d) => d.id === selectedDocId)) {
-      setSelectedDocId(docs[0].id);
+      setSelectedDocId(docs[0]!.id);
     }
   }, [data?.activeProject.id, docs]);
 
@@ -2712,6 +2270,8 @@ function PrototypeStudioBaselineView({
     const target = data.prototypes.find((p) => p.id === activeItemId);
     if (target && target.id !== selectedProtoId) {
       setSelectedProtoId(target.id);
+      setPreviewSource('SAVED_PROTO');
+      setActiveStep(3);
       setPageMode('WORKSPACE');
     }
   }, [activeItemId, data?.prototypes]);
@@ -2721,43 +2281,19 @@ function PrototypeStudioBaselineView({
     const list = data.prototypes;
     if (list.length === 0) {
       setSelectedProtoId('');
-      setHtmlContent('');
+      setSavedHtmlContent('');
+      setPreviewSource('REFERENCE_DRAFT');
       return;
     }
     if (!list.some((p) => p.id === selectedProtoId)) {
-      setSelectedProtoId(list[0].id);
+      setSelectedProtoId(list[0]!.id);
     }
   }, [data?.activeProject.id, data?.prototypes]);
 
   useEffect(() => {
-    setHtmlContent(proto?.htmlContent ?? '');
+    setSavedHtmlContent(proto?.htmlContent ?? '');
     setVisualAnnotations([]);
   }, [data?.activeProject.id, proto?.id, proto?.updatedAt, proto?.htmlContent]);
-
-  const liveMuSummary = useMemo(() => {
-    if (!data || !htmlContent.trim()) {
-      return { screenCount: 0, elementCount: 0, bindingCount: 0, eventCount: 0 };
-    }
-    try {
-      const extracted = extractMuFromPrototypeHtml(htmlContent, data.activeProject.domain);
-      let elementCount = 0;
-      let bindingCount = 0;
-      let eventCount = 0;
-      for (const scr of extracted.screens) {
-        elementCount += scr.elements.length;
-        bindingCount += scr.elements.filter((el) => Boolean(el.dataBinding)).length;
-        eventCount += scr.events.length;
-      }
-      return {
-        screenCount: extracted.screens.length,
-        elementCount,
-        bindingCount,
-        eventCount,
-      };
-    } catch {
-      return { screenCount: 0, elementCount: 0, bindingCount: 0, eventCount: 0 };
-    }
-  }, [htmlContent, data?.activeProject.domain]);
 
   if (!data) return null;
 
@@ -2770,6 +2306,13 @@ function PrototypeStudioBaselineView({
   );
   const synthesizingOntology = activeOntoTask?.status === 'RUNNING';
   const isBusyProto = refining || activeProtoTask?.status === 'RUNNING';
+
+  const effectiveHtml =
+    previewSource === 'SAVED_PROTO' && proto
+      ? savedHtmlContent || proto.htmlContent
+      : draftHtml;
+  const hasHtml = effectiveHtml.trim().length > 0;
+
   const isContractProject = /合同|contract|clm/i.test(`${project.name} ${project.domain}`);
   const hasStaleContractTemplate =
     !isContractProject &&
@@ -2781,10 +2324,6 @@ function PrototypeStudioBaselineView({
   const authenticAggregates = hasStaleContractTemplate
     ? []
     : (project.suite.M1?.aggregates ?? []);
-
-  const hasHtml = htmlContent.trim().length > 0;
-  const isEmptyZeroState = prototypes.length === 0 && !hasHtml && !scratchMode;
-
   const domainSubject =
     authenticAggregates[0]?.alias ||
     project.name.replace(/管理系统|平台|工作台|系统|工程/g, '').trim() ||
@@ -2805,27 +2344,19 @@ function PrototypeStudioBaselineView({
         `Design an operations dashboard prototype for "${project.name}": KPI summary cards at top, multi-filter data table in center, and interactive ${domainSubject} detail inspection view.`,
       ),
     },
-    {
-      label: t('核心业务办理台 + 规则校验 + 状态流转', 'Transaction Workbench + Rule Checks + Lifecycle'),
-      prompt: t(
-        `生成「${project.name}」一线业务高频办理工作台原型：包含快捷录入表单、实时计算与规则校验状态条反馈、以及从草稿到完结的全状态流转操作按钮。`,
-        `Generate a high-efficiency transaction workbench prototype for "${project.name}" with quick entry form, inline rule validation banner, and lifecycle transition actions.`,
-      ),
-    },
   ];
 
-  const handleSaveAndExtractMu = async () => {
-    if (!hasHtml) return;
+  const persistPrototypeHtml = async (params: {
+    id?: string;
+    name: string;
+    version: string;
+    htmlContent: string;
+    syncMu: boolean;
+  }) => {
     const res = await fetch(`/api/projects/${project.id}/prototypes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: proto?.id,
-        name: proto?.name ?? '界面原型.html',
-        version: proto?.version ?? 'v5.1',
-        htmlContent,
-        syncMu: true,
-      }),
+      body: JSON.stringify(params),
     });
     const json = await res.json();
     patchData({
@@ -2834,12 +2365,45 @@ function PrototypeStudioBaselineView({
     });
     if (json.prototype?.id) {
       setSelectedProtoId(json.prototype.id);
+      setPreviewSource('SAVED_PROTO');
     }
-    setScratchMode(false);
+    return json;
+  };
+
+  const handleSaveAndExtractMu = async () => {
+    if (!hasHtml) return;
+    const isSavingExisting = previewSource === 'SAVED_PROTO' && Boolean(proto);
+    const json = await persistPrototypeHtml({
+      ...(isSavingExisting && proto ? { id: proto.id } : {}),
+      name:
+        isSavingExisting && proto
+          ? proto.name
+          : `${project.name} · 参考合成 (${draftRefSummary}).html`,
+      version: isSavingExisting && proto ? proto.version : nextVersionLabel,
+      htmlContent: effectiveHtml,
+      syncMu: true,
+    });
     showToast(
       t(
         `已从 HTML 原型语义锚点提取 ${json.prototype.extractedScreenCount} 个屏幕并自动同步至 MU UI 模型`,
         `Extracted ${json.prototype.extractedScreenCount} screen(s) from HTML semantic anchors and synced to MU`,
+      ),
+    );
+  };
+
+  const handleSaveDraftAsPrototype = async (html: string, refTitleSummary: string) => {
+    if (!html.trim()) return;
+    const json = await persistPrototypeHtml({
+      name: `${project.name} · 参考合成 (${refTitleSummary}).html`,
+      version: nextVersionLabel,
+      htmlContent: html,
+      syncMu: true,
+    });
+    setActiveStep(3);
+    showToast(
+      t(
+        `已将「${refTitleSummary}」参考原型保存为 ${json.prototype.version}，并同步 ${json.prototype.extractedScreenCount} 个屏幕至 MU 模型`,
+        `Saved "${refTitleSummary}" prototype as ${json.prototype.version} and synced ${json.prototype.extractedScreenCount} screen(s) to MU`,
       ),
     );
   };
@@ -2852,26 +2416,13 @@ function PrototypeStudioBaselineView({
       return;
     }
     const uploadedHtml = await file.text();
-    setHtmlContent(uploadedHtml);
-    const res = await fetch(`/api/projects/${project.id}/prototypes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: file.name || '界面原型.html',
-        version: 'v5.1',
-        htmlContent: uploadedHtml,
-        syncMu: true,
-      }),
+    const json = await persistPrototypeHtml({
+      name: file.name || '界面原型.html',
+      version: nextVersionLabel,
+      htmlContent: uploadedHtml,
+      syncMu: true,
     });
-    const json = await res.json();
-    patchData({
-      activeProject: json.project,
-      prototypes: json.prototypes,
-    });
-    if (json.prototype?.id) {
-      setSelectedProtoId(json.prototype.id);
-    }
-    setScratchMode(false);
+    setActiveStep(3);
     setPageMode('WORKSPACE');
     showToast(
       t(
@@ -2888,20 +2439,11 @@ function PrototypeStudioBaselineView({
     await importHtmlFile(file);
   };
 
-  const handleDropHtml = async (e: React.DragEvent<HTMLElement>) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-    await importHtmlFile(file);
-  };
-
-  const handleDownloadHtml = () => {
-    if (!hasHtml) return;
-    const fileName = proto?.name?.endsWith('.html')
-      ? proto.name
-      : `${proto?.name ?? '界面原型'}.html`;
-    triggerBrowserDownload(fileName, htmlContent, 'text/html;charset=utf-8');
+  const handleDownloadHtml = (html: string, preferredName?: string) => {
+    if (!html.trim()) return;
+    const baseName = preferredName ?? proto?.name ?? '界面原型.html';
+    const fileName = baseName.endsWith('.html') ? baseName : `${baseName}.html`;
+    triggerBrowserDownload(fileName, html, 'text/html;charset=utf-8');
     showToast(t(`已下载原型文件 ${fileName}`, `Downloaded ${fileName}`));
   };
 
@@ -2909,7 +2451,6 @@ function PrototypeStudioBaselineView({
     if (refining || activeProtoTask?.status === 'RUNNING') return;
     const promptText = options?.prompt?.trim();
     const targetDoc = options?.docId || selectedDocId || undefined;
-    setScratchMode(false);
     setPageMode('WORKSPACE');
     void startPrototypeGenTask({
       ...(targetDoc ? { docId: targetDoc } : {}),
@@ -2956,8 +2497,8 @@ function PrototypeStudioBaselineView({
     try {
       const sourceHtml =
         proto.id === (prototypes.find((p) => p.id === selectedProtoId) ?? prototypes[0])?.id &&
-        htmlContent.trim()
-          ? htmlContent
+        savedHtmlContent.trim()
+          ? savedHtmlContent
           : proto.htmlContent;
       const versionTag = cloneVersionTag.trim() || nextVersionLabel;
       const targetName =
@@ -2965,30 +2506,18 @@ function PrototypeStudioBaselineView({
         proto.name.replace(/\s*\(副本\)\s*$/g, '').trim() ||
         '界面原型.html';
       const hasDomainOntology = (project.suite.M1?.aggregates.length ?? 0) > 0;
-      const res = await fetch(`/api/projects/${project.id}/prototypes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: targetName,
-          version: versionTag,
-          htmlContent: sourceHtml,
-          syncMu: hasDomainOntology,
-        }),
+      await persistPrototypeHtml({
+        name: targetName,
+        version: versionTag,
+        htmlContent: sourceHtml,
+        syncMu: hasDomainOntology,
       });
-      const json = await res.json();
-      patchData({
-        activeProject: json.project,
-        prototypes: json.prototypes,
-      });
-      if (json.prototype?.id) {
-        setSelectedProtoId(json.prototype.id);
-      }
-      setScratchMode(false);
+      setActiveStep(3);
       setPageMode('WORKSPACE');
       setNewVersionModalOpen(false);
       showToast(
         t(
-          `已基于 ${proto.version} 创建新版本「${versionTag}」，原版本完整保留，可直接在下方精修或编辑源码`,
+          `已基于 ${proto.version} 创建新版本「${versionTag}」，原版本完整保留`,
           `Created new version "${versionTag}" from ${proto.version}; original version is preserved.`,
         ),
       );
@@ -3025,44 +2554,37 @@ function PrototypeStudioBaselineView({
     );
   };
 
-  const handleRefinePrototype = async (immediateDraft?: {
-    target: PrototypeSelectionTarget;
-    note: string;
-  }) => {
+  const handleRefinePrototype = async (
+    activeHtml: string,
+    immediateDraft?: {
+      target: PrototypeSelectionTarget;
+      note: string;
+    },
+  ) => {
     const instruction = refineInstruction.trim();
     const selections = toRefinementSelections(visualAnnotations, immediateDraft ?? null);
     if (refining) return;
-    if (!proto && !hasHtml) {
-      await handleGenerateNewPrototype({ prompt: instruction, docId: selectedDocId });
-      return;
-    }
-    const hasAnySelectionNote = selections.some((s) => Boolean(s.note?.trim()));
     if (!instruction && selections.length === 0) return;
-    if (!instruction && !hasAnySelectionNote && selections.length === 0) return;
 
     setRefining(true);
     try {
-      let targetProtoId = proto?.id;
       const hasDomainOntology = (project.suite.M1?.aggregates.length ?? 0) > 0;
-      if (!targetProtoId || (proto && htmlContent.trim() && htmlContent !== proto.htmlContent)) {
-        const saveRes = await fetch(`/api/projects/${project.id}/prototypes`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...(proto?.id ? { id: proto.id } : {}),
-            name: proto?.name ?? '界面原型.html',
-            version: proto?.version ?? 'v5.1',
-            htmlContent,
-            syncMu: hasDomainOntology,
-          }),
-        });
-        const saveJson = await saveRes.json();
-        patchData({
-          activeProject: saveJson.project,
-          prototypes: saveJson.prototypes,
+      let targetProtoId = previewSource === 'SAVED_PROTO' ? proto?.id : undefined;
+
+      if (
+        !targetProtoId ||
+        (proto && activeHtml.trim() && activeHtml !== proto.htmlContent)
+      ) {
+        const saveJson = await persistPrototypeHtml({
+          ...(targetProtoId ? { id: targetProtoId } : {}),
+          name: targetProtoId && proto
+            ? proto.name
+            : `${project.name} · 参考合成 (${draftRefSummary}).html`,
+          version: targetProtoId && proto ? proto.version : nextVersionLabel,
+          htmlContent: activeHtml,
+          syncMu: hasDomainOntology,
         });
         targetProtoId = saveJson.prototype?.id ?? targetProtoId;
-        setScratchMode(false);
       }
 
       if (!targetProtoId) return;
@@ -3073,12 +2595,13 @@ function PrototypeStudioBaselineView({
         instruction,
         selections.length > 0 ? selections : undefined,
       );
-      setHtmlContent(res.prototype.htmlContent);
+      setSavedHtmlContent(res.prototype.htmlContent);
       patchData({
         activeProject: res.project,
         prototypes: res.prototypes,
       });
       setSelectedProtoId(res.prototype.id);
+      setPreviewSource('SAVED_PROTO');
       setRefineInstruction('');
       setVisualAnnotations([]);
       setInspectMode(false);
@@ -3099,51 +2622,17 @@ function PrototypeStudioBaselineView({
     }
   };
 
-  const handleLoadStarterTemplate = () => {
-    const templateHtml = buildStarterPrototypeTemplate(project, locale);
-    setHtmlContent(templateHtml);
-    setScratchMode(true);
-    setViewMode('SPLIT');
-    showToast(
-      t(
-        '已载入 MU 语义锚点骨架模板，右侧可编辑源码，点击上方「保存原型并提取同步至 MU 模型」即可落库',
-        'Loaded semantic HTML starter template. Edit source and click "Save & Extract to MU Model" to persist.',
-      ),
-    );
-  };
-
-  const handleOpenBlankEditor = () => {
-    setScratchMode(true);
-    setViewMode('SPLIT');
-    requestAnimationFrame(() => {
-      htmlTextareaRef.current?.focus();
-    });
-  };
-
   const handleConfirmAndSynthesizeOntology = async () => {
     if (synthesizingOntology || (!proto && !hasHtml)) return;
-    let targetPrototypeId = proto?.id;
+    let targetPrototypeId = previewSource === 'SAVED_PROTO' ? proto?.id : undefined;
     if (!targetPrototypeId && hasHtml) {
-      const saveRes = await fetch(`/api/projects/${project.id}/prototypes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: '界面原型.html',
-          version: 'v5.1',
-          htmlContent,
-          syncMu: true,
-        }),
-      });
-      const saveJson = await saveRes.json();
-      patchData({
-        activeProject: saveJson.project,
-        prototypes: saveJson.prototypes,
+      const saveJson = await persistPrototypeHtml({
+        name: `${project.name} · 参考合成 (${draftRefSummary}).html`,
+        version: nextVersionLabel,
+        htmlContent: effectiveHtml,
+        syncMu: true,
       });
       targetPrototypeId = saveJson.prototype?.id;
-      if (targetPrototypeId) {
-        setSelectedProtoId(targetPrototypeId);
-      }
-      setScratchMode(false);
     }
 
     const res = await startOntologySynthTask(
@@ -3164,22 +2653,6 @@ function PrototypeStudioBaselineView({
     showToast(t('已删除原型版本', 'Deleted prototype artifact'));
   };
 
-  const handleZeroStateKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (e.nativeEvent.isComposing || e.keyCode === 229) {
-        return;
-      }
-      if (
-        lastCompositionEndRef.current !== null &&
-        Math.abs(e.timeStamp - lastCompositionEndRef.current) < 50
-      ) {
-        return;
-      }
-      e.currentTarget.form?.requestSubmit();
-    }
-  };
-
   return (
     <div className="flex flex-col gap-3">
       <input
@@ -3193,7 +2666,7 @@ function PrototypeStudioBaselineView({
       <ViewModeHeader
         mode={pageMode}
         onChange={setPageMode}
-        workspaceLabel={t('HTML 原型与 MU 锚定工作台', 'Prototype Studio')}
+        workspaceLabel={t('界面参考共创与 MU 原型工作台', 'Prototype Co-Design Studio')}
         registryLabel={t('原型版本管理列表', 'Prototype Registry')}
         count={prototypes.length}
         testIdPrefix="proto"
@@ -3214,7 +2687,7 @@ function PrototypeStudioBaselineView({
               size="sm"
               data-testid="sync-prototype-mu-btn"
               disabled={!hasHtml || refining}
-              onClick={handleSaveAndExtractMu}
+              onClick={() => void handleSaveAndExtractMu()}
             >
               {t('保存原型并提取同步至 MU 模型', 'Save & Extract to MU Model')}
             </Button>
@@ -3226,7 +2699,9 @@ function PrototypeStudioBaselineView({
               disabled={synthesizingOntology || refining || (!proto && !hasHtml)}
               onClick={() => void handleConfirmAndSynthesizeOntology()}
             >
-              {synthesizingOntology && <Loader2 size={13.5} className="pipeline-spin" aria-hidden="true" />}
+              {synthesizingOntology && (
+                <Loader2 size={13.5} className="pipeline-spin" aria-hidden="true" />
+              )}
               {synthesizingOntology
                 ? t('正在后台合成 11 模型…', 'Synthesizing 11 Models…')
                 : t('确认原型并一键合成 11 元模型本体', 'Confirm & Synthesize 11-Model')}
@@ -3250,6 +2725,26 @@ function PrototypeStudioBaselineView({
         />
       )}
 
+      {synthesisSummary && (
+        <div className="flex items-center justify-between gap-2.5 rounded-[6px] border border-line bg-green-tint p-[8px_12px]">
+          <div className="text-[12.5px]">
+            <strong>
+              {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
+            </strong>
+            {synthesisSummary.modelCount}/11 Models · {synthesisSummary.errorCount}{' '}
+            Consistency Errors
+          </div>
+          <Button
+            type="button"
+            variant="accent"
+            size="sm"
+            onClick={() => onNavigate?.('app-ontology')}
+          >
+            {t('前往 11 模型本体工作台查看 →', 'Open 11-Model Ontology Workbench →')}
+          </Button>
+        </div>
+      )}
+
       {pageMode === 'REGISTRY' ? (
         <RegistryTable<PrototypeArtifact>
           testId="prototype-registry-table"
@@ -3263,8 +2758,8 @@ function PrototypeStudioBaselineView({
           activeRowKey={proto?.id}
           searchPlaceholder={t('搜索原型名称或版本号…', 'Search prototype name or version…')}
           emptyMessage={t(
-            '当前工程暂无原型版本，点击右上角「新建原型版本…」或切换至工作台导入 .html 文件',
-            'No prototype versions yet. Click "New Prototype Version…" or upload an .html file in Prototype Studio.',
+            '当前工程暂无原型版本，可在工作台挑选参考大图合成或上传 .html 文件',
+            'No prototype versions yet. Pick visual references in Prototype Studio or upload an .html file.',
           )}
           matchesSearch={(p, q) =>
             p.name.toLowerCase().includes(q) || p.version.toLowerCase().includes(q)
@@ -3277,6 +2772,8 @@ function PrototypeStudioBaselineView({
           onPrimaryAction={() => openNewVersionModal()}
           onRowClick={(p) => {
             setSelectedProtoId(p.id);
+            setPreviewSource('SAVED_PROTO');
+            setActiveStep(3);
             setPageMode('WORKSPACE');
           }}
           columns={[
@@ -3328,10 +2825,12 @@ function PrototypeStudioBaselineView({
                     size="xs"
                     onClick={() => {
                       setSelectedProtoId(p.id);
+                      setPreviewSource('SAVED_PROTO');
+                      setActiveStep(3);
                       setPageMode('WORKSPACE');
                     }}
                   >
-                    {t('打开工作台', 'Studio')}
+                    {t('打开沙箱', 'Studio')}
                   </Button>
                   <Button
                     variant="ghost"
@@ -3354,697 +2853,43 @@ function PrototypeStudioBaselineView({
             },
           ]}
         />
-      ) : isEmptyZeroState ? (
-        <div className="card flex flex-col gap-4" data-testid="prototype-empty-state">
-          {/* Editorial Header & Project Context Readiness */}
-          <div className="flex flex-col gap-3 border-b border-line pb-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] border border-accent/25 bg-accent-tint text-accent">
-                  <Sparkles size={17} />
-                </div>
-                <div className="max-w-[740px]">
-                  <h2 className="editorial-heading m-0 font-serif text-[18px] font-semibold leading-[1.35] text-ink">
-                    {t(
-                      `构建「${project.name}」的首个可交互界面原型`,
-                      `Create the First Interactive Prototype for "${project.name}"`,
-                    )}
-                  </h2>
-                  <p className="editorial-prose m-0 mt-1 text-[13px] leading-[1.6] text-ink-2">
-                    {t(
-                      '生成或导入带语义锚点的单文件 HTML5 交互原型，平台将确定性提取业务屏幕、表单属性绑定与按钮事件，自动对齐 MU 界面模型。',
-                      'Generate or import a single-file semantic HTML5 prototype. Ontology Plus deterministically extracts screens, field bindings, and UI events into the MU model.',
-                    )}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Live Upstream Context Signals */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[11.5px] font-medium text-ink-3">
-                {t('可用工程上下文：', 'Detected Context:')}
-              </span>
-              <span className="badge">
-                {t('业务领域：', 'Domain: ')}
-                {project.domain || project.name}
-              </span>
-              {docs.length > 0 ? (
-                <span className="badge badge-ok">
-                  <CheckCircle2 size={11.5} />
-                  {t(
-                    `已就绪 ${docs.length} 份需求规格书`,
-                    `${docs.length} SRS Spec(s) Ready`,
-                  )}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => onNavigate?.('app-req-docs')}
-                  className="badge cursor-pointer transition-colors hover:border-accent hover:text-accent"
-                >
-                  {t('暂无需求规格书 · 前往编写', 'No SRS yet · Write SRS')}
-                  <ArrowRight size={11} />
-                </button>
-              )}
-              {sessions.length > 0 && (
-                <span className="badge">
-                  {t(
-                    `${sessions.length} 个需求探索会话`,
-                    `${sessions.length} Exploration Session(s)`,
-                  )}
-                </span>
-              )}
-              {authenticAggregates.length > 0 && (
-                <span className="badge mono">
-                  M1 ×{authenticAggregates.length} (
-                  {authenticAggregates
-                    .slice(0, 3)
-                    .map((a) => a.alias || a.name)
-                    .join(', ')}
-                  )
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Primary AI Generation + Secondary Upload / Skeleton Grid */}
-          <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-[1.35fr_0.95fr]">
-            {/* Path A: AI Semantic Prototype Composer (2nd card level -> recessed --surface-2) */}
-            <div className="card flex flex-col justify-between gap-3">
-              <form
-                className="flex flex-col gap-3"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void handleGenerateNewPrototype({
-                    prompt: refineInstruction,
-                    docId: selectedDocId,
-                  });
-                }}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[14px] font-semibold text-ink">
-                      {t('AI 语义原型生成', 'AI Semantic Prototype Generation')}
-                    </span>
-                    <span className="badge badge-accent">{t('推荐', 'Recommended')}</span>
-                  </div>
-                  <span className="font-mono text-[11px] text-ink-3">
-                    界面原型.html → MU
-                  </span>
-                </div>
-
-                {docs.length > 0 && (
-                  <div className="form-field">
-                    <label htmlFor={srsSelectId} className="form-label text-[12px]">
-                      {t('依据需求规格说明书', 'Source SRS Specification')}
-                    </label>
-                    <select
-                      id={srsSelectId}
-                      className="select"
-                      value={selectedDocId}
-                      onChange={(e) => setSelectedDocId(e.target.value)}
-                    >
-                      {docs.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.title} ({d.version})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                <div className="form-field">
-                  <label htmlFor={promptInputId} className="form-label text-[12px]">
-                    {t(
-                      '界面布局与核心交互诉求（可选，留空将按工程领域与规格书自动规划）',
-                      'Layout & interaction focus (optional — leave blank to auto-plan from project context)',
-                    )}
-                  </label>
-                  <textarea
-                    id={promptInputId}
-                    rows={3}
-                    className="textarea"
-                    data-testid="refine-prototype-input"
-                    placeholder={t(
-                      `例如：为「${project.name}」生成包含多条件筛选台账、新建录入表单与状态流转审批的三屏联动原型…`,
-                      `e.g. Build a 3-screen prototype for "${project.name}" with a filterable ledger, creation form, and approval workflow…`,
-                    )}
-                    value={refineInstruction}
-                    onChange={(e) => setRefineInstruction(e.target.value)}
-                    onCompositionEnd={(e) => {
-                      lastCompositionEndRef.current = e.timeStamp;
-                    }}
-                    onKeyDown={handleZeroStateKeyDown}
-                  />
-                </div>
-
-                {/* Quick Domain Prompt Chips */}
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-[11.5px] text-ink-3">
-                    {t('快速填入典型界面结构：', 'Quick layout presets:')}
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {starterPresets.map((preset) => (
-                      <button
-                        key={preset.label}
-                        type="button"
-                        onClick={() => setRefineInstruction(preset.prompt)}
-                        className="inline-flex items-center gap-1 rounded-[6px] border border-line bg-surface px-2.5 py-1 text-left text-[11.5px] text-ink-2 transition-colors hover:border-accent hover:text-accent cursor-pointer"
-                      >
-                        <Plus size={11} className="shrink-0 text-ink-3" />
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {refining && !activeProtoTask && (
-                  <div
-                    role="status"
-                    aria-live="polite"
-                    className="flex items-center gap-2.5 rounded-[6px] border border-accent/25 bg-accent-tint/60 px-3 py-2 text-[12.5px] text-ink"
-                  >
-                    <progress
-                      aria-label={t('正在生成交互原型', 'Generating prototype')}
-                      className="loading-spinner"
-                    />
-                    <span>
-                      {t(
-                        '正在结合领域上下文合成单文件 HTML5 交互原型，并注入 data-screen-id / data-binding 语义锚点…',
-                        'Synthesizing single-file HTML5 prototype with semantic MU anchors…',
-                      )}
-                    </span>
-                  </div>
-                )}
-
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                  <span className="text-[11.5px] text-ink-3">
-                    {t('按 Enter 直接生成，Shift + Enter 换行', 'Press Enter to generate, Shift + Enter for newline')}
-                  </span>
-                  <Button
-                    type="submit"
-                    variant="accent"
-                    size="md"
-                    data-testid="refine-prototype-btn"
-                    disabled={isBusyProto}
-                  >
-                    <Sparkles size={13.5} />
-                    {isBusyProto
-                      ? t('正在生成原型…', 'Generating Prototype…')
-                      : refineInstruction.trim()
-                        ? t('按指令生成交互原型并同步 MU', 'Generate Custom Prototype & Sync MU')
-                        : t('AI 基于工程上下文一键生成原型', 'Generate Prototype from Context')}
-                  </Button>
-                </div>
-              </form>
-            </div>
-
-            {/* Path B & C: Drag-and-Drop .html Import + Starter Skeleton / Blank Editor */}
-            <div className="flex flex-col gap-3">
-              {/* Drag & Drop Zone */}
-              <div
-                data-testid="prototype-dropzone"
-                role="button"
-                tabIndex={0}
-                onClick={() => htmlUploadRef.current?.click()}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    htmlUploadRef.current?.click();
-                  }
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  if (!isDragOver) setIsDragOver(true);
-                }}
-                onDragLeave={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                    setIsDragOver(false);
-                  }
-                }}
-                onDrop={(e) => void handleDropHtml(e)}
-                className={cn(
-                  'flex flex-1 flex-col items-center justify-center gap-2 rounded-[8px] border border-dashed px-4 py-6 text-center transition-colors cursor-pointer select-none',
-                  isDragOver
-                    ? 'border-accent bg-accent-tint/50 text-ink'
-                    : 'border-line-strong bg-inset/55 text-ink-2 hover:border-accent hover:bg-accent-tint/20',
-                )}
-              >
-                <div className="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-surface text-ink-2">
-                  <Upload size={16} />
-                </div>
-                <div className="text-[13px] font-medium text-ink">
-                  {t(
-                    '拖拽本地 .html 原型文件至此，或点击选择文件',
-                    'Drop a local .html prototype file here, or click to browse',
-                  )}
-                </div>
-                <p className="editorial-prose m-0 max-w-[320px] text-[12px] text-ink-3">
-                  {t(
-                    '支持单文件 HTML5 原型（.html / .htm），导入后自动解析语义锚点并同步至 MU 模型',
-                    'Supports single-file HTML5 (.html / .htm) with automatic semantic anchor extraction into MU',
-                  )}
-                </p>
-              </div>
-
-              {/* Starter Template & Blank Code Authoring */}
-              <div className="card flex flex-col gap-2.5">
-                <div className="flex items-center gap-2">
-                  <Code2 size={14} className="text-ink-3" />
-                  <span className="text-[13.5px] font-semibold text-ink">
-                    {t('从源码模板或空白画布开始', 'Start from Starter Code or Blank HTML')}
-                  </span>
-                </div>
-                <p className="editorial-prose m-0 text-[12px] leading-[1.55] text-ink-3">
-                  {t(
-                    '偏好手写或从外部工具粘贴 HTML？可一键载入带标准语义锚点的双屏骨架模板并进入分栏联调。',
-                    'Prefer hand-crafting or pasting HTML? Load a pre-wired 2-screen semantic template and open Split View.',
-                  )}
-                </p>
-                <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    data-testid="load-starter-template-btn"
-                    onClick={handleLoadStarterTemplate}
-                  >
-                    <FileCode size={13} />
-                    {t('载入语义骨架模板', 'Load Semantic Starter')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    data-testid="open-blank-editor-btn"
-                    onClick={handleOpenBlankEditor}
-                  >
-                    <Edit3 size={13} />
-                    {t('粘贴 / 手写空白源码', 'Blank HTML Editor')}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Quiet Bottom Reference Strip: 4 Deterministic MU Semantic Anchors */}
-          <div className="rounded-[8px] border border-line bg-inset/45 px-3.5 py-2.5">
-            <div className="mb-2 flex items-center gap-1.5 text-[11.5px] font-semibold text-ink-2">
-              <Layers size={12.5} className="text-accent" />
-              {t('MU 确定性语义锚点提取规范', 'Deterministic MU Semantic Anchor Contract')}
-            </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-              <div className="flex flex-col gap-0.5 text-[11.5px]">
-                <code className="font-mono text-[11px] text-accent">data-screen-id="SCR-*"</code>
-                <span className="text-ink-3">
-                  {t('声明独立业务屏幕、类型与路由边界', 'Declares MU screen boundary & route')}
-                </span>
-              </div>
-              <div className="flex flex-col gap-0.5 text-[11.5px]">
-                <code className="font-mono text-[11px] text-accent">data-element-id="EL-*"</code>
-                <span className="text-ink-3">
-                  {t('标识输入、下拉、表格或按钮控件', 'Identifies input, select, table, or button')}
-                </span>
-              </div>
-              <div className="flex flex-col gap-0.5 text-[11.5px]">
-                <code className="font-mono text-[11px] text-accent">data-binding="Agg.field"</code>
-                <span className="text-ink-3">
-                  {t('双向绑定 M1 聚合根与业务属性', 'Binds control to M1 aggregate attribute')}
-                </span>
-              </div>
-              <div className="flex flex-col gap-0.5 text-[11.5px]">
-                <code className="font-mono text-[11px] text-accent">data-event-id="UIE-*"</code>
-                <span className="text-ink-3">
-                  {t('关联 M2 领域行为与 M3 校验规则', 'Triggers M2 behavior & M3 validation rule')}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
       ) : (
-        <>
-          <div className="card flex flex-col gap-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                {prototypes.length > 0 ? (
-                  <select
-                    aria-label={t('选择原型版本', 'Select prototype version')}
-                    className="select w-[260px]"
-                    value={proto?.id ?? ''}
-                    onChange={(e) => setSelectedProtoId(e.target.value)}
-                  >
-                    {prototypes.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.version} · {p.extractedScreenCount} Screens)
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <>
-                    <span className="badge badge-warn">
-                      {t('未保存原型草稿', 'Unsaved Prototype Draft')}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setHtmlContent('');
-                        setScratchMode(false);
-                      }}
-                    >
-                      <RotateCcw size={12.5} />
-                      {t('返回原型向导', 'Back to Launchpad')}
-                    </Button>
-                  </>
-                )}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={!hasHtml}
-                  onClick={handleDownloadHtml}
-                >
-                  {t('下载 .html', 'Download .html')}
-                </Button>
-                {prototypes.length > 0 && (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    data-testid="open-new-proto-modal-btn"
-                    disabled={refining || activeProtoTask?.status === 'RUNNING'}
-                    onClick={() => openNewVersionModal()}
-                  >
-                    {activeProtoTask?.status === 'RUNNING' ? (
-                      <Loader2 size={12.5} className="pipeline-spin" aria-hidden="true" />
-                    ) : (
-                      <Plus size={13} />
-                    )}
-                    {activeProtoTask?.status === 'RUNNING'
-                      ? t('正在流式生成新版本…', 'Streaming New Version…')
-                      : t('新建版本…', 'New Version…')}
-                  </Button>
-                )}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Button
-                  type="button"
-                  variant="toggle"
-                  size="sm"
-                  data-testid="toggle-visual-select-btn"
-                  aria-pressed={inspectMode}
-                  disabled={!hasHtml || isBusyProto}
-                  onClick={() => {
-                    const next = !inspectMode;
-                    setInspectMode(next);
-                    if (next && viewMode === 'HTML') {
-                      setViewMode('SPLIT');
-                    }
-                  }}
-                >
-                  <Crosshair size={13} aria-hidden="true" />
-                  {t('框选精修', 'Visual Select')}
-                  {visualAnnotations.length > 0 && (
-                    <span className="rounded-full bg-accent px-1.5 font-mono text-[10.5px] text-accent-ink tabular-nums">
-                      {visualAnnotations.length}
-                    </span>
-                  )}
-                </Button>
-                <span className="mx-0.5 h-4 w-[1px] bg-line" aria-hidden="true" />
-                <Button
-                  type="button"
-                  variant="toggle"
-                  size="sm"
-                  aria-pressed={viewMode === 'SPLIT'}
-                  onClick={() => setViewMode('SPLIT')}
-                >
-                  {t('分栏联调', 'Split View')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="toggle"
-                  size="sm"
-                  aria-pressed={viewMode === 'PREVIEW'}
-                  onClick={() => setViewMode('PREVIEW')}
-                >
-                  {t('仅看原型', 'Preview Only')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="toggle"
-                  size="sm"
-                  aria-pressed={viewMode === 'HTML'}
-                  onClick={() => {
-                    setInspectMode(false);
-                    setViewMode('HTML');
-                  }}
-                >
-                  {t('HTML 源码', 'HTML Source')}
-                </Button>
-              </div>
-            </div>
-
-            {/* AI Prototype Assistant Bar (native <form> implicit Enter submit for IME safety) */}
-            <form
-              className="flex flex-col gap-2 rounded-[6px] border border-line bg-inset p-[10px_12px]"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void handleRefinePrototype();
-              }}
-            >
-              {visualAnnotations.length > 0 && (
-                <div
-                  data-testid="visual-annotations-strip"
-                  className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2"
-                >
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11.5px] font-medium text-muted">
-                      {t('已框选目标：', 'Selected targets:')}
-                    </span>
-                    {visualAnnotations.map((ann) => (
-                      <span key={ann.id} className="proto-pin-chip">
-                        <span className="proto-pin-num">{ann.index}</span>
-                        <span className="max-w-[240px] truncate">
-                          {ann.target.elementId || ann.target.screenId || ann.target.label}
-                          {ann.note ? `：${ann.note}` : ''}
-                        </span>
-                        <button
-                          type="button"
-                          className="proto-pin-remove"
-                          aria-label={t(
-                            `移除批注 #${ann.index} ${ann.target.label}`,
-                            `Remove annotation #${ann.index} ${ann.target.label}`,
-                          )}
-                          onClick={() => handleRemoveVisualAnnotation(ann.id)}
-                        >
-                          <X size={12} aria-hidden="true" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => setVisualAnnotations([])}
-                  >
-                    {t('清空批注', 'Clear Pins')}
-                  </Button>
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-2">
-                <label htmlFor={studioRefineInputId} className="badge badge-accent cursor-pointer">
-                  {proto || hasHtml
-                    ? t('AI 原型精修助手', 'AI Prototype Assistant')
-                    : t('AI 原型生成助手', 'AI Prototype Generator')}
-                </label>
-                <input
-                  id={studioRefineInputId}
-                  className="input min-w-[260px] flex-1"
-                  data-testid="refine-prototype-input"
-                  placeholder={
-                    visualAnnotations.length > 0
-                      ? t(
-                          `补充对这 ${visualAnnotations.length} 处框选区域的统一修改说明（若批注已写明可直接点右侧精修）…`,
-                          `Add overall instructions for the ${visualAnnotations.length} pinned target(s), or click Refine directly…`,
-                        )
-                      : proto || hasHtml
-                        ? t(
-                            '输入界面精修指令，或点击右上「框选精修」直接在原型上点选/画框定位修改（自动同步 MU）...',
-                            'Describe UI refinement, or click "Visual Select" above to box-select & annotate on the canvas...',
-                          )
-                        : t(
-                            '输入原型生成指令（或直接点击右侧按钮按工程上下文一键生成）...',
-                            'Describe prototype screens (or click button to generate from context)...',
-                          )
-                  }
-                  value={refineInstruction}
-                  onChange={(e) => setRefineInstruction(e.target.value)}
-                />
-                <Button
-                  type="submit"
-                  variant="accent"
-                  size="md"
-                  data-testid="refine-prototype-btn"
-                  disabled={
-                    isBusyProto ||
-                    Boolean(
-                      (proto || hasHtml) &&
-                        !refineInstruction.trim() &&
-                        visualAnnotations.length === 0,
-                    )
-                  }
-                >
-                  {refining && (
-                    <progress
-                      aria-label={t('正在处理原型', 'Processing prototype')}
-                      className="loading-spinner"
-                      style={{ ['--size' as string]: '13px', ['--spinner-color' as string]: 'currentColor' }}
-                    />
-                  )}
-                  {refining
-                    ? proto || hasHtml
-                      ? t('精修中...', 'Refining...')
-                      : t('生成中...', 'Generating...')
-                    : proto || hasHtml
-                      ? visualAnnotations.length > 0
-                        ? t(
-                            `AI 精修 ${visualAnnotations.length} 处并同步 MU`,
-                            `Refine (${visualAnnotations.length}) & Sync MU`,
-                          )
-                        : t('AI 精修并同步 MU', 'Refine & Sync MU')
-                      : t('AI 生成并同步 MU', 'Generate & Sync MU')}
-                </Button>
-              </div>
-            </form>
-
-            {synthesisSummary && (
-              <div className="flex items-center justify-between gap-2.5 rounded-[6px] border border-line bg-green-tint p-[8px_12px]">
-                <div className="text-[12.5px]">
-                  <strong>
-                    {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
-                  </strong>
-                  {synthesisSummary.modelCount}/11 Models · {synthesisSummary.errorCount}{' '}
-                  Consistency Errors
-                </div>
-                <Button
-                  type="button"
-                  variant="accent"
-                  size="sm"
-                  onClick={() => onNavigate?.('app-ontology')}
-                >
-                  {t('前往 11 模型本体工作台查看 →', 'Open 11-Model Ontology Workbench →')}
-                </Button>
-              </div>
-            )}
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: viewMode === 'SPLIT' ? '1.15fr 0.85fr' : '1fr',
-              gap: 12,
-            }}
-          >
-            {(viewMode === 'SPLIT' || viewMode === 'PREVIEW') && (
-              <div className="card overflow-hidden p-0">
-                {hasHtml ? (
-                  <PrototypeVisualPreviewStage
-                    htmlContent={htmlContent}
-                    inspectMode={inspectMode}
-                    onInspectModeChange={setInspectMode}
-                    annotations={visualAnnotations}
-                    onAddAnnotation={handleAddVisualAnnotation}
-                    onApplyImmediate={(target, note) =>
-                      void handleRefinePrototype({ target, note })
-                    }
-                    busy={isBusyProto}
-                  />
-                ) : (
-                  <div
-                    data-testid="prototype-preview-placeholder"
-                    className="flex h-[560px] flex-col items-center justify-center gap-3 bg-inset/45 px-6 text-center"
-                  >
-                    <div className="flex h-10 w-10 items-center justify-center rounded-[8px] border border-line bg-surface text-ink-3">
-                      <Eye size={18} />
-                    </div>
-                    <div className="max-w-[360px] space-y-1">
-                      <div className="text-[14px] font-semibold text-ink">
-                        {t('等待 HTML 原型源码输入', 'Waiting for HTML Prototype Source')}
-                      </div>
-                      <p className="editorial-prose m-0 text-[12.5px] text-ink-3">
-                        {t(
-                          '在右侧源码区输入或粘贴完整 HTML 后，此处将实时渲染沙箱交互预览；也可以直接载入标准语义骨架模板。',
-                          'Paste or type HTML in the source pane to render a live sandboxed preview here, or load a semantic starter template.',
-                        )}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={handleLoadStarterTemplate}
-                      >
-                        <FileCode size={13} />
-                        {t('载入语义骨架模板', 'Load Semantic Starter')}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => htmlUploadRef.current?.click()}
-                      >
-                        <Upload size={13} />
-                        {t('上传本地 .html', 'Upload .html')}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            {(viewMode === 'SPLIT' || viewMode === 'HTML') && (
-              <div className="card flex flex-col">
-                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 font-mono text-[11.5px]">
-                  <label htmlFor={htmlEditorId} className="text-ink-2">
-                    {proto?.name ?? '界面原型.html'} (Semantic Anchors)
-                  </label>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {!hasHtml ? (
-                      <span className="badge">0 MU Screens</span>
-                    ) : liveMuSummary.screenCount > 0 ? (
-                      <span className="badge badge-ok">
-                        {liveMuSummary.screenCount} MU Screens · {liveMuSummary.elementCount} Anchors
-                      </span>
-                    ) : (
-                      <span className="badge badge-warn">
-                        {t(
-                          '0 MU Screens · 未检测到 data-screen-id',
-                          '0 MU Screens · Missing data-screen-id',
-                        )}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <textarea
-                  ref={htmlTextareaRef}
-                  id={htmlEditorId}
-                  className="textarea mono min-h-[520px] flex-1"
-                  placeholder={t(
-                    '在此粘贴或编写完整 <!DOCTYPE html> 原型源码（包含 data-screen-id / data-element-id / data-binding / data-event-id 语义锚点）…',
-                    'Paste or author <!DOCTYPE html> prototype source with data-screen-id / data-element-id / data-binding / data-event-id anchors…',
-                  )}
-                  value={htmlContent}
-                  onChange={(e) => setHtmlContent(e.target.value)}
-                />
-              </div>
-            )}
-          </div>
-        </>
+        <PrototypeCoDesignStudio
+          project={project}
+          docs={docs}
+          selectedDocId={selectedDocId}
+          onSelectDocId={setSelectedDocId}
+          prototypes={prototypes}
+          selectedProtoId={selectedProtoId}
+          onSelectProtoId={setSelectedProtoId}
+          activeStep={activeStep}
+          onStepChange={setActiveStep}
+          previewSource={previewSource}
+          onPreviewSourceChange={setPreviewSource}
+          savedHtmlContent={savedHtmlContent}
+          onSavedHtmlContentChange={setSavedHtmlContent}
+          onDraftHtmlChange={(html, summary) => {
+            setDraftHtml(html);
+            setDraftRefSummary(summary);
+          }}
+          onSaveDraftAsPrototype={handleSaveDraftAsPrototype}
+          onGenerateWithAi={async (compiledPrompt, docId) => {
+            await handleGenerateNewPrototype({ prompt: compiledPrompt, docId });
+          }}
+          onCloneVersion={() => openNewVersionModal('CLONE')}
+          onDeleteProto={(p) => setDeletingProto(p)}
+          onDownloadHtml={handleDownloadHtml}
+          inspectMode={inspectMode}
+          onInspectModeChange={setInspectMode}
+          visualAnnotations={visualAnnotations}
+          onAddVisualAnnotation={handleAddVisualAnnotation}
+          onRemoveVisualAnnotation={handleRemoveVisualAnnotation}
+          onClearVisualAnnotations={() => setVisualAnnotations([])}
+          refineInstruction={refineInstruction}
+          onRefineInstructionChange={setRefineInstruction}
+          onApplyRefine={handleRefinePrototype}
+          isBusyProto={isBusyProto}
+        />
       )}
 
       <ConfirmDialog
@@ -4113,7 +2958,7 @@ function PrototypeStudioBaselineView({
                 </div>
                 <span className="text-[11.5px] leading-[1.45] text-ink-3">
                   {t(
-                    `将当前 ${proto.version} 复制为独立新版本，不调用大模型，适合用「AI 原型精修助手」或源码局部微调。`,
+                    `将当前 ${proto.version} 复制为独立新版本，不调用大模型，适合用「AI 原型精修」或源码局部微调。`,
                     `Copy ${proto.version} instantly without LLM calls—ideal for targeted edits or AI Assistant refinements.`,
                   )}
                 </span>
@@ -4238,13 +3083,6 @@ function PrototypeStudioBaselineView({
                     {preset.label}
                   </button>
                 ))}
-              </div>
-
-              <div className="rounded-[6px] border border-accent/25 bg-accent-tint/45 px-2.5 py-2 text-[11.5px] text-ink-2">
-                {t(
-                  `提示：确认后将在工作台顶部展示实时流式进度面板（可按需展开 HTML 输出、随时取消或断点续写），现有版本不会被覆盖。`,
-                  `Note: Starts a visible streaming pipeline at the top of Prototype Studio (expandable live HTML, cancellable, checkpoint-resumable) without overwriting existing versions.`,
-                )}
               </div>
             </div>
           )}

@@ -6,6 +6,4 @@ export * from './ApprovalCard.js';
 export * from './CodeBlock.js';
 export * from './ConfirmDialog.js';
 export * from './RegistryTable.js';
-export * from './PrototypeSwitcher.js';
-
 

@@ -3520,7 +3520,7 @@ export async function generatePrototypeFromDoc(
             '2. Every interactive input/select/table/button MUST carry unique `data-element-id="EL-..."`, `data-element-name="..."`, `data-element-label="..."`, `data-element-type="INPUT|SELECT|NUMBER|DATE_PICKER|TABLE|BUTTON|BADGE"`.',
             '3. Form/filter fields MUST carry `data-binding="AggregateName.fieldName"` using PascalCase domain aggregate names authentic to the project (NEVER use `Contract` unless the project is actually contract management).',
             '4. Action buttons MUST carry `data-event-id="UIE-..."`, `data-event-name="..."`, `data-behavior-ref="BHV-..."` (and optional `data-validate-ref="RULE-..."` or `data-navigate-to="SCR-..."`).',
-            '5. Include clean warm-paper CSS (`#f6f4ef` background, `#ffffff` cards, `#4c50c4` accent) and lightweight inline vanilla JS for tab switching, live row filtering, and inline status toast feedback. NEVER call `window.alert`, `window.confirm`, or `window.prompt`.',
+            '5. If the User Prototype Prompt specifies Visual Reference DNA (preferred canvas/surface background hex, primary CTA/accent hex, dark/light mode, border-radius, typography, liked reasons) or Interaction/Motion Schematics (e.g., slide-over drawer vs centered modal vs split detail, filter chips, count-up KPIs, accordion, stepper, toast, skeleton, hover-lift), strictly implement those exact visual tokens and interactive CSS/JS behaviors! Only fall back to default warm-paper CSS (`#f6f4ef` background, `#ffffff` cards, `#4c50c4` accent) when no visual reference palette is specified. NEVER call `window.alert`, `window.confirm`, or `window.prompt`.',
             '6. Output raw HTML only without markdown fences.',
             '7. Keep internal reasoning ultra-brief (2 sentences max) and immediately stream raw HTML up to `</html>`.',
           ].join('\n')
@@ -3532,7 +3532,7 @@ export async function generatePrototypeFromDoc(
             '2. 所有输入框、下拉框、表格、按钮必须携带唯一的 `data-element-id="EL-..."`、`data-element-name="..."`、`data-element-label="..."`、`data-element-type="INPUT|SELECT|NUMBER|DATE_PICKER|TABLE|BUTTON|BADGE"`。',
             '3. 表单与筛选控件必须携带贴合真实业务领域的 `data-binding="AggregateName.fieldName"`（PascalCase 聚合名 + camelCase 属性名；若非合同项目，严禁出现 Contract 字样！例如咖啡店应为 Order.cupSize / Product.recipeId / Member.points）。',
             '4. 操作按钮必须携带 `data-event-id="UIE-..."`、`data-event-name="..."`、`data-behavior-ref="BHV-..."`（可按需配 `data-validate-ref="RULE-..."`、`data-navigate-to="SCR-..."`）。',
-            '5. 采用温润纸感（Warm-Paper `#f6f4ef` 背景、`#ffffff` 卡片、`#4c50c4` 强调色）样式，内置轻量原生 JS 支持屏幕页签切换、表单提交动态插入表格与顶部非阻塞状态条反馈，严禁使用 `window.alert` / `confirm` / `prompt`！',
+            '5. 若下方 User Prototype Prompt 中指定了「视觉参考与喜欢原因」（如指定的背景底色 Hex、主按钮强调色 Hex、深色/浅色模式、圆角与留白偏好）或「交互与动效示意图诉求」（如右侧滑出抽屉/居中弹窗/同屏双栏、胶囊筛选、数字跳动、手风琴展开、分步引导条、轻量状态横幅、骨架屏与行悬浮微抬升），必须严格兑现用户选定的配色、排版与原生 CSS/JS 交互动效！仅在用户未指定视觉参考色板时默认采用温润纸感（`#f6f4ef` 背景、`#ffffff` 卡片、`#4c50c4` 强调色）。严禁使用 `window.alert` / `confirm` / `prompt`！',
             '6. 直接输出纯 HTML 源码，不要包裹 ```html 代码块。',
             '7. 内部思考请极度精炼（不超过 2 句话），立即开始流式输出完整 HTML 直至闭合 `</html>`！',
           ].join('\n');
