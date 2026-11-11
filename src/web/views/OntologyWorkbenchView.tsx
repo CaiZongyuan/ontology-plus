@@ -1008,7 +1008,7 @@ export function OntologyWorkbenchView() {
   const searchKeyword = treeSearch.trim().toLowerCase();
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - var(--topbar-h, 48px))' }}>
+    <div className="flex flex-col h-[calc(100vh_-_var(--topbar-h,48px))]">
       <div className="ontology-workbench">
         {/* ─── Left Pane: Hierarchical 11-Model Progressive Navigator + Searchable Tree ─── */}
         <div className="workbench-left">
@@ -1082,7 +1082,7 @@ export function OntologyWorkbenchView() {
                         {t(item.labelZh.slice(3), item.labelEn.slice(3))}
                       </span>
                     </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <span className="flex items-center gap-1 shrink-0">
                       {modelErrors > 0 ? (
                         <span className="badge badge-bad">{modelErrors}</span>
                       ) : isPresent ? (
@@ -1251,15 +1251,10 @@ export function OntologyWorkbenchView() {
             )}
 
             {activeTab === 'YAML' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, height: '100%' }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
+              <div className="flex flex-col gap-2.5 h-full">
+                <div className="flex justify-between items-center"
                 >
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--muted)' }}>
+                  <span className="font-mono text-[12.5px] text-muted-foreground">
                     .onto-cs/model/{project.id}/yaml/{MODEL_FILE_NAMES[selectedModel]}
                   </span>
                   <Button
@@ -1458,16 +1453,7 @@ export function OntologyWorkbenchView() {
             </div>
 
             {pendingDeleteAction && (
-              <div
-                style={{
-                  marginBottom: 12,
-                  padding: '8px 10px',
-                  borderRadius: 6,
-                  background: 'var(--warn-soft)',
-                  color: 'var(--warn)',
-                  fontSize: 12.5,
-                  fontWeight: 500,
-                }}
+              <div className="mb-3 p-[8px_10px] rounded-[6px] bg-orange-tint text-orange text-[12.5px] font-medium"
               >
                 {t(
                   `检测到「${pendingDeleteAction.label} (${pendingDeleteAction.elementId})」仍被其他元模型引用。建议先解除引用或执行级联重命名；如确认移除，可点击底部「强制删除此元素」。`,
@@ -1476,17 +1462,10 @@ export function OntologyWorkbenchView() {
               </div>
             )}
 
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr auto',
-                gap: 8,
-                marginBottom: 12,
-                alignItems: 'end',
-              }}
+            <div className="grid grid-cols-[1fr_1fr_auto] gap-2 mb-3 items-end"
             >
               <div>
-                <label style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                <label className="text-[11.5px] text-muted-foreground">
                   {t('原本体符号 / ID', 'Original Symbol / ID')}
                 </label>
                 <input
@@ -1496,7 +1475,7 @@ export function OntologyWorkbenchView() {
                 />
               </div>
               <div>
-                <label style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                <label className="text-[11.5px] text-muted-foreground">
                   {t('新本体符号 / ID', 'New Symbol / ID')}
                 </label>
                 <input
@@ -1519,10 +1498,10 @@ export function OntologyWorkbenchView() {
             </div>
 
             {impactReport && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ marginBottom: 8, fontSize: 12.5 }}>
+              <div className="mb-3.5">
+                <div className="mb-2 text-[12.5px]">
                   {t('扫描到跨模型引用数', 'Cross-Model References Found')}:{' '}
-                  <strong style={{ fontFamily: 'var(--mono)' }}>
+                  <strong className="font-mono">
                     {impactReport.references.length}
                   </strong>{' '}
                   ({t('直接删除安全性', 'Safe to delete directly')}:{' '}
@@ -1533,13 +1512,7 @@ export function OntologyWorkbenchView() {
                   </span>
                   )
                 </div>
-                <div
-                  style={{
-                    maxHeight: 220,
-                    overflowY: 'auto',
-                    border: '1px solid var(--line)',
-                    borderRadius: 5,
-                  }}
+                <div className="max-h-[220px] overflow-y-auto border border-line rounded-[5px]"
                 >
                   <table className="data-table">
                     <thead>
@@ -1574,7 +1547,7 @@ export function OntologyWorkbenchView() {
               </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <div className="flex justify-end gap-2">
               <Button
                 type="button"
                 variant="secondary" size="md"
@@ -1588,8 +1561,7 @@ export function OntologyWorkbenchView() {
               {pendingDeleteAction && (
                 <Button
                   type="button"
-                  variant="secondary" size="md"
-                  style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }}
+                  variant="secondary" size="md" className="text-red border-[var(--bad)]"
                   onClick={() => pendingDeleteAction.execute()}
                 >
                   {t('强制删除此元素', 'Force Delete Element')}
@@ -1709,10 +1681,10 @@ function StructuredModelInspector({
 
   const renderEmptyModelBanner = (code: ModelCode) => (
     <div className="card" style={{ textAlign: 'center', padding: 28 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+      <div className="text-[13px] font-semibold mb-1.5">
         {t(`${code} 元模型尚未初始化`, `${code} model is not yet authored`)}
       </div>
-      <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 14 }}>
+      <div className="text-[12.5px] text-muted-foreground mb-3.5">
         {t(
           '点击下方按钮直接生成符合两级一致性校验规范的首个结构化元素。',
           'Click below to scaffold the first validated structured AST element.',
@@ -1725,21 +1697,21 @@ function StructuredModelInspector({
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="flex flex-col gap-3">
       {/* Sticky Structured AST Save Bar */}
       <div className="owb-savebar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+        <div className="flex items-center gap-2 text-[12.5px]">
           <span className={`badge ${dirty ? 'badge-warn' : 'badge-ok'}`}>
             {dirty
               ? t('● 待保存 AST 变更', '● Unsaved AST Edits')
               : t('✓ AST 已同步', '✓ AST Synced')}
           </span>
-          <span style={{ color: 'var(--muted)', fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+          <span className="text-muted-foreground font-mono text-[11.5px]">
             {MODEL_FILE_NAMES[modelCode]}
           </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className="flex items-center gap-1.5">
           {dirty && (
             <Button
               type="button"
@@ -1771,7 +1743,7 @@ function StructuredModelInspector({
         (!draft.M1 ? (
           renderEmptyModelBanner('M1')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="flex flex-col gap-3.5">
             {draft.M1.aggregates.map((agg, aggIdx) => (
               <div
                 key={agg.id}
@@ -1780,14 +1752,14 @@ function StructuredModelInspector({
                 style={cardHighlightStyle([agg.id, agg.name])}
               >
                 <div className="card-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="badge badge-accent">{agg.id}</span>
                     <strong className="owb-agg-title">
                       {agg.name}
                       <span className="owb-agg-alias">{agg.alias}</span>
                     </strong>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div className="flex gap-1.5">
                     <Button
                       type="button"
                       variant="secondary" size="sm"
@@ -1821,7 +1793,7 @@ function StructuredModelInspector({
                   label={t('生命周期状态机', 'Lifecycle')}
                 />
 
-                <div className="form-grid-2 owb-agg-grid" style={{ marginBottom: 10 }}>
+                <div className="form-grid-2 owb-agg-grid mb-2.5">
                   <div className="form-field">
                     <label className="form-label">
                       {t('聚合根英文符号', 'Aggregate Name')}
@@ -1871,7 +1843,7 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-field" style={{ marginBottom: 12 }}>
+                <div className="form-field mb-3">
                   <label className="form-label">{t('领域职责描述', 'Description')}</label>
                   <AutoGrowTextarea
                     className="textarea"
@@ -2091,7 +2063,7 @@ function StructuredModelInspector({
         (!draft.M2 ? (
           renderEmptyModelBanner('M2')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {draft.M2.behaviors.map((b, bIdx) => (
               <div
                 key={b.id}
@@ -2100,7 +2072,7 @@ function StructuredModelInspector({
                 style={cardHighlightStyle([b.id])}
               >
                 <div className="card-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="badge badge-accent">{b.id}</span>
                     <strong>
                       {b.alias} ({b.name})
@@ -2108,7 +2080,7 @@ function StructuredModelInspector({
                     <span className="badge badge-ok">{b.behaviorType}</span>
                     <span className="badge">{b.triggerType}</span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div className="flex gap-1.5">
                     <Button
                       type="button"
                       variant="secondary" size="sm"
@@ -2136,7 +2108,7 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-grid-3" style={{ marginBottom: 10 }}>
+                <div className="form-grid-3 mb-2.5">
                   <div className="form-field">
                     <label className="form-label">{t('行为方法名', 'Method Name')}</label>
                     <input
@@ -2180,7 +2152,7 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-grid-3" style={{ marginBottom: 10 }}>
+                <div className="form-grid-3 mb-2.5">
                   <div className="form-field">
                     <label className="form-label">{t('行为类型', 'Behavior Type')}</label>
                     <select
@@ -2244,15 +2216,9 @@ function StructuredModelInspector({
                 </div>
 
                 {/* Parameters quick editor */}
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 4,
-                  }}
+                <div className="flex justify-between items-center mb-1"
                 >
-                  <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>
+                  <span className="text-[11.5px] font-semibold text-muted-foreground">
                     {t('入参列表', 'Input Parameters')} (
                     {b.inputParameters.length})
                   </span>
@@ -2278,19 +2244,10 @@ function StructuredModelInspector({
                 </div>
 
                 {b.inputParameters.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  <div className="flex flex-wrap gap-1.5">
                     {b.inputParameters.map((p, pIdx) => (
                       <div
-                        key={`${b.id}-p-${pIdx}`}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          padding: '3px 6px',
-                          borderRadius: 4,
-                          background: 'var(--surface-2)',
-                          border: '1px solid var(--line-2)',
-                        }}
+                        key={`${b.id}-p-${pIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-inset border border-[var(--line-2)]"
                       >
                         <input
                           className="input"
@@ -2316,8 +2273,7 @@ function StructuredModelInspector({
                         />
                         <Button
                           type="button"
-                          variant="secondary" size="sm"
-                          style={{ height: 20, padding: '0 4px' }}
+                          variant="secondary" size="sm" className="h-[20px] p-[0_4px]"
                           onClick={() =>
                             mutateDraft((nx) => {
                               nx.M2?.behaviors[bIdx]?.inputParameters.splice(pIdx, 1);
@@ -2345,7 +2301,7 @@ function StructuredModelInspector({
         (!draft.M3 ? (
           renderEmptyModelBanner('M3')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {draft.M3.rules.map((r, rIdx) => (
               <div
                 key={r.id}
@@ -2354,7 +2310,7 @@ function StructuredModelInspector({
                 style={cardHighlightStyle([r.id])}
               >
                 <div className="card-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="badge badge-accent">{r.id}</span>
                     <strong>
                       {r.alias} ({r.name})
@@ -2362,7 +2318,7 @@ function StructuredModelInspector({
                     <span className="badge badge-warn">{r.ruleType}</span>
                     <span className="badge">{r.scope}</span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div className="flex gap-1.5">
                     <Button
                       type="button"
                       variant="secondary" size="sm"
@@ -2388,7 +2344,7 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-grid-3" style={{ marginBottom: 10 }}>
+                <div className="form-grid-3 mb-2.5">
                   <div className="form-field">
                     <label className="form-label">{t('规则符号', 'Rule Name')}</label>
                     <input
@@ -2436,7 +2392,7 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-grid-2" style={{ marginBottom: 10 }}>
+                <div className="form-grid-2 mb-2.5">
                   <div className="form-field">
                     <label className="form-label">
                       {t('引用聚合对象 (M1 Objects)', 'Referenced M1 Objects')}
@@ -2495,7 +2451,7 @@ function StructuredModelInspector({
         (!draft.ME ? (
           renderEmptyModelBanner('ME')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {draft.ME.events.map((ev, evIdx) => (
               <div
                 key={ev.id}
@@ -2504,13 +2460,13 @@ function StructuredModelInspector({
                 style={cardHighlightStyle([ev.id])}
               >
                 <div className="card-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="badge badge-accent">{ev.id}</span>
-                    <strong style={{ fontFamily: 'var(--mono)' }}>{ev.name}</strong>
+                    <strong className="font-mono">{ev.name}</strong>
                     <span>({ev.label})</span>
                     <span className="badge badge-ok">{ev.orderingSemantic}</span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div className="flex gap-1.5">
                     <Button
                       type="button"
                       variant="secondary" size="sm"
@@ -2536,7 +2492,7 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-grid-3" style={{ marginBottom: 10 }}>
+                <div className="form-grid-3 mb-2.5">
                   <div className="form-field">
                     <label className="form-label">
                       {t('事件名 (<Object>.<PastParticiple>)', 'Event Name')}
@@ -2586,7 +2542,7 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-grid-2" style={{ marginBottom: 10 }}>
+                <div className="form-grid-2 mb-2.5">
                   <div className="form-field">
                     <label className="form-label">{t('来源聚合根 (M1)', 'Source Aggregate')}</label>
                     <input
@@ -2621,15 +2577,9 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 4,
-                  }}
+                <div className="flex justify-between items-center mb-1"
                 >
-                  <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>
+                  <span className="text-[11.5px] font-semibold text-muted-foreground">
                     {t('事件载荷字段', 'Event Payload')} ({ev.payload.length})
                   </span>
                   <Button
@@ -2654,19 +2604,10 @@ function StructuredModelInspector({
                 </div>
 
                 {ev.payload.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  <div className="flex flex-wrap gap-1.5">
                     {ev.payload.map((pf, pfIdx) => (
                       <div
-                        key={`${ev.id}-pf-${pfIdx}`}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          padding: '3px 6px',
-                          borderRadius: 4,
-                          background: 'var(--surface-2)',
-                          border: '1px solid var(--line-2)',
-                        }}
+                        key={`${ev.id}-pf-${pfIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-inset border border-[var(--line-2)]"
                       >
                         <input
                           className="input"
@@ -2692,8 +2633,7 @@ function StructuredModelInspector({
                         />
                         <Button
                           type="button"
-                          variant="secondary" size="sm"
-                          style={{ height: 20, padding: '0 4px' }}
+                          variant="secondary" size="sm" className="h-[20px] p-[0_4px]"
                           onClick={() =>
                             mutateDraft((nx) => {
                               nx.ME?.events[evIdx]?.payload.splice(pfIdx, 1);
@@ -2716,7 +2656,7 @@ function StructuredModelInspector({
         (!draft.M4 ? (
           renderEmptyModelBanner('M4')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {draft.M4.event_scenarios.map((sc, scIdx) => (
               <div
                 key={sc.id}
@@ -2725,12 +2665,12 @@ function StructuredModelInspector({
                 style={cardHighlightStyle([sc.id])}
               >
                 <div className="card-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="badge badge-accent">{sc.id}</span>
                     <strong>{sc.name}</strong>
                     <span className="badge badge-ok">Trigger: {sc.triggerEventRef}</span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div className="flex gap-1.5">
                     <Button
                       type="button"
                       variant="secondary" size="sm"
@@ -2760,7 +2700,7 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-grid-3" style={{ marginBottom: 10 }}>
+                <div className="form-grid-3 mb-2.5">
                   <div className="form-field">
                     <label className="form-label">{t('场景名称', 'Scenario Name')}</label>
                     <input
@@ -2813,15 +2753,9 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 6,
-                  }}
+                <div className="flex justify-between items-center mb-1.5"
                 >
-                  <strong style={{ fontSize: 12.5 }}>
+                  <strong className="text-[12.5px]">
                     {t('跨聚合编排步骤', 'Scenario Steps')} ({sc.steps.length})
                   </strong>
                   <Button
@@ -2948,7 +2882,7 @@ function StructuredModelInspector({
         (!draft.M5 ? (
           renderEmptyModelBanner('M5')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {draft.M5.roles.map((r, rIdx) => (
               <div
                 key={r.id}
@@ -2957,14 +2891,14 @@ function StructuredModelInspector({
                 style={cardHighlightStyle([r.id])}
               >
                 <div className="card-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="flex items-center gap-2">
                     <span className="badge badge-accent">{r.id}</span>
                     <strong>
                       {r.name} ({r.code})
                     </strong>
                     <span className="badge badge-ok">{r.dataScope}</span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div className="flex gap-1.5">
                     <Button
                       type="button"
                       variant="secondary" size="sm"
@@ -2990,7 +2924,7 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-grid-3" style={{ marginBottom: 8 }}>
+                <div className="form-grid-3 mb-2">
                   <div className="form-field">
                     <label className="form-label">{t('角色名称', 'Role Name')}</label>
                     <input
@@ -3166,7 +3100,7 @@ function StructuredModelInspector({
         (!draft.M6 ? (
           renderEmptyModelBanner('M6')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {draft.M6.flows.map((fl, flIdx) => (
               <div
                 key={fl.id}
@@ -3175,12 +3109,12 @@ function StructuredModelInspector({
                 style={cardHighlightStyle([fl.id])}
               >
                 <div className="card-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="flex items-center gap-2">
                     <span className="badge badge-accent">{fl.id}</span>
                     <strong>{fl.name}</strong>
                     <span className="badge badge-ok">{fl.flowType}</span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div className="flex gap-1.5">
                     <Button
                       type="button"
                       variant="secondary" size="sm"
@@ -3207,18 +3141,7 @@ function StructuredModelInspector({
                 </div>
 
                 {/* Visual Node Sequence Strip */}
-                <div
-                  style={{
-                    padding: '8px 10px',
-                    marginBottom: 10,
-                    borderRadius: 5,
-                    background: 'var(--surface-2)',
-                    border: '1px solid var(--line-2)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: 6,
-                  }}
+                <div className="p-[8px_10px] mb-2.5 rounded-[5px] bg-inset border border-[var(--line-2)] flex items-center flex-wrap gap-1.5"
                 >
                   {fl.activities.map((a, idx) => (
                     <React.Fragment key={a.id}>
@@ -3234,7 +3157,7 @@ function StructuredModelInspector({
                         {a.id}: {a.name} ({a.activityType})
                       </span>
                       {idx < fl.activities.length - 1 && (
-                        <span style={{ color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                        <span className="text-muted-foreground font-mono">
                           →
                         </span>
                       )}
@@ -3242,7 +3165,7 @@ function StructuredModelInspector({
                   ))}
                 </div>
 
-                <div className="form-grid-3" style={{ marginBottom: 10 }}>
+                <div className="form-grid-3 mb-2.5">
                   <div className="form-field">
                     <label className="form-label">{t('流程名称', 'Flow Name')}</label>
                     <input
@@ -3288,15 +3211,9 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 6,
-                  }}
+                <div className="flex justify-between items-center mb-1.5"
                 >
-                  <strong style={{ fontSize: 12.5 }}>
+                  <strong className="text-[12.5px]">
                     {t('流程活动节点拓扑', 'Flow Activities')} ({fl.activities.length})
                   </strong>
                   <Button
@@ -3370,7 +3287,7 @@ function StructuredModelInspector({
                         </td>
                         <td>
                           {a.branches.length > 0 ? (
-                            <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+                            <span className="font-mono text-[11.5px]">
                               {a.branches
                                 .map((b) => `${b.label || b.condition || 'default'} -> ${b.targetActivity}`)
                                 .join(' | ')}
@@ -3405,7 +3322,7 @@ function StructuredModelInspector({
         (!draft.M7 ? (
           renderEmptyModelBanner('M7')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {draft.M7.query_reports.map((qr, qrIdx) => (
               <div
                 key={qr.id}
@@ -3414,14 +3331,14 @@ function StructuredModelInspector({
                 style={cardHighlightStyle([qr.id])}
               >
                 <div className="card-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="badge badge-accent">{qr.id}</span>
                     <strong>
                       {qr.alias} ({qr.name})
                     </strong>
                     <span className="badge badge-ok">1:1 M2 Behavior: {qr.behaviorRef}</span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div className="flex gap-1.5">
                     <Button
                       type="button"
                       variant="secondary" size="sm"
@@ -3456,7 +3373,7 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-grid-3" style={{ marginBottom: 10 }}>
+                <div className="form-grid-3 mb-2.5">
                   <div className="form-field">
                     <label className="form-label">{t('查询英文名', 'Query Name')}</label>
                     <input
@@ -3545,7 +3462,7 @@ function StructuredModelInspector({
         (!draft.MU ? (
           renderEmptyModelBanner('MU')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="flex flex-col gap-3.5">
             {draft.MU.screens.map((sc, scIdx) => {
               const layoutRefs = sc.layout ? extractLayoutElementIds(sc.layout) : [];
               const declaredIds = new Set(sc.elements.map((el) => el.elementId));
@@ -3561,14 +3478,14 @@ function StructuredModelInspector({
                   style={cardHighlightStyle([sc.screenId])}
                 >
                   <div className="card-header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="badge badge-accent">{sc.screenId}</span>
                       <strong>{sc.name}</strong>
                       <span className="badge badge-ok">
                         {sc.screenType} {sc.route ? `· ${sc.route}` : ''}
                       </span>
                     </div>
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <div className="flex gap-1.5">
                       <Button
                         type="button"
                         variant="secondary" size="sm"
@@ -3598,7 +3515,7 @@ function StructuredModelInspector({
                     </div>
                   </div>
 
-                  <div className="form-grid-3" style={{ marginBottom: 10 }}>
+                  <div className="form-grid-3 mb-2.5">
                     <div className="form-field">
                       <label className="form-label">{t('屏幕标题', 'Screen Name')}</label>
                       <input
@@ -3646,13 +3563,8 @@ function StructuredModelInspector({
                     </div>
                   </div>
 
-                  <div className="form-field" style={{ marginBottom: 10 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                      }}
+                  <div className="form-field mb-2.5">
+                    <div className="flex justify-between items-center"
                     >
                       <label className="form-label">
                         {t(
@@ -3703,33 +3615,17 @@ function StructuredModelInspector({
                   </div>
 
                   {/* Semantic UI Elements */}
-                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
+                  <div className="text-[12.5px] font-semibold mb-1.5">
                     {t('语义化控件绑定', 'Semantic Elements')} (
                     {sc.elements.length})
                   </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: 6,
-                      marginBottom: 10,
-                    }}
+                  <div className="flex flex-wrap gap-1.5 mb-2.5"
                   >
                     {sc.elements.map((el, elIdx) => (
                       <div
-                        key={el.elementId}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 5,
-                          padding: '4px 8px',
-                          borderRadius: 4,
-                          background: 'var(--surface-2)',
-                          border: '1px solid var(--line-2)',
-                          fontSize: 11.5,
-                        }}
+                        key={el.elementId} className="inline-flex items-center gap-1.25 p-[4px_8px] rounded-[4px] bg-inset border border-[var(--line-2)] text-[11.5px]"
                       >
-                        <span style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>
+                        <span className="font-mono font-semibold">
                           [{el.elementId}]
                         </span>
                         <input
@@ -3745,12 +3641,7 @@ function StructuredModelInspector({
                         />
                         <span className="badge">{el.elementType}</span>
                         {el.dataBinding && (
-                          <span
-                            style={{
-                              fontFamily: 'var(--mono)',
-                              fontSize: 10.5,
-                              color: 'var(--accent)',
-                            }}
+                          <span className="font-mono text-[10.5px] text-accent"
                           >
                             {el.dataBinding}
                           </span>
@@ -3760,26 +3651,13 @@ function StructuredModelInspector({
                   </div>
 
                   {/* UI Event Call Chains */}
-                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
+                  <div className="text-[12.5px] font-semibold mb-1.5">
                     {t('UI 事件调用链 (VALIDATE → BEHAVIOR → EVENT)', 'UI Event Call Chains')} (
                     {sc.events.length})
                   </div>
                   {sc.events.map((ev, evIdx) => (
                     <div
-                      key={ev.eventId}
-                      style={{
-                        padding: '6px 10px',
-                        background: 'var(--surface-2)',
-                        borderRadius: 4,
-                        marginBottom: 6,
-                        fontFamily: 'var(--mono)',
-                        fontSize: 11.5,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 8,
-                        flexWrap: 'wrap',
-                      }}
+                      key={ev.eventId} className="p-[6px_10px] bg-inset rounded-[4px] mb-1.5 font-mono text-[11.5px] flex items-center justify-between gap-2 flex-wrap"
                     >
                       <div>
                         <strong>{ev.eventId}</strong> (
@@ -3817,7 +3695,7 @@ function StructuredModelInspector({
         (!draft.MM ? (
           renderEmptyModelBanner('MM')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {draft.MM.mappings.map((mp, mpIdx) => (
               <div
                 key={mp.id}
@@ -3826,7 +3704,7 @@ function StructuredModelInspector({
                 style={cardHighlightStyle([mp.id])}
               >
                 <div className="card-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="badge badge-accent">{mp.id}</span>
                     <strong>
                       {mp.objectName} ({mp.objectRef})
@@ -3835,7 +3713,7 @@ function StructuredModelInspector({
                       {mp.tableMappings.map((tm) => tm.tableName).join(', ')}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div className="flex gap-1.5">
                     <Button
                       type="button"
                       variant="secondary" size="sm"
@@ -3862,15 +3740,9 @@ function StructuredModelInspector({
                 </div>
 
                 {mp.tableMappings.map((tm, tmIdx) => (
-                  <div key={`${mp.id}-tm-${tmIdx}`} style={{ marginBottom: 10 }}>
+                  <div key={`${mp.id}-tm-${tmIdx}`} className="mb-2.5">
                     <div
-                      className="form-grid-3"
-                      style={{
-                        marginBottom: 8,
-                        padding: 8,
-                        borderRadius: 5,
-                        background: 'var(--surface-2)',
-                      }}
+                      className="form-grid-3 mb-2 p-2 rounded-[5px] bg-inset"
                     >
                       <div className="form-field">
                         <label className="form-label">{t('物理表名', 'Table Name')}</label>
@@ -3920,15 +3792,9 @@ function StructuredModelInspector({
                       </div>
                     </div>
 
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: 4,
-                      }}
+                    <div className="flex justify-between items-center mb-1"
                     >
-                      <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>
+                      <span className="text-[11.5px] font-semibold text-muted-foreground">
                         {t('对象属性 ↔ 物理字段映射', 'Column Mappings')} (
                         {tm.columnMappings.length})
                       </span>
@@ -4049,22 +3915,16 @@ function StructuredModelInspector({
         (!draft.MI ? (
           renderEmptyModelBanner('MI')
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {draft.MI.interfaces.map((intf, iIdx) => {
               const renderFieldEditor = (
                 kind: 'inputFields' | 'outputFields',
                 fields: InterfaceFieldSpec[],
               ) => (
                 <div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      marginBottom: 4,
-                    }}
+                  <div className="flex justify-between items-center mb-1"
                   >
-                    <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>
+                    <span className="text-[11.5px] font-semibold text-muted-foreground">
                       {kind === 'inputFields'
                         ? t('入参契约字段', 'Input Fields')
                         : t('出参契约字段', 'Output Fields')}{' '}
@@ -4090,16 +3950,10 @@ function StructuredModelInspector({
                       + {t('新增字段', 'Add Field')}
                     </Button>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div className="flex flex-col gap-1">
                     {fields.map((f, fIdx) => (
                       <div
-                        key={`${intf.interfaceId}-${kind}-${fIdx}`}
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: '1fr 1fr 90px auto',
-                          gap: 4,
-                          alignItems: 'center',
-                        }}
+                        key={`${intf.interfaceId}-${kind}-${fIdx}`} className="grid grid-cols-[1fr_1fr_90px_auto] gap-1 items-center"
                       >
                         <input
                           className="input"
@@ -4136,8 +3990,7 @@ function StructuredModelInspector({
                         />
                         <Button
                           type="button"
-                          variant="secondary" size="sm"
-                          style={{ height: 22, padding: '0 5px' }}
+                          variant="secondary" size="sm" className="h-[22px] p-[0_5px]"
                           onClick={() =>
                             mutateDraft((nx) => {
                               nx.MI?.interfaces[iIdx]?.[kind].splice(fIdx, 1);
@@ -4160,14 +4013,14 @@ function StructuredModelInspector({
                   style={cardHighlightStyle([intf.interfaceId])}
                 >
                   <div className="card-header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="badge badge-accent">{intf.interfaceId}</span>
                       <strong>{intf.name}</strong>
                       <span className="badge badge-ok">{intf.direction}</span>
                       <span className="badge">{intf.interfaceCategory}</span>
                       <span className="badge">{intf.protocol}</span>
                     </div>
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <div className="flex gap-1.5">
                       <Button
                         type="button"
                         variant="secondary" size="sm"
@@ -4197,7 +4050,7 @@ function StructuredModelInspector({
                     </div>
                   </div>
 
-                  <div className="form-grid-3" style={{ marginBottom: 10 }}>
+                  <div className="form-grid-3 mb-2.5">
                     <div className="form-field">
                       <label className="form-label">{t('接口契约名称', 'Interface Name')}</label>
                       <input
@@ -4251,7 +4104,7 @@ function StructuredModelInspector({
                     </div>
                   </div>
 
-                  <div className="form-grid-2" style={{ marginBottom: 10 }}>
+                  <div className="form-grid-2 mb-2.5">
                     <div className="form-field">
                       <label className="form-label">
                         {t('承接行为引用 (M2 Behavior)', 'Related M2 Behavior')}

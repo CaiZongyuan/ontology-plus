@@ -13,3 +13,5 @@ A Hex-style replacement shell was prototyped (branch `prototype/hex-shell-varian
 - **Depth by tone.** Layers are separated by `--ground` → `--surface` → `--surface-2`, not by stacking borders and shadows. Cards nest at most two levels and the inner level has no shadow.
 - **No preflight.** Tailwind preflight stays off because it flattens rendered markdown; `tokens.css` carries a control-only reset in the lowest cascade layer.
 - **Copy.** Titles are short and in the active locale only; English glosses belong in the `en-US` strings, not in parentheses after the Chinese.
+- **Motion.** Motion is quiet and editorial: sections settle in reading order, the nav marker draws in, dialogs rise, chat turns fade up. Only `opacity` and `transform` are animated, nothing runs longer than 320ms, and `prefers-reduced-motion` turns all of it off.
+- **Spacing.** Tailwind's spacing step is pinned to 4px (`--spacing` in `tokens.css`) because the root font size is 13px; layout uses utilities on that step, and `style={{…}}` is reserved for values computed at runtime or deliberate overrides of a shell class.

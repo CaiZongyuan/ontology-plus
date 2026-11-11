@@ -320,6 +320,9 @@ body,
 }
 
 @theme inline {
+  /* The root font size is 13px, so Tailwind's default rem-based step (0.25rem) would be
+     3.25px. Pin it to 4px so `gap-2` is 8px and utilities line up with --space-*. */
+  --spacing: 4px;
   --color-background: var(--ground);
   --color-foreground: var(--ink);
   --color-card: var(--surface);
@@ -360,6 +363,7 @@ body,
 
   --font-sans: var(--sans);
   --font-mono: var(--mono);
+  --font-serif: var(--serif);
 
   --radius-chip: 6px;
   --radius-control: 8px;

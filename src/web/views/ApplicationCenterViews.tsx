@@ -334,23 +334,18 @@ export function OverviewSessionsView({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div className="flex flex-col gap-4">
       {/* 4 KPI Cards */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-          gap: 12,
-        }}
+      <div className="grid grid-cols-4 gap-3"
       >
         <div className="card">
-          <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+          <div className="text-[11.5px] text-muted-foreground">
             {t('当前激活本体工程', 'Active Ontology Project')}
           </div>
-          <div style={{ fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, marginTop: 4 }}>
+          <div className="font-serif text-[18px] font-semibold mt-1">
             {active.name}
           </div>
-          <div style={{ marginTop: 6 }}>
+          <div className="mt-1.5">
             <span className="badge badge-accent">{active.code}</span>{' '}
             <span className="badge badge-ok">
               {active.validation.presentModels.length}/11 {t('模型就绪', 'Models Ready')}
@@ -359,15 +354,15 @@ export function OverviewSessionsView({
         </div>
 
         <div className="card">
-          <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+          <div className="text-[11.5px] text-muted-foreground">
             {t('两级一致性校验门禁', 'Two-Tier Validation Gate')}
           </div>
-          <div style={{ fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, marginTop: 4 }}>
+          <div className="font-serif text-[18px] font-semibold mt-1">
             {active.validation.errorCount === 0
               ? t('0 一致性错误', '0 Consistency Errors')
               : `${active.validation.errorCount} Errors`}
           </div>
-          <div style={{ marginTop: 6 }}>
+          <div className="mt-1.5">
             <span className="badge badge-ok">Tier 1: Strict</span>{' '}
             <span className="badge badge-warn">
               Tier 2: {active.validation.warningCount} Warnings
@@ -376,14 +371,14 @@ export function OverviewSessionsView({
         </div>
 
         <div className="card">
-          <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+          <div className="text-[11.5px] text-muted-foreground">
             {t('四层架构资产与开发包', '4-Layer Assets & Packages')}
           </div>
-          <div style={{ fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, marginTop: 4 }}>
+          <div className="font-serif text-[18px] font-semibold mt-1">
             {data.fourLayerAssets.length} {t('项标准资产', 'Assets')} ·{' '}
             {data.assembledApplications.length} {t('个应用', 'Apps')}
           </div>
-          <div style={{ marginTop: 6 }}>
+          <div className="mt-1.5">
             <Button
               type="button"
               variant="secondary" size="sm"
@@ -395,16 +390,16 @@ export function OverviewSessionsView({
         </div>
 
         <div className="card">
-          <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+          <div className="text-[11.5px] text-muted-foreground">
             {t('活跃智能体推理网关', 'Active Agent LLM Gateway')}
           </div>
-          <div style={{ fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, marginTop: 4 }}>
+          <div className="font-serif text-[18px] font-semibold mt-1">
             {data.systemSettings.mockLlmMode
               ? 'Mock Demo Engine'
               : ((data.llmProviders.find((p) => p.enabled) ?? data.llmProviders[0])
                   ?.defaultModel ?? 'auto/glm-5.3-flash')}
           </div>
-          <div style={{ marginTop: 6 }}>
+          <div className="mt-1.5">
             <span className="badge badge-ok">
               {(data.agentSessions ?? []).length} {t('条智能体会话', 'Agent Sessions')}
             </span>{' '}
@@ -430,34 +425,19 @@ export function OverviewSessionsView({
           <span className="badge badge-accent">{active.domain}</span>
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
-            gap: 10,
-          }}
+        <div className="grid grid-cols-5 gap-2.5"
         >
           {pipelineSteps.map((st, idx) => (
             <div
-              key={st.step}
-              style={{
-                padding: '10px 12px',
-                borderRadius: 6,
-                border: '1px solid var(--line)',
-                background: 'var(--surface-2)',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                gap: 8,
-              }}
+              key={st.step} className="p-[10px_12px] rounded-[6px] border border-line bg-inset flex flex-col justify-between gap-2"
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong style={{ fontSize: 13 }}>{t(st.labelZh, st.labelEn)}</strong>
+              <div className="flex justify-between items-center">
+                <strong className="text-[13px]">{t(st.labelZh, st.labelEn)}</strong>
                 {idx < pipelineSteps.length - 1 && (
-                  <span style={{ color: 'var(--muted)', fontFamily: 'var(--mono)' }}>→</span>
+                  <span className="text-muted-foreground font-mono">→</span>
                 )}
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+              <div className="flex justify-between items-center gap-1.5">
                 <span className="badge badge-ok">{st.meta}</span>
                 <Button
                   type="button"
@@ -964,11 +944,11 @@ export function RequirementExploreView({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="flex flex-col gap-3">
       {/* Top SRS Synthesis Header */}
       <div className="card">
         <div className="card-header" style={{ marginBottom: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div className="flex items-center gap-2.5 flex-wrap">
             <h3 className="card-title">
               {t(
                 '需求探索与分级追问',
@@ -991,7 +971,7 @@ export function RequirementExploreView({
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="flex gap-2">
             <Button
               type="button"
               variant="accent" size="md"
@@ -1011,7 +991,7 @@ export function RequirementExploreView({
       </div>
 
       {/* Main Unified Streaming Agent + Right Convergence Panel */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 350px', gap: 14 }}>
+      <div className="grid grid-cols-[minmax(0,1fr)_350px] gap-3.5">
         <AgentSessionWorkbench
           agentKind="REQUIREMENT"
           title={t('需求探索与边界澄清智能体', 'Requirement Discovery Agent')}
@@ -1022,7 +1002,7 @@ export function RequirementExploreView({
         />
 
         {/* Right Panel: Decisions (A/B Tags), M1 Aggregates, M3 Rules & Next Actions */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="flex flex-col gap-3">
           <div className="card">
             <div className="card-header" style={{ marginBottom: 8 }}>
               <h4 className="card-title">
@@ -1032,45 +1012,22 @@ export function RequirementExploreView({
                 {(session?.resolvedDecisions ?? []).length}
               </span>
             </div>
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-                maxHeight: 220,
-                overflowY: 'auto',
-              }}
+            <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto"
             >
               {(session?.resolvedDecisions ?? []).map((dec, idx) => {
                 const parsed = parseDecisionTag(dec);
                 return (
                   <div
-                    key={`${idx}-${dec.slice(0, 18)}`}
-                    style={{
-                      padding: '8px 10px',
-                      borderRadius: 5,
-                      background: 'var(--surface-2)',
-                      border: '1px solid var(--line)',
-                      fontSize: 12.5,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 4,
-                    }}
+                    key={`${idx}-${dec.slice(0, 18)}`} className="p-[8px_10px] rounded-[5px] bg-inset border border-line text-[12.5px] flex flex-col gap-1"
                   >
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 6,
-                      }}
+                    <div className="flex items-center justify-between gap-1.5"
                     >
                       <span className={`badge ${parsed.badgeClass}`}>{parsed.tag}</span>
-                      <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                      <span className="text-[11.5px] text-muted-foreground">
                         {t(parsed.categoryLabelZh, parsed.categoryLabelEn)}
                       </span>
                     </div>
-                    <div style={{ lineHeight: 1.45 }}>{parsed.body}</div>
+                    <div className="leading-[1.45]">{parsed.body}</div>
                   </div>
                 );
               })}
@@ -1081,7 +1038,7 @@ export function RequirementExploreView({
             <h4 className="card-title" style={{ marginBottom: 8 }}>
               {t('已识别领域聚合根 (M1)', 'Discovered Aggregates (M1)')}
             </h4>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <div className="flex flex-wrap gap-1.5">
               {mergedAggs.map((a) => (
                 <span key={a} className="badge badge-accent">
                   {a}
@@ -1094,16 +1051,10 @@ export function RequirementExploreView({
             <h4 className="card-title" style={{ marginBottom: 8 }}>
               {t('已收敛业务规则 (M3)', 'Discovered Rules (M3)')}
             </h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div className="flex flex-col gap-1.5">
               {mergedRules.map((r) => (
                 <div
-                  key={r}
-                  style={{
-                    padding: '6px 8px',
-                    borderRadius: 4,
-                    background: 'var(--surface-2)',
-                    fontSize: 12.5,
-                  }}
+                  key={r} className="p-[6px_8px] rounded-[4px] bg-inset text-[12.5px]"
                 >
                   {r}
                 </div>
@@ -1115,7 +1066,7 @@ export function RequirementExploreView({
             <h4 className="card-title" style={{ marginBottom: 8 }}>
               {t('下一步转化动作', 'Next Actions')}
             </h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="flex flex-col gap-2">
               <Button
                 type="button"
                 variant="accent" size="md"
@@ -1331,8 +1282,7 @@ export function RequirementDocsView({
       <input
         ref={mdUploadRef}
         type="file"
-        accept=".md,.txt"
-        style={{ display: 'none' }}
+        accept=".md,.txt" className="hidden"
         onChange={handleUploadMdFile}
       />
 
@@ -1707,12 +1657,11 @@ export function PrototypeStudioView({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="flex flex-col gap-3">
       <input
         ref={htmlUploadRef}
         type="file"
-        accept=".html,.htm"
-        style={{ display: 'none' }}
+        accept=".html,.htm" className="hidden"
         onChange={handleUploadHtml}
       />
 
@@ -1849,7 +1798,7 @@ export function PrototypeStudioView({
         />
       ) : (
         <>
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="card flex flex-col gap-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 {prototypes.length > 0 && (
@@ -1897,24 +1846,13 @@ export function PrototypeStudioView({
             </div>
 
             {/* AI Prototype Assistant Bar */}
-            <div
-              style={{
-                padding: '10px 12px',
-                borderRadius: 6,
-                background: 'var(--surface-2)',
-                border: '1px solid var(--line)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                flexWrap: 'wrap',
-              }}
+            <div className="p-[10px_12px] rounded-[6px] bg-inset border border-line flex items-center gap-2 flex-wrap"
             >
               <span className="badge badge-accent">
                 {t('AI 原型精修助手', 'AI Prototype Assistant')}
               </span>
               <input
-                className="input"
-                style={{ flex: 1, minWidth: 260 }}
+                className="input flex-1 min-w-[260px]"
                 data-testid="refine-prototype-input"
                 placeholder={t(
                   '输入界面精修指令，例如：增加里程碑逾期预警统计卡片与批量审批按钮（自动保持语义锚点并同步 MU）...',
@@ -1938,19 +1876,9 @@ export function PrototypeStudioView({
             </div>
 
             {synthesisSummary && (
-              <div
-                style={{
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  background: 'var(--ok-soft)',
-                  border: '1px solid var(--line)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 10,
-                }}
+              <div className="p-[8px_12px] rounded-[6px] bg-green-tint border border-line flex items-center justify-between gap-2.5"
               >
-                <div style={{ fontSize: 12.5 }}>
+                <div className="text-[12.5px]">
                   <strong>
                     {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
                   </strong>
@@ -1980,22 +1908,13 @@ export function PrototypeStudioView({
                 <iframe
                   title="Interactive Prototype Sandbox"
                   sandbox="allow-scripts"
-                  srcDoc={htmlContent}
-                  style={{ width: '100%', height: 560, border: 'none', display: 'block' }}
+                  srcDoc={htmlContent} className="w-full h-[560px] border-0 block"
                 />
               </div>
             )}
             {(viewMode === 'SPLIT' || viewMode === 'HTML') && (
-              <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    fontSize: 11.5,
-                    fontFamily: 'var(--mono)',
-                    marginBottom: 6,
-                  }}
+              <div className="card flex flex-col">
+                <div className="flex justify-between items-center text-[11.5px] font-mono mb-1.5"
                 >
                   <span>{proto?.name ?? '界面原型.html'} (Semantic Anchors)</span>
                   <span className="badge badge-ok">
@@ -2159,7 +2078,7 @@ export function ModelFilesView() {
       : (yamlFiles[selectedFile]?.content ?? `# ${selectedFile} not yet authored`);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       <div className="card">
         <div className="card-header" style={{ marginBottom: 0, flexWrap: 'wrap' }}>
           <div>
@@ -2169,18 +2088,17 @@ export function ModelFilesView() {
                 '11-Model YAML Repository & Multi-Format Export',
               )}
             </h3>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+            <div className="text-[12.5px] text-muted-foreground font-mono">
               .onto-cs/model/{project.id}/
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div className="flex gap-2 flex-wrap">
             <input
               ref={yamlImportRef}
               type="file"
               multiple
-              accept=".yaml,.yml,.json"
-              style={{ display: 'none' }}
+              accept=".yaml,.yml,.json" className="hidden"
               onChange={handleImportYamlFiles}
             />
             <Button
@@ -2236,9 +2154,9 @@ export function ModelFilesView() {
               {t('清除提示', 'Dismiss')}
             </Button>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div className="flex flex-col gap-1">
             {importErrors.map((err, i) => (
-              <div key={i} style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}>
+              <div key={i} className="font-mono text-[12.5px]">
                 <strong>[{err.model}]</strong> {err.message}
               </div>
             ))}
@@ -2246,7 +2164,7 @@ export function ModelFilesView() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '270px 1fr', gap: 12 }}>
+      <div className="grid grid-cols-[270px_1fr] gap-3">
         <div className="card" style={{ padding: 8 }}>
           <button
             type="button"
@@ -2254,8 +2172,8 @@ export function ModelFilesView() {
             onClick={() => setSelectedFile('MANIFEST')}
           >
             <span className="nav-item-left">
-              <span style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>IDX</span>
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}>manifest.json</span>
+              <span className="font-mono font-semibold">IDX</span>
+              <span className="font-mono text-[11.5px]">manifest.json</span>
             </span>
             <span className="badge badge-accent">JSON</span>
           </button>
@@ -2271,8 +2189,8 @@ export function ModelFilesView() {
                 onClick={() => setSelectedFile(item.code)}
               >
                 <span className="nav-item-left">
-                  <span style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{item.code}</span>
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}>{fileName}</span>
+                  <span className="font-mono font-semibold">{item.code}</span>
+                  <span className="font-mono text-[11.5px]">{fileName}</span>
                 </span>
                 <span className={`badge ${exists ? 'badge-ok' : 'badge-warn'}`}>
                   {exists ? 'YAML' : 'Empty'}
@@ -2297,7 +2215,7 @@ export function ModelFilesView() {
           <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
             <div className="card-header">
               <h3 className="card-title">W3C OWL/RDF XML — {project.name}</h3>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div className="flex gap-2">
                 <Button
                   type="button"
                   variant="secondary" size="sm"
@@ -2318,16 +2236,7 @@ export function ModelFilesView() {
               </div>
             </div>
             <pre
-              data-testid="owl-xml-preview"
-              style={{
-                padding: 12,
-                background: 'var(--surface-2)',
-                borderRadius: 5,
-                fontFamily: 'var(--mono)',
-                fontSize: 11.5,
-                maxHeight: 420,
-                overflow: 'auto',
-              }}
+              data-testid="owl-xml-preview" className="p-3 bg-inset rounded-[5px] font-mono text-[11.5px] max-h-[420px] overflow-auto"
             >
               {owlPreview}
             </pre>
@@ -2491,7 +2400,7 @@ export function FourLayerAssetsView() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       <div className="card">
         <div className="card-header" style={{ marginBottom: 0, flexWrap: 'wrap' }}>
           <div>
@@ -2501,14 +2410,14 @@ export function FourLayerAssetsView() {
                 'Four-Layer Architecture Reusable Asset Library',
               )}
             </h3>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+            <div className="text-[12.5px] text-muted-foreground">
               {t(
                 '与业务本体自由组合装配，支持 Tiptap 富文本编辑规范文档与引用保护删除',
                 'Freely assemble with any Ontology Suite, edit specs via Tiptap, or synthesize from tech stack',
               )}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <div className="flex gap-1.5 flex-wrap">
             {(['ALL', 'UI_UE', 'TECH_FOUNDATION', 'TECH_ARCH'] as const).map((ly) => (
               <Button
                 key={ly}
@@ -2580,17 +2489,17 @@ export function FourLayerAssetsView() {
       </div>
 
       {/* Asset Cards Grid with Rendered Markdown Preview */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+      <div className="grid grid-cols-2 gap-3">
         {list.map((asset) => (
-          <div key={asset.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div key={asset.id} className="card flex flex-col gap-2">
             <div className="card-header" style={{ marginBottom: 0 }}>
               <div>
-                <span className="badge badge-accent" style={{ marginRight: 8 }}>
+                <span className="badge badge-accent mr-2">
                   {asset.layer}
                 </span>
                 <strong>{asset.name}</strong>
               </div>
-              <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+              <div className="flex gap-1.25 items-center">
                 <span className="badge badge-ok">{asset.version}</span>
                 <Button
                   type="button"
@@ -2618,10 +2527,10 @@ export function FourLayerAssetsView() {
               </div>
             </div>
 
-            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{asset.summary}</div>
+            <div className="text-[12.5px] text-muted-foreground">{asset.summary}</div>
 
             {asset.tags.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              <div className="flex flex-wrap gap-1">
                 {asset.tags.map((tg) => (
                   <span key={tg} className="badge">
                     {tg}
@@ -2658,7 +2567,7 @@ export function FourLayerAssetsView() {
               </Button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div className="flex flex-col gap-2.5">
               <div className="form-grid-3">
                 <div className="form-field">
                   <label className="form-label">{t('所属架构层', 'Layer')}</label>
@@ -2902,7 +2811,7 @@ export function ApplicationAssemblyDevView() {
     data.projects.find((p) => p.id === app?.projectId) ?? data.activeProject;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       <ViewModeHeader
         mode={pageMode}
         onChange={setPageMode}
@@ -3064,15 +2973,10 @@ export function ApplicationAssemblyDevView() {
             </div>
 
             {app && (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-                  gap: 10,
-                }}
+              <div className="grid grid-cols-4 gap-2.5"
               >
-                <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
+                  <div className="text-[11.5px] text-muted-foreground">
                     1. {t('业务本体层', 'Ontology Layer')}
                   </div>
                   <select
@@ -3091,8 +2995,8 @@ export function ApplicationAssemblyDevView() {
                   </span>
                 </div>
 
-                <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
+                  <div className="text-[11.5px] text-muted-foreground">
                     2. {t('UI/UE 设计规范层', 'UI/UE Design Layer')}
                   </div>
                   <select
@@ -3108,8 +3012,8 @@ export function ApplicationAssemblyDevView() {
                   </select>
                 </div>
 
-                <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
+                  <div className="text-[11.5px] text-muted-foreground">
                     3. {t('技术底座层', 'Tech Foundation Layer')}
                   </div>
                   <select
@@ -3127,8 +3031,8 @@ export function ApplicationAssemblyDevView() {
                   </select>
                 </div>
 
-                <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
+                  <div className="text-[11.5px] text-muted-foreground">
                     4. {t('技术架构层', 'Tech Architecture Layer')}
                   </div>
                   <select
@@ -3149,8 +3053,7 @@ export function ApplicationAssemblyDevView() {
 
           {/* Compiled Progressive-Disclosure Development Package Inspector */}
           {compiledPkg && (
-            <div
-              style={{ display: 'grid', gridTemplateColumns: '330px minmax(0, 1fr)', gap: 12 }}
+            <div className="grid grid-cols-[330px_minmax(0,1fr)] gap-3"
               data-testid="compiled-package-inspector"
             >
               <div className="card" style={{ maxHeight: 540, overflowY: 'auto' }}>
@@ -3159,7 +3062,7 @@ export function ApplicationAssemblyDevView() {
                     {t('开发资料包目录树', 'Package File Tree')} ({compiledPkg.files.length})
                   </h4>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div className="flex flex-col gap-0.75">
                   {compiledPkg.files.map((file) => (
                     <button
                       key={file.relativePath}
@@ -3168,8 +3071,7 @@ export function ApplicationAssemblyDevView() {
                       onClick={() => setSelectedFilePath(file.relativePath)}
                     >
                       <span
-                        className="nav-item-left"
-                        style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}
+                        className="nav-item-left font-mono text-[11.5px]"
                       >
                         {file.relativePath}
                       </span>
@@ -3181,10 +3083,10 @@ export function ApplicationAssemblyDevView() {
 
               <div className="card" style={{ maxHeight: 540, overflowY: 'auto' }}>
                 <div className="card-header">
-                  <strong style={{ fontFamily: 'var(--mono)' }}>
+                  <strong className="font-mono">
                     {activeFile?.relativePath}
                   </strong>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <div className="flex gap-2 items-center">
                     {isMarkdownArtifact && (
                       <Button
                         variant="ghost"
@@ -3232,7 +3134,7 @@ export function ApplicationAssemblyDevView() {
 
           {/* Unified Streaming AI Coding Agent + Real-Time Logs */}
           {app && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 12 }}>
+            <div className="grid grid-cols-[minmax(0,1fr)_340px] gap-3">
               <AgentSessionWorkbench
                 height="max(480px, calc(100vh - 372px))"
                 agentKind="CODING"
@@ -3250,17 +3152,10 @@ export function ApplicationAssemblyDevView() {
                     {t('构建与发布流水日志', 'Build & Release Logs')} ({app.agentDevLogs.length})
                   </h4>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div className="flex flex-col gap-1.5">
                   {[...app.agentDevLogs].reverse().map((log, i) => (
                     <div
-                      key={i}
-                      style={{
-                        padding: '6px 10px',
-                        background: 'var(--surface-2)',
-                        borderRadius: 4,
-                        fontFamily: 'var(--mono)',
-                        fontSize: 11.5,
-                      }}
+                      key={i} className="p-[6px_10px] bg-inset rounded-[4px] font-mono text-[11.5px]"
                     >
                       [{log.timestamp.slice(0, 19)}] <strong>{log.phase}</strong>: {log.detail}
                     </div>
@@ -3659,18 +3554,18 @@ export function AppPublishView() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="flex flex-col gap-3">
       {data.assembledApplications.map((app) => (
-        <div key={app.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div key={app.id} className="card flex flex-col gap-2.5">
           <div className="card-header" style={{ marginBottom: 0, flexWrap: 'wrap' }}>
             <div>
               <h3 className="card-title">{app.name}</h3>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--muted)' }}>
+              <div className="font-mono text-[12.5px] text-muted-foreground">
                 {app.publishedEndpoint || `/apps/${app.id}`} ·{' '}
                 {app.packageOutputDir || `.onto-cs/packages/${app.id}`}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="flex gap-1.5 items-center flex-wrap">
               <span className="badge badge-accent">4A Gate: BA · DA · AA · TA</span>
               <span className="badge badge-ok">
                 {app.status} · {app.publishedVersion || 'v1.0.0'}
@@ -3678,17 +3573,7 @@ export function AppPublishView() {
             </div>
           </div>
 
-          <div
-            style={{
-              padding: '10px 12px',
-              borderRadius: 6,
-              background: 'var(--surface-2)',
-              border: '1px solid var(--line)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              flexWrap: 'wrap',
-            }}
+          <div className="p-[10px_12px] rounded-[6px] bg-inset border border-line flex items-center gap-2 flex-wrap"
           >
             <input
               className="input"
@@ -3721,20 +3606,13 @@ export function AppPublishView() {
           </div>
 
           <div>
-            <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
+            <div className="text-[12.5px] font-semibold mb-1.5">
               {t('Agent 研发与发布流水日志', 'Agent Build & Release Logs')}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div className="flex flex-col gap-1.5">
               {app.agentDevLogs.map((log, i) => (
                 <div
-                  key={i}
-                  style={{
-                    padding: '6px 10px',
-                    background: 'var(--surface-2)',
-                    borderRadius: 4,
-                    fontFamily: 'var(--mono)',
-                    fontSize: 11.5,
-                  }}
+                  key={i} className="p-[6px_10px] bg-inset rounded-[4px] font-mono text-[11.5px]"
                 >
                   [{log.timestamp.slice(0, 19)}] <strong>{log.phase}</strong>: {log.detail}
                 </div>

@@ -276,11 +276,11 @@ function LoadingState() {
     <div className="loading-state" aria-busy="true">
       <div className="loading-row">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="skeleton" style={{ height: 96 }} />
+          <div key={i} className="skeleton h-[96px]" />
         ))}
       </div>
-      <div className="skeleton" style={{ height: 140 }} />
-      <div className="skeleton" style={{ height: 260 }} />
+      <div className="skeleton h-[140px]" />
+      <div className="skeleton h-[260px]" />
     </div>
   );
 }
@@ -546,7 +546,7 @@ function ShellInner() {
                   </span>
                 </>
               )}
-              <h1 className="breadcrumb-page" style={{ margin: 0 }}>
+              <h1 className="breadcrumb-page m-0">
                 {activeLabel || 'Ontology Plus'}
               </h1>
             </div>
@@ -604,7 +604,7 @@ function ShellInner() {
                   <span className="dot" />
                   <strong>{validation.presentModels.length}/11</strong>
                   {t('模型', 'Models')}
-                  <span style={{ color: 'var(--line)' }}>|</span>
+                  <span className="text-[var(--line)]">|</span>
                   <strong>{validation.errorCount}</strong>
                   {t('错误', 'Errors')}
                 </span>

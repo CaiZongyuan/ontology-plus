@@ -259,18 +259,18 @@ export function DataResourcesView({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       {/* Database Resources & Schema Explorer */}
       {data.databaseResources.map((db) => (
         <div key={db.id} className="card">
           <div className="card-header">
             <div>
               <h3 className="card-title">{db.name}</h3>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--muted)' }}>
+              <div className="font-mono text-[12.5px] text-muted-foreground">
                 {db.dialect} · {db.connectionUri}
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="flex items-center gap-2">
               <span className="badge badge-ok">{db.status}</span>
               <Button
                 type="button"
@@ -290,20 +290,14 @@ export function DataResourcesView({
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+          <div className="grid grid-cols-3 gap-2.5">
             {db.tables.map((tb) => (
               <div
-                key={tb.tableName}
-                style={{
-                  padding: 10,
-                  background: 'var(--surface-2)',
-                  borderRadius: 5,
-                  border: '1px solid var(--line)',
-                }}
+                key={tb.tableName} className="p-2.5 bg-inset rounded-[5px] border border-line"
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <strong style={{ fontFamily: 'var(--mono)' }}>{tb.tableName}</strong>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <div className="flex justify-between items-center">
+                  <strong className="font-mono">{tb.tableName}</strong>
+                  <div className="flex items-center gap-1">
                     <span className="badge badge-accent">{tb.rowCount} rows</span>
                     <Button
                       type="button"
@@ -316,22 +310,15 @@ export function DataResourcesView({
                     </Button>
                   </div>
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--muted)', margin: '4px 0 8px 0' }}>
+                <div className="text-[11.5px] text-muted-foreground m-[4px_0_8px_0]">
                   {tb.comment}
                 </div>
                 {tb.columns.map((c) => (
                   <div
-                    key={c.name}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: 11.5,
-                      fontFamily: 'var(--mono)',
-                      padding: '2px 0',
-                    }}
+                    key={c.name} className="flex justify-between text-[11.5px] font-mono p-[2px_0]"
                   >
                     <span>{c.name}</span>
-                    <span style={{ color: 'var(--muted)' }}>{c.type}</span>
+                    <span className="text-muted-foreground">{c.type}</span>
                   </div>
                 ))}
               </div>
@@ -350,7 +337,7 @@ export function DataResourcesView({
                 'Live Read-Only SQL Sandbox & M1 Dictionary Enrichment',
               )}
             </h3>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+            <div className="text-[12.5px] text-muted-foreground">
               {t(
                 '仅允许执行只读 SELECT / WITH 分析查询，自动挂载 __dict 数据字典生成 <col>__label 中文语义列',
                 'Executes read-only SELECT / WITH queries against live SQLite tables with automatic <col>__label dictionary enrichment',
@@ -371,7 +358,7 @@ export function DataResourcesView({
           </Button>
         </div>
 
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+        <div className="flex flex-wrap gap-1.5 mb-2">
           {SQL_SANDBOX_PRESETS.map((preset) => (
             <Button
               key={preset.labelEn}
@@ -392,32 +379,15 @@ export function DataResourcesView({
         />
 
         {sqlError && (
-          <div
-            style={{
-              marginTop: 8,
-              padding: '8px 10px',
-              borderRadius: 5,
-              background: 'var(--bad-soft)',
-              color: 'var(--bad)',
-              fontFamily: 'var(--mono)',
-              fontSize: 12.5,
-            }}
+          <div className="mt-2 p-[8px_10px] rounded-[5px] bg-red-tint text-red font-mono text-[12.5px]"
           >
             {sqlError}
           </div>
         )}
 
         {sqlResult && (
-          <div style={{ marginTop: 10 }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: 11.5,
-                color: 'var(--muted)',
-                fontFamily: 'var(--mono)',
-                marginBottom: 6,
-              }}
+          <div className="mt-2.5">
+            <div className="flex justify-between text-[11.5px] text-muted-foreground font-mono mb-1.5"
             >
               <span>
                 Rows: {sqlResult.rowCount} · Elapsed: {sqlResult.elapsedMs}ms
@@ -440,7 +410,7 @@ export function DataResourcesView({
                       <th key={col} style={{ fontFamily: 'var(--mono)', whiteSpace: 'nowrap' }}>
                         {col}
                         {col.endsWith('__label') && (
-                          <span className="badge badge-accent" style={{ marginLeft: 4 }}>
+                          <span className="badge badge-accent ml-1">
                             Dict
                           </span>
                         )}
@@ -497,8 +467,8 @@ export function DataResourcesView({
           </Button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '280px minmax(0, 1fr)', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div className="grid grid-cols-[280px_minmax(0,1fr)] gap-3">
+          <div className="flex flex-col gap-1.5">
             {data.dataDocuments.map((doc) => {
               const active = doc.id === activeDoc?.id;
               return (
@@ -755,7 +725,7 @@ export function DataMappingsView() {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       <div className="card">
         <div className="card-header">
           <div>
@@ -765,14 +735,14 @@ export function DataMappingsView() {
                 'Data Ontology Semantic Lineage Graph (M1 ↔ MM ↔ M7)',
               )}
             </h3>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+            <div className="text-[12.5px] text-muted-foreground">
               {t(
                 '基于 React Flow + ELK 正交分层透视 M1 聚合根、MM 物理数仓表与 M7 查询报表模型血缘',
                 'Interactive React Flow + ELK semantic lineage across M1 aggregates, MM tables, and M7 reports',
               )}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div className="flex gap-1.5">
             <span className="badge badge-accent">M1 Objects: {m1Count}</span>
             <span className="badge badge-ok">MM Mappings: {mmCount}</span>
             <span className="badge badge-warn">M7 Reports: {m7Count}</span>
@@ -1112,7 +1082,7 @@ export function DataMetricsReportsView() {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div className="flex flex-col gap-4">
       {/* Top Mode Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
         <div className="inline-flex items-center gap-1 rounded-control bg-inset p-1">
@@ -1148,7 +1118,7 @@ export function DataMetricsReportsView() {
       </div>
 
       {viewMode === 'REPORTS_EDITOR' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div className="flex flex-col gap-3.5">
           <RegistryTable
             title={t('归档分析报告管理注册表', 'Archived Analytical Reports Registry')}
             rows={data.analyticsReports}
@@ -1190,7 +1160,7 @@ export function DataMetricsReportsView() {
                     'Ontology Metrics & AI Anomaly Insights',
                   )}
                 </h3>
-                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                <div className="text-[12.5px] text-muted-foreground">
                   {t(
                     '基于 M1 聚合根与 MM 物理表实时聚合指标，支持一键触发 AI 异动根因洞察与业务回写',
                     'Metrics bound to M1 aggregates and MM tables with one-click AI anomaly driver insights',
@@ -1199,23 +1169,14 @@ export function DataMetricsReportsView() {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+            <div className="grid grid-cols-3 gap-3">
               {data.metrics.map((m, idx) => {
                 const insight = insightsByMetric[m.id];
                 return (
                   <div
-                    key={m.id}
-                    style={{
-                      padding: 12,
-                      borderRadius: 6,
-                      background: 'var(--surface-2)',
-                      border: '1px solid var(--line)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 6,
-                    }}
+                    key={m.id} className="p-3 rounded-[6px] bg-inset border border-line flex flex-col gap-1.5"
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div className="flex justify-between items-center">
                       <span className="badge badge-accent">{m.code}</span>
                       <div className="inline-flex items-center gap-1">
                         <span
@@ -1241,18 +1202,18 @@ export function DataMetricsReportsView() {
                       </div>
                     </div>
 
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{m.name}</div>
-                    <div style={{ fontFamily: 'var(--serif)', fontSize: 24, fontWeight: 600 }}>
+                    <div className="font-semibold text-[14px]">{m.name}</div>
+                    <div className="font-serif text-[24px] font-semibold">
                       {m.currentValue}{' '}
-                      <span style={{ fontSize: 12.5, fontFamily: 'var(--mono)', color: 'var(--muted)' }}>
+                      <span className="text-[12.5px] font-mono text-muted-foreground">
                         ({m.yoYChange})
                       </span>
                     </div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--muted)' }}>
+                    <div className="font-mono text-[11.5px] text-muted-foreground">
                       {m.formula}
                     </div>
 
-                    <div style={{ marginTop: 4 }}>
+                    <div className="mt-1">
                       <Button
                         type="button"
                         variant="accent" size="sm"
@@ -1267,28 +1228,17 @@ export function DataMetricsReportsView() {
                     </div>
 
                     {insight && (
-                      <div
-                        style={{
-                          marginTop: 6,
-                          padding: 10,
-                          borderRadius: 5,
-                          background: 'var(--surface)',
-                          border: '1px solid var(--line)',
-                          fontSize: 12.5,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 6,
-                        }}
+                      <div className="mt-1.5 p-2.5 rounded-[5px] bg-surface border border-line text-[12.5px] flex flex-col gap-1.5"
                       >
-                        <div style={{ fontWeight: 600, color: 'var(--accent)' }}>
+                        <div className="font-semibold text-accent">
                           {t('AI 异动驱动因子：', 'Anomaly Drivers:')}
                         </div>
                         {insight.anomalyDrivers.map((drv, dIdx) => (
-                          <div key={dIdx} style={{ fontSize: 11.5 }}>
+                          <div key={dIdx} className="text-[11.5px]">
                             • {drv}
                           </div>
                         ))}
-                        <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                        <div className="text-[11.5px] text-muted-foreground">
                           {insight.suggestedAction}
                         </div>
                         <div>
@@ -1321,7 +1271,7 @@ export function DataMetricsReportsView() {
                     'Domain Scenario Analysis & Attribution',
                   )}
                 </h3>
-                <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                <div className="text-[12.5px] text-muted-foreground">
                   {t(
                     '围绕异常预警条件组织多指标联合归因，一键生成并归档结构化分析报告',
                     'Multi-metric causal attribution scenarios that synthesize and archive analytical reports',
@@ -1330,33 +1280,18 @@ export function DataMetricsReportsView() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="flex flex-col gap-3">
               {data.analyticsScenarios.map((sc, idx) => {
                 const attrRes = attributionsByScenario[sc.id];
                 return (
                   <div
-                    key={sc.id}
-                    style={{
-                      padding: 12,
-                      borderRadius: 6,
-                      background: 'var(--surface-2)',
-                      border: '1px solid var(--line)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 8,
-                    }}
+                    key={sc.id} className="p-3 rounded-[6px] bg-inset border border-line flex flex-col gap-2"
                   >
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        gap: 10,
-                      }}
+                    <div className="flex justify-between items-start gap-2.5"
                     >
                       <div>
-                        <strong style={{ fontSize: 14 }}>{sc.name}</strong>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                        <strong className="text-[14px]">{sc.name}</strong>
+                        <div className="flex flex-wrap gap-1.5 mt-1">
                           <span className="badge badge-warn">Trigger: {sc.triggerCondition}</span>
                           {sc.relatedMetrics.map((mid) => (
                             <span key={mid} className="badge badge-accent">
@@ -1396,35 +1331,23 @@ export function DataMetricsReportsView() {
 
                     <div className="form-grid-2">
                       <div>
-                        <div
-                          style={{
-                            fontSize: 11.5,
-                            fontWeight: 600,
-                            color: 'var(--muted)',
-                            marginBottom: 4,
-                          }}
+                        <div className="text-[11.5px] font-semibold text-muted-foreground mb-1"
                         >
                           {t('预设本体归因链因子', 'Ontology Causal Factors')}
                         </div>
                         {sc.causalFactors.map((cf, i) => (
-                          <div key={i} style={{ fontSize: 12.5, marginBottom: 3 }}>
+                          <div key={i} className="text-[12.5px] mb-0.75">
                             • {cf}
                           </div>
                         ))}
                       </div>
                       <div>
-                        <div
-                          style={{
-                            fontSize: 11.5,
-                            fontWeight: 600,
-                            color: 'var(--muted)',
-                            marginBottom: 4,
-                          }}
+                        <div className="text-[11.5px] font-semibold text-muted-foreground mb-1"
                         >
                           {t('建议闭环处置策略', 'Recommended Actions')}
                         </div>
                         {sc.recommendedActions.map((act, i) => (
-                          <div key={i} style={{ fontSize: 12.5, marginBottom: 3 }}>
+                          <div key={i} className="text-[12.5px] mb-0.75">
                             • {act}
                           </div>
                         ))}
@@ -1432,16 +1355,10 @@ export function DataMetricsReportsView() {
                     </div>
 
                     {attrRes && (
-                      <div
-                        style={{
-                          padding: 10,
-                          borderRadius: 5,
-                          background: 'var(--surface)',
-                          border: '1px solid var(--line)',
-                        }}
+                      <div className="p-2.5 rounded-[5px] bg-surface border border-line"
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                          <strong style={{ fontSize: 12.5 }}>
+                        <div className="flex justify-between mb-1.5">
+                          <strong className="text-[12.5px]">
                             {t('实时归因贡献度拆解', 'Live Causal Contribution Breakdown')}
                           </strong>
                           {attrRes.savedReport && (
@@ -1450,19 +1367,10 @@ export function DataMetricsReportsView() {
                             </span>
                           )}
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div className="flex flex-col gap-1">
                           {attrRes.causalBreakdown.map((item, cIdx) => (
                             <div
-                              key={cIdx}
-                              style={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                gap: 8,
-                                fontSize: 12.5,
-                                padding: '4px 6px',
-                                background: 'var(--surface-2)',
-                                borderRadius: 4,
-                              }}
+                              key={cIdx} className="flex justify-between gap-2 text-[12.5px] p-[4px_6px] bg-inset rounded-[4px]"
                             >
                               <span>
                                 <strong>{item.factor}</strong> — {item.evidence}
@@ -1480,17 +1388,17 @@ export function DataMetricsReportsView() {
           </div>
 
           {/* 3. Rendered Archived Analytical Reports Preview */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {data.analyticsReports.map((rp) => (
               <div key={rp.id} className="card">
                 <div className="card-header">
                   <div>
                     <h3 className="card-title">{rp.title}</h3>
-                    <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                    <div className="text-[12.5px] text-muted-foreground">
                       {rp.period} · {rp.author}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="flex items-center gap-2">
                     <span className="badge badge-ok">{t('已归档报告', 'Published Report')}</span>
                     <Button
                       variant="secondary"
@@ -1682,7 +1590,7 @@ export function DataReasoningView() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       <AgentSessionWorkbench
         agentKind="REASONING"
         defaultReasoningMode="ASK_POLICY"
@@ -1708,7 +1616,7 @@ export function DataReasoningView() {
               <h4 className="card-title">
                 {t('智能问策：受治理业务闭环回写动作库', 'Governed Policy Write-Back Actions')}
               </h4>
-              <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+              <div className="text-[12.5px] text-muted-foreground">
                 {t(
                   '将三阶数据本体推理产出的风控策略通过 MI / Writeback 接口一键回写存量业务系统',
                   'Execute policy recommendations via governed MI Write-Back interfaces',
@@ -1718,27 +1626,17 @@ export function DataReasoningView() {
             <span className="badge badge-accent">{seededSession.mode}</span>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+          <div className="grid grid-cols-2 gap-2.5">
             {seededSession.policyRecommendations.map((rec, i) => (
               <div
-                key={i}
-                style={{
-                  padding: 12,
-                  background: 'var(--surface-2)',
-                  borderRadius: 6,
-                  border: '1px solid var(--line)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  gap: 8,
-                }}
+                key={i} className="p-3 bg-inset rounded-[6px] border border-line flex flex-col justify-between gap-2"
               >
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
+                  <div className="flex justify-between gap-1.5">
                     <strong>{rec.actionTitle}</strong>
                     <span className="badge badge-accent">{rec.targetObject}</span>
                   </div>
-                  <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 4 }}>
+                  <div className="text-[12.5px] text-muted-foreground mt-1">
                     {rec.expectedImpact}
                   </div>
                 </div>
@@ -1846,7 +1744,7 @@ export function DataWritebackView() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
         <div className="text-[13px] font-semibold text-ink">
           {t('受治理业务系统闭环回写接口注册表', 'Governed Write-Back Interfaces')} (
@@ -1859,18 +1757,18 @@ export function DataWritebackView() {
       </div>
 
       {data.writebackInterfaces.map((wb) => (
-        <div key={wb.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div key={wb.id} className="card flex flex-col gap-2.5">
           <div className="card-header" style={{ marginBottom: 0 }}>
             <div>
               <h3 className="card-title">
                 {wb.id} · {wb.name}
               </h3>
-              <div style={{ fontSize: 12.5, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+              <div className="text-[12.5px] text-muted-foreground font-mono">
                 Protocol: {wb.protocol} · Target: {wb.targetSystem} ({wb.endpoint}) · Bound M2
                 Behavior: {wb.boundBehaviorRef}
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="flex items-center gap-2">
               <span className="badge badge-ok">
                 {t('累计回写次数', 'Executions')}: {wb.executionCount}
               </span>
@@ -1901,22 +1799,14 @@ export function DataWritebackView() {
               onChange={(e) => setPayloadDrafts((prev) => ({ ...prev, [wb.id]: e.target.value }))}
             />
             {jsonErrors[wb.id] && (
-              <div style={{ fontSize: 11.5, color: 'var(--bad)', fontFamily: 'var(--mono)' }}>
+              <div className="text-[11.5px] text-red font-mono">
                 {jsonErrors[wb.id]}
               </div>
             )}
           </div>
 
           {wb.lastExecutionResult && (
-            <div
-              style={{
-                padding: 10,
-                background: 'var(--ok-soft)',
-                color: 'var(--ok)',
-                borderRadius: 5,
-                fontFamily: 'var(--mono)',
-                fontSize: 12.5,
-              }}
+            <div className="p-2.5 bg-green-tint text-green rounded-[5px] font-mono text-[12.5px]"
             >
               {wb.lastExecutionResult}
             </div>
@@ -2088,14 +1978,14 @@ export function LlmCenterView() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-3 shadow-2xs">
         <div>
           <div className="flex items-center gap-2 text-[14px] font-semibold text-ink">
             <Cpu size={15} className="text-accent" />
             {t('大模型网关', 'Pi AI Unified LLM Gateway Hub')}
           </div>
-          <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+          <div className="text-[12.5px] text-muted-foreground">
             {t(
               '统一管理 OpenAI-Compatible、Anthropic 与 Google Gemini 端点；Live 模式下所有 5 类智能体会话均通过此网关进行真实流式推理',
               'Manage OpenAI-Compatible, Anthropic, and Google Gemini gateways powering all 5 Pi Durable agent surfaces',
@@ -2118,11 +2008,11 @@ export function LlmCenterView() {
                   {p.enabled ? 'ENABLED' : 'DISABLED'}
                 </span>
               </div>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 12.5, color: 'var(--muted)' }}>
+              <div className="font-mono text-[12.5px] text-muted-foreground">
                 [{p.providerType}] {p.baseUrl} · Default Model: {p.defaultModel}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="flex gap-2 items-center flex-wrap">
               <span className={`badge ${p.lastTestedStatus === 'OK' ? 'badge-ok' : 'badge-warn'}`}>
                 {p.lastTestedStatus ?? 'READY'}
               </span>
@@ -2154,25 +2044,17 @@ export function LlmCenterView() {
 
           {p.lastTestedMessage && (
             <div
-              data-testid={idx === 0 ? 'llm-ping-result' : `llm-ping-result-${idx}`}
-              style={{
-                padding: 10,
-                background: 'var(--surface-2)',
-                borderRadius: 5,
-                fontFamily: 'var(--mono)',
-                fontSize: 12.5,
-                marginBottom: 10,
-              }}
+              data-testid={idx === 0 ? 'llm-ping-result' : `llm-ping-result-${idx}`} className="p-2.5 bg-inset rounded-[5px] font-mono text-[12.5px] mb-2.5"
             >
               {p.lastTestedMessage}
             </div>
           )}
 
           <div>
-            <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
+            <div className="text-[12.5px] font-semibold mb-1.5">
               {t('已发现可用模型列表', 'Discovered Models')} ({p.availableModels.length})
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <div className="flex flex-wrap gap-1.5">
               {p.availableModels.map((m) => (
                 <span key={m} className={`badge ${m === p.defaultModel ? 'badge-accent' : ''}`}>
                   {m}
@@ -2285,14 +2167,14 @@ export function SystemSettingsView() {
   };
 
   return (
-    <div className="card" style={{ maxWidth: 860 }}>
+    <div className="card max-w-[860px]">
       <div className="card-header">
         <h3 className="card-title">
           {t('系统设置与工作区治理首选项', 'System Settings & Workspace Governance Preferences')}
         </h3>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="flex flex-col gap-4">
         {/* Explicit Offline Demo Mock Mode Switch (ADR-0007) */}
         <div
           style={{
@@ -2313,21 +2195,14 @@ export function SystemSettingsView() {
                 'Explicit Offline Demo Mock LLM Mode (ADR-0007)',
               )}
             </strong>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 2 }}>
+            <div className="text-[12.5px] text-muted-foreground mt-0.5">
               {t(
                 '默认关闭（Live 模式强制连接真实 LLM 网关，失败时返回结构化诊断而绝不静默伪造回复）；开启后使用内置确定性 fauxProvider 演示完整 5 步工具流。',
                 'Off by default (Live mode strictly calls configured LLM gateways and reports LlmGatewayError when unreachable); turn on to run deterministic multi-step fauxProvider tool streams offline.',
               )}
             </div>
           </div>
-          <label
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              cursor: 'pointer',
-              flexShrink: 0,
-            }}
+          <label className="inline-flex items-center gap-1.5 cursor-pointer shrink-0"
           >
             <input
               type="checkbox"
@@ -2349,20 +2224,11 @@ export function SystemSettingsView() {
         </div>
 
         {/* 3-State Segmented Theme Control */}
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12,
-            paddingBottom: 14,
-            borderBottom: '1px solid var(--line)',
-          }}
+        <div className="flex flex-wrap justify-between items-center gap-3 pb-3.5 border-b border-line"
         >
           <div>
             <strong>{t('界面主题', 'Appearance Theme')}</strong>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+            <div className="text-[12.5px] text-muted-foreground">
               {t(
                 '支持跟随操作系统色温，或显式锁定暖纸亮色 (Warm Paper) / 胶片颗粒暗色 (Film Grain)',
                 'Follow OS preference or pin Warm Paper Light / Film Grain Dark scheme',
@@ -2372,15 +2238,7 @@ export function SystemSettingsView() {
 
           <div
             role="group"
-            aria-label={t('界面外观主题选择', 'Appearance theme preference')}
-            style={{
-              display: 'inline-flex',
-              padding: 3,
-              borderRadius: 6,
-              background: 'var(--surface-2)',
-              border: '1px solid var(--line)',
-              gap: 4,
-            }}
+            aria-label={t('界面外观主题选择', 'Appearance theme preference')} className="inline-flex p-0.75 rounded-[6px] bg-inset border border-line gap-1"
           >
             <Button
               type="button"
@@ -2413,20 +2271,11 @@ export function SystemSettingsView() {
         </div>
 
         {/* Bilingual Language Toggle */}
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12,
-            paddingBottom: 14,
-            borderBottom: '1px solid var(--line)',
-          }}
+        <div className="flex flex-wrap justify-between items-center gap-3 pb-3.5 border-b border-line"
         >
           <div>
             <strong>{t('界面语言', 'Interface Language')}</strong>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+            <div className="text-[12.5px] text-muted-foreground">
               {t(
                 '支持简体中文 (zh-CN) 与英文 (en-US) 实时无刷切换',
                 'Switch between Simplified Chinese (zh-CN) and English (en-US)',
@@ -2434,15 +2283,7 @@ export function SystemSettingsView() {
             </div>
           </div>
 
-          <div
-            style={{
-              display: 'inline-flex',
-              padding: 3,
-              borderRadius: 6,
-              background: 'var(--surface-2)',
-              border: '1px solid var(--line)',
-              gap: 4,
-            }}
+          <div className="inline-flex p-0.75 rounded-[6px] bg-inset border border-line gap-1"
           >
             <Button
               type="button"
@@ -2462,15 +2303,7 @@ export function SystemSettingsView() {
         </div>
 
         {/* Strict Validation Gate Switch */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12,
-            paddingBottom: 14,
-            borderBottom: '1px solid var(--line)',
-          }}
+        <div className="flex justify-between items-center gap-3 pb-3.5 border-b border-line"
         >
           <div>
             <strong>
@@ -2479,14 +2312,14 @@ export function SystemSettingsView() {
                 'Strict Consistency Validation Gate',
               )}
             </strong>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+            <div className="text-[12.5px] text-muted-foreground">
               {t(
                 '存在跨模型引用断链或类型契约冲突时，自动拦截四层应用开发包编译导出',
                 'Block 4-layer development package compilation whenever Consistency Errors exist',
               )}
             </div>
           </div>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <label className="inline-flex items-center gap-1.5 cursor-pointer">
             <input
               type="checkbox"
               checked={settings.strictValidation}
@@ -2504,25 +2337,17 @@ export function SystemSettingsView() {
         </div>
 
         {/* Auto Mirror YAML & Auto Sync MU Switches */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12,
-            paddingBottom: 14,
-            borderBottom: '1px solid var(--line)',
-          }}
+        <div className="flex justify-between items-center gap-3 pb-3.5 border-b border-line"
         >
           <div>
             <strong>
               {t('本体文件自动镜像', 'Auto-Mirror Local YAML Files')}
             </strong>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+            <div className="text-[12.5px] text-muted-foreground font-mono">
               {settings.workspaceDir}/model/{data.activeProject.id}/yaml/
             </div>
           </div>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <label className="inline-flex items-center gap-1.5 cursor-pointer">
             <input
               type="checkbox"
               checked={settings.autoMirrorYaml}
@@ -2539,7 +2364,7 @@ export function SystemSettingsView() {
           </label>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+        <div className="flex justify-between items-center gap-3">
           <div>
             <strong>
               {t(
@@ -2547,14 +2372,14 @@ export function SystemSettingsView() {
                 'Auto-Sync MU UI Model from HTML Prototypes',
               )}
             </strong>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+            <div className="text-[12.5px] text-muted-foreground">
               {t(
                 '解析 HTML 原型中的 data-screen-id / data-element-id / data-event-id 锚点同步至 MU',
                 'Deterministically extract semantic data-* anchors into MU on prototype save',
               )}
             </div>
           </div>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <label className="inline-flex items-center gap-1.5 cursor-pointer">
             <input
               type="checkbox"
               checked={settings.autoSyncPrototypeMu}

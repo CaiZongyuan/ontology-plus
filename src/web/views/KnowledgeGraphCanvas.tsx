@@ -1291,6 +1291,7 @@ function KnowledgeGraphInner({
                 const entity = (n.data as EntityNodeData)?.node;
                 return (entity && MODEL_COLORS[entity.model]) || '#4c50c4';
               }}
+              maskColor="color-mix(in srgb, var(--ground) 70%, transparent)"
               style={{
                 width: 148,
                 height: 96,
@@ -1307,7 +1308,7 @@ function KnowledgeGraphInner({
           <div className="card-header">
             <h4 className="card-title">{t('图谱节点详情', 'Node Inspector')}</h4>
             {selectedNode && (
-              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <div className="flex gap-1 items-center">
                 <span className="badge badge-accent">{selectedNode.model}</span>
                 <span className="badge" title={t('节点关联度', 'Node Degree')}>
                   deg:{selectedNode.degree}
@@ -1317,26 +1318,21 @@ function KnowledgeGraphInner({
           </div>
 
           {selectedNode ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div className="flex flex-col gap-2.5">
               <div>
-                <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>ID / Symbol</div>
-                <div style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>
+                <div className="text-[11.5px] text-muted-foreground">ID / Symbol</div>
+                <div className="font-mono font-semibold">
                   {selectedNode.id}
                 </div>
               </div>
 
               <div>
-                <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                <div className="text-[11.5px] text-muted-foreground">
                   {t('名称 / 子标签', 'Label / SubLabel')}
                 </div>
-                <div style={{ fontWeight: 600 }}>{selectedNode.label}</div>
+                <div className="font-semibold">{selectedNode.label}</div>
                 {selectedNode.subLabel && selectedNode.subLabel !== selectedNode.label && (
-                  <div
-                    style={{
-                      fontSize: 11.5,
-                      color: 'var(--muted)',
-                      fontFamily: 'var(--mono)',
-                    }}
+                  <div className="text-[11.5px] text-muted-foreground font-mono"
                   >
                     {selectedNode.subLabel}
                   </div>
@@ -1345,18 +1341,18 @@ function KnowledgeGraphInner({
 
               <div className="form-grid-2">
                 <div>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                  <div className="text-[11.5px] text-muted-foreground">
                     {t('元模型分类', 'Category')}
                   </div>
-                  <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+                  <div className="font-mono text-[11.5px]">
                     {selectedNode.category}
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                  <div className="text-[11.5px] text-muted-foreground">
                     {t('连接度', 'Degree')}
                   </div>
-                  <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, fontWeight: 600 }}>
+                  <div className="font-mono text-[11.5px] font-semibold">
                     {selectedNode.degree} {t('条跨模型边', 'edges')}
                   </div>
                 </div>
@@ -1365,8 +1361,7 @@ function KnowledgeGraphInner({
               <div className="flex flex-wrap gap-1.5">
                 <Button
                   type="button"
-                  variant="secondary" size="sm"
-                  style={{ flex: 1 }}
+                  variant="secondary" size="sm" className="flex-1"
                   onClick={() =>
                     setLayoutMode((m) =>
                       m === 'EGO_FOCUS' ? 'STAGE_SWIMLANE' : 'EGO_FOCUS',
@@ -1382,8 +1377,7 @@ function KnowledgeGraphInner({
                 {onNavigateToElement && (
                   <Button
                     type="button"
-                    variant="accent" size="sm"
-                    style={{ flex: 1 }}
+                    variant="accent" size="sm" className="flex-1"
                     onClick={() =>
                       onNavigateToElement(
                         selectedNode.model,
@@ -1396,18 +1390,18 @@ function KnowledgeGraphInner({
                 )}
               </div>
 
-              <div style={{ borderTop: '1px solid var(--line)', paddingTop: 8 }}>
-                <div style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 6 }}>
+              <div className="border-t border-line pt-2">
+                <div className="text-[11.5px] font-semibold mb-1.5">
                   {t('跨模型关联边 (点击多跳追踪)', 'Cross-Model Edges')} (
                   {relatedEdges.length})
                 </div>
 
                 {relatedEdges.length === 0 ? (
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                  <div className="text-[11.5px] text-muted-foreground">
                     {t('当前节点暂无跨模型关联边', 'No cross-model edges for this node')}
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div className="flex flex-col gap-1.5">
                     {relatedEdges.map((edge) => {
                       const isOutgoing = edge.source === selectedNode.id;
                       const neighborId = isOutgoing ? edge.target : edge.source;
@@ -1415,59 +1409,24 @@ function KnowledgeGraphInner({
 
                       return (
                         <div
-                          key={edge.id}
-                          style={{
-                            padding: '6px 8px',
-                            borderRadius: 5,
-                            background: 'var(--surface-2)',
-                            border: '1px solid var(--line-2)',
-                            fontSize: 11.5,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 4,
-                          }}
+                          key={edge.id} className="p-[6px_8px] rounded-[5px] bg-inset border border-[var(--line-2)] text-[11.5px] flex flex-col gap-1"
                         >
-                          <div
-                            style={{
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              gap: 4,
-                            }}
+                          <div className="flex justify-between items-center gap-1"
                           >
-                            <span
-                              style={{
-                                color: 'var(--accent)',
-                                fontFamily: 'var(--mono)',
-                                fontSize: 10.5,
-                                fontWeight: 600,
-                              }}
+                            <span className="text-accent font-mono text-[10.5px] font-semibold"
                             >
                               {isOutgoing ? '→' : '←'} {edge.relation}
                             </span>
-                            <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>
+                            <span className="text-[10.5px] text-muted-foreground">
                               {t(edge.labelZh, edge.labelEn)}
                             </span>
                           </div>
 
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: 6,
-                            }}
+                          <div className="flex items-center justify-between gap-1.5"
                           >
                             <Button
                               type="button"
-                              variant="secondary" size="sm"
-                              style={{
-                                flex: 1,
-                                justifyContent: 'flex-start',
-                                fontFamily: 'var(--mono)',
-                                fontSize: 11.5,
-                                overflow: 'hidden',
-                              }}
+                              variant="secondary" size="sm" className="flex-1 justify-start font-mono text-[11.5px] overflow-hidden"
                               onClick={() => handleSelectNeighbor(neighborId)}
                               title={t('点击跳转至该邻居节点', 'Click to traverse to neighbor')}
                             >
@@ -1503,8 +1462,7 @@ function KnowledgeGraphInner({
                             {onNavigateToElement && neighborNode && (
                               <Button
                                 type="button"
-                                variant="secondary" size="sm"
-                                style={{ padding: '0 6px', flexShrink: 0 }}
+                                variant="secondary" size="sm" className="p-[0_6px] shrink-0"
                                 title={t(
                                   `打开 ${neighborNode.model} 编辑器`,
                                   `Open in ${neighborNode.model} editor`,
@@ -1528,7 +1486,7 @@ function KnowledgeGraphInner({
               </div>
             </div>
           ) : (
-            <div style={{ color: 'var(--muted)' }}>
+            <div className="text-muted-foreground">
               {t(
                 '点击左侧画布中的任意节点查看跨模型关系链。',
                 'Click any node in the graph to inspect cross-model links.',

@@ -213,29 +213,29 @@ export function CapabilitySystemsView() {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       <div className="form-grid-3">
         <div className="card">
-          <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+          <div className="text-[11.5px] text-muted-foreground">
             {t('已接入存量业务系统', 'Registered Legacy Systems')}
           </div>
-          <div style={{ fontFamily: 'var(--serif)', fontSize: 22, fontWeight: 600, marginTop: 4 }}>
+          <div className="font-serif text-[22px] font-semibold mt-1">
             {data.legacySystems.length}
           </div>
         </div>
         <div className="card">
-          <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+          <div className="text-[11.5px] text-muted-foreground">
             {t('已完成本体萃取系统', 'Ontology Extracted Systems')}
           </div>
-          <div style={{ fontFamily: 'var(--serif)', fontSize: 22, fontWeight: 600, marginTop: 4 }}>
+          <div className="font-serif text-[22px] font-semibold mt-1">
             {data.legacySystems.filter((s) => s.status !== 'CONNECTED').length}
           </div>
         </div>
         <div className="card">
-          <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+          <div className="text-[11.5px] text-muted-foreground">
             {t('MCP 服务在线封装数', 'Active MCP Wrapped Systems')}
           </div>
-          <div style={{ fontFamily: 'var(--serif)', fontSize: 22, fontWeight: 600, marginTop: 4 }}>
+          <div className="font-serif text-[22px] font-semibold mt-1">
             {data.legacySystems.filter((s) => s.status === 'MCP_ACTIVE').length}
           </div>
         </div>
@@ -552,7 +552,7 @@ export function CapabilityExtractionView() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       <div className="card">
         <div className="card-header">
           <div>
@@ -562,7 +562,7 @@ export function CapabilityExtractionView() {
                 'Legacy System Two-Round Ontology Extraction Workbench',
               )}
             </h3>
-            <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+            <div className="text-[12.5px] text-muted-foreground">
               {t(
                 '融合存量系统数据库表结构 (DDL)、OpenAPI 接口规范与领域文档，通过结构扫描与语义对齐两轮提炼 M1~MI 领域本体模型',
                 'Two-round structural scan and semantic alignment over SQL DDL, OpenAPI specs, and domain docs to extract M1-MI ontology models',
@@ -582,22 +582,10 @@ export function CapabilityExtractionView() {
           </Button>
         </div>
 
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-            padding: '8px 10px',
-            marginBottom: 12,
-            borderRadius: 6,
-            background: 'var(--surface-2)',
-            border: '1px solid var(--line)',
-          }}
+        <div className="flex flex-wrap items-center justify-between gap-2 p-[8px_10px] mb-3 rounded-[6px] bg-inset border border-line"
         >
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--muted)' }}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11.5px] font-semibold text-muted-foreground">
               {t('快速载入萃取样例：', 'Load Sample Input:')}
             </span>
             {EXTRACTION_PRESETS.map((preset) => (
@@ -612,15 +600,7 @@ export function CapabilityExtractionView() {
             ))}
           </div>
 
-          <label
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              fontSize: 12.5,
-              cursor: 'pointer',
-              fontWeight: 500,
-            }}
+          <label className="inline-flex items-center gap-1.5 text-[12.5px] cursor-pointer font-medium"
           >
             <input
               type="checkbox"
@@ -636,8 +616,8 @@ export function CapabilityExtractionView() {
           </label>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1.08fr 0.92fr', gap: 14 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="grid grid-cols-[1.08fr_0.92fr] gap-3.5">
+          <div className="flex flex-col gap-2.5">
             <div className="form-grid-3">
               <div className="form-field">
                 <label className="form-label">{t('源存量业务系统', 'Source Legacy System')}</label>
@@ -708,9 +688,9 @@ export function CapabilityExtractionView() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+          <div className="flex flex-col gap-2">
+            <div className="flex justify-between items-center">
+              <span className="text-[12.5px] font-semibold">
                 {t('本体萃取任务与候选复核队列', 'Ontology Extraction Jobs & Review Queue')} (
                 {data.extractionJobs.length})
               </span>
@@ -721,14 +701,7 @@ export function CapabilityExtractionView() {
               </span>
             </div>
 
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-                maxHeight: 380,
-                overflowY: 'auto',
-              }}
+            <div className="flex flex-col gap-2 max-h-[380px] overflow-y-auto"
             >
               {data.extractionJobs.map((job) => {
                 const entitiesCnt =
@@ -741,38 +714,18 @@ export function CapabilityExtractionView() {
 
                 return (
                   <div
-                    key={job.id}
-                    style={{
-                      padding: 10,
-                      borderRadius: 6,
-                      background: 'var(--surface-2)',
-                      border: '1px solid var(--line)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 6,
-                    }}
+                    key={job.id} className="p-2.5 rounded-[6px] bg-inset border border-line flex flex-col gap-1.5"
                   >
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        gap: 8,
-                      }}
+                    <div className="flex justify-between items-start gap-2"
                     >
                       <div>
                         <strong>{job.title}</strong>
-                        <div
-                          style={{
-                            fontSize: 11.5,
-                            color: 'var(--muted)',
-                            fontFamily: 'var(--mono)',
-                          }}
+                        <div className="text-[11.5px] text-muted-foreground font-mono"
                         >
                           {job.sourceType} · Project: {job.projectId}
                         </div>
                       </div>
-                      <div style={{ display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' }}>
+                      <div className="flex gap-1 shrink-0 items-center">
                         <span className="badge badge-ok">
                           {(job.confidenceScore * 100).toFixed(0)}%
                         </span>
@@ -792,32 +745,18 @@ export function CapabilityExtractionView() {
                       </div>
                     </div>
 
-                    <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{job.summary}</div>
+                    <div className="text-[12.5px] text-muted-foreground">{job.summary}</div>
 
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        gap: 6,
-                        fontSize: 11.5,
-                        fontFamily: 'var(--mono)',
-                      }}
+                    <div className="flex flex-wrap gap-1.5 text-[11.5px] font-mono"
                     >
                       <span className="badge">M1 实体: {entitiesCnt}</span>
                       <span className="badge">MM 映射表: {tablesCnt}</span>
                       <span className="badge">MI 接口: {ifacesCnt}</span>
                     </div>
 
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: 8,
-                        flexWrap: 'wrap',
-                      }}
+                    <div className="flex justify-between items-center gap-2 flex-wrap"
                     >
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      <div className="flex flex-wrap gap-1">
                         {job.extractedModels.map((m) => (
                           <span key={m} className="badge badge-accent">
                             {m}
@@ -1141,7 +1080,7 @@ export function CapabilityMcpView() {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       {/* Top Mode Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
         <div className="inline-flex items-center gap-1 rounded-control bg-inset p-1">
@@ -1211,12 +1150,12 @@ export function CapabilityMcpView() {
                   'Dynamic Ontology MCP Server Hub & Inspector',
                 )}
               </h3>
-              <div style={{ fontSize: 12.5, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+              <div className="text-[12.5px] text-muted-foreground font-mono">
                 POST /api/mcp/{projectId} · Tools: {caps?.tools.length ?? 0} · Resources:{' '}
                 {caps?.resources.length ?? 0}
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="flex items-center gap-2">
               <select
                 className="select"
                 style={{ width: 220 }}
@@ -1237,22 +1176,15 @@ export function CapabilityMcpView() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="grid grid-cols-[1fr_1fr] gap-3.5">
+            <div className="flex flex-col gap-3">
               <div>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 8,
-                    gap: 6,
-                  }}
+                <div className="flex justify-between items-center mb-2 gap-1.5"
                 >
-                  <span style={{ fontWeight: 600 }}>
+                  <span className="font-semibold">
                     {t('本体自动映射 MCP 工具列表 (M2 / M7 / MI / Meta)', 'Mapped MCP Tools')}
                   </span>
-                  <div style={{ display: 'flex', gap: 4 }}>
+                  <div className="flex gap-1">
                     {(['ALL', 'M2', 'M7', 'MI', 'META'] as const).map((f) => (
                       <Button
                         key={f}
@@ -1266,14 +1198,7 @@ export function CapabilityMcpView() {
                   </div>
                 </div>
 
-                <div
-                  style={{
-                    maxHeight: 250,
-                    overflowY: 'auto',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
-                  }}
+                <div className="max-h-[250px] overflow-y-auto flex flex-col gap-1.5"
                 >
                   {filteredTools.map((tool) => (
                     <div
@@ -1288,15 +1213,15 @@ export function CapabilityMcpView() {
                         border: '1px solid var(--line)',
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
-                        <strong style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}>
+                      <div className="flex justify-between gap-1.5">
+                        <strong className="font-mono text-[12.5px]">
                           {tool.name}
                         </strong>
                         <span className="badge badge-accent">
                           {tool.name.startsWith('ontology_') ? 'Meta' : tool.sourceModel}
                         </span>
                       </div>
-                      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 3 }}>
+                      <div className="text-[11.5px] text-muted-foreground mt-0.75">
                         {tool.description}
                       </div>
                     </div>
@@ -1305,20 +1230,13 @@ export function CapabilityMcpView() {
               </div>
 
               <div>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                <div className="font-semibold mb-1.5">
                   {t(
                     '本体只读资源列表 (manifest.json + 11 元模型 YAML URIs · 点击在线读取)',
                     'MCP Resources (Click URI to preview resources/read)',
                   )}
                 </div>
-                <div
-                  style={{
-                    maxHeight: 190,
-                    overflowY: 'auto',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 5,
-                  }}
+                <div className="max-h-[190px] overflow-y-auto flex flex-col gap-1.25"
                 >
                   {(caps?.resources ?? []).map((resItem) => (
                     <button
@@ -1338,13 +1256,13 @@ export function CapabilityMcpView() {
                         color: 'var(--ink)',
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                        <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, fontWeight: 600 }}>
+                      <div className="flex justify-between gap-2">
+                        <span className="font-mono text-[11.5px] font-semibold">
                           {resItem.uri}
                         </span>
                         <span className="badge">{resItem.mimeType}</span>
                       </div>
-                      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
+                      <div className="text-[11.5px] text-muted-foreground mt-0.5">
                         {resItem.name} — {resItem.description}
                       </div>
                     </button>
@@ -1353,11 +1271,10 @@ export function CapabilityMcpView() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+            <div className="flex flex-col gap-2.5">
+              <div className="flex justify-between items-center"
               >
-                <strong style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}>
+                <strong className="font-mono text-[12.5px]">
                   tools/call → {selectedTool}
                 </strong>
                 <Button
@@ -1397,23 +1314,11 @@ export function CapabilityMcpView() {
                 />
               )}
 
-              <div
-                style={{
-                  padding: 10,
-                  background: 'var(--surface-2)',
-                  borderRadius: 6,
-                  border: '1px solid var(--line)',
-                }}
+              <div className="p-2.5 bg-inset rounded-[6px] border border-line"
               >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 6,
-                  }}
+                <div className="flex justify-between items-center mb-1.5"
                 >
-                  <strong style={{ fontSize: 12.5 }}>
+                  <strong className="text-[12.5px]">
                     {t(
                       '标准 mcpServers 客户端接入配置 (Client Config JSON)',
                       'Client mcpServers Config JSON',
@@ -1597,13 +1502,13 @@ export function CapabilityAgentsView() {
   ).filter(Boolean);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 14 }}>
+    <div className="grid grid-cols-[340px_minmax(0,1fr)] gap-3.5">
       {/* Left Column: Configured Capability Agents */}
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div className="card flex flex-col gap-2.5">
         <div className="card-header" style={{ marginBottom: 4 }}>
           <div>
             <h3 className="card-title">{t('领域能力智能体', 'Capability Agents')}</h3>
-            <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+            <div className="text-[11.5px] text-muted-foreground">
               {t('绑定本体 MCP 服务与 SKILL.md 规则包', 'Bound with Ontology MCPs & Skills')}
             </div>
           </div>
@@ -1613,7 +1518,7 @@ export function CapabilityAgentsView() {
           </Button>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="flex flex-col gap-2">
           {data.capabilityAgents.map((ag) => {
             const selected = ag.id === activeAgent?.id;
             return (
@@ -1628,13 +1533,7 @@ export function CapabilityAgentsView() {
                   border: `1px solid ${selected ? 'var(--accent)' : 'var(--line)'}`,
                 }}
               >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
+                <div className="flex justify-between items-center gap-1.5"
                 >
                   <strong className="inline-flex items-center gap-1.5">
                     <Bot size={13} className="text-accent" />
@@ -1654,10 +1553,10 @@ export function CapabilityAgentsView() {
                     )}
                   </div>
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--muted)', margin: '3px 0 6px 0' }}>
+                <div className="text-[11.5px] text-muted-foreground m-[3px_0_6px_0]">
                   {ag.role}
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                <div className="flex flex-wrap gap-1">
                   <span className="badge">{ag.modelId}</span>
                   {ag.mcpIds.map((id) => (
                     <span key={id} className="badge badge-accent">
@@ -1761,21 +1660,10 @@ export function CapabilityAgentsView() {
           <label className="form-label">
             {t('挂载本体 MCP 服务 (可多选)', 'Mount Ontology MCP Servers')}
           </label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div className="flex flex-wrap gap-2">
             {data.mcpServers.map((mcp) => (
               <label
-                key={mcp.id}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '5px 10px',
-                  borderRadius: 5,
-                  background: 'var(--surface-2)',
-                  border: '1px solid var(--line)',
-                  fontSize: 12.5,
-                  cursor: 'pointer',
-                }}
+                key={mcp.id} className="inline-flex items-center gap-1.5 p-[5px_10px] rounded-[5px] bg-inset border border-line text-[12.5px] cursor-pointer"
               >
                 <input
                   type="checkbox"
@@ -1794,21 +1682,10 @@ export function CapabilityAgentsView() {
           <label className="form-label">
             {t('挂载领域 SKILL.md 技能包 (可多选)', 'Mount Domain Skills')}
           </label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div className="flex flex-wrap gap-2">
             {data.generatedSkills.map((sk) => (
               <label
-                key={sk.id}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '5px 10px',
-                  borderRadius: 5,
-                  background: 'var(--surface-2)',
-                  border: '1px solid var(--line)',
-                  fontSize: 12.5,
-                  cursor: 'pointer',
-                }}
+                key={sk.id} className="inline-flex items-center gap-1.5 p-[5px_10px] rounded-[5px] bg-inset border border-line text-[12.5px] cursor-pointer"
               >
                 <input
                   type="checkbox"
@@ -1925,7 +1802,7 @@ export function CapabilityCrossFlowsView() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
         <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
           <Workflow size={15} className="text-accent" />
@@ -1946,8 +1823,8 @@ export function CapabilityCrossFlowsView() {
           <div className="card-header">
             <div>
               <h3 className="card-title">{fl.name}</h3>
-              <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{fl.description}</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+              <div className="text-[12.5px] text-muted-foreground">{fl.description}</div>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
                 <span className="badge badge-accent">Trigger: {fl.triggerEvent}</span>
                 {fl.involvedSystems.map((sys) => (
                   <span key={sys} className="badge">
@@ -1982,30 +1859,18 @@ export function CapabilityCrossFlowsView() {
           >
             {fl.steps.map((s, stepIdx) => (
               <div
-                key={s.stepOrder}
-                style={{
-                  padding: 10,
-                  borderRadius: 6,
-                  background: 'var(--surface-2)',
-                  border: '1px solid var(--line)',
-                }}
+                key={s.stepOrder} className="p-2.5 rounded-[6px] bg-inset border border-line"
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <div className="flex justify-between mb-1">
                   <span className="badge badge-accent">Step #{s.stepOrder}</span>
                   <span className="badge badge-ok">{s.status}</span>
                 </div>
-                <div style={{ fontWeight: 600, fontSize: 12.5 }}>{s.systemName}</div>
-                <div
-                  style={{
-                    fontFamily: 'var(--mono)',
-                    fontSize: 11.5,
-                    color: 'var(--accent)',
-                    margin: '4px 0',
-                  }}
+                <div className="font-semibold text-[12.5px]">{s.systemName}</div>
+                <div className="font-mono text-[11.5px] text-accent m-[4px_0]"
                 >
                   {s.mcpToolName}
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                <div className="text-[11.5px] text-muted-foreground">
                   {s.description}
                   {stepIdx < fl.steps.length - 1 ? ' →' : ''}
                 </div>
@@ -2252,7 +2117,7 @@ export function KnowledgeCenterView() {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="flex flex-col gap-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
         <div className="inline-flex items-center gap-1 rounded-control bg-inset p-1">
           <Button
@@ -2306,12 +2171,12 @@ export function KnowledgeCenterView() {
           testId="knowledge-registry-table"
         />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr)', gap: 14 }}>
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="grid grid-cols-[300px_minmax(0,1fr)] gap-3.5">
+          <div className="card flex flex-col gap-2">
             <div className="text-[12.5px] font-semibold text-ink">
               {t('知识词条目录', 'Knowledge Entries')} ({data.knowledgeEntries.length})
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 540, overflowY: 'auto' }}>
+            <div className="flex flex-col gap-1.5 max-h-[540px] overflow-y-auto">
               {data.knowledgeEntries.map((kn) => {
                 const active = kn.id === activeEntry?.id;
                 return (
