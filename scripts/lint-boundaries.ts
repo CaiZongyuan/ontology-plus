@@ -39,33 +39,87 @@ function extractImports(fileContent: string): string[] {
   return specs;
 }
 
-function resolveImportTarget(fromFile: string, specifier: string): string | null {
+function resolveImportTarget(fromFile: string, specifier: string, fileSet: Set<string>): string | null {
   if (!specifier.startsWith('.')) return null;
   const fromDir = path.posix.dirname(fromFile);
-  return path.posix.normalize(path.posix.join(fromDir, specifier));
+  const raw = path.posix.normalize(path.posix.join(fromDir, specifier));
+  if (fileSet.has(raw)) return raw;
+  const stripped = raw.replace(/\.(js|jsx|mjs|cjs)$/, '');
+  for (const ext of ['.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js']) {
+    const candidate = `${stripped}${ext}`;
+    if (fileSet.has(candidate)) return candidate;
+  }
+  return raw;
 }
 
 function substituteGroup(pattern: string, groups: string[]): string {
   return pattern.replace(/\$(\d+)/g, (_, idx) => groups[Number(idx) - 1] ?? '');
 }
 
+function detectCycles(adjacency: Map<string, string[]>, rule: { name: string; severity: string; comment: string }): Violation[] {
+  const violations: Violation[] = [];
+  const state = new Map<string, 0 | 1 | 2>(); // 0=unvisited, 1=visiting, 2=visited
+  const stack: string[] = [];
+  const recordedCycles = new Set<string>();
+
+  function dfs(node: string): void {
+    state.set(node, 1);
+    stack.push(node);
+    for (const next of adjacency.get(node) ?? []) {
+      const nextState = state.get(next) ?? 0;
+      if (nextState === 0) {
+        dfs(next);
+      } else if (nextState === 1) {
+        const idx = stack.indexOf(next);
+        const cycle = [...stack.slice(idx), next];
+        const canonical = [...cycle.slice(0, -1)].sort().join('->');
+        if (!recordedCycles.has(canonical)) {
+          recordedCycles.add(canonical);
+          violations.push({
+            ruleName: rule.name,
+            severity: rule.severity,
+            comment: `${rule.comment} Cycle: ${cycle.join(' -> ')}`,
+            from: node,
+            to: next,
+          });
+        }
+      }
+    }
+    stack.pop();
+    state.set(node, 2);
+  }
+
+  for (const file of adjacency.keys()) {
+    if ((state.get(file) ?? 0) === 0) {
+      dfs(file);
+    }
+  }
+  return violations;
+}
+
 function runBoundaryCheck(): void {
   const rootDir = process.cwd();
   const srcDir = path.join(rootDir, 'src');
   const files = collectTsFiles(srcDir, rootDir);
+  const fileSet = new Set(files);
   const violations: Violation[] = [];
+  const adjacency = new Map<string, string[]>();
 
   for (const fromFile of files) {
     const fullPath = path.join(rootDir, fromFile);
     const content = fs.readFileSync(fullPath, 'utf-8');
     const imports = extractImports(content);
+    const resolvedTargets: string[] = [];
 
     for (const spec of imports) {
-      const target = resolveImportTarget(fromFile, spec);
+      const target = resolveImportTarget(fromFile, spec, fileSet);
       if (!target) continue;
+      if (fileSet.has(target)) {
+        resolvedTargets.push(target);
+      }
 
       for (const rule of config.forbidden ?? []) {
-        if (!rule.to?.path) continue; // skip circular-only rule here
+        if (!rule.to?.path) continue;
 
         let groups: string[] = [];
         if (rule.from?.path) {
@@ -95,6 +149,15 @@ function runBoundaryCheck(): void {
         });
       }
     }
+
+    adjacency.set(fromFile, resolvedTargets);
+  }
+
+  const circularRule = (config.forbidden ?? []).find(
+    (r: { to?: { circular?: boolean } }) => r.to?.circular === true,
+  );
+  if (circularRule) {
+    violations.push(...detectCycles(adjacency, circularRule));
   }
 
   if (violations.length > 0) {
@@ -106,10 +169,9 @@ function runBoundaryCheck(): void {
     process.exit(1);
   } else {
     console.log(
-      `✔ Deep-module boundary check passed (${files.length} source files verified, 0 violations).`,
+      `✔ Deep-module boundary check passed (${files.length} source files verified, including circular check, 0 violations).`,
     );
   }
 }
 
 runBoundaryCheck();
-

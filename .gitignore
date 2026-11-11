@@ -3,6 +3,7 @@ dist/
 .onto-cs/
 .scratch/
 .wrangler/
+references/
 playwright-report/
 test-results/
 *.log

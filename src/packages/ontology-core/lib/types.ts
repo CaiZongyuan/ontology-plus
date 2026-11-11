@@ -44,6 +44,39 @@ export const MODEL_STAGE_ORDER: { stage: number; code: ModelCode; labelZh: strin
   { stage: 11, code: 'MI', labelZh: 'MI 接口模型', labelEn: 'MI Interface Model' },
 ];
 
+// ─── Manifest Schema (§14.3: strictly relative paths) ─────────────────────────
+export function isRelativeManifestPath(p: string): boolean {
+  if (!p || !p.trim()) return false;
+  const trimmed = p.trim();
+  if (trimmed.startsWith('/')) return false;
+  if (trimmed.includes('\\')) return false;
+  if (/^[A-Za-z]:/.test(trimmed)) return false;
+  const segments = trimmed.split('/');
+  if (segments.some((s) => s === '..')) return false;
+  return true;
+}
+
+export const ManifestSchema = z
+  .object({
+    version: z.string().default('1.0'),
+    projectId: z.string(),
+    domain: z.string(),
+    models: z.record(z.string(), z.string()).default({}),
+  })
+  .superRefine((val, ctx) => {
+    for (const [key, relPath] of Object.entries(val.models)) {
+      if (!isRelativeManifestPath(relPath)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['models', key],
+          message: `Manifest path "${relPath}" for "${key}" must be a relative path (no leading "/", "\\", "..", or Windows drive prefix per §14.3).`,
+        });
+      }
+    }
+  });
+
+export type OntologyManifest = z.infer<typeof ManifestSchema>;
+
 // ─── M1 Object Model ──────────────────────────────────────────────────────────
 export const AttributeRuleSchema = z.object({
   name: z.string(),
@@ -92,7 +125,15 @@ export const SubEntitySchema = z.object({
   description: z.string().optional(),
   localId: z.string(),
   cardinality: z
-    .enum(['ONE', 'ZERO_OR_ONE', 'ONE_OR_MORE', 'ZERO_OR_MORE', 'ONE_TO_MANY'])
+    .enum([
+      'ONE',
+      'ZERO_OR_ONE',
+      'ONE_OR_MORE',
+      'ZERO_OR_MORE',
+      'ONE_TO_MANY',
+      'ONE_TO_ONE',
+      'MANY_TO_MANY',
+    ])
     .default('ONE_OR_MORE'),
   cascadeDelete: z.boolean().default(true),
   attributes: z.array(AttributeSchema).default([]),
@@ -202,6 +243,13 @@ export const ProducedEventRefSchema = z.union([
   }),
 ]);
 
+export const SyncTriggerSchema = z.object({
+  ruleRef: z.string().optional(),
+  behaviorRef: z.string(),
+  parameterMapping: z.record(z.string(), z.string()).optional(),
+  description: z.string().optional(),
+});
+
 export const BehaviorItemSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -218,6 +266,7 @@ export const BehaviorItemSchema = z.object({
   stateChanges: z.array(StateChangeSchema).default([]),
   invokedRules: z.array(z.string()).default([]),
   producedEvents: z.array(ProducedEventRefSchema).default([]),
+  syncTriggers: z.array(SyncTriggerSchema).optional(),
   requiredPermissions: z.array(z.string()).default([]),
   queryReportRef: z.string().optional(),
   uiEventRefs: z.array(z.string()).optional(),
@@ -236,7 +285,18 @@ export const RuleItemSchema = z.object({
   name: z.string(),
   alias: z.string(),
   ruleType: z
-    .enum(['VALIDATION', 'CALCULATION', 'DECISION_TABLE', 'EVENT_RULE', 'POLICY'])
+    .enum([
+      'VALIDATION',
+      'CALCULATION',
+      'DECISION_TABLE',
+      'EVENT_RULE',
+      'POLICY',
+      'DERIVATION',
+      'TRANSFORMATION',
+      'RISK',
+      'RISK_CONTROL',
+      'EVENT_DRIVEN',
+    ])
     .default('VALIDATION'),
   scope: z
     .enum(['CROSS_OBJECT', 'CROSS_BEHAVIOR', 'EVENT_DRIVEN', 'EXTERNAL_DECISION', 'REUSABLE'])
@@ -250,11 +310,22 @@ export const RuleItemSchema = z.object({
         name: z.string(),
         type: z.string(),
         source: z.string().optional(),
+        sourceField: z.string().optional(),
+        required: z.boolean().optional(),
+        description: z.string().optional(),
       }),
     )
     .default([]),
+  outputType: z.string().optional(),
   expression: z.string(),
   violationMessage: z.string().optional(),
+  reusedBy: z.array(z.string()).optional(),
+  externalEngine: z.string().optional(),
+  triggerType: z.enum(['BEHAVIOR', 'EVENT', 'MANUAL', 'SYSTEM']).optional(),
+  conditionExpression: z.string().optional(),
+  eventTriggerCondition: z.string().optional(),
+  executionMode: z.enum(['SYNC', 'ASYNC']).optional(),
+  timeout: z.string().optional(),
   triggeredByEvents: z.array(z.string()).default([]),
   producedEvents: z.array(z.string()).default([]),
   triggeredBehaviors: z
@@ -289,6 +360,8 @@ export const EventPayloadFieldSchema = z.object({
 export const EventSubscriberSchema = z.object({
   subscriberType: z.enum(['BEHAVIOR', 'RULE']),
   subscriberRef: z.string(),
+  subscriberEntityRef: z.string().optional(),
+  priority: z.number().optional(),
   deliveryMode: z.enum(['ASYNC', 'SYNC']).default('ASYNC'),
   condition: z.string().optional(),
   idempotencyStrategy: z.string().optional(),
@@ -301,15 +374,18 @@ export const EventItemSchema = z.object({
   label: z.string(),
   description: z.string().optional(),
   producerType: z.enum(['BEHAVIOR', 'RULE']).default('BEHAVIOR'),
-  producerBehaviorRef: z.string(),
+  producerBehaviorRef: z.string().default(''),
+  producerRuleRef: z.string().optional(),
   sourceAggregate: z.string(),
+  triggerCondition: z.string().optional(),
+  version: z.string().optional(),
   orderingSemantic: z
-    .enum(['AT_LEAST_ONCE', 'EXACTLY_ONCE', 'BEST_EFFORT'])
+    .enum(['AT_LEAST_ONCE', 'EXACTLY_ONCE', 'BEST_EFFORT', 'FIFO'])
     .default('AT_LEAST_ONCE'),
   idempotencyKey: z.string().optional(),
   payload: z.array(EventPayloadFieldSchema).default([]),
   subscribers: z.array(EventSubscriberSchema).default([]),
-  uiEventPath: z.string().optional(),
+  uiEventPath: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 export const MEEventModelSchema = z.object({
@@ -322,8 +398,10 @@ export const MEEventModelSchema = z.object({
 // ─── M4 Scenario Model ────────────────────────────────────────────────────────
 export const ScenarioStepSchema = z.object({
   stepOrder: z.number(),
+  stepId: z.string().optional(),
   stepType: z.enum(['BEHAVIOR_CALL', 'EVENT_EMIT', 'RULE_EVALUATE']),
   refId: z.string(),
+  nextSteps: z.array(z.string()).optional(),
   targetAggregate: z.string().optional(),
   description: z.string().optional(),
 });
@@ -332,6 +410,8 @@ export const ScenarioItemSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().optional(),
+  sourceObjectRef: z.string().optional(),
+  targetObjectRefs: z.array(z.string()).optional(),
   triggerBehaviorRef: z.string().optional(),
   triggerEventRef: z.string(),
   involvedAggregates: z.array(z.string()).default([]),
@@ -354,6 +434,7 @@ export const ActorItemSchema = z.object({
   name: z.string(),
   actorType: z.enum(['HUMAN', 'SYSTEM', 'EXTERNAL_ENTITY']).default('HUMAN'),
   roles: z.array(z.string()).default([]),
+  attributes: z.record(z.string(), z.string()).optional(),
   description: z.string().optional(),
   externalContract: z
     .object({
@@ -372,8 +453,16 @@ export const RoleItemSchema = z.object({
   code: z.string(),
   inheritsFrom: z.array(z.string()).default([]),
   permissions: z.array(z.string()).default([]),
-  dataScope: z.enum(['ALL', 'DEPARTMENT', 'SELF', 'CUSTOM']).default('ALL'),
+  permissionGroups: z.array(z.string()).optional(),
+  dataScope: z.enum(['ALL', 'DEPARTMENT', 'DEPT', 'SELF', 'OWN', 'CUSTOM']).default('ALL'),
   abacCondition: z.string().optional(),
+  description: z.string().optional(),
+});
+
+export const PermissionGroupSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  permissions: z.array(z.string()).default([]),
   description: z.string().optional(),
 });
 
@@ -381,6 +470,9 @@ export const PermissionItemSchema = z.object({
   id: z.string(),
   name: z.string(),
   code: z.string(),
+  targetType: z.enum(['BEHAVIOR', 'ENTITY']).optional(),
+  targetRef: z.string().optional(),
+  dataScope: z.enum(['ALL', 'DEPARTMENT', 'DEPT', 'SELF', 'OWN', 'CUSTOM']).optional(),
   targetAggregate: z.string(),
   allowedBehaviors: z.array(z.string()).default([]),
   abacCondition: z.string().optional(),
@@ -393,13 +485,18 @@ export const M5ActorModelSchema = z.object({
   domain: z.string(),
   actors: z.array(ActorItemSchema).default([]),
   roles: z.array(RoleItemSchema).default([]),
+  permissionGroups: z.array(PermissionGroupSchema).optional(),
   permissions: z.array(PermissionItemSchema).default([]),
 });
 
 // ─── M6 Flow Model ────────────────────────────────────────────────────────────
 export const FlowBranchSchema = z.object({
+  branchName: z.string().optional(),
   targetActivity: z.string(),
   condition: z.string().optional(),
+  conditionExpression: z.string().optional(),
+  ruleRef: z.string().optional(),
+  approvalOutcome: z.string().optional(),
   isDefault: z.boolean().default(false),
   label: z.string().optional(),
 });
@@ -412,19 +509,27 @@ export const FlowActivitySchema = z.object({
     'END',
     'USER_TASK',
     'APPROVAL_TASK',
+    'SYSTEM_TASK',
     'BEHAVIOR_CALL',
     'SCENARIO_CALL',
     'SUB_FLOW_CALL',
     'XOR_GATEWAY',
+    'GATEWAY',
     'AND_JOIN',
+    'EVENT_WAIT',
   ]),
   roleRef: z.string().optional(),
   behaviorRef: z.string().optional(),
   scenarioRef: z.string().optional(),
   subFlowRef: z.string().optional(),
   screenRef: z.string().optional(),
+  ruleRef: z.string().optional(),
+  conditionExpression: z.string().optional(),
+  eventRef: z.string().optional(),
+  timeout: z.string().optional(),
   approvalOutcomes: z.array(z.string()).optional(),
   nextActivity: z.string().optional(),
+  nextActivities: z.array(z.string()).optional(),
   branches: z.array(FlowBranchSchema).default([]),
 });
 
@@ -433,11 +538,22 @@ export const FlowItemSchema = z.object({
   name: z.string(),
   flowType: z.enum(['COLLABORATION', 'APPROVAL']),
   primaryAggregate: z.string(),
+  businessObjectRefs: z.array(z.string()).optional(),
   roleRefs: z.array(z.string()).default([]),
   description: z.string().optional(),
+  preconditions: z.array(z.string()).optional(),
+  postconditions: z.array(z.string()).optional(),
+  startActivity: z.string().optional(),
+  endActivities: z.array(z.string()).optional(),
+  version: z.string().optional(),
   trigger: z.object({
-    triggerType: z.enum(['USER_ACTION', 'EVENT', 'SUB_FLOW']).default('USER_ACTION'),
+    triggerType: z
+      .enum(['USER_ACTION', 'EVENT', 'SUB_FLOW', 'MANUAL', 'BEHAVIOR', 'SCHEDULE'])
+      .default('USER_ACTION'),
     refId: z.string().optional(),
+    behaviorRef: z.string().optional(),
+    eventRef: z.string().optional(),
+    scheduleExpression: z.string().optional(),
     description: z.string().optional(),
   }),
   activities: z.array(FlowActivitySchema).default([]),
@@ -451,13 +567,35 @@ export const M6FlowModelSchema = z.object({
 });
 
 // ─── M7 Query & Report Model ──────────────────────────────────────────────────
+export const QueryReportSourceObjectSchema = z.object({
+  objectRef: z.string(),
+  alias: z.string(),
+  primary: z.boolean().optional(),
+  entityPath: z.string().optional(),
+  preAggregation: z
+    .object({
+      groupBy: z.array(z.string()).default([]),
+      columns: z
+        .array(
+          z.object({
+            name: z.string(),
+            sourceExpression: z.string(),
+            aggregateFunction: z.string(),
+          }),
+        )
+        .default([]),
+    })
+    .optional(),
+});
+
 export const QueryReportItemSchema = z.object({
   id: z.string(),
   name: z.string(),
   alias: z.string(),
-  queryType: z.enum(['DETAIL_QUERY', 'STATISTICAL_QUERY', 'REPORT']),
+  queryType: z.enum(['DETAIL_QUERY', 'LIST_QUERY', 'QUERY', 'STATISTICAL_QUERY', 'REPORT']),
   behaviorRef: z.string(),
   description: z.string().optional(),
+  sourceObjects: z.array(QueryReportSourceObjectSchema).optional(),
   primarySource: z.object({
     aggregateRef: z.string(),
     alias: z.string(),
@@ -465,7 +603,11 @@ export const QueryReportItemSchema = z.object({
   joins: z
     .array(
       z.object({
-        joinType: z.enum(['INNER', 'LEFT']).default('LEFT'),
+        joinId: z.string().optional(),
+        joinType: z.enum(['INNER', 'LEFT', 'RIGHT', 'FULL']).default('LEFT'),
+        leftSource: z.string().optional(),
+        rightSource: z.string().optional(),
+        relationRef: z.string().optional(),
         aggregateRef: z.string(),
         alias: z.string(),
         onCondition: z.string(),
@@ -487,10 +629,13 @@ export const QueryReportItemSchema = z.object({
   conditions: z
     .array(
       z.object({
+        conditionId: z.string().optional(),
         field: z.string(),
         operator: z.string(),
         parameterRef: z.string().optional(),
         expression: z.string().optional(),
+        logicalConnector: z.string().optional(),
+        skipWhenParameterEmpty: z.boolean().optional(),
       }),
     )
     .default([]),
@@ -501,11 +646,14 @@ export const QueryReportItemSchema = z.object({
         label: z.string(),
         sourceExpr: z.string(),
         dataType: z.string(),
-        aggregation: z.enum(['SUM', 'COUNT', 'AVG', 'MIN', 'MAX', 'NONE']).optional(),
+        aggregation: z
+          .enum(['SUM', 'COUNT', 'COUNT_DISTINCT', 'AVG', 'MIN', 'MAX', 'NONE'])
+          .optional(),
       }),
     )
     .default([]),
   groupBy: z.array(z.string()).default([]),
+  having: z.array(z.any()).optional(),
   orderBy: z
     .array(
       z.object({
@@ -523,6 +671,12 @@ export const QueryReportItemSchema = z.object({
     .optional(),
   reportOptions: z
     .object({
+      title: z.string().optional(),
+      layout: z.string().optional(),
+      groupFields: z.array(z.string()).optional(),
+      subtotalFields: z.array(z.string()).optional(),
+      totalFields: z.array(z.string()).optional(),
+      emptyValueDisplay: z.string().optional(),
       exportFormats: z.array(z.enum(['XLSX', 'CSV', 'PDF'])).default(['XLSX', 'CSV']),
       summaryRow: z.boolean().default(true),
       groupHeaders: z.array(z.string()).default([]),
@@ -538,7 +692,7 @@ export const QueryReportItemSchema = z.object({
 });
 
 export const M7ReportModelSchema = z.object({
-  model_type: z.literal('QUERY_REPORT').default('QUERY_REPORT'),
+  model_type: z.enum(['QUERY_REPORT', 'REPORT']).default('QUERY_REPORT'),
   version: z.string().default('5.0'),
   domain: z.string(),
   query_reports: z.array(QueryReportItemSchema).default([]),
@@ -553,20 +707,44 @@ export const UIElementSchema = z.object({
     'INPUT',
     'SELECT',
     'DATE_PICKER',
+    'DATEPICKER',
     'NUMBER',
     'TABLE',
     'BUTTON',
     'TAB',
     'BADGE',
     'VIEWER',
+    'REPORT_VIEWER',
     'CONTAINER',
+    'TEXTBOX',
+    'TEXTAREA',
+    'COMBO',
+    'POPUP_SELECT',
+    'CHECKBOX',
+    'RADIO',
+    'SWITCH',
+    'TOOLBAR',
+    'MENU',
+    'LISTVIEW',
+    'GRID',
+    'TREEVIEW',
+    'TREE',
+    'TIMER',
+    'MODAL',
+    'LABEL',
+    'IMAGE',
+    'FRAME',
+    'OTHER',
   ]),
   io: z.enum(['IN', 'OUT', 'IN_OUT', 'ACTION']).default('IN_OUT'),
+  actionType: z.enum(['DRAFT', 'SUBMIT', 'DEFAULT', 'QUERY', 'DELETE', 'NAVIGATE']).optional(),
   required: z.boolean().default(false),
+  enabled: z.boolean().optional(),
   dataBinding: z.string().optional(),
   dictionaryRef: z.string().optional(),
   dataSource: z.string().optional(),
   permissionRef: z.string().optional(),
+  refRules: z.array(z.any()).optional(),
 });
 
 export const CallChainStepSchema = z.object({
@@ -579,14 +757,22 @@ export const CallChainStepSchema = z.object({
     'REPORT_CALL',
     'QUERY_REPORT',
     'NAVIGATE',
+    'CLOSE_MODAL',
+    'EXIT',
+    'DEVICE_SETUP',
+    'TOGGLE_INPUT',
   ]),
   refId: z.string(),
+  rules: z.array(z.string()).optional(),
+  targets: z.array(z.string()).optional(),
   description: z.string().optional(),
 });
 
 export const UIEventSchema = z.object({
   eventId: z.string(),
   name: z.string(),
+  source: z.string().optional(),
+  preConditions: z.array(z.string()).optional(),
   triggerElementId: z.string(),
   triggerAction: z.enum(['CLICK', 'CHANGE', 'SUBMIT', 'LOAD']).default('CLICK'),
   permissions: z.array(z.string()).default([]),
@@ -597,7 +783,19 @@ export const ScreenItemSchema = z.object({
   screenId: z.string(),
   name: z.string(),
   screenType: z
-    .enum(['LIST', 'FORM', 'DETAIL', 'APPROVAL', 'REPORT', 'DASHBOARD', 'MODAL'])
+    .enum([
+      'LIST',
+      'FORM',
+      'DETAIL',
+      'APPROVAL',
+      'REPORT',
+      'DASHBOARD',
+      'MODAL',
+      'SINGLE_FORM',
+      'LIST_MAINTENANCE',
+      'MASTER_DETAIL_FORM',
+      'QUERY_LIST',
+    ])
     .default('LIST'),
   route: z.string().optional(),
   screenRef: z.string().optional(),
@@ -620,8 +818,11 @@ export const NavigationEdgeSchema = z.object({
 export const CrossCuttingUISchema = z.object({
   id: z.string(),
   name: z.string(),
-  type: z.enum(['SHORTCUT', 'TIMEOUT', 'GLOBAL_GUARD', 'NOTIFICATION']),
+  type: z.enum(['SHORTCUT', 'TIMEOUT', 'GLOBAL_GUARD', 'NOTIFICATION']).default('GLOBAL_GUARD'),
   scopeScreens: z.array(z.string()).default([]),
+  rules: z.array(z.string()).optional(),
+  target: z.string().optional(),
+  shortcuts: z.array(z.any()).optional(),
   description: z.string().optional(),
 });
 
@@ -629,6 +830,7 @@ export const MUUiModelSchema = z.object({
   model_type: z.literal('UI').default('UI'),
   version: z.string().default('5.0'),
   domain: z.string(),
+  application: z.any().optional(),
   screens: z.array(ScreenItemSchema).default([]),
   navigation_edges: z.array(NavigationEdgeSchema).default([]),
   cross_cutting_ui: z.array(CrossCuttingUISchema).default([]),
@@ -639,6 +841,9 @@ export const ColumnMappingSchema = z.object({
   attributeRef: z.string(),
   column: z.string(),
   columnType: z.string(),
+  nullable: z.boolean().optional(),
+  unique: z.boolean().optional(),
+  defaultValue: z.any().optional(),
   isPrimaryKey: z.boolean().optional(),
   isForeignKey: z.boolean().optional(),
   fkTargetTable: z.string().optional(),
@@ -651,8 +856,11 @@ export const ColumnMappingSchema = z.object({
 
 export const TableMappingSchema = z.object({
   tableName: z.string(),
-  tableRole: z.enum(['MASTER', 'DETAIL', 'EXT']).default('MASTER'),
+  tableRole: z
+    .enum(['MASTER', 'DETAIL', 'EXT', 'ASSOC', 'LOG', 'SNAPSHOT', 'VIEW'])
+    .default('MASTER'),
   primaryKey: z.string(),
+  tableNote: z.string().optional(),
   foreignKeys: z
     .array(
       z.object({
@@ -660,6 +868,7 @@ export const TableMappingSchema = z.object({
         localColumn: z.string(),
         targetTable: z.string(),
         targetColumn: z.string(),
+        associationRef: z.string().optional(),
       }),
     )
     .default([]),
@@ -669,8 +878,11 @@ export const TableMappingSchema = z.object({
 export const ObjectTableMappingSchema = z.object({
   id: z.string(),
   objectRef: z.string(),
-  objectRole: z.enum(['AGGREGATE_ROOT', 'ENTITY']).default('AGGREGATE_ROOT'),
+  objectRole: z
+    .enum(['AGGREGATE_ROOT', 'ENTITY', 'VALUE_OBJECT', 'ASSOCIATION'])
+    .default('AGGREGATE_ROOT'),
   objectName: z.string(),
+  mappingNote: z.string().optional(),
   tableMappings: z.array(TableMappingSchema).default([]),
 });
 
@@ -682,14 +894,44 @@ export const MMMappingModelSchema = z.object({
 });
 
 // ─── MI Interface Model ───────────────────────────────────────────────────────
-export const InterfaceFieldSpecSchema = z.object({
-  name: z.string(),
-  label: z.string(),
-  type: z.string(),
-  required: z.boolean().default(false),
-  mappedRef: z.string().optional(),
-  description: z.string().optional(),
-});
+export interface InterfaceFieldSpec {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+  mappedRef?: string;
+  allowedValues?: string[];
+  fields?: InterfaceFieldSpec[];
+  description?: string;
+}
+
+export interface InterfaceFieldSpecInput {
+  name: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  mappedRef?: string;
+  allowedValues?: string[];
+  fields?: InterfaceFieldSpecInput[];
+  description?: string;
+}
+
+export const InterfaceFieldSpecSchema: z.ZodType<
+  InterfaceFieldSpec,
+  z.ZodTypeDef,
+  InterfaceFieldSpecInput
+> = z.lazy(() =>
+  z.object({
+    name: z.string(),
+    label: z.string(),
+    type: z.string(),
+    required: z.boolean().default(false),
+    mappedRef: z.string().optional(),
+    allowedValues: z.array(z.string()).optional(),
+    fields: z.array(InterfaceFieldSpecSchema).optional(),
+    description: z.string().optional(),
+  }),
+);
 
 export const InterfaceReturnRuleSchema = z.object({
   code: z.string(),
@@ -703,10 +945,19 @@ export const InterfaceItemSchema = z.object({
   interfaceId: z.string(),
   name: z.string(),
   direction: z.enum(['PROVIDED', 'DEPENDENT']),
-  interfaceCategory: z.enum(['COMMAND', 'QUERY', 'EVENT']).default('COMMAND'),
-  protocol: z.enum(['REST', 'GRAPHQL', 'RPC', 'MQ', 'WEBHOOK']).default('REST'),
-  format: z.enum(['JSON', 'XML', 'PROTOBUF']).default('JSON'),
+  providerSystem: z.string().optional(),
+  consumerSystem: z.string().optional(),
+  interfaceCategory: z.enum(['COMMAND', 'QUERY', 'EVENT', 'NOTIFICATION']).default('COMMAND'),
+  businessPurpose: z.string().optional(),
+  invokeScenario: z.string().optional(),
+  protocol: z
+    .enum(['REST', 'GRAPHQL', 'RPC', 'MQ', 'WEBHOOK', 'SOAP', 'gRPC', 'SFTP', 'FILE'])
+    .default('REST'),
+  format: z.enum(['JSON', 'XML', 'PROTOBUF', 'CSV', 'Binary', 'BINARY']).default('JSON'),
   authMethod: z.string().optional(),
+  timeoutMs: z.number().optional(),
+  idempotency: z.enum(['IDEMPOTENT', 'NON_IDEMPOTENT']).optional(),
+  contractNote: z.string().optional(),
   description: z.string().optional(),
   relatedBehaviorRef: z.string().optional(),
   relatedEntityRef: z.string().optional(),
@@ -750,6 +1001,7 @@ export type AggregateAssociation = z.infer<typeof AggregateAssociationSchema>;
 
 export type M2BehaviorModel = z.infer<typeof M2BehaviorModelSchema>;
 export type BehaviorItem = z.infer<typeof BehaviorItemSchema>;
+export type SyncTrigger = z.infer<typeof SyncTriggerSchema>;
 
 export type M3RuleModel = z.infer<typeof M3RuleModelSchema>;
 export type RuleItem = z.infer<typeof RuleItemSchema>;
@@ -763,6 +1015,7 @@ export type ScenarioItem = z.infer<typeof ScenarioItemSchema>;
 export type M5ActorModel = z.infer<typeof M5ActorModelSchema>;
 export type ActorItem = z.infer<typeof ActorItemSchema>;
 export type RoleItem = z.infer<typeof RoleItemSchema>;
+export type PermissionGroupItem = z.infer<typeof PermissionGroupSchema>;
 export type PermissionItem = z.infer<typeof PermissionItemSchema>;
 
 export type M6FlowModel = z.infer<typeof M6FlowModelSchema>;
@@ -844,4 +1097,3 @@ export interface KnowledgeGraphData {
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeGraphEdge[];
 }
-

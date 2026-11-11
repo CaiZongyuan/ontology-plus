@@ -1,4 +1,31 @@
 import React, { useEffect, useState } from 'react';
+import {
+  Activity,
+  Blocks,
+  BookOpen,
+  Bot,
+  Boxes,
+  Cpu,
+  Database,
+  FileCode2,
+  FileText,
+  FolderKanban,
+  GitBranch,
+  Globe,
+  Layers,
+  LayoutTemplate,
+  MessageSquare,
+  Network,
+  PackageCheck,
+  Rocket,
+  Send,
+  Settings,
+  Sparkles,
+  Sun,
+  Moon,
+  Workflow,
+  BarChart3,
+} from 'lucide-react';
 import { useWorkbenchStore } from './api.js';
 import {
   NAV_GROUPS,
@@ -36,14 +63,60 @@ import {
 import { KnowledgeGraphCanvas } from './views/KnowledgeGraphCanvas.js';
 import { OntologyWorkbenchView } from './views/OntologyWorkbenchView.js';
 
+const NAV_ICONS: Record<NavViewId, React.ReactNode> = {
+  overview: <FolderKanban size={14} />,
+  'app-req-explore': <MessageSquare size={14} />,
+  'app-req-docs': <FileText size={14} />,
+  'app-prototype': <LayoutTemplate size={14} />,
+  'app-ontology': <Boxes size={14} />,
+  'app-model-files': <FileCode2 size={14} />,
+  'app-knowledge-graph': <Network size={14} />,
+  'app-four-layer-assets': <Layers size={14} />,
+  'app-assembly-dev': <PackageCheck size={14} />,
+  'app-skills': <Blocks size={14} />,
+  'app-publish': <Rocket size={14} />,
+  'cap-systems': <Cpu size={14} />,
+  'cap-extraction': <GitBranch size={14} />,
+  'cap-mcp': <Activity size={14} />,
+  'cap-agents': <Bot size={14} />,
+  'cap-cross-flows': <Workflow size={14} />,
+  'cap-knowledge': <BookOpen size={14} />,
+  'data-resources': <Database size={14} />,
+  'data-mappings': <Layers size={14} />,
+  'data-metrics-reports': <BarChart3 size={14} />,
+  'data-reasoning': <Sparkles size={14} />,
+  'data-writeback': <Send size={14} />,
+  'llm-center': <Cpu size={14} />,
+  'system-settings': <Settings size={14} />,
+};
+
+function readHashView(): NavViewId {
+  if (typeof window === 'undefined') return 'app-ontology';
+  const raw = window.location.hash.replace(/^#\/?/, '').trim() as NavViewId;
+  return NAV_ITEMS.some((i) => i.id === raw) ? raw : 'app-ontology';
+}
+
 function ShellInner() {
   const { locale, toggleLocale, theme, toggleTheme, t } = usePreferences();
   const { data, loading, toast, bootstrap, switchProject } = useWorkbenchStore();
-  const [activeView, setActiveView] = useState<NavViewId>('app-ontology');
+  const [activeView, setActiveViewState] = useState<NavViewId>(readHashView);
   const [collapsed, setCollapsed] = useState(false);
+
+  const setActiveView = (view: NavViewId) => {
+    setActiveViewState(view);
+    if (typeof window !== 'undefined') {
+      const targetHash = `#/${view}`;
+      if (window.location.hash !== targetHash) {
+        window.history.replaceState(null, '', targetHash);
+      }
+    }
+  };
 
   useEffect(() => {
     bootstrap();
+    const onHashChange = () => setActiveViewState(readHashView());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
   }, [bootstrap]);
 
   const activeNavSpec = NAV_ITEMS.find((i) => i.id === activeView);
@@ -85,7 +158,10 @@ function ShellInner() {
                     title={t(item.labelZh, item.labelEn)}
                   >
                     <span className="nav-item-left">
-                      <span>{collapsed ? item.labelZh.slice(0, 2) : t(item.labelZh, item.labelEn)}</span>
+                      <span style={{ display: 'inline-flex', opacity: 0.82 }}>
+                        {NAV_ICONS[item.id]}
+                      </span>
+                      {!collapsed && <span>{t(item.labelZh, item.labelEn)}</span>}
                     </span>
                     {!collapsed && item.badge && (
                       <span className="nav-badge">{item.badge}</span>
@@ -103,19 +179,28 @@ function ShellInner() {
               type="button"
               className="btn btn-sm"
               data-testid="theme-toggle-btn"
-              style={{ flex: 1 }}
+              style={{ flex: 1, justifyContent: 'center' }}
               onClick={toggleTheme}
             >
-              {theme === 'light' ? '☀ Light' : '☾ Dark'}
+              {theme === 'light' ? (
+                <>
+                  <Sun size={13} /> {!collapsed && 'Light'}
+                </>
+              ) : (
+                <>
+                  <Moon size={13} /> {!collapsed && 'Dark'}
+                </>
+              )}
             </button>
             {!collapsed && (
               <button
                 type="button"
                 className="btn btn-sm"
                 data-testid="locale-toggle-btn"
-                style={{ flex: 1 }}
+                style={{ flex: 1, justifyContent: 'center' }}
                 onClick={toggleLocale}
               >
+                <Globe size={13} />
                 {locale === 'zh-CN' ? '中文 / EN' : 'EN / 中文'}
               </button>
             )}
@@ -176,8 +261,12 @@ function ShellInner() {
               {activeView === 'app-req-explore' && (
                 <RequirementExploreView onNavigate={setActiveView} />
               )}
-              {activeView === 'app-req-docs' && <RequirementDocsView />}
-              {activeView === 'app-prototype' && <PrototypeStudioView />}
+              {activeView === 'app-req-docs' && (
+                <RequirementDocsView onNavigate={setActiveView} />
+              )}
+              {activeView === 'app-prototype' && (
+                <PrototypeStudioView onNavigate={setActiveView} />
+              )}
               {activeView === 'app-ontology' && <OntologyWorkbenchView />}
               {activeView === 'app-model-files' && <ModelFilesView />}
               {activeView === 'app-knowledge-graph' && (
@@ -205,7 +294,9 @@ function ShellInner() {
               {activeView === 'cap-cross-flows' && <CapabilityCrossFlowsView />}
               {activeView === 'cap-knowledge' && <KnowledgeCenterView />}
 
-              {activeView === 'data-resources' && <DataResourcesView />}
+              {activeView === 'data-resources' && (
+                <DataResourcesView onNavigate={setActiveView} />
+              )}
               {activeView === 'data-mappings' && <DataMappingsView />}
               {activeView === 'data-metrics-reports' && <DataMetricsReportsView />}
               {activeView === 'data-reasoning' && <DataReasoningView />}
@@ -234,4 +325,3 @@ export function App() {
     </PreferencesProvider>
   );
 }
-

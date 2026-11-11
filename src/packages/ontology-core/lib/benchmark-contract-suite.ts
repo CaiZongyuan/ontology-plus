@@ -492,7 +492,7 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
             description: '审批通过并完成电子签章后进入履约执行状态',
           },
         ],
-        invokedRules: ['RULE-03'],
+        invokedRules: ['RULE-01'],
         producedEvents: ['EVT-03'],
         requiredPermissions: ['PERM-CONTRACT-APPROVE'],
         uiEventRefs: ['UIE-APPROVE-CONTRACT'],
@@ -568,6 +568,7 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
         producedEvents: [],
         requiredPermissions: ['PERM-CONTRACT-READ'],
         queryReportRef: 'RPT-02',
+        uiEventRefs: ['UIE-EXPORT-RISK-REPORT'],
       },
     ],
   },
@@ -595,7 +596,7 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
         triggeredByEvents: [],
         producedEvents: [],
         triggeredBehaviors: [],
-        uiValidationRefs: ['SCR-CONTRACT-EDIT'],
+        uiValidationRefs: ['UIE-SAVE-DRAFT', 'UIE-APPROVE-CONTRACT'],
       },
       {
         id: 'RULE-02',
@@ -616,16 +617,16 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
         triggeredByEvents: [],
         producedEvents: [],
         triggeredBehaviors: [],
-        uiValidationRefs: ['SCR-CONTRACT-EDIT'],
+        uiValidationRefs: ['UIE-SUBMIT-APPROVAL'],
       },
       {
         id: 'RULE-03',
         name: 'SettlementCeilingGuardRule',
         alias: '累计结算不超合同总额守恒规则',
-        ruleType: 'CALCULATION',
-        scope: 'CROSS_OBJECT',
+        ruleType: 'EVENT_DRIVEN',
+        scope: 'EVENT_DRIVEN',
         version: '1.0',
-        description: '同一份合同下所有履约结算单累计金额不得超过合同总金额。',
+        description: '监听合同审批生效事件，校验同一份合同下所有履约结算单累计金额不超过合同总金额并触发首期结算单创建。',
         referencedObjects: ['Contract', 'SettlementOrder'],
         parameters: [
           { name: 'totalAmount', type: 'Money', source: 'Contract.totalAmount' },
@@ -733,6 +734,8 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
         name: '合同审批生效联动首期结算场景',
         description:
           '当合同经法务/部门审批通过后，发布生效事件，自动校验结算额度守恒规则并创建首期结算单。',
+        sourceObjectRef: 'Contract',
+        targetObjectRefs: ['SettlementOrder'],
         triggerBehaviorRef: 'BHV-03',
         triggerEventRef: 'EVT-03',
         involvedAggregates: ['Contract', 'SettlementOrder'],
@@ -840,7 +843,7 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
         code: 'contract:read',
         targetAggregate: 'Contract',
         allowedBehaviors: ['BHV-05', 'BHV-06'],
-        uiControlledElements: ['EL-BTN-SEARCH'],
+        uiControlledElements: ['EL-BTN-SEARCH', 'EL-BTN-RISK-REPORT'],
       },
       {
         id: 'PERM-CONTRACT-WRITE',
@@ -937,9 +940,36 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
             roleRef: 'ROLE-DEPT-MGR',
             behaviorRef: 'BHV-03',
             screenRef: 'SCR-CONTRACT-APPROVAL',
-            approvalOutcomes: ['APPROVED', 'REJECTED'],
-            nextActivity: 'ACTV-AUTO-EFFECT',
+            approvalOutcomes: ['APPROVED', 'RETURN', 'REJECTED'],
+            nextActivity: 'ACTV-LEGAL-OUTCOME-GW',
             branches: [],
+          },
+          {
+            id: 'ACTV-LEGAL-OUTCOME-GW',
+            name: '法务审批结果分流网关',
+            activityType: 'XOR_GATEWAY',
+            branches: [
+              {
+                targetActivity: 'ACTV-AUTO-EFFECT',
+                approvalOutcome: 'APPROVED',
+                condition: "approvalOutcome == 'APPROVED'",
+                isDefault: false,
+                label: '审批通过进入生效联动',
+              },
+              {
+                targetActivity: 'ACTV-DRAFT',
+                approvalOutcome: 'RETURN',
+                condition: "approvalOutcome == 'RETURN'",
+                isDefault: false,
+                label: '退回起草人补充修订',
+              },
+              {
+                targetActivity: 'ACTV-END-REJECTED',
+                approvalOutcome: 'REJECTED',
+                isDefault: true,
+                label: '审批驳回终止流程',
+              },
+            ],
           },
           {
             id: 'ACTV-AUTO-EFFECT',
@@ -952,6 +982,12 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
           {
             id: 'ACTV-END',
             name: '流程结束',
+            activityType: 'END',
+            branches: [],
+          },
+          {
+            id: 'ACTV-END-REJECTED',
+            name: '合同驳回终止',
             activityType: 'END',
             branches: [],
           },
@@ -1108,7 +1144,8 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
           '+--------------------------------------------------------------------------+',
           '| 合同台账与风险监控工作台 (SCR-CONTRACT-LIST)                             |',
           '+--------------------------------------------------------------------------+',
-          '| [EL-FILTER-KEYWORD] [EL-FILTER-TYPE] [EL-FILTER-STATUS] [EL-BTN-SEARCH]  |',
+          '| [EL-FILTER-KEYWORD] [EL-FILTER-TYPE] [EL-FILTER-STATUS]                  |',
+          '| [EL-BTN-SEARCH]     [EL-BTN-RISK-REPORT]                                 |',
           '+--------------------------------------------------------------------------+',
           '| [EL-LEDGER-TABLE]                                                        |',
           '+--------------------------------------------------------------------------+',
@@ -1152,6 +1189,15 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
             permissionRef: 'PERM-CONTRACT-READ',
           },
           {
+            elementId: 'EL-BTN-RISK-REPORT',
+            name: 'riskReportButton',
+            label: '生成风险与结算统计报表',
+            elementType: 'BUTTON',
+            io: 'ACTION',
+            required: false,
+            permissionRef: 'PERM-CONTRACT-READ',
+          },
+          {
             elementId: 'EL-LEDGER-TABLE',
             name: 'contractLedgerTable',
             label: '合同台账数据表格',
@@ -1180,6 +1226,27 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
                 stepType: 'REPORT_CALL',
                 refId: 'QRY-01',
                 description: '加载 QRY-01 台账数据集',
+              },
+            ],
+          },
+          {
+            eventId: 'UIE-EXPORT-RISK-REPORT',
+            name: '点击生成风险与履约统计报表',
+            triggerElementId: 'EL-BTN-RISK-REPORT',
+            triggerAction: 'CLICK',
+            permissions: ['PERM-CONTRACT-READ'],
+            callChain: [
+              {
+                stepOrder: 1,
+                stepType: 'BEHAVIOR_CALL',
+                refId: 'BHV-06',
+                description: '调用统计合同风险与履约率行为',
+              },
+              {
+                stepOrder: 2,
+                stepType: 'REPORT_CALL',
+                refId: 'RPT-02',
+                description: '渲染并导出 RPT-02 风险与结算统计报表',
               },
             ],
           },
@@ -1396,8 +1463,8 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
               {
                 stepOrder: 1,
                 stepType: 'VALIDATE',
-                refId: 'RULE-03',
-                description: '核验结算总额度守恒规则',
+                refId: 'RULE-01',
+                description: '前置校验签约相对方资信准入额度规则',
               },
               {
                 stepOrder: 2,
@@ -1410,6 +1477,12 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
                 stepType: 'EVENT_EMIT',
                 refId: 'EVT-03',
                 description: '触发合同审批生效事件',
+              },
+              {
+                stepOrder: 4,
+                stepType: 'SCENARIO_CALL',
+                refId: 'SCN-01',
+                description: '联动执行首期结算单生成场景',
               },
             ],
           },
@@ -1508,6 +1581,104 @@ export const CONTRACT_LIFECYCLE_SUITE: OntologySuite = {
                 attributeRef: 'Contract.riskLevel',
                 column: 'risk_level',
                 columnType: 'VARCHAR(16)',
+              },
+            ],
+          },
+          {
+            tableName: 't_contract_line_item',
+            tableRole: 'DETAIL',
+            primaryKey: 'id',
+            foreignKeys: [
+              {
+                fkName: 'fk_line_item_contract',
+                localColumn: 'contract_id',
+                targetTable: 't_contract',
+                targetColumn: 'id',
+              },
+            ],
+            columnMappings: [
+              {
+                attributeRef: 'Contract.ContractLineItem[].lineId',
+                column: 'id',
+                columnType: 'VARCHAR(36)',
+                isPrimaryKey: true,
+              },
+              {
+                attributeRef: 'Contract.id',
+                column: 'contract_id',
+                columnType: 'VARCHAR(36)',
+                isForeignKey: true,
+                fkTargetTable: 't_contract',
+                fkTargetColumn: 'id',
+              },
+              {
+                attributeRef: 'Contract.ContractLineItem[].itemName',
+                column: 'item_name',
+                columnType: 'VARCHAR(128)',
+              },
+              {
+                attributeRef: 'Contract.ContractLineItem[].quantity',
+                column: 'quantity',
+                columnType: 'INTEGER',
+              },
+              {
+                attributeRef: 'Contract.ContractLineItem[].unitPrice',
+                column: 'unit_price',
+                columnType: 'DECIMAL(18,2)',
+              },
+              {
+                attributeRef: 'Contract.ContractLineItem[].subtotalAmount',
+                column: 'subtotal_amount',
+                columnType: 'DECIMAL(18,2)',
+              },
+            ],
+          },
+          {
+            tableName: 't_payment_milestone',
+            tableRole: 'DETAIL',
+            primaryKey: 'id',
+            foreignKeys: [
+              {
+                fkName: 'fk_milestone_contract',
+                localColumn: 'contract_id',
+                targetTable: 't_contract',
+                targetColumn: 'id',
+              },
+            ],
+            columnMappings: [
+              {
+                attributeRef: 'Contract.PaymentMilestone[].milestoneId',
+                column: 'id',
+                columnType: 'VARCHAR(36)',
+                isPrimaryKey: true,
+              },
+              {
+                attributeRef: 'Contract.id',
+                column: 'contract_id',
+                columnType: 'VARCHAR(36)',
+                isForeignKey: true,
+                fkTargetTable: 't_contract',
+                fkTargetColumn: 'id',
+              },
+              {
+                attributeRef: 'Contract.PaymentMilestone[].phaseName',
+                column: 'phase_name',
+                columnType: 'VARCHAR(64)',
+              },
+              {
+                attributeRef: 'Contract.PaymentMilestone[].plannedRatio',
+                column: 'planned_ratio',
+                columnType: 'DECIMAL(5,2)',
+              },
+              {
+                attributeRef: 'Contract.PaymentMilestone[].plannedAmount',
+                column: 'planned_amount',
+                columnType: 'DECIMAL(18,2)',
+              },
+              {
+                attributeRef: 'Contract.PaymentMilestone[].dueDate',
+                column: 'due_date',
+                columnType: 'DATE',
               },
             ],
           },
@@ -1881,6 +2052,7 @@ export const CONTRACT_PROTOTYPE_HTML = `<!DOCTYPE html>
     data-screen-name="合同台账与风险监控工作台"
     data-screen-type="LIST"
     data-route="/contracts/ledger"
+    data-role-refs="ROLE-CONTRACT-SPEC,ROLE-DEPT-MGR"
   >
     <div class="screen-title">
       <span>1. 合同台账与风险监控工作台</span>
@@ -1929,7 +2101,7 @@ export const CONTRACT_PROTOTYPE_HTML = `<!DOCTYPE html>
         </select>
       </div>
     </div>
-    <div style="margin-bottom: 12px;">
+    <div style="margin-bottom: 12px; display: flex; gap: 10px;">
       <button
         data-element-id="EL-BTN-SEARCH"
         data-element-name="searchButton"
@@ -1941,6 +2113,18 @@ export const CONTRACT_PROTOTYPE_HTML = `<!DOCTYPE html>
         data-behavior-ref="BHV-05"
         data-report-ref="QRY-01"
       >查询合同台账 (BHV-05 -> QRY-01)</button>
+      <button
+        class="secondary"
+        data-element-id="EL-BTN-RISK-REPORT"
+        data-element-name="riskReportButton"
+        data-element-label="生成风险与结算统计报表"
+        data-element-type="BUTTON"
+        data-permission-ref="PERM-CONTRACT-READ"
+        data-event-id="UIE-EXPORT-RISK-REPORT"
+        data-event-name="点击生成风险与履约统计报表"
+        data-behavior-ref="BHV-06"
+        data-report-ref="RPT-02"
+      >生成风险与结算统计报表 (BHV-06 -> RPT-02)</button>
     </div>
     <table
       data-element-id="EL-LEDGER-TABLE"
@@ -1989,6 +2173,7 @@ export const CONTRACT_PROTOTYPE_HTML = `<!DOCTYPE html>
     data-screen-name="合同起草与条款配置页"
     data-screen-type="FORM"
     data-route="/contracts/edit"
+    data-role-refs="ROLE-CONTRACT-SPEC"
   >
     <div class="screen-title">
       <span>2. 合同起草与条款配置页</span>
@@ -2107,7 +2292,7 @@ export const CONTRACT_PROTOTYPE_HTML = `<!DOCTYPE html>
         data-permission-ref="PERM-CONTRACT-WRITE"
         data-event-id="UIE-SAVE-DRAFT"
         data-event-name="点击保存合同草稿"
-        data-rule-ref="RULE-01"
+        data-validate-ref="RULE-01"
         data-behavior-ref="BHV-01"
         data-emit-event-ref="EVT-01"
       >保存合同草稿 (RULE-01 -> BHV-01 -> EVT-01)</button>
@@ -2119,9 +2304,10 @@ export const CONTRACT_PROTOTYPE_HTML = `<!DOCTYPE html>
         data-permission-ref="PERM-CONTRACT-SUBMIT"
         data-event-id="UIE-SUBMIT-APPROVAL"
         data-event-name="点击提交合同审批"
-        data-rule-ref="RULE-02"
+        data-validate-ref="RULE-02"
         data-behavior-ref="BHV-02"
         data-emit-event-ref="EVT-02"
+        data-navigate-to="SCR-CONTRACT-APPROVAL"
       >提交合同审批 (RULE-02 -> BHV-02 -> EVT-02)</button>
     </div>
   </section>
@@ -2132,6 +2318,7 @@ export const CONTRACT_PROTOTYPE_HTML = `<!DOCTYPE html>
     data-screen-name="法务风险会签与审批工作台"
     data-screen-type="APPROVAL"
     data-route="/contracts/approval"
+    data-role-refs="ROLE-DEPT-MGR"
   >
     <div class="screen-title">
       <span>3. 法务风险会签与审批工作台</span>
@@ -2156,10 +2343,11 @@ export const CONTRACT_PROTOTYPE_HTML = `<!DOCTYPE html>
       data-permission-ref="PERM-CONTRACT-APPROVE"
       data-event-id="UIE-APPROVE-CONTRACT"
       data-event-name="点击审批通过合同"
-      data-rule-ref="RULE-03"
+      data-validate-ref="RULE-01"
       data-behavior-ref="BHV-03"
       data-emit-event-ref="EVT-03"
-    >审批通过并触发签章结算 (RULE-03 -> BHV-03 -> EVT-03)</button>
+      data-scenario-ref="SCN-01"
+    >审批通过并触发签章结算 (RULE-01 -> BHV-03 -> EVT-03 -> SCN-01)</button>
   </section>
 </body>
 </html>`;

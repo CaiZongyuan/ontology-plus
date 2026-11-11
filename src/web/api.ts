@@ -5,10 +5,12 @@ import type {
   OntologySuite,
 } from '../packages/ontology-core/index.js';
 import type {
+  AnalyticsQueryResult,
   AnalyticsReport,
   AnalyticsScenario,
   AssembledApplication,
   CapabilityAgent,
+  CapabilityChatSession,
   CrossSystemFlow,
   DataDocument,
   DataMappingRule,
@@ -30,7 +32,18 @@ import type {
   SystemSettingsState,
   WritebackInterface,
 } from '../packages/workspace-store/index.js';
-import type { OntologyCopilotResult, LlmPingResult } from '../packages/agent-runtime/index.js';
+import type {
+  AppCodingAgentResult,
+  CapabilitySmartChatResult,
+  LlmPingResult,
+  MetricInsightResult,
+  OntologyCopilotResult,
+  OntologySynthesisFromPrototypeResult,
+  PrototypeGenerationResult,
+  RequirementDocSynthesisResult,
+  ScenarioAttributionResult,
+  TechArchitectureGenerationResult,
+} from '../packages/agent-runtime/index.js';
 import type {
   CompiledDevelopmentPackage,
   McpResourceDefinition,
@@ -50,6 +63,7 @@ export interface BootstrapPayload {
   extractionJobs: ExtractionJob[];
   mcpServers: McpServerConfig[];
   capabilityAgents: CapabilityAgent[];
+  capabilityChatSessions: CapabilityChatSession[];
   crossSystemFlows: CrossSystemFlow[];
   knowledgeEntries: KnowledgeEntry[];
   databaseResources: DatabaseResource[];
@@ -71,7 +85,9 @@ interface WorkbenchStoreState {
   undoStack: OntologySuite[];
   redoStack: OntologySuite[];
   selectedModel: ModelCode;
-  setSelectedModel: (code: ModelCode) => void;
+  selectedElementId: string | null;
+  setSelectedModel: (code: ModelCode, elementId?: string | null) => void;
+  setSelectedElementId: (elementId: string | null) => void;
   showToast: (msg: string) => void;
   bootstrap: (projectId?: string) => Promise<void>;
   switchProject: (projectId: string) => Promise<void>;
@@ -83,6 +99,7 @@ interface WorkbenchStoreState {
     template: 'CONTRACT' | 'MFT' | 'EMPTY';
   }) => Promise<void>;
   saveSuiteWithUndo: (suite: OntologySuite, note?: string) => Promise<void>;
+  pushUndoSnapshot: (prevSuite: OntologySuite) => void;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
   patchData: (patch: Partial<BootstrapPayload>) => void;
@@ -95,8 +112,12 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   undoStack: [],
   redoStack: [],
   selectedModel: 'M1',
+  selectedElementId: null,
 
-  setSelectedModel: (code) => set({ selectedModel: code }),
+  setSelectedModel: (code, elementId = null) =>
+    set({ selectedModel: code, selectedElementId: elementId }),
+
+  setSelectedElementId: (elementId) => set({ selectedElementId: elementId }),
 
   showToast: (msg) => {
     set({ toast: msg });
@@ -111,12 +132,25 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     set({ data: { ...cur, ...patch } });
   },
 
+  pushUndoSnapshot: (prevSuite) => {
+    set({
+      undoStack: [...get().undoStack, JSON.parse(JSON.stringify(prevSuite)) as OntologySuite],
+      redoStack: [],
+    });
+  },
+
   bootstrap: async (projectId) => {
     set({ loading: true });
     const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
     const res = await fetch(`/api/bootstrap${qs}`);
     const payload = (await res.json()) as BootstrapPayload;
-    set({ data: payload, loading: false, undoStack: [], redoStack: [] });
+    set({
+      data: payload,
+      loading: false,
+      undoStack: [],
+      redoStack: [],
+      selectedElementId: null,
+    });
   },
 
   switchProject: async (projectId) => {
@@ -227,9 +261,86 @@ export async function apiRunCopilot(
   return res.json();
 }
 
+export async function apiSynthesizeSrsDoc(
+  sessionId: string,
+): Promise<RequirementDocSynthesisResult & { requirementSessions: RequirementSession[] }> {
+  const res = await fetch(`/api/requirements/${sessionId}/synthesize-doc`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  return res.json();
+}
+
+export async function apiGeneratePrototype(
+  projectId: string,
+  input: { docId?: string; prompt?: string },
+): Promise<PrototypeGenerationResult> {
+  const res = await fetch(`/api/projects/${projectId}/prototypes/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return res.json();
+}
+
+export async function apiRefinePrototype(
+  projectId: string,
+  prototypeId: string,
+  instruction: string,
+): Promise<PrototypeGenerationResult> {
+  const res = await fetch(`/api/projects/${projectId}/prototypes/${prototypeId}/refine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instruction }),
+  });
+  return res.json();
+}
+
+export async function apiSynthesizeOntologyFromPrototype(
+  projectId: string,
+  input: { prototypeId?: string; docId?: string },
+): Promise<OntologySynthesisFromPrototypeResult> {
+  const res = await fetch(`/api/projects/${projectId}/prototypes/synthesize-ontology`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return res.json();
+}
+
+export async function apiGenerateTechArch(input: {
+  name: string;
+  stackTags?: string[];
+  prompt?: string;
+}): Promise<TechArchitectureGenerationResult> {
+  const res = await fetch('/api/assets/generate-tech-arch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return res.json();
+}
+
+export async function apiRunAppCodingAgent(
+  appId: string,
+  instruction: string,
+): Promise<AppCodingAgentResult & { assembledApplications: AssembledApplication[] }> {
+  const res = await fetch(`/api/applications/${appId}/coding-agent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instruction }),
+  });
+  return res.json();
+}
+
 export async function apiCompileDevPackage(
   appId: string,
-): Promise<{ compiledPackage: CompiledDevelopmentPackage; application: AssembledApplication; assembledApplications: AssembledApplication[] }> {
+): Promise<{
+  compiledPackage: CompiledDevelopmentPackage;
+  application: AssembledApplication;
+  assembledApplications: AssembledApplication[];
+}> {
   const res = await fetch(`/api/applications/${appId}/compile-package`, {
     method: 'POST',
   });
@@ -240,9 +351,11 @@ export async function apiCompileDevPackage(
   return res.json();
 }
 
-export async function apiInspectMcp(
-  projectId: string,
-): Promise<{ tools: McpToolDefinition[]; resources: McpResourceDefinition[] }> {
+export async function apiInspectMcp(projectId: string): Promise<{
+  tools: McpToolDefinition[];
+  resources: McpResourceDefinition[];
+  clientConfigJson?: string;
+}> {
   const res = await fetch(`/api/mcp/${projectId}/capabilities`);
   return res.json();
 }
@@ -265,6 +378,53 @@ export async function apiCallMcpTool(
   return res.json();
 }
 
+export async function apiSendCapabilityChat(
+  agentId: string,
+  input: { sessionId?: string; userMessage: string },
+): Promise<CapabilitySmartChatResult & { capabilityChatSessions: CapabilityChatSession[] }> {
+  const res = await fetch(`/api/capability/agents/${agentId}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return res.json();
+}
+
+export async function apiExecuteAnalyticsSql(
+  sql: string,
+  params?: Record<string, unknown>,
+): Promise<AnalyticsQueryResult> {
+  const res = await fetch('/api/analytics/sql', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql, params }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'SQL execution failed');
+  }
+  return data;
+}
+
+export async function apiGenerateMetricInsight(metricId: string): Promise<MetricInsightResult> {
+  const res = await fetch(`/api/analytics/metrics/${metricId}/insight`, {
+    method: 'POST',
+  });
+  return res.json();
+}
+
+export async function apiRunScenarioAttribution(
+  scenarioId: string,
+  input: { question?: string; saveAsReport?: boolean },
+): Promise<ScenarioAttributionResult & { analyticsReports: AnalyticsReport[] }> {
+  const res = await fetch(`/api/analytics/scenarios/${scenarioId}/attribute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return res.json();
+}
+
 export async function apiTestLlmProvider(
   providerId: string,
 ): Promise<{ ping: LlmPingResult; llmProviders: LlmProviderConfig[] }> {
@@ -274,3 +434,18 @@ export async function apiTestLlmProvider(
   return res.json();
 }
 
+export function triggerBrowserDownload(
+  fileName: string,
+  content: string | Blob,
+  mimeType = 'text/plain;charset=utf-8',
+): void {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

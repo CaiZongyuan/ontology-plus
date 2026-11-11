@@ -1,8 +1,23 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      try {
+        var saved = localStorage.getItem('onto_theme');
+        var meta = document.querySelector('meta[name="color-scheme"]');
+        if (saved === 'dark' || saved === 'light') {
+          if (meta) meta.content = saved;
+          document.documentElement.dataset.theme = saved;
+        } else {
+          if (meta) meta.content = 'light dark';
+          var sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          document.documentElement.dataset.theme = sysDark ? 'dark' : 'light';
+        }
+      } catch (_) {}
+    </script>
     <title>Ontology Plus · 本体驱动研发工作台</title>
   </head>
   <body>
@@ -10,4 +25,3 @@
     <script type="module" src="/src/web/main.tsx"></script>
   </body>
 </html>
-

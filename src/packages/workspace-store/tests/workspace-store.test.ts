@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createWorkspaceStore } from '../index.js';
 
@@ -18,8 +21,13 @@ describe('workspace-store deep module', () => {
     expect(assets.length).toBeGreaterThanOrEqual(5);
 
     const providers = store.listLlmProviders();
+    expect(providers[0].id).toBe('llm-pi-local');
     expect(providers[0].baseUrl).toBe('http://127.0.0.1:3425/v1');
     expect(providers[0].defaultModel).toBe('auto/glm-5.3-flash');
+
+    const chatSessions = store.listCapabilityChatSessions('agent-contract-risk');
+    expect(chatSessions.length).toBeGreaterThanOrEqual(1);
+    expect(chatSessions[0].agentId).toBe('agent-contract-risk');
   });
 
   it('supports cascade symbol rename, extraction jobs, cross-system flow execution, and write-back execution', () => {
@@ -47,5 +55,212 @@ describe('workspace-store deep module', () => {
     expect(wb.executionCount).toBe(3);
     expect(wb.lastExecutionResult).toContain('BHV-03');
   });
-});
 
+  it('executes read-only analytics SQL with named params, dictionary __label enrichment, and strict DDL/DML blocking', () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+
+    const res = store.executeReadOnlyAnalyticsSql(
+      `SELECT c.contract_no, c.status, c.risk_level, cp.credit_rating, c.overdue_days, c.created_by, c.flag
+       FROM t_contract c
+       JOIN t_counterparty cp ON c.counterparty_id = cp.id
+       WHERE c.region = :region AND c.industry = :industry AND c.overdue_days > :minOverdue
+       ORDER BY c.overdue_days DESC;`,
+      { region: '华东区', industry: '半导体', minOverdue: 10 },
+    );
+
+    expect(res.rowCount).toBeGreaterThanOrEqual(3);
+    expect(res.columns).toContain('status__label');
+    expect(res.columns).toContain('risk_level__label');
+    expect(res.columns).toContain('credit_rating__label');
+
+    const topRow = res.rows[0];
+    expect(topRow.status).toBe('EXECUTING');
+    expect(topRow.status__label).toBe('履约执行中');
+    expect(topRow.risk_level).toBe('HIGH');
+    expect(topRow.risk_level__label).toBe('高风险');
+    expect(topRow.credit_rating).toBe('A');
+    expect(topRow.credit_rating__label).toContain('A级');
+    expect(topRow.flag).toBe(1);
+
+    // Block DML / DDL / comments / multi-statements
+    expect(() =>
+      store.executeReadOnlyAnalyticsSql('DELETE FROM t_contract WHERE 1 = 1'),
+    ).toThrow(/Read-only analytics SQL violation/i);
+    expect(() =>
+      store.executeReadOnlyAnalyticsSql('DROP TABLE t_contract'),
+    ).toThrow(/Read-only analytics SQL violation/i);
+    expect(() =>
+      store.executeReadOnlyAnalyticsSql('PRAGMA table_info(t_contract)'),
+    ).toThrow(/Read-only analytics SQL violation/i);
+    expect(() =>
+      store.executeReadOnlyAnalyticsSql('SELECT * FROM t_contract; SELECT * FROM __dict'),
+    ).toThrow(/Read-only analytics SQL violation/i);
+    expect(() =>
+      store.executeReadOnlyAnalyticsSql('SELECT * FROM t_contract -- inline comment'),
+    ).toThrow(/Read-only analytics SQL violation/i);
+  });
+
+  it('supports two-step DDL + OpenAPI extraction and applyExtractionJobToProject with 0 consistency errors', () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+
+    const beforeProj = store.getProject('proj-mft')!;
+    const beforeAggCount = beforeProj.suite.M1!.aggregates.length;
+
+    const snippet = `
+CREATE TABLE t_mft_node_cluster (
+  id VARCHAR(36) PRIMARY KEY,
+  cluster_code VARCHAR(32) NOT NULL UNIQUE,
+  bandwidth_mbps INTEGER NOT NULL,
+  active BOOLEAN NOT NULL
+);
+CREATE TABLE t_mft_route_policy (
+  id VARCHAR(36) PRIMARY KEY,
+  policy_name VARCHAR(128) NOT NULL,
+  cluster_id VARCHAR(36) NOT NULL REFERENCES t_mft_node_cluster(id)
+);
+openapi: 3.0.0
+paths:
+  /api/v1/mft/clusters:
+    get:
+      operationId: listNodeClusters
+      summary: 查询跨网传输节点集群列表
+    post:
+      operationId: registerNodeCluster
+      summary: 注册跨网传输节点集群
+`;
+
+    const { job, project: unmutatedProj } = store.runOntologyExtractionJob({
+      systemId: 'sys-mft-transfer',
+      projectId: 'proj-mft',
+      title: 'MFT 集群与路由策略两步萃取审阅',
+      sourceType: 'DDL_AND_OPENAPI',
+      sourceSnippet: snippet,
+      applyImmediately: false,
+    });
+
+    expect(job.appliedToProject).toBe(false);
+    expect(job.extractedTablesCount).toBe(2);
+    expect(job.extractedEntitiesCount).toBe(2);
+    expect(job.extractedInterfacesCount).toBe(2);
+    expect(job.candidateSuite?.M1?.aggregates.some((a) => a.name === 'MftNodeCluster')).toBe(true);
+    expect(job.candidateSuite?.MM?.mappings.some((m) => m.objectName === 'MftRoutePolicy')).toBe(true);
+    expect(job.candidateSuite?.MI?.interfaces.length).toBeGreaterThanOrEqual(2);
+    expect(unmutatedProj.suite.M1!.aggregates.length).toBe(beforeAggCount);
+
+    const applied = store.applyExtractionJobToProject(job.id);
+    expect(applied.job.appliedToProject).toBe(true);
+    expect(applied.job.status).toBe('REVIEWED');
+    expect(applied.project.suite.M1!.aggregates.some((a) => a.name === 'MftNodeCluster')).toBe(true);
+    expect(applied.project.validation.valid).toBe(true);
+    expect(applied.project.validation.errorCount).toBe(0);
+  });
+
+  it('mirrors onto-cs.db and manifest.json, and persists requirement sessions, capability chats, analytics mutations, and durable checkpoints', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-cs-test-'));
+    try {
+      const store = createWorkspaceStore({
+        workspaceRoot: tmpDir,
+        enableFileMirror: true,
+      });
+
+      // Verify default onto-cs.db and mirrored manifest.json
+      expect(fs.existsSync(path.join(tmpDir, 'onto-cs.db'))).toBe(true);
+      const manifestPath = path.join(tmpDir, 'model', 'proj-contract', 'yaml', 'manifest.json');
+      expect(fs.existsSync(manifestPath)).toBe(true);
+
+      const exportedManifest = JSON.parse(store.exportManifestJson('proj-contract')) as {
+        projectId: string;
+        models: Record<string, string>;
+      };
+      expect(exportedManifest.projectId).toBe('proj-contract');
+      expect(exportedManifest.models.M1).toBe('m1-object-model.yaml');
+      expect(exportedManifest.models.MI).toBe('mi-interface-model.yaml');
+
+      // Requirement session creation & lookup
+      const reqSess = store.createRequirementSession({
+        projectId: 'proj-contract',
+        title: '合同归档与多币种结算补充需求',
+        initialPrompt: '需要支持跨境美元合同汇率锁定与自动折算。',
+      });
+      expect(reqSess.status).toBe('EXPLORING');
+      expect(reqSess.messages).toHaveLength(1);
+      expect(store.getRequirementSession(reqSess.id)?.title).toBe('合同归档与多币种结算补充需求');
+
+      // Capability chat session persistence
+      const savedChat = store.saveCapabilityChatSession({
+        id: 'cap-chat-test-02',
+        agentId: 'agent-contract-risk',
+        projectId: 'proj-contract',
+        title: '履约里程碑催收测试会话',
+        messages: [
+          {
+            id: 'm-1',
+            role: 'user',
+            content: '列出逾期超过 20 天的合同。',
+            timestamp: '2026-11-10T12:00:00.000Z',
+          },
+        ],
+      });
+      expect(savedChat.updatedAt).toBeTruthy();
+      expect(
+        store.listCapabilityChatSessions('agent-contract-risk').some((s) => s.id === 'cap-chat-test-02'),
+      ).toBe(true);
+
+      // Analytics resource / metric / scenario persistence
+      store.saveDatabaseResource({
+        id: 'db-ext-clickhouse',
+        name: '供应链实时风控 OLAP 备库',
+        dialect: 'ClickHouse',
+        connectionUri: 'clickhouse://127.0.0.1:8123/risk_dw',
+        status: 'SYNCED',
+        tables: [],
+      });
+      expect(store.listDatabaseResources().some((d) => d.id === 'db-ext-clickhouse')).toBe(true);
+
+      store.saveMetric({
+        id: 'MET-99',
+        code: 'MFT_ARCHIVE_SLA_RATE',
+        name: '合同定稿 MFT 加密归档及时率',
+        category: '跨网协同',
+        formula: 'COUNT(archived_within_1h) / COUNT(total_approved)',
+        unit: '%',
+        currentValue: '99.2%',
+        yoYChange: '+1.5%',
+        status: 'NORMAL',
+        dimensions: ['安全域 (securityDomain)'],
+        linkedAggregate: 'Contract',
+      });
+      expect(store.listMetrics().some((m) => m.id === 'MET-99')).toBe(true);
+
+      store.saveAnalyticsScenario({
+        id: 'ascn-99',
+        name: '跨网归档延迟预警分析',
+        domain: '企业文件安全传输系统 (MFT)',
+        triggerCondition: 'MFT_ARCHIVE_SLA_RATE < 95%',
+        relatedMetrics: ['MET-99'],
+        causalFactors: ['大体积附件扫描队列堆积'],
+        recommendedActions: ['扩容脱敏扫描节点'],
+        writebackInterfaceId: 'WB-01',
+      });
+      expect(store.listAnalyticsScenarios().some((s) => s.id === 'ascn-99')).toBe(true);
+
+      // Durable agent checkpoints
+      store.saveAgentCheckpoint(
+        'ckpt-sess-01',
+        'ontology-assistant',
+        JSON.stringify({ step: 2, pendingModel: 'M3' }),
+      );
+      const loadedCkpt = store.loadAgentCheckpoint('ckpt-sess-01');
+      expect(loadedCkpt).toBeDefined();
+      expect(loadedCkpt!.workflow).toBe('ontology-assistant');
+      expect(JSON.parse(loadedCkpt!.stateJson)).toEqual({ step: 2, pendingModel: 'M3' });
+      expect(store.listAgentCheckpoints('ontology-assistant')).toHaveLength(1);
+    } finally {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // Ignore Windows file-handle lock on open SQLite temp file until process exit
+      }
+    }
+  });
+});

@@ -131,6 +131,11 @@ export interface ExtractionJob {
   confidenceScore: number;
   status: 'COMPLETED' | 'RUNNING' | 'REVIEWED';
   summary: string;
+  candidateSuite?: OntologySuite;
+  extractedEntitiesCount?: number;
+  extractedTablesCount?: number;
+  extractedInterfacesCount?: number;
+  appliedToProject?: boolean;
   createdAt: string;
 }
 
@@ -254,11 +259,50 @@ export interface AnalyticsReport {
   createdAt: string;
 }
 
+export interface CapabilityChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: string;
+  toolInvocations?: {
+    toolName: string;
+    arguments: Record<string, unknown>;
+    output: string;
+    isError?: boolean;
+  }[];
+}
+
+export interface CapabilityChatSession {
+  id: string;
+  agentId: string;
+  projectId: string;
+  title: string;
+  messages: CapabilityChatMessage[];
+  updatedAt: string;
+}
+
+export interface AnalyticsQueryResult {
+  sql: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  rowCount: number;
+  elapsedMs: number;
+}
+
+export interface AgentCheckpointRecord {
+  sessionId: string;
+  workflow: string;
+  stateJson: string;
+  updatedAt: string;
+}
+
 export interface ReasoningSession {
   id: string;
   question: string;
   mode: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
   sqlGenerated: string;
+  queryColumns?: string[];
+  queryRows?: Record<string, unknown>[];
   dataSummary: { label: string; value: string; delta?: string }[];
   causalAnalysis: string[];
   policyRecommendations: {
@@ -300,7 +344,7 @@ export interface LlmProviderConfig {
 export interface SystemSettingsState {
   workspaceDir: string;
   defaultLanguage: 'zh-CN' | 'en-US';
-  defaultTheme: 'light' | 'dark';
+  defaultTheme: 'system' | 'light' | 'dark';
   strictValidation: boolean;
   autoMirrorYaml: boolean;
   autoSyncPrototypeMu: boolean;
@@ -331,6 +375,7 @@ export interface WorkspaceStore {
   exportYamlFiles(
     projectId: string,
   ): Partial<Record<ModelCode, { fileName: string; content: string }>>;
+  exportManifestJson(projectId: string): string;
   analyzeSymbolImpact(projectId: string, targetId: string): ImpactAnalysisReport;
   renameSymbol(
     projectId: string,
@@ -340,6 +385,12 @@ export interface WorkspaceStore {
 
   // Application Center
   listRequirementSessions(projectId: string): RequirementSession[];
+  getRequirementSession(sessionId: string): RequirementSession | undefined;
+  createRequirementSession(input: {
+    projectId: string;
+    title: string;
+    initialPrompt?: string;
+  }): RequirementSession;
   appendRequirementMessage(
     sessionId: string,
     message: RequirementMessage,
@@ -373,11 +424,15 @@ export interface WorkspaceStore {
     title: string;
     sourceType: ExtractionJob['sourceType'];
     sourceSnippet: string;
+    applyImmediately?: boolean;
   }): { job: ExtractionJob; project: ProjectDetail };
+  applyExtractionJobToProject(jobId: string): { job: ExtractionJob; project: ProjectDetail };
   listMcpServers(): McpServerConfig[];
   saveMcpServer(mcp: Omit<McpServerConfig, 'updatedAt'>): McpServerConfig;
   listCapabilityAgents(): CapabilityAgent[];
   saveCapabilityAgent(agent: CapabilityAgent): CapabilityAgent;
+  listCapabilityChatSessions(agentId?: string): CapabilityChatSession[];
+  saveCapabilityChatSession(session: Omit<CapabilityChatSession, 'updatedAt'>): CapabilityChatSession;
   listCrossSystemFlows(): CrossSystemFlow[];
   executeCrossSystemFlow(flowId: string): CrossSystemFlow;
   listKnowledgeEntries(): KnowledgeEntry[];
@@ -385,21 +440,30 @@ export interface WorkspaceStore {
 
   // Data Analytics Center
   listDatabaseResources(): DatabaseResource[];
+  saveDatabaseResource(res: DatabaseResource): DatabaseResource;
   listDataDocuments(): DataDocument[];
   saveDataDocument(doc: Omit<DataDocument, 'updatedAt'>): DataDocument;
   listDataMappings(): DataMappingRule[];
   saveDataMapping(rule: DataMappingRule): DataMappingRule;
   listMetrics(): MetricDefinition[];
+  saveMetric(metric: MetricDefinition): MetricDefinition;
   listAnalyticsScenarios(): AnalyticsScenario[];
+  saveAnalyticsScenario(scenario: AnalyticsScenario): AnalyticsScenario;
   listAnalyticsReports(): AnalyticsReport[];
   saveAnalyticsReport(report: Omit<AnalyticsReport, 'createdAt'>): AnalyticsReport;
   listReasoningSessions(): ReasoningSession[];
   saveReasoningSession(session: Omit<ReasoningSession, 'createdAt'>): ReasoningSession;
+  executeReadOnlyAnalyticsSql(sql: string, params?: Record<string, unknown>): AnalyticsQueryResult;
   listWritebackInterfaces(): WritebackInterface[];
   executeWritebackInterface(
     interfaceId: string,
     payloadOverride?: Record<string, unknown>,
   ): WritebackInterface;
+
+  // Durable Agent Checkpoints
+  saveAgentCheckpoint(sessionId: string, workflow: string, stateJson: string): void;
+  loadAgentCheckpoint(sessionId: string): AgentCheckpointRecord | undefined;
+  listAgentCheckpoints(workflow?: string): AgentCheckpointRecord[];
 
   // LLM Center & System Settings
   listLlmProviders(): LlmProviderConfig[];

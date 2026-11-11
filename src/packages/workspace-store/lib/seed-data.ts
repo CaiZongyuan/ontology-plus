@@ -8,6 +8,7 @@ import type {
   AnalyticsScenario,
   AssembledApplication,
   CapabilityAgent,
+  CapabilityChatSession,
   CrossSystemFlow,
   DataDocument,
   DataMappingRule,
@@ -27,6 +28,207 @@ import type {
   SystemSettingsState,
   WritebackInterface,
 } from './types.js';
+
+const AUDIT_TS = '2026-11-10T09:00:00.000Z';
+
+export interface SeedDictRow {
+  id: string;
+  dict_id: string;
+  type_code: string;
+  type_name: string;
+  item_code: string;
+  item_label: string;
+  sort_order: number;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  flag: number;
+}
+
+export interface SeedCounterpartyRow {
+  id: string;
+  credit_code: string;
+  company_name: string;
+  industry: string;
+  region: string;
+  credit_rating: string;
+  status: string;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  flag: number;
+}
+
+export interface SeedContractRow {
+  id: string;
+  contract_no: string;
+  title: string;
+  contract_type: string;
+  counterparty_id: string;
+  region: string;
+  department: string;
+  industry: string;
+  total_amount: number;
+  risk_level: string;
+  status: string;
+  sign_period_json: string;
+  overdue_days: number;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  flag: number;
+}
+
+export interface SeedContractLineItemRow {
+  id: string;
+  contract_id: string;
+  item_name: string;
+  category: string;
+  quantity: number;
+  unit_price: number;
+  subtotal_amount: number;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  flag: number;
+}
+
+export interface SeedPaymentMilestoneRow {
+  id: string;
+  contract_id: string;
+  phase_name: string;
+  planned_ratio: number;
+  planned_amount: number;
+  due_date: string;
+  milestone_status: string;
+  overdue_days: number;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  flag: number;
+}
+
+export interface SeedSettlementOrderRow {
+  id: string;
+  settlement_no: string;
+  contract_ref: string;
+  milestone_id: string | null;
+  settlement_amount: number;
+  settlement_status: string;
+  overdue_days: number;
+  settled_at: string | null;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  flag: number;
+}
+
+export interface SeedMftWorkOrderRow {
+  id: string;
+  work_order_no: string;
+  contract_ref: string | null;
+  file_name: string;
+  file_size_mb: number;
+  security_domain: string;
+  sha256_digest: string;
+  status: string;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_at: string;
+  flag: number;
+}
+
+export const SEED_DICT_ROWS: SeedDictRow[] = [
+  { id: 'dict-status-draft', dict_id: 'DICT-CONTRACT', type_code: 'CONTRACT_STATUS', type_name: '合同履约状态', item_code: 'DRAFT', item_label: '草稿', sort_order: 10, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-status-pending', dict_id: 'DICT-CONTRACT', type_code: 'CONTRACT_STATUS', type_name: '合同履约状态', item_code: 'PENDING_APPROVAL', item_label: '审批会签中', sort_order: 20, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-status-exec', dict_id: 'DICT-CONTRACT', type_code: 'CONTRACT_STATUS', type_name: '合同履约状态', item_code: 'EXECUTING', item_label: '履约执行中', sort_order: 30, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-status-comp', dict_id: 'DICT-CONTRACT', type_code: 'CONTRACT_STATUS', type_name: '合同履约状态', item_code: 'COMPLETED', item_label: '已完结归档', sort_order: 40, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-credit-aaa', dict_id: 'DICT-COUNTERPARTY', type_code: 'CREDIT_RATING', type_name: '相对方资信等级', item_code: 'AAA', item_label: 'AAA级(特优资信)', sort_order: 10, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-credit-aa', dict_id: 'DICT-COUNTERPARTY', type_code: 'CREDIT_RATING', type_name: '相对方资信等级', item_code: 'AA', item_label: 'AA级(优良资信)', sort_order: 20, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-credit-a', dict_id: 'DICT-COUNTERPARTY', type_code: 'CREDIT_RATING', type_name: '相对方资信等级', item_code: 'A', item_label: 'A级(标准资信)', sort_order: 30, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-credit-b', dict_id: 'DICT-COUNTERPARTY', type_code: 'CREDIT_RATING', type_name: '相对方资信等级', item_code: 'B', item_label: 'B级(关注资信)', sort_order: 40, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-credit-c', dict_id: 'DICT-COUNTERPARTY', type_code: 'CREDIT_RATING', type_name: '相对方资信等级', item_code: 'C', item_label: 'C级(高危受限)', sort_order: 50, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-risk-high', dict_id: 'DICT-CONTRACT', type_code: 'RISK_LEVEL', type_name: '风险定级', item_code: 'HIGH', item_label: '高风险', sort_order: 10, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-risk-med', dict_id: 'DICT-CONTRACT', type_code: 'RISK_LEVEL', type_name: '风险定级', item_code: 'MEDIUM', item_label: '中风险', sort_order: 20, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-risk-low', dict_id: 'DICT-CONTRACT', type_code: 'RISK_LEVEL', type_name: '风险定级', item_code: 'LOW', item_label: '低风险', sort_order: 30, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-type-proc', dict_id: 'DICT-CONTRACT', type_code: 'CONTRACT_TYPE', type_name: '合同类型', item_code: 'PROCUREMENT', item_label: '设备与物资采购', sort_order: 10, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-type-sales', dict_id: 'DICT-CONTRACT', type_code: 'CONTRACT_TYPE', type_name: '合同类型', item_code: 'SALES', item_label: '产品销售合同', sort_order: 20, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-type-out', dict_id: 'DICT-CONTRACT', type_code: 'CONTRACT_TYPE', type_name: '合同类型', item_code: 'OUTSOURCING', item_label: '技术服务外包', sort_order: 30, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-stl-paid', dict_id: 'DICT-SETTLEMENT', type_code: 'SETTLEMENT_STATUS', type_name: '结算状态', item_code: 'PAID', item_label: '已核销付款', sort_order: 10, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-stl-pending', dict_id: 'DICT-SETTLEMENT', type_code: 'SETTLEMENT_STATUS', type_name: '结算状态', item_code: 'PENDING', item_label: '待核销结算', sort_order: 20, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'dict-stl-frozen', dict_id: 'DICT-SETTLEMENT', type_code: 'SETTLEMENT_STATUS', type_name: '结算状态', item_code: 'FROZEN', item_label: '风控冻结', sort_order: 30, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+];
+
+export const SEED_COUNTERPARTY_ROWS: SeedCounterpartyRow[] = [
+  { id: 'CP-01', credit_code: '91310115MA1K88010X', company_name: '中芯精工半导体设备（上海）有限公司', industry: '半导体设备', region: '华东区', credit_rating: 'AAA', status: 'ACTIVE', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CP-02', credit_code: '91320214MA1W99021A', company_name: '长三角微电子晶圆技术（无锡）有限公司', industry: '半导体封测', region: '华东区', credit_rating: 'A', status: 'ACTIVE', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CP-03', credit_code: '91320594MA1S77132B', company_name: '苏南光刻精密部件（苏州）股份有限公司', industry: '半导体材料与部件', region: '华东区', credit_rating: 'A', status: 'RESTRICTED', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CP-04', credit_code: '91110108MA01B2204C', company_name: '京津冀云智算信息技术（北京）有限公司', industry: '云计算与IT服务', region: '华北区', credit_rating: 'AA', status: 'ACTIVE', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CP-05', credit_code: '91120116MA06T5505D', company_name: '燕山智能装备制造（天津）有限公司', industry: '智能装备', region: '华北区', credit_rating: 'B', status: 'RESTRICTED', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CP-06', credit_code: '91440300MA5F33906E', company_name: '大湾区鹏城光通信科技（深圳）有限公司', industry: '光通信电子', region: '华南区', credit_rating: 'AAA', status: 'ACTIVE', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+];
+
+export const SEED_CONTRACT_ROWS: SeedContractRow[] = [
+  { id: 'CT-01', contract_no: 'CT-2026-0001', title: '12英寸晶圆刻蚀机核心腔体采购合同', contract_type: 'PROCUREMENT', counterparty_id: 'CP-01', region: '华东区', department: '半导体供应链部', industry: '半导体', total_amount: 4600000, risk_level: 'HIGH', status: 'EXECUTING', sign_period_json: '{"startDate":"2026-01-15","endDate":"2026-12-31"}', overdue_days: 0, created_by: 'u-spec-01', created_at: AUDIT_TS, updated_by: 'u-legal-01', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CT-02', contract_no: 'CT-2026-0002', title: '华东半导体洁净室CIM系统驻场开发外包合同', contract_type: 'OUTSOURCING', counterparty_id: 'CP-02', region: '华东区', department: '晶圆制造IT部', industry: '半导体', total_amount: 960000, risk_level: 'HIGH', status: 'EXECUTING', sign_period_json: '{"startDate":"2026-03-01","endDate":"2026-11-30"}', overdue_days: 24, created_by: 'u-spec-01', created_at: AUDIT_TS, updated_by: 'u-legal-01', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CT-03', contract_no: 'CT-2026-0003', title: '苏州光刻精密阀门批次维保与测试外包合同', contract_type: 'OUTSOURCING', counterparty_id: 'CP-03', region: '华东区', department: '光刻设备工程部', industry: '半导体', total_amount: 1850000, risk_level: 'HIGH', status: 'EXECUTING', sign_period_json: '{"startDate":"2026-02-10","endDate":"2026-10-31"}', overdue_days: 31, created_by: 'u-spec-02', created_at: AUDIT_TS, updated_by: 'u-legal-01', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CT-04', contract_no: 'CT-2026-0004', title: '上海临港半导体封测产线MES二期升级合同', contract_type: 'OUTSOURCING', counterparty_id: 'CP-02', region: '华东区', department: '晶圆制造IT部', industry: '半导体', total_amount: 2400000, risk_level: 'HIGH', status: 'EXECUTING', sign_period_json: '{"startDate":"2026-04-01","endDate":"2027-03-31"}', overdue_days: 19, created_by: 'u-spec-01', created_at: AUDIT_TS, updated_by: 'u-legal-01', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CT-05', contract_no: 'CT-2026-0005', title: '华北智算中心高速交换矩阵年度采购合同', contract_type: 'PROCUREMENT', counterparty_id: 'CP-04', region: '华北区', department: '基础设施采购部', industry: '云计算', total_amount: 3200000, risk_level: 'HIGH', status: 'COMPLETED', sign_period_json: '{"startDate":"2026-01-01","endDate":"2026-09-30"}', overdue_days: 0, created_by: 'u-spec-03', created_at: AUDIT_TS, updated_by: 'u-legal-02', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CT-06', contract_no: 'CT-2026-0006', title: '华北工业网关固件安全审计技术服务合同', contract_type: 'OUTSOURCING', counterparty_id: 'CP-05', region: '华北区', department: '平台安全部', industry: '智能制造', total_amount: 680000, risk_level: 'MEDIUM', status: 'PENDING_APPROVAL', sign_period_json: '{"startDate":"2026-10-01","endDate":"2027-03-31"}', overdue_days: 0, created_by: 'u-spec-03', created_at: AUDIT_TS, updated_by: 'u-spec-03', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CT-07', contract_no: 'CT-2026-0007', title: '华南光模块自动化检测设备销售主合同', contract_type: 'SALES', counterparty_id: 'CP-06', region: '华南区', department: '大客户销售部', industry: '光通信', total_amount: 5100000, risk_level: 'HIGH', status: 'EXECUTING', sign_period_json: '{"startDate":"2026-05-01","endDate":"2027-04-30"}', overdue_days: 0, created_by: 'u-sales-01', created_at: AUDIT_TS, updated_by: 'u-legal-02', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CT-08', contract_no: 'CT-2026-0008', title: '深圳研发中心EDA算力调度软件许可草稿', contract_type: 'PROCUREMENT', counterparty_id: 'CP-06', region: '华南区', department: '芯片研发中心', industry: '半导体', total_amount: 420000, risk_level: 'LOW', status: 'DRAFT', sign_period_json: '{"startDate":"2026-11-15","endDate":"2027-11-14"}', overdue_days: 0, created_by: 'u-spec-02', created_at: AUDIT_TS, updated_by: 'u-spec-02', updated_at: AUDIT_TS, flag: 1 },
+];
+
+export const SEED_CONTRACT_LINE_ITEM_ROWS: SeedContractLineItemRow[] = [
+  { id: 'CLI-01', contract_id: 'CT-01', item_name: '12英寸等离子刻蚀真空反应腔体组件', category: '半导体核心设备', quantity: 2, unit_price: 2300000, subtotal_amount: 4600000, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CLI-02', contract_id: 'CT-02', item_name: '洁净室天车调度与EAP接口驻场开发人月', category: '半导体软件外包', quantity: 24, unit_price: 40000, subtotal_amount: 960000, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CLI-03', contract_id: 'CT-03', item_name: '超高纯特气波纹管阀门检测与校准批次服务', category: '半导体维保外包', quantity: 5, unit_price: 370000, subtotal_amount: 1850000, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CLI-04', contract_id: 'CT-04', item_name: '先进封测批次追溯MES核心引擎升级包', category: '工业软件外包', quantity: 1, unit_price: 2400000, subtotal_amount: 2400000, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CLI-05', contract_id: 'CT-05', item_name: '400G RoCEv2 无损算力核心交换机', category: '网络硬件', quantity: 16, unit_price: 200000, subtotal_amount: 3200000, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CLI-06', contract_id: 'CT-06', item_name: '工业边缘网关固件渗透测试与合规加固', category: '安全技术服务', quantity: 2, unit_price: 340000, subtotal_amount: 680000, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CLI-07', contract_id: 'CT-07', item_name: '800G硅光模块全温区耦合测试台', category: '自动化装备销售', quantity: 3, unit_price: 1700000, subtotal_amount: 5100000, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'CLI-08', contract_id: 'CT-08', item_name: 'EDA分布式作业调度器企业年框订阅', category: '研发工具软件', quantity: 1, unit_price: 420000, subtotal_amount: 420000, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+];
+
+export const SEED_PAYMENT_MILESTONE_ROWS: SeedPaymentMilestoneRow[] = [
+  { id: 'PM-01', contract_id: 'CT-01', phase_name: '合同生效首付款 (30%)', planned_ratio: 0.3, planned_amount: 1380000, due_date: '2026-02-01', milestone_status: 'PAID', overdue_days: 0, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'PM-02', contract_id: 'CT-01', phase_name: '腔体到货与FAT验收款 (50%)', planned_ratio: 0.5, planned_amount: 2300000, due_date: '2026-08-15', milestone_status: 'PAID', overdue_days: 0, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'PM-03', contract_id: 'CT-02', phase_name: 'CIM接口联调里程碑款 (60%)', planned_ratio: 0.6, planned_amount: 576000, due_date: '2026-10-15', milestone_status: 'OVERDUE', overdue_days: 24, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'PM-04', contract_id: 'CT-03', phase_name: '首批次光刻阀门洁净度认证款 (40%)', planned_ratio: 0.4, planned_amount: 740000, due_date: '2026-05-20', milestone_status: 'PAID', overdue_days: 0, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'PM-05', contract_id: 'CT-03', phase_name: '二期批量耐压测试里程碑款 (60%)', planned_ratio: 0.6, planned_amount: 1110000, due_date: '2026-10-10', milestone_status: 'OVERDUE', overdue_days: 31, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'PM-06', contract_id: 'CT-04', phase_name: 'MES二期蓝图冻结首付款 (30%)', planned_ratio: 0.3, planned_amount: 720000, due_date: '2026-04-20', milestone_status: 'PAID', overdue_days: 0, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'PM-07', contract_id: 'CT-04', phase_name: '产线过站采集压测验收款 (50%)', planned_ratio: 0.5, planned_amount: 1200000, due_date: '2026-10-22', milestone_status: 'OVERDUE', overdue_days: 19, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'PM-08', contract_id: 'CT-05', phase_name: '交换矩阵全量上架终验款 (100%)', planned_ratio: 1.0, planned_amount: 3200000, due_date: '2026-09-25', milestone_status: 'PAID', overdue_days: 0, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'PM-09', contract_id: 'CT-07', phase_name: '光模块测试台首期交付回款 (50%)', planned_ratio: 0.5, planned_amount: 2550000, due_date: '2026-07-30', milestone_status: 'PAID', overdue_days: 0, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'PM-10', contract_id: 'CT-07', phase_name: '产线良率达标尾款 (50%)', planned_ratio: 0.5, planned_amount: 2550000, due_date: '2026-12-20', milestone_status: 'PENDING', overdue_days: 0, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+];
+
+export const SEED_SETTLEMENT_ORDER_ROWS: SeedSettlementOrderRow[] = [
+  { id: 'STL-01', settlement_no: 'STL-2026-0001', contract_ref: 'CT-01', milestone_id: 'PM-01', settlement_amount: 1380000, settlement_status: 'PAID', overdue_days: 0, settled_at: '2026-02-02T10:00:00.000Z', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'STL-02', settlement_no: 'STL-2026-0002', contract_ref: 'CT-01', milestone_id: 'PM-02', settlement_amount: 2300000, settlement_status: 'PAID', overdue_days: 0, settled_at: '2026-08-14T15:20:00.000Z', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'STL-03', settlement_no: 'STL-2026-0003', contract_ref: 'CT-02', milestone_id: 'PM-03', settlement_amount: 576000, settlement_status: 'PENDING', overdue_days: 24, settled_at: null, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'STL-04', settlement_no: 'STL-2026-0004', contract_ref: 'CT-03', milestone_id: 'PM-04', settlement_amount: 740000, settlement_status: 'PAID', overdue_days: 0, settled_at: '2026-05-19T11:00:00.000Z', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'STL-05', settlement_no: 'STL-2026-0005', contract_ref: 'CT-03', milestone_id: 'PM-05', settlement_amount: 1110000, settlement_status: 'PENDING', overdue_days: 31, settled_at: null, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'STL-06', settlement_no: 'STL-2026-0006', contract_ref: 'CT-04', milestone_id: 'PM-06', settlement_amount: 720000, settlement_status: 'PAID', overdue_days: 0, settled_at: '2026-04-20T09:30:00.000Z', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'STL-07', settlement_no: 'STL-2026-0007', contract_ref: 'CT-04', milestone_id: 'PM-07', settlement_amount: 1200000, settlement_status: 'PENDING', overdue_days: 19, settled_at: null, created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'STL-08', settlement_no: 'STL-2026-0008', contract_ref: 'CT-05', milestone_id: 'PM-08', settlement_amount: 3200000, settlement_status: 'PAID', overdue_days: 0, settled_at: '2026-09-24T16:45:00.000Z', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'STL-09', settlement_no: 'STL-2026-0009', contract_ref: 'CT-07', milestone_id: 'PM-09', settlement_amount: 2550000, settlement_status: 'PAID', overdue_days: 0, settled_at: '2026-07-29T14:10:00.000Z', created_by: 'system', created_at: AUDIT_TS, updated_by: 'system', updated_at: AUDIT_TS, flag: 1 },
+];
+
+export const SEED_MFT_WORK_ORDER_ROWS: SeedMftWorkOrderRow[] = [
+  { id: 'MFT-WO-01', work_order_no: 'MFT-2026-0412', contract_ref: 'CT-01', file_name: 'CT-2026-0001_刻蚀机腔体采购定稿签章版.pdf', file_size_mb: 48.6, security_domain: 'DMZ_TO_CORE_ARCHIVE', sha256_digest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', status: 'COMPLETED', created_by: 'mft-gateway', created_at: AUDIT_TS, updated_by: 'mft-gateway', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'MFT-WO-02', work_order_no: 'MFT-2026-0413', contract_ref: 'CT-02', file_name: 'CT-2026-0002_洁净室CIM驻场开发技术附件.zip', file_size_mb: 312.4, security_domain: 'PARTNER_TO_FAB_NET', sha256_digest: '8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4', status: 'EXECUTING', created_by: 'mft-gateway', created_at: AUDIT_TS, updated_by: 'mft-gateway', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'MFT-WO-03', work_order_no: 'MFT-2026-0414', contract_ref: 'CT-03', file_name: 'CT-2026-0003_光刻阀门氦质谱检漏原始报告.pdf', file_size_mb: 125.0, security_domain: 'PARTNER_TO_FAB_NET', sha256_digest: '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae', status: 'EXECUTING', created_by: 'mft-gateway', created_at: AUDIT_TS, updated_by: 'mft-gateway', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'MFT-WO-04', work_order_no: 'MFT-2026-0415', contract_ref: 'CT-05', file_name: 'CT-2026-0005_华北智算交换矩阵终验归档包.tar.gz', file_size_mb: 842.0, security_domain: 'DMZ_TO_CORE_ARCHIVE', sha256_digest: '4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce', status: 'COMPLETED', created_by: 'mft-gateway', created_at: AUDIT_TS, updated_by: 'mft-gateway', updated_at: AUDIT_TS, flag: 1 },
+  { id: 'MFT-WO-05', work_order_no: 'MFT-2026-0416', contract_ref: 'CT-07', file_name: 'CT-2026-0007_800G硅光耦合测试台出厂校准谱图.bin', file_size_mb: 1560.8, security_domain: 'LAB_TO_CUSTOMER_PORTAL', sha256_digest: '6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b', status: 'COMPLETED', created_by: 'mft-gateway', created_at: AUDIT_TS, updated_by: 'mft-gateway', updated_at: AUDIT_TS, flag: 1 },
+];
 
 export const SEED_PROJECTS = [
   {
@@ -56,7 +258,7 @@ export const SEED_PROJECTS = [
     domain: '企业文件安全传输系统 (MFT)',
     description:
       '通过存量系统本体萃取（Ontology Extraction）从既有 MFT 跨网文件传输系统 DDL 与接口规范提炼的领域本体工程。',
-    currentStage: 6,
+    currentStage: 5,
     suite: MFT_ENTERPRISE_SUITE,
     changelog: [
       '# Ontology Change Log - 企业文件安全传输系统 (MFT)',
@@ -310,7 +512,7 @@ export const SEED_LEGACY_SYSTEMS: LegacySystemConfig[] = [
     category: 'ERP / 业财一体',
     baseUrl: 'http://127.0.0.1:4310/api/mock-legacy/erp',
     dbDialect: 'SQLite / PostgreSQL',
-    dbConnectionUri: 'sqlite://.onto-cs/legacy-erp.db',
+    dbConnectionUri: 'sqlite://.onto-cs/onto-cs.db',
     status: 'MCP_ACTIVE',
     linkedProjectId: 'proj-contract',
     description: '存量企业合同与相对方管理系统，已完成本体萃取并封装为标准 MCP Server。',
@@ -352,6 +554,10 @@ export const SEED_EXTRACTION_JOBS: ExtractionJob[] = [
     status: 'COMPLETED',
     summary:
       '成功从 3 张核心物理表与 6 个 REST 接口萃取生成 Contract、Counterparty、SettlementOrder 三个聚合根及完整映射模型 MM/MI。',
+    extractedEntitiesCount: 3,
+    extractedTablesCount: 3,
+    extractedInterfacesCount: 6,
+    appliedToProject: true,
     createdAt: '2026-11-10T08:50:00.000Z',
   },
   {
@@ -371,6 +577,10 @@ export const SEED_EXTRACTION_JOBS: ExtractionJob[] = [
     confidenceScore: 0.94,
     status: 'COMPLETED',
     summary: '成功从 MFT 存量库表与传输网关接口萃取出 TransferTask 聚合根与 10GB 体积校验规则 RULE-MFT-01。',
+    extractedEntitiesCount: 1,
+    extractedTablesCount: 1,
+    extractedInterfacesCount: 1,
+    appliedToProject: true,
     createdAt: '2026-11-10T09:20:00.000Z',
   },
 ];
@@ -402,6 +612,18 @@ export const SEED_MCP_SERVERS: McpServerConfig[] = [
 
 export const SEED_CAPABILITY_AGENTS: CapabilityAgent[] = [
   {
+    id: 'agent-contract-risk',
+    name: '合同风控与履约协同智能体',
+    role: '法务风控与跨系统履约数字专家',
+    projectId: 'proj-contract',
+    mcpIds: ['mcp-contract-server', 'mcp-mft-server'],
+    skillIds: ['skill-contract-clm'],
+    modelId: 'auto/glm-5.3-flash',
+    systemPrompt:
+      '你是基于《合同全生命周期管理系统》11元模型驱动的智能体。在执行任何合同起草、审批、MFT跨网归档或结算指令前，必须严格遵循 M3 规则模型（如 RULE-01 百万级合同相对方 AA/AAA 资信要求、RULE-03 结算总额上限守恒）。',
+    status: 'ACTIVE',
+  },
+  {
     id: 'agent-contract-copilot',
     name: '合同合规审查与履约协同智能体',
     role: '法务风控与商务履约数字专家',
@@ -412,6 +634,38 @@ export const SEED_CAPABILITY_AGENTS: CapabilityAgent[] = [
     systemPrompt:
       '你是基于《合同全生命周期管理系统》11元模型驱动的智能体。在执行任何合同起草、审批或结算指令前，必须严格遵循 M3 规则模型（如 RULE-01 百万级合同相对方 AA/AAA 资信要求、RULE-03 结算总额上限守恒）。',
     status: 'ACTIVE',
+  },
+];
+
+export const SEED_CAPABILITY_CHAT_SESSIONS: CapabilityChatSession[] = [
+  {
+    id: 'cap-chat-contract-risk-01',
+    agentId: 'agent-contract-risk',
+    projectId: 'proj-contract',
+    title: '华东区半导体逾期合同排查与 M3 资信红线核验',
+    messages: [
+      {
+        id: 'cap-msg-1',
+        role: 'user',
+        content: '请帮我核查华东区半导体高风险外包合同的履约结算情况，并校验是否触发 RULE-01 与 RULE-03 风控规则。',
+        timestamp: '2026-11-10T09:35:00.000Z',
+      },
+      {
+        id: 'cap-msg-2',
+        role: 'assistant',
+        content:
+          '已通过 `mcp-contract-server` 检索合同台账并完成 M3 规则门禁核验：\n1. **华东区半导体逾期外包合同共 3 份**（`CT-2026-0002`、`CT-2026-0003`、`CT-2026-0004`），待核销逾期结算单合计 **¥ 2,886,000**。\n2. 其中 `CT-2026-0003`（¥185万）与 `CT-2026-0004`（¥240万）签约相对方资信等级为 `A` 级，已触发 **`RULE-01` 百万级合同资信准入预警**；全部合同累计结算额均满足 **`RULE-03` 总额守恒约束**。建议通过 `WB-01` 冻结后续批次付款并推送法务催办。',
+        timestamp: '2026-11-10T09:35:06.000Z',
+        toolInvocations: [
+          {
+            toolName: 'm2_queryContractLedger',
+            arguments: { contractType: 'OUTSOURCING', status: 'EXECUTING' },
+            output: '{"matchedContracts":3,"overdueSettlementTotal":2886000,"region":"华东区"}',
+          },
+        ],
+      },
+    ],
+    updatedAt: '2026-11-10T09:35:06.000Z',
   },
 ];
 
@@ -503,46 +757,104 @@ export const SEED_DATABASE_RESOURCES: DatabaseResource[] = [
     id: 'db-clm-dw',
     name: '业财合同与履约分析主数仓 (SQLite / Cloudflare D1)',
     dialect: 'SQLite',
-    connectionUri: 'sqlite://.onto-cs/workspace.sqlite',
+    connectionUri: 'sqlite://.onto-cs/onto-cs.db',
     status: 'ONLINE',
     tables: [
       {
+        tableName: '__dict',
+        comment: '全域标准数据字典表 (映射 M1 DataDictionary)',
+        rowCount: SEED_DICT_ROWS.length,
+        columns: [
+          { name: 'id', type: 'TEXT', comment: '主键ID' },
+          { name: 'dict_id', type: 'TEXT', comment: '字典编号' },
+          { name: 'type_code', type: 'TEXT', comment: '字典分类编码' },
+          { name: 'item_code', type: 'TEXT', comment: '字典项编码' },
+          { name: 'item_label', type: 'TEXT', comment: '字典项中文名称' },
+        ],
+      },
+      {
+        tableName: 't_counterparty',
+        comment: '签约相对方资信表 (映射 M1 Counterparty)',
+        rowCount: SEED_COUNTERPARTY_ROWS.length,
+        columns: [
+          { name: 'id', type: 'VARCHAR(36)', comment: '主键ID' },
+          { name: 'credit_code', type: 'CHAR(18)', comment: '统一社会信用代码' },
+          { name: 'company_name', type: 'VARCHAR(128)', comment: '企业全称' },
+          { name: 'industry', type: 'VARCHAR(64)', comment: '所属行业' },
+          { name: 'region', type: 'VARCHAR(32)', comment: '所属大区' },
+          { name: 'credit_rating', type: 'VARCHAR(8)', comment: '资信等级 AAA~C' },
+          { name: 'status', type: 'VARCHAR(16)', comment: '准入状态' },
+        ],
+      },
+      {
         tableName: 't_contract',
         comment: '商务合同主表 (映射 M1 Contract)',
-        rowCount: 1280,
+        rowCount: SEED_CONTRACT_ROWS.length,
         columns: [
           { name: 'id', type: 'VARCHAR(36)', comment: '主键ID' },
           { name: 'contract_no', type: 'VARCHAR(32)', comment: '合同编号' },
           { name: 'title', type: 'VARCHAR(128)', comment: '合同名称' },
           { name: 'contract_type', type: 'VARCHAR(32)', comment: '合同类型' },
           { name: 'counterparty_id', type: 'VARCHAR(36)', comment: '相对方ID' },
+          { name: 'region', type: 'VARCHAR(32)', comment: '所属区域' },
+          { name: 'industry', type: 'VARCHAR(64)', comment: '行业板块' },
           { name: 'total_amount', type: 'DECIMAL(18,2)', comment: '合同总金额' },
           { name: 'risk_level', type: 'VARCHAR(16)', comment: '风险等级' },
           { name: 'status', type: 'VARCHAR(24)', comment: '履约状态' },
+          { name: 'overdue_days', type: 'INTEGER', comment: '逾期天数' },
         ],
       },
       {
-        tableName: 't_counterparty',
-        comment: '签约相对方资信表 (映射 M1 Counterparty)',
-        rowCount: 340,
+        tableName: 't_contract_line_item',
+        comment: '合同标的明细子表 (映射 M1 Contract.ContractLineItem)',
+        rowCount: SEED_CONTRACT_LINE_ITEM_ROWS.length,
         columns: [
           { name: 'id', type: 'VARCHAR(36)', comment: '主键ID' },
-          { name: 'credit_code', type: 'CHAR(18)', comment: '统一社会信用代码' },
-          { name: 'company_name', type: 'VARCHAR(128)', comment: '企业全称' },
-          { name: 'credit_rating', type: 'VARCHAR(8)', comment: '资信等级 AAA~C' },
-          { name: 'status', type: 'VARCHAR(16)', comment: '准入状态' },
+          { name: 'contract_id', type: 'VARCHAR(36)', comment: '关联合同ID' },
+          { name: 'item_name', type: 'VARCHAR(128)', comment: '标的名称' },
+          { name: 'quantity', type: 'INTEGER', comment: '数量' },
+          { name: 'unit_price', type: 'DECIMAL(18,2)', comment: '含税单价' },
+          { name: 'subtotal_amount', type: 'DECIMAL(18,2)', comment: '明细小计金额' },
+        ],
+      },
+      {
+        tableName: 't_payment_milestone',
+        comment: '合同收付款里程碑表 (映射 M1 Contract.PaymentMilestone)',
+        rowCount: SEED_PAYMENT_MILESTONE_ROWS.length,
+        columns: [
+          { name: 'id', type: 'VARCHAR(36)', comment: '主键ID' },
+          { name: 'contract_id', type: 'VARCHAR(36)', comment: '关联合同ID' },
+          { name: 'phase_name', type: 'VARCHAR(64)', comment: '阶段名称' },
+          { name: 'planned_amount', type: 'DECIMAL(18,2)', comment: '计划付款金额' },
+          { name: 'due_date', type: 'DATE', comment: '计划到期日' },
+          { name: 'milestone_status', type: 'VARCHAR(16)', comment: '里程碑状态' },
+          { name: 'overdue_days', type: 'INTEGER', comment: '逾期天数' },
         ],
       },
       {
         tableName: 't_settlement_order',
         comment: '合同履约结算事实表 (映射 M1 SettlementOrder)',
-        rowCount: 3920,
+        rowCount: SEED_SETTLEMENT_ORDER_ROWS.length,
         columns: [
           { name: 'id', type: 'VARCHAR(36)', comment: '主键ID' },
           { name: 'settlement_no', type: 'VARCHAR(32)', comment: '结算单号' },
           { name: 'contract_ref', type: 'VARCHAR(36)', comment: '关联合同ID' },
           { name: 'settlement_amount', type: 'DECIMAL(18,2)', comment: '结算金额' },
           { name: 'settlement_status', type: 'VARCHAR(16)', comment: '结算状态' },
+          { name: 'overdue_days', type: 'INTEGER', comment: '逾期天数' },
+        ],
+      },
+      {
+        tableName: 't_mft_work_order',
+        comment: 'MFT 跨网安全归档传输工单表 (映射 MFT TransferTask)',
+        rowCount: SEED_MFT_WORK_ORDER_ROWS.length,
+        columns: [
+          { name: 'id', type: 'VARCHAR(36)', comment: '主键ID' },
+          { name: 'work_order_no', type: 'VARCHAR(32)', comment: '传输工单号' },
+          { name: 'contract_ref', type: 'VARCHAR(36)', comment: '关联合同ID' },
+          { name: 'file_name', type: 'VARCHAR(255)', comment: '归档文件名称' },
+          { name: 'file_size_mb', type: 'DECIMAL(12,2)', comment: '文件大小(MB)' },
+          { name: 'status', type: 'VARCHAR(24)', comment: '传输状态' },
         ],
       },
     ],
@@ -620,7 +932,7 @@ export const SEED_METRICS: MetricDefinition[] = [
     currentValue: '14.8%',
     yoYChange: '+3.1%',
     status: 'WARNING',
-    dimensions: ['相对方资信 (creditRating)', '所属部门'],
+    dimensions: ['相对方资信 (creditRating)', '所属大区 (region)'],
     linkedAggregate: 'SettlementOrder',
   },
   {
@@ -646,7 +958,7 @@ export const SEED_ANALYTICS_SCENARIOS: AnalyticsScenario[] = [
     triggerCondition: 'HIGH_RISK_OVERDUE_RATIO > 12%',
     relatedMetrics: ['MET-01', 'MET-02'],
     causalFactors: [
-      'A 级资信外包服务商在 Q3 集中出现里程碑验收材料缺失（占比 62%）',
+      '华东区 A 级资信半导体外包服务商在 Q3 集中出现里程碑验收材料缺失（占比 71.5%）',
       '部分技术服务外包合同未绑定自动电子签章回执校验，导致财务核销挂起',
     ],
     recommendedActions: [
@@ -664,21 +976,21 @@ export const SEED_ANALYTICS_REPORTS: AnalyticsReport[] = [
     period: '2026-Q4',
     author: '数据本体推理引擎 (Data Ontology Reasoner)',
     summary:
-      '全公司生效合同总额 ¥1.42 亿，整体结算达成率 88.4%，但技术外包类高风险合同逾期率上升 3.1%，建议通过回写接口收紧 A 级相对方首付款比例。',
+      '全公司生效合同总额 ¥1,921 万，整体结算达成率良好，但华东区半导体技术外包类高风险合同逾期率偏高，建议通过回写接口收紧 A 级相对方首付款比例。',
     markdownContent: `# 2026 Q4 企业商务合同履约健康度与风险归因分析报告
 
 ## 一、核心经营指标概览（智能问数结论）
-- **生效合同总金额**：\`¥ 142,600,000.00\`（环比 \`+11.4%\`）
+- **生效合同总金额**：\`¥ 19,210,000.00\`（环比 \`+11.4%\`）
 - **合同履约结算达成率 (\`MET-01\`)**：\`88.4%\`（处于健康区间）
 - **高风险合同逾期未结算率 (\`MET-02\`)**：\`14.8%\`（触发黄色预警阈值 \`12.0%\`）
 
 ## 二、异常波动根因穿透（智能问因结论）
 沿着 \`Contract -> Counterparty -> SettlementOrder\` 本体关联路径下钻发现：
-1. **合同类型维度**：\`OUTSOURCING\`（技术服务外包合同）贡献了 \`71.5%\` 的逾期未结算金额；
-2. **相对方资信维度**：资信等级为 \`A\` 级的 4 家供应商在二期里程碑交付物签署环节平均延误 \`19.2\` 天。
+1. **区域与行业维度**：\`华东区\` 半导体 \`OUTSOURCING\`（技术服务外包合同）贡献了全部高风险逾期未结算金额（\`¥ 2,886,000\`）；
+2. **相对方资信维度**：资信等级为 \`A\` 级的半导体外包供应商在二期里程碑交付物签署环节平均逾期 \`24.7\` 天。
 
 ## 三、策略建议与业务回写（智能问策结论）
-1. **立即执行**：调用 **\`WB-01 高风险逾期合同催收与结算冻结回写接口\`**，对逾期超 15 天的 3 份高风险合同自动锁定下期付款并发送法务催办通知。
+1. **立即执行**：调用 **\`WB-01 高风险逾期合同催收与结算冻结回写接口\`**，对逾期超 15 天的 3 份华东区高风险合同自动锁定下期付款并发送法务催办通知。
 2. **规则优化**：建议将 \`M3\` 中 \`RULE-01\` 的大额合同准入阈值从 \`100万\` 下调至 \`80万\`。`,
     createdAt: '2026-11-10T09:40:00.000Z',
   },
@@ -692,23 +1004,23 @@ export const SEED_REASONING_SESSIONS: ReasoningSession[] = [
     sqlGenerated:
       "SELECT c.contract_type, cp.credit_rating, COUNT(c.id) AS cnt, SUM(so.settlement_amount) AS overdue_amt FROM t_contract c JOIN t_counterparty cp ON c.counterparty_id = cp.id JOIN t_settlement_order so ON so.contract_ref = c.id WHERE c.risk_level = 'HIGH' AND so.settlement_status = 'PENDING' GROUP BY c.contract_type, cp.credit_rating ORDER BY overdue_amt DESC",
     dataSummary: [
-      { label: '高风险逾期总额', value: '¥ 4,820,000', delta: '+3.1%' },
-      { label: '技术外包合同占比', value: '71.5%', delta: '+14.2%' },
-      { label: 'A级资信相对方逾期笔数', value: '9 笔', delta: '主因' },
+      { label: '高风险逾期总额', value: '¥ 2,886,000', delta: '+3.1%' },
+      { label: '华东半导体外包占比', value: '100%', delta: '主因' },
+      { label: 'A级资信相对方逾期笔数', value: '3 笔', delta: '超15天' },
     ],
     causalAnalysis: [
-      '【对象层 M1 关联穿透】Contract(OUTSOURCING) -> Counterparty(creditRating=A) 组合贡献了 71.5% 的未核销结算单。',
+      '【对象层 M1 关联穿透】Contract(OUTSOURCING, 华东区半导体) -> Counterparty(creditRating=A) 组合贡献了全部待核销逾期结算单。',
       '【规则层 M3 阈值对照】当前 RULE-01 仅对 >100万合同强制要求 AA/AAA 级资信，导致 80万~100万区间的高风险外包合同流入 A 级供应商。',
     ],
     policyRecommendations: [
       {
         actionTitle: '触发高风险逾期合同付款冻结与法务催办',
         targetObject: 'Contract / SettlementOrder',
-        expectedImpact: '预计 7 日内追回逾期结算款 ¥320 万，降低逾期率至 8.5% 以下',
+        expectedImpact: '预计 7 日内追回逾期结算款 ¥288.6 万，降低逾期率至 6.5% 以下',
         writebackInterfaceId: 'WB-01',
       },
     ],
-    answerMarkdown: `### 1. 智能问数 (Data Retrieval)\n检索 \`t_contract\` 与 \`t_settlement_order\` 发现，高风险合同待核销逾期总额为 **¥ 4,820,000**（逾期率 **14.8%**）。\n\n### 2. 智能问因 (Causal Attribution)\n沿本体知识图谱关系链 \`Contract -> Counterparty -> SettlementOrder\` 归因：\n- **71.5%** 的逾期金额集中在 \`OUTSOURCING\`（技术外包）类型且相对方资信为 \`A\` 级的合同；\n- \`RULE-01\` 资信门槛当前设定在 100 万元，80~100 万区间合同存在风控敞口。\n\n### 3. 智能问策 (Actionable Policy)\n建议立即调用回写接口 **\`WB-01\`** 批量冻结逾期结算单并推送法务催收待办。`,
+    answerMarkdown: `### 1. 智能问数 (Data Retrieval)\n检索 \`t_contract\` 与 \`t_settlement_order\` 发现，高风险合同待核销逾期总额为 **¥ 2,886,000**（逾期率 **14.8%**）。\n\n### 2. 智能问因 (Causal Attribution)\n沿本体知识图谱关系链 \`Contract -> Counterparty -> SettlementOrder\` 归因：\n- 逾期金额集中在 **华东区半导体** \`OUTSOURCING\`（技术外包）类型且相对方资信为 \`A\` 级的合同；\n- \`RULE-01\` 资信门槛当前设定在 100 万元，80~100 万区间合同存在风控敞口。\n\n### 3. 智能问策 (Actionable Policy)\n建议立即调用回写接口 **\`WB-01\`** 批量冻结逾期结算单并推送法务催收待办。`,
     createdAt: '2026-11-10T09:42:00.000Z',
   },
 ];
@@ -735,7 +1047,7 @@ export const SEED_WRITEBACK_INTERFACES: WritebackInterface[] = [
 
 export const SEED_LLM_PROVIDERS: LlmProviderConfig[] = [
   {
-    id: 'provider-magpie-local',
+    id: 'llm-pi-local',
     name: 'Magpie Local Gateway (Pi · GLM-5.3-Flash)',
     providerType: 'OPENAI_COMPATIBLE',
     baseUrl: 'http://127.0.0.1:3425/v1',
@@ -756,9 +1068,8 @@ export const SEED_LLM_PROVIDERS: LlmProviderConfig[] = [
 export const SEED_SYSTEM_SETTINGS: SystemSettingsState = {
   workspaceDir: '.onto-cs',
   defaultLanguage: 'zh-CN',
-  defaultTheme: 'light',
+  defaultTheme: 'system',
   strictValidation: true,
   autoMirrorYaml: true,
   autoSyncPrototypeMu: true,
 };
-

@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest';
+import { CONTRACT_LIFECYCLE_SUITE, validateOntologySuite } from '../../ontology-core/index.js';
 import { createWorkspaceStore } from '../../workspace-store/index.js';
 import {
+  ONTOLOGY_TOOL_NAMES,
+  OPENAI_ONTOLOGY_TOOLS,
+  applyOntologyToolCall,
+  buildTurnSseEvents,
+  createSseEventStream,
+  generateMetricInsight,
+  generatePrototypeFromDoc,
+  generateTechArchitectureDoc,
+  ontologyToolRegistry,
+  refinePrototypeWithAi,
+  runAppCodingAgentTurn,
+  runCapabilitySmartChatTurn,
   runDataOntologyReasoning,
   runOntologyCopilotTurn,
   runRequirementGrillingTurn,
+  runScenarioAttributionTurn,
+  synthesizeOntologyFromPrototype,
+  synthesizeRequirementDocFromSession,
   testLlmGatewayConnection,
 } from '../index.js';
 
@@ -32,6 +48,58 @@ describe('agent-runtime deep module', () => {
     expect(res.project.suite.M3?.rules.length).toBe(4);
   }, 30000);
 
+  it('satisfies critical copilot M3 rule mutation invariant and rejects corrupting deletions via validator gate', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+
+    const ruleTurn = await runOntologyCopilotTurn(store, {
+      projectId: 'proj-contract',
+      prompt: '请为合同新增一条付款里程碑逾期超 30 天自动冻结结算单的校验规则',
+    });
+
+    expect(ruleTurn.toolCalls[0].toolName).toBe('upsert_rule');
+    expect(ruleTurn.toolCalls[0].status).toBe('APPLIED');
+    expect(ruleTurn.project.suite.M3?.rules.length).toBe(4);
+    expect(ruleTurn.project.validation.errorCount).toBe(0);
+
+    // Deleting referenced core aggregate AGG-01 must be rejected by validator and leave suite intact
+    const rejectTurn = await runOntologyCopilotTurn(store, {
+      projectId: 'proj-contract',
+      prompt: '请删除核心聚合根 AGG-01',
+      activeModel: 'M1',
+    });
+
+    expect(rejectTurn.toolCalls[0].toolName).toBe('delete_element');
+    expect(rejectTurn.toolCalls[0].status).toBe('REJECTED_BY_VALIDATOR');
+    expect(rejectTurn.project.validation.errorCount).toBe(0);
+    expect(rejectTurn.project.suite.M1?.aggregates.some((a) => a.id === 'AGG-01')).toBe(true);
+  }, 30000);
+
+  it('registers all 12 durable tools in pi-durable registry and mutates all 11 ontology models validly', () => {
+    expect(ONTOLOGY_TOOL_NAMES).toHaveLength(12);
+    expect(OPENAI_ONTOLOGY_TOOLS).toHaveLength(12);
+    expect(ontologyToolRegistry.snapshot().tools()).toHaveLength(12);
+
+    let suite = JSON.parse(JSON.stringify(CONTRACT_LIFECYCLE_SUITE));
+    suite = applyOntologyToolCall(suite, 'upsert_aggregate', { alias: '履约保函' }).nextSuite;
+    suite = applyOntologyToolCall(suite, 'upsert_behavior', {
+      alias: '查询履约保函台账',
+      behaviorType: 'QUERY',
+    }).nextSuite;
+    suite = applyOntologyToolCall(suite, 'upsert_rule', { alias: '保函有效期校验规则' }).nextSuite;
+    suite = applyOntologyToolCall(suite, 'upsert_event', { label: '保函已归档事件' }).nextSuite;
+    suite = applyOntologyToolCall(suite, 'upsert_scenario', { name: '保函生效联动场景' }).nextSuite;
+    suite = applyOntologyToolCall(suite, 'upsert_actor_role', { roleName: '资金风控官角色' }).nextSuite;
+    suite = applyOntologyToolCall(suite, 'upsert_flow', { name: '保函开立审批流程' }).nextSuite;
+    suite = applyOntologyToolCall(suite, 'upsert_query_report', { alias: '保函风险汇总报表' }).nextSuite;
+    suite = applyOntologyToolCall(suite, 'upsert_screen', { name: '保函监控看板' }).nextSuite;
+    suite = applyOntologyToolCall(suite, 'upsert_mapping', { tableName: 't_contract_audit_ext' }).nextSuite;
+    suite = applyOntologyToolCall(suite, 'upsert_interface', { name: '保函核验服务接口' }).nextSuite;
+
+    const report = validateOntologySuite(suite);
+    expect(report.errorCount).toBe(0);
+    expect(report.valid).toBe(true);
+  });
+
   it('runs requirement grilling and data ontology reasoning (ASK_POLICY)', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
 
@@ -48,8 +116,123 @@ describe('agent-runtime deep module', () => {
 
     expect(grill.session.messages.length).toBeGreaterThan(4);
     expect(grill.session.discoveredRules.length).toBeGreaterThan(3);
+    expect(grill.session.resolvedDecisions.some((d) => d.includes('[AI自动补全]'))).toBe(true);
     expect(reasoning.mode).toBe('ASK_POLICY');
     expect(reasoning.policyRecommendations[0].writebackInterfaceId).toBe('WB-01');
   }, 40000);
-});
 
+  it('synthesizes canonical 9-Part SRS (需求规格说明书.md) including mandatory sub-items 9.1 through 9.7', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const res = await synthesizeRequirementDocFromSession(store, {
+      sessionId: 'req-sess-contract-01',
+    });
+
+    expect(res.doc.title).toContain('需求规格说明书');
+    for (let ch = 1; ch <= 9; ch++) {
+      expect(res.doc.content).toContain(`## ${ch}. `);
+    }
+    for (let sub = 1; sub <= 7; sub++) {
+      expect(res.doc.content).toContain(`### 9.${sub} `);
+    }
+    expect(res.session.status).toBe('CONVERGED');
+  }, 20000);
+
+  it('generates semantic HTML prototype, refines it, and synthesizes 11-model ontology with 0 consistency errors', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const emptyProj = store.createProject({
+      name: '供应商采购订单协同系统',
+      code: 'SRM-PO',
+      domain: '采购与供应链协同',
+      template: 'EMPTY',
+    });
+
+    const protoRes = await generatePrototypeFromDoc(store, {
+      projectId: emptyProj.id,
+      prompt: '生成包含采购单台账、起草与主管审核三屏联动的交互原型',
+    });
+
+    expect(protoRes.prototype.htmlContent).toContain('data-screen-id=');
+    expect(protoRes.prototype.htmlContent).toContain('data-element-id=');
+    expect(protoRes.prototype.htmlContent).toContain('data-binding=');
+    expect(protoRes.prototype.htmlContent).toContain('data-event-id=');
+    expect(protoRes.prototype.extractedScreenCount).toBeGreaterThanOrEqual(3);
+    expect(protoRes.project.validation.errorCount).toBe(0);
+
+    const refined = await refinePrototypeWithAi(store, {
+      projectId: emptyProj.id,
+      prototypeId: protoRes.prototype.id,
+      instruction: '在台账页顶部补充紧急采购交期红线提示徽章',
+    });
+    expect(refined.project.validation.errorCount).toBe(0);
+
+    const synth = await synthesizeOntologyFromPrototype(store, {
+      projectId: emptyProj.id,
+      prototypeId: refined.prototype.id,
+    });
+    expect(synth.synthesizedModels).toHaveLength(11);
+    expect(synth.validation.errorCount).toBe(0);
+    expect(synth.validation.valid).toBe(true);
+
+    const arch = await generateTechArchitectureDoc(store, {
+      name: 'SRM 11模型深模块云原生架构',
+      stackTags: ['TypeScript', 'Hono', 'D1'],
+    });
+    expect(arch.asset.layer).toBe('TECH_ARCH');
+
+    const coding = await runAppCodingAgentTurn(store, {
+      appId: 'app-contract-clm',
+      instruction: '同步最新 M3 合规校验规则至后端应用服务层',
+    });
+    expect(coding.generatedFilesCount).toBeGreaterThan(5);
+  }, 30000);
+
+  it('runs capability smart chat turn invoking dynamic MCP tools and citing SKILL.md rules', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const chatRes = await runCapabilitySmartChatTurn(store, {
+      agentId: 'agent-contract-copilot',
+      userMessage: '请查询当前合同台账并核对百万级合同资信合规规则',
+    });
+
+    expect(chatRes.toolInvocations).toHaveLength(1);
+    expect(chatRes.toolInvocations[0].output).toContain('SUCCESS');
+    expect(chatRes.message.content).toContain('SKILL.md');
+    expect(chatRes.session.messages.length).toBe(2);
+  }, 30000);
+
+  it('streams standard SSE frames (message_start -> delta -> tool_call -> tool_result -> render_payload -> message_end) and analytics insights', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const insight = await generateMetricInsight(store, { metricId: 'MET-02' });
+    expect(insight.writebackInterfaceId).toBe('WB-01');
+
+    const attr = await runScenarioAttributionTurn(store, {
+      scenarioId: 'ascn-01',
+      saveAsReport: true,
+    });
+    expect(attr.recommendedWritebackId).toBe('WB-01');
+    expect(attr.savedReport?.id).toBeTruthy();
+
+    const events = buildTurnSseEvents({
+      sessionId: 'sse-test-01',
+      reply: '已完成本体变更与一致性校验。',
+      toolCalls: [{ toolName: 'upsert_rule', args: { id: 'RULE-04' }, status: 'APPLIED' }],
+      renderPayload: { errorCount: 0 },
+    });
+
+    const stream = createSseEventStream(events);
+    const rawText = await new Response(stream).text();
+
+    const startIdx = rawText.indexOf('event: message_start');
+    const deltaIdx = rawText.indexOf('event: delta');
+    const callIdx = rawText.indexOf('event: tool_call');
+    const resultIdx = rawText.indexOf('event: tool_result');
+    const payloadIdx = rawText.indexOf('event: render_payload');
+    const endIdx = rawText.indexOf('event: message_end');
+
+    expect(startIdx).toBeGreaterThanOrEqual(0);
+    expect(deltaIdx).toBeGreaterThan(startIdx);
+    expect(callIdx).toBeGreaterThan(deltaIdx);
+    expect(resultIdx).toBeGreaterThan(callIdx);
+    expect(payloadIdx).toBeGreaterThan(resultIdx);
+    expect(endIdx).toBeGreaterThan(payloadIdx);
+  }, 20000);
+});

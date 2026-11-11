@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
 export type Locale = 'zh-CN' | 'en-US';
-export type ThemeMode = 'light' | 'dark';
+export type ThemePreference = 'system' | 'light' | 'dark';
+export type ResolvedTheme = 'light' | 'dark';
+export type ThemeMode = ThemePreference;
 
 export type NavViewId =
   | 'overview'
@@ -146,7 +148,7 @@ export const NAV_ITEMS: NavItemSpec[] = [
     id: 'cap-agents',
     group: 'CAPABILITY',
     labelZh: '智能体与对话',
-    labelEn: 'Agents & Dialog',
+    labelEn: 'Agents & Smart Chat',
   },
   {
     id: 'cap-cross-flows',
@@ -171,13 +173,13 @@ export const NAV_ITEMS: NavItemSpec[] = [
     id: 'data-mappings',
     group: 'ANALYTICS',
     labelZh: '数据本体与映射',
-    labelEn: 'Data Ontology Mapping',
+    labelEn: 'Data Ontology & MM',
   },
   {
     id: 'data-metrics-reports',
     group: 'ANALYTICS',
     labelZh: '指标、场景与报告',
-    labelEn: 'Metrics & Reports',
+    labelEn: 'Metrics, Scenarios & Reports',
   },
   {
     id: 'data-reasoning',
@@ -207,12 +209,20 @@ export const NAV_ITEMS: NavItemSpec[] = [
   },
 ];
 
+function getSystemColorScheme(): ResolvedTheme {
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return 'light';
+}
+
 interface PreferencesContextValue {
   locale: Locale;
   setLocale: (l: Locale) => void;
   toggleLocale: () => void;
-  theme: ThemeMode;
-  setTheme: (t: ThemeMode) => void;
+  themePreference: ThemePreference;
+  theme: ResolvedTheme;
+  setTheme: (t: ThemePreference) => void;
   toggleTheme: () => void;
   t: (zh: string, en: string) => string;
 }
@@ -221,34 +231,104 @@ const PreferencesContext = createContext<PreferencesContextValue | null>(null);
 
 export function PreferencesProvider({ children }: { children: React.ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => {
-    const saved = localStorage.getItem('onto_locale');
-    return saved === 'en-US' ? 'en-US' : 'zh-CN';
+    try {
+      const saved = localStorage.getItem('onto_locale');
+      return saved === 'en-US' ? 'en-US' : 'zh-CN';
+    } catch {
+      return 'zh-CN';
+    }
   });
 
-  const [theme, setThemeState] = useState<ThemeMode>(() => {
-    const saved = localStorage.getItem('onto_theme');
-    return saved === 'dark' ? 'dark' : 'light';
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
+    try {
+      const saved = localStorage.getItem('onto_theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+      return 'system';
+    } catch {
+      return 'system';
+    }
   });
+
+  const [systemScheme, setSystemScheme] = useState<ResolvedTheme>(getSystemColorScheme);
+  const resolvedTheme: ResolvedTheme =
+    themePreference === 'system' ? systemScheme : themePreference;
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('onto_theme', theme);
-  }, [theme]);
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e: MediaQueryListEvent) => {
+      setSystemScheme(e.matches ? 'dark' : 'light');
+    };
+    mql.addEventListener('change', onChange);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'onto_theme') {
+        setThemePreference(
+          e.newValue === 'light' || e.newValue === 'dark' ? e.newValue : 'system',
+        );
+      } else if (e.key === 'onto_locale' && (e.newValue === 'zh-CN' || e.newValue === 'en-US')) {
+        setLocaleState(e.newValue);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      mql.removeEventListener('change', onChange);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme;
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) {
+      meta.setAttribute('content', themePreference === 'system' ? 'light dark' : themePreference);
+    }
+    try {
+      if (themePreference === 'system') {
+        localStorage.removeItem('onto_theme');
+      } else {
+        localStorage.setItem('onto_theme', themePreference);
+      }
+    } catch {
+      // Ignore storage write errors in restricted contexts
+    }
+  }, [themePreference, resolvedTheme]);
 
   useEffect(() => {
     document.documentElement.lang = locale;
-    localStorage.setItem('onto_locale', locale);
+    try {
+      localStorage.setItem('onto_locale', locale);
+    } catch {
+      // Ignore storage write errors
+    }
   }, [locale]);
 
   const setLocale = (l: Locale) => setLocaleState(l);
   const toggleLocale = () => setLocaleState((prev) => (prev === 'zh-CN' ? 'en-US' : 'zh-CN'));
-  const setTheme = (t: ThemeMode) => setThemeState(t);
-  const toggleTheme = () => setThemeState((prev) => (prev === 'light' ? 'dark' : 'light'));
+
+  const setTheme = (next: ThemePreference) => setThemePreference(next);
+
+  // Two-state chrome toggle per modern-web-guidance `dark-mode-toggle`:
+  // selects the opposite of the currently rendered scheme; if that matches system default, clears override back to 'system'.
+  const toggleTheme = () => {
+    const target: ResolvedTheme = resolvedTheme === 'light' ? 'dark' : 'light';
+    const currentSys = getSystemColorScheme();
+    setThemePreference(target === currentSys ? 'system' : target);
+  };
+
   const t = (zh: string, en: string) => (locale === 'zh-CN' ? zh : en);
 
   return (
     <PreferencesContext.Provider
-      value={{ locale, setLocale, toggleLocale, theme, setTheme, toggleTheme, t }}
+      value={{
+        locale,
+        setLocale,
+        toggleLocale,
+        themePreference,
+        theme: resolvedTheme,
+        setTheme,
+        toggleTheme,
+        t,
+      }}
     >
       {children}
     </PreferencesContext.Provider>
@@ -260,4 +340,3 @@ export function usePreferences(): PreferencesContextValue {
   if (!ctx) throw new Error('usePreferences must be used inside PreferencesProvider');
   return ctx;
 }
-

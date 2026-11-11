@@ -11,8 +11,11 @@ const distDir = path.resolve(process.cwd(), 'dist', 'client');
 if (fs.existsSync(distDir)) {
   app.get('*', (c) => {
     const reqPath = c.req.path === '/' ? '/index.html' : c.req.path;
-    const candidate = path.join(distDir, reqPath);
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+    const candidate = path.resolve(distDir, `.${reqPath}`);
+    const isInsideDist =
+      candidate === distDir || candidate.startsWith(`${distDir}${path.sep}`);
+
+    if (isInsideDist && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
       const ext = path.extname(candidate).toLowerCase();
       const mimeMap: Record<string, string> = {
         '.html': 'text/html; charset=utf-8',
@@ -25,7 +28,12 @@ if (fs.existsSync(distDir)) {
       };
       const body = fs.readFileSync(candidate);
       return new Response(body, {
-        headers: { 'Content-Type': mimeMap[ext] ?? 'application/octet-stream' },
+        headers: {
+          'Content-Type': mimeMap[ext] ?? 'application/octet-stream',
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'SAMEORIGIN',
+          'Referrer-Policy': 'strict-origin-when-cross-origin',
+        },
       });
     }
     const indexHtml = path.join(distDir, 'index.html');

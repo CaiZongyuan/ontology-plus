@@ -2,6 +2,8 @@ export {
   MODEL_FILE_NAMES,
   MODEL_CODES,
   MODEL_STAGE_ORDER,
+  ManifestSchema,
+  isRelativeManifestPath,
   M1ObjectModelSchema,
   M2BehaviorModelSchema,
   M3RuleModelSchema,
@@ -14,6 +16,7 @@ export {
   MMMappingModelSchema,
   MIInterfaceModelSchema,
   OntologySuiteSchema,
+  type OntologyManifest,
   type ModelCode,
   type M1ObjectModel,
   type AggregateRoot,
@@ -24,6 +27,7 @@ export {
   type AggregateAssociation,
   type M2BehaviorModel,
   type BehaviorItem,
+  type SyncTrigger,
   type M3RuleModel,
   type RuleItem,
   type MEEventModel,
@@ -33,6 +37,7 @@ export {
   type M5ActorModel,
   type ActorItem,
   type RoleItem,
+  type PermissionGroupItem,
   type PermissionItem,
   type M6FlowModel,
   type FlowItem,
@@ -47,6 +52,8 @@ export {
   type ObjectTableMapping,
   type MIInterfaceModel,
   type InterfaceItem,
+  type InterfaceFieldSpec,
+  type InterfaceFieldSpecInput,
   type OntologySuite,
   type ValidationDiagnostic,
   type ValidationReport,
@@ -58,6 +65,9 @@ export {
 } from './lib/types.js';
 
 export {
+  normalizeRawModelYaml,
+  parseManifestJson,
+  serializeManifestJson,
   parseModelYaml,
   serializeModelYaml,
   parseSuiteFromYamlFiles,
@@ -85,4 +95,3 @@ export {
   CONTRACT_PROTOTYPE_HTML,
   MFT_ENTERPRISE_SUITE,
 } from './lib/benchmark-contract-suite.js';
-
