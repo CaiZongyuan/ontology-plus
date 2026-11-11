@@ -841,8 +841,8 @@ export function AgentSessionWorkbench({
                 activeLabel={
                   streaming.phase === 'THINKING'
                     ? t(
-                        `正在深度思考${streaming.step > 1 ? `（第 ${streaming.step} 轮）` : ''} · ${elapsedSec}s · ${streaming.thinking.length} 字…`,
-                        `Thinking${streaming.step > 1 ? ` (round ${streaming.step})` : ''} · ${elapsedSec}s · ${streaming.thinking.length} chars…`,
+                        `正在深度思考${streaming.step > 1 ? `（第 ${streaming.step} 轮）` : ''} · ${elapsedSec}s…`,
+                        `Thinking${streaming.step > 1 ? ` (round ${streaming.step})` : ''} · ${elapsedSec}s…`,
                       )
                     : streaming.phase === 'TOOL_CALLING'
                       ? t(
@@ -862,8 +862,8 @@ export function AgentSessionWorkbench({
                 doneLabel={
                   streaming.thinking
                     ? t(
-                        `已深度思考 ${elapsedSec}s（${streaming.thinking.length} 字 · 点击查看思维链）`,
-                        `Thought for ${elapsedSec}s (${streaming.thinking.length} chars · view trace)`,
+                        `已深度思考 ${elapsedSec}s（点击查看思维链）`,
+                        `Thought for ${elapsedSec}s (view trace)`,
                       )
                     : t('已完成当前推理步骤', 'Reasoning step complete')
                 }
@@ -1129,11 +1129,13 @@ function MessageTurnItem({
     );
   }
 
+  const finalOutputChars = message.content ? message.content.trim().length : 0;
+
   return (
     <div className="msg-in group space-y-2.5 rounded-window border border-line bg-surface p-3.5 shadow-2xs">
-      <div className="flex items-center justify-between gap-2 text-[11.5px] text-ink-3">
-        <div className="flex items-center gap-1.5">
-          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent-tint text-accent">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11.5px] text-ink-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent-tint text-accent">
             <Wrench size={9.5} />
           </span>
           <span className="font-semibold text-ink-2">
@@ -1142,6 +1144,11 @@ function MessageTurnItem({
           {message.modelUsed && (
             <span className="font-mono text-[10.5px] text-ink-3">
               · {message.modelUsed}
+            </span>
+          )}
+          {finalOutputChars > 0 && (
+            <span className="rounded bg-inset px-1.5 py-0.2 font-mono text-[10.5px] text-ink-3 tabular-nums">
+              {t(`本轮输出 ${finalOutputChars} 字`, `${finalOutputChars} chars`)}
             </span>
           )}
         </div>
@@ -1224,6 +1231,7 @@ function DomainArtifactCard({
   onTriggerWriteback?: (writebackInterfaceId: string, recommendationTitle: string) => void;
 }) {
   const { t } = usePreferences();
+  const [hintsExpanded, setHintsExpanded] = useState(false);
 
   if (artifact.kind === 'ONTOLOGY_DIFF') {
     return (
@@ -1387,28 +1395,49 @@ function DomainArtifactCard({
   }
 
   if (artifact.kind === 'REQUIREMENT_HINTS') {
-    const hasSignals =
-      artifact.aggregates.length > 0 ||
-      artifact.rules.length > 0 ||
-      artifact.openQuestions.length > 0;
-    if (!hasSignals) return null;
+    const totalCount =
+      artifact.aggregates.length +
+      artifact.rules.length +
+      artifact.openQuestions.length;
+    if (totalCount === 0) return null;
+
+    const shownAggs = hintsExpanded ? artifact.aggregates : artifact.aggregates.slice(0, 4);
+    const shownRules = hintsExpanded ? artifact.rules : artifact.rules.slice(0, 2);
+    const shownQuestions = hintsExpanded
+      ? artifact.openQuestions
+      : artifact.openQuestions.slice(0, 2);
+    const hiddenCount =
+      totalCount - (shownAggs.length + shownRules.length + shownQuestions.length);
 
     return (
       <div className="space-y-2 rounded-card border border-line bg-inset/45 p-2.5 text-[11.5px]">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-semibold text-ink">
-            {t('实时提炼的领域建模要素', 'Extracted Domain Modeling Signals')}
+            {t('本轮提炼的领域建模要素', 'Turn Extracted Signals')}
           </span>
-          <span className="font-mono text-[10.5px] text-ink-3 tabular-nums">
-            {artifact.aggregates.length > 0 ? `M1×${artifact.aggregates.length} ` : ''}
-            {artifact.rules.length > 0 ? `M3×${artifact.rules.length} ` : ''}
-            {artifact.openQuestions.length > 0 ? `Q×${artifact.openQuestions.length}` : ''}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10.5px] text-ink-3 tabular-nums">
+              {artifact.aggregates.length > 0 ? `M1×${artifact.aggregates.length} ` : ''}
+              {artifact.rules.length > 0 ? `M3×${artifact.rules.length} ` : ''}
+              {artifact.openQuestions.length > 0 ? `Q×${artifact.openQuestions.length}` : ''}
+            </span>
+            {(hiddenCount > 0 || hintsExpanded) && (
+              <button
+                type="button"
+                onClick={() => setHintsExpanded((v) => !v)}
+                className="cursor-pointer rounded bg-surface px-1.5 py-0.5 text-[10.5px] font-medium text-accent shadow-hairline hover:bg-hover"
+              >
+                {hintsExpanded
+                  ? t('收起', 'Collapse')
+                  : t(`展开其余 ${hiddenCount} 项`, `+${hiddenCount} more`)}
+              </button>
+            )}
+          </div>
         </div>
 
-        {artifact.aggregates.length > 0 && (
+        {shownAggs.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {artifact.aggregates.map((a) => (
+            {shownAggs.map((a) => (
               <span
                 key={a}
                 className="max-w-full break-words rounded bg-accent-tint px-2 py-0.5 font-mono text-[11px] text-accent"
@@ -1419,9 +1448,9 @@ function DomainArtifactCard({
           </div>
         )}
 
-        {artifact.rules.length > 0 && (
+        {shownRules.length > 0 && (
           <div className="space-y-1">
-            {artifact.rules.map((r, i) => (
+            {shownRules.map((r, i) => (
               <div
                 key={`${i}-${r.slice(0, 24)}`}
                 className="flex items-start gap-1.5 rounded-control bg-surface px-2 py-1.5 text-[12px] leading-snug text-ink shadow-hairline"
@@ -1435,9 +1464,9 @@ function DomainArtifactCard({
           </div>
         )}
 
-        {artifact.openQuestions.length > 0 && (
+        {shownQuestions.length > 0 && (
           <div className="space-y-1">
-            {artifact.openQuestions.map((q, i) => (
+            {shownQuestions.map((q, i) => (
               <div
                 key={`${i}-${q.slice(0, 24)}`}
                 className="flex items-start gap-1.5 rounded-control bg-surface px-2 py-1.5 text-[12px] leading-snug text-ink shadow-hairline"

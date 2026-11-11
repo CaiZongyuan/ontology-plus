@@ -1,14 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Boxes,
+  CheckCircle2,
   Copy,
   Edit3,
   Eye,
   FileCode,
   FolderKanban,
+  GitBranch,
   History,
   LayoutList,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RotateCcw,
+  Search,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import {
@@ -28,6 +35,7 @@ import type {
   ProjectSummary,
   PrototypeArtifact,
   RequirementDoc,
+  RequirementSession,
 } from '../../packages/workspace-store/index.js';
 import {
   apiCloneProject,
@@ -871,6 +879,78 @@ export function OverviewSessionsView({
   );
 }
 
+interface NormalizedAggregateSignal {
+  key: string;
+  title: string;
+  englishCode?: string;
+  detail?: string;
+}
+
+function parseAndDedupeAggregates(rawItems: string[]): NormalizedAggregateSignal[] {
+  const byKey = new Map<string, NormalizedAggregateSignal>();
+
+  for (const raw of rawItems) {
+    let cleaned = raw
+      .trim()
+      .replace(/^(AGG候选|AGG|M1)\s*[:：\-·]\s*/i, '')
+      .replace(/\s*(\[候选\]|\(候选\)|（候选）)\s*$/g, '')
+      .trim();
+    if (!cleaned) continue;
+
+    // Extract trailing parenthetical description, e.g. "门店 Store (单店经营，预留多店扩展)"
+    let detail: string | undefined;
+    const parenMatch = /^(.*?)\s*[\(（]([^()（）]+)[\)）]\s*$/.exec(cleaned);
+    if (parenMatch && parenMatch[1]?.trim()) {
+      cleaned = parenMatch[1].trim();
+      const note = parenMatch[2]?.trim();
+      if (note && note !== '候选') {
+        detail = note;
+      }
+    }
+
+    // Separate bilingual title + English identifier, e.g. "员工账号 EmployeeAccount"
+    let title = cleaned;
+    let englishCode: string | undefined;
+    const biMatch = /^([^\x00-\x7F/·\s]+(?:[/·][^\x00-\x7F/·\s]+)*)\s+([A-Za-z][A-Za-z0-9_]*)$/.exec(
+      cleaned,
+    );
+    if (biMatch) {
+      title = biMatch[1]!.trim();
+      englishCode = biMatch[2]!.trim();
+    }
+
+    // Canonicalize primary entity noun so repeated refinements across turns merge cleanly
+    const canonicalKey = title
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .split(/[/、·]/)[0]!;
+
+    const existing = byKey.get(canonicalKey);
+    if (!existing) {
+      byKey.set(canonicalKey, {
+        key: canonicalKey || cleaned,
+        title,
+        ...(englishCode ? { englishCode } : {}),
+        ...(detail ? { detail } : {}),
+      });
+    } else {
+      byKey.set(canonicalKey, {
+        key: existing.key,
+        title: title.length >= existing.title.length ? title : existing.title,
+        englishCode: englishCode || existing.englishCode,
+        detail:
+          detail && (!existing.detail || detail.length >= existing.detail.length)
+            ? detail
+            : existing.detail,
+      });
+    }
+  }
+
+  return [...byKey.values()];
+}
+
+type ConvergenceTab = 'ALL' | 'DECISIONS' | 'M1' | 'M3';
+
 // ─── 2. Requirement Exploration (需求探索 / Live Streaming + Scoped HITL) ──────
 export function RequirementExploreView({
   onNavigate,
@@ -881,6 +961,9 @@ export function RequirementExploreView({
   const { data, patchData, showToast } = useWorkbenchStore();
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
   const [synthesizingSrs, setSynthesizingSrs] = useState(false);
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState<ConvergenceTab>('ALL');
+  const [signalFilter, setSignalFilter] = useState('');
 
   useEffect(() => {
     if (!data) return;
@@ -890,10 +973,13 @@ export function RequirementExploreView({
     }
   }, [data?.activeProject.id, data?.requirementSessions, selectedSessionId]);
 
-  // Extract additional domain signals from unified REQUIREMENT AgentSessions
+  // Extract domain signals from unified REQUIREMENT AgentSessions (artifacts + tool traces + HITL answers)
   const extraReqArtifacts = useMemo(() => {
     const aggs = new Set<string>();
     const rules = new Set<string>();
+    const decisions = new Set<string>();
+    const openQuestions = new Set<string>();
+
     for (const sess of data?.agentSessions ?? []) {
       if (sess.projectId !== data?.activeProject.id || sess.agentKind !== 'REQUIREMENT') {
         continue;
@@ -903,11 +989,39 @@ export function RequirementExploreView({
           if (art.kind === 'REQUIREMENT_HINTS') {
             art.aggregates.forEach((a) => aggs.add(a));
             art.rules.forEach((r) => rules.add(r));
+            art.openQuestions.forEach((q) => openQuestions.add(q));
           }
+        }
+        for (const tc of m.toolCalls ?? []) {
+          if (tc.toolName === 'record_requirement_insights' && tc.arguments) {
+            const args = tc.arguments;
+            if (Array.isArray(args.discoveredAggregates)) {
+              args.discoveredAggregates.forEach((a) => aggs.add(String(a)));
+            }
+            if (Array.isArray(args.discoveredRules)) {
+              args.discoveredRules.forEach((r) => rules.add(String(r)));
+            }
+            if (Array.isArray(args.resolvedDecisions)) {
+              args.resolvedDecisions.forEach((d) => decisions.add(String(d)));
+            }
+            if (Array.isArray(args.openQuestions)) {
+              args.openQuestions.forEach((q) => openQuestions.add(String(q)));
+            }
+          }
+        }
+        if (m.askUser?.answered && (m.askUser.selectedAnswers?.length ?? 0) > 0) {
+          decisions.add(
+            `[已确认] ${m.askUser.header ? `${m.askUser.header}：` : ''}${m.askUser.selectedAnswers!.join('；')}`,
+          );
         }
       }
     }
-    return { aggs: [...aggs], rules: [...rules] };
+    return {
+      aggs: [...aggs],
+      rules: [...rules],
+      decisions: [...decisions],
+      openQuestions: [...openQuestions],
+    };
   }, [data?.agentSessions, data?.activeProject.id]);
 
   if (!data) return null;
@@ -915,18 +1029,95 @@ export function RequirementExploreView({
   const session =
     sessions.find((s) => s.id === selectedSessionId) ?? sessions[0] ?? undefined;
 
-  const mergedAggs = [
-    ...new Set([...(session?.discoveredAggregates ?? []), ...extraReqArtifacts.aggs]),
-  ];
-  const mergedRules = [
-    ...new Set([...(session?.discoveredRules ?? []), ...extraReqArtifacts.rules]),
-  ];
+  const normalizedAggs = useMemo(
+    () =>
+      parseAndDedupeAggregates([
+        ...(session?.discoveredAggregates ?? []),
+        ...extraReqArtifacts.aggs,
+      ]),
+    [session?.discoveredAggregates, extraReqArtifacts.aggs],
+  );
+
+  const mergedRules = useMemo(
+    () => [
+      ...new Set([...(session?.discoveredRules ?? []), ...extraReqArtifacts.rules]),
+    ],
+    [session?.discoveredRules, extraReqArtifacts.rules],
+  );
+
+  const mergedDecisions = useMemo(() => {
+    const combined = [
+      ...new Set([
+        ...(session?.resolvedDecisions ?? []),
+        ...extraReqArtifacts.decisions,
+      ]),
+    ];
+    // Append unresolved open questions tagged as [待确认] if not yet resolved
+    for (const q of extraReqArtifacts.openQuestions) {
+      const cleanQ = q.replace(/^\[[^\]]+\]\s*/, '').trim();
+      const alreadyCovered = combined.some((d) => d.includes(cleanQ.slice(0, 12)));
+      if (!alreadyCovered) {
+        combined.push(q.startsWith('[') ? q : `[待确认] ${q}`);
+      }
+    }
+    return combined;
+  }, [
+    session?.resolvedDecisions,
+    extraReqArtifacts.decisions,
+    extraReqArtifacts.openQuestions,
+  ]);
+
+  const filterQ = signalFilter.trim().toLowerCase();
+  const filteredAggs = useMemo(
+    () =>
+      filterQ
+        ? normalizedAggs.filter(
+            (a) =>
+              a.title.toLowerCase().includes(filterQ) ||
+              (a.englishCode?.toLowerCase().includes(filterQ) ?? false) ||
+              (a.detail?.toLowerCase().includes(filterQ) ?? false),
+          )
+        : normalizedAggs,
+    [normalizedAggs, filterQ],
+  );
+
+  const filteredRules = useMemo(
+    () =>
+      filterQ
+        ? mergedRules.filter((r) => r.toLowerCase().includes(filterQ))
+        : mergedRules,
+    [mergedRules, filterQ],
+  );
+
+  const filteredDecisions = useMemo(
+    () =>
+      filterQ
+        ? mergedDecisions.filter((d) => d.toLowerCase().includes(filterQ))
+        : mergedDecisions,
+    [mergedDecisions, filterQ],
+  );
+
+  const totalSignalCount =
+    normalizedAggs.length + mergedRules.length + mergedDecisions.length;
+  const canSynthesize = Boolean(session || totalSignalCount > 0);
 
   const handleSynthesizeSrs = async () => {
-    if (!session || synthesizingSrs) return;
+    if (!canSynthesize || synthesizingSrs) return;
     setSynthesizingSrs(true);
     try {
-      const res = await apiSynthesizeSrsDoc(session.id);
+      let targetSessionId = session?.id;
+      if (!targetSessionId) {
+        const created = await apiPostJson<{
+          session: RequirementSession;
+          requirementSessions: RequirementSession[];
+        }>('/api/requirements/sessions', {
+          projectId: data.activeProject.id,
+          title: `${data.activeProject.name} 需求探索会话`,
+        });
+        patchData({ requirementSessions: created.requirementSessions });
+        targetSessionId = created.session.id;
+      }
+      const res = await apiSynthesizeSrsDoc(targetSessionId);
       patchData({
         requirementDocs: res.docs,
         requirementSessions: res.requirementSessions,
@@ -943,22 +1134,98 @@ export function RequirementExploreView({
     }
   };
 
+  const renderDecisionItem = (dec: string, idx: number) => {
+    const parsed = parseDecisionTag(dec);
+    return (
+      <div
+        key={`${idx}-${dec.slice(0, 20)}`}
+        className="flex flex-col gap-1 rounded-control border border-line bg-surface px-2.5 py-2 text-[12px] shadow-2xs"
+      >
+        <div className="flex items-center justify-between gap-1.5">
+          <span className={`badge ${parsed.badgeClass}`}>{parsed.tag}</span>
+          <span className="text-[10.5px] text-ink-3">
+            {t(parsed.categoryLabelZh, parsed.categoryLabelEn)}
+          </span>
+        </div>
+        <div className="break-words leading-[1.5] text-ink">{parsed.body}</div>
+      </div>
+    );
+  };
+
+  const renderAggregateItem = (agg: NormalizedAggregateSignal) => (
+    <div
+      key={agg.key}
+      className="flex flex-col gap-0.5 rounded-control border border-line bg-surface px-2.5 py-2 text-[12px] shadow-2xs"
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="rounded bg-accent-tint px-1.5 py-0.1 font-mono text-[10px] font-semibold text-accent">
+          M1
+        </span>
+        <span className="break-words font-semibold text-ink">{agg.title}</span>
+        {agg.englishCode && (
+          <code className="rounded bg-inset px-1.5 py-0.1 font-mono text-[10.5px] text-ink-3">
+            {agg.englishCode}
+          </code>
+        )}
+      </div>
+      {agg.detail && (
+        <div className="break-words pl-0.5 text-[11.5px] leading-[1.45] text-ink-3">
+          {agg.detail}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderRuleItem = (rule: string, idx: number) => {
+    const parsed = parseDecisionTag(rule);
+    const hasExplicitPrefix =
+      rule.trim().startsWith('[AI自动补全]') ||
+      rule.trim().startsWith('[待确认]') ||
+      rule.trim().startsWith('[已确认]');
+
+    return (
+      <div
+        key={`${idx}-${rule.slice(0, 20)}`}
+        className="flex items-start gap-2 rounded-control border border-line bg-surface px-2.5 py-2 text-[12px] leading-[1.5] text-ink shadow-2xs"
+      >
+        <span className="mt-[2px] inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded bg-green-tint px-1 font-mono text-[10px] font-semibold text-green tabular-nums">
+          {idx + 1}
+        </span>
+        <div className="min-w-0 flex-1 break-words">
+          {hasExplicitPrefix && (
+            <span
+              className={cn(
+                'mr-1.5 inline-block rounded px-1.5 py-0.1 text-[10px] font-semibold align-[1px]',
+                parsed.badgeClass === 'badge-accent' && 'bg-accent-tint text-accent',
+                parsed.badgeClass === 'badge-warn' && 'bg-orange-tint text-orange',
+                parsed.badgeClass === 'badge-ok' && 'bg-green-tint text-green',
+              )}
+            >
+              {parsed.tag.replace(/^\[|\]$/g, '')}
+            </span>
+          )}
+          <span>{hasExplicitPrefix ? parsed.body : rule}</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-3">
-      {/* Top SRS Synthesis Header */}
-      <div className="card">
-        <div className="card-header" style={{ marginBottom: 0 }}>
-          <div className="flex items-center gap-2.5 flex-wrap">
+      {/* Compact Top SRS Synthesis Toolbar */}
+      <div className="card" style={{ padding: '12px 16px' }}>
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-2.5">
             <h3 className="card-title">
               {t(
                 '需求探索与分级追问',
                 'Interactive Requirement Exploration & Scoped HITL',
               )}
             </h3>
-            {sessions.length > 0 && (
+            {sessions.length > 1 && (
               <select
                 className="select"
-                style={{ width: 280 }}
+                style={{ width: 240 }}
                 value={session?.id ?? ''}
                 onChange={(e) => setSelectedSessionId(e.target.value)}
               >
@@ -969,14 +1236,45 @@ export function RequirementExploreView({
                 ))}
               </select>
             )}
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-line bg-inset/60 px-2.5 py-0.5 font-mono text-[11px] text-ink-2 tabular-nums">
+              <span>M1×{normalizedAggs.length}</span>
+              <span className="text-ink-3">·</span>
+              <span>M3×{mergedRules.length}</span>
+              <span className="text-ink-3">·</span>
+              <span>
+                {t('决策', 'Dec')}×{mergedDecisions.length}
+              </span>
+            </div>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <Button
               type="button"
-              variant="accent" size="md"
+              variant="secondary"
+              size="sm"
+              onClick={() => setRightPanelOpen((v) => !v)}
+              title={
+                rightPanelOpen
+                  ? t('收起右侧识别成果栏', 'Collapse extracted signals rail')
+                  : t('展开右侧识别成果栏', 'Expand extracted signals rail')
+              }
+            >
+              {rightPanelOpen ? (
+                <PanelRightClose size={13.5} />
+              ) : (
+                <PanelRightOpen size={13.5} />
+              )}
+              {rightPanelOpen
+                ? t('收起成果栏', 'Hide Signals')
+                : t(`展开成果栏 (${totalSignalCount})`, `Signals (${totalSignalCount})`)}
+            </Button>
+
+            <Button
+              type="button"
+              variant="accent"
+              size="sm"
               data-testid="synthesize-srs-btn"
-              disabled={!session || synthesizingSrs}
+              disabled={!canSynthesize || synthesizingSrs}
               onClick={handleSynthesizeSrs}
             >
               {synthesizingSrs
@@ -990,10 +1288,18 @@ export function RequirementExploreView({
         </div>
       </div>
 
-      {/* Main Unified Streaming Agent + Right Convergence Panel */}
-      <div className="grid grid-cols-[minmax(0,1fr)_350px] gap-3.5">
+      {/* Viewport-Locked Split Workbench: Center Agent + Bounded Right Convergence Inspector */}
+      <div
+        className={cn(
+          'grid gap-3.5 lg:h-[max(540px,calc(100dvh-184px))]',
+          rightPanelOpen ? 'lg:grid-cols-[minmax(0,1fr)_368px]' : 'grid-cols-1',
+        )}
+      >
         <AgentSessionWorkbench
           agentKind="REQUIREMENT"
+          targetId={session?.id}
+          height="100%"
+          className="min-h-[540px] lg:min-h-0"
           title={t('需求探索与边界澄清智能体', 'Requirement Discovery Agent')}
           subtitle={t(
             'A 类常规项自动补全；遇到 B 类模糊业务边界时自动弹出交互式确认卡片',
@@ -1001,89 +1307,281 @@ export function RequirementExploreView({
           )}
         />
 
-        {/* Right Panel: Decisions (A/B Tags), M1 Aggregates, M3 Rules & Next Actions */}
-        <div className="flex flex-col gap-3">
-          <div className="card">
-            <div className="card-header" style={{ marginBottom: 8 }}>
-              <h4 className="card-title">
-                {t('A/B 分级决策清单', 'A/B Classification Decisions')}
-              </h4>
-              <span className="badge badge-accent">
-                {(session?.resolvedDecisions ?? []).length}
-              </span>
-            </div>
-            <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto"
-            >
-              {(session?.resolvedDecisions ?? []).map((dec, idx) => {
-                const parsed = parseDecisionTag(dec);
-                return (
-                  <div
-                    key={`${idx}-${dec.slice(0, 18)}`} className="p-[8px_10px] rounded-[5px] bg-inset border border-line text-[12.5px] flex flex-col gap-1"
-                  >
-                    <div className="flex items-center justify-between gap-1.5"
-                    >
-                      <span className={`badge ${parsed.badgeClass}`}>{parsed.tag}</span>
-                      <span className="text-[11.5px] text-muted-foreground">
-                        {t(parsed.categoryLabelZh, parsed.categoryLabelEn)}
-                      </span>
-                    </div>
-                    <div className="leading-[1.45]">{parsed.body}</div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="card">
-            <h4 className="card-title" style={{ marginBottom: 8 }}>
-              {t('已识别领域聚合根 (M1)', 'Discovered Aggregates (M1)')}
-            </h4>
-            <div className="flex flex-wrap gap-1.5">
-              {mergedAggs.map((a) => (
-                <span key={a} className="badge badge-accent">
-                  {a}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div className="card">
-            <h4 className="card-title" style={{ marginBottom: 8 }}>
-              {t('已收敛业务规则 (M3)', 'Discovered Rules (M3)')}
-            </h4>
-            <div className="flex flex-col gap-1.5">
-              {mergedRules.map((r) => (
-                <div
-                  key={r} className="p-[6px_8px] rounded-[4px] bg-inset text-[12.5px]"
-                >
-                  {r}
+        {/* Bounded Right Panel: Fixed Height, Internal Contained Scroll, Pinned Footer */}
+        {rightPanelOpen && (
+          <aside
+            aria-label={t('已收敛需求要素面板', 'Converged Requirement Signals')}
+            className="flex max-h-[680px] min-h-[420px] flex-col overflow-hidden rounded-window border border-line bg-surface shadow-card lg:h-full lg:max-h-none lg:min-h-0"
+          >
+            {/* Zone 1: Sticky Header + Search + Accessible Tablist */}
+            <div className="shrink-0 border-b border-line bg-inset/35">
+              <div className="flex items-center justify-between gap-2 px-3.5 pt-2.5 pb-2">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles size={13.5} className="text-accent" />
+                  <span className="text-[13px] font-semibold text-ink">
+                    {t('已识别需求成果', 'Converged Signals')}
+                  </span>
                 </div>
-              ))}
-            </div>
-          </div>
+                <span className="rounded-full bg-accent-tint px-2 py-0.5 font-mono text-[10.5px] font-semibold text-accent tabular-nums">
+                  {totalSignalCount} {t('项', 'items')}
+                </span>
+              </div>
 
-          <div className="card">
-            <h4 className="card-title" style={{ marginBottom: 8 }}>
-              {t('下一步转化动作', 'Next Actions')}
-            </h4>
-            <div className="flex flex-col gap-2">
-              <Button
-                type="button"
-                variant="accent" size="md"
-                onClick={() => onNavigate('app-req-docs')}
+              {totalSignalCount > 5 && (
+                <div className="px-3 pb-2">
+                  <div className="relative flex items-center">
+                    <Search
+                      size={12}
+                      className="pointer-events-none absolute left-2.5 text-ink-3"
+                    />
+                    <input
+                      type="search"
+                      value={signalFilter}
+                      onChange={(e) => setSignalFilter(e.target.value)}
+                      placeholder={t(
+                        '筛选聚合、规则或分级决策…',
+                        'Filter aggregates, rules, decisions…',
+                      )}
+                      className="h-7 w-full rounded-control border border-line bg-surface pl-7 pr-2.5 text-[12px] text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div
+                role="tablist"
+                aria-label={t('需求识别分类视图', 'Requirement signal categories')}
+                className="grid grid-cols-4 px-1.5"
               >
-                {t('查看/编辑《软件需求说明书》 →', 'Open SRS Document →')}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary" size="md"
-                onClick={() => onNavigate('app-ontology')}
-              >
-                {t('打开 11 模型本体工作台 →', 'Open 11-Model Ontology →')}
-              </Button>
+                {(
+                  [
+                    {
+                      id: 'ALL' as const,
+                      label: t('概览', 'All'),
+                      count: totalSignalCount,
+                    },
+                    {
+                      id: 'DECISIONS' as const,
+                      label: t('决策 A/B', 'A/B'),
+                      count: filteredDecisions.length,
+                    },
+                    {
+                      id: 'M1' as const,
+                      label: t('聚合 M1', 'M1'),
+                      count: filteredAggs.length,
+                    },
+                    {
+                      id: 'M3' as const,
+                      label: t('规则 M3', 'M3'),
+                      count: filteredRules.length,
+                    },
+                  ] as const
+                ).map((tab, idx, allTabs) => (
+                  <button
+                    key={tab.id}
+                    id={`req-signal-tab-${tab.id}`}
+                    type="button"
+                    role="tab"
+                    tabIndex={activeTab === tab.id ? 0 : -1}
+                    aria-selected={activeTab === tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    onKeyDown={(e) => {
+                      if (
+                        e.key !== 'ArrowRight' &&
+                        e.key !== 'ArrowLeft' &&
+                        e.key !== 'Home' &&
+                        e.key !== 'End'
+                      ) {
+                        return;
+                      }
+                      e.preventDefault();
+                      const nextIdx =
+                        e.key === 'Home'
+                          ? 0
+                          : e.key === 'End'
+                            ? allTabs.length - 1
+                            : (idx + (e.key === 'ArrowRight' ? 1 : -1) + allTabs.length) %
+                              allTabs.length;
+                      const nextTab = allTabs[nextIdx]!;
+                      setActiveTab(nextTab.id);
+                      document.getElementById(`req-signal-tab-${nextTab.id}`)?.focus();
+                    }}
+                    className="req-tab flex h-8 cursor-pointer items-center justify-center gap-1 px-1.5 text-[11.5px] font-medium text-ink-2 transition-colors hover:text-ink"
+                  >
+                    <span className="truncate">{tab.label}</span>
+                    <span className="rounded-full bg-inset px-1.5 py-0.1 font-mono text-[10px] text-ink-3 tabular-nums">
+                      {tab.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        </div>
+
+            {/* Zone 2: Contained Scrollable Body (Never Grows Outer Page!) */}
+            <div
+              role="tabpanel"
+              aria-labelledby={`req-signal-tab-${activeTab}`}
+              tabIndex={0}
+              className="req-signal-scroller bui-scroller flex-1 min-h-0 space-y-3 overflow-y-auto p-3"
+            >
+              {totalSignalCount === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center px-4 py-10 text-center">
+                  <Sparkles size={18} className="mb-2 text-ink-3" />
+                  <div className="text-[12.5px] font-medium text-ink-2">
+                    {t('暂未沉淀结构化要素', 'No signals extracted yet')}
+                  </div>
+                  <p className="mt-1 text-[11.5px] leading-relaxed text-ink-3">
+                    {t(
+                      '在左侧与需求探索智能体对话，识别出的 A/B 决策、M1 聚合根与 M3 业务规则会自动去重归档至此。',
+                      'Chat with the Requirement Agent on the left to automatically extract and deduplicate decisions, M1 aggregates, and M3 rules here.',
+                    )}
+                  </p>
+                </div>
+              ) : activeTab === 'ALL' ? (
+                <>
+                  {/* Overview Section 1: A/B Decisions */}
+                  <section className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink">
+                        <CheckCircle2 size={12.5} className="text-accent" />
+                        {t('A/B 分级决策清单', 'A/B Decisions')}
+                      </span>
+                      {filteredDecisions.length > 3 && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('DECISIONS')}
+                          className="cursor-pointer text-[11px] font-medium text-accent hover:underline"
+                        >
+                          {t(`查看全部 ${filteredDecisions.length} 项 →`, `All ${filteredDecisions.length} →`)}
+                        </button>
+                      )}
+                    </div>
+                    {filteredDecisions.length === 0 ? (
+                      <div className="rounded-control border border-dashed border-line px-2.5 py-2 text-[11.5px] text-ink-3">
+                        {t('暂无匹配决策记录', 'No matching decisions')}
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {filteredDecisions.slice(0, 3).map(renderDecisionItem)}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Overview Section 2: Deduplicated M1 Aggregates */}
+                  <section className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink">
+                        <Boxes size={12.5} className="text-accent" />
+                        {t('已识别领域聚合根 (M1)', 'Discovered Aggregates (M1)')}
+                      </span>
+                      {filteredAggs.length > 5 && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('M1')}
+                          className="cursor-pointer text-[11px] font-medium text-accent hover:underline"
+                        >
+                          {t(`查看全部 ${filteredAggs.length} 个 →`, `All ${filteredAggs.length} →`)}
+                        </button>
+                      )}
+                    </div>
+                    {filteredAggs.length === 0 ? (
+                      <div className="rounded-control border border-dashed border-line px-2.5 py-2 text-[11.5px] text-ink-3">
+                        {t('暂无匹配领域聚合根', 'No matching aggregates')}
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {filteredAggs.slice(0, 5).map(renderAggregateItem)}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Overview Section 3: M3 Business Rules */}
+                  <section className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink">
+                        <GitBranch size={12.5} className="text-green" />
+                        {t('已收敛业务规则 (M3)', 'Discovered Rules (M3)')}
+                      </span>
+                      {filteredRules.length > 4 && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('M3')}
+                          className="cursor-pointer text-[11px] font-medium text-accent hover:underline"
+                        >
+                          {t(`查看全部 ${filteredRules.length} 条 →`, `All ${filteredRules.length} →`)}
+                        </button>
+                      )}
+                    </div>
+                    {filteredRules.length === 0 ? (
+                      <div className="rounded-control border border-dashed border-line px-2.5 py-2 text-[11.5px] text-ink-3">
+                        {t('暂无匹配业务规则', 'No matching rules')}
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {filteredRules.slice(0, 4).map(renderRuleItem)}
+                      </div>
+                    )}
+                  </section>
+                </>
+              ) : activeTab === 'DECISIONS' ? (
+                <div className="space-y-1.5">
+                  {filteredDecisions.length === 0 ? (
+                    <div className="py-8 text-center text-[12px] text-ink-3">
+                      {t('暂无分级决策记录', 'No A/B decisions recorded yet')}
+                    </div>
+                  ) : (
+                    filteredDecisions.map(renderDecisionItem)
+                  )}
+                </div>
+              ) : activeTab === 'M1' ? (
+                <div className="space-y-1.5">
+                  {filteredAggs.length === 0 ? (
+                    <div className="py-8 text-center text-[12px] text-ink-3">
+                      {t('暂无已识别聚合根', 'No M1 aggregates discovered yet')}
+                    </div>
+                  ) : (
+                    filteredAggs.map(renderAggregateItem)
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {filteredRules.length === 0 ? (
+                    <div className="py-8 text-center text-[12px] text-ink-3">
+                      {t('暂无已收敛业务规则', 'No M3 rules discovered yet')}
+                    </div>
+                  ) : (
+                    filteredRules.map(renderRuleItem)
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Zone 3: Pinned Bottom Next-Step Actions */}
+            <div className="shrink-0 space-y-1.5 border-t border-line bg-inset/40 p-2.5">
+              <div className="px-0.5 text-[10.5px] font-semibold text-ink-3">
+                {t('下一步转化动作', 'Next Actions')}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <Button
+                  type="button"
+                  variant="accent"
+                  size="sm"
+                  onClick={() => onNavigate('app-req-docs')}
+                >
+                  {t('查看需求说明书 →', 'Open SRS Doc →')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onNavigate('app-ontology')}
+                >
+                  {t('11 模型工作台 →', '11-Model Suite →')}
+                </Button>
+              </div>
+            </div>
+          </aside>
+        )}
       </div>
     </div>
   );

@@ -102,6 +102,7 @@ export type AgentDomainArtifact =
       kind: 'REQUIREMENT_HINTS';
       aggregates: string[];
       rules: string[];
+      decisions?: string[];
       openQuestions: string[];
     }
   | {
@@ -618,6 +619,10 @@ export interface WorkspaceStore {
     sourceType: ExtractionJob['sourceType'];
     sourceSnippet: string;
     applyImmediately?: boolean;
+    synthesizedSuite?: OntologySuite;
+    synthesizedSummary?: string;
+    synthesizedEntitiesCount?: number;
+    synthesizedInterfacesCount?: number;
   }): { job: ExtractionJob; project: ProjectDetail };
   applyExtractionJobToProject(jobId: string): { job: ExtractionJob; project: ProjectDetail };
   deleteExtractionJob(jobId: string): void;

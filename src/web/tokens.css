@@ -337,6 +337,27 @@ body,
   }
 }
 
+/* Bounded scroll region & accessible underline tabs for Requirement Convergence Sidebar */
+.req-signal-scroller {
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.req-tab {
+  position: relative;
+}
+
+.req-tab[aria-selected="true"] {
+  color: var(--accent);
+}
+
+.req-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 4px 0;
+  border-block-end: 2px solid var(--accent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -88,9 +88,9 @@ export const OPENAI_ONTOLOGY_TOOLS: OpenAiFunctionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'Aggregate ID such as AGG-04' },
-          name: { type: 'string', description: 'PascalCase aggregate name such as ContractAmendment' },
-          alias: { type: 'string', description: 'Chinese business name such as 合同补充协议' },
+          id: { type: 'string', description: 'Aggregate ID such as AGG-01' },
+          name: { type: 'string', description: 'PascalCase aggregate name such as CoffeeOrder or Contract' },
+          alias: { type: 'string', description: 'Chinese business name such as 门店订单 or 饮品配方' },
           description: { type: 'string', description: 'Business responsibility description' },
           lifecycle: { type: 'array', items: { type: 'string' }, description: 'Lifecycle state codes' },
           attributes: {
@@ -185,8 +185,8 @@ export const OPENAI_ONTOLOGY_TOOLS: OpenAiFunctionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'Event ID such as EVT-04' },
-          name: { type: 'string', description: 'Dot-qualified event name such as Contract.Frozen' },
+          id: { type: 'string', description: 'Event ID such as EVT-01' },
+          name: { type: 'string', description: 'Dot-qualified event name such as Order.Completed' },
           label: { type: 'string', description: 'Chinese event label' },
           sourceAggregate: { type: 'string', description: 'Source M1 aggregate name' },
           producerType: { type: 'string', enum: ['BEHAVIOR', 'RULE'] },
@@ -308,9 +308,9 @@ export const OPENAI_ONTOLOGY_TOOLS: OpenAiFunctionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'Mapping ID such as MAP-04' },
+          id: { type: 'string', description: 'Mapping ID such as MAP-01' },
           objectName: { type: 'string', description: 'Target M1 aggregate name' },
-          tableName: { type: 'string', description: 'Physical SQL table name such as t_contract_audit' },
+          tableName: { type: 'string', description: 'Physical SQL table name such as t_coffee_order' },
           mappingNote: { type: 'string' },
         },
       },
@@ -459,6 +459,57 @@ function findAggregate(suite: OntologySuite, ref?: string): AggregateRoot | unde
   );
 }
 
+function ensurePrimaryAggregate(
+  suite: OntologySuite,
+  domain: string,
+  preferredRef?: string,
+): AggregateRoot {
+  const existing = findAggregate(suite, preferredRef);
+  if (existing) return existing;
+  if (!suite.M1) {
+    suite.M1 = {
+      model_type: 'OBJECT',
+      version: '5.0',
+      domain,
+      aggregates: [],
+      data_dictionaries: [],
+      aggregate_associations: [],
+    };
+  }
+  const cleanDomain = domain.replace(/管理系统|系统|平台|工程/g, '').trim() || '业务';
+  const aggName = toPascalIdentifier(preferredRef, 'DomainRecord', 1);
+  const alias =
+    preferredRef && /[\u4e00-\u9fa5]/.test(preferredRef)
+      ? preferredRef.trim().slice(0, 24)
+      : `${cleanDomain}核心单据`;
+  const created: AggregateRoot = {
+    id: 'AGG-01',
+    name: aggName,
+    alias,
+    aggregateType: 'AGGREGATE_ROOT',
+    description: `${domain}核心业务聚合根「${alias}」`,
+    lifecycle: ['DRAFT', 'ACTIVE', 'COMPLETED'],
+    tags: ['CORE'],
+    attributes: [
+      { name: 'recordNo', label: `${alias}编号`, type: 'String', required: true },
+      { name: 'title', label: `${alias}名称`, type: 'String', required: true },
+      {
+        name: 'status',
+        label: '状态',
+        type: 'Enum',
+        required: true,
+        defaultValue: 'DRAFT',
+        enumValues: ['DRAFT', 'ACTIVE', 'COMPLETED'],
+      },
+    ],
+    entities: [],
+    valueObjects: [],
+    invariants: [],
+  };
+  suite.M1.aggregates.push(created);
+  return created;
+}
+
 function buildAsciiWireframeLayout(screenId: string, screenName: string, elements: UIElement[]): string {
   const lines: string[] = [
     '+--------------------------------------------------------------------------+',
@@ -546,17 +597,23 @@ export function applyOntologyToolCall(
       }
       const nextIdx = nextSuite.M1.aggregates.length + 1;
       const aggId = typeof args.id === 'string' && args.id.trim() ? args.id.trim() : `AGG-${pad2(nextIdx)}`;
-      const aggName = toPascalIdentifier(
-        typeof args.name === 'string' ? args.name : undefined,
-        'ContractAmendment',
-        nextIdx,
-      );
+      const cleanDomain = domain.replace(/管理系统|系统|平台|工程/g, '').trim() || '业务';
       const alias =
         typeof args.alias === 'string' && args.alias.trim()
           ? args.alias.trim().slice(0, 24)
-          : '合同补充协议';
+          : `${cleanDomain}业务对象${pad2(nextIdx)}`;
+      const aggName = toPascalIdentifier(
+        typeof args.name === 'string' ? args.name : undefined,
+        'DomainAggregate',
+        nextIdx,
+      );
 
       const rawAttrs = Array.isArray(args.attributes) ? (args.attributes as Record<string, unknown>[]) : [];
+      const lifecycle =
+        Array.isArray(args.lifecycle) && args.lifecycle.length > 0
+          ? args.lifecycle.map(String)
+          : ['DRAFT', 'ACTIVE', 'COMPLETED'];
+
       const attributes: Attribute[] =
         rawAttrs.length > 0
           ? rawAttrs.map((a, idx) => {
@@ -577,46 +634,33 @@ export function applyOntologyToolCall(
                   ? {
                       enumValues: Array.isArray(a.enumValues)
                         ? a.enumValues.map(String)
-                        : ['DRAFT', 'ACTIVE', 'CLOSED'],
+                        : lifecycle,
                     }
                   : {}),
               };
             })
           : [
               {
-                name: `${toCamelIdentifier(aggName, 'doc', nextIdx)}No`,
+                name: `${toCamelIdentifier(aggName, 'record', nextIdx)}No`,
                 label: `${alias}编号`,
                 type: 'String',
                 required: true,
               },
               {
-                name: 'amount',
-                label: '关联金额',
-                type: 'Money',
+                name: 'title',
+                label: `${alias}名称`,
+                type: 'String',
                 required: true,
-                refRules: [
-                  {
-                    name: 'NonNegativeAmountRule',
-                    expression: 'value >= 0',
-                    violationMessage: '金额不能为负数',
-                    enforcedAt: 'ALWAYS',
-                  },
-                ],
               },
               {
                 name: 'status',
                 label: '状态',
                 type: 'Enum',
                 required: true,
-                defaultValue: 'DRAFT',
-                enumValues: ['DRAFT', 'APPROVED', 'EFFECTIVE'],
+                defaultValue: lifecycle[0] ?? 'DRAFT',
+                enumValues: lifecycle,
               },
             ];
-
-      const lifecycle =
-        Array.isArray(args.lifecycle) && args.lifecycle.length > 0
-          ? args.lifecycle.map(String)
-          : ['DRAFT', 'APPROVED', 'EFFECTIVE'];
 
       const newAgg: AggregateRoot = {
         id: aggId,
@@ -670,11 +714,12 @@ export function applyOntologyToolCall(
       const nextIdx = nextSuite.M2.behaviors.length + 1;
       const behId =
         typeof args.id === 'string' && args.id.trim() ? args.id.trim() : `BHV-${pad2(nextIdx)}`;
-      const ownerAgg = findAggregate(
+      const ownerAgg = ensurePrimaryAggregate(
         nextSuite,
+        domain,
         typeof args.ownerEntity === 'string' ? args.ownerEntity : undefined,
       );
-      const ownerEntity = ownerAgg?.name ?? (typeof args.ownerEntity === 'string' && args.ownerEntity ? args.ownerEntity : 'Contract');
+      const ownerEntity = ownerAgg.name;
 
       const rawType = String(args.behaviorType ?? 'COMMAND').toUpperCase();
       const behaviorType: BehaviorItem['behaviorType'] =
@@ -871,7 +916,22 @@ export function applyOntologyToolCall(
 
       if (resolvedRefs.length === 0) {
         if (knownAggs.length > 0) {
-          resolvedRefs.push(knownAggs[0].name);
+          const textHint = `${alias} ${String(args.description ?? '')}`;
+          for (const agg of knownAggs) {
+            const cleanAlias = agg.alias.replace(/单|表|根|聚合/g, '').trim();
+            if (
+              textHint.includes(agg.name) ||
+              textHint.includes(agg.alias) ||
+              (cleanAlias.length >= 2 && textHint.includes(cleanAlias))
+            ) {
+              if (!resolvedRefs.includes(agg.name)) {
+                resolvedRefs.push(agg.name);
+              }
+            }
+          }
+          if (resolvedRefs.length === 0) {
+            resolvedRefs.push(knownAggs[0].name);
+          }
           if (
             (alias.includes('结算') || String(args.description ?? '').includes('结算')) &&
             knownAggs.some((a) => a.name === 'SettlementOrder') &&
@@ -880,19 +940,23 @@ export function applyOntologyToolCall(
             resolvedRefs.push('SettlementOrder');
           }
         } else {
-          resolvedRefs.push('Contract');
+          resolvedRefs.push(ensurePrimaryAggregate(nextSuite, domain).name);
         }
       }
 
-      const primaryObj = resolvedRefs[0] ?? 'Contract';
-      const primaryAttr =
-        knownAggs.find((a) => a.name === primaryObj)?.attributes.find((at) => at.type === 'Money' || at.type === 'Decimal' || at.type === 'Integer')?.name ??
-        'totalAmount';
+      const primaryObj = resolvedRefs[0] ?? ensurePrimaryAggregate(nextSuite, domain).name;
+      const targetRuleAgg = (nextSuite.M1?.aggregates ?? []).find((a) => a.name === primaryObj);
+      const numericAttr = targetRuleAgg?.attributes.find(
+        (at) => at.type === 'Money' || at.type === 'Decimal' || at.type === 'Integer',
+      );
+      const fallbackAttr = targetRuleAgg?.attributes[0]?.name ?? 'id';
 
       const expression =
         typeof args.expression === 'string' && args.expression.trim()
           ? args.expression.trim()
-          : `${primaryObj}.${primaryAttr} > 0`;
+          : numericAttr
+            ? `${primaryObj}.${numericAttr.name} >= 0`
+            : `${primaryObj}.${fallbackAttr} != ''`;
 
       const newRule: RuleItem = {
         id: ruleId,
@@ -948,11 +1012,12 @@ export function applyOntologyToolCall(
       const nextIdx = nextSuite.ME.events.length + 1;
       const evId =
         typeof args.id === 'string' && args.id.trim() ? args.id.trim() : `EVT-${pad2(nextIdx)}`;
-      const srcAgg = findAggregate(
+      const srcAgg = ensurePrimaryAggregate(
         nextSuite,
+        domain,
         typeof args.sourceAggregate === 'string' ? args.sourceAggregate : undefined,
       );
-      const sourceAggregate = srcAgg?.name ?? 'Contract';
+      const sourceAggregate = srcAgg.name;
 
       let evName = typeof args.name === 'string' ? args.name.trim() : '';
       if (!/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/.test(evName)) {
@@ -1074,7 +1139,30 @@ export function applyOntologyToolCall(
         }
       }
       if (involvedAggregates.length === 0) {
-        involvedAggregates.push('Contract', 'SettlementOrder');
+        const primary = ensurePrimaryAggregate(nextSuite, domain);
+        involvedAggregates.push(primary.name);
+        if (nextSuite.M1 && nextSuite.M1.aggregates.length < 2) {
+          const secondaryName = `${primary.name}Record`;
+          nextSuite.M1.aggregates.push({
+            id: `AGG-${pad2(nextSuite.M1.aggregates.length + 1)}`,
+            name: secondaryName,
+            alias: `${primary.alias}关联记录`,
+            aggregateType: 'AGGREGATE_ROOT',
+            lifecycle: ['CREATED', 'COMPLETED'],
+            tags: ['COLLAB'],
+            attributes: [
+              { name: 'recordNo', label: '记录编号', type: 'String', required: true },
+              { name: 'summary', label: '业务摘要', type: 'String', required: true },
+            ],
+            entities: [],
+            valueObjects: [],
+            invariants: [],
+          });
+        }
+        const second = nextSuite.M1?.aggregates[1];
+        if (second && !involvedAggregates.includes(second.name)) {
+          involvedAggregates.push(second.name);
+        }
       }
 
       const firstBeh = nextSuite.M2?.behaviors[0];
@@ -1170,11 +1258,11 @@ export function applyOntologyToolCall(
       const roleName =
         typeof args.roleName === 'string' && args.roleName.trim()
           ? args.roleName.trim()
-          : '合规风控专员角色';
+          : '业务操作员角色';
       const roleCode =
         typeof args.roleCode === 'string' && args.roleCode.trim()
           ? args.roleCode.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_')
-          : `RISK_AUDITOR_${pad2(roleIdx)}`;
+          : `DOMAIN_OPERATOR_${pad2(roleIdx)}`;
 
       if (actorType !== 'EXTERNAL_ENTITY') {
         const newRole: RoleItem = {
@@ -1203,7 +1291,7 @@ export function applyOntologyToolCall(
         typeof args.actorName === 'string' && args.actorName.trim()
           ? args.actorName.trim()
           : actorType === 'EXTERNAL_ENTITY'
-            ? '外部风控征信服务网关'
+            ? '外部协同服务网关'
             : roleName.replace(/角色$/, '');
 
       const newActor: ActorItem = {
@@ -1229,7 +1317,7 @@ export function applyOntologyToolCall(
       else nextSuite.M5.actors.push(newActor);
 
       if (args.permissionId && typeof args.permissionId === 'string') {
-        const targetAgg = findAggregate(nextSuite)?.name ?? 'Contract';
+        const targetAgg = ensurePrimaryAggregate(nextSuite, domain).name;
         const perm: PermissionItem = {
           id: args.permissionId,
           name: `${roleName}访问权限`,
@@ -1264,17 +1352,23 @@ export function applyOntologyToolCall(
       const nextIdx = nextSuite.M6.flows.length + 1;
       const flowId =
         typeof args.id === 'string' && args.id.trim() ? args.id.trim() : `FLW-${pad2(nextIdx)}`;
+      const cleanDomain = domain.replace(/管理系统|系统|平台|工程/g, '').trim() || '业务';
       const name =
         typeof args.name === 'string' && args.name.trim()
           ? args.name.trim()
-          : `业务协同与合规审批流程 ${pad2(nextIdx)}`;
+          : `${cleanDomain}业务协同流程 ${pad2(nextIdx)}`;
       const flowType: FlowItem['flowType'] =
-        args.flowType === 'COLLABORATION' ? 'COLLABORATION' : 'APPROVAL';
-      const primaryAgg = findAggregate(
+        args.flowType === 'COLLABORATION'
+          ? 'COLLABORATION'
+          : args.flowType === 'APPROVAL' || /审批|审核|会签|放行|终审/.test(name)
+            ? 'APPROVAL'
+            : 'COLLABORATION';
+      const primaryAgg = ensurePrimaryAggregate(
         nextSuite,
+        domain,
         typeof args.primaryAggregate === 'string' ? args.primaryAggregate : undefined,
       );
-      const primaryAggregate = primaryAgg?.name ?? 'Contract';
+      const primaryAggregate = primaryAgg.name;
       const validRoles = (nextSuite.M5?.roles ?? []).map((r) => r.id);
       const firstRole = validRoles[0];
       const secondRole = validRoles[1] ?? firstRole;
@@ -1405,21 +1499,23 @@ export function applyOntologyToolCall(
       const prefix = queryType === 'REPORT' ? 'RPT' : 'QRY';
       const rptId =
         typeof args.id === 'string' && args.id.trim() ? args.id.trim() : `${prefix}-${pad2(nextIdx + 2)}`;
+      const cleanDomain = domain.replace(/管理系统|系统|平台|工程/g, '').trim() || '业务';
       const alias =
         typeof args.alias === 'string' && args.alias.trim()
           ? args.alias.trim()
-          : `合同履约分析统计报表 ${pad2(nextIdx)}`;
+          : `${cleanDomain}统计查询报表 ${pad2(nextIdx)}`;
       const rptName = toPascalIdentifier(
         typeof args.name === 'string' ? args.name : undefined,
         'DomainAnalyticsReport',
         nextIdx,
       );
 
-      const primaryAgg = findAggregate(
+      const primaryAgg = ensurePrimaryAggregate(
         nextSuite,
+        domain,
         typeof args.primaryAggregate === 'string' ? args.primaryAggregate : undefined,
       );
-      const aggName = primaryAgg?.name ?? 'Contract';
+      const aggName = primaryAgg.name;
       const firstAttr = primaryAgg?.attributes[0]?.name ?? 'id';
       const tableSnake = `t_${toSnakeCase(aggName)}`;
       const colSnake = toSnakeCase(firstAttr);
@@ -1657,12 +1753,13 @@ export function applyOntologyToolCall(
         };
       }
       const nextIdx = nextSuite.MM.mappings.length + 1;
-      const targetAgg = findAggregate(
+      const targetAgg = ensurePrimaryAggregate(
         nextSuite,
+        domain,
         typeof args.objectName === 'string' ? args.objectName : undefined,
       );
-      const objectRef = targetAgg?.id ?? 'AGG-01';
-      const objectName = targetAgg?.name ?? 'Contract';
+      const objectRef = targetAgg.id;
+      const objectName = targetAgg.name;
       const mapId =
         typeof args.id === 'string' && args.id.trim()
           ? args.id.trim()
@@ -1733,10 +1830,11 @@ export function applyOntologyToolCall(
         typeof args.interfaceId === 'string' && args.interfaceId.trim()
           ? args.interfaceId.trim()
           : `IF-${pad2(nextIdx + 2)}`;
+      const cleanDomain = domain.replace(/管理系统|系统|平台|工程/g, '').trim() || '业务';
       const name =
         typeof args.name === 'string' && args.name.trim()
           ? args.name.trim()
-          : `合同领域服务接口 ${pad2(nextIdx)}`;
+          : `${cleanDomain}领域服务接口 ${pad2(nextIdx)}`;
       const direction: InterfaceItem['direction'] =
         args.direction === 'DEPENDENT' ? 'DEPENDENT' : 'PROVIDED';
 

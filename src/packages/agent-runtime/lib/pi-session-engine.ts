@@ -1206,7 +1206,13 @@ function executeUnifiedToolCall(
   // 4. Record Requirement Insights
   if (tc.name === 'record_requirement_insights') {
     const reqSessions = store.listRequirementSessions(session.projectId);
-    const targetReq = reqSessions.find((s) => s.id === session.targetId) ?? reqSessions[0];
+    const targetReq =
+      reqSessions.find((s) => s.id === session.targetId) ??
+      reqSessions[0] ??
+      store.createRequirementSession({
+        projectId: session.projectId,
+        title: session.title || '需求探索会话',
+      });
     const discoveredAggregates = Array.isArray(args.discoveredAggregates)
       ? args.discoveredAggregates.map(String)
       : [];
