@@ -102,5 +102,14 @@ _Avoid_: Custom webhook, REST wrapper
 The process of distilling an Ontology Suite from an existing business system's documentation, schemas, and interfaces to upgrade legacy capabilities into Agent-native Skills, MCP tools, and intelligent workflows.
 _Avoid_: 逆向工程, 本体逆向, 逆向建模, Reverse engineering
 
+**Extraction Candidate (萃取候选)**:
+A single model element proposed by an Ontology Extraction that has not yet entered the Ontology Suite.
+_Avoid_: Candidate suite, draft model, 候选套件
 
+**Evidence (证据)**:
+The excerpt of source material an Extraction Candidate rests on, together with how it was derived: read off the source by the structural scan, or inferred by semantic alignment.
+_Avoid_: Confidence score, 置信度, provenance chain
 
+**Confirmation (确认)**:
+A person's decision to accept or reject one Extraction Candidate; only accepted candidates are merged into the Ontology Suite.
+_Avoid_: Certification, 认证 (collides with `M5` authentication), approval

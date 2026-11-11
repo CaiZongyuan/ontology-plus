@@ -7,7 +7,7 @@ An ontology-driven software modeling, application assembly, capability extractio
 - Framework specification: `docs/Ontology-Modeling-Framework/ontology-plus-framework.md`.
 - Domain vocabulary: `GLOSSARY.md`. Architecture decisions: `docs/adr/`.
 - Deep modules: `src/packages/README.md`. Packages under `src/packages/<name>/` expose only root entry points (`index.ts`), hide implementation in `lib/`, and keep tests in `tests/`, enforced by `pnpm lint:boundaries` (`dependency-cruiser`).
-- Feature specs and tracer-bullet tickets: `.scratch/ontology-plus/spec.md` and `.scratch/ontology-plus/issues/`.
+- Feature specs and tracer-bullet tickets: GitHub Issues (a spec issue with its tickets as sub-issues).
 
 ## Contracts
 
@@ -21,7 +21,7 @@ An ontology-driven software modeling, application assembly, capability extractio
 
 ### Issue tracker
 
-Issues and specs live as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+Issues and specs live as GitHub Issues. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

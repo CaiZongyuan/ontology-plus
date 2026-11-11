@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -142,13 +143,26 @@ paths:
     expect(job.extractedTablesCount).toBe(2);
     expect(job.extractedEntitiesCount).toBe(2);
     expect(job.extractedInterfacesCount).toBe(2);
-    expect(job.candidateSuite?.M1?.aggregates.some((a) => a.name === 'MftNodeCluster')).toBe(true);
-    expect(job.candidateSuite?.MM?.mappings.some((m) => m.objectName === 'MftRoutePolicy')).toBe(true);
-    expect(job.candidateSuite?.MI?.interfaces.length).toBeGreaterThanOrEqual(2);
+    const candidateOf = (collection: string, name: string) =>
+      job.candidates.find(
+        (c) => c.collection === collection && JSON.stringify(c.element).includes(`"${name}"`),
+      );
+    expect(candidateOf('aggregates', 'MftNodeCluster')).toBeDefined();
+    expect(candidateOf('mappings', 'MftRoutePolicy')).toBeDefined();
+    expect(job.candidates.filter((c) => c.collection === 'interfaces').length).toBeGreaterThanOrEqual(2);
     expect(unmutatedProj.suite.M1!.aggregates.length).toBe(beforeAggCount);
 
+    // Nothing is merged until candidates are confirmed.
+    expect(() => store.applyExtractionJobToProject(job.id)).toThrow(/No accepted candidates/);
+    store.saveExtractionDecisions(
+      job.id,
+      Object.fromEntries(job.candidates.map((c) => [c.key, 'ACCEPTED' as const])),
+    );
+
     const applied = store.applyExtractionJobToProject(job.id);
+    expect(applied.blockedBy).toEqual([]);
     expect(applied.job.appliedToProject).toBe(true);
+    expect(applied.job.appliedCandidateCount).toBe(job.candidates.length);
     expect(applied.job.status).toBe('REVIEWED');
     expect(applied.project.suite.M1!.aggregates.some((a) => a.name === 'MftNodeCluster')).toBe(true);
     expect(applied.project.validation.valid).toBe(true);
@@ -282,6 +296,78 @@ paths:
       expect(resetDemo.currentStage).toBe(0);
       expect(resetDemo.validation.presentModels).toEqual([]);
       expect(fs.existsSync(demoYamlDir)).toBe(false);
+    } finally {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // Ignore Windows file-handle lock on open SQLite temp file until process exit
+      }
+    }
+  });
+  it('upgrades a job stored as a whole-suite snapshot into candidates on first read', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-cs-legacy-'));
+    try {
+      const store = createWorkspaceStore({ workspaceRoot: tmpDir, enableFileMirror: false });
+      const project = store.getProject('proj-mft')!;
+
+      // What an older version persisted: the suite as extraction left it, and a score.
+      const snapshot = JSON.parse(JSON.stringify(project.suite)) as typeof project.suite;
+      snapshot.M1!.aggregates.push({
+        ...snapshot.M1!.aggregates[0]!,
+        id: 'AGG-LEGACY-01',
+        name: 'LegacyAuditLog',
+        alias: '旧版萃取出的审计日志',
+      });
+      const legacyJob = (id: string, appliedToProject: boolean) => ({
+        id,
+        systemId: 'sys-mft-transfer',
+        projectId: 'proj-mft',
+        title: '旧版任务',
+        sourceType: 'DDL_AND_OPENAPI',
+        sourceSnippet: 'CREATE TABLE legacy_audit_log (id INTEGER PRIMARY KEY);',
+        extractedModels: ['M1'],
+        confidenceScore: 0.95,
+        status: 'COMPLETED',
+        summary: '旧版任务',
+        candidateSuite: snapshot,
+        appliedToProject,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      });
+
+      const req = createRequire(import.meta.url);
+      const { DatabaseSync } = req('node:sqlite') as {
+        DatabaseSync: new (p: string) => {
+          prepare(sql: string): { run(...args: unknown[]): unknown };
+          close(): void;
+        };
+      };
+      const raw = new DatabaseSync(path.join(tmpDir, 'onto-cs.db'));
+      for (const job of [legacyJob('ext-legacy-open', false), legacyJob('ext-legacy-merged', true)]) {
+        raw
+          .prepare(
+            `INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at) VALUES (?, ?, ?, ?, ?)`,
+          )
+          .run('extraction_jobs', job.id, job.projectId, JSON.stringify(job), job.createdAt);
+      }
+      raw.close();
+
+      const jobs = store.listExtractionJobs('proj-mft');
+      const open = jobs.find((j) => j.id === 'ext-legacy-open')!;
+      expect(open.candidates.map((c) => c.elementId)).toEqual(['AGG-LEGACY-01']);
+      expect(open.decisions).toEqual({});
+      expect(open.semanticAlignment).toEqual({ status: 'SKIPPED', reason: 'LEGACY_JOB' });
+      expect('candidateSuite' in open).toBe(false);
+      expect('confidenceScore' in open).toBe(false);
+
+      const merged = jobs.find((j) => j.id === 'ext-legacy-merged')!;
+      expect(merged.appliedToProject).toBe(true);
+      expect(merged.candidates).toEqual([]);
+
+      // The upgraded job goes through the ordinary confirm-then-merge path.
+      store.saveExtractionDecisions(open.id, { 'M1/aggregates/AGG-LEGACY-01': 'ACCEPTED' });
+      const applied = store.applyExtractionJobToProject(open.id);
+      expect(applied.blockedBy).toEqual([]);
+      expect(applied.project.suite.M1!.aggregates.some((a) => a.id === 'AGG-LEGACY-01')).toBe(true);
     } finally {
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true });

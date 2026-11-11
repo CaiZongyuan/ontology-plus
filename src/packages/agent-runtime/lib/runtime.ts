@@ -1,12 +1,22 @@
 import {
   CONTRACT_PROTOTYPE_HTML,
   MODEL_CODES,
+  applyAlignment,
+  buildAlignmentSkeleton,
+  buildExtractionCandidates,
+  candidateKey,
   extractMuFromPrototypeHtml,
+  locateQuote,
+  sanitizeAlignment,
+  scanSourceStructure,
   validateOntologySuite,
   type AggregateRoot,
   type Attribute,
   type ModelCode,
+  type ExtractionEvidence,
   type OntologySuite,
+  type SemanticAlignmentReport,
+  type StructuralScanResult,
   type ValidationReport,
 } from '../../ontology-core/index.js';
 import {
@@ -24,6 +34,7 @@ import type {
   CapabilityChatMessage,
   CapabilityChatSession,
   ExtractionJob,
+  ExtractionMergeResult,
   FourLayerAsset,
   LlmProviderConfig,
   MetricDefinition,
@@ -3976,6 +3987,7 @@ export async function refinePrototypeWithAi(
 
 interface LlmSynthesizedDomainBlueprint {
   aggregates?: {
+    sourceQuote?: string;
     id?: string;
     name: string;
     alias?: string;
@@ -3983,6 +3995,7 @@ interface LlmSynthesizedDomainBlueprint {
     attributes?: { name: string; label?: string; type?: string; required?: boolean }[];
   }[];
   behaviors?: {
+    sourceQuote?: string;
     id?: string;
     name: string;
     alias?: string;
@@ -3990,6 +4003,7 @@ interface LlmSynthesizedDomainBlueprint {
     behaviorType?: 'COMMAND' | 'QUERY';
   }[];
   rules?: {
+    sourceQuote?: string;
     id?: string;
     name?: string;
     alias?: string;
@@ -3999,12 +4013,14 @@ interface LlmSynthesizedDomainBlueprint {
     violationMessage?: string;
   }[];
   events?: {
+    sourceQuote?: string;
     id?: string;
     name: string;
     label?: string;
     sourceAggregate?: string;
   }[];
   actors?: {
+    sourceQuote?: string;
     actorId?: string;
     actorName?: string;
     actorType?: 'HUMAN' | 'SYSTEM' | 'EXTERNAL_ENTITY' | 'TIMER';
@@ -4013,12 +4029,14 @@ interface LlmSynthesizedDomainBlueprint {
     roleCode?: string;
   }[];
   flows?: {
+    sourceQuote?: string;
     id?: string;
     name: string;
     flowType?: 'APPROVAL' | 'COLLABORATION' | 'SCHEDULED';
     primaryAggregate?: string;
   }[];
   interfaces?: {
+    sourceQuote?: string;
     interfaceId?: string;
     name: string;
     direction?: 'PROVIDED' | 'DEPENDENT';
@@ -4744,6 +4762,154 @@ export async function runAppCodingAgentTurn(
   };
 }
 
+/**
+ * Semantic alignment: one LLM call over the structural-scan skeleton. The LLM
+ * labels what was read and picks reference targets from listed candidates; it
+ * cannot add structure. A failed or unusable call leaves the scan untouched
+ * and says so in the report (ADR-0007).
+ */
+async function runSemanticAlignment(
+  store: WorkspaceStore,
+  scan: StructuralScanResult,
+  input: { projectId: string; source: string; locale: AgentLocale },
+): Promise<{ scan: StructuralScanResult; report: SemanticAlignmentReport }> {
+  const skeleton = buildAlignmentSkeleton(scan);
+  const omitted = skeleton.omitted ? { omitted: skeleton.omitted } : {};
+  const provider = resolvePreferredProvider(store, input.projectId);
+
+  let content: string | undefined;
+  try {
+    const res = await callOpenAiCompatibleChat(
+      provider,
+      [
+        {
+          role: 'system',
+          content: [
+            'You are the semantic alignment step of Ontology Extraction in Ontology Plus (always "Ontology Extraction", never "reverse engineering").',
+            'A deterministic structural scan already read the tables below from the source. Do not add, rename, or remove tables or columns.',
+            `For each table give a short business alias and a one-sentence description, and a short business label for each column, written in ${input.locale === 'en-US' ? 'English' : 'Simplified Chinese'}.`,
+            'A column that lists "refCandidates" may be an undeclared reference. Answer "refTable" with exactly one of the listed table names, or null when it is not a reference or you are not sure. Never answer a name that is not listed. A column without "refCandidates" must not get a "refTable".',
+            'Return ONLY JSON: {"tables":[{"table":"<name>","alias":"...","description":"...","columns":[{"column":"<name>","label":"...","refTable":null}]}]}',
+          ].join('\n'),
+        },
+        { role: 'user', content: JSON.stringify(skeleton) },
+      ],
+      { store, maxTokens: 6144 },
+    );
+    content = res?.content;
+  } catch (err) {
+    if (!(err instanceof LlmGatewayError)) throw err;
+    const diag = err.toDiagnostic(input.locale);
+    return {
+      scan,
+      report: {
+        status: 'FAILED',
+        reason: 'GATEWAY_ERROR',
+        diagnostic: {
+          message: diag.message,
+          providerName: diag.providerName,
+          baseUrl: diag.baseUrl,
+          model: diag.model,
+          remediation: diag.remediation,
+        },
+        ...omitted,
+      },
+    };
+  }
+
+  const sanitized = sanitizeAlignment(skeleton, content ? extractFirstJsonObject(content) : null);
+  const usable =
+    sanitized.tableLabels.length + sanitized.columnLabels.length + sanitized.inferredRefs.length;
+  if (usable === 0) {
+    return {
+      scan,
+      report: {
+        status: 'FAILED',
+        reason: 'UNUSABLE_RESPONSE',
+        dropped: sanitized.dropped,
+        ...omitted,
+      },
+    };
+  }
+  const applied = applyAlignment(scan, sanitized, input.source);
+  return {
+    scan: applied.scan,
+    report: {
+      status: 'DONE',
+      ...(applied.dropped.length > 0 ? { dropped: applied.dropped } : {}),
+      ...omitted,
+    },
+  };
+}
+
+/** Evidence for blueprint-derived elements: the LLM's quote, kept only if it is really in the source. */
+function collectBlueprintEvidence(
+  suite: OntologySuite,
+  blueprint: LlmSynthesizedDomainBlueprint,
+  source: string,
+  locale: AgentLocale,
+): Record<string, ExtractionEvidence[]> {
+  const evidenceByKey: Record<string, ExtractionEvidence[]> = {};
+  const clean = (name: string | undefined) => (name ?? '').replace(/[^A-Za-z0-9_]/g, '');
+  const cite = (key: string, quote: string | undefined) => {
+    const located = locateQuote(source, quote);
+    evidenceByKey[key] = [
+      located
+        ? {
+            origin: 'INFERRED',
+            note: pickLocaleText(locale, 'LLM 依据此段原文归纳', 'Inferred by the LLM from this passage'),
+            lines: located.lines,
+            excerpt: located.excerpt,
+          }
+        : {
+            origin: 'INFERRED',
+            note: quote?.trim()
+              ? pickLocaleText(
+                  locale,
+                  `LLM 给出的引用在源材料中核对不到：「${quote.trim().slice(0, 80)}」`,
+                  `The quote the LLM cited is not in the source: "${quote.trim().slice(0, 80)}"`,
+                )
+              : pickLocaleText(locale, 'LLM 未给出原文引用', 'The LLM cited no passage'),
+            unverified: true,
+          },
+    ];
+  };
+
+  for (const agg of suite.M1?.aggregates ?? []) {
+    const item = blueprint.aggregates?.find((a) => clean(a.name) === agg.name);
+    if (item) cite(candidateKey('M1', 'aggregates', agg.id), item.sourceQuote);
+  }
+  for (const bhv of suite.M2?.behaviors ?? []) {
+    const item = blueprint.behaviors?.find((b) => clean(b.name) === bhv.name);
+    if (item) cite(candidateKey('M2', 'behaviors', bhv.id), item.sourceQuote);
+  }
+  for (const rule of suite.M3?.rules ?? []) {
+    const item = blueprint.rules?.find(
+      (r) => (r.name && clean(r.name) === rule.name) || (r.alias && r.alias === rule.alias),
+    );
+    if (item) cite(candidateKey('M3', 'rules', rule.id), item.sourceQuote);
+  }
+  for (const evt of suite.ME?.events ?? []) {
+    const item = blueprint.events?.find((e) => e.name === evt.name);
+    if (item) cite(candidateKey('ME', 'events', evt.id), item.sourceQuote);
+  }
+  for (const flow of suite.M6?.flows ?? []) {
+    const item = blueprint.flows?.find((f) => f.name === flow.name);
+    if (item) cite(candidateKey('M6', 'flows', flow.id), item.sourceQuote);
+  }
+  for (const itf of suite.MI?.interfaces ?? []) {
+    const item = blueprint.interfaces?.find((i) => i.name === itf.name);
+    if (item) cite(candidateKey('MI', 'interfaces', itf.interfaceId), item.sourceQuote);
+  }
+  return evidenceByKey;
+}
+
+/**
+ * Ontology Extraction in two rounds. Round one, the structural scan, is
+ * deterministic. Round two is the LLM: semantic alignment when the scan read
+ * tables, a quoted blueprint when the source is prose. Either way the result
+ * is a set of Extraction Candidates, never a replacement suite.
+ */
 export async function runSmartOntologyExtractionJob(
   store: WorkspaceStore,
   input: {
@@ -4755,96 +4921,158 @@ export async function runSmartOntologyExtractionJob(
     applyImmediately?: boolean;
     locale?: AgentLocale | string;
   },
-): Promise<{ job: ExtractionJob; project: ProjectDetail }> {
-  const snippet = input.sourceSnippet.trim();
-  const locale = resolveEffectiveLocale(store, input.locale, snippet || input.title);
-  const hasExplicitDdl = /CREATE\s+TABLE/i.test(snippet);
-  const hasExplicitOpenApi = snippet.includes('"paths"') || /\/api\/[a-zA-Z0-9/_-]+/.test(snippet);
+): Promise<ExtractionMergeResult> {
+  const project = store.getProject(input.projectId);
+  if (!project) throw new Error(`Project not found: ${input.projectId}`);
+  const source = input.sourceSnippet;
+  const locale = resolveEffectiveLocale(store, input.locale, source.trim() || input.title);
+  const sys = store.listLegacySystems().find((s) => s.id === input.systemId);
+  const systemName = sys?.name ?? input.systemId;
+  const mock = isMockLlmActive(store);
 
-  // Use LLM semantic extraction when Live mode is active and input is unstructured docs/logs/code
-  if (!isMockLlmActive(store) && (!hasExplicitDdl || input.sourceType === 'LOG_AND_DOC')) {
-    const sys = store.listLegacySystems().find((s) => s.id === input.systemId);
-    const targetProject =
-      store.getProject(input.projectId) ?? store.getProject(store.listProjects()[0]!.id)!;
-    const domainLabel = targetProject?.domain || (sys?.name ? `${sys.name}业务域` : '萃取业务域');
-    const activeProvider = resolvePreferredProvider(store, input.projectId);
-
-    try {
-      const llmExtractRes = await callOpenAiCompatibleChat(
-        activeProvider,
-        [
-          {
-            role: 'system',
-            content: [
-              'You are the Ontology Extraction Engine of Ontology Plus (strictly "Ontology Extraction", never "reverse engineering").',
-              'Extract structured domain aggregates, behaviors, business rules, events, actors, flows, and service interfaces from the provided source code, API spec, SOP document, or runtime logs.',
-              'Return ONLY valid JSON matching:',
-              '{"aggregates":[{"name":"PascalCase","alias":"...","lifecycle":["CREATED","COMPLETED"],"attributes":[{"name":"camelCase","label":"...","type":"String|Integer|Decimal|Money|Boolean|Date","required":true}]}],"behaviors":[{"name":"camelCase","alias":"...","ownerEntity":"PascalCase","behaviorType":"COMMAND|QUERY"}],"rules":[{"name":"PascalRule","alias":"...","ruleType":"VALIDATION","referencedObjects":["PascalCase"],"expression":"...","violationMessage":"..."}],"events":[{"name":"PascalCase.Completed","label":"...","sourceAggregate":"PascalCase"}],"interfaces":[{"name":"...","direction":"PROVIDED","interfaceCategory":"COMMAND|QUERY","protocol":"REST","relatedEntityRef":"PascalCase"}]}',
-            ].join('\n'),
-          },
-          {
-            role: 'user',
-            content: `System: ${sys?.name ?? input.systemId} (Source Type: ${input.sourceType})\n\n--- Raw Artifact ---\n${snippet.slice(0, 12000)}`,
-          },
-        ],
-        { store, maxTokens: 6144 },
-      );
-
-      const parsed = llmExtractRes?.content
-        ? extractFirstJsonObject<LlmSynthesizedDomainBlueprint>(llmExtractRes.content)
-        : null;
-
-      if (parsed && (parsed.aggregates?.length || parsed.interfaces?.length)) {
-        const baseSuite: OntologySuite = targetProject
-          ? JSON.parse(JSON.stringify(targetProject.suite))
-          : {};
-        const seeded = applyLlmBlueprintToSuite(baseSuite, parsed, domainLabel);
-        const placeholderHtml = buildSemanticPrototypeHtmlForProject({
-          ...targetProject,
-          name: input.title || sys?.name || targetProject.name,
-          domain: domainLabel,
-          suite: seeded,
-          validation: validateOntologySuite(seeded),
-        });
-        const alignedSuite = alignSuiteWithExtractedMu(seeded, placeholderHtml, domainLabel);
-        const validation = validateOntologySuite(alignedSuite);
-
-        if (validation.errorCount === 0) {
-          const aggsCount = alignedSuite.M1?.aggregates.length ?? 0;
-          const ifCount = alignedSuite.MI?.interfaces.length ?? 0;
-          return store.runOntologyExtractionJob({
-            systemId: input.systemId,
-            projectId: input.projectId,
-            title: input.title,
-            sourceType: input.sourceType,
-            sourceSnippet: input.sourceSnippet,
-            ...(input.applyImmediately !== undefined
-              ? { applyImmediately: input.applyImmediately }
-              : {}),
-            synthesizedSuite: alignedSuite,
-            synthesizedEntitiesCount: aggsCount,
-            synthesizedInterfacesCount: ifCount,
-            synthesizedSummary: pickLocaleText(
-              locale,
-              `已完成「${sys?.name ?? input.systemId}」AI 语义本体萃取：提炼 ${aggsCount} 个领域聚合根、${alignedSuite.M3?.rules.length ?? 0} 条业务规则与 ${ifCount} 个服务接口契约（0 一致性错误）`,
-              `Completed AI semantic Ontology Extraction for "${sys?.name ?? input.systemId}": extracted ${aggsCount} aggregates, ${alignedSuite.M3?.rules.length ?? 0} rules, and ${ifCount} interfaces (0 consistency errors)`,
-            ),
-          });
-        }
-      }
-    } catch {
-      // Fall back cleanly to deterministic parser if gateway is temporarily unavailable during job
-    }
-  }
-
-  void hasExplicitOpenApi;
-  return store.runOntologyExtractionJob({
+  const scan = scanSourceStructure({ baseSuite: project.suite, source, domain: project.domain });
+  const jobBase = {
     systemId: input.systemId,
     projectId: input.projectId,
     title: input.title,
     sourceType: input.sourceType,
-    sourceSnippet: input.sourceSnippet,
+    sourceSnippet: source,
     ...(input.applyImmediately !== undefined ? { applyImmediately: input.applyImmediately } : {}),
+  };
+  const fromScan = (
+    result: StructuralScanResult,
+    semanticAlignment: SemanticAlignmentReport,
+  ): ExtractionMergeResult => {
+    const candidates = buildExtractionCandidates(project.suite, result.suite, result.evidenceByKey);
+    const tableList = scan.tables.map((t) => t.tableName).join(', ');
+    const scope =
+      semanticAlignment.status === 'DONE'
+        ? pickLocaleText(locale, '结构扫描 + 语义对齐', 'structural scan + semantic alignment')
+        : pickLocaleText(locale, '仅结构扫描', 'structural scan only');
+    return store.runOntologyExtractionJob({
+      ...jobBase,
+      extraction: {
+        candidates,
+        semanticAlignment,
+        tablesCount: scan.tables.length,
+        summary: pickLocaleText(
+          locale,
+          `本体萃取完成（${scope}）：${tableList ? `识别物理表 [${tableList}]，` : ''}${scan.operations.length > 0 ? `解析服务接口 ${scan.operations.length} 个，` : ''}产出 ${candidates.length} 个萃取候选。`,
+          `Ontology Extraction finished (${scope}): ${tableList ? `read tables [${tableList}], ` : ''}${scan.operations.length > 0 ? `${scan.operations.length} service operations, ` : ''}${candidates.length} extraction candidates.`,
+        ),
+      },
+    });
+  };
+
+  if (mock) return fromScan(scan, { status: 'SKIPPED', reason: 'MOCK_MODE' });
+
+  if (scan.tables.length > 0) {
+    const aligned = await runSemanticAlignment(store, scan, {
+      projectId: input.projectId,
+      source,
+      locale,
+    });
+    return fromScan(aligned.scan, aligned.report);
+  }
+
+  // No table structure to align: the source is prose (or bare endpoints), so
+  // the LLM proposes the elements and must quote the passage each one rests on.
+  const domainLabel = project.domain || `${systemName}业务域`;
+  const provider = resolvePreferredProvider(store, input.projectId);
+  const hasScannedStructure = scan.operations.length > 0;
+
+  let blueprint: LlmSynthesizedDomainBlueprint | null = null;
+  try {
+    const res = await callOpenAiCompatibleChat(
+      provider,
+      [
+        {
+          role: 'system',
+          content: [
+            'You are the Ontology Extraction Engine of Ontology Plus (strictly "Ontology Extraction", never "reverse engineering").',
+            'Extract structured domain aggregates, behaviors, business rules, events, flows, and service interfaces from the provided source code, API spec, SOP document, or runtime logs.',
+            'Every item MUST carry "sourceQuote": a short passage (at most 120 characters) copied verbatim from the artifact that the item rests on. Do not paraphrase the quote. Leave out anything you cannot quote.',
+            'Return ONLY valid JSON matching:',
+            '{"aggregates":[{"sourceQuote":"...","name":"PascalCase","alias":"...","lifecycle":["CREATED","COMPLETED"],"attributes":[{"name":"camelCase","label":"...","type":"String|Integer|Decimal|Money|Boolean|Date","required":true}]}],"behaviors":[{"sourceQuote":"...","name":"camelCase","alias":"...","ownerEntity":"PascalCase","behaviorType":"COMMAND|QUERY"}],"rules":[{"sourceQuote":"...","name":"PascalRule","alias":"...","ruleType":"VALIDATION","referencedObjects":["PascalCase"],"expression":"...","violationMessage":"..."}],"events":[{"sourceQuote":"...","name":"PascalCase.Completed","label":"...","sourceAggregate":"PascalCase"}],"interfaces":[{"sourceQuote":"...","name":"...","direction":"PROVIDED","interfaceCategory":"COMMAND|QUERY","protocol":"REST","relatedEntityRef":"PascalCase"}]}',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: `System: ${systemName} (Source Type: ${input.sourceType})\n\n--- Raw Artifact ---\n${source.trim().slice(0, 12000)}`,
+        },
+      ],
+      { store, maxTokens: 6144 },
+    );
+    blueprint = res?.content
+      ? extractFirstJsonObject<LlmSynthesizedDomainBlueprint>(res.content)
+      : null;
+  } catch (err) {
+    // What the structural scan read is still true; with nothing read there is
+    // no honest result to return, so the failure surfaces (ADR-0007).
+    if (!hasScannedStructure || !(err instanceof LlmGatewayError)) throw err;
+    const diag = err.toDiagnostic(locale);
+    return fromScan(scan, {
+      status: 'FAILED',
+      reason: 'GATEWAY_ERROR',
+      diagnostic: {
+        message: diag.message,
+        providerName: diag.providerName,
+        baseUrl: diag.baseUrl,
+        model: diag.model,
+        remediation: diag.remediation,
+      },
+    });
+  }
+
+  if (!blueprint || !(blueprint.aggregates?.length || blueprint.interfaces?.length)) {
+    if (hasScannedStructure) return fromScan(scan, { status: 'FAILED', reason: 'UNUSABLE_RESPONSE' });
+    throw new LlmGatewayError({
+      message: pickLocaleText(
+        locale,
+        'LLM 未返回可用的萃取结果：响应中解析不出任何聚合根或接口。',
+        'The LLM returned no usable extraction: no aggregate or interface could be parsed from its response.',
+      ),
+      providerName: provider?.name ?? '未配置网关',
+      baseUrl: provider?.baseUrl ?? '(none)',
+      model: provider?.defaultModel ?? '(none)',
+      locale,
+    });
+  }
+
+  const seeded = applyLlmBlueprintToSuite(
+    JSON.parse(JSON.stringify(project.suite)) as OntologySuite,
+    blueprint,
+    domainLabel,
+  );
+  const placeholderHtml = buildSemanticPrototypeHtmlForProject({
+    ...project,
+    name: input.title || systemName || project.name,
+    domain: domainLabel,
+    suite: seeded,
+    validation: validateOntologySuite(seeded),
+  });
+  const synthesized = alignSuiteWithExtractedMu(seeded, placeholderHtml, domainLabel);
+  const candidates = buildExtractionCandidates(
+    project.suite,
+    synthesized,
+    collectBlueprintEvidence(synthesized, blueprint, source, locale),
+  );
+  const aggsCount = candidates.filter((c) => c.collection === 'aggregates').length;
+  const rulesCount = candidates.filter((c) => c.collection === 'rules').length;
+  const ifCount = candidates.filter((c) => c.collection === 'interfaces').length;
+
+  return store.runOntologyExtractionJob({
+    ...jobBase,
+    extraction: {
+      candidates,
+      semanticAlignment: { status: 'DONE' },
+      tablesCount: 0,
+      summary: pickLocaleText(
+        locale,
+        `已完成「${systemName}」语义本体萃取：产出 ${candidates.length} 个萃取候选（聚合根 ${aggsCount}、业务规则 ${rulesCount}、服务接口 ${ifCount}），每项附原文引用供核对。`,
+        `Completed semantic Ontology Extraction for "${systemName}": ${candidates.length} extraction candidates (${aggsCount} aggregates, ${rulesCount} rules, ${ifCount} interfaces), each citing the source passage it rests on.`,
+      ),
+    },
   });
 }
 

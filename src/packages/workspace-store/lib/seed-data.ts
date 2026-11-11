@@ -552,8 +552,10 @@ export const SEED_EXTRACTION_JOBS: ExtractionJob[] = [
 -- POST /api/v1/contracts/draft -> BHV-01 draftContract
 -- POST /api/v1/contracts/approve -> BHV-03 approveContract`,
     extractedModels: ['M1', 'M2', 'M3', 'ME', 'M7', 'MM', 'MI'],
-    confidenceScore: 0.96,
     status: 'COMPLETED',
+    candidates: [],
+    decisions: {},
+    semanticAlignment: { status: 'SKIPPED', reason: 'LEGACY_JOB' },
     summary:
       '成功从 3 张核心物理表与 6 个 REST 接口萃取生成 Contract、Counterparty、SettlementOrder 三个聚合根及完整映射模型 MM/MI。',
     extractedEntitiesCount: 3,
@@ -576,8 +578,10 @@ export const SEED_EXTRACTION_JOBS: ExtractionJob[] = [
   status VARCHAR(24) NOT NULL
 );`,
     extractedModels: ['M1', 'M2', 'M3', 'ME', 'M5'],
-    confidenceScore: 0.94,
     status: 'COMPLETED',
+    candidates: [],
+    decisions: {},
+    semanticAlignment: { status: 'SKIPPED', reason: 'LEGACY_JOB' },
     summary: '成功从 MFT 存量库表与传输网关接口萃取出 TransferTask 聚合根与 10GB 体积校验规则 RULE-MFT-01。',
     extractedEntitiesCount: 1,
     extractedTablesCount: 1,
