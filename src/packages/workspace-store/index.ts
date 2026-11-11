@@ -6,6 +6,13 @@ export {
 export type {
   ProjectSummary,
   ProjectDetail,
+  ProjectSnapshot,
+  AgentSessionKind,
+  AgentToolCallTrace,
+  AgentAskUserPrompt,
+  AgentDomainArtifact,
+  AgentSessionMessage,
+  AgentSession,
   RequirementMessage,
   RequirementSession,
   RequirementDoc,
@@ -35,4 +42,3 @@ export type {
   SystemSettingsState,
   WorkspaceStore,
 } from './lib/types.js';
-

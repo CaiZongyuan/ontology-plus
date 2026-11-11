@@ -98,6 +98,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
 
     // 1. Capability Center: Ontology Extraction (verify "本体萃取" and zero "逆向")
     await page.getByTestId('nav-cap-extraction').click();
+    await expect(page.getByTestId('run-extraction-btn')).toBeVisible();
     const bodyText = await page.locator('.platform-content').innerText();
     expect(bodyText).toContain('本体萃取');
     expect(bodyText).not.toContain('逆向');
@@ -136,5 +137,87 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.getByTestId('nav-llm-center').click();
     await page.getByTestId('ping-llm-gateway-btn').first().click();
     await expect(page.getByTestId('llm-ping-result').first()).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('4. Ontology Project Hub snapshots, Tiptap bidirectional Markdown & SKILL.md refinement guard, React Flow + ELK/d3-force Knowledge Graph, Registry tables & Multi-Session Agent SSE/Fork', async ({
+    page,
+  }) => {
+    // Enforce AGENTS.md contract: zero native window.alert / confirm / prompt dialogs
+    page.on('dialog', (dialog) => {
+      throw new Error(`Forbidden blocking browser dialog triggered: ${dialog.message()}`);
+    });
+
+    await page.goto('/');
+
+    // 1. Ontology Project Hub (overview): Registry table + non-blocking Milestone Snapshot manager
+    await page.getByTestId('nav-overview').click();
+    await expect(page.getByTestId('project-hub-registry')).toBeVisible();
+    await page.getByTestId('project-snapshots-btn-proj-contract').click();
+    const openDialog = page.locator('dialog[open]');
+    await expect(openDialog).toBeVisible();
+    await openDialog.getByPlaceholder(/快照版本标签|Snapshot label/).fill('v5.3 E2E Baseline');
+    await page.getByTestId('create-snapshot-confirm-btn').click();
+    await expect(openDialog).toContainText('v5.3 E2E Baseline');
+    await openDialog.getByRole('button', { name: 'Close dialog' }).click();
+    await expect(openDialog).toBeHidden();
+
+    // 2. SRS Tiptap Bidirectional Markdown Editor (RICH <-> SOURCE <-> PREVIEW) & Registry switcher
+    await page.getByTestId('nav-app-req-docs').click();
+    await page.getByTestId('md-mode-source').click();
+    await expect(page.getByTestId('md-source-textarea')).toBeVisible();
+    await page.getByTestId('md-mode-preview').click();
+    await page.getByTestId('md-mode-rich').click();
+    await expect(page.locator('.ProseMirror').first()).toBeVisible();
+    await page.getByTestId('srs-mode-registry').click();
+    await expect(page.locator('table').first()).toBeVisible();
+
+    // 3. Ontology SKILL.md Custom Refinement + Overwrite Protection ConfirmDialog
+    await page.getByTestId('nav-app-skills').click();
+    const compileBtn = page.getByRole('button', { name: /编译当前工程 SKILL\.md|Compile Current Project SKILL\.md/ });
+    if (await page.locator('.ProseMirror').count() === 0) {
+      await compileBtn.click();
+    }
+    await page.getByTestId('md-mode-source').click();
+    const skillSource = page.getByTestId('md-source-textarea');
+    const existingMd = await skillSource.inputValue();
+    await skillSource.fill(`${existingMd}\n\n## E2E Custom Refinement Guard\n- Verified custom rule\n`);
+    await page.getByRole('button', { name: /保存精修版 SKILL\.md|Save Refined SKILL\.md/ }).click();
+    await expect(page.locator('.platform-content')).toContainText('已手工精修');
+    await compileBtn.click();
+    await expect(page.locator('dialog[open]')).toContainText('isCustomRefined');
+    await page.locator('dialog[open]').getByRole('button', { name: 'Close dialog' }).click();
+
+    // 4. React Flow v12 + ELK Swimlane + d3-force Ego Focus Knowledge Graph & Data Lineage preset
+    await page.getByTestId('nav-app-knowledge-graph').click();
+    await expect(page.getByTestId('kg-root')).toBeVisible();
+    await expect(page.locator('.react-flow').first()).toBeVisible();
+    await page.getByTestId('kg-mode-ego-btn').click();
+    await page.getByTestId('kg-mode-swimlane-btn').click();
+
+    await page.getByTestId('nav-data-mappings').click();
+    await expect(page.locator('.react-flow').first()).toBeVisible();
+
+    // 5. Capability & Analytics Registry Tables + Markdown Editors
+    await page.getByTestId('nav-cap-knowledge').click();
+    await expect(page.getByTestId('knowledge-markdown-editor')).toBeVisible();
+    await page.getByTestId('knowledge-mode-registry-btn').click();
+    await expect(page.getByTestId('knowledge-registry-table')).toBeVisible();
+
+    await page.getByTestId('nav-data-metrics-reports').click();
+    await page.getByTestId('reports-mode-editor-btn').click();
+    await expect(page.getByTestId('analytics-reports-registry')).toBeVisible();
+    await expect(page.getByTestId('analytics-report-markdown-editor')).toBeVisible();
+
+    // 6. Unified Multi-Session Agent Workbench: New Session, Live SSE Stream & Session Fork
+    await page.getByTestId('nav-app-ontology').click();
+    const copilotWorkbench = page.getByTestId('agent-workbench-copilot');
+    await expect(copilotWorkbench).toBeVisible();
+    await copilotWorkbench.getByTestId('agent-new-session-btn').click();
+    await page.getByTestId('copilot-input').fill('请校验当前合同本体模型的完整性并给出建议');
+    await page.getByTestId('copilot-send-btn').click();
+    const forkBtn = copilotWorkbench.getByTestId('agent-fork-msg-btn').first();
+    await expect(forkBtn).toBeVisible({ timeout: 25_000 });
+    await forkBtn.click();
+    await expect(copilotWorkbench).toContainText(/分支|Fork/);
   });
 });

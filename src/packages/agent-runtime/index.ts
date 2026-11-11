@@ -11,6 +11,22 @@ export {
 } from './lib/tools.js';
 
 export {
+  LlmGatewayError,
+  isMockLlmActive,
+  UNIFIED_AGENT_EXTRA_TOOLS,
+  agentWorkbenchRegistry,
+  abortActiveAgentSession,
+  compactAgentSession,
+  buildPiModelsForStore,
+  runUnifiedAgentSessionStream,
+  collectUnifiedAgentTurn,
+  createUnifiedSseStream,
+  type UnifiedAgentSseEventType,
+  type UnifiedAgentSseEvent,
+  type UnifiedAgentStreamInput,
+} from './lib/pi-session-engine.js';
+
+export {
   SSE_RESPONSE_HEADERS,
   testLlmGatewayConnection,
   runOntologyCopilotTurn,

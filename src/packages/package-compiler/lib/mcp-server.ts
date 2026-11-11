@@ -597,8 +597,47 @@ export function handleOntologyMcpRequest(
         }
       }
 
+      // Enrich args from live SQLite tables when sqlExecutor is available (e.g. lookup creditRating by counterpartyId)
+      const enrichedArgs: Record<string, unknown> = { ...args };
+      if (options?.sqlExecutor) {
+        if (
+          typeof enrichedArgs.counterpartyId === 'string' &&
+          enrichedArgs.creditRating === undefined
+        ) {
+          try {
+            const cpRes = options.sqlExecutor(
+              `SELECT credit_rating, company_name FROM t_counterparty WHERE id = :cpId OR credit_code = :cpId LIMIT 1`,
+              { cpId: enrichedArgs.counterpartyId },
+            );
+            if (cpRes.rows[0]?.credit_rating) {
+              enrichedArgs.creditRating = cpRes.rows[0].credit_rating;
+              enrichedArgs.counterpartyName = cpRes.rows[0].company_name;
+            }
+          } catch {
+            // Non-fatal if table does not exist in custom project
+          }
+        }
+        if (
+          typeof enrichedArgs.contractId === 'string' &&
+          enrichedArgs.totalAmount === undefined
+        ) {
+          try {
+            const ctRes = options.sqlExecutor(
+              `SELECT total_amount, risk_level, status FROM t_contract WHERE id = :ctId OR contract_no = :ctId LIMIT 1`,
+              { ctId: enrichedArgs.contractId },
+            );
+            if (ctRes.rows[0]?.total_amount !== undefined) {
+              enrichedArgs.totalAmount = ctRes.rows[0].total_amount;
+              enrichedArgs.currentStatus = ctRes.rows[0].status;
+            }
+          } catch {
+            // Non-fatal
+          }
+        }
+      }
+
       for (const rule of rulesToEvaluate) {
-        const check = evaluateDynamicM3Rule(rule, args);
+        const check = evaluateDynamicM3Rule(rule, enrichedArgs);
         if (check.violated) {
           return {
             jsonrpc: '2.0',
@@ -614,7 +653,7 @@ export function handleOntologyMcpRequest(
                       ruleId: rule.id,
                       ruleName: rule.alias,
                       message: check.reason,
-                      inputArgs: args,
+                      inputArgs: enrichedArgs,
                     },
                     null,
                     2,
@@ -646,14 +685,42 @@ export function handleOntologyMcpRequest(
 
         let executedLiveSql = false;
         let liveRows: Record<string, unknown>[] = [];
+        let executedSqlText = '';
 
         if (options?.sqlExecutor && masterTable && /^[a-zA-Z0-9_]+$/.test(masterTable)) {
           try {
-            const sqlRes = options.sqlExecutor(`SELECT * FROM ${masterTable} LIMIT 20`);
+            const whereClauses: string[] = [];
+            const sqlParams: Record<string, unknown> = {};
+            if (typeof args.riskLevel === 'string' && args.riskLevel.trim()) {
+              whereClauses.push(`risk_level = :riskLevel`);
+              sqlParams.riskLevel = args.riskLevel.trim();
+            }
+            if (typeof args.status === 'string' && args.status.trim()) {
+              whereClauses.push(`status = :status`);
+              sqlParams.status = args.status.trim();
+            }
+            if (typeof args.region === 'string' && args.region.trim()) {
+              whereClauses.push(`region = :region`);
+              sqlParams.region = args.region.trim();
+            }
+            if (typeof args.keyword === 'string' && args.keyword.trim()) {
+              whereClauses.push(`(id = :keyword OR contract_no = :keyword)`);
+              sqlParams.keyword = args.keyword.trim();
+            }
+            const whereSql = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
+            executedSqlText = `SELECT * FROM ${masterTable}${whereSql} LIMIT 20`;
+            const sqlRes = options.sqlExecutor(executedSqlText, sqlParams);
             liveRows = sqlRes.rows;
             executedLiveSql = true;
           } catch {
-            // Fall back to ontology-synthesized sample rows if table is not populated
+            try {
+              executedSqlText = `SELECT * FROM ${masterTable} LIMIT 20`;
+              const sqlRes = options.sqlExecutor(executedSqlText);
+              liveRows = sqlRes.rows;
+              executedLiveSql = true;
+            } catch {
+              // Fall back to ontology-synthesized sample rows if table is not populated
+            }
           }
         }
 
@@ -661,6 +728,7 @@ export function handleOntologyMcpRequest(
           domainResult = {
             queryId: rpt?.id ?? targetTool.sourceElementId,
             physicalTable: masterTable,
+            executedSql: executedSqlText,
             rows: liveRows,
             totalCount: liveRows.length,
           };
@@ -682,20 +750,47 @@ export function handleOntologyMcpRequest(
           };
         }
       } else {
+        const ownerEntity =
+          matchedBehavior?.ownerEntity ?? project.suite.M1?.aggregates[0]?.name ?? 'Entity';
+        const mmMapping = (project.suite.MM?.mappings ?? []).find(
+          (m) => m.objectName === ownerEntity || m.objectRef === ownerEntity,
+        );
+        const masterTable = mmMapping?.tableMappings.find((t) => t.tableRole === 'MASTER')?.tableName;
+
+        let existingRowCount = 0;
+        if (options?.sqlExecutor && masterTable && /^[a-zA-Z0-9_]+$/.test(masterTable)) {
+          try {
+            const cntRes = options.sqlExecutor(`SELECT COUNT(*) AS cnt FROM ${masterTable}`);
+            existingRowCount = Number(cntRes.rows[0]?.cnt ?? 0);
+          } catch {
+            existingRowCount = 0;
+          }
+        }
+
         const prefix = (project.code || 'ONT')
           .replace(/[^A-Za-z]/g, '')
           .toUpperCase()
           .slice(0, 3)
           .padEnd(3, 'X');
-        const seq = String((Object.keys(args).length * 137 + 1) % 9999).padStart(4, '0');
+        const seq = String(existingRowCount + 1).padStart(4, '0');
         const producedEvents = (matchedBehavior?.producedEvents ?? []).map((ev) =>
           typeof ev === 'string' ? ev : ev.eventRef,
         );
+        const nextLifecycleState =
+          matchedBehavior?.stateChanges?.[0]?.expression ??
+          project.suite.M1?.aggregates.find((a) => a.name === ownerEntity)?.lifecycle[0] ??
+          'ACTIVE';
+
         domainResult = {
-          documentNo: `${prefix}${seq}`,
-          ownerEntity: matchedBehavior?.ownerEntity ?? project.suite.M1?.aggregates[0]?.name ?? 'Entity',
+          documentNo:
+            (typeof enrichedArgs.contractId === 'string' && enrichedArgs.contractId) ||
+            `${prefix}-${new Date().getFullYear()}-${seq}`,
+          ownerEntity,
+          physicalTable: masterTable,
+          transitionedState: nextLifecycleState,
           emittedEvents: producedEvents,
           verifiedRules: rulesToEvaluate.map((r) => r.id),
+          enrichedContext: enrichedArgs,
         };
       }
 

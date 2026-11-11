@@ -4,6 +4,7 @@ import {
   MFT_ENTERPRISE_SUITE,
 } from '../../ontology-core/index.js';
 import type {
+  AgentSession,
   AnalyticsReport,
   AnalyticsScenario,
   AssembledApplication,
@@ -21,6 +22,7 @@ import type {
   LlmProviderConfig,
   McpServerConfig,
   MetricDefinition,
+  ProjectSnapshot,
   PrototypeArtifact,
   ReasoningSession,
   RequirementDoc,
@@ -1072,4 +1074,166 @@ export const SEED_SYSTEM_SETTINGS: SystemSettingsState = {
   strictValidation: true,
   autoMirrorYaml: true,
   autoSyncPrototypeMu: true,
+  mockLlmMode: false,
 };
+
+export const SEED_PROJECT_SNAPSHOTS: ProjectSnapshot[] = [
+  {
+    id: 'snap-contract-baseline',
+    projectId: 'proj-contract',
+    label: 'v5.0 基准全套 11 元模型快照',
+    note: '合同全生命周期管理系统基准快照（0 错误 · 11/11 模型完备）',
+    presentModels: ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'ME', 'MU', 'MM', 'MI'],
+    errorCount: 0,
+    warningCount: 0,
+    suite: CONTRACT_LIFECYCLE_SUITE,
+    createdAt: '2026-11-10T09:00:00.000Z',
+  },
+];
+
+export const SEED_AGENT_SESSIONS: AgentSession[] = [
+  {
+    id: 'asess-req-01',
+    projectId: 'proj-contract',
+    agentKind: 'REQUIREMENT',
+    targetId: 'req-sess-01',
+    title: '商务合同履约与结算规则探索',
+    pinned: true,
+    status: 'IDLE',
+    createdAt: '2026-11-10T09:05:00.000Z',
+    updatedAt: '2026-11-10T09:10:00.000Z',
+    messages: [
+      {
+        id: 'amsg-req-1',
+        role: 'user',
+        content: '我们需要建设一套企业级合同全生命周期管理系统，涵盖相对方准入、大额会签、履约里程碑与结算回款。',
+        timestamp: '2026-11-10T09:05:00.000Z',
+      },
+      {
+        id: 'amsg-req-2',
+        role: 'assistant',
+        thinking: '识别合同全生命周期核心聚合根（Contract, Counterparty, SettlementOrder）与关键准入/里程碑校验规则。',
+        thinkingDurationMs: 1240,
+        content:
+          '已完成首轮领域实体与规则收敛：\n\n1. **M1 领域聚合根**：`Contract`（含 `ContractLineItem`、`PaymentMilestone`）、`Counterparty`、`SettlementOrder`\n2. **M3 刚性业务规则**：大额合同资信准入（`RULE-01`）、里程碑收款比例守恒 100%（`RULE-02`）\n\n您可以继续补充多币种折算、印章用印策略或直接生成 **结构化 SRS 需求规格书**。',
+        timestamp: '2026-11-10T09:06:00.000Z',
+        artifacts: [
+          {
+            kind: 'REQUIREMENT_HINTS',
+            aggregates: ['Contract', 'Counterparty', 'SettlementOrder'],
+            rules: ['RULE-01 大额合同资信准入', 'RULE-02 里程碑收款比例守恒 100%'],
+            openQuestions: ['跨境合同汇率锁定基准日采取签约日还是结算日？'],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'asess-copilot-01',
+    projectId: 'proj-contract',
+    agentKind: 'COPILOT',
+    title: '11 元模型本体建模助手主会话',
+    pinned: true,
+    status: 'IDLE',
+    createdAt: '2026-11-10T09:15:00.000Z',
+    updatedAt: '2026-11-10T09:15:00.000Z',
+    messages: [
+      {
+        id: 'amsg-cop-1',
+        role: 'assistant',
+        content:
+          '您好！我是 **AI 本体助手 (Ontology Copilot)**。所有工具调用默认自动执行并通过 `ontology-core` 双层一致性校验器守门。您可以直接要求：\n- 为 `Contract` 新增字段或业务不变量\n- 在 `M3` 新增业务规则并关联 `M2` 行为\n- 检查跨模型引用完整性或执行级联重命名',
+        timestamp: '2026-11-10T09:15:00.000Z',
+      },
+    ],
+  },
+  {
+    id: 'asess-cap-01',
+    projectId: 'proj-contract',
+    agentKind: 'CAPABILITY',
+    targetId: 'ag-contract-copilot',
+    title: '高风险合同审查与结算巡检对话',
+    pinned: true,
+    status: 'IDLE',
+    createdAt: '2026-11-10T09:30:00.000Z',
+    updatedAt: '2026-11-10T09:32:00.000Z',
+    messages: [
+      {
+        id: 'amsg-cap-1',
+        role: 'user',
+        content: '帮我巡检当前高风险合同台账并核对是否存在逾期未结算风险。',
+        timestamp: '2026-11-10T09:30:00.000Z',
+      },
+      {
+        id: 'amsg-cap-2',
+        role: 'assistant',
+        thinking: '调用 MCP 查询工具检索高风险合同及关联结算单逾期状态。',
+        thinkingDurationMs: 960,
+        content:
+          '已通过 MCP 服务查询合同与结算台账：共命中 **3 份** `HIGH` 风险等级生效合同，其中华东区技术服务外包合同存在超 15 天待核销结算单，建议启动法务催办流程。',
+        timestamp: '2026-11-10T09:32:00.000Z',
+        toolCalls: [
+          {
+            id: 'tc-seed-1',
+            toolName: 'mcp_query_contracts',
+            arguments: { riskLevel: 'HIGH' },
+            output: '{"matchedContracts":3,"overdueSettlementAmount":2886000}',
+            durationMs: 42,
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'asess-reason-01',
+    projectId: 'proj-contract',
+    agentKind: 'REASONING',
+    reasoningMode: 'ASK_POLICY',
+    title: 'Q4 高风险合同逾期归因与策略回写',
+    pinned: true,
+    status: 'IDLE',
+    createdAt: '2026-11-10T09:42:00.000Z',
+    updatedAt: '2026-11-10T09:42:00.000Z',
+    messages: [
+      {
+        id: 'amsg-reas-1',
+        role: 'user',
+        content: '为什么本季度高风险合同逾期未结算率上升到了 14.8%？应该采取什么处置策略并回写业务系统？',
+        timestamp: '2026-11-10T09:42:00.000Z',
+      },
+      {
+        id: 'amsg-reas-2',
+        role: 'assistant',
+        thinking: '沿 M1(Contract -> Counterparty -> SettlementOrder) 与 MM 物理表映射执行实库聚合 SQL，并对照 M3 RULE-01 准入阈值定位风控敞口。',
+        thinkingDurationMs: 1450,
+        content:
+          '### 1. 智能问数 (Data Retrieval)\n检索 `t_contract` 与 `t_settlement_order` 发现，高风险合同待核销逾期总额为 **¥ 2,886,000**（逾期率 **14.8%**）。\n\n### 2. 智能问因 (Causal Attribution)\n沿本体知识图谱关系链 `Contract -> Counterparty -> SettlementOrder` 归因：\n- 逾期金额集中在 **华东区半导体** `OUTSOURCING`（技术外包）类型且相对方资信为 `A` 级的合同；\n- `RULE-01` 资信门槛当前设定在 100 万元，80~100 万区间合同存在风控敞口。\n\n### 3. 智能问策 (Actionable Policy)\n建议立即调用回写接口 **`WB-01`** 批量冻结逾期结算单并推送法务催收待办。',
+        timestamp: '2026-11-10T09:42:05.000Z',
+        artifacts: [
+          {
+            kind: 'REASONING_POLICY',
+            mode: 'ASK_POLICY',
+            dataSummary: [
+              { label: '高风险逾期总额', value: '¥ 2,886,000', delta: '+3.1%' },
+              { label: '华东半导体外包占比', value: '100%', delta: '主因' },
+              { label: 'A级资信相对方逾期笔数', value: '3 笔', delta: '超15天' },
+            ],
+            causalAnalysis: [
+              '【对象层 M1 关联穿透】Contract(OUTSOURCING, 华东区半导体) -> Counterparty(creditRating=A) 组合贡献了全部待核销逾期结算单。',
+              '【规则层 M3 阈值对照】当前 RULE-01 仅对 >100万合同强制要求 AA/AAA 级资信，导致 80万~100万区间的高风险外包合同流入 A 级供应商。',
+            ],
+            policyRecommendations: [
+              {
+                actionTitle: '触发高风险逾期合同付款冻结与法务催办',
+                targetObject: 'Contract / SettlementOrder',
+                expectedImpact: '预计 7 日内追回逾期结算款 ¥288.6 万，降低逾期率至 6.5% 以下',
+                writebackInterfaceId: 'WB-01',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+];
+

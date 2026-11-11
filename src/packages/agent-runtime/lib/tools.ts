@@ -58,7 +58,7 @@ export const ONTOLOGY_TOOL_NAMES: readonly OntologyToolName[] = [
 export interface OpenAiFunctionTool {
   type: 'function';
   function: {
-    name: OntologyToolName;
+    name: OntologyToolName | string;
     description: string;
     parameters: {
       type: 'object';

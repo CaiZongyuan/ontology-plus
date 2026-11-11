@@ -116,4 +116,104 @@ describe('server API & Cloudflare Worker integration', () => {
     expect(body.service).toBe('ontology-plus');
     expect(executedQueries.length).toBeGreaterThan(0);
   });
+
+  it('supports unified AgentSession SSE streaming, session fork/compact, project snapshots/restore, Skill refinement guard, and 409 reference protection', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const app = createApiApp(store);
+
+    // 1. Create AgentSession and stream SSE tool-loop turn
+    const createSessRes = await app.request('/api/agent-sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'proj-contract',
+        agentKind: 'COPILOT',
+        title: 'API SSE Integration Test',
+      }),
+    });
+    expect(createSessRes.status).toBe(200);
+    const { session } = (await createSessRes.json()) as { session: { id: string } };
+    expect(session.id).toBeTruthy();
+
+    const streamRes = await app.request(`/api/agent-sessions/${session.id}/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: '请新增一条超额采购合同双重风控校验规则',
+        activeModelCode: 'M3',
+      }),
+    });
+    expect(streamRes.status).toBe(200);
+    expect(streamRes.headers.get('Content-Type')).toContain('text/event-stream');
+    const sseBody = await streamRes.text();
+    expect(sseBody).toContain('event: session_meta');
+    expect(sseBody).toContain('event: tool_call');
+    expect(sseBody).toContain('upsert_rule');
+    expect(sseBody).toContain('event: tool_result');
+    expect(sseBody).toContain('event: delta');
+    expect(sseBody).toContain('event: message_end');
+
+    // 2. Fork session from turn
+    const forkRes = await app.request(`/api/agent-sessions/${session.id}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Forked Copilot Branch' }),
+    });
+    expect(forkRes.status).toBe(200);
+    const forkJson = (await forkRes.json()) as {
+      session: { id: string; parentSessionId: string; messages: unknown[] };
+    };
+    expect(forkJson.session.parentSessionId).toBe(session.id);
+    expect(forkJson.session.messages.length).toBeGreaterThanOrEqual(2);
+
+    // 3. Project snapshot & restore
+    const snapRes = await app.request('/api/projects/proj-contract/snapshots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: 'v1.0-baseline', note: 'Before mutation' }),
+    });
+    expect(snapRes.status).toBe(200);
+    const { snapshot } = (await snapRes.json()) as { snapshot: { id: string } };
+
+    const restoreRes = await app.request(
+      `/api/projects/proj-contract/snapshots/${snapshot.id}/restore`,
+      { method: 'POST' },
+    );
+    expect(restoreRes.status).toBe(200);
+
+    // 4. 409 Reference conflict protection on referenced 4-layer asset (and ?force=1 override)
+    const referencedAssetId = store.listAssembledApplications()[0]!.uiUeAssetId;
+    const conflictRes = await app.request(`/api/assets/${referencedAssetId}`, {
+      method: 'DELETE',
+    });
+    expect(conflictRes.status).toBe(409);
+
+    const forceRes = await app.request(`/api/assets/${referencedAssetId}?force=1`, {
+      method: 'DELETE',
+    });
+    expect(forceRes.status).toBe(200);
+
+    // 5. Skill manual refinement flag & re-compile reset
+    const existingSkill = store.listGeneratedSkills()[0]!;
+    const refineRes = await app.request(`/api/skills/${existingSkill.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...existingSkill,
+        skillMarkdown: `${existingSkill.skillMarkdown}\n\n## 手工补充条款\n`,
+        isCustomRefined: true,
+      }),
+    });
+    expect(refineRes.status).toBe(200);
+    const refineJson = (await refineRes.json()) as { skill: { isCustomRefined: boolean } };
+    expect(refineJson.skill.isCustomRefined).toBe(true);
+
+    const recompileRes = await app.request('/api/projects/proj-contract/generate-skill', {
+      method: 'POST',
+    });
+    expect(recompileRes.status).toBe(200);
+    const recompileJson = (await recompileRes.json()) as { skill: { isCustomRefined: boolean } };
+    expect(recompileJson.skill.isCustomRefined).toBe(false);
+  });
 });

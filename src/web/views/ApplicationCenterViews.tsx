@@ -1,4 +1,16 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Copy,
+  Edit3,
+  Eye,
+  FileCode,
+  FolderKanban,
+  History,
+  LayoutList,
+  Plus,
+  RotateCcw,
+  Trash2,
+} from 'lucide-react';
 import {
   MODEL_CODES,
   MODEL_FILE_NAMES,
@@ -8,19 +20,106 @@ import {
   type ModelCode,
 } from '../../packages/ontology-core/index.js';
 import type { CompiledDevelopmentPackage } from '../../packages/package-compiler/index.js';
-import type { FourLayerAsset } from '../../packages/workspace-store/index.js';
+import type {
+  AssembledApplication,
+  FourLayerAsset,
+  GeneratedSkill,
+  ProjectSnapshot,
+  ProjectSummary,
+  PrototypeArtifact,
+  RequirementDoc,
+} from '../../packages/workspace-store/index.js';
 import {
+  apiCloneProject,
   apiCompileDevPackage,
+  apiCreateProjectSnapshot,
+  apiDeleteProject,
+  apiDeleteProjectSnapshot,
+  apiDeleteResource,
   apiGeneratePrototype,
   apiGenerateTechArch,
+  apiPostJson,
+  apiPutJson,
   apiRefinePrototype,
-  apiRunAppCodingAgent,
+  apiRestoreProjectSnapshot,
   apiSynthesizeOntologyFromPrototype,
   apiSynthesizeSrsDoc,
+  apiUpdateProjectMeta,
   triggerBrowserDownload,
   useWorkbenchStore,
 } from '../api.js';
+import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
+import {
+  Button,
+  CodeBlock,
+  ConfirmDialog,
+  RegistryTable,
+} from '../components/beautifui/index.js';
+import {
+  MarkdownRenderer,
+  TiptapMarkdownEditor,
+} from '../components/markdown/index.js';
 import { usePreferences, type NavViewId } from '../i18n.js';
+import { cn } from '../lib/utils.js';
+
+// ─── Reusable Two-Level Workspace ↔ Registry Switcher Bar ───────────────────
+function ViewModeHeader({
+  mode,
+  onChange,
+  workspaceLabel,
+  registryLabel,
+  count,
+  testIdPrefix,
+  rightActions,
+}: {
+  mode: 'WORKSPACE' | 'REGISTRY';
+  onChange: (next: 'WORKSPACE' | 'REGISTRY') => void;
+  workspaceLabel: string;
+  registryLabel: string;
+  count: number;
+  testIdPrefix: string;
+  rightActions?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-3.5 py-2 shadow-2xs">
+      <div className="inline-flex items-center rounded-full border border-line bg-inset/60 p-0.5">
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-mode-workspace`}
+          onClick={() => onChange('WORKSPACE')}
+          className={cn(
+            'inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium cursor-pointer transition-colors',
+            mode === 'WORKSPACE' ? 'bg-ink text-surface' : 'text-ink-2 hover:text-ink',
+          )}
+        >
+          <Edit3 size={12.5} />
+          {workspaceLabel}
+        </button>
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-mode-registry`}
+          onClick={() => onChange('REGISTRY')}
+          className={cn(
+            'inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium cursor-pointer transition-colors',
+            mode === 'REGISTRY' ? 'bg-ink text-surface' : 'text-ink-2 hover:text-ink',
+          )}
+        >
+          <LayoutList size={12.5} />
+          {registryLabel}
+          <span
+            className={cn(
+              'rounded-full px-1.5 font-mono text-[10.5px] tabular-nums',
+              mode === 'REGISTRY' ? 'bg-white/20 text-surface' : 'bg-surface text-ink-3',
+            )}
+          >
+            {count}
+          </span>
+        </button>
+      </div>
+      {rightActions && <div className="flex flex-wrap items-center gap-2">{rightActions}</div>}
+    </div>
+  );
+}
 
 // ─── Helper: Parse A/B Classification Tag on Requirement Decisions ────────────
 function parseDecisionTag(raw: string): {
@@ -67,22 +166,46 @@ function parseDecisionTag(raw: string): {
   };
 }
 
-// ─── 1. Overview / Project Sessions (项目会话管理) ─────────────────────────────
+// ─── 1. Overview / Ontology Project Management Hub (本体工程管理中心) ─────────
 export function OverviewSessionsView({
   onNavigate,
 }: {
   onNavigate: (view: NavViewId) => void;
 }) {
   const { t } = usePreferences();
-  const { data, switchProject, createNewProject } = useWorkbenchStore();
+  const { data, switchProject, createNewProject, patchData, showToast, bootstrap } =
+    useWorkbenchStore();
+
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newCode, setNewCode] = useState('');
   const [newDomain, setNewDomain] = useState('');
+  const [newCenter, setNewCenter] = useState<'APPLICATION' | 'CAPABILITY' | 'ANALYTICS'>(
+    'APPLICATION',
+  );
+  const [newDescription, setNewDescription] = useState('');
   const [newTemplate, setNewTemplate] = useState<'CONTRACT' | 'MFT' | 'EMPTY'>('CONTRACT');
+
+  // Edit Metadata Dialog State
+  const [editingProj, setEditingProj] = useState<ProjectSummary | null>(null);
+
+  // Snapshots Drawer/Dialog State
+  const [snapshotProj, setSnapshotProj] = useState<ProjectSummary | null>(null);
+  const [snapLabel, setSnapLabel] = useState('');
+  const [snapNote, setSnapNote] = useState('');
+
+  // Delete Project Dialog State
+  const [deletingProj, setDeletingProj] = useState<{
+    proj: ProjectSummary;
+    needsForce: boolean;
+    conflictMsg?: string;
+  } | null>(null);
 
   if (!data) return null;
   const active = data.activeProject;
+  const snapshotsForModal: ProjectSnapshot[] = snapshotProj
+    ? (data.projectSnapshots ?? []).filter((s) => s.projectId === snapshotProj.id)
+    : [];
 
   const pipelineSteps: {
     step: string;
@@ -127,6 +250,88 @@ export function OverviewSessionsView({
       targetView: 'app-assembly-dev',
     },
   ];
+
+  const handleCloneProject = async (proj: ProjectSummary) => {
+    const res = await apiCloneProject(proj.id);
+    patchData({ projects: res.projects, activeProject: res.project });
+    showToast(t(`已克隆工程「${res.project.name}」`, `Cloned project "${res.project.name}"`));
+  };
+
+  const handleSaveEditedProject = async () => {
+    if (!editingProj) return;
+    const res = await apiUpdateProjectMeta(editingProj.id, {
+      name: editingProj.name,
+      code: editingProj.code,
+      domain: editingProj.domain,
+      center: editingProj.center,
+      description: editingProj.description,
+    });
+    patchData({
+      projects: res.projects,
+      ...(active.id === editingProj.id ? { activeProject: res.project } : {}),
+    });
+    setEditingProj(null);
+    showToast(t('已更新本体工程元数据', 'Updated project metadata'));
+  };
+
+  const handleDeleteProjectConfirm = async () => {
+    if (!deletingProj) return;
+    try {
+      const res = await apiDeleteProject(deletingProj.proj.id, deletingProj.needsForce);
+      await bootstrap(res.remainingProjectId);
+      setDeletingProj(null);
+      showToast(
+        t(
+          `已删除本体工程「${deletingProj.proj.name}」`,
+          `Deleted project "${deletingProj.proj.name}"`,
+        ),
+      );
+    } catch (err) {
+      const e = err as Error & { status?: number };
+      if (e.status === 409 && !deletingProj.needsForce) {
+        setDeletingProj({
+          proj: deletingProj.proj,
+          needsForce: true,
+          conflictMsg: e.message,
+        });
+      } else {
+        showToast(e.message);
+        setDeletingProj(null);
+      }
+    }
+  };
+
+  const handleCreateSnapshot = async () => {
+    if (!snapshotProj) return;
+    const label =
+      snapLabel.trim() ||
+      `v${snapshotsForModal.length + 1}.0 快照 (${new Date().toISOString().slice(0, 10)})`;
+    const res = await apiCreateProjectSnapshot(snapshotProj.id, {
+      label,
+      note: snapNote.trim() || '手工保存 11 模型里程碑快照',
+    });
+    const otherSnaps = (data.projectSnapshots ?? []).filter(
+      (s) => s.projectId !== snapshotProj.id,
+    );
+    patchData({ projectSnapshots: [...res.snapshots, ...otherSnaps] });
+    setSnapLabel('');
+    setSnapNote('');
+    showToast(t(`已创建工程快照「${label}」`, `Created snapshot "${label}"`));
+  };
+
+  const handleRestoreSnapshot = async (snap: ProjectSnapshot) => {
+    if (!snapshotProj) return;
+    const res = await apiRestoreProjectSnapshot(snapshotProj.id, snap.id);
+    const otherSnaps = (data.projectSnapshots ?? []).filter(
+      (s) => s.projectId !== snapshotProj.id,
+    );
+    patchData({
+      projects: res.projects,
+      ...(active.id === snapshotProj.id ? { activeProject: res.project } : {}),
+      projectSnapshots: [...res.snapshots, ...otherSnaps],
+    });
+    showToast(t(`已恢复至快照「${snap.label}」`, `Restored snapshot "${snap.label}"`));
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -191,14 +396,22 @@ export function OverviewSessionsView({
 
         <div className="card">
           <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
-            {t('本地 Pi 智能体引擎', 'Local Pi Agent Runtime')}
+            {t('活跃智能体推理网关', 'Active Agent LLM Gateway')}
           </div>
           <div style={{ fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, marginTop: 4 }}>
-            {data.llmProviders[0]?.defaultModel ?? 'auto/glm-5.3-flash'}
+            {data.systemSettings.mockLlmMode
+              ? 'Mock Demo Engine'
+              : ((data.llmProviders.find((p) => p.enabled) ?? data.llmProviders[0])
+                  ?.defaultModel ?? 'auto/glm-5.3-flash')}
           </div>
           <div style={{ marginTop: 6 }}>
-            <span className="badge badge-ok">127.0.0.1:3425</span>{' '}
-            <span className="badge badge-accent">Pi Durable</span>
+            <span className="badge badge-ok">
+              {(data.agentSessions ?? []).length} {t('条智能体会话', 'Agent Sessions')}
+            </span>{' '}
+            <span className="badge badge-accent">
+              {(data.llmProviders.find((p) => p.enabled) ?? data.llmProviders[0])?.name ??
+                'Pi Durable'}
+            </span>
           </div>
         </div>
       </div>
@@ -265,161 +478,426 @@ export function OverviewSessionsView({
         </div>
       </div>
 
-      {/* Project Sessions Table */}
-      <div className="card">
-        <div className="card-header">
-          <h3 className="card-title">
-            {t('本体工程会话列表 (Project Sessions)', 'Ontology Project Sessions')}
-          </h3>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => setCreateOpen(true)}
-          >
-            + {t('新建本体工程', 'New Ontology Project')}
-          </button>
-        </div>
-
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{t('工程编码', 'Code')}</th>
-              <th>{t('工程名称', 'Project Name')}</th>
-              <th>{t('所属中心', 'Center')}</th>
-              <th>{t('业务领域', 'Domain')}</th>
-              <th>{t('建模阶段进度', 'Stage Progress')}</th>
-              <th>{t('操作', 'Actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.projects.map((p) => (
-              <tr key={p.id}>
-                <td style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{p.code}</td>
-                <td>
-                  <strong>{p.name}</strong>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{p.description}</div>
-                </td>
-                <td>
-                  <span className="badge badge-accent">{p.center}</span>
-                </td>
-                <td>{p.domain}</td>
-                <td>
-                  <span className="badge badge-ok">{p.currentStage} / 11 Models</span>
-                </td>
-                <td>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button
-                      type="button"
-                      className={`btn btn-sm ${p.id === active.id ? 'btn-primary' : ''}`}
-                      onClick={async () => {
-                        await switchProject(p.id);
-                      }}
-                    >
-                      {p.id === active.id ? t('当前工程', 'Active') : t('切换至此工程', 'Switch')}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      onClick={async () => {
-                        if (p.id !== active.id) await switchProject(p.id);
-                        onNavigate('app-ontology');
-                      }}
-                    >
-                      {t('打开 11 模型工作台', 'Open Workbench')}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {createOpen && (
-        <div className="modal-backdrop" onClick={() => setCreateOpen(false)}>
-          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="card-header">
-              <h3 className="card-title">{t('新建业务本体工程', 'Create Ontology Project')}</h3>
-              <button type="button" className="btn btn-sm" onClick={() => setCreateOpen(false)}>
-                ✕
-              </button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div className="form-field">
-                <label className="form-label">{t('工程名称', 'Project Name')}</label>
-                <input
-                  className="input"
-                  placeholder="例如：供应链采购协同系统"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                />
+      {/* Ontology Project Management Hub Registry Table */}
+      <RegistryTable<ProjectSummary>
+        testId="project-hub-registry"
+        title={t('本体工程管理中心 (Ontology Project Hub)', 'Ontology Project Management Hub')}
+        subtitle={t(
+          '管理所有业务本体工程的元数据、克隆副本、11 模型历史版本快照与生命周期（与单轮智能体会话严格解耦）',
+          'Full lifecycle management for Ontology Projects: metadata, cloning, snapshots, and safe deletion',
+        )}
+        rows={data.projects}
+        getRowKey={(p) => p.id}
+        activeRowKey={active.id}
+        searchPlaceholder={t('按工程编码、名称或业务领域搜索…', 'Search by code, name, or domain…')}
+        matchesSearch={(p, q) =>
+          p.code.toLowerCase().includes(q) ||
+          p.name.toLowerCase().includes(q) ||
+          p.domain.toLowerCase().includes(q) ||
+          p.description.toLowerCase().includes(q)
+        }
+        statusFilters={[
+          { value: 'ALL', label: t('全部中心', 'All') },
+          { value: 'APPLICATION', label: 'APPLICATION' },
+          { value: 'CAPABILITY', label: 'CAPABILITY' },
+          { value: 'ANALYTICS', label: 'ANALYTICS' },
+        ]}
+        getRowStatus={(p) => p.center}
+        primaryActionLabel={t('新建本体工程', 'New Ontology Project')}
+        primaryActionTestId="new-project-hub-btn"
+        onPrimaryAction={() => setCreateOpen(true)}
+        columns={[
+          {
+            key: 'code',
+            header: t('工程编码', 'Code'),
+            width: '130px',
+            render: (p) => (
+              <span className="font-mono text-[12px] font-semibold text-ink">{p.code}</span>
+            ),
+          },
+          {
+            key: 'name',
+            header: t('工程名称与说明', 'Project Name'),
+            render: (p) => (
+              <div>
+                <div className="flex items-center gap-1.5 font-semibold text-ink">
+                  <FolderKanban size={13.5} className="text-accent" />
+                  <span>{p.name}</span>
+                  {p.id === active.id && (
+                    <span className="filter-status-done rounded-full px-2 py-0.2 text-[10px] font-semibold">
+                      {t('当前激活', 'Active')}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-0.5 text-[11.5px] text-ink-3">{p.description}</div>
               </div>
-              <div className="form-field">
-                <label className="form-label">{t('工程编码', 'Project Code')}</label>
-                <input
-                  className="input"
-                  placeholder="例如：SCM-PROC"
-                  value={newCode}
-                  onChange={(e) => setNewCode(e.target.value)}
-                />
+            ),
+          },
+          {
+            key: 'domain',
+            header: t('业务领域 / 中心', 'Domain / Center'),
+            width: '180px',
+            render: (p) => (
+              <div className="space-y-1">
+                <div className="text-[12px] text-ink">{p.domain}</div>
+                <span className="filter-status-accent inline-block rounded-full px-2 py-0.2 font-mono text-[10px]">
+                  {p.center}
+                </span>
               </div>
-              <div className="form-field">
-                <label className="form-label">{t('业务领域', 'Domain')}</label>
-                <input
-                  className="input"
-                  placeholder="例如：供应链采购管理"
-                  value={newDomain}
-                  onChange={(e) => setNewDomain(e.target.value)}
-                />
-              </div>
-              <div className="form-field">
-                <label className="form-label">{t('初始化模板', 'Initial Template')}</label>
-                <select
-                  className="select"
-                  value={newTemplate}
-                  onChange={(e) =>
-                    setNewTemplate(e.target.value as 'CONTRACT' | 'MFT' | 'EMPTY')
-                  }
-                >
-                  <option value="CONTRACT">11模型完整标杆模板 (合同全生命周期 CLM)</option>
-                  <option value="MFT">存量系统本体萃取模板 (MFT 安全传输)</option>
-                  <option value="EMPTY">空白渐进式本体模板 (从 M1 开始)</option>
-                </select>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
-                <button type="button" className="btn" onClick={() => setCreateOpen(false)}>
-                  {t('取消', 'Cancel')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
+            ),
+          },
+          {
+            key: 'stage',
+            header: t('11 模型进度', 'Stage Progress'),
+            width: '130px',
+            render: (p) => (
+              <span className="filter-status-done inline-block rounded-full px-2.5 py-0.5 font-mono text-[11px]">
+                {p.currentStage} / 11 Models
+              </span>
+            ),
+          },
+          {
+            key: 'actions',
+            header: t('管理操作', 'Actions'),
+            align: 'right',
+            render: (p) => (
+              <div
+                className="inline-flex flex-wrap items-center justify-end gap-1.5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Button
+                  variant={p.id === active.id ? 'primary' : 'secondary'}
+                  size="xs"
                   onClick={async () => {
-                    if (!newName.trim()) return;
-                    await createNewProject({
-                      name: newName.trim(),
-                      code: newCode.trim() || 'ONTO-NEW',
-                      center: 'APPLICATION',
-                      domain: newDomain.trim() || newName.trim(),
-                      template: newTemplate,
-                    });
-                    setNewName('');
-                    setNewCode('');
-                    setNewDomain('');
-                    setCreateOpen(false);
+                    if (p.id !== active.id) await switchProject(p.id);
+                    onNavigate('app-ontology');
                   }}
                 >
-                  {t('立即创建', 'Create Project')}
-                </button>
+                  {t('打开建模台', 'Workbench')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setSnapshotProj(p)}
+                  data-testid={`project-snapshots-btn-${p.id}`}
+                  title={t('版本快照管理', 'Manage Snapshots')}
+                >
+                  <History size={12} />
+                  {t('快照', 'Snapshots')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setEditingProj({ ...p })}
+                  title={t('编辑元数据', 'Edit Metadata')}
+                >
+                  <Edit3 size={12} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => void handleCloneProject(p)}
+                  data-testid={`project-clone-btn-${p.id}`}
+                  title={t('克隆副本', 'Clone Project')}
+                >
+                  <Copy size={12} />
+                </Button>
+                {data.projects.length > 1 && (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="text-red hover:bg-red-tint hover:text-red"
+                    onClick={() => setDeletingProj({ proj: p, needsForce: false })}
+                    title={t('删除工程', 'Delete Project')}
+                  >
+                    <Trash2 size={12} />
+                  </Button>
+                )}
               </div>
+            ),
+          },
+        ]}
+      />
+
+      {/* Create Ontology Project Dialog */}
+      <ConfirmDialog
+        open={createOpen}
+        title={t('新建业务本体工程', 'Create Ontology Project')}
+        confirmLabel={t('立即创建', 'Create Project')}
+        testId="create-project-dialog"
+        onClose={() => setCreateOpen(false)}
+        onConfirm={async () => {
+          if (!newName.trim()) return;
+          await createNewProject({
+            name: newName.trim(),
+            code: newCode.trim() || 'ONTO-NEW',
+            center: newCenter,
+            domain: newDomain.trim() || newName.trim(),
+            description: newDescription.trim() || undefined,
+            template: newTemplate,
+          });
+          setNewName('');
+          setNewCode('');
+          setNewDomain('');
+          setNewDescription('');
+          setCreateOpen(false);
+        }}
+      >
+        <div className="space-y-3">
+          <div className="form-grid-2">
+            <div className="form-field">
+              <label className="form-label">{t('工程名称', 'Project Name')}</label>
+              <input
+                className="input"
+                data-testid="new-project-name-input"
+                placeholder="例如：供应链采购协同系统"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+            </div>
+            <div className="form-field">
+              <label className="form-label">{t('工程编码', 'Project Code')}</label>
+              <input
+                className="input"
+                data-testid="new-project-code-input"
+                placeholder="例如：SCM-PROC"
+                value={newCode}
+                onChange={(e) => setNewCode(e.target.value)}
+              />
             </div>
           </div>
+          <div className="form-grid-2">
+            <div className="form-field">
+              <label className="form-label">{t('业务领域', 'Domain')}</label>
+              <input
+                className="input"
+                placeholder="例如：供应链采购管理"
+                value={newDomain}
+                onChange={(e) => setNewDomain(e.target.value)}
+              />
+            </div>
+            <div className="form-field">
+              <label className="form-label">{t('归属中心', 'Center')}</label>
+              <select
+                className="select"
+                value={newCenter}
+                onChange={(e) =>
+                  setNewCenter(e.target.value as 'APPLICATION' | 'CAPABILITY' | 'ANALYTICS')
+                }
+              >
+                <option value="APPLICATION">APPLICATION (应用研发中心)</option>
+                <option value="CAPABILITY">CAPABILITY (业务能力中心)</option>
+                <option value="ANALYTICS">ANALYTICS (数据分析中心)</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-field">
+            <label className="form-label">{t('工程简介', 'Description')}</label>
+            <input
+              className="input"
+              placeholder="简述核心业务边界与建模目标…"
+              value={newDescription}
+              onChange={(e) => setNewDescription(e.target.value)}
+            />
+          </div>
+          <div className="form-field">
+            <label className="form-label">{t('初始化模板', 'Initial Template')}</label>
+            <select
+              className="select"
+              value={newTemplate}
+              onChange={(e) =>
+                setNewTemplate(e.target.value as 'CONTRACT' | 'MFT' | 'EMPTY')
+              }
+            >
+              <option value="CONTRACT">11模型完整标杆模板 (合同全生命周期 CLM)</option>
+              <option value="MFT">存量系统本体萃取模板 (MFT 安全传输)</option>
+              <option value="EMPTY">空白渐进式本体模板 (从 M1 开始)</option>
+            </select>
+          </div>
         </div>
-      )}
+      </ConfirmDialog>
+
+      {/* Edit Project Metadata Dialog */}
+      <ConfirmDialog
+        open={Boolean(editingProj)}
+        title={t('编辑本体工程元数据', 'Edit Project Metadata')}
+        confirmLabel={t('保存修改', 'Save Changes')}
+        onClose={() => setEditingProj(null)}
+        onConfirm={() => void handleSaveEditedProject()}
+      >
+        {editingProj && (
+          <div className="space-y-3">
+            <div className="form-grid-2">
+              <div className="form-field">
+                <label className="form-label">{t('工程名称', 'Name')}</label>
+                <input
+                  className="input"
+                  value={editingProj.name}
+                  onChange={(e) =>
+                    setEditingProj({ ...editingProj, name: e.target.value })
+                  }
+                />
+              </div>
+              <div className="form-field">
+                <label className="form-label">{t('工程编码', 'Code')}</label>
+                <input
+                  className="input"
+                  value={editingProj.code}
+                  onChange={(e) =>
+                    setEditingProj({ ...editingProj, code: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <div className="form-field">
+              <label className="form-label">{t('业务领域', 'Domain')}</label>
+              <input
+                className="input"
+                value={editingProj.domain}
+                onChange={(e) =>
+                  setEditingProj({ ...editingProj, domain: e.target.value })
+                }
+              />
+            </div>
+            <div className="form-field">
+              <label className="form-label">{t('工程说明', 'Description')}</label>
+              <input
+                className="input"
+                value={editingProj.description}
+                onChange={(e) =>
+                  setEditingProj({ ...editingProj, description: e.target.value })
+                }
+              />
+            </div>
+          </div>
+        )}
+      </ConfirmDialog>
+
+      {/* Project Snapshots Manager Dialog */}
+      <ConfirmDialog
+        open={Boolean(snapshotProj)}
+        title={
+          snapshotProj
+            ? `${t('11 模型里程碑快照管理', 'Project Snapshots')} — ${snapshotProj.name}`
+            : ''
+        }
+        cancelLabel={t('关闭', 'Close')}
+        onClose={() => setSnapshotProj(null)}
+      >
+        {snapshotProj && (
+          <div className="space-y-3">
+            <div className="rounded-card border border-line bg-inset/50 p-3 space-y-2">
+              <div className="text-[12px] font-semibold text-ink">
+                {t('创建当前 11 模型快照', 'Create New Milestone Snapshot')}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  className="input"
+                  placeholder={t('快照版本标签，如 v5.2 评审基线', 'Snapshot label…')}
+                  value={snapLabel}
+                  onChange={(e) => setSnapLabel(e.target.value)}
+                />
+                <Button
+                  variant="accent"
+                  size="sm"
+                  data-testid="create-snapshot-confirm-btn"
+                  onClick={() => void handleCreateSnapshot()}
+                >
+                  <Plus size={12.5} />
+                  {t('保存快照', 'Snapshot')}
+                </Button>
+              </div>
+              <input
+                className="input"
+                placeholder={t('快照备注说明（可选）', 'Optional note…')}
+                value={snapNote}
+                onChange={(e) => setSnapNote(e.target.value)}
+              />
+            </div>
+
+            <div className="max-h-60 space-y-2 overflow-y-auto">
+              {snapshotsForModal.length === 0 ? (
+                <div className="py-4 text-center text-[12px] text-ink-3">
+                  {t('当前工程暂无历史快照', 'No snapshots yet for this project')}
+                </div>
+              ) : (
+                snapshotsForModal.map((snap) => (
+                  <div
+                    key={snap.id}
+                    className="flex items-center justify-between gap-2 rounded-control border border-line bg-surface p-2.5"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-semibold text-ink">{snap.label}</div>
+                      <div className="text-[11px] text-ink-3">
+                        {snap.presentModels.length}/11 Models · {snap.errorCount} Errors ·{' '}
+                        {snap.createdAt.slice(0, 19).replace('T', ' ')}
+                      </div>
+                      {snap.note && (
+                        <div className="text-[11.5px] text-ink-2">{snap.note}</div>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        onClick={() => void handleRestoreSnapshot(snap)}
+                      >
+                        <RotateCcw size={11.5} />
+                        {t('恢复', 'Restore')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className="text-red"
+                        onClick={async () => {
+                          const res = await apiDeleteProjectSnapshot(
+                            snapshotProj.id,
+                            snap.id,
+                          );
+                          const other = (data.projectSnapshots ?? []).filter(
+                            (s) => s.projectId !== snapshotProj.id,
+                          );
+                          patchData({ projectSnapshots: [...res.snapshots, ...other] });
+                        }}
+                      >
+                        <Trash2 size={11.5} />
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </ConfirmDialog>
+
+      {/* Delete Project Confirmation Dialog */}
+      <ConfirmDialog
+        open={Boolean(deletingProj)}
+        danger
+        title={t('删除本体工程', 'Delete Ontology Project')}
+        confirmLabel={
+          deletingProj?.needsForce
+            ? t('强制级联删除工程及关联应用', 'Force Cascade Delete')
+            : t('确认删除', 'Delete')
+        }
+        description={
+          deletingProj?.conflictMsg ||
+          (deletingProj
+            ? t(
+                `确认删除本体工程「${deletingProj.proj.name} (${deletingProj.proj.code})」吗？`,
+                `Delete ontology project "${deletingProj.proj.name}"?`,
+              )
+            : '')
+        }
+        onClose={() => setDeletingProj(null)}
+        onConfirm={() => void handleDeleteProjectConfirm()}
+      />
     </div>
   );
 }
 
-// ─── 2. Requirement Exploration (需求探索 / Grilling) ──────────────────────────
+// ─── 2. Requirement Exploration (需求探索 / Live Streaming + Scoped HITL) ──────
 export function RequirementExploreView({
   onNavigate,
 }: {
@@ -428,15 +906,7 @@ export function RequirementExploreView({
   const { t } = usePreferences();
   const { data, patchData, showToast } = useWorkbenchStore();
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
-  const [inputMsg, setInputMsg] = useState('');
-  const [busy, setBusy] = useState(false);
   const [synthesizingSrs, setSynthesizingSrs] = useState(false);
-
-  // New session modal/inline state
-  const [newSessionOpen, setNewSessionOpen] = useState(false);
-  const [newSessionTitle, setNewSessionTitle] = useState('');
-  const [newSessionPrompt, setNewSessionPrompt] = useState('');
-  const [creatingSession, setCreatingSession] = useState(false);
 
   useEffect(() => {
     if (!data) return;
@@ -446,83 +916,37 @@ export function RequirementExploreView({
     }
   }, [data?.activeProject.id, data?.requirementSessions, selectedSessionId]);
 
+  // Extract additional domain signals from unified REQUIREMENT AgentSessions
+  const extraReqArtifacts = useMemo(() => {
+    const aggs = new Set<string>();
+    const rules = new Set<string>();
+    for (const sess of data?.agentSessions ?? []) {
+      if (sess.projectId !== data?.activeProject.id || sess.agentKind !== 'REQUIREMENT') {
+        continue;
+      }
+      for (const m of sess.messages) {
+        for (const art of m.artifacts ?? []) {
+          if (art.kind === 'REQUIREMENT_HINTS') {
+            art.aggregates.forEach((a) => aggs.add(a));
+            art.rules.forEach((r) => rules.add(r));
+          }
+        }
+      }
+    }
+    return { aggs: [...aggs], rules: [...rules] };
+  }, [data?.agentSessions, data?.activeProject.id]);
+
   if (!data) return null;
   const sessions = data.requirementSessions;
   const session =
     sessions.find((s) => s.id === selectedSessionId) ?? sessions[0] ?? undefined;
 
-  const handleCreateSession = async () => {
-    const title =
-      newSessionTitle.trim() ||
-      `${data.activeProject.name} 需求探索会话 #${sessions.length + 1}`;
-    setCreatingSession(true);
-    try {
-      const res = await fetch('/api/requirements/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: data.activeProject.id,
-          title,
-          initialPrompt: newSessionPrompt.trim() || undefined,
-        }),
-      });
-      const json = await res.json();
-      let nextSessions = json.requirementSessions ?? [...sessions, json.session];
-
-      // If an initial prompt was provided, trigger first grilling turn immediately
-      if (newSessionPrompt.trim() && json.session?.id) {
-        const grillRes = await fetch(`/api/requirements/${json.session.id}/grill`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userMessage: newSessionPrompt.trim() }),
-        });
-        const grillJson = await grillRes.json();
-        if (grillJson.requirementSessions) {
-          nextSessions = grillJson.requirementSessions;
-        }
-      }
-
-      patchData({ requirementSessions: nextSessions });
-      if (json.session?.id) {
-        setSelectedSessionId(json.session.id);
-      }
-      setNewSessionTitle('');
-      setNewSessionPrompt('');
-      setNewSessionOpen(false);
-      showToast(t(`已创建需求探索会话「${title}」`, `Created requirement session "${title}"`));
-    } finally {
-      setCreatingSession(false);
-    }
-  };
-
-  const handleSendGrill = async () => {
-    if (!inputMsg.trim() || !session || busy) return;
-    setBusy(true);
-    const text = inputMsg.trim();
-    setInputMsg('');
-    try {
-      const res = await fetch(`/api/requirements/${session.id}/grill`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userMessage: text }),
-      });
-      const json = await res.json();
-      const updatedList =
-        json.requirementSessions ??
-        sessions.map((s) => (s.id === json.session.id ? json.session : s));
-      patchData({
-        requirementSessions: updatedList,
-      });
-      showToast(
-        t(
-          '已完成 A/B 分级追问并更新候选聚合根与业务规则',
-          'Updated A/B requirement grilling and candidate domain rules',
-        ),
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
+  const mergedAggs = [
+    ...new Set([...(session?.discoveredAggregates ?? []), ...extraReqArtifacts.aggs]),
+  ];
+  const mergedRules = [
+    ...new Set([...(session?.discoveredRules ?? []), ...extraReqArtifacts.rules]),
+  ];
 
   const handleSynthesizeSrs = async () => {
     if (!session || synthesizingSrs) return;
@@ -547,20 +971,20 @@ export function RequirementExploreView({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Top Multi-Session Switcher & Creator Bar */}
+      {/* Top SRS Synthesis Header */}
       <div className="card">
-        <div className="card-header" style={{ marginBottom: newSessionOpen ? 12 : 0 }}>
+        <div className="card-header" style={{ marginBottom: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <h3 className="card-title">
               {t(
-                '交互式需求探索与 A/B 分级追问 (Requirement Grilling)',
-                'Interactive Requirement Exploration & A/B Grilling',
+                '交互式需求探索与 A/B 分级追问工作台 (Live Streaming + Scoped HITL)',
+                'Interactive Requirement Exploration & Scoped HITL',
               )}
             </h3>
             {sessions.length > 0 && (
               <select
                 className="select"
-                style={{ width: 290 }}
+                style={{ width: 280 }}
                 value={session?.id ?? ''}
                 onChange={(e) => setSelectedSessionId(e.target.value)}
               >
@@ -571,22 +995,9 @@ export function RequirementExploreView({
                 ))}
               </select>
             )}
-            {session && (
-              <span className={`badge ${session.status === 'CONVERGED' ? 'badge-ok' : 'badge-accent'}`}>
-                {session.status}
-              </span>
-            )}
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              type="button"
-              className="btn"
-              data-testid="new-req-session-btn"
-              onClick={() => setNewSessionOpen((v) => !v)}
-            >
-              + {t('新建需求会话', 'New Req Session')}
-            </button>
             <button
               type="button"
               className="btn btn-primary"
@@ -603,152 +1014,19 @@ export function RequirementExploreView({
             </button>
           </div>
         </div>
-
-        {newSessionOpen && (
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 6,
-              background: 'var(--surface-2)',
-              border: '1px solid var(--line)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-            }}
-          >
-            <div className="form-grid-2">
-              <div className="form-field">
-                <label className="form-label">{t('会话标题', 'Session Title')}</label>
-                <input
-                  className="input"
-                  placeholder={t('例如：里程碑变更与违约金追索专题探索', 'e.g. Milestone & Penalty Rules Exploration')}
-                  value={newSessionTitle}
-                  onChange={(e) => setNewSessionTitle(e.target.value)}
-                />
-              </div>
-              <div className="form-field">
-                <label className="form-label">
-                  {t('初始业务诉求描述 (可选)', 'Initial Requirement Prompt (Optional)')}
-                </label>
-                <input
-                  className="input"
-                  placeholder={t('输入核心业务场景，创建后自动启动 A/B 分级追问...', 'Describe core business need...')}
-                  value={newSessionPrompt}
-                  onChange={(e) => setNewSessionPrompt(e.target.value)}
-                />
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button type="button" className="btn btn-sm" onClick={() => setNewSessionOpen(false)}>
-                {t('取消', 'Cancel')}
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                disabled={creatingSession}
-                onClick={handleCreateSession}
-              >
-                {creatingSession ? '...' : t('创建并进入会话', 'Create Session')}
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Main Conversation + Right Convergence Panel */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 370px', gap: 14 }}>
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', minHeight: 520 }}>
-          <div className="card-header">
-            <div>
-              <strong>{session?.title ?? t('暂无需求探索会话', 'No Requirement Session')}</strong>
-              <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
-                {t(
-                  'A 类常规项由 AI 自动补全免打扰；B 类核心业务边界自动追问消除歧义',
-                  'Class-A defaults auto-filled quietly; Class-B core ambiguities surfaced for confirmation',
-                )}
-              </div>
-            </div>
-            <span className="badge badge-accent">
-              {(session?.messages ?? []).length} {t('轮对话', 'Turns')}
-            </span>
-          </div>
-
-          <div
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-              padding: '8px 0',
-            }}
-          >
-            {(session?.messages ?? []).length === 0 ? (
-              <div style={{ padding: 18, color: 'var(--muted)', fontSize: 12.5 }}>
-                {t(
-                  '请在下方输入业务需求或点击“+ 新建需求会话”开始探索。',
-                  'Enter a business requirement below or create a new session to start.',
-                )}
-              </div>
-            ) : (
-              (session?.messages ?? []).map((m) => (
-                <div
-                  key={m.id}
-                  style={{
-                    padding: '10px 12px',
-                    borderRadius: 6,
-                    background: m.role === 'user' ? 'var(--accent-soft)' : 'var(--surface-2)',
-                    border: '1px solid var(--line)',
-                    whiteSpace: 'pre-wrap',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: 11,
-                      color: 'var(--muted)',
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span>
-                      {m.role === 'user'
-                        ? t('业务需求提出方', 'Business Stakeholder')
-                        : t('需求追问智能体 (Grilling Agent)', 'Requirement Grilling Agent')}
-                    </span>
-                    <span style={{ fontFamily: 'var(--mono)' }}>
-                      {m.timestamp ? m.timestamp.slice(11, 19) : ''}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>{m.content}</div>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <input
-              className="input"
-              placeholder={t(
-                '输入新的业务需求或回答 B 类边界追问（如：确认逾期超 30 天冻结结算单）...',
-                'Enter business requirement or confirm Class-B boundary...',
-              )}
-              value={inputMsg}
-              onChange={(e) => setInputMsg(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSendGrill();
-              }}
-            />
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || !session}
-              onClick={handleSendGrill}
-            >
-              {busy ? '...' : t('发送并追问', 'Send')}
-            </button>
-          </div>
-        </div>
+      {/* Main Unified Streaming Agent + Right Convergence Panel */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 350px', gap: 14 }}>
+        <AgentSessionWorkbench
+          agentKind="REQUIREMENT"
+          height={580}
+          title={t('需求探索与边界澄清智能体', 'Requirement Discovery Agent')}
+          subtitle={t(
+            'A 类常规项自动补全；遇到 B 类模糊业务边界时自动弹出交互式确认卡片',
+            'Auto-completes Class-A defaults; pops up Scoped HITL card for Class-B decisions',
+          )}
+        />
 
         {/* Right Panel: Decisions (A/B Tags), M1 Aggregates, M3 Rules & Next Actions */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -761,52 +1039,48 @@ export function RequirementExploreView({
                 {(session?.resolvedDecisions ?? []).length}
               </span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
-              {(session?.resolvedDecisions ?? []).length === 0 ? (
-                <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                  {t('发送需求后将自动生成 [AI自动补全] 与 [待确认] 决策项', 'Send a message to populate Class-A/B decisions')}
-                </div>
-              ) : (
-                (session?.resolvedDecisions ?? []).map((dec, idx) => {
-                  const parsed = parseDecisionTag(dec);
-                  return (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                maxHeight: 220,
+                overflowY: 'auto',
+              }}
+            >
+              {(session?.resolvedDecisions ?? []).map((dec, idx) => {
+                const parsed = parseDecisionTag(dec);
+                return (
+                  <div
+                    key={`${idx}-${dec.slice(0, 18)}`}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 5,
+                      background: 'var(--surface-2)',
+                      border: '1px solid var(--line)',
+                      fontSize: 12,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}
+                  >
                     <div
-                      key={`${idx}-${dec.slice(0, 18)}`}
                       style={{
-                        padding: '8px 10px',
-                        borderRadius: 5,
-                        background: 'var(--surface-2)',
-                        border: '1px solid var(--line)',
-                        fontSize: 12,
                         display: 'flex',
-                        flexDirection: 'column',
-                        gap: 4,
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 6,
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-                        <span className={`badge ${parsed.badgeClass}`}>{parsed.tag}</span>
-                        <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-                          {t(parsed.categoryLabelZh, parsed.categoryLabelEn)}
-                        </span>
-                      </div>
-                      <div style={{ lineHeight: 1.45 }}>{parsed.body}</div>
-                      {parsed.tag === '[待确认]' && (
-                        <div>
-                          <button
-                            type="button"
-                            className="btn btn-sm"
-                            onClick={() =>
-                              setInputMsg(`确认业务边界决策：${parsed.body}`)
-                            }
-                          >
-                            {t('填入确认回复 →', 'Reply to Confirm →')}
-                          </button>
-                        </div>
-                      )}
+                      <span className={`badge ${parsed.badgeClass}`}>{parsed.tag}</span>
+                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                        {t(parsed.categoryLabelZh, parsed.categoryLabelEn)}
+                      </span>
                     </div>
-                  );
-                })
-              )}
+                    <div style={{ lineHeight: 1.45 }}>{parsed.body}</div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -815,7 +1089,7 @@ export function RequirementExploreView({
               {t('已识别领域聚合根 (M1)', 'Discovered Aggregates (M1)')}
             </h4>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {(session?.discoveredAggregates ?? []).map((a) => (
+              {mergedAggs.map((a) => (
                 <span key={a} className="badge badge-accent">
                   {a}
                 </span>
@@ -828,7 +1102,7 @@ export function RequirementExploreView({
               {t('已收敛业务规则 (M3)', 'Discovered Rules (M3)')}
             </h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {(session?.discoveredRules ?? []).map((r) => (
+              {mergedRules.map((r) => (
                 <div
                   key={r}
                   style={{
@@ -871,7 +1145,7 @@ export function RequirementExploreView({
   );
 }
 
-// ─── 3. Requirement Documents (需求文档 SRS) ──────────────────────────────────
+// ─── 3. Requirement Documents (需求文档 SRS: Registry + Tiptap Markdown) ─────
 export function RequirementDocsView({
   onNavigate,
 }: {
@@ -879,11 +1153,13 @@ export function RequirementDocsView({
 }) {
   const { t } = usePreferences();
   const { data, patchData, showToast } = useWorkbenchStore();
+  const [pageMode, setPageMode] = useState<'WORKSPACE' | 'REGISTRY'>('WORKSPACE');
   const [selectedDocId, setSelectedDocId] = useState<string>('');
   const [docTitle, setDocTitle] = useState<string>('');
   const [docVersion, setDocVersion] = useState<string>('v1.0');
   const [content, setContent] = useState<string>('');
   const [generatingProto, setGeneratingProto] = useState(false);
+  const [deletingDoc, setDeletingDoc] = useState<RequirementDoc | null>(null);
   const mdUploadRef = useRef<HTMLInputElement | null>(null);
 
   const docs = data?.requirementDocs ?? [];
@@ -918,23 +1194,21 @@ export function RequirementDocsView({
 
   if (!data) return null;
 
-  const handleSaveDoc = async () => {
+  const handleSaveDoc = async (mdToSave = content) => {
     const targetId = selectedDoc?.id ?? `doc-${Date.now()}`;
-    const res = await fetch('/api/requirements/docs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const res = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
+      '/api/requirements/docs',
+      {
         id: targetId,
         projectId: data.activeProject.id,
         title: docTitle.trim() || `${data.activeProject.name} 软件需求规格说明书`,
         version: docVersion.trim() || 'v1.0',
-        content,
+        content: mdToSave,
         status: 'CONFIRMED',
-      }),
-    });
-    const json = await res.json();
-    patchData({ requirementDocs: json.docs });
-    setSelectedDocId(json.doc.id);
+      },
+    );
+    patchData({ requirementDocs: res.docs });
+    setSelectedDocId(res.doc.id);
     showToast(
       t(
         '《软件需求说明书》已保存并标记为 CONFIRMED',
@@ -943,31 +1217,74 @@ export function RequirementDocsView({
     );
   };
 
+  const handleCreateBlankDoc = async () => {
+    const res = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
+      '/api/requirements/docs',
+      {
+        id: `doc-${Date.now()}`,
+        projectId: data.activeProject.id,
+        title: `${data.activeProject.name} 需求规格书 #${docs.length + 1}`,
+        version: 'v1.0',
+        content: `# ${data.activeProject.name} 软件需求规格说明书\n\n## 1. 业务目标与范围\n\n## 2. 核心领域对象与状态机\n\n| 对象名称 | 编码 | 核心职责 |\n| --- | --- | --- |\n| 示例聚合根 | AGG-01 | 核心业务单据 |\n`,
+        status: 'DRAFT',
+      },
+    );
+    patchData({ requirementDocs: res.docs });
+    setSelectedDocId(res.doc.id);
+    setPageMode('WORKSPACE');
+    showToast(t('已新建需求规格书草稿', 'Created new SRS draft'));
+  };
+
+  const handleCloneDoc = async (doc: RequirementDoc) => {
+    const res = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
+      '/api/requirements/docs',
+      {
+        id: `doc-clone-${Date.now()}`,
+        projectId: data.activeProject.id,
+        title: `${doc.title} (副本)`,
+        version: doc.version,
+        content: doc.content,
+        status: 'DRAFT',
+      },
+    );
+    patchData({ requirementDocs: res.docs });
+    showToast(t(`已克隆文档「${doc.title}」`, `Cloned "${doc.title}"`));
+  };
+
+  const handleConfirmDeleteDoc = async () => {
+    if (!deletingDoc) return;
+    const res = await apiDeleteResource<{ docs: RequirementDoc[] }>(
+      `/api/requirements/docs/${deletingDoc.id}?projectId=${data.activeProject.id}`,
+    );
+    patchData({ requirementDocs: res.docs });
+    setDeletingDoc(null);
+    showToast(t('已删除需求规格书', 'Deleted SRS document'));
+  };
+
   const handleUploadMdFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     const text = await file.text();
-    const baseTitle = file.name.replace(/\.(md|txt)$/i, '') || `${data.activeProject.name} 需求规格书`;
-    const newId = `doc-upload-${Date.now()}`;
-    const res = await fetch('/api/requirements/docs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: newId,
+    const baseTitle =
+      file.name.replace(/\.(md|txt)$/i, '') || `${data.activeProject.name} 需求规格书`;
+    const res = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
+      '/api/requirements/docs',
+      {
+        id: `doc-upload-${Date.now()}`,
         projectId: data.activeProject.id,
         title: baseTitle,
         version: 'v1.0',
         content: text,
         status: 'CONFIRMED',
-      }),
-    });
-    const json = await res.json();
-    patchData({ requirementDocs: json.docs });
-    setSelectedDocId(json.doc.id);
-    setDocTitle(json.doc.title);
-    setDocVersion(json.doc.version);
+      },
+    );
+    patchData({ requirementDocs: res.docs });
+    setSelectedDocId(res.doc.id);
+    setDocTitle(res.doc.title);
+    setDocVersion(res.doc.version);
     setContent(text);
+    setPageMode('WORKSPACE');
     showToast(
       t(
         `已导入本地需求规格书「${file.name}」并保存`,
@@ -976,31 +1293,23 @@ export function RequirementDocsView({
     );
   };
 
-  const handleDownloadMd = () => {
-    const safeName = `${(docTitle || '软件需求规格说明书').replace(/[\\/:*?"<>|]+/g, '_')}-${docVersion || 'v1.0'}.md`;
-    triggerBrowserDownload(safeName, content, 'text/markdown;charset=utf-8');
-    showToast(t(`已下载 ${safeName}`, `Downloaded ${safeName}`));
-  };
-
   const handleGeneratePrototype = async () => {
     if (generatingProto) return;
     setGeneratingProto(true);
     try {
       let targetDocId = selectedDoc?.id;
       if (!targetDocId && content.trim()) {
-        const saveRes = await fetch('/api/requirements/docs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const saveJson = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
+          '/api/requirements/docs',
+          {
             id: `doc-${Date.now()}`,
             projectId: data.activeProject.id,
             title: docTitle.trim() || `${data.activeProject.name} 软件需求规格说明书`,
             version: docVersion.trim() || 'v1.0',
             content,
             status: 'CONFIRMED',
-          }),
-        });
-        const saveJson = await saveRes.json();
+          },
+        );
         patchData({ requirementDocs: saveJson.docs });
         targetDocId = saveJson.doc.id;
       }
@@ -1025,95 +1334,220 @@ export function RequirementDocsView({
   };
 
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div className="card-header" style={{ flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {docs.length > 0 && (
-            <select
-              className="select"
-              style={{ width: 280 }}
-              value={selectedDoc?.id ?? ''}
-              onChange={(e) => setSelectedDocId(e.target.value)}
+    <div className="space-y-3">
+      <input
+        ref={mdUploadRef}
+        type="file"
+        accept=".md,.txt"
+        style={{ display: 'none' }}
+        onChange={handleUploadMdFile}
+      />
+
+      <ViewModeHeader
+        mode={pageMode}
+        onChange={setPageMode}
+        workspaceLabel={t('Tiptap 规格书工作台', 'SRS Editor Workspace')}
+        registryLabel={t('规格书版本管理列表', 'SRS Document Registry')}
+        count={docs.length}
+        testIdPrefix="srs"
+        rightActions={
+          <>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => mdUploadRef.current?.click()}
             >
-              {docs.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.title} ({d.version} · {d.status})
-                </option>
-              ))}
-            </select>
-          )}
-          <input
-            className="input"
-            style={{ width: 240 }}
-            value={docTitle}
-            onChange={(e) => setDocTitle(e.target.value)}
-            placeholder={t('文档标题', 'Document Title')}
-          />
-          <input
-            className="input"
-            style={{ width: 84, fontFamily: 'var(--mono)' }}
-            value={docVersion}
-            onChange={(e) => setDocVersion(e.target.value)}
-            placeholder="v1.0"
-          />
-          {selectedDoc && (
-            <>
-              <span className="badge badge-ok">{selectedDoc.status}</span>
-              <span className="badge badge-accent">{selectedDoc.version}</span>
-            </>
-          )}
-        </div>
+              {t('上传本地 .md', 'Upload .md')}
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              data-testid="generate-prototype-btn"
+              disabled={generatingProto}
+              onClick={handleGeneratePrototype}
+            >
+              {generatingProto
+                ? t('正在生成交互原型...', 'Generating Prototype...')
+                : t('基于此需求生成可交互 HTML 原型 →', 'Generate HTML Prototype →')}
+            </button>
+          </>
+        }
+      />
 
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input
-            ref={mdUploadRef}
-            type="file"
-            accept=".md,.txt"
-            style={{ display: 'none' }}
-            onChange={handleUploadMdFile}
-          />
-          <button
-            type="button"
-            className="btn"
-            onClick={() => mdUploadRef.current?.click()}
-          >
-            {t('上传本地 .md', 'Upload .md')}
-          </button>
-          <button type="button" className="btn" onClick={handleDownloadMd}>
-            {t('下载 .md', 'Download .md')}
-          </button>
-          <button type="button" className="btn" onClick={handleSaveDoc}>
-            {t('保存并确认需求规格书', 'Save & Confirm SRS')}
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            data-testid="generate-prototype-btn"
-            disabled={generatingProto}
-            onClick={handleGeneratePrototype}
-          >
-            {generatingProto
-              ? t('正在生成交互原型...', 'Generating Prototype...')
-              : t('基于此需求生成可交互 HTML 原型 →', 'Generate Interactive HTML Prototype →')}
-          </button>
-        </div>
-      </div>
+      {pageMode === 'REGISTRY' ? (
+        <RegistryTable<RequirementDoc>
+          testId="srs-registry-table"
+          title={t('软件需求规格说明书注册表', 'SRS Document Registry')}
+          subtitle={t(
+            '管理多版本需求规格书草稿、评审确认状态、副本克隆与清理',
+            'Manage multi-version SRS documents, statuses, clones, and cleanup',
+          )}
+          rows={docs}
+          getRowKey={(d) => d.id}
+          activeRowKey={selectedDoc?.id}
+          matchesSearch={(d, q) =>
+            d.title.toLowerCase().includes(q) ||
+            d.version.toLowerCase().includes(q) ||
+            d.content.toLowerCase().includes(q)
+          }
+          statusFilters={[
+            { value: 'ALL', label: t('全部', 'All') },
+            { value: 'DRAFT', label: 'DRAFT' },
+            { value: 'CONFIRMED', label: 'CONFIRMED' },
+            { value: 'PUBLISHED', label: 'PUBLISHED' },
+          ]}
+          getRowStatus={(d) => d.status}
+          primaryActionLabel={t('新建需求规格书', 'New SRS Doc')}
+          onPrimaryAction={() => void handleCreateBlankDoc()}
+          onRowClick={(d) => {
+            setSelectedDocId(d.id);
+            setPageMode('WORKSPACE');
+          }}
+          columns={[
+            {
+              key: 'title',
+              header: t('文档标题', 'Title'),
+              render: (d) => (
+                <div>
+                  <div className="font-semibold text-ink">{d.title}</div>
+                  <div className="font-mono text-[11px] text-ink-3">{d.id}</div>
+                </div>
+              ),
+            },
+            {
+              key: 'version',
+              header: t('版本', 'Version'),
+              width: '100px',
+              render: (d) => <span className="badge badge-accent">{d.version}</span>,
+            },
+            {
+              key: 'status',
+              header: t('状态', 'Status'),
+              width: '120px',
+              render: (d) => <span className="badge badge-ok">{d.status}</span>,
+            },
+            {
+              key: 'updatedAt',
+              header: t('更新时间', 'Updated'),
+              width: '170px',
+              render: (d) => (
+                <span className="font-mono text-[11.5px] text-ink-3">
+                  {d.updatedAt.slice(0, 19).replace('T', ' ')}
+                </span>
+              ),
+            },
+            {
+              key: 'actions',
+              header: t('操作', 'Actions'),
+              align: 'right',
+              render: (d) => (
+                <div
+                  className="inline-flex items-center gap-1.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => {
+                      setSelectedDocId(d.id);
+                      setPageMode('WORKSPACE');
+                    }}
+                  >
+                    {t('编辑', 'Edit')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => void handleCloneDoc(d)}
+                    title={t('克隆副本', 'Clone')}
+                  >
+                    <Copy size={12} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="text-red"
+                    onClick={() => setDeletingDoc(d)}
+                    title={t('删除', 'Delete')}
+                  >
+                    <Trash2 size={12} />
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
+      ) : (
+        <div className="space-y-3">
+          <div className="card">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {docs.length > 1 && (
+                  <select
+                    className="select"
+                    style={{ width: 240 }}
+                    value={selectedDoc?.id ?? ''}
+                    onChange={(e) => setSelectedDocId(e.target.value)}
+                  >
+                    {docs.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.title} ({d.version})
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <input
+                  className="input"
+                  style={{ width: 260 }}
+                  value={docTitle}
+                  onChange={(e) => setDocTitle(e.target.value)}
+                  placeholder={t('文档标题', 'Document Title')}
+                />
+                <input
+                  className="input"
+                  style={{ width: 88, fontFamily: 'var(--mono)' }}
+                  value={docVersion}
+                  onChange={(e) => setDocVersion(e.target.value)}
+                  placeholder="v1.0"
+                />
+                {selectedDoc && (
+                  <span className="badge badge-ok">{selectedDoc.status}</span>
+                )}
+              </div>
+              <Button variant="secondary" size="xs" onClick={() => void handleCreateBlankDoc()}>
+                <Plus size={12} />
+                {t('新建空白规格书', 'New Draft')}
+              </Button>
+            </div>
+          </div>
 
-      <textarea
-        className="textarea mono"
-        style={{ minHeight: 520 }}
-        placeholder={t(
-          '# 软件需求规格说明书 (SRS)\n在此编写或上传 9 章节 Markdown 需求规格书...',
-          '# Software Requirements Specification (SRS)\nWrite or upload 9-chapter Markdown specification...',
-        )}
-        value={content}
-        onChange={(e) => setContent(e.target.value)}
+          <TiptapMarkdownEditor
+            title={docTitle || t('软件需求规格说明书 (SRS)', 'SRS Specification')}
+            value={content}
+            onChange={setContent}
+            onSave={handleSaveDoc}
+            saveLabel={t('保存并确认规格书', 'Save & Confirm SRS')}
+            downloadFilename={`${(docTitle || 'SRS').replace(/[\\/:*?"<>|]+/g, '_')}-${docVersion}.md`}
+            minHeight={500}
+          />
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(deletingDoc)}
+        danger
+        title={t('删除需求规格书', 'Delete SRS Document')}
+        description={
+          deletingDoc ? t(`确认删除「${deletingDoc.title}」吗？`, `Delete "${deletingDoc.title}"?`) : ''
+        }
+        onClose={() => setDeletingDoc(null)}
+        onConfirm={() => void handleConfirmDeleteDoc()}
       />
     </div>
   );
 }
 
-// ─── 4. UI Prototype & MU Sync (界面原型) ─────────────────────────────────────
+// ─── 4. UI Prototype & MU Sync (界面原型: Registry + Studio) ──────────────────
 export function PrototypeStudioView({
   onNavigate,
 }: {
@@ -1121,11 +1555,11 @@ export function PrototypeStudioView({
 }) {
   const { t } = usePreferences();
   const { data, patchData, showToast } = useWorkbenchStore();
+  const [pageMode, setPageMode] = useState<'WORKSPACE' | 'REGISTRY'>('WORKSPACE');
   const [selectedProtoId, setSelectedProtoId] = useState<string>('');
   const [htmlContent, setHtmlContent] = useState<string>('');
   const [viewMode, setViewMode] = useState<'SPLIT' | 'PREVIEW' | 'HTML'>('SPLIT');
 
-  // AI Prototype Refinement Assistant state
   const [refineInstruction, setRefineInstruction] = useState<string>('');
   const [refining, setRefining] = useState(false);
   const [synthesizingOntology, setSynthesizingOntology] = useState(false);
@@ -1133,12 +1567,12 @@ export function PrototypeStudioView({
     modelCount: number;
     errorCount: number;
   } | null>(null);
+  const [deletingProto, setDeletingProto] = useState<PrototypeArtifact | null>(null);
   const htmlUploadRef = useRef<HTMLInputElement | null>(null);
 
   const prototypes = data?.prototypes ?? [];
   const proto = prototypes.find((p) => p.id === selectedProtoId) ?? prototypes[0];
 
-  // Sync selectedProtoId when project or prototype list changes
   useEffect(() => {
     if (!data) return;
     const list = data.prototypes;
@@ -1152,7 +1586,6 @@ export function PrototypeStudioView({
     }
   }, [data?.activeProject.id, data?.prototypes]);
 
-  // Sync htmlContent whenever activeProject or selected prototype updates on server
   useEffect(() => {
     setHtmlContent(proto?.htmlContent ?? '');
   }, [data?.activeProject.id, proto?.id, proto?.updatedAt, proto?.htmlContent]);
@@ -1208,6 +1641,7 @@ export function PrototypeStudioView({
     if (json.prototype?.id) {
       setSelectedProtoId(json.prototype.id);
     }
+    setPageMode('WORKSPACE');
     showToast(
       `已导入原型「${file.name}」，提取 ${json.prototype.extractedScreenCount} 个屏幕并同步至 MU 模型`,
     );
@@ -1269,51 +1703,35 @@ export function PrototypeStudioView({
     }
   };
 
+  const handleDeleteProtoConfirm = async () => {
+    if (!deletingProto) return;
+    const res = await apiDeleteResource<{ prototypes: PrototypeArtifact[] }>(
+      `/api/prototypes/${deletingProto.id}?projectId=${data.activeProject.id}`,
+    );
+    patchData({ prototypes: res.prototypes });
+    setDeletingProto(null);
+    showToast(t('已删除原型版本', 'Deleted prototype artifact'));
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Top Toolbar Card */}
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div className="card-header" style={{ marginBottom: 0, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div>
-              <h3 className="card-title">
-                {t(
-                  '可交互 HTML 界面原型与 MU 模型双向锚定工作台',
-                  'Interactive HTML Prototype & MU Extractor',
-                )}
-              </h3>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                {t(
-                  '通过 data-screen-id / data-element-id / data-binding / data-event-id 确定性提取 MU 屏幕模型与 11 元模型本体',
-                  'Deterministically extracts MU screens, bindings, events, and synthesizes full 11-model ontology',
-                )}
-              </div>
-            </div>
+      <input
+        ref={htmlUploadRef}
+        type="file"
+        accept=".html,.htm"
+        style={{ display: 'none' }}
+        onChange={handleUploadHtml}
+      />
 
-            {prototypes.length > 0 && (
-              <select
-                className="select"
-                style={{ width: 230 }}
-                value={proto?.id ?? ''}
-                onChange={(e) => setSelectedProtoId(e.target.value)}
-              >
-                {prototypes.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.version} · {p.extractedScreenCount} Screens)
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <input
-              ref={htmlUploadRef}
-              type="file"
-              accept=".html,.htm"
-              style={{ display: 'none' }}
-              onChange={handleUploadHtml}
-            />
+      <ViewModeHeader
+        mode={pageMode}
+        onChange={setPageMode}
+        workspaceLabel={t('HTML 原型与 MU 锚定工作台', 'Prototype Studio')}
+        registryLabel={t('原型版本管理列表', 'Prototype Registry')}
+        count={prototypes.length}
+        testIdPrefix="proto"
+        rightActions={
+          <>
             <button
               type="button"
               className="btn btn-sm"
@@ -1321,32 +1739,6 @@ export function PrototypeStudioView({
             >
               {t('上传 .html', 'Upload .html')}
             </button>
-            <button type="button" className="btn btn-sm" onClick={handleDownloadHtml}>
-              {t('下载 .html', 'Download .html')}
-            </button>
-
-            <button
-              type="button"
-              className={`btn btn-sm ${viewMode === 'SPLIT' ? 'btn-primary' : ''}`}
-              onClick={() => setViewMode('SPLIT')}
-            >
-              {t('分栏联调', 'Split View')}
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${viewMode === 'PREVIEW' ? 'btn-primary' : ''}`}
-              onClick={() => setViewMode('PREVIEW')}
-            >
-              {t('仅看原型', 'Preview Only')}
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${viewMode === 'HTML' ? 'btn-primary' : ''}`}
-              onClick={() => setViewMode('HTML')}
-            >
-              {t('HTML 源码', 'HTML Source')}
-            </button>
-
             <button
               type="button"
               className="btn btn-sm"
@@ -1355,7 +1747,6 @@ export function PrototypeStudioView({
             >
               {t('保存原型并提取同步至 MU 模型', 'Save & Extract to MU Model')}
             </button>
-
             <button
               type="button"
               className="btn btn-sm btn-primary"
@@ -1365,131 +1756,286 @@ export function PrototypeStudioView({
             >
               {synthesizingOntology
                 ? t('正在合成 11 模型...', 'Synthesizing 11 Models...')
-                : t(
-                    '确认原型并一键合成 11 元模型本体',
-                    'Confirm Prototype & Synthesize 11-Model Ontology',
-                  )}
+                : t('确认原型并一键合成 11 元模型本体', 'Confirm & Synthesize 11-Model')}
             </button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        {/* AI Prototype Assistant Bar */}
-        <div
-          style={{
-            padding: '10px 12px',
-            borderRadius: 6,
-            background: 'var(--surface-2)',
-            border: '1px solid var(--line)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            flexWrap: 'wrap',
+      {pageMode === 'REGISTRY' ? (
+        <RegistryTable<PrototypeArtifact>
+          testId="prototype-registry-table"
+          title={t('可交互界面原型版本注册表', 'Interactive HTML Prototype Registry')}
+          subtitle={t(
+            '管理不同迭代版本的语义锚点 HTML 原型、MU 提取屏幕数与生命周期',
+            'Manage semantic HTML prototype versions and MU screen extraction counts',
+          )}
+          rows={prototypes}
+          getRowKey={(p) => p.id}
+          activeRowKey={proto?.id}
+          matchesSearch={(p, q) =>
+            p.name.toLowerCase().includes(q) || p.version.toLowerCase().includes(q)
+          }
+          primaryActionLabel={t('AI 生成新原型版本', 'Generate New Prototype')}
+          onPrimaryAction={async () => {
+            const res = await apiGeneratePrototype(data.activeProject.id, {});
+            patchData({ prototypes: res.prototypes, activeProject: res.project });
+            setSelectedProtoId(res.prototype.id);
+            setPageMode('WORKSPACE');
           }}
-        >
-          <span className="badge badge-accent">
-            {t('AI 原型精修助手', 'AI Prototype Assistant')}
-          </span>
-          <input
-            className="input"
-            style={{ flex: 1, minWidth: 260 }}
-            data-testid="refine-prototype-input"
-            placeholder={t(
-              '输入界面精修指令，例如：增加里程碑逾期预警统计卡片与批量审批按钮（自动保持语义锚点并同步 MU）...',
-              'Describe UI refinement, e.g. Add overdue milestone KPI banner and batch approve modal...',
-            )}
-            value={refineInstruction}
-            onChange={(e) => setRefineInstruction(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleRefinePrototype();
-            }}
-          />
-          <button
-            type="button"
-            className="btn btn-primary"
-            data-testid="refine-prototype-btn"
-            disabled={refining || !refineInstruction.trim()}
-            onClick={handleRefinePrototype}
-          >
-            {refining ? t('精修中...', 'Refining...') : t('AI 精修并同步 MU', 'Refine & Sync MU')}
-          </button>
-        </div>
+          onRowClick={(p) => {
+            setSelectedProtoId(p.id);
+            setPageMode('WORKSPACE');
+          }}
+          columns={[
+            {
+              key: 'name',
+              header: t('原型文件名称', 'Prototype Name'),
+              render: (p) => (
+                <div>
+                  <div className="font-semibold text-ink">{p.name}</div>
+                  <div className="font-mono text-[11px] text-ink-3">{p.id}</div>
+                </div>
+              ),
+            },
+            {
+              key: 'version',
+              header: t('版本', 'Version'),
+              width: '100px',
+              render: (p) => <span className="badge badge-accent">{p.version}</span>,
+            },
+            {
+              key: 'screens',
+              header: t('提取 MU 屏幕数', 'MU Screens'),
+              width: '140px',
+              render: (p) => (
+                <span className="badge badge-ok">{p.extractedScreenCount} Screens</span>
+              ),
+            },
+            {
+              key: 'updatedAt',
+              header: t('更新时间', 'Updated'),
+              width: '170px',
+              render: (p) => (
+                <span className="font-mono text-[11.5px] text-ink-3">
+                  {p.updatedAt.slice(0, 19).replace('T', ' ')}
+                </span>
+              ),
+            },
+            {
+              key: 'actions',
+              header: t('操作', 'Actions'),
+              align: 'right',
+              render: (p) => (
+                <div
+                  className="inline-flex items-center gap-1.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => {
+                      setSelectedProtoId(p.id);
+                      setPageMode('WORKSPACE');
+                    }}
+                  >
+                    {t('打开工作台', 'Studio')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="text-red"
+                    onClick={() => setDeletingProto(p)}
+                  >
+                    <Trash2 size={12} />
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
+      ) : (
+        <>
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {prototypes.length > 0 && (
+                  <select
+                    className="select"
+                    style={{ width: 250 }}
+                    value={proto?.id ?? ''}
+                    onChange={(e) => setSelectedProtoId(e.target.value)}
+                  >
+                    {prototypes.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.version} · {p.extractedScreenCount} Screens)
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button type="button" className="btn btn-sm" onClick={handleDownloadHtml}>
+                  {t('下载 .html', 'Download .html')}
+                </button>
+              </div>
 
-        {/* Post-Synthesis Banner with Jump to 11-Model Workbench */}
-        {synthesisSummary && (
-          <div
-            style={{
-              padding: '8px 12px',
-              borderRadius: 6,
-              background: 'var(--ok-soft)',
-              border: '1px solid var(--line)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 10,
-            }}
-          >
-            <div style={{ fontSize: 12.5 }}>
-              <strong>
-                {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
-              </strong>
-              {synthesisSummary.modelCount}/11 Models · {synthesisSummary.errorCount} Consistency Errors
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  className={`btn btn-sm ${viewMode === 'SPLIT' ? 'btn-primary' : ''}`}
+                  onClick={() => setViewMode('SPLIT')}
+                >
+                  {t('分栏联调', 'Split View')}
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${viewMode === 'PREVIEW' ? 'btn-primary' : ''}`}
+                  onClick={() => setViewMode('PREVIEW')}
+                >
+                  {t('仅看原型', 'Preview Only')}
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${viewMode === 'HTML' ? 'btn-primary' : ''}`}
+                  onClick={() => setViewMode('HTML')}
+                >
+                  {t('HTML 源码', 'HTML Source')}
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              className="btn btn-sm btn-primary"
-              onClick={() => onNavigate?.('app-ontology')}
-            >
-              {t('前往 11 模型本体工作台查看 →', 'Open 11-Model Ontology Workbench →')}
-            </button>
-          </div>
-        )}
-      </div>
 
-      {/* Sandbox Preview + HTML Source Split Area */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: viewMode === 'SPLIT' ? '1.15fr 0.85fr' : '1fr',
-          gap: 12,
-        }}
-      >
-        {(viewMode === 'SPLIT' || viewMode === 'PREVIEW') && (
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <iframe
-              title="Interactive Prototype Sandbox"
-              sandbox="allow-scripts"
-              srcDoc={htmlContent}
-              style={{ width: '100%', height: 560, border: 'none', display: 'block' }}
-            />
-          </div>
-        )}
-        {(viewMode === 'SPLIT' || viewMode === 'HTML') && (
-          <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+            {/* AI Prototype Assistant Bar */}
             <div
               style={{
+                padding: '10px 12px',
+                borderRadius: 6,
+                background: 'var(--surface-2)',
+                border: '1px solid var(--line)',
                 display: 'flex',
-                justifyContent: 'space-between',
                 alignItems: 'center',
-                fontSize: 11.5,
-                fontFamily: 'var(--mono)',
-                marginBottom: 6,
+                gap: 8,
+                flexWrap: 'wrap',
               }}
             >
-              <span>{proto?.name ?? '界面原型.html'} (Semantic Anchors)</span>
-              <span className="badge badge-ok">
-                {proto?.extractedScreenCount ?? data.activeProject.suite.MU?.screens.length ?? 0}{' '}
-                MU Screens
+              <span className="badge badge-accent">
+                {t('AI 原型精修助手', 'AI Prototype Assistant')}
               </span>
+              <input
+                className="input"
+                style={{ flex: 1, minWidth: 260 }}
+                data-testid="refine-prototype-input"
+                placeholder={t(
+                  '输入界面精修指令，例如：增加里程碑逾期预警统计卡片与批量审批按钮（自动保持语义锚点并同步 MU）...',
+                  'Describe UI refinement, e.g. Add overdue milestone KPI banner...',
+                )}
+                value={refineInstruction}
+                onChange={(e) => setRefineInstruction(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleRefinePrototype();
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-primary"
+                data-testid="refine-prototype-btn"
+                disabled={refining || !refineInstruction.trim()}
+                onClick={handleRefinePrototype}
+              >
+                {refining ? t('精修中...', 'Refining...') : t('AI 精修并同步 MU', 'Refine & Sync MU')}
+              </button>
             </div>
-            <textarea
-              className="textarea mono"
-              style={{ flex: 1, minHeight: 520 }}
-              value={htmlContent}
-              onChange={(e) => setHtmlContent(e.target.value)}
-            />
+
+            {synthesisSummary && (
+              <div
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  background: 'var(--ok-soft)',
+                  border: '1px solid var(--line)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                }}
+              >
+                <div style={{ fontSize: 12.5 }}>
+                  <strong>
+                    {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
+                  </strong>
+                  {synthesisSummary.modelCount}/11 Models · {synthesisSummary.errorCount}{' '}
+                  Consistency Errors
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={() => onNavigate?.('app-ontology')}
+                >
+                  {t('前往 11 模型本体工作台查看 →', 'Open 11-Model Ontology Workbench →')}
+                </button>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: viewMode === 'SPLIT' ? '1.15fr 0.85fr' : '1fr',
+              gap: 12,
+            }}
+          >
+            {(viewMode === 'SPLIT' || viewMode === 'PREVIEW') && (
+              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                <iframe
+                  title="Interactive Prototype Sandbox"
+                  sandbox="allow-scripts"
+                  srcDoc={htmlContent}
+                  style={{ width: '100%', height: 560, border: 'none', display: 'block' }}
+                />
+              </div>
+            )}
+            {(viewMode === 'SPLIT' || viewMode === 'HTML') && (
+              <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: 11.5,
+                    fontFamily: 'var(--mono)',
+                    marginBottom: 6,
+                  }}
+                >
+                  <span>{proto?.name ?? '界面原型.html'} (Semantic Anchors)</span>
+                  <span className="badge badge-ok">
+                    {proto?.extractedScreenCount ??
+                      data.activeProject.suite.MU?.screens.length ??
+                      0}{' '}
+                    MU Screens
+                  </span>
+                </div>
+                <textarea
+                  className="textarea mono"
+                  style={{ flex: 1, minHeight: 520 }}
+                  value={htmlContent}
+                  onChange={(e) => setHtmlContent(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(deletingProto)}
+        danger
+        title={t('删除界面原型版本', 'Delete Prototype Version')}
+        description={
+          deletingProto
+            ? t(`确认删除原型「${deletingProto.name}」吗？`, `Delete "${deletingProto.name}"?`)
+            : ''
+        }
+        onClose={() => setDeletingProto(null)}
+        onConfirm={() => void handleDeleteProtoConfirm()}
+      />
     </div>
   );
 }
@@ -1508,7 +2054,6 @@ export function ModelFilesView() {
   const project = data.activeProject;
   const yamlFiles = serializeSuiteToYamlFiles(project.suite);
 
-  // Build canonical relative-path manifest.json per §14.3
   const manifestModels: Record<string, string> = {};
   for (const item of MODEL_STAGE_ORDER) {
     if (project.suite[item.code]) {
@@ -1556,11 +2101,15 @@ export function ModelFilesView() {
     for (const file of Array.from(fileList)) {
       const content = await file.text();
       filesMap[file.name] = content;
-      // Also map shorthand names like m1.yaml -> M1
       for (const code of MODEL_CODES) {
         const canonicalName = MODEL_FILE_NAMES[code].toLowerCase();
         const lower = file.name.toLowerCase();
-        if (lower === canonicalName || lower.startsWith(`${code.toLowerCase()}-`) || lower === `${code.toLowerCase()}.yaml` || lower === `${code.toLowerCase()}.yml`) {
+        if (
+          lower === canonicalName ||
+          lower.startsWith(`${code.toLowerCase()}-`) ||
+          lower === `${code.toLowerCase()}.yaml` ||
+          lower === `${code.toLowerCase()}.yml`
+        ) {
           filesMap[code] = content;
         }
       }
@@ -1706,7 +2255,6 @@ export function ModelFilesView() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '270px 1fr', gap: 12 }}>
         <div className="card" style={{ padding: 8 }}>
-          {/* manifest.json entry */}
           <button
             type="button"
             className={`nav-item ${selectedFile === 'MANIFEST' ? 'active' : ''}`}
@@ -1719,7 +2267,6 @@ export function ModelFilesView() {
             <span className="badge badge-accent">JSON</span>
           </button>
 
-          {/* 11 Model YAML entries */}
           {MODEL_STAGE_ORDER.map((item) => {
             const fileName = MODEL_FILE_NAMES[item.code];
             const exists = Boolean(yamlFiles[item.code]);
@@ -1742,34 +2289,13 @@ export function ModelFilesView() {
           })}
         </div>
 
-        <div className="card">
-          <div className="card-header">
-            <strong style={{ fontFamily: 'var(--mono)' }}>{currentTitle}</strong>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span className="badge badge-accent">{selectedFile}</span>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={handleDownloadCurrentFile}
-              >
-                {t('下载', 'Download')} {currentTitle}
-              </button>
-            </div>
-          </div>
-          <pre
-            style={{
-              margin: 0,
-              padding: 12,
-              background: 'var(--surface-2)',
-              borderRadius: 5,
-              fontFamily: 'var(--mono)',
-              fontSize: 12,
-              maxHeight: 520,
-              overflow: 'auto',
-            }}
-          >
-            {currentContent}
-          </pre>
+        <div>
+          <CodeBlock
+            code={currentContent}
+            language={selectedFile === 'MANIFEST' ? 'json' : 'yaml'}
+            filename={currentTitle}
+            maxHeight={560}
+          />
         </div>
       </div>
 
@@ -1819,13 +2345,14 @@ export function ModelFilesView() {
   );
 }
 
-// ─── 6. Four-Layer Architecture Assets (四层架构资产) ─────────────────────────
+// ─── 6. Four-Layer Architecture Assets (四层架构资产: CRUD + Tiptap Markdown) ─
 export function FourLayerAssetsView() {
   const { t } = usePreferences();
   const { data, patchData, showToast } = useWorkbenchStore();
-  const [filterLayer, setFilterLayer] = useState<'ALL' | 'UI_UE' | 'TECH_FOUNDATION' | 'TECH_ARCH'>('ALL');
+  const [filterLayer, setFilterLayer] = useState<'ALL' | 'UI_UE' | 'TECH_FOUNDATION' | 'TECH_ARCH'>(
+    'ALL',
+  );
 
-  // Asset Editor Modal State
   const [editingAsset, setEditingAsset] = useState<{
     id: string;
     layer: FourLayerAsset['layer'];
@@ -1836,10 +2363,12 @@ export function FourLayerAssetsView() {
     specMarkdown: string;
   } | null>(null);
   const [savingAsset, setSavingAsset] = useState(false);
+  const [deletingAsset, setDeletingAsset] = useState<FourLayerAsset | null>(null);
 
-  // AI Tech-Stack-to-Arch Generator State
   const [archName, setArchName] = useState('云原生 DDD 四层技术架构规范');
-  const [archStackTags, setArchStackTags] = useState('TypeScript, Hono, React 19, Drizzle SQLite/D1');
+  const [archStackTags, setArchStackTags] = useState(
+    'TypeScript, Hono, React 19, Drizzle SQLite/D1',
+  );
   const [archPrompt, setArchPrompt] = useState('');
   const [generatingArch, setGeneratingArch] = useState(false);
 
@@ -1859,7 +2388,7 @@ export function FourLayerAssetsView() {
       version: 'v1.0',
       summary: '',
       tagsText: 'Standard, Reusable',
-      specMarkdown: '# 架构资产规范说明\n\n## 1. 核心约束\n- ',
+      specMarkdown: '# 架构资产规范说明\n\n## 1. 核心约束\n- 严格遵循 Deep Modules 边界规范\n',
     });
   };
 
@@ -1883,25 +2412,55 @@ export function FourLayerAssetsView() {
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean);
-      const res = await fetch('/api/assets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: editingAsset.id,
-          layer: editingAsset.layer,
-          name: editingAsset.name.trim(),
-          version: editingAsset.version.trim() || 'v1.0',
-          summary: editingAsset.summary.trim() || editingAsset.name.trim(),
-          tags,
-          specMarkdown: editingAsset.specMarkdown,
-        }),
+      const json = await apiPostJson<{
+        asset: FourLayerAsset;
+        fourLayerAssets: FourLayerAsset[];
+      }>('/api/assets', {
+        id: editingAsset.id,
+        layer: editingAsset.layer,
+        name: editingAsset.name.trim(),
+        version: editingAsset.version.trim() || 'v1.0',
+        summary: editingAsset.summary.trim() || editingAsset.name.trim(),
+        tags,
+        specMarkdown: editingAsset.specMarkdown,
       });
-      const json = await res.json();
       patchData({ fourLayerAssets: json.fourLayerAssets });
       setEditingAsset(null);
       showToast(t(`已保存四层架构资产「${json.asset.name}」`, `Saved asset "${json.asset.name}"`));
     } finally {
       setSavingAsset(false);
+    }
+  };
+
+  const handleCloneAsset = async (asset: FourLayerAsset) => {
+    const json = await apiPostJson<{
+      asset: FourLayerAsset;
+      fourLayerAssets: FourLayerAsset[];
+    }>('/api/assets', {
+      id: `${asset.id}-copy-${Date.now().toString(36)}`,
+      layer: asset.layer,
+      name: `${asset.name} (副本)`,
+      version: asset.version,
+      summary: asset.summary,
+      tags: asset.tags,
+      specMarkdown: asset.specMarkdown,
+    });
+    patchData({ fourLayerAssets: json.fourLayerAssets });
+    showToast(t(`已克隆架构资产「${asset.name}」`, `Cloned asset "${asset.name}"`));
+  };
+
+  const handleConfirmDeleteAsset = async () => {
+    if (!deletingAsset) return;
+    try {
+      const res = await apiDeleteResource<{ fourLayerAssets: FourLayerAsset[] }>(
+        `/api/assets/${deletingAsset.id}`,
+      );
+      patchData({ fourLayerAssets: res.fourLayerAssets });
+      setDeletingAsset(null);
+      showToast(t('已删除四层架构资产', 'Deleted 4-layer asset'));
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '删除失败');
+      setDeletingAsset(null);
     }
   };
 
@@ -1940,7 +2499,6 @@ export function FourLayerAssetsView() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Header + Layer Filter Tabs */}
       <div className="card">
         <div className="card-header" style={{ marginBottom: 0, flexWrap: 'wrap' }}>
           <div>
@@ -1952,8 +2510,8 @@ export function FourLayerAssetsView() {
             </h3>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>
               {t(
-                '与业务本体自由组合装配，支持在线编辑规范文档与 AI 技术栈推导架构设计',
-                'Freely assemble with any Ontology Suite, edit specs, or synthesize architecture docs from tech stack',
+                '与业务本体自由组合装配，支持 Tiptap 富文本编辑规范文档与引用保护删除',
+                'Freely assemble with any Ontology Suite, edit specs via Tiptap, or synthesize from tech stack',
               )}
             </div>
           </div>
@@ -1968,7 +2526,7 @@ export function FourLayerAssetsView() {
                 {t(layerLabels[ly].zh, layerLabels[ly].en)}
               </button>
             ))}
-            <button type="button" className="btn btn-sm" onClick={openNewAssetModal}>
+            <button type="button" className="btn btn-sm btn-primary" onClick={openNewAssetModal}>
               + {t('新建架构资产', 'New Asset')}
             </button>
           </div>
@@ -1985,12 +2543,6 @@ export function FourLayerAssetsView() {
                 'AI Tech-Stack-to-Architecture Document Generator',
               )}
             </h4>
-            <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
-              {t(
-                '输入目标技术栈标签与架构诉求，自动生成分层职责、模块边界与部署拓扑规范',
-                'Enter stack tags and constraints to synthesize a reusable TECH_ARCH specification',
-              )}
-            </div>
           </div>
           <button
             type="button"
@@ -2012,7 +2564,6 @@ export function FourLayerAssetsView() {
               className="input"
               value={archName}
               onChange={(e) => setArchName(e.target.value)}
-              placeholder="例如：Spring Boot 3 + PostgreSQL 分层架构规范"
             />
           </div>
           <div className="form-field">
@@ -2021,7 +2572,6 @@ export function FourLayerAssetsView() {
               className="input"
               value={archStackTags}
               onChange={(e) => setArchStackTags(e.target.value)}
-              placeholder="TypeScript, Hono, React 19, SQLite/D1"
             />
           </div>
           <div className="form-field">
@@ -2030,13 +2580,13 @@ export function FourLayerAssetsView() {
               className="input"
               value={archPrompt}
               onChange={(e) => setArchPrompt(e.target.value)}
-              placeholder={t('例如：要求严格的 Deep Modules 边界与多租户隔离', 'e.g. Strict module boundaries & audit logging')}
+              placeholder={t('例如：要求严格的 Deep Modules 边界', 'e.g. Strict module boundaries')}
             />
           </div>
         </div>
       </div>
 
-      {/* Asset Cards Grid */}
+      {/* Asset Cards Grid with Rendered Markdown Preview */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
         {list.map((asset) => (
           <div key={asset.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2047,27 +2597,31 @@ export function FourLayerAssetsView() {
                 </span>
                 <strong>{asset.name}</strong>
               </div>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
                 <span className="badge badge-ok">{asset.version}</span>
                 <button
                   type="button"
                   className="btn btn-sm"
                   onClick={() => openEditAssetModal(asset)}
                 >
-                  {t('编辑 Markdown', 'Edit')}
+                  {t('编辑规范', 'Edit')}
                 </button>
                 <button
                   type="button"
                   className="btn btn-sm"
-                  onClick={() =>
-                    triggerBrowserDownload(
-                      `${asset.id}.md`,
-                      asset.specMarkdown,
-                      'text/markdown;charset=utf-8',
-                    )
-                  }
+                  onClick={() => void handleCloneAsset(asset)}
+                  title={t('克隆副本', 'Clone')}
                 >
-                  {t('下载', 'Download')}
+                  <Copy size={12} />
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  style={{ color: 'var(--bad)' }}
+                  onClick={() => setDeletingAsset(asset)}
+                  title={t('删除资产', 'Delete')}
+                >
+                  <Trash2 size={12} />
                 </button>
               </div>
             </div>
@@ -2084,36 +2638,24 @@ export function FourLayerAssetsView() {
               </div>
             )}
 
-            <pre
-              style={{
-                margin: 0,
-                padding: 10,
-                background: 'var(--surface-2)',
-                borderRadius: 5,
-                fontFamily: 'var(--mono)',
-                fontSize: 11.5,
-                whiteSpace: 'pre-wrap',
-                maxHeight: 200,
-                overflowY: 'auto',
-              }}
-            >
-              {asset.specMarkdown}
-            </pre>
+            <div className="max-h-52 overflow-y-auto rounded-card border border-line bg-inset/35 p-3">
+              <MarkdownRenderer content={asset.specMarkdown} />
+            </div>
           </div>
         ))}
       </div>
 
-      {/* Markdown Asset Editor Modal */}
+      {/* Tiptap Asset Editor Modal */}
       {editingAsset && (
         <div className="modal-backdrop" onClick={() => setEditingAsset(null)}>
           <div
             className="modal-panel"
-            style={{ maxWidth: 760 }}
+            style={{ maxWidth: 880 }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="card-header">
               <h3 className="card-title">
-                {t('编辑四层架构资产规范', 'Edit 4-Layer Architecture Asset')}
+                {t('编辑四层架构资产规范 (Tiptap Markdown)', 'Edit 4-Layer Architecture Asset')}
               </h3>
               <button
                 type="button"
@@ -2188,41 +2730,34 @@ export function FourLayerAssetsView() {
                 </div>
               </div>
 
-              <div className="form-field">
-                <label className="form-label">
-                  {t('Markdown 规范正文', 'Specification Markdown')}
-                </label>
-                <textarea
-                  className="textarea mono"
-                  style={{ minHeight: 280 }}
-                  value={editingAsset.specMarkdown}
-                  onChange={(e) =>
-                    setEditingAsset({ ...editingAsset, specMarkdown: e.target.value })
-                  }
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => setEditingAsset(null)}
-                >
-                  {t('取消', 'Cancel')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={savingAsset || !editingAsset.name.trim()}
-                  onClick={handleSaveAsset}
-                >
-                  {savingAsset ? '...' : t('保存架构资产', 'Save Asset')}
-                </button>
-              </div>
+              <TiptapMarkdownEditor
+                value={editingAsset.specMarkdown}
+                onChange={(md) => setEditingAsset({ ...editingAsset, specMarkdown: md })}
+                onSave={handleSaveAsset}
+                saving={savingAsset}
+                saveLabel={t('保存架构资产', 'Save Asset')}
+                minHeight={300}
+              />
             </div>
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={Boolean(deletingAsset)}
+        danger
+        title={t('删除四层架构资产', 'Delete 4-Layer Asset')}
+        description={
+          deletingAsset
+            ? t(
+                `确认删除资产「${deletingAsset.name}」吗？（若已被四层装配应用引用，系统将自动拦截保护）`,
+                `Delete "${deletingAsset.name}"? (Protected if referenced by an assembled app)`,
+              )
+            : ''
+        }
+        onClose={() => setDeletingAsset(null)}
+        onConfirm={() => void handleConfirmDeleteAsset()}
+      />
     </div>
   );
 }
@@ -2231,24 +2766,19 @@ export function FourLayerAssetsView() {
 export function ApplicationAssemblyDevView() {
   const { t } = usePreferences();
   const { data, patchData, showToast } = useWorkbenchStore();
+  const [pageMode, setPageMode] = useState<'WORKSPACE' | 'REGISTRY'>('WORKSPACE');
   const [selectedAppId, setSelectedAppId] = useState<string>('');
   const [compiledPkg, setCompiledPkg] = useState<CompiledDevelopmentPackage | null>(null);
   const [selectedFilePath, setSelectedFilePath] = useState<string>('开发指导书.md');
+  const [pkgPreviewRaw, setPkgPreviewRaw] = useState(false);
 
-  // Interactive 4-Layer Assembly Creator / Updater State
   const [newAppOpen, setNewAppOpen] = useState(false);
   const [newAppName, setNewAppName] = useState('');
   const [selProjectId, setSelProjectId] = useState('');
   const [selUiAssetId, setSelUiAssetId] = useState('');
   const [selFoundationId, setSelFoundationId] = useState('');
   const [selArchId, setSelArchId] = useState('');
-
-  // In-Platform AI Coding Agent State
-  const [codingInstruction, setCodingInstruction] = useState(
-    '基于四层开发资料包与11元模型本体，生成聚合根仓储层、M2命令/M7查询服务及MU前端台账页面并执行门禁校验',
-  );
-  const [runningAgent, setRunningAgent] = useState(false);
-  const [agentReply, setAgentReply] = useState<string | null>(null);
+  const [deletingApp, setDeletingApp] = useState<AssembledApplication | null>(null);
   const [downloadingZip, setDownloadingZip] = useState(false);
 
   const apps = data?.assembledApplications ?? [];
@@ -2283,15 +2813,13 @@ export function ApplicationAssemblyDevView() {
     }>,
   ) => {
     if (!app) return;
-    const res = await fetch('/api/applications', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const json = await apiPostJson<{ assembledApplications: AssembledApplication[] }>(
+      '/api/applications',
+      {
         ...app,
         ...patch,
-      }),
-    });
-    const json = await res.json();
+      },
+    );
     patchData({ assembledApplications: json.assembledApplications });
     showToast(t('已更新四层架构装配绑定', 'Updated 4-layer assembly binding'));
   };
@@ -2301,34 +2829,43 @@ export function ApplicationAssemblyDevView() {
       data.projects.find((p) => p.id === (selProjectId || data.activeProject.id)) ??
       data.activeProject;
     const name = newAppName.trim() || `${targetProject.name} 四层装配应用`;
-    const res = await fetch('/api/applications', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: `app-${Date.now()}`,
-        name,
-        projectId: targetProject.id,
-        uiUeAssetId: selUiAssetId || uiAssets[0]?.id || '',
-        techFoundationAssetId: selFoundationId || foundationAssets[0]?.id || '',
-        techArchAssetId: selArchId || archAssets[0]?.id || '',
-        status: 'ASSEMBLED',
-        publishedVersion: 'v1.0.0',
-        publishedEndpoint: `/apps/${targetProject.code.toLowerCase()}`,
-        agentDevLogs: [
-          {
-            timestamp: new Date().toISOString(),
-            phase: 'FOUR_LAYER_ASSEMBLED',
-            detail: `完成 [${targetProject.name}] 与四层架构资产组装`,
-          },
-        ],
-      }),
+    const json = await apiPostJson<{
+      application: AssembledApplication;
+      assembledApplications: AssembledApplication[];
+    }>('/api/applications', {
+      id: `app-${Date.now()}`,
+      name,
+      projectId: targetProject.id,
+      uiUeAssetId: selUiAssetId || uiAssets[0]?.id || '',
+      techFoundationAssetId: selFoundationId || foundationAssets[0]?.id || '',
+      techArchAssetId: selArchId || archAssets[0]?.id || '',
+      status: 'ASSEMBLED',
+      publishedVersion: 'v1.0.0',
+      publishedEndpoint: `/apps/${targetProject.code.toLowerCase()}`,
+      agentDevLogs: [
+        {
+          timestamp: new Date().toISOString(),
+          phase: 'FOUR_LAYER_ASSEMBLED',
+          detail: `完成 [${targetProject.name}] 与四层架构资产组装`,
+        },
+      ],
     });
-    const json = await res.json();
     patchData({ assembledApplications: json.assembledApplications });
     setSelectedAppId(json.application.id);
     setNewAppName('');
     setNewAppOpen(false);
+    setPageMode('WORKSPACE');
     showToast(t(`已创建装配应用「${name}」`, `Created assembled application "${name}"`));
+  };
+
+  const handleConfirmDeleteApp = async () => {
+    if (!deletingApp) return;
+    const res = await apiDeleteResource<{ assembledApplications: AssembledApplication[] }>(
+      `/api/applications/${deletingApp.id}`,
+    );
+    patchData({ assembledApplications: res.assembledApplications });
+    setDeletingApp(null);
+    showToast(t('已删除四层装配应用', 'Deleted assembled application'));
   };
 
   const handleCompilePackage = async () => {
@@ -2367,83 +2904,32 @@ export function ApplicationAssemblyDevView() {
     }
   };
 
-  const handleRunCodingAgent = async () => {
-    if (!app || runningAgent) return;
-    setRunningAgent(true);
-    try {
-      const instruction =
-        codingInstruction.trim() ||
-        '基于开发资料包执行全栈领域代码与校验门禁构建';
-      const res = await apiRunAppCodingAgent(app.id, instruction);
-      patchData({ assembledApplications: res.assembledApplications });
-      setAgentReply(res.reply);
-      showToast(
-        t(
-          `AI 研发智能体已完成构建任务（生成/校验 ${res.generatedFilesCount} 项工程产物）`,
-          `AI Coding Agent finished (${res.generatedFilesCount} artifacts processed)`,
-        ),
-      );
-    } finally {
-      setRunningAgent(false);
-    }
-  };
-
   const activeFile = compiledPkg?.files.find((f) => f.relativePath === selectedFilePath);
+  const isMarkdownArtifact = Boolean(activeFile?.relativePath.endsWith('.md'));
   const boundProject =
     data.projects.find((p) => p.id === app?.projectId) ?? data.activeProject;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Top 4-Layer Selector & Compiler Card */}
-      <div className="card">
-        <div className="card-header" style={{ flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div>
-              <h3 className="card-title">
-                {t(
-                  '四层架构应用组装与渐进式开发资料包编译器',
-                  'Four-Layer Application Assembly & Development Package Compiler',
-                )}
-              </h3>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                {t(
-                  '自由选择【业务本体 + UI/UE设计 + 技术底座 + 技术架构】编译渐进式披露开发包或启动内置 AI Coding Agent',
-                  'Assemble [Ontology + UI/UE + Tech Foundation + Tech Arch] into progressive-disclosure dev package & ZIP',
-                )}
-              </div>
-            </div>
-
-            {apps.length > 0 && (
-              <select
-                className="select"
-                style={{ width: 260 }}
-                value={app?.id ?? ''}
-                onChange={(e) => {
-                  setSelectedAppId(e.target.value);
-                  setCompiledPkg(null);
-                  setAgentReply(null);
-                }}
-              >
-                {apps.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} ({item.status})
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <ViewModeHeader
+        mode={pageMode}
+        onChange={setPageMode}
+        workspaceLabel={t('四层装配与开发工作台', 'Assembly & Dev Workspace')}
+        registryLabel={t('装配应用管理注册表', 'Assembled App Registry')}
+        count={apps.length}
+        testIdPrefix="app-assembly"
+        rightActions={
+          <>
             <button
               type="button"
-              className="btn"
-              onClick={() => setNewAppOpen((v) => !v)}
+              className="btn btn-sm"
+              onClick={() => setNewAppOpen(true)}
             >
               + {t('新建四层装配应用', 'New Assembled App')}
             </button>
             <button
               type="button"
-              className="btn"
+              className="btn btn-sm"
               data-testid="download-package-zip-btn"
               disabled={!app || downloadingZip}
               onClick={handleDownloadPackageZip}
@@ -2454,132 +2940,371 @@ export function ApplicationAssemblyDevView() {
             </button>
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-sm btn-primary"
               data-testid="compile-dev-package-btn"
               disabled={!app}
               onClick={handleCompilePackage}
             >
               {t('一键编译生成《开发资料包》', 'Compile Development Package')}
             </button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        {/* Inline Creator for New AssembledApplication */}
-        {newAppOpen && (
-          <div
-            style={{
-              marginBottom: 12,
-              padding: 12,
-              borderRadius: 6,
-              background: 'var(--surface-2)',
-              border: '1px solid var(--line)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-            }}
-          >
-            <div className="form-grid-3">
-              <div className="form-field">
-                <label className="form-label">{t('应用名称', 'Application Name')}</label>
-                <input
-                  className="input"
-                  value={newAppName}
-                  onChange={(e) => setNewAppName(e.target.value)}
-                  placeholder={t('例如：合同履约管理微服务应用', 'e.g. Contract Management App')}
-                />
-              </div>
-              <div className="form-field">
-                <label className="form-label">1. {t('业务本体工程', 'Ontology Project')}</label>
-                <select
-                  className="select"
-                  value={selProjectId}
-                  onChange={(e) => setSelProjectId(e.target.value)}
+      {pageMode === 'REGISTRY' ? (
+        <RegistryTable<AssembledApplication>
+          testId="assembled-app-registry"
+          title={t('四层架构装配应用注册表', '4-Layer Assembled Application Registry')}
+          subtitle={t(
+            '管理【业务本体 + UI/UE + 技术底座 + 技术架构】四层组装实例、编译状态与发布路由',
+            'Manage 4-layer assembled application instances, compilation status, and release endpoints',
+          )}
+          rows={apps}
+          getRowKey={(a) => a.id}
+          activeRowKey={app?.id}
+          matchesSearch={(a, q) =>
+            a.name.toLowerCase().includes(q) ||
+            (a.publishedEndpoint || '').toLowerCase().includes(q)
+          }
+          statusFilters={[
+            { value: 'ALL', label: t('全部', 'All') },
+            { value: 'ASSEMBLED', label: 'ASSEMBLED' },
+            { value: 'COMPILED', label: 'COMPILED' },
+            { value: 'PUBLISHED', label: 'PUBLISHED' },
+          ]}
+          getRowStatus={(a) => a.status}
+          primaryActionLabel={t('新建四层装配应用', 'New Assembled App')}
+          onPrimaryAction={() => setNewAppOpen(true)}
+          onRowClick={(a) => {
+            setSelectedAppId(a.id);
+            setPageMode('WORKSPACE');
+          }}
+          columns={[
+            {
+              key: 'name',
+              header: t('应用名称', 'Application Name'),
+              render: (a) => (
+                <div>
+                  <div className="font-semibold text-ink">{a.name}</div>
+                  <div className="font-mono text-[11px] text-ink-3">
+                    {a.publishedEndpoint || `/apps/${a.id}`}
+                  </div>
+                </div>
+              ),
+            },
+            {
+              key: 'project',
+              header: t('绑定业务本体', 'Ontology Project'),
+              render: (a) => {
+                const p = data.projects.find((pr) => pr.id === a.projectId);
+                return <span className="badge badge-accent">{p?.name || a.projectId}</span>;
+              },
+            },
+            {
+              key: 'status',
+              header: t('状态 / 版本', 'Status'),
+              width: '150px',
+              render: (a) => (
+                <span className="badge badge-ok">
+                  {a.status} · {a.publishedVersion || 'v1.0.0'}
+                </span>
+              ),
+            },
+            {
+              key: 'actions',
+              header: t('操作', 'Actions'),
+              align: 'right',
+              render: (a) => (
+                <div
+                  className="inline-flex items-center gap-1.5"
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  {data.projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.code})
-                    </option>
-                  ))}
-                </select>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => {
+                      setSelectedAppId(a.id);
+                      setPageMode('WORKSPACE');
+                    }}
+                  >
+                    {t('打开研发台', 'Workspace')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="text-red"
+                    onClick={() => setDeletingApp(a)}
+                  >
+                    <Trash2 size={12} />
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
+      ) : (
+        <>
+          <div className="card">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2">
+                <strong className="text-[13.5px]">
+                  {t('当前装配应用：', 'Active Application: ')}
+                </strong>
+                {apps.length > 0 && (
+                  <select
+                    className="select"
+                    style={{ width: 260 }}
+                    value={app?.id ?? ''}
+                    onChange={(e) => {
+                      setSelectedAppId(e.target.value);
+                      setCompiledPkg(null);
+                    }}
+                  >
+                    {apps.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name} ({item.status})
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
-              <div className="form-field">
-                <label className="form-label">2. {t('UI/UE 设计资产', 'UI/UE Asset')}</label>
-                <select
-                  className="select"
-                  value={selUiAssetId}
-                  onChange={(e) => setSelUiAssetId(e.target.value)}
-                >
-                  {uiAssets.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} ({a.version})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {app && <span className="badge badge-ok">{app.status}</span>}
             </div>
-            <div className="form-grid-2">
-              <div className="form-field">
-                <label className="form-label">3. {t('技术底座资产', 'Tech Foundation')}</label>
-                <select
-                  className="select"
-                  value={selFoundationId}
-                  onChange={(e) => setSelFoundationId(e.target.value)}
-                >
-                  {foundationAssets.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} ({a.version})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-field">
-                <label className="form-label">4. {t('技术架构资产', 'Tech Architecture')}</label>
-                <select
-                  className="select"
-                  value={selArchId}
-                  onChange={(e) => setSelArchId(e.target.value)}
-                >
-                  {archAssets.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} ({a.version})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button type="button" className="btn btn-sm" onClick={() => setNewAppOpen(false)}>
-                {t('取消', 'Cancel')}
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                onClick={handleCreateApplication}
+
+            {app && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+                  gap: 10,
+                }}
               >
-                {t('确认组装应用', 'Create Assembled Application')}
-              </button>
-            </div>
-          </div>
-        )}
+                <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                    1. {t('业务本体层 (Ontology)', 'Ontology Layer')}
+                  </div>
+                  <select
+                    className="select"
+                    value={app.projectId}
+                    onChange={(e) => handleUpdateLayerBinding({ projectId: e.target.value })}
+                  >
+                    {data.projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.code})
+                      </option>
+                    ))}
+                  </select>
+                  <span className="badge badge-ok">
+                    {boundProject.currentStage}/11 Models · 0 Errors
+                  </span>
+                </div>
 
-        {/* Interactive 4-Layer Binding Cards */}
-        {app && (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-              gap: 10,
-              marginTop: 8,
-            }}
-          >
-            <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                1. {t('业务本体层 (Ontology)', 'Ontology Layer')}
+                <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                    2. {t('UI/UE 设计规范层', 'UI/UE Design Layer')}
+                  </div>
+                  <select
+                    className="select"
+                    value={app.uiUeAssetId}
+                    onChange={(e) => handleUpdateLayerBinding({ uiUeAssetId: e.target.value })}
+                  >
+                    {uiAssets.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                    3. {t('技术底座层 (Foundation)', 'Tech Foundation Layer')}
+                  </div>
+                  <select
+                    className="select"
+                    value={app.techFoundationAssetId}
+                    onChange={(e) =>
+                      handleUpdateLayerBinding({ techFoundationAssetId: e.target.value })
+                    }
+                  >
+                    {foundationAssets.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                    4. {t('技术架构层 (Architecture)', 'Tech Architecture Layer')}
+                  </div>
+                  <select
+                    className="select"
+                    value={app.techArchAssetId}
+                    onChange={(e) => handleUpdateLayerBinding({ techArchAssetId: e.target.value })}
+                  >
+                    {archAssets.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
+            )}
+          </div>
+
+          {/* Compiled Progressive-Disclosure Development Package Inspector */}
+          {compiledPkg && (
+            <div
+              style={{ display: 'grid', gridTemplateColumns: '330px minmax(0, 1fr)', gap: 12 }}
+              data-testid="compiled-package-inspector"
+            >
+              <div className="card" style={{ maxHeight: 540, overflowY: 'auto' }}>
+                <div className="card-header">
+                  <h4 className="card-title">
+                    {t('开发资料包目录树', 'Package File Tree')} ({compiledPkg.files.length})
+                  </h4>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {compiledPkg.files.map((file) => (
+                    <button
+                      key={file.relativePath}
+                      type="button"
+                      className={`nav-item ${selectedFilePath === file.relativePath ? 'active' : ''}`}
+                      onClick={() => setSelectedFilePath(file.relativePath)}
+                    >
+                      <span
+                        className="nav-item-left"
+                        style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}
+                      >
+                        {file.relativePath}
+                      </span>
+                      <span className="badge">{file.category}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="card" style={{ maxHeight: 540, overflowY: 'auto' }}>
+                <div className="card-header">
+                  <strong style={{ fontFamily: 'var(--mono)' }}>
+                    {activeFile?.relativePath}
+                  </strong>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {isMarkdownArtifact && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setPkgPreviewRaw((v) => !v)}
+                      >
+                        {pkgPreviewRaw ? <Eye size={12} /> : <FileCode size={12} />}
+                        {pkgPreviewRaw ? t('富排版预览', 'Rendered') : t('查看源码', 'Raw')}
+                      </Button>
+                    )}
+                    <span className="badge badge-ok">{activeFile?.sizeBytes} bytes</span>
+                    {activeFile && (
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() =>
+                          triggerBrowserDownload(
+                            activeFile.relativePath.split('/').pop() || 'artifact.md',
+                            activeFile.content,
+                          )
+                        }
+                      >
+                        {t('下载单文件', 'Download File')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {activeFile &&
+                  (isMarkdownArtifact && !pkgPreviewRaw ? (
+                    <div className="p-2">
+                      <MarkdownRenderer content={activeFile.content} />
+                    </div>
+                  ) : (
+                    <CodeBlock
+                      code={activeFile.content}
+                      language={activeFile.relativePath.split('.').pop() || 'text'}
+                      filename={activeFile.relativePath}
+                      maxHeight={440}
+                    />
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {/* Unified Streaming AI Coding Agent + Real-Time Logs */}
+          {app && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 12 }}>
+              <AgentSessionWorkbench
+                agentKind="CODING"
+                targetId={app.id}
+                height={480}
+                title={t('四层架构 AI 研发智能体 (Coding Agent)', '4-Layer AI Coding Agent')}
+                subtitle={t(
+                  '基于渐进式《开发资料包》执行代码骨架生成、包编译与门禁校验',
+                  'Generates domain repositories, routes, UI components & compiles dev packages',
+                )}
+              />
+
+              <div className="card" style={{ maxHeight: 480, overflowY: 'auto' }}>
+                <div className="card-header">
+                  <h4 className="card-title">
+                    {t('构建与发布流水日志', 'Build & Release Logs')} ({app.agentDevLogs.length})
+                  </h4>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {[...app.agentDevLogs].reverse().map((log, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        padding: '6px 10px',
+                        background: 'var(--surface-2)',
+                        borderRadius: 4,
+                        fontFamily: 'var(--mono)',
+                        fontSize: 11.5,
+                      }}
+                    >
+                      [{log.timestamp.slice(0, 19)}] <strong>{log.phase}</strong>: {log.detail}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* New Assembled App Dialog */}
+      <ConfirmDialog
+        open={newAppOpen}
+        title={t('新建四层架构装配应用', 'Create 4-Layer Assembled Application')}
+        confirmLabel={t('确认组装应用', 'Create Application')}
+        onClose={() => setNewAppOpen(false)}
+        onConfirm={() => void handleCreateApplication()}
+      >
+        <div className="space-y-3">
+          <div className="form-field">
+            <label className="form-label">{t('应用名称', 'Application Name')}</label>
+            <input
+              className="input"
+              value={newAppName}
+              onChange={(e) => setNewAppName(e.target.value)}
+              placeholder={t('例如：合同履约管理微服务应用', 'e.g. Contract Management App')}
+            />
+          </div>
+          <div className="form-grid-2">
+            <div className="form-field">
+              <label className="form-label">1. {t('业务本体工程', 'Ontology Project')}</label>
               <select
                 className="select"
-                value={app.projectId}
-                onChange={(e) => handleUpdateLayerBinding({ projectId: e.target.value })}
+                value={selProjectId}
+                onChange={(e) => setSelProjectId(e.target.value)}
               >
                 {data.projects.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -2587,19 +3312,13 @@ export function ApplicationAssemblyDevView() {
                   </option>
                 ))}
               </select>
-              <span className="badge badge-ok">
-                {boundProject.currentStage}/11 Models · 0 Errors
-              </span>
             </div>
-
-            <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                2. {t('UI/UE 设计规范层', 'UI/UE Design Layer')}
-              </div>
+            <div className="form-field">
+              <label className="form-label">2. {t('UI/UE 设计资产', 'UI/UE Asset')}</label>
               <select
                 className="select"
-                value={app.uiUeAssetId}
-                onChange={(e) => handleUpdateLayerBinding({ uiUeAssetId: e.target.value })}
+                value={selUiAssetId}
+                onChange={(e) => setSelUiAssetId(e.target.value)}
               >
                 {uiAssets.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -2607,19 +3326,15 @@ export function ApplicationAssemblyDevView() {
                   </option>
                 ))}
               </select>
-              <span className="badge badge-accent">Warm Paper / Film Grain</span>
             </div>
-
-            <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                3. {t('技术底座层 (Foundation)', 'Tech Foundation Layer')}
-              </div>
+          </div>
+          <div className="form-grid-2">
+            <div className="form-field">
+              <label className="form-label">3. {t('技术底座资产', 'Tech Foundation')}</label>
               <select
                 className="select"
-                value={app.techFoundationAssetId}
-                onChange={(e) =>
-                  handleUpdateLayerBinding({ techFoundationAssetId: e.target.value })
-                }
+                value={selFoundationId}
+                onChange={(e) => setSelFoundationId(e.target.value)}
               >
                 {foundationAssets.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -2627,17 +3342,13 @@ export function ApplicationAssemblyDevView() {
                   </option>
                 ))}
               </select>
-              <span className="badge badge-accent">TS + Hono + SQLite/D1</span>
             </div>
-
-            <div style={{ padding: 10, background: 'var(--surface-2)', borderRadius: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                4. {t('技术架构层 (Architecture)', 'Tech Architecture Layer')}
-              </div>
+            <div className="form-field">
+              <label className="form-label">4. {t('技术架构资产', 'Tech Architecture')}</label>
               <select
                 className="select"
-                value={app.techArchAssetId}
-                onChange={(e) => handleUpdateLayerBinding({ techArchAssetId: e.target.value })}
+                value={selArchId}
+                onChange={(e) => setSelArchId(e.target.value)}
               >
                 {archAssets.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -2645,178 +3356,23 @@ export function ApplicationAssemblyDevView() {
                   </option>
                 ))}
               </select>
-              <span className="badge badge-accent">DDD Deep Modules</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Compiled Progressive-Disclosure Development Package Inspector */}
-      {compiledPkg && (
-        <div
-          style={{ display: 'grid', gridTemplateColumns: '330px 1fr', gap: 12 }}
-          data-testid="compiled-package-inspector"
-        >
-          <div className="card" style={{ maxHeight: 520, overflowY: 'auto' }}>
-            <div className="card-header">
-              <h4 className="card-title">
-                {t('开发资料包目录树', 'Package File Tree')} ({compiledPkg.files.length})
-              </h4>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {compiledPkg.files.map((file) => (
-                <button
-                  key={file.relativePath}
-                  type="button"
-                  className={`nav-item ${selectedFilePath === file.relativePath ? 'active' : ''}`}
-                  onClick={() => setSelectedFilePath(file.relativePath)}
-                >
-                  <span
-                    className="nav-item-left"
-                    style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}
-                  >
-                    {file.relativePath}
-                  </span>
-                  <span className="badge">{file.category}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="card" style={{ maxHeight: 520, overflowY: 'auto' }}>
-            <div className="card-header">
-              <strong style={{ fontFamily: 'var(--mono)' }}>{activeFile?.relativePath}</strong>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span className="badge badge-ok">{activeFile?.sizeBytes} bytes</span>
-                {activeFile && (
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() =>
-                      triggerBrowserDownload(
-                        activeFile.relativePath.split('/').pop() || 'artifact.md',
-                        activeFile.content,
-                      )
-                    }
-                  >
-                    {t('下载单文件', 'Download File')}
-                  </button>
-                )}
-              </div>
-            </div>
-            <pre
-              style={{
-                margin: 0,
-                padding: 12,
-                background: 'var(--surface-2)',
-                borderRadius: 5,
-                fontFamily: 'var(--mono)',
-                fontSize: 12,
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {activeFile?.content}
-            </pre>
-          </div>
-        </div>
-      )}
-
-      {/* In-Platform AI Coding Agent Panel */}
-      {app && (
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div className="card-header" style={{ marginBottom: 0 }}>
-            <div>
-              <h4 className="card-title">
-                {t(
-                  '平台内置 AI 研发智能体 (In-Platform Pi Coding Agent)',
-                  'In-Platform AI Coding Agent',
-                )}
-              </h4>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                {t(
-                  '遵循《开发指导书.md》与《本体模型业务功能开发指导书.md》渐进式上下文执行全栈代码生成与门禁核验',
-                  'Executes progressive-disclosure engineering tasks directly against the assembled 4-layer bundle',
-                )}
-              </div>
-            </div>
-            <span className="badge badge-ok">{app.status}</span>
-          </div>
-
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              className="input"
-              value={codingInstruction}
-              onChange={(e) => setCodingInstruction(e.target.value)}
-              placeholder={t(
-                '输入研发任务指令，例如：实现结算单逾期冻结命令接口与单元测试...',
-                'Enter coding instruction for the AI agent...',
-              )}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRunCodingAgent();
-              }}
-            />
-            <button
-              type="button"
-              className="btn btn-primary"
-              data-testid="run-coding-agent-btn"
-              disabled={runningAgent}
-              onClick={handleRunCodingAgent}
-            >
-              {runningAgent
-                ? t('Agent 构建中...', 'Running Agent...')
-                : t('启动 AI 研发构建', 'Run AI Coding Agent')}
-            </button>
-          </div>
-
-          {agentReply && (
-            <pre
-              style={{
-                margin: 0,
-                padding: 12,
-                background: 'var(--accent-soft)',
-                border: '1px solid var(--line)',
-                borderRadius: 5,
-                fontFamily: 'var(--mono)',
-                fontSize: 12,
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {agentReply}
-            </pre>
-          )}
-
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-              {t('实时智能体构建与流水线日志', 'Real-Time Agent Build Logs')} (
-              {app.agentDevLogs.length})
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6,
-                maxHeight: 220,
-                overflowY: 'auto',
-              }}
-            >
-              {[...app.agentDevLogs].reverse().map((log, i) => (
-                <div
-                  key={i}
-                  style={{
-                    padding: '6px 10px',
-                    background: 'var(--surface-2)',
-                    borderRadius: 4,
-                    fontFamily: 'var(--mono)',
-                    fontSize: 11.5,
-                  }}
-                >
-                  [{log.timestamp.slice(0, 19)}] <strong>{log.phase}</strong>: {log.detail}
-                </div>
-              ))}
             </div>
           </div>
         </div>
-      )}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={Boolean(deletingApp)}
+        danger
+        title={t('删除四层装配应用', 'Delete Assembled Application')}
+        description={
+          deletingApp
+            ? t(`确认删除应用「${deletingApp.name}」吗？`, `Delete "${deletingApp.name}"?`)
+            : ''
+        }
+        onClose={() => setDeletingApp(null)}
+        onConfirm={() => void handleConfirmDeleteApp()}
+      />
     </div>
   );
 }
@@ -2825,88 +3381,250 @@ export function ApplicationAssemblyDevView() {
 export function OntologySkillsView() {
   const { t } = usePreferences();
   const { data, patchData, showToast } = useWorkbenchStore();
+  const [pageMode, setPageMode] = useState<'WORKSPACE' | 'REGISTRY'>('WORKSPACE');
+  const [selectedSkillId, setSelectedSkillId] = useState<string>('');
+  const [skillDraft, setSkillDraft] = useState<string>('');
+  const [confirmOverwriteOpen, setConfirmOverwriteOpen] = useState(false);
+  const [deletingSkill, setDeletingSkill] = useState<GeneratedSkill | null>(null);
+
+  const skills = data?.generatedSkills ?? [];
+  const activeSkill =
+    skills.find((s) => s.id === selectedSkillId) ??
+    skills.find((s) => s.projectId === data?.activeProject.id) ??
+    skills[0];
+
+  useEffect(() => {
+    if (skills.length > 0 && !skills.some((s) => s.id === selectedSkillId)) {
+      const preferred =
+        skills.find((s) => s.projectId === data?.activeProject.id) ?? skills[0];
+      setSelectedSkillId(preferred.id);
+    }
+  }, [skills, selectedSkillId, data?.activeProject.id]);
+
+  useEffect(() => {
+    setSkillDraft(activeSkill?.skillMarkdown ?? '');
+  }, [activeSkill?.id, activeSkill?.updatedAt, activeSkill?.skillMarkdown]);
+
   if (!data) return null;
 
-  const handleCompileCurrentSkill = async () => {
-    const res = await fetch(`/api/projects/${data.activeProject.id}/generate-skill`, {
+  const targetCompileProjectId =
+    pageMode === 'WORKSPACE' && activeSkill ? activeSkill.projectId : data.activeProject.id;
+
+  const executeCompileSkill = async () => {
+    const res = await fetch(`/api/projects/${targetCompileProjectId}/generate-skill`, {
       method: 'POST',
     });
     const json = await res.json();
     patchData({ generatedSkills: json.skills });
+    setSelectedSkillId(json.skill.id);
+    setConfirmOverwriteOpen(false);
     showToast(`已生成业务本体技能包 ${json.skill.slug}`);
   };
 
+  const handleRequestCompile = () => {
+    const existingForProj = skills.find((s) => s.projectId === targetCompileProjectId);
+    if (existingForProj?.isCustomRefined) {
+      setConfirmOverwriteOpen(true);
+      return;
+    }
+    void executeCompileSkill();
+  };
+
+  const handleSaveRefinedSkill = async (mdToSave = skillDraft) => {
+    if (!activeSkill) return;
+    const res = await apiPutJson<{ skill: GeneratedSkill; skills: GeneratedSkill[] }>(
+      `/api/skills/${activeSkill.id}`,
+      {
+        skillMarkdown: mdToSave,
+      },
+    );
+    patchData({ generatedSkills: res.skills });
+    showToast(
+      t(
+        `已保存手工精修版 ${res.skill.slug}/SKILL.md（重新编译前将自动提示保护）`,
+        `Saved custom-refined ${res.skill.slug}/SKILL.md`,
+      ),
+    );
+  };
+
+  const handleDeleteSkillConfirm = async () => {
+    if (!deletingSkill) return;
+    const res = await apiDeleteResource<{ skills: GeneratedSkill[] }>(
+      `/api/skills/${deletingSkill.id}`,
+    );
+    patchData({ generatedSkills: res.skills });
+    setDeletingSkill(null);
+    showToast(t('已删除本体技能包', 'Deleted ontology skill'));
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div className="card">
-        <div className="card-header" style={{ marginBottom: 0 }}>
-          <div>
-            <h3 className="card-title">
-              {t(
-                '渐进式业务本体技能中心 (Progressive Disclosure Ontology Skills)',
-                'Ontology Skills Hub (SKILL.md)',
-              )}
-            </h3>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-              {t(
-                '将 11 元模型编译为符合 Agent 渐进式上下文披露规范的 SKILL.md，可直接下载挂载至 Claude Code / Pi / Cursor',
-                'Progressive-disclosure SKILL.md artifacts compiled from 11-model ontology suites',
-              )}
-            </div>
-          </div>
+    <div className="space-y-3">
+      <ViewModeHeader
+        mode={pageMode}
+        onChange={setPageMode}
+        workspaceLabel={t('SKILL.md 精修编辑器', 'SKILL.md Editor')}
+        registryLabel={t('本体技能管理列表', 'Skills Registry')}
+        count={skills.length}
+        testIdPrefix="skills"
+        rightActions={
           <button
             type="button"
-            className="btn btn-primary"
-            onClick={handleCompileCurrentSkill}
+            className="btn btn-sm btn-primary"
+            onClick={handleRequestCompile}
           >
             {t('编译当前工程 SKILL.md', 'Compile Current Project SKILL.md')}
           </button>
-        </div>
-      </div>
+        }
+      />
 
-      {data.generatedSkills.map((sk) => (
-        <div key={sk.id} className="card">
-          <div className="card-header">
-            <div>
-              <h3 className="card-title">{sk.name}</h3>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>{sk.description}</div>
+      {pageMode === 'REGISTRY' ? (
+        <RegistryTable<GeneratedSkill>
+          testId="skills-registry-table"
+          title={t('渐进式业务本体技能中心 (SKILL.md Registry)', 'Ontology Skills Registry')}
+          subtitle={t(
+            '管理由 11 模型自动编译或手工精修的 Agent SKILL.md 资产',
+            'Manage compiled and custom-refined SKILL.md artifacts',
+          )}
+          rows={skills}
+          getRowKey={(s) => s.id}
+          activeRowKey={activeSkill?.id}
+          matchesSearch={(s, q) =>
+            s.name.toLowerCase().includes(q) ||
+            s.slug.toLowerCase().includes(q) ||
+            s.description.toLowerCase().includes(q)
+          }
+          primaryActionLabel={t('编译当前工程 SKILL.md', 'Compile SKILL.md')}
+          onPrimaryAction={handleRequestCompile}
+          onRowClick={(s) => {
+            setSelectedSkillId(s.id);
+            setPageMode('WORKSPACE');
+          }}
+          columns={[
+            {
+              key: 'name',
+              header: t('技能名称 / Slug', 'Skill Name'),
+              render: (s) => (
+                <div>
+                  <div className="flex items-center gap-1.5 font-semibold text-ink">
+                    <span>{s.name}</span>
+                    {s.isCustomRefined && (
+                      <span className="filter-status-progress rounded-full px-2 py-0.2 text-[10px]">
+                        {t('已手工精修', 'Custom Refined')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="font-mono text-[11px] text-ink-3">{s.slug}</div>
+                </div>
+              ),
+            },
+            {
+              key: 'version',
+              header: t('版本', 'Version'),
+              width: '100px',
+              render: (s) => <span className="badge badge-ok">v{s.version}</span>,
+            },
+            {
+              key: 'actions',
+              header: t('操作', 'Actions'),
+              align: 'right',
+              render: (s) => (
+                <div
+                  className="inline-flex items-center gap-1.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => {
+                      setSelectedSkillId(s.id);
+                      setPageMode('WORKSPACE');
+                    }}
+                  >
+                    {t('编辑', 'Edit')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="text-red"
+                    onClick={() => setDeletingSkill(s)}
+                  >
+                    <Trash2 size={12} />
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
+      ) : activeSkill ? (
+        <div className="space-y-3">
+          <div className="card flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {skills.length > 1 && (
+                <select
+                  className="select"
+                  style={{ width: 260 }}
+                  value={activeSkill.id}
+                  onChange={(e) => setSelectedSkillId(e.target.value)}
+                >
+                  {skills.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.slug})
+                    </option>
+                  ))}
+                </select>
+              )}
+              <span className="badge badge-accent">{activeSkill.slug}</span>
+              <span className="badge badge-ok">v{activeSkill.version}</span>
+              {activeSkill.isCustomRefined && (
+                <span className="badge badge-warn">
+                  {t('★ 已手工精修 (受覆盖保护)', '★ Custom Refined')}
+                </span>
+              )}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="badge badge-accent">{sk.slug}</span>
-              <span className="badge badge-ok">v{sk.version}</span>
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                onClick={() => {
-                  triggerBrowserDownload(
-                    `${sk.slug}-SKILL.md`,
-                    sk.skillMarkdown,
-                    'text/markdown;charset=utf-8',
-                  );
-                  showToast(t(`已下载 ${sk.slug}-SKILL.md`, `Downloaded ${sk.slug}-SKILL.md`));
-                }}
-              >
-                {t('一键下载 SKILL.md', 'Download SKILL.md')}
-              </button>
-            </div>
+            <div className="text-[12px] text-ink-3">{activeSkill.description}</div>
           </div>
-          <pre
-            style={{
-              margin: 0,
-              padding: 12,
-              background: 'var(--surface-2)',
-              borderRadius: 5,
-              fontFamily: 'var(--mono)',
-              fontSize: 12,
-              whiteSpace: 'pre-wrap',
-              maxHeight: 360,
-              overflowY: 'auto',
-            }}
-          >
-            {sk.skillMarkdown}
-          </pre>
+
+          <TiptapMarkdownEditor
+            title={`${activeSkill.slug}/SKILL.md`}
+            value={skillDraft}
+            onChange={setSkillDraft}
+            onSave={handleSaveRefinedSkill}
+            saveLabel={t('保存精修版 SKILL.md', 'Save Refined SKILL.md')}
+            downloadFilename={`${activeSkill.slug}-SKILL.md`}
+            minHeight={460}
+          />
         </div>
-      ))}
+      ) : (
+        <div className="card py-10 text-center text-ink-3">
+          {t('当前暂无生成的本体技能，点击右上角编译生成。', 'No skills generated yet.')}
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirmOverwriteOpen}
+        danger
+        title={t('覆盖手工精修版 SKILL.md 确认', 'Overwrite Custom-Refined SKILL.md?')}
+        description={t(
+          '当前工程的 SKILL.md 包含手工精修内容（isCustomRefined）。重新从 11 模型编译将覆盖手工修改，是否继续？',
+          'This SKILL.md has manual refinements. Re-compiling from the 11-model AST will overwrite your manual edits. Proceed?',
+        )}
+        confirmLabel={t('确认重新编译并覆盖', 'Overwrite & Re-compile')}
+        onClose={() => setConfirmOverwriteOpen(false)}
+        onConfirm={() => void executeCompileSkill()}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deletingSkill)}
+        danger
+        title={t('删除本体技能包', 'Delete Ontology Skill')}
+        description={
+          deletingSkill
+            ? t(`确认删除技能「${deletingSkill.name}」吗？`, `Delete "${deletingSkill.name}"?`)
+            : ''
+        }
+        onClose={() => setDeletingSkill(null)}
+        onConfirm={() => void handleDeleteSkillConfirm()}
+      />
     </div>
   );
 }
@@ -2968,7 +3686,6 @@ export function AppPublishView() {
             </div>
           </div>
 
-          {/* 4A Gate Release Controls */}
           <div
             style={{
               padding: '10px 12px',

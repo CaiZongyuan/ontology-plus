@@ -1,3 +1,8 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /* ─── Bundled Offline Fonts (IBM Plex Sans & IBM Plex Mono) ─── */
 @font-face {
   font-family: "IBM Plex Sans";
@@ -68,8 +73,29 @@
     url("/textures/paper/cloud.png");
   --paper-grain-size: 260px 260px, 260px 260px, 900px 900px;
 
-  --scrollbar-track: #eae8e2;
-  --scrollbar-thumb: #8a8880;
+  /* ─── Shape, Elevation & Motion Scale ─── */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --shadow-xs: 0 1px 0 rgba(26, 26, 24, 0.04);
+  --shadow-sm: 0 1px 2px rgba(26, 26, 24, 0.06), 0 1px 1px rgba(26, 26, 24, 0.03);
+  --shadow-md: 0 4px 14px rgba(26, 26, 24, 0.08), 0 1px 3px rgba(26, 26, 24, 0.05);
+  --shadow-lg: 0 18px 48px rgba(26, 26, 24, 0.16), 0 4px 12px rgba(26, 26, 24, 0.08);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur-med: 200ms;
+
+  --topbar-h: 52px;
+  --sidebar-w: 240px;
+  --sidebar-w-collapsed: 56px;
+
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: #b9b6ac;
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   accent-color: var(--accent);
@@ -106,8 +132,12 @@
     --bad-soft: rgba(224, 97, 89, 0.16);
 
     --paper-grain-url: none;
-    --scrollbar-track: #181816;
-    --scrollbar-thumb: #6f6d66;
+    --scrollbar-track: transparent;
+    --scrollbar-thumb: #3e3d38;
+    --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
   }
 }
 
@@ -139,8 +169,12 @@
   --bad-soft: rgba(224, 97, 89, 0.16);
 
   --paper-grain-url: none;
-  --scrollbar-track: #181816;
-  --scrollbar-thumb: #6f6d66;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: #3e3d38;
+  --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 *,
@@ -160,6 +194,464 @@ body,
   color: var(--ink);
   font-family: var(--sans);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ─── BeautifulUI & Tailwind v4 Spatial-Sync Token Bridge ─── */
+:root {
+  --page: var(--ground);
+  --canvas: var(--ground-2);
+  --inset: var(--surface-2);
+  --hover: var(--ghost);
+  --hover-2: color-mix(in srgb, var(--ink) 8%, transparent);
+  --ink-3: var(--faint);
+  --line-strong: color-mix(in srgb, var(--muted) 42%, var(--line));
+  --line-soft: var(--line-2);
+  --grid-line: color-mix(in srgb, var(--line) 82%, transparent);
+  --field: var(--surface-2);
+  --accent-tint: var(--accent-soft);
+  --green: var(--ok);
+  --green-tint: var(--ok-soft);
+  --orange: var(--warn);
+  --orange-tint: var(--warn-soft);
+  --red: var(--bad);
+  --red-tint: var(--bad-soft);
+  --tooltip-bg: var(--ink);
+  --tooltip-fg: var(--surface);
+  --tooltip-muted: var(--muted);
+  --tooltip-border: var(--line);
+  --shadow-hairline: 0 0 0 1px var(--line);
+  --shadow-btn: 0 0 0 1px var(--line-strong), var(--shadow-xs);
+  --shadow-card: 0 0 0 1px var(--line), var(--shadow-sm);
+  --shadow-raised: 0 0 0 1px var(--line), var(--shadow-md);
+  --shadow-overlay: 0 0 0 1px var(--line), var(--shadow-lg);
+  --shadow-inset-field: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+@theme inline {
+  --color-background: var(--ground);
+  --color-foreground: var(--ink);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--ink);
+  --color-muted: var(--surface-2);
+  --color-muted-foreground: var(--muted);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-ink);
+  --color-border: var(--line);
+  --color-page: var(--page);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-inset: var(--inset);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-hover: var(--hover);
+  --color-hover-2: var(--hover-2);
+  --color-field: var(--field);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-tint: var(--accent-tint);
+  --color-green: var(--green);
+  --color-green-tint: var(--green-tint);
+  --color-orange: var(--orange);
+  --color-orange-tint: var(--orange-tint);
+  --color-red: var(--red);
+  --color-red-tint: var(--red-tint);
+
+  --shadow-hairline: var(--shadow-hairline);
+  --shadow-btn: var(--shadow-btn);
+  --shadow-inset-field: var(--shadow-inset-field);
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-overlay: var(--shadow-overlay);
+
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+
+  --radius-chip: 6px;
+  --radius-control: 8px;
+  --radius-card: 10px;
+  --radius-window: 14px;
+
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-link: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.primitive-card-pad {
+  padding: 12px;
+}
+
+.primitive-card-bar {
+  padding: 10px 12px;
+}
+
+.primitive-card-footer {
+  padding: 10px;
+}
+
+.primitive-table-cell {
+  padding: 10px 12px;
+}
+
+.primitive-icon-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-control);
+}
+
+.stream-tail {
+  filter: blur(1.2px);
+  -webkit-mask-image: linear-gradient(to right, #000 20%, rgba(0, 0, 0, 0.25));
+  mask-image: linear-gradient(to right, #000 20%, rgba(0, 0, 0, 0.25));
+}
+
+.stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 1.5px;
+  translate: 0 -0.5px;
+  border-radius: 1px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: caret-blink 1s step-end infinite;
+}
+
+.stream-caret.is-streaming {
+  animation: none;
+}
+
+@keyframes shimmer-text {
+  from {
+    background-position: 150% center;
+  }
+  to {
+    background-position: -50% center;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ─── BeautifulUI Status Pills ─── */
+.filter-status-todo {
+  background: var(--inset);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.filter-status-progress {
+  background: var(--orange-tint);
+  color: var(--orange);
+  border: 1px solid color-mix(in srgb, var(--orange) 28%, transparent);
+}
+
+.filter-status-done {
+  background: var(--green-tint);
+  color: var(--green);
+  border: 1px solid color-mix(in srgb, var(--green) 28%, transparent);
+}
+
+.filter-status-accent {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.filter-status-error {
+  background: var(--red-tint);
+  color: var(--red);
+  border: 1px solid color-mix(in srgb, var(--red) 28%, transparent);
+}
+
+/* ─── Accessible Light-Dismiss Dialog (<dialog closedby="any">) ─── */
+dialog.bui-dialog {
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-window);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-overlay);
+  max-width: min(520px, calc(100vw - 32px));
+  width: 100%;
+}
+
+dialog.bui-dialog::backdrop {
+  background: rgba(15, 15, 14, 0.46);
+  backdrop-filter: blur(2px);
+}
+
+/* ─── Responsive Table Scroll Region (modern-web-guidance: responsive-table) ─── */
+.responsive-table-region {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.responsive-table-region > table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
+/* ─── Tiptap Bidirectional Markdown Prose & GFM Styling ─── */
+.tiptap-editor-root .ProseMirror {
+  min-height: 280px;
+  padding: 16px 20px;
+  outline: none;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13.5px;
+  line-height: 1.68;
+}
+
+.tiptap-editor-root .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--faint);
+  pointer-events: none;
+  height: 0;
+}
+
+.tiptap-editor-root .ProseMirror h1,
+.md-prose h1 {
+  font-size: 1.48rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.1em 0 0.45em;
+  padding-bottom: 0.28em;
+  border-bottom: 1px solid var(--line-2);
+  color: var(--ink);
+}
+
+.tiptap-editor-root .ProseMirror h2,
+.md-prose h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 1em 0 0.4em;
+  color: var(--ink);
+}
+
+.tiptap-editor-root .ProseMirror h3,
+.md-prose h3 {
+  font-size: 1.04rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0.9em 0 0.35em;
+  color: var(--ink-2);
+}
+
+.tiptap-editor-root .ProseMirror p,
+.md-prose p {
+  margin: 0.5em 0;
+}
+
+.tiptap-editor-root .ProseMirror ul,
+.md-prose ul {
+  margin: 0.45em 0;
+  padding-left: 1.4em;
+  list-style-type: disc;
+}
+
+.tiptap-editor-root .ProseMirror ol,
+.md-prose ol {
+  margin: 0.45em 0;
+  padding-left: 1.5em;
+  list-style-type: decimal;
+}
+
+.tiptap-editor-root .ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.25em;
+}
+
+.tiptap-editor-root .ProseMirror ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.tiptap-editor-root .ProseMirror ul[data-type="taskList"] li > label {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  user-select: none;
+}
+
+.tiptap-editor-root .ProseMirror ul[data-type="taskList"] li > div {
+  flex: 1 1 auto;
+}
+
+.tiptap-editor-root .ProseMirror blockquote,
+.md-prose blockquote {
+  margin: 0.65em 0;
+  padding: 0.4em 0.9em;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--ink-2);
+}
+
+.tiptap-editor-root .ProseMirror code,
+.md-prose :not(pre) > code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  color: var(--accent);
+}
+
+.tiptap-editor-root .ProseMirror pre {
+  margin: 0.7em 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--ground-2);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+.tiptap-editor-root .ProseMirror pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.tiptap-editor-root .ProseMirror table,
+.md-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75em 0;
+  font-size: 12.5px;
+}
+
+.tiptap-editor-root .ProseMirror th,
+.tiptap-editor-root .ProseMirror td,
+.md-prose th,
+.md-prose td {
+  border: 1px solid var(--line);
+  padding: 7px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.tiptap-editor-root .ProseMirror th,
+.md-prose th {
+  background: var(--surface-2);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.tiptap-editor-root .ProseMirror hr,
+.md-prose hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1em 0;
+}
+
+/* ─── React Flow Spatial-Sync Theme Bridge ─── */
+.react-flow {
+  --xy-background-color-default: var(--surface);
+  --xy-node-background-color-default: var(--surface);
+  --xy-node-border-default: 1px solid var(--line);
+  --xy-node-color-default: var(--ink);
+  --xy-edge-stroke-default: color-mix(in srgb, var(--muted) 58%, transparent);
+  --xy-edge-stroke-selected-default: var(--accent);
+  --xy-minimap-background-color-default: var(--surface-2);
+  --xy-controls-button-background-color-default: var(--surface);
+  --xy-controls-button-color-default: var(--ink);
+  --xy-controls-button-border-color-default: var(--line);
 }

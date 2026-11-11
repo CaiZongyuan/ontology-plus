@@ -25,6 +25,137 @@ export interface ProjectDetail extends ProjectSummary {
   changelog: string;
 }
 
+export interface ProjectSnapshot {
+  id: string;
+  projectId: string;
+  label: string;
+  note: string;
+  presentModels: ModelCode[];
+  errorCount: number;
+  warningCount: number;
+  suite: OntologySuite;
+  createdAt: string;
+}
+
+export type AgentSessionKind =
+  | 'REQUIREMENT'
+  | 'COPILOT'
+  | 'CODING'
+  | 'CAPABILITY'
+  | 'REASONING';
+
+export interface AgentToolCallTrace {
+  id: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+  output: string;
+  isError?: boolean;
+  validatorRepair?: boolean;
+  durationMs?: number;
+  targetElementId?: string;
+  targetModelCode?: ModelCode;
+}
+
+export interface AgentAskUserPrompt {
+  id: string;
+  header?: string;
+  question: string;
+  options: string[];
+  multiSelect?: boolean;
+  allowFreeform?: boolean;
+  answered?: boolean;
+  selectedAnswers?: string[];
+}
+
+export type AgentDomainArtifact =
+  | {
+      kind: 'ONTOLOGY_DIFF';
+      title: string;
+      modelCode?: ModelCode;
+      changes: {
+        id: string;
+        category: string;
+        detail: string;
+        action: 'ADDED' | 'MODIFIED' | 'REMOVED';
+      }[];
+    }
+  | {
+      kind: 'SQL_PREVIEW';
+      sql: string;
+      columns: string[];
+      rows: Record<string, unknown>[];
+      elapsedMs: number;
+    }
+  | {
+      kind: 'REASONING_POLICY';
+      mode: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+      dataSummary: { label: string; value: string; delta?: string }[];
+      causalAnalysis: string[];
+      policyRecommendations: {
+        actionTitle: string;
+        targetObject: string;
+        expectedImpact: string;
+        writebackInterfaceId: string;
+      }[];
+    }
+  | {
+      kind: 'REQUIREMENT_HINTS';
+      aggregates: string[];
+      rules: string[];
+      openQuestions: string[];
+    }
+  | {
+      kind: 'CODING_PACKAGE';
+      appId: string;
+      outputDir: string;
+      files: string[];
+    };
+
+export interface AgentSessionMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  thinking?: string;
+  thinkingDurationMs?: number;
+  timestamp: string;
+  modelUsed?: string;
+  providerName?: string;
+  toolCalls?: AgentToolCallTrace[];
+  askUser?: AgentAskUserPrompt;
+  artifacts?: AgentDomainArtifact[];
+  errorDiagnostic?: {
+    code: string;
+    providerName?: string;
+    baseUrl?: string;
+    message: string;
+    remediation: string;
+  };
+}
+
+export interface AgentSession {
+  id: string;
+  projectId: string;
+  agentKind: AgentSessionKind;
+  targetId?: string;
+  title: string;
+  pinned?: boolean;
+  status: 'IDLE' | 'RUNNING' | 'WAITING_INPUT' | 'ERROR';
+  parentSessionId?: string;
+  forkedFromMessageId?: string;
+  providerId?: string;
+  modelOverride?: string;
+  reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+  compactedSummary?: string;
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  messages: AgentSessionMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RequirementMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -104,6 +235,7 @@ export interface GeneratedSkill {
   version: string;
   description: string;
   skillMarkdown: string;
+  isCustomRefined?: boolean;
   updatedAt: string;
 }
 
@@ -331,7 +463,7 @@ export interface WritebackInterface {
 export interface LlmProviderConfig {
   id: string;
   name: string;
-  providerType: 'OPENAI_COMPATIBLE' | 'ANTHROPIC' | 'CLOUDFLARE_AI';
+  providerType: 'OPENAI_COMPATIBLE' | 'ANTHROPIC' | 'GOOGLE_GEMINI' | 'CLOUDFLARE_AI';
   baseUrl: string;
   apiKey: string;
   defaultModel: string;
@@ -348,6 +480,7 @@ export interface SystemSettingsState {
   strictValidation: boolean;
   autoMirrorYaml: boolean;
   autoSyncPrototypeMu: boolean;
+  mockLlmMode?: boolean;
 }
 
 export interface WorkspaceStore {
@@ -362,6 +495,25 @@ export interface WorkspaceStore {
     description?: string;
     template?: 'CONTRACT' | 'MFT' | 'EMPTY';
   }): ProjectDetail;
+  updateProjectMeta(
+    projectId: string,
+    patch: Partial<Pick<ProjectSummary, 'name' | 'code' | 'center' | 'domain' | 'description'>>,
+  ): ProjectDetail;
+  cloneProject(
+    projectId: string,
+    overrides?: { name?: string; code?: string },
+  ): ProjectDetail;
+  deleteProject(
+    projectId: string,
+    force?: boolean,
+  ): { deletedId: string; remainingProjectId: string };
+  listProjectSnapshots(projectId: string): ProjectSnapshot[];
+  createProjectSnapshot(
+    projectId: string,
+    input: { label: string; note?: string },
+  ): ProjectSnapshot;
+  restoreProjectSnapshot(projectId: string, snapshotId: string): ProjectDetail;
+  deleteProjectSnapshot(snapshotId: string): void;
   updateModel<K extends ModelCode>(
     projectId: string,
     modelCode: K,
@@ -383,6 +535,32 @@ export interface WorkspaceStore {
     newId: string,
   ): { project: ProjectDetail; changedCount: number; changelogEntry: string };
 
+  // Unified Agent Sessions (across all 5 AI surfaces)
+  listAgentSessions(filter?: {
+    projectId?: string;
+    agentKind?: AgentSessionKind;
+    targetId?: string;
+  }): AgentSession[];
+  getAgentSession(sessionId: string): AgentSession | undefined;
+  createAgentSession(input: {
+    id?: string;
+    projectId: string;
+    agentKind: AgentSessionKind;
+    targetId?: string;
+    title?: string;
+    providerId?: string;
+    modelOverride?: string;
+    reasoningMode?: AgentSession['reasoningMode'];
+    initialMessages?: AgentSessionMessage[];
+  }): AgentSession;
+  saveAgentSession(session: AgentSession): AgentSession;
+  forkAgentSession(
+    sessionId: string,
+    upToMessageId?: string,
+    newTitle?: string,
+  ): AgentSession;
+  deleteAgentSession(sessionId: string): void;
+
   // Application Center
   listRequirementSessions(projectId: string): RequirementSession[];
   getRequirementSession(sessionId: string): RequirementSession | undefined;
@@ -394,29 +572,44 @@ export interface WorkspaceStore {
   appendRequirementMessage(
     sessionId: string,
     message: RequirementMessage,
-    updates?: Partial<Pick<RequirementSession, 'discoveredAggregates' | 'discoveredRules' | 'resolvedDecisions' | 'status'>>,
+    updates?: Partial<
+      Pick<
+        RequirementSession,
+        'discoveredAggregates' | 'discoveredRules' | 'resolvedDecisions' | 'status' | 'title'
+      >
+    >,
   ): RequirementSession;
+  deleteRequirementSession(sessionId: string): void;
   listRequirementDocs(projectId: string): RequirementDoc[];
   saveRequirementDoc(doc: Omit<RequirementDoc, 'updatedAt'>): RequirementDoc;
+  cloneRequirementDoc(docId: string): RequirementDoc;
+  deleteRequirementDoc(docId: string): void;
   listPrototypes(projectId: string): PrototypeArtifact[];
   savePrototypeAndSyncMu(
     projectId: string,
     input: { id?: string; name: string; version?: string; htmlContent: string; syncMu?: boolean },
   ): { prototype: PrototypeArtifact; project: ProjectDetail };
+  clonePrototype(protoId: string): PrototypeArtifact;
+  deletePrototype(protoId: string): void;
   listFourLayerAssets(layer?: FourLayerAsset['layer']): FourLayerAsset[];
   saveFourLayerAsset(asset: Omit<FourLayerAsset, 'updatedAt'>): FourLayerAsset;
+  deleteFourLayerAsset(assetId: string, force?: boolean): void;
   listAssembledApplications(): AssembledApplication[];
   saveAssembledApplication(
     app: Omit<AssembledApplication, 'updatedAt' | 'agentDevLogs'> & {
       agentDevLogs?: AssembledApplication['agentDevLogs'];
     },
   ): AssembledApplication;
+  cloneAssembledApplication(appId: string): AssembledApplication;
+  deleteAssembledApplication(appId: string): void;
   listGeneratedSkills(projectId?: string): GeneratedSkill[];
   saveGeneratedSkill(skill: Omit<GeneratedSkill, 'updatedAt'>): GeneratedSkill;
+  deleteGeneratedSkill(skillId: string, force?: boolean): void;
 
   // Capability Center & Knowledge Center
   listLegacySystems(): LegacySystemConfig[];
   saveLegacySystem(sys: LegacySystemConfig): LegacySystemConfig;
+  deleteLegacySystem(systemId: string): void;
   listExtractionJobs(projectId?: string): ExtractionJob[];
   runOntologyExtractionJob(input: {
     systemId: string;
@@ -427,38 +620,54 @@ export interface WorkspaceStore {
     applyImmediately?: boolean;
   }): { job: ExtractionJob; project: ProjectDetail };
   applyExtractionJobToProject(jobId: string): { job: ExtractionJob; project: ProjectDetail };
+  deleteExtractionJob(jobId: string): void;
   listMcpServers(): McpServerConfig[];
   saveMcpServer(mcp: Omit<McpServerConfig, 'updatedAt'>): McpServerConfig;
+  deleteMcpServer(mcpId: string, force?: boolean): void;
   listCapabilityAgents(): CapabilityAgent[];
   saveCapabilityAgent(agent: CapabilityAgent): CapabilityAgent;
+  deleteCapabilityAgent(agentId: string): void;
   listCapabilityChatSessions(agentId?: string): CapabilityChatSession[];
   saveCapabilityChatSession(session: Omit<CapabilityChatSession, 'updatedAt'>): CapabilityChatSession;
+  deleteCapabilityChatSession(sessionId: string): void;
   listCrossSystemFlows(): CrossSystemFlow[];
+  saveCrossSystemFlow(flow: CrossSystemFlow): CrossSystemFlow;
   executeCrossSystemFlow(flowId: string): CrossSystemFlow;
+  deleteCrossSystemFlow(flowId: string): void;
   listKnowledgeEntries(): KnowledgeEntry[];
   saveKnowledgeEntry(entry: Omit<KnowledgeEntry, 'updatedAt'>): KnowledgeEntry;
+  deleteKnowledgeEntry(entryId: string): void;
 
   // Data Analytics Center
   listDatabaseResources(): DatabaseResource[];
   saveDatabaseResource(res: DatabaseResource): DatabaseResource;
+  deleteDatabaseResource(dbId: string): void;
   listDataDocuments(): DataDocument[];
   saveDataDocument(doc: Omit<DataDocument, 'updatedAt'>): DataDocument;
+  deleteDataDocument(docId: string): void;
   listDataMappings(): DataMappingRule[];
   saveDataMapping(rule: DataMappingRule): DataMappingRule;
+  deleteDataMapping(mappingId: string): void;
   listMetrics(): MetricDefinition[];
   saveMetric(metric: MetricDefinition): MetricDefinition;
+  deleteMetric(metricId: string): void;
   listAnalyticsScenarios(): AnalyticsScenario[];
   saveAnalyticsScenario(scenario: AnalyticsScenario): AnalyticsScenario;
+  deleteAnalyticsScenario(scenarioId: string): void;
   listAnalyticsReports(): AnalyticsReport[];
   saveAnalyticsReport(report: Omit<AnalyticsReport, 'createdAt'>): AnalyticsReport;
+  deleteAnalyticsReport(reportId: string): void;
   listReasoningSessions(): ReasoningSession[];
   saveReasoningSession(session: Omit<ReasoningSession, 'createdAt'>): ReasoningSession;
+  deleteReasoningSession(sessionId: string): void;
   executeReadOnlyAnalyticsSql(sql: string, params?: Record<string, unknown>): AnalyticsQueryResult;
   listWritebackInterfaces(): WritebackInterface[];
+  saveWritebackInterface(wb: WritebackInterface): WritebackInterface;
   executeWritebackInterface(
     interfaceId: string,
     payloadOverride?: Record<string, unknown>,
   ): WritebackInterface;
+  deleteWritebackInterface(wbId: string): void;
 
   // Durable Agent Checkpoints
   saveAgentCheckpoint(sessionId: string, workflow: string, stateJson: string): void;
@@ -468,7 +677,7 @@ export interface WorkspaceStore {
   // LLM Center & System Settings
   listLlmProviders(): LlmProviderConfig[];
   saveLlmProvider(provider: LlmProviderConfig): LlmProviderConfig;
+  deleteLlmProvider(providerId: string): void;
   getSystemSettings(): SystemSettingsState;
   updateSystemSettings(patch: Partial<SystemSettingsState>): SystemSettingsState;
 }
-

@@ -62,6 +62,16 @@ _Avoid_: Warning, lint hint
 A non-blocking indicator showing that a late-stage model in the 12-stage modeling sequence (such as `MM` or `MI`) has not yet been authored, permitting progressive modeling and legacy 8/9-model imports.
 _Avoid_: Validation failure, broken model
 
+## Workspace & Agent Collaboration
+
+**Ontology Project (本体工程)**:
+The top-level domain workspace container that owns one evolving Ontology Suite alongside its requirement specifications, interactive prototypes, snapshots, and assembled deliverables.
+_Avoid_: Project session,工程会话, chat workspace
+
+**Agent Session (智能体会话)**:
+A persistent, multi-turn conversation thread between a user and a specialized domain agent (such as Requirement Exploration, Ontology Copilot, Application Coding, Capability Chat, or Data Reasoning) scoped to an Ontology Project.
+_Avoid_: Project session, stateless prompt, one-shot turn
+
 ## Application Center & Delivery
 
 **Requirement Exploration (需求探索)**:

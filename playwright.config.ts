@@ -22,7 +22,11 @@ export default defineConfig({
   webServer: {
     command: 'pnpm start',
     url: 'http://127.0.0.1:4310/api/health',
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     timeout: 30_000,
+    env: {
+      ...process.env,
+      ONTOLOGY_MOCK_LLM: '1',
+    },
   },
 });

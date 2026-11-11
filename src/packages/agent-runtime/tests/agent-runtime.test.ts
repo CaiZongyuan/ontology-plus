@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { CONTRACT_LIFECYCLE_SUITE, validateOntologySuite } from '../../ontology-core/index.js';
 import { createWorkspaceStore } from '../../workspace-store/index.js';
 import {
+  LlmGatewayError,
   ONTOLOGY_TOOL_NAMES,
   OPENAI_ONTOLOGY_TOOLS,
   applyOntologyToolCall,
   buildTurnSseEvents,
+  collectUnifiedAgentTurn,
+  compactAgentSession,
   createSseEventStream,
   generateMetricInsight,
   generatePrototypeFromDoc,
@@ -234,5 +237,109 @@ describe('agent-runtime deep module', () => {
     expect(resultIdx).toBeGreaterThan(callIdx);
     expect(payloadIdx).toBeGreaterThan(resultIdx);
     expect(endIdx).toBeGreaterThan(payloadIdx);
+  }, 20000);
+
+  it('throws LlmGatewayError instead of silent fake fallback when live mode hits an offline gateway', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    // Point the sole provider at a guaranteed unreachable port
+    const existing = store.listLlmProviders();
+    for (const p of existing) {
+      store.saveLlmProvider({
+        ...p,
+        baseUrl: 'http://127.0.0.1:59999/v1',
+        enabled: true,
+      });
+    }
+
+    await expect(
+      runOntologyCopilotTurn(store, {
+        projectId: 'proj-contract',
+        prompt: '查询当前模型结构',
+        mockMode: false,
+      }),
+    ).rejects.toBeInstanceOf(LlmGatewayError);
+
+    const session = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'COPILOT',
+      title: 'Live Gateway Failure Probe',
+    });
+    const turn = await collectUnifiedAgentTurn(store, {
+      sessionId: session.id,
+      prompt: '测试离线网关诊断',
+      mockMode: false,
+    });
+    expect(turn.events.some((e) => e.event === 'run_error')).toBe(true);
+    expect(turn.session.status).toBe('ERROR');
+    expect(turn.session.messages.at(-1)?.errorDiagnostic?.code).toBe('LLM_GATEWAY_ERROR');
+  }, 20000);
+
+  it('streams unified AgentSession with multi-step validator self-repair, Scoped HITL ask_user, fork, and compact', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+
+    // 1. Multi-step Validator Self-Repair in COPILOT
+    const copilotSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'COPILOT',
+      title: '新会话',
+    });
+    const repairTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: copilotSess.id,
+      prompt: '执行悬空自修复测试创建跨聚合场景',
+      mockMode: true,
+    });
+
+    expect(repairTurn.events.some((e) => e.event === 'thinking_delta')).toBe(true);
+    const traces = repairTurn.session.messages.at(-1)?.toolCalls ?? [];
+    expect(traces.length).toBe(2);
+    expect(traces[0]?.isError).toBe(true);
+    expect(traces[1]?.isError).toBe(false);
+    expect(traces[1]?.validatorRepair).toBe(true);
+    expect(store.getProject('proj-contract')!.validation.errorCount).toBe(0);
+
+    // 2. Scoped HITL ask_user pause & resume
+    const reqSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'REQUIREMENT',
+      title: '需求边界探索',
+    });
+    const hitlTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: reqSess.id,
+      prompt: '当履约里程碑逾期时我不确定采用哪种方案，请给我待确认选项让我选择',
+      mockMode: true,
+    });
+    expect(hitlTurn.events.some((e) => e.event === 'ask_user')).toBe(true);
+    expect(hitlTurn.session.status).toBe('WAITING_INPUT');
+    const askPrompt = hitlTurn.session.messages.at(-1)?.askUser;
+    expect(askPrompt?.options.length).toBeGreaterThanOrEqual(2);
+
+    const resumedTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: reqSess.id,
+      askUserAnswer: {
+        promptId: askPrompt!.id,
+        selectedAnswers: [askPrompt!.options[0]!],
+        freeformText: '超过 100 万同时抄送法务总监',
+      },
+      mockMode: true,
+    });
+    expect(resumedTurn.session.status).toBe('IDLE');
+    expect(resumedTurn.session.messages.some((m) => m.askUser?.answered === true)).toBe(true);
+
+    // 3. Fork from an earlier message & Compact long history
+    const forked = store.forkAgentSession(
+      resumedTurn.session.id,
+      resumedTurn.session.messages[1]!.id,
+    );
+    expect(forked.parentSessionId).toBe(resumedTurn.session.id);
+    expect(forked.messages.length).toBe(2);
+
+    await collectUnifiedAgentTurn(store, {
+      sessionId: resumedTurn.session.id,
+      prompt: '补充第二条结算核销一致性规则',
+      mockMode: true,
+    });
+    const compacted = compactAgentSession(store, resumedTurn.session.id);
+    expect(compacted.compactedSummary).toBeTruthy();
+    expect(compacted.messages.length).toBeLessThanOrEqual(4);
   }, 20000);
 });

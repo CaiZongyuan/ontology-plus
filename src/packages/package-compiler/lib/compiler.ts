@@ -43,6 +43,7 @@ export interface CompileDevelopmentPackageInput {
   techArchAsset: FourLayerAsset;
   requirementDoc?: RequirementDoc;
   prototype?: PrototypeArtifact;
+  extraSourceFiles?: { relativePath: string; content: string }[];
   workspaceRoot?: string;
   writeToDisk?: boolean;
 }
@@ -498,13 +499,137 @@ export function compileDevelopmentPackage(
     addFile(`参考资料/本体模型/${info.fileName}`, 'ONTOLOGY_YAML', info.content);
   }
 
-  // 5. 技术底座 & 应用源码
+  // 5. 技术底座 & 动态生成的应用源码 (M1/M2/M3/M7/MM/MI 确定性代码生成)
   addFile('技术底座/README.md', 'FOUNDATION', techFoundationAsset.specMarkdown);
   addFile(
     '应用源码/README.md',
     'SOURCE',
-    `# ${app.name} — 应用源码工作区\n\n请基于根目录《开发指导书.md》与《本体模型业务功能开发指导书.md》在此目录生成并验证业务源码。`,
+    `# ${app.name} — 应用源码工作区\n\n本目录包含从「${project.name}」11 元模型 AST 自动生成的物理建表 DDL、领域聚合根、M3 规则门禁、M2/M7 CQRS 应用服务及 MI 接口路由，以及 AI Coding Agent 增量构建产物。`,
   );
+
+  // 5.1 Generate SQLite/D1 DDL from MM + M1
+  const ddlStatements: string[] = [
+    `-- Auto-generated from ${project.name} (${project.code}) MM & M1 Ontology Models`,
+    `CREATE TABLE IF NOT EXISTS __dict (`,
+    `  id TEXT PRIMARY KEY,`,
+    `  dict_id TEXT NOT NULL,`,
+    `  type_code TEXT NOT NULL,`,
+    `  item_code TEXT NOT NULL,`,
+    `  item_label TEXT NOT NULL,`,
+    `  sort_order INTEGER DEFAULT 1,`,
+    `  created_by TEXT DEFAULT 'system',`,
+    `  created_at TEXT NOT NULL,`,
+    `  updated_by TEXT DEFAULT 'system',`,
+    `  updated_at TEXT NOT NULL,`,
+    `  flag INTEGER DEFAULT 1`,
+    `);`,
+  ];
+  for (const mapping of project.suite.MM?.mappings ?? []) {
+    for (const tm of mapping.tableMappings) {
+      const colDefs = tm.columnMappings.map((cm) => {
+        const pk = cm.isPrimaryKey || cm.column === tm.primaryKey ? ' PRIMARY KEY' : '';
+        const nn = cm.nullable === false && !pk ? ' NOT NULL' : '';
+        const uq = cm.unique && !pk ? ' UNIQUE' : '';
+        return `  ${cm.column} ${cm.columnType || 'TEXT'}${pk}${nn}${uq}`;
+      });
+      if (!tm.columnMappings.some((c) => c.column === tm.primaryKey)) {
+        colDefs.unshift(`  ${tm.primaryKey} TEXT PRIMARY KEY`);
+      }
+      for (const auditCol of [
+        `  created_by TEXT DEFAULT 'system'`,
+        `  created_at TEXT NOT NULL`,
+        `  updated_by TEXT DEFAULT 'system'`,
+        `  updated_at TEXT NOT NULL`,
+        `  flag INTEGER DEFAULT 1`,
+      ]) {
+        colDefs.push(auditCol);
+      }
+      ddlStatements.push(
+        `\n-- Object: ${mapping.objectName} (${mapping.id} · ${tm.tableRole})\nCREATE TABLE IF NOT EXISTS ${tm.tableName} (\n${colDefs.join(',\n')}\n);`,
+      );
+    }
+  }
+  addFile('应用源码/db/schema.sql', 'SOURCE', ddlStatements.join('\n') + '\n');
+
+  // 5.2 Generate TypeScript Domain Entities & Lifecycle Guards from M1
+  const tsTypeFor = (t: string): string => {
+    if (t === 'Money' || t === 'Decimal' || t === 'Integer') return 'number';
+    if (t === 'Boolean') return 'boolean';
+    return 'string';
+  };
+  const domainEntityBlocks = (project.suite.M1?.aggregates ?? []).map((agg) => {
+    const stateUnion =
+      agg.lifecycle.length > 0 ? agg.lifecycle.map((s) => `'${s}'`).join(' | ') : `'ACTIVE'`;
+    const fields = agg.attributes
+      .map((attr) => `  /** ${attr.label} (${attr.type}) */\n  ${attr.name}${attr.required ? '' : '?'}: ${tsTypeFor(attr.type)};`)
+      .join('\n');
+    const invariants = agg.invariants
+      .map(
+        (inv) =>
+          `  // [${inv.name}] ${inv.expression}\n  if (!entity) throw new Error(${JSON.stringify(inv.violationMessage || inv.name)});`,
+      )
+      .join('\n');
+    return [
+      `export type ${agg.name}LifecycleState = ${stateUnion};`,
+      `export interface ${agg.name}Aggregate {`,
+      `  id: string;`,
+      fields,
+      `  createdBy: string;`,
+      `  createdAt: string;`,
+      `  updatedBy: string;`,
+      `  updatedAt: string;`,
+      `  flag: 0 | 1;`,
+      `}`,
+      `export function assert${agg.name}Invariants(entity: Partial<${agg.name}Aggregate>): void {`,
+      invariants || `  if (!entity) throw new Error('${agg.name} entity is required');`,
+      `}`,
+    ].join('\n');
+  });
+  addFile(
+    '应用源码/src/domain/entities.ts',
+    'SOURCE',
+    `// Auto-generated Domain Model from M1 (${MODEL_FILE_NAMES.M1})\n\n${domainEntityBlocks.join('\n\n')}\n`,
+  );
+
+  // 5.3 Generate M3 Rule Interceptors
+  const ruleBlocks = (project.suite.M3?.rules ?? []).map(
+    (rule) =>
+      `export const ${rule.id.replace(/[^A-Za-z0-9_]/g, '_')} = {\n  id: ${JSON.stringify(rule.id)},\n  name: ${JSON.stringify(rule.name)},\n  alias: ${JSON.stringify(rule.alias)},\n  ruleType: ${JSON.stringify(rule.ruleType)},\n  expression: ${JSON.stringify(rule.expression)},\n  violationMessage: ${JSON.stringify(rule.violationMessage ?? '违反业务合规规则')},\n} as const;`,
+  );
+  addFile(
+    '应用源码/src/domain/rules.ts',
+    'SOURCE',
+    `// Auto-generated M3 Business Rules (${MODEL_FILE_NAMES.M3})\n\n${ruleBlocks.join('\n\n')}\n`,
+  );
+
+  // 5.4 Generate M2 Command & M7 Query Application Services
+  const serviceBlocks = (project.suite.M2?.behaviors ?? []).map((beh) => {
+    const pairedRpt = (project.suite.M7?.query_reports ?? []).find(
+      (q) => q.id === beh.queryReportRef || q.behaviorRef === beh.id,
+    );
+    const fnName = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(beh.name)
+      ? beh.name
+      : `exec_${beh.id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+    return [
+      `/** [${beh.id}] ${beh.alias} (${beh.behaviorType}) — Owner: ${beh.ownerEntity} */`,
+      `export async function ${fnName}(input: Record<string, unknown>) {`,
+      `  const invokedRules = ${JSON.stringify(beh.invokedRules)};`,
+      pairedRpt
+        ? `  const referenceSql = ${JSON.stringify(pairedRpt.referenceSql.sql)};\n  return { behaviorId: ${JSON.stringify(beh.id)}, queryReportId: ${JSON.stringify(pairedRpt.id)}, referenceSql, input, invokedRules };`
+        : `  return { behaviorId: ${JSON.stringify(beh.id)}, ownerEntity: ${JSON.stringify(beh.ownerEntity)}, invokedRules, producedEvents: ${JSON.stringify(beh.producedEvents)}, input };`,
+      `}`,
+    ].join('\n');
+  });
+  addFile(
+    '应用源码/src/application/services.ts',
+    'SOURCE',
+    `// Auto-generated CQRS Application Services from M2 & M7\n\n${serviceBlocks.join('\n\n')}\n`,
+  );
+
+  // 5.5 Include any AI Coding Agent generated files
+  for (const extra of input.extraSourceFiles ?? []) {
+    addFile(extra.relativePath, 'SOURCE', extra.content);
+  }
 
   // 6. 开发资料清单.json
   const presentModels = getPresentModelCodes(project);

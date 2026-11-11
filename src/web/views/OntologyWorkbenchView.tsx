@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   MODEL_FILE_NAMES,
   MODEL_STAGE_ORDER,
@@ -14,13 +14,12 @@ import {
 import {
   apiAnalyzeImpact,
   apiRenameSymbol,
-  apiRunCopilot,
   useWorkbenchStore,
 } from '../api.js';
+import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
 import { usePreferences } from '../i18n.js';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas.js';
-
-type CopilotToolCall = Awaited<ReturnType<typeof apiRunCopilot>>['toolCalls'][number];
+import './ontology-workbench.css';
 
 interface TreeElementSummary {
   id: string;
@@ -135,6 +134,60 @@ function splitCsv(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** Textarea that grows with its content (falls back to JS sizing where `field-sizing` is unsupported). */
+function AutoGrowTextarea({
+  className = '',
+  value,
+  minRows = 1,
+  ...rest
+}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { value: string; minRows?: number }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      rows={minRows}
+      className={`owb-autogrow ${className}`}
+      value={value}
+      {...rest}
+    />
+  );
+}
+
+/** Renders a lifecycle state machine as wrapping chips joined by arrows. */
+function LifecycleFlow({ states, label }: { states: string[]; label: string }) {
+  return (
+    <div className="owb-lifecycle" aria-label={label}>
+      <span className="owb-lifecycle-label">{label}</span>
+      {states.length === 0 ? (
+        <span className="owb-empty-hint">—</span>
+      ) : (
+        states.map((s, i) => (
+          <React.Fragment key={`${s}-${i}`}>
+            {i > 0 && (
+              <span className="owb-state-arrow" aria-hidden="true">
+                →
+              </span>
+            )}
+            <span
+              className={`owb-state-chip ${i === 0 ? 'is-initial' : ''} ${
+                i === states.length - 1 && states.length > 1 ? 'is-final' : ''
+              }`}
+            >
+              {s}
+            </span>
+          </React.Fragment>
+        ))
+      )}
+    </div>
+  );
+}
+
 export function OntologyWorkbenchView() {
   const { t } = usePreferences();
   const {
@@ -155,25 +208,6 @@ export function OntologyWorkbenchView() {
   const [activeTab, setActiveTab] = useState<'STRUCTURED' | 'GRAPH' | 'YAML'>('STRUCTURED');
   const [treeSearch, setTreeSearch] = useState('');
   const [yamlText, setYamlText] = useState('');
-  const [copilotPrompt, setCopilotPrompt] = useState('');
-  const [copilotBusy, setCopilotBusy] = useState(false);
-  const [copilotMessages, setCopilotMessages] = useState<
-    {
-      id: string;
-      role: 'user' | 'assistant';
-      content: string;
-      meta?: string;
-      toolCalls?: CopilotToolCall[];
-    }[]
-  >([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content:
-        '您好！我是基于 Pi Durable 与 11 元模型架构的 AI 本体助手（已连接本地 auto/glm-5.3-flash）。您可以直接让我新增聚合根、补充跨对象业务规则、或者执行一致性诊断。',
-      meta: 'Pi Durable · auto/glm-5.3-flash',
-    },
-  ]);
 
   // Non-blocking Cascade Rename, Impact Analysis & Referenced-Delete Guard Modal
   const [renameModalOpen, setRenameModalOpen] = useState(false);
@@ -967,73 +1001,26 @@ export function OntologyWorkbenchView() {
     );
   };
 
-  const handleSendCopilot = async (textOverride?: string) => {
-    const promptText = (textOverride ?? copilotPrompt).trim();
-    if (!promptText || copilotBusy) return;
-    setCopilotPrompt('');
-    setCopilotBusy(true);
-    setCopilotMessages((prev) => [
-      ...prev,
-      { id: `u-${Date.now()}`, role: 'user', content: promptText },
-    ]);
-
-    try {
-      const res = await apiRunCopilot(project.id, promptText, selectedModel);
-      const hasAppliedMutation =
-        res.toolCalls.some((tc) => tc.status === 'APPLIED') ||
-        JSON.stringify(res.project.suite) !== JSON.stringify(suite);
-      if (hasAppliedMutation) {
-        pushUndoSnapshot(suite);
-      }
-      patchData({ activeProject: res.project });
-      setCopilotMessages((prev) => [
-        ...prev,
-        {
-          id: `a-${Date.now()}`,
-          role: 'assistant',
-          content: res.reply,
-          meta: `${res.modelUsed} · ${res.latencyMs}ms`,
-          toolCalls: res.toolCalls,
-        },
-      ]);
-    } finally {
-      setCopilotBusy(false);
-    }
-  };
-
   const searchKeyword = treeSearch.trim().toLowerCase();
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 48px)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - var(--topbar-h, 48px))' }}>
       <div className="ontology-workbench">
         {/* ─── Left Pane: Hierarchical 11-Model Progressive Navigator + Searchable Tree ─── */}
         <div className="workbench-left">
-          <div
-            style={{
-              padding: '10px 12px 8px',
-              borderBottom: '1px solid var(--line)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 7,
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <span style={{ fontWeight: 600, fontSize: 12 }}>
-                {t('11 元模型渐进导航', '11-Model Stages')}
-              </span>
+          <div className="owb-pane-head">
+            <div className="owb-pane-title-row">
+              <span className="owb-pane-title">{t('11 元模型渐进导航', '11-Model Stages')}</span>
               <span className="badge badge-accent">{validation.presentModels.length}/11</span>
             </div>
 
-            <div style={{ position: 'relative' }}>
+            <div className="owb-search">
+              <span className="owb-search-icon" aria-hidden="true">
+                ⌕
+              </span>
               <input
                 className="input"
-                style={{ height: 27, fontSize: 11.5, paddingRight: treeSearch ? 24 : 8 }}
+                style={{ paddingRight: treeSearch ? 28 : 10 }}
                 placeholder={t(
                   '搜索 M1~MI 元素 ID / 名称...',
                   'Filter M1–MI elements...',
@@ -1044,18 +1031,10 @@ export function OntologyWorkbenchView() {
               {treeSearch && (
                 <button
                   type="button"
+                  className="owb-search-clear"
                   onClick={() => setTreeSearch('')}
-                  style={{
-                    position: 'absolute',
-                    right: 5,
-                    top: 4,
-                    border: 'none',
-                    background: 'transparent',
-                    color: 'var(--muted)',
-                    cursor: 'pointer',
-                    fontSize: 11,
-                  }}
                   title={t('清空过滤', 'Clear')}
+                  aria-label={t('清空过滤', 'Clear')}
                 >
                   ✕
                 </button>
@@ -1063,16 +1042,7 @@ export function OntologyWorkbenchView() {
             </div>
           </div>
 
-          <div
-            style={{
-              padding: 6,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 3,
-              overflowY: 'auto',
-              flex: 1,
-            }}
-          >
+          <div className="owb-nav-list">
             {MODEL_STAGE_ORDER.map((item) => {
               const isSelected = selectedModel === item.code;
               const isPresent = Boolean(suite[item.code]);
@@ -1094,27 +1064,21 @@ export function OntologyWorkbenchView() {
                 (Boolean(searchKeyword) && filteredChildren.length > 0);
 
               return (
-                <div key={item.code} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div key={item.code} className="owb-nav-group">
                   <button
                     type="button"
                     data-testid={`model-nav-${item.code}`}
                     className={`nav-item ${isSelected ? 'active' : ''}`}
                     onClick={() => setSelectedModel(item.code, null)}
+                    aria-current={isSelected ? 'true' : undefined}
                   >
-                    <span className="nav-item-left">
-                      <span
-                        style={{
-                          fontFamily: 'var(--mono)',
-                          fontSize: 11,
-                          fontWeight: 600,
-                          minWidth: 26,
-                        }}
-                      >
-                        {item.code}
+                    <span className="nav-item-left" style={{ minWidth: 0 }}>
+                      <span className="owb-nav-code">{item.code}</span>
+                      <span className="owb-nav-label">
+                        {t(item.labelZh.slice(3), item.labelEn.slice(3))}
                       </span>
-                      <span>{t(item.labelZh.slice(3), item.labelEn.slice(3))}</span>
                     </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                       {modelErrors > 0 ? (
                         <span className="badge badge-bad">{modelErrors}</span>
                       ) : isPresent ? (
@@ -1126,14 +1090,7 @@ export function OntologyWorkbenchView() {
                   </button>
 
                   {showChildren && (
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 1,
-                        marginBottom: 4,
-                      }}
-                    >
+                    <div className="owb-nav-children">
                       {filteredChildren.map((el) => {
                         const isElActive =
                           isSelected &&
@@ -1144,48 +1101,21 @@ export function OntologyWorkbenchView() {
                             className={`tree-element-row ${isElActive ? 'selected' : ''}`}
                             onClick={() => {
                               setSelectedModel(item.code, el.id);
-                              if (activeTab === 'GRAPH') {
-                                setActiveTab('STRUCTURED');
-                              }
                             }}
                           >
-                            <span
-                              style={{
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                minWidth: 0,
-                              }}
-                            >
-                              <span
-                                style={{
-                                  fontFamily: 'var(--mono)',
-                                  fontSize: 10.5,
-                                  marginRight: 5,
-                                  opacity: 0.85,
-                                }}
-                              >
-                                {el.id}
-                              </span>
+                            <span className="owb-tree-text" title={`${el.id} ${el.label}`}>
+                              <span className="owb-tree-id">{el.id}</span>
                               <span>{el.label}</span>
                             </span>
                             <button
                               type="button"
+                              className="owb-impact-btn"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleOpenImpactModal(el.impactSymbol);
                               }}
-                              style={{
-                                border: 'none',
-                                background: 'transparent',
-                                color: 'var(--faint)',
-                                cursor: 'pointer',
-                                fontFamily: 'var(--mono)',
-                                fontSize: 10.5,
-                                padding: '0 2px',
-                                flexShrink: 0,
-                              }}
                               title={t('扫描跨模型引用影响', 'Impact Analysis')}
+                              aria-label={t('扫描跨模型引用影响', 'Impact Analysis')}
                             >
                               ⇄
                             </button>
@@ -1202,108 +1132,113 @@ export function OntologyWorkbenchView() {
 
         {/* ─── Center Pane: 3-Tab Model Editor ─── */}
         <div className="workbench-center">
-          <div
-            style={{
-              padding: '10px 14px',
-              borderBottom: '1px solid var(--line)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 8,
-              background: 'var(--surface)',
-              flexWrap: 'wrap',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="badge badge-accent">{selectedModel}</span>
-              <strong style={{ fontFamily: 'var(--serif)', fontSize: 14.5 }}>
-                {
-                  MODEL_STAGE_ORDER.find((m) => m.code === selectedModel)?.[
-                    t('labelZh', 'labelEn') as 'labelZh' | 'labelEn'
-                  ]
-                }
-              </strong>
-              {selectedElementId && (
-                <span
-                  className="badge"
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => setSelectedModel(selectedModel, null)}
-                  title={t('点击取消高亮筛选', 'Clear active selection')}
-                >
-                  ⌖ {selectedElementId} ✕
-                </span>
-              )}
+          <div className="owb-toolbar">
+            <div className="owb-toolbar-row">
+              <div className="owb-title-group">
+                <span className="badge badge-accent">{selectedModel}</span>
+                <strong className="owb-title">
+                  {
+                    MODEL_STAGE_ORDER.find((m) => m.code === selectedModel)?.[
+                      t('labelZh', 'labelEn') as 'labelZh' | 'labelEn'
+                    ]
+                  }
+                </strong>
+                {selectedElementId && (
+                  <button
+                    type="button"
+                    className="owb-selection-chip"
+                    onClick={() => setSelectedModel(selectedModel, null)}
+                    title={t('点击取消高亮筛选', 'Clear active selection')}
+                  >
+                    ⌖ {selectedElementId}
+                    <span className="owb-selection-chip-x" aria-hidden="true">
+                      ✕
+                    </span>
+                  </button>
+                )}
+              </div>
+
+              <div
+                className="owb-segmented"
+                role="tablist"
+                aria-label={t('视图切换', 'View switcher')}
+              >
+                {(
+                  [
+                    ['STRUCTURED', t('结构化视图', 'Structured')],
+                    ['GRAPH', t('模型关系图', 'Graph')],
+                    ['YAML', t('YAML 元文件', 'YAML Source')],
+                  ] as const
+                ).map(([tab, label]) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    className="owb-segment"
+                    aria-selected={activeTab === tab}
+                    onClick={() => setActiveTab(tab)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className={`btn btn-sm ${activeTab === 'STRUCTURED' ? 'btn-primary' : ''}`}
-                onClick={() => setActiveTab('STRUCTURED')}
-              >
-                {t('结构化视图', 'Structured')}
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${activeTab === 'GRAPH' ? 'btn-primary' : ''}`}
-                onClick={() => setActiveTab('GRAPH')}
-              >
-                {t('模型关系图', 'Graph')}
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${activeTab === 'YAML' ? 'btn-primary' : ''}`}
-                onClick={() => setActiveTab('YAML')}
-              >
-                {t('YAML 元文件', 'YAML Source')}
-              </button>
+            <div className="owb-toolbar-row">
+              <div className="owb-btn-group" role="group" aria-label={t('历史', 'History')}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  data-testid="undo-btn"
+                  disabled={undoStack.length === 0}
+                  onClick={() => undo()}
+                  title="Undo"
+                >
+                  ↶ {t('撤销', 'Undo')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  data-testid="redo-btn"
+                  disabled={redoStack.length === 0}
+                  onClick={() => redo()}
+                  title="Redo"
+                >
+                  ↷ {t('重做', 'Redo')}
+                </button>
+              </div>
 
-              <span style={{ width: 1, height: 18, background: 'var(--line)' }} />
-
-              <button
-                type="button"
-                className="btn btn-sm"
-                data-testid="undo-btn"
-                disabled={undoStack.length === 0}
-                onClick={() => undo()}
-                title="Undo"
-              >
-                ↶ {t('撤销', 'Undo')}
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                data-testid="redo-btn"
-                disabled={redoStack.length === 0}
-                onClick={() => redo()}
-                title="Redo"
-              >
-                ↷ {t('重做', 'Redo')}
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                data-testid="open-cascade-rename-btn"
-                onClick={() => handleOpenImpactModal('Contract')}
-              >
-                {t('级联重命名 / 影响分析', 'Cascade Rename')}
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                data-testid="add-model-item-btn"
-                onClick={handleQuickAddItem}
-              >
-                + {t('新增模型项', 'Add Item')}
-              </button>
+              <div className="owb-actions">
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  data-testid="open-cascade-rename-btn"
+                  onClick={() => handleOpenImpactModal('Contract')}
+                >
+                  ⇄ {t('级联重命名 / 影响分析', 'Cascade Rename')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  data-testid="add-model-item-btn"
+                  onClick={handleQuickAddItem}
+                >
+                  + {t('新增模型项', 'Add Item')}
+                </button>
+              </div>
             </div>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+          <div className="owb-center-body">
             {activeTab === 'GRAPH' && (
               <KnowledgeGraphCanvas
                 graph={project.knowledgeGraph}
+                preset="WORKBENCH_EGO"
+                focusElementId={selectedElementId}
                 height={470}
+                onSelectElement={(m, id) => {
+                  setSelectedModel(m, id);
+                }}
                 onNavigateToElement={(m, id) => {
                   setSelectedModel(m, id);
                   setActiveTab('STRUCTURED');
@@ -1362,195 +1297,27 @@ export function OntologyWorkbenchView() {
           </div>
         </div>
 
-        {/* ─── Right Pane: AI Ontology Copilot (Pi Durable · auto/glm-5.3-flash) ─── */}
+        {/* ─── Right Pane: Unified Live Streaming AI Ontology Copilot ─── */}
         <div className="workbench-right">
-          <div
-            style={{
-              padding: '10px 12px',
-              borderBottom: '1px solid var(--line)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
+          <AgentSessionWorkbench
+            agentKind="COPILOT"
+            activeModelCode={selectedModel}
+            compactRailByDefault
+            height="100%"
+            inputTestId="copilot-input"
+            sendBtnTestId="copilot-send-btn"
+            onJumpToOntology={(m, id) => {
+              setSelectedModel(m, id ?? null);
+              setActiveTab('STRUCTURED');
             }}
-          >
-            <span style={{ fontWeight: 600, fontSize: 12.5 }}>
-              {t('AI 本体助手 (Pi Durable)', 'AI Ontology Copilot')}
-            </span>
-            <span className="badge badge-ok">glm-5.3-flash</span>
-          </div>
-
-          <div
-            style={{
-              padding: '8px 10px',
-              borderBottom: '1px solid var(--line-2)',
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 5,
-            }}
-          >
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => handleSendCopilot('新增一条超期未结算自动预警规则')}
-            >
-              + {t('生成M3预警规则', 'Add M3 Rule')}
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => handleSendCopilot('新增合同补充协议聚合根')}
-            >
-              + {t('生成M1补充协议聚合', 'Add M1 Aggregate')}
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => handleSendCopilot('诊断当前11个模型的跨模型引用完整性')}
-            >
-              {t('诊断11模型完整性', 'Diagnose 11 Models')}
-            </button>
-          </div>
-
-          <div
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              padding: 10,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-            }}
-          >
-            {copilotMessages.map((m) => (
-              <div
-                key={m.id}
-                style={{
-                  padding: '8px 10px',
-                  borderRadius: 6,
-                  background: m.role === 'user' ? 'var(--accent-soft)' : 'var(--surface)',
-                  border: '1px solid var(--line)',
-                  fontSize: 12,
-                  whiteSpace: 'pre-wrap',
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 10.5,
-                    color: 'var(--muted)',
-                    marginBottom: 4,
-                    fontFamily: 'var(--mono)',
-                  }}
-                >
-                  {m.role === 'user' ? t('您', 'You') : m.meta || 'AI Copilot'}
-                </div>
-                <div>{m.content}</div>
-
-                {m.toolCalls && m.toolCalls.length > 0 && (
-                  <div
-                    style={{
-                      marginTop: 8,
-                      paddingTop: 6,
-                      borderTop: '1px dashed var(--line)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 5,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 10.5,
-                        fontFamily: 'var(--mono)',
-                        color: 'var(--muted)',
-                      }}
-                    >
-                      {t('AST 工具调用记录', 'AST Tool Invocations')} ({m.toolCalls.length})
-                    </div>
-                    {m.toolCalls.map((tc, idx) => (
-                      <div
-                        key={`${tc.toolName}-${idx}`}
-                        style={{
-                          padding: '5px 7px',
-                          borderRadius: 4,
-                          background: 'var(--surface-2)',
-                          border: '1px solid var(--line-2)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 3,
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 6,
-                          }}
-                        >
-                          <span
-                            style={{
-                              fontFamily: 'var(--mono)',
-                              fontSize: 11,
-                              fontWeight: 600,
-                            }}
-                          >
-                            ⚙ {tc.toolName}
-                          </span>
-                          <span
-                            className={`badge ${
-                              tc.status === 'APPLIED' ? 'badge-ok' : 'badge-bad'
-                            }`}
-                          >
-                            {tc.status}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--ink-2)' }}>
-                          {t(tc.summaryZh, tc.summaryEn)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          <div
-            style={{
-              padding: 10,
-              borderTop: '1px solid var(--line)',
-              display: 'flex',
-              gap: 6,
-            }}
-          >
-            <input
-              className="input"
-              data-testid="copilot-input"
-              placeholder={t(
-                '输入自然语言指令修改或诊断本体...',
-                'Ask Copilot to mutate or verify ontology...',
-              )}
-              value={copilotPrompt}
-              onChange={(e) => setCopilotPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSendCopilot();
-              }}
-            />
-            <button
-              type="button"
-              className="btn btn-primary"
-              data-testid="copilot-send-btn"
-              disabled={copilotBusy}
-              onClick={() => handleSendCopilot()}
-            >
-              {copilotBusy ? '...' : t('发送', 'Send')}
-            </button>
-          </div>
+            className="rounded-none border-0 shadow-none"
+          />
         </div>
       </div>
 
       {/* ─── Bottom Two-Tier Validation Status Bar ─── */}
       <div className="workbench-statusbar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="owb-status-left">
           <span
             className={`badge ${validation.errorCount === 0 ? 'badge-ok' : 'badge-bad'}`}
             data-testid="validation-error-badge"
@@ -1562,8 +1329,10 @@ export function OntologyWorkbenchView() {
           <span className="badge badge-warn" data-testid="validation-warning-badge">
             {validation.warningCount} {t('阶段提示 (Stage Warnings)', 'Stage Warnings')}
           </span>
-          <span style={{ color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-            {t('已就绪模型', 'Models Ready')}: {validation.presentModels.join(' · ')}
+          <span className="owb-status-sep" aria-hidden="true" />
+          <span className="owb-status-models" title={validation.presentModels.join(' · ')}>
+            <b>{t('已就绪模型', 'Models Ready')}</b>
+            {validation.presentModels.join(' · ')}
           </span>
         </div>
 
@@ -1571,6 +1340,7 @@ export function OntologyWorkbenchView() {
           type="button"
           className="btn btn-sm"
           data-testid="toggle-diagnostics-btn"
+          aria-expanded={showDiagnosticsDrawer}
           onClick={() => setShowDiagnosticsDrawer((v) => !v)}
         >
           {showDiagnosticsDrawer
@@ -1953,21 +1723,7 @@ function StructuredModelInspector({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Sticky Structured AST Save Bar */}
-      <div
-        style={{
-          position: 'sticky',
-          top: -14,
-          zIndex: 8,
-          padding: '8px 12px',
-          borderRadius: 6,
-          background: 'var(--surface-2)',
-          border: '1px solid var(--line)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-        }}
-      >
+      <div className="owb-savebar">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
           <span className={`badge ${dirty ? 'badge-warn' : 'badge-ok'}`}>
             {dirty
@@ -2022,12 +1778,10 @@ function StructuredModelInspector({
                 <div className="card-header">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span className="badge badge-accent">{agg.id}</span>
-                    <strong style={{ fontSize: 14.5 }}>
-                      {agg.name} ({agg.alias})
+                    <strong className="owb-agg-title">
+                      {agg.name}
+                      <span className="owb-agg-alias">{agg.alias}</span>
                     </strong>
-                    <span className="badge badge-ok">
-                      {t('生命周期', 'Lifecycle')}: {agg.lifecycle.join(' → ')}
-                    </span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button
@@ -2059,7 +1813,12 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-grid-3" style={{ marginBottom: 10 }}>
+                <LifecycleFlow
+                  states={agg.lifecycle}
+                  label={t('生命周期状态机', 'Lifecycle')}
+                />
+
+                <div className="form-grid-2 owb-agg-grid" style={{ marginBottom: 10 }}>
                   <div className="form-field">
                     <label className="form-label">
                       {t('聚合根英文符号 (Name)', 'Aggregate Name')}
@@ -2090,12 +1849,13 @@ function StructuredModelInspector({
                       }
                     />
                   </div>
-                  <div className="form-field">
+                  <div className="form-field owb-span-all">
                     <label className="form-label">
                       {t('生命周期状态机 (逗号分隔)', 'Lifecycle States (CSV)')}
                     </label>
                     <input
                       className="input"
+                      style={{ fontFamily: 'var(--mono)', fontSize: 12 }}
                       value={agg.lifecycle.join(', ')}
                       onChange={(e) =>
                         mutateDraft((nx) => {
@@ -2108,11 +1868,13 @@ function StructuredModelInspector({
                   </div>
                 </div>
 
-                <div className="form-field" style={{ marginBottom: 10 }}>
+                <div className="form-field" style={{ marginBottom: 12 }}>
                   <label className="form-label">{t('领域职责描述', 'Description')}</label>
-                  <input
-                    className="input"
+                  <AutoGrowTextarea
+                    className="textarea"
+                    minRows={1}
                     value={agg.description ?? ''}
+                    placeholder={t('描述该聚合根的领域职责...', 'Describe the domain responsibility...')}
                     onChange={(e) =>
                       mutateDraft((nx) => {
                         if (nx.M1?.aggregates[aggIdx]) {
@@ -2123,17 +1885,11 @@ function StructuredModelInspector({
                   />
                 </div>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 6,
-                  }}
-                >
-                  <strong style={{ fontSize: 12 }}>
-                    {t('聚合根属性定义', 'Attributes')} ({agg.attributes.length})
-                  </strong>
+                <div className="owb-section-head">
+                  <span className="owb-section-title">
+                    {t('聚合根属性定义', 'Attributes')}
+                    <span className="owb-count">{agg.attributes.length}</span>
+                  </span>
                   <button
                     type="button"
                     className="btn btn-sm"
@@ -2155,107 +1911,161 @@ function StructuredModelInspector({
                   </button>
                 </div>
 
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>{t('属性名', 'Attribute')}</th>
-                      <th>{t('中文名', 'Label')}</th>
-                      <th>{t('类型', 'Type')}</th>
-                      <th>{t('必填', 'Req')}</th>
-                      <th>{t('引用/约束规则', 'Ref & Rules')}</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {agg.attributes.map((attr, attrIdx) => (
-                      <tr key={`${agg.id}-attr-${attrIdx}`}>
-                        <td>
-                          <input
-                            className="input"
-                            style={{ fontFamily: 'var(--mono)', height: 26, fontSize: 12 }}
-                            value={attr.name}
-                            onChange={(e) =>
-                              mutateDraft((nx) => {
-                                const a = nx.M1?.aggregates[aggIdx]?.attributes[attrIdx];
-                                if (a) a.name = e.target.value;
-                              })
-                            }
-                          />
-                        </td>
-                        <td>
-                          <input
-                            className="input"
-                            style={{ height: 26, fontSize: 12 }}
-                            value={attr.label}
-                            onChange={(e) =>
-                              mutateDraft((nx) => {
-                                const a = nx.M1?.aggregates[aggIdx]?.attributes[attrIdx];
-                                if (a) a.label = e.target.value;
-                              })
-                            }
-                          />
-                        </td>
-                        <td>
-                          <select
-                            className="select"
-                            style={{ height: 26, fontSize: 11.5, fontFamily: 'var(--mono)' }}
-                            value={attr.type}
-                            onChange={(e) =>
-                              mutateDraft((nx) => {
-                                const a = nx.M1?.aggregates[aggIdx]?.attributes[attrIdx];
-                                if (a) a.type = e.target.value as Attribute['type'];
-                              })
-                            }
-                          >
-                            {M1_ATTRIBUTE_TYPES.map((tp) => (
-                              <option key={tp} value={tp}>
-                                {tp}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={Boolean(attr.required)}
-                            onChange={(e) =>
-                              mutateDraft((nx) => {
-                                const a = nx.M1?.aggregates[aggIdx]?.attributes[attrIdx];
-                                if (a) a.required = e.target.checked;
-                              })
-                            }
-                          />
-                        </td>
-                        <td style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>
-                          {attr.targetAggregate && `→ ${attr.targetAggregate} `}
-                          {attr.dictionaryRef &&
-                            `Dict:${attr.dictionaryRef.dictionaryId}.${attr.dictionaryRef.typeCode} `}
-                          {(attr.refRules ?? []).map((r) => `${r.name}: ${r.expression}`).join('; ') ||
-                            '-'}
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="btn btn-sm"
-                            onClick={() =>
-                              mutateDraft((nx) => {
-                                const target = nx.M1?.aggregates[aggIdx];
-                                if (target) {
-                                  target.attributes.splice(attrIdx, 1);
-                                }
-                              })
-                            }
-                          >
-                            ✕
-                          </button>
-                        </td>
+                <div className="owb-attr-table-wrap">
+                  <table className="owb-attr-table">
+                    <colgroup>
+                      <col className="c-name" />
+                      <col className="c-label" />
+                      <col className="c-type" />
+                      <col className="c-req" />
+                      <col className="c-del" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th>{t('属性名', 'Attribute')}</th>
+                        <th>{t('中文名', 'Label')}</th>
+                        <th>{t('类型', 'Type')}</th>
+                        <th className="is-center">{t('必填', 'Req')}</th>
+                        <th aria-label={t('操作', 'Actions')} />
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {agg.attributes.map((attr, attrIdx) => {
+                        const ruleTags = [
+                          ...(attr.targetAggregate
+                            ? [{ kind: 'ref', text: `→ ${attr.targetAggregate}` }]
+                            : []),
+                          ...(attr.dictionaryRef
+                            ? [
+                                {
+                                  kind: 'dict',
+                                  text: `Dict:${attr.dictionaryRef.dictionaryId}.${attr.dictionaryRef.typeCode}`,
+                                },
+                              ]
+                            : []),
+                          ...(attr.refRules ?? []).map((r) => ({
+                            kind: 'rule',
+                            text: `${r.name}: ${r.expression}`,
+                          })),
+                        ];
+                        return (
+                          <React.Fragment key={`${agg.id}-attr-${attrIdx}`}>
+                          <tr className={ruleTags.length > 0 ? 'has-rules' : undefined}>
+                            <td>
+                              <input
+                                className="owb-cell-input is-mono"
+                                aria-label={t('属性名', 'Attribute')}
+                                title={attr.name}
+                                value={attr.name}
+                                onChange={(e) =>
+                                  mutateDraft((nx) => {
+                                    const a = nx.M1?.aggregates[aggIdx]?.attributes[attrIdx];
+                                    if (a) a.name = e.target.value;
+                                  })
+                                }
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="owb-cell-input"
+                                aria-label={t('中文名', 'Label')}
+                                title={attr.label}
+                                value={attr.label}
+                                onChange={(e) =>
+                                  mutateDraft((nx) => {
+                                    const a = nx.M1?.aggregates[aggIdx]?.attributes[attrIdx];
+                                    if (a) a.label = e.target.value;
+                                  })
+                                }
+                              />
+                            </td>
+                            <td>
+                              <select
+                                className="owb-cell-select"
+                                aria-label={t('类型', 'Type')}
+                                title={attr.type}
+                                value={attr.type}
+                                onChange={(e) =>
+                                  mutateDraft((nx) => {
+                                    const a = nx.M1?.aggregates[aggIdx]?.attributes[attrIdx];
+                                    if (a) a.type = e.target.value as Attribute['type'];
+                                  })
+                                }
+                              >
+                                {M1_ATTRIBUTE_TYPES.map((tp) => (
+                                  <option key={tp} value={tp}>
+                                    {tp}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="is-center">
+                              <input
+                                type="checkbox"
+                                className="owb-cell-check"
+                                aria-label={t('必填', 'Required')}
+                                checked={Boolean(attr.required)}
+                                onChange={(e) =>
+                                  mutateDraft((nx) => {
+                                    const a = nx.M1?.aggregates[aggIdx]?.attributes[attrIdx];
+                                    if (a) a.required = e.target.checked;
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="is-center">
+                              <button
+                                type="button"
+                                className="owb-row-del"
+                                title={t('删除属性', 'Remove attribute')}
+                                aria-label={t('删除属性', 'Remove attribute')}
+                                onClick={() =>
+                                  mutateDraft((nx) => {
+                                    const target = nx.M1?.aggregates[aggIdx];
+                                    if (target) {
+                                      target.attributes.splice(attrIdx, 1);
+                                    }
+                                  })
+                                }
+                              >
+                                ✕
+                              </button>
+                            </td>
+                          </tr>
+                          {ruleTags.length > 0 && (
+                            <tr className="owb-rule-row">
+                              <td colSpan={5}>
+                                <div className="owb-rule-cell">
+                                  <span className="owb-rule-label">
+                                    ↳ {t('引用/约束规则', 'Ref & Rules')}
+                                  </span>
+                                  {ruleTags.map((tag, i) => (
+                                    <span
+                                      key={`${tag.kind}-${i}`}
+                                      className={`owb-rule-tag ${
+                                        tag.kind === 'ref'
+                                          ? 'is-ref'
+                                          : tag.kind === 'dict'
+                                            ? 'is-dict'
+                                            : ''
+                                      }`}
+                                    >
+                                      {tag.text}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
                 {(agg.entities.length > 0 || agg.invariants.length > 0) && (
-                  <div style={{ marginTop: 10, fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  <div className="owb-tags">
                     {agg.entities.map((ent) => (
                       <span key={ent.name} className="badge">
                         SubEntity: {ent.name} ({ent.alias})

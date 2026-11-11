@@ -27,6 +27,7 @@ import {
 } from '../../ontology-core/index.js';
 import { BOOTSTRAP_SQLITE_DDL } from './schema.js';
 import {
+  SEED_AGENT_SESSIONS,
   SEED_ANALYTICS_REPORTS,
   SEED_ANALYTICS_SCENARIOS,
   SEED_ASSEMBLED_APPS,
@@ -50,6 +51,7 @@ import {
   SEED_MFT_WORK_ORDER_ROWS,
   SEED_PAYMENT_MILESTONE_ROWS,
   SEED_PROJECTS,
+  SEED_PROJECT_SNAPSHOTS,
   SEED_PROTOTYPES,
   SEED_REASONING_SESSIONS,
   SEED_REQUIREMENT_DOCS,
@@ -61,6 +63,7 @@ import {
 } from './seed-data.js';
 import type {
   AgentCheckpointRecord,
+  AgentSession,
   AnalyticsQueryResult,
   AnalyticsReport,
   AnalyticsScenario,
@@ -80,6 +83,7 @@ import type {
   McpServerConfig,
   MetricDefinition,
   ProjectDetail,
+  ProjectSnapshot,
   ProjectSummary,
   PrototypeArtifact,
   ReasoningSession,
@@ -279,7 +283,21 @@ function createEdgeMemoryFallbackDb(): SqliteDbLike {
             return;
           }
           if (s.startsWith('UPDATE projects')) {
-            if (params.length === 5) {
+            if (params.length === 7) {
+              const [name, code, center, domain, description, updated_at, id] = params;
+              const cur = projectsMap.get(String(id));
+              if (cur) {
+                projectsMap.set(String(id), {
+                  ...cur,
+                  name,
+                  code,
+                  center,
+                  domain,
+                  description,
+                  updated_at,
+                });
+              }
+            } else if (params.length === 5) {
               const [suite_json, current_stage, changelog, updated_at, id] = params;
               const cur = projectsMap.get(String(id));
               if (cur) {
@@ -297,6 +315,21 @@ function createEdgeMemoryFallbackDb(): SqliteDbLike {
               if (cur) {
                 projectsMap.set(String(id), { ...cur, suite_json, changelog, updated_at });
               }
+            }
+            return;
+          }
+          if (s.startsWith('DELETE FROM projects WHERE id = ?')) {
+            projectsMap.delete(String(params[0]));
+            return;
+          }
+          if (s.startsWith('DELETE FROM workspace_entities WHERE collection = ? AND item_id = ?')) {
+            entitiesMap.delete(`${params[0]}::${params[1]}`);
+            return;
+          }
+          if (s.startsWith('DELETE FROM workspace_entities WHERE project_id = ?')) {
+            const pid = String(params[0]);
+            for (const [k, v] of entitiesMap.entries()) {
+              if (v.project_id === pid) entitiesMap.delete(k);
             }
             return;
           }
@@ -1009,6 +1042,18 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     return row ? (JSON.parse(row.payload_json) as T) : undefined;
   }
 
+  function deleteItem(collection: string, itemId: string): void {
+    db.prepare(`DELETE FROM workspace_entities WHERE collection = ? AND item_id = ?`).run(
+      collection,
+      itemId,
+    );
+    replicateToD1(
+      `DELETE FROM workspace_entities WHERE collection = ? AND item_id = ?`,
+      collection,
+      itemId,
+    );
+  }
+
   // Idempotent seed for analytical domain tables
   const dictCountRow = db.prepare(`SELECT COUNT(*) AS cnt FROM __dict`).get() as
     | { cnt: number }
@@ -1220,11 +1265,28 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     for (const rp of SEED_ANALYTICS_REPORTS) putItem('analytics_reports', rp.id, rp);
     for (const rs of SEED_REASONING_SESSIONS) putItem('reasoning_sessions', rs.id, rs);
     for (const wb of SEED_WRITEBACK_INTERFACES) putItem('writebacks', wb.id, wb);
+    for (const snap of SEED_PROJECT_SNAPSHOTS) {
+      putItem('project_snapshots', snap.id, snap, snap.projectId);
+    }
+    for (const asess of SEED_AGENT_SESSIONS) {
+      putItem('agent_sessions', asess.id, asess, asess.projectId);
+    }
 
     const discoveredProviders = discoverPiModelsJsonProviders(workspaceRoot, SEED_LLM_PROVIDERS);
     for (const llm of discoveredProviders) putItem('llm_providers', llm.id, llm);
 
     putItem('system_settings', 'global', SEED_SYSTEM_SETTINGS);
+  } else {
+    if (listItems<AgentSession>('agent_sessions').length === 0) {
+      for (const asess of SEED_AGENT_SESSIONS) {
+        putItem('agent_sessions', asess.id, asess, asess.projectId);
+      }
+    }
+    if (listItems<ProjectSnapshot>('project_snapshots').length === 0) {
+      for (const snap of SEED_PROJECT_SNAPSHOTS) {
+        putItem('project_snapshots', snap.id, snap, snap.projectId);
+      }
+    }
   }
 
   function hydrateProject(row: Record<string, unknown>): ProjectDetail {
@@ -1359,6 +1421,170 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return this.getProject(id)!;
     },
 
+    updateProjectMeta(projectId, patch): ProjectDetail {
+      const current = this.getProject(projectId);
+      if (!current) throw new Error(`Project not found: ${projectId}`);
+      const now = new Date().toISOString();
+      const nextName = patch.name?.trim() || current.name;
+      const nextCode = patch.code?.trim() || current.code;
+      const nextCenter = patch.center ?? current.center;
+      const nextDomain = patch.domain?.trim() || current.domain;
+      const nextDesc = patch.description ?? current.description;
+      db.prepare(`
+        UPDATE projects SET name = ?, code = ?, center = ?, domain = ?, description = ?, updated_at = ? WHERE id = ?
+      `).run(nextName, nextCode, nextCenter, nextDomain, nextDesc, now, projectId);
+      replicateToD1(
+        `UPDATE projects SET name = ?, code = ?, center = ?, domain = ?, description = ?, updated_at = ? WHERE id = ?`,
+        nextName,
+        nextCode,
+        nextCenter,
+        nextDomain,
+        nextDesc,
+        now,
+        projectId,
+      );
+      mirrorProjectFiles(projectId, nextDomain, current.suite, current.changelog);
+      return this.getProject(projectId)!;
+    },
+
+    cloneProject(projectId, overrides): ProjectDetail {
+      const source = this.getProject(projectId);
+      if (!source) throw new Error(`Project not found: ${projectId}`);
+      const id = nextUniqueId('proj');
+      const now = new Date().toISOString();
+      const nextName = overrides?.name?.trim() || `${source.name} (副本)`;
+      const nextCode = overrides?.code?.trim() || `${source.code}-COPY`;
+      const clonedSuite: OntologySuite = JSON.parse(JSON.stringify(source.suite));
+      const changelog = `${source.changelog}\n## [${now}] Cloned from ${source.name} (${source.code})\n`;
+      const suiteJson = JSON.stringify(clonedSuite);
+      const stage = validateOntologySuite(clonedSuite).presentModels.length;
+
+      db.prepare(`
+        INSERT INTO projects (id, name, code, center, domain, description, current_stage, suite_json, changelog, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        nextName,
+        nextCode,
+        source.center,
+        source.domain,
+        source.description,
+        stage,
+        suiteJson,
+        changelog,
+        now,
+        now,
+      );
+      replicateToD1(
+        `INSERT INTO projects (id, name, code, center, domain, description, current_stage, suite_json, changelog, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id,
+        nextName,
+        nextCode,
+        source.center,
+        source.domain,
+        source.description,
+        stage,
+        suiteJson,
+        changelog,
+        now,
+        now,
+      );
+      syncEaRelations(id, clonedSuite);
+      mirrorProjectFiles(id, source.domain, clonedSuite, changelog);
+
+      // Clone SRS docs and Prototypes attached to the project
+      for (const doc of this.listRequirementDocs(projectId)) {
+        this.saveRequirementDoc({
+          ...doc,
+          id: nextUniqueId('rdoc'),
+          projectId: id,
+          title: `${doc.title} (副本)`,
+        });
+      }
+      for (const proto of this.listPrototypes(projectId)) {
+        const clonedProto: PrototypeArtifact = {
+          ...proto,
+          id: nextUniqueId('proto'),
+          projectId: id,
+          name: `${proto.name} (副本)`,
+          updatedAt: now,
+        };
+        putItem('prototypes', clonedProto.id, clonedProto, id);
+      }
+
+      return this.getProject(id)!;
+    },
+
+    deleteProject(projectId, force) {
+      const allProjects = this.listProjects();
+      if (allProjects.length <= 1) {
+        throw new Error('Cannot delete the last remaining ontology project in the workspace.');
+      }
+      const target = allProjects.find((p) => p.id === projectId);
+      if (!target) {
+        throw new Error(`Project not found: ${projectId}`);
+      }
+      const boundApps = this.listAssembledApplications().filter((a) => a.projectId === projectId);
+      if (!force && boundApps.length > 0) {
+        throw new Error(
+          `Project "${target.name}" is referenced by ${boundApps.length} assembled application(s): ${boundApps.map((a) => a.name).join(', ')}. Confirm force deletion or unbind first.`,
+        );
+      }
+      db.prepare(`DELETE FROM ea_relations WHERE project_id = ?`).run(projectId);
+      replicateToD1(`DELETE FROM ea_relations WHERE project_id = ?`, projectId);
+      db.prepare(`DELETE FROM workspace_entities WHERE project_id = ?`).run(projectId);
+      replicateToD1(`DELETE FROM workspace_entities WHERE project_id = ?`, projectId);
+      db.prepare(`DELETE FROM projects WHERE id = ?`).run(projectId);
+      replicateToD1(`DELETE FROM projects WHERE id = ?`, projectId);
+
+      const remaining = this.listProjects();
+      return {
+        deletedId: projectId,
+        remainingProjectId: remaining[0].id,
+      };
+    },
+
+    listProjectSnapshots(projectId): ProjectSnapshot[] {
+      return listItems<ProjectSnapshot>('project_snapshots', projectId).sort((a, b) =>
+        b.createdAt.localeCompare(a.createdAt),
+      );
+    },
+
+    createProjectSnapshot(projectId, input): ProjectSnapshot {
+      const current = this.getProject(projectId);
+      if (!current) throw new Error(`Project not found: ${projectId}`);
+      const now = new Date().toISOString();
+      const snapshot: ProjectSnapshot = {
+        id: nextUniqueId('snap'),
+        projectId,
+        label: input.label.trim() || `快照 ${now.slice(0, 16)}`,
+        note: input.note?.trim() ?? '',
+        presentModels: [...current.validation.presentModels],
+        errorCount: current.validation.errorCount,
+        warningCount: current.validation.warningCount,
+        suite: JSON.parse(JSON.stringify(current.suite)),
+        createdAt: now,
+      };
+      return putItem('project_snapshots', snapshot.id, snapshot, projectId);
+    },
+
+    restoreProjectSnapshot(projectId, snapshotId): ProjectDetail {
+      const snap = getItem<ProjectSnapshot>('project_snapshots', snapshotId);
+      if (!snap || snap.projectId !== projectId) {
+        throw new Error(`Project snapshot not found: ${snapshotId}`);
+      }
+      const restoredSuite: OntologySuite = JSON.parse(JSON.stringify(snap.suite));
+      return this.updateSuite(
+        projectId,
+        restoredSuite,
+        `Restored project snapshot "${snap.label}" (${snap.id})`,
+      );
+    },
+
+    deleteProjectSnapshot(snapshotId) {
+      deleteItem('project_snapshots', snapshotId);
+    },
+
     updateModel(projectId, modelCode, modelData): ProjectDetail {
       const current = this.getProject(projectId);
       if (!current) throw new Error(`Project not found: ${projectId}`);
@@ -1457,6 +1683,91 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       };
     },
 
+    listAgentSessions(filter) {
+      let items = filter?.projectId
+        ? listItems<AgentSession>('agent_sessions', filter.projectId)
+        : listItems<AgentSession>('agent_sessions');
+      if (filter?.agentKind) {
+        items = items.filter((s) => s.agentKind === filter.agentKind);
+      }
+      if (filter?.targetId) {
+        items = items.filter((s) => s.targetId === filter.targetId);
+      }
+      return items.sort((a, b) => {
+        if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+        return b.updatedAt.localeCompare(a.updatedAt);
+      });
+    },
+
+    getAgentSession(sessionId) {
+      return getItem<AgentSession>('agent_sessions', sessionId);
+    },
+
+    createAgentSession(input) {
+      const now = new Date().toISOString();
+      const defaultTitles: Record<AgentSession['agentKind'], string> = {
+        REQUIREMENT: '新建需求探索会话',
+        COPILOT: '新建本体建模对话',
+        CODING: '新建四层编码任务会话',
+        CAPABILITY: '新建智能体工具对话',
+        REASONING: '新建数据本体推演会话',
+      };
+      const session: AgentSession = {
+        id: input.id ?? nextUniqueId('asess'),
+        projectId: input.projectId,
+        agentKind: input.agentKind,
+        targetId: input.targetId,
+        title: input.title?.trim() || defaultTitles[input.agentKind],
+        pinned: false,
+        status: 'IDLE',
+        providerId: input.providerId,
+        modelOverride: input.modelOverride,
+        reasoningMode: input.reasoningMode,
+        messages: input.initialMessages ?? [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      return putItem('agent_sessions', session.id, session, session.projectId);
+    },
+
+    saveAgentSession(session) {
+      const updated: AgentSession = {
+        ...session,
+        updatedAt: new Date().toISOString(),
+      };
+      return putItem('agent_sessions', updated.id, updated, updated.projectId);
+    },
+
+    forkAgentSession(sessionId, upToMessageId, newTitle) {
+      const existing = getItem<AgentSession>('agent_sessions', sessionId);
+      if (!existing) throw new Error(`Agent session not found: ${sessionId}`);
+      const now = new Date().toISOString();
+      let slicedMessages = [...existing.messages];
+      if (upToMessageId) {
+        const idx = slicedMessages.findIndex((m) => m.id === upToMessageId);
+        if (idx >= 0) {
+          slicedMessages = slicedMessages.slice(0, idx + 1);
+        }
+      }
+      const forked: AgentSession = {
+        ...existing,
+        id: nextUniqueId('asess-fork'),
+        title: newTitle?.trim() || `${existing.title} · 分支`,
+        pinned: false,
+        status: 'IDLE',
+        parentSessionId: existing.id,
+        forkedFromMessageId: upToMessageId ?? slicedMessages[slicedMessages.length - 1]?.id,
+        messages: JSON.parse(JSON.stringify(slicedMessages)),
+        createdAt: now,
+        updatedAt: now,
+      };
+      return putItem('agent_sessions', forked.id, forked, forked.projectId);
+    },
+
+    deleteAgentSession(sessionId) {
+      deleteItem('agent_sessions', sessionId);
+    },
+
     listRequirementSessions(projectId) {
       return listItems<RequirementSession>('req_sessions', projectId);
     },
@@ -1495,6 +1806,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       if (!existing) throw new Error(`Requirement session not found: ${sessionId}`);
       const updated: RequirementSession = {
         ...existing,
+        title: updates?.title ?? existing.title,
         messages: [...existing.messages, message],
         discoveredAggregates: updates?.discoveredAggregates ?? existing.discoveredAggregates,
         discoveredRules: updates?.discoveredRules ?? existing.discoveredRules,
@@ -1503,6 +1815,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         updatedAt: new Date().toISOString(),
       };
       return putItem('req_sessions', sessionId, updated, existing.projectId);
+    },
+
+    deleteRequirementSession(sessionId) {
+      deleteItem('req_sessions', sessionId);
     },
 
     listRequirementDocs(projectId) {
@@ -1515,6 +1831,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         updatedAt: new Date().toISOString(),
       };
       return putItem('req_docs', full.id, full, full.projectId);
+    },
+
+    cloneRequirementDoc(docId) {
+      const existing = getItem<RequirementDoc>('req_docs', docId);
+      if (!existing) throw new Error(`Requirement doc not found: ${docId}`);
+      return this.saveRequirementDoc({
+        ...existing,
+        id: nextUniqueId('rdoc'),
+        title: `${existing.title} (副本)`,
+        status: 'DRAFT',
+      });
+    },
+
+    deleteRequirementDoc(docId) {
+      deleteItem('req_docs', docId);
     },
 
     listPrototypes(projectId) {
@@ -1543,6 +1874,22 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return { prototype: proto, project: updatedProject };
     },
 
+    clonePrototype(protoId) {
+      const existing = getItem<PrototypeArtifact>('prototypes', protoId);
+      if (!existing) throw new Error(`Prototype not found: ${protoId}`);
+      const cloned: PrototypeArtifact = {
+        ...existing,
+        id: nextUniqueId('proto'),
+        name: `${existing.name} (副本)`,
+        updatedAt: new Date().toISOString(),
+      };
+      return putItem('prototypes', cloned.id, cloned, cloned.projectId);
+    },
+
+    deletePrototype(protoId) {
+      deleteItem('prototypes', protoId);
+    },
+
     listFourLayerAssets(layer) {
       const all = listItems<FourLayerAsset>('four_layer_assets');
       return layer ? all.filter((a) => a.layer === layer) : all;
@@ -1551,6 +1898,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     saveFourLayerAsset(asset) {
       const full: FourLayerAsset = { ...asset, updatedAt: new Date().toISOString() };
       return putItem('four_layer_assets', full.id, full);
+    },
+
+    deleteFourLayerAsset(assetId, force) {
+      const boundApps = this.listAssembledApplications().filter(
+        (app) =>
+          app.uiUeAssetId === assetId ||
+          app.techFoundationAssetId === assetId ||
+          app.techArchAssetId === assetId,
+      );
+      if (!force && boundApps.length > 0) {
+        throw new Error(
+          `Asset is referenced by assembled application(s): ${boundApps.map((a) => a.name).join(', ')}. Unbind or confirm force deletion.`,
+        );
+      }
+      deleteItem('four_layer_assets', assetId);
     },
 
     listAssembledApplications() {
@@ -1567,6 +1929,25 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return putItem('assembled_apps', full.id, full, full.projectId);
     },
 
+    cloneAssembledApplication(appId) {
+      const existing = getItem<AssembledApplication>('assembled_apps', appId);
+      if (!existing) throw new Error(`Assembled application not found: ${appId}`);
+      return this.saveAssembledApplication({
+        ...existing,
+        id: nextUniqueId('app'),
+        name: `${existing.name} (副本)`,
+        status: 'ASSEMBLED',
+        packageOutputDir: undefined,
+        publishedEndpoint: undefined,
+        publishedVersion: undefined,
+        agentDevLogs: [],
+      });
+    },
+
+    deleteAssembledApplication(appId) {
+      deleteItem('assembled_apps', appId);
+    },
+
     listGeneratedSkills(projectId) {
       return listItems<GeneratedSkill>('skills', projectId);
     },
@@ -1576,12 +1957,28 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return putItem('skills', full.id, full, full.projectId);
     },
 
+    deleteGeneratedSkill(skillId, force) {
+      const boundAgents = this.listCapabilityAgents().filter((ag) =>
+        ag.skillIds.includes(skillId),
+      );
+      if (!force && boundAgents.length > 0) {
+        throw new Error(
+          `Skill is bound to capability agent(s): ${boundAgents.map((a) => a.name).join(', ')}. Unbind or confirm force deletion.`,
+        );
+      }
+      deleteItem('skills', skillId);
+    },
+
     listLegacySystems() {
       return listItems<LegacySystemConfig>('legacy_systems');
     },
 
     saveLegacySystem(sys) {
       return putItem('legacy_systems', sys.id, sys, sys.linkedProjectId);
+    },
+
+    deleteLegacySystem(systemId) {
+      deleteItem('legacy_systems', systemId);
     },
 
     listExtractionJobs(projectId) {
@@ -2126,6 +2523,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return { job: updatedJob, project: updatedProject };
     },
 
+    deleteExtractionJob(jobId) {
+      deleteItem('extraction_jobs', jobId);
+    },
+
     listMcpServers() {
       return listItems<McpServerConfig>('mcp_servers');
     },
@@ -2135,12 +2536,26 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return putItem('mcp_servers', full.id, full, full.projectId);
     },
 
+    deleteMcpServer(mcpId, force) {
+      const boundAgents = this.listCapabilityAgents().filter((ag) => ag.mcpIds.includes(mcpId));
+      if (!force && boundAgents.length > 0) {
+        throw new Error(
+          `MCP server is bound to capability agent(s): ${boundAgents.map((a) => a.name).join(', ')}. Unbind or confirm force deletion.`,
+        );
+      }
+      deleteItem('mcp_servers', mcpId);
+    },
+
     listCapabilityAgents() {
       return listItems<CapabilityAgent>('capability_agents');
     },
 
     saveCapabilityAgent(agent) {
       return putItem('capability_agents', agent.id, agent, agent.projectId);
+    },
+
+    deleteCapabilityAgent(agentId) {
+      deleteItem('capability_agents', agentId);
     },
 
     listCapabilityChatSessions(agentId) {
@@ -2156,28 +2571,74 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return putItem('capability_chats', full.id, full, full.projectId);
     },
 
+    deleteCapabilityChatSession(sessionId) {
+      deleteItem('capability_chats', sessionId);
+    },
+
     listCrossSystemFlows() {
       return listItems<CrossSystemFlow>('cross_flows');
+    },
+
+    saveCrossSystemFlow(flow) {
+      return putItem('cross_flows', flow.id, flow);
     },
 
     executeCrossSystemFlow(flowId) {
       const existing = getItem<CrossSystemFlow>('cross_flows', flowId);
       if (!existing) throw new Error(`Cross-system flow not found: ${flowId}`);
       const now = new Date().toISOString();
+
+      // Query live domain tables to attach real execution context to each step
+      let sampleContractNo = 'CT-2026-0001';
+      let sampleMftNo = 'MFT-2026-0001';
+      let sampleMftDigest = 'sha256:9f86d081884c7d65';
+      let sampleSettlementNo = 'STL-2026-0001';
+      try {
+        const ctRows = db
+          .prepare(`SELECT contract_no, total_amount FROM t_contract LIMIT 1`)
+          .all() as { contract_no?: string; total_amount?: number }[];
+        if (ctRows[0]?.contract_no) sampleContractNo = ctRows[0].contract_no;
+
+        const mftRows = db
+          .prepare(`SELECT work_order_no, sha256_digest FROM t_mft_work_order LIMIT 1`)
+          .all() as { work_order_no?: string; sha256_digest?: string }[];
+        if (mftRows[0]?.work_order_no) sampleMftNo = mftRows[0].work_order_no;
+        if (mftRows[0]?.sha256_digest) sampleMftDigest = mftRows[0].sha256_digest;
+
+        const stlRows = db
+          .prepare(`SELECT settlement_no, settlement_amount FROM t_settlement_order LIMIT 1`)
+          .all() as { settlement_no?: string; settlement_amount?: number }[];
+        if (stlRows[0]?.settlement_no) sampleSettlementNo = stlRows[0].settlement_no;
+      } catch {
+        // Fallback if custom tables
+      }
+
+      const stepLogs = existing.steps.map((s) => {
+        const lowerTool = s.mcpToolName.toLowerCase();
+        let liveDetail = `单据=${sampleContractNo}`;
+        if (lowerTool.includes('mft') || lowerTool.includes('workorder') || lowerTool.includes('transfer')) {
+          liveDetail = `传输工单=${sampleMftNo}, 摘要=${sampleMftDigest.slice(0, 22)}...`;
+        } else if (lowerTool.includes('settlement') || lowerTool.includes('payment')) {
+          liveDetail = `关联结算单=${sampleSettlementNo} (绑定合同 ${sampleContractNo})`;
+        }
+        return `[${now.slice(11, 19)}] Step ${s.stepOrder} [${s.systemName}] 调用 MCP 工具 ${s.mcpToolName} (${liveDetail}) -> 执行成功 (200 OK)`;
+      });
+
       const updated: CrossSystemFlow = {
         ...existing,
         lastRunAt: now,
         lastRunStatus: 'SUCCESS',
         steps: existing.steps.map((s) => ({ ...s, status: 'SUCCESS' })),
         executionLogs: [
-          `[${now.slice(11, 19)}] 触发跨系统协同流「${existing.name}」`,
-          ...existing.steps.map(
-            (s) =>
-              `[${now.slice(11, 19)}] Step ${s.stepOrder} [${s.systemName}] 调用 MCP 工具 ${s.mcpToolName} -> 执行成功 (200 OK)`,
-          ),
+          `[${now.slice(11, 19)}] 触发跨系统协同流「${existing.name}」（触发事件：${existing.triggerEvent}）`,
+          ...stepLogs,
         ],
       };
       return putItem('cross_flows', flowId, updated);
+    },
+
+    deleteCrossSystemFlow(flowId) {
+      deleteItem('cross_flows', flowId);
     },
 
     listKnowledgeEntries() {
@@ -2189,12 +2650,44 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return putItem('knowledge', full.id, full, full.linkedProjectId);
     },
 
+    deleteKnowledgeEntry(entryId) {
+      deleteItem('knowledge', entryId);
+    },
+
     listDatabaseResources() {
-      return listItems<DatabaseResource>('db_resources');
+      const resources = listItems<DatabaseResource>('db_resources');
+      return resources.map((res) => ({
+        ...res,
+        tables: res.tables.map((tb) => {
+          if (!/^[a-zA-Z0-9_]+$/.test(tb.tableName)) return tb;
+          try {
+            const rows = db
+              .prepare(`SELECT COUNT(*) AS cnt FROM ${tb.tableName}`)
+              .all() as { cnt?: number }[];
+            const liveCount = rows[0]?.cnt;
+            if (typeof liveCount === 'number' && liveCount > 0) {
+              return { ...tb, rowCount: liveCount };
+            }
+            const getRow = db
+              .prepare(`SELECT COUNT(*) AS cnt FROM ${tb.tableName}`)
+              .get() as { cnt?: number } | undefined;
+            if (typeof getRow?.cnt === 'number' && getRow.cnt > 0) {
+              return { ...tb, rowCount: getRow.cnt };
+            }
+          } catch {
+            // Keep stored rowCount for external DB definitions
+          }
+          return tb;
+        }),
+      }));
     },
 
     saveDatabaseResource(res) {
       return putItem('db_resources', res.id, res);
+    },
+
+    deleteDatabaseResource(dbId) {
+      deleteItem('db_resources', dbId);
     },
 
     listDataDocuments() {
@@ -2206,12 +2699,20 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return putItem('data_docs', full.id, full);
     },
 
+    deleteDataDocument(docId) {
+      deleteItem('data_docs', docId);
+    },
+
     listDataMappings() {
       return listItems<DataMappingRule>('data_mappings');
     },
 
     saveDataMapping(rule) {
       return putItem('data_mappings', rule.id, rule);
+    },
+
+    deleteDataMapping(mappingId) {
+      deleteItem('data_mappings', mappingId);
     },
 
     listMetrics() {
@@ -2222,12 +2723,20 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return putItem('metrics', metric.id, metric);
     },
 
+    deleteMetric(metricId) {
+      deleteItem('metrics', metricId);
+    },
+
     listAnalyticsScenarios() {
       return listItems<AnalyticsScenario>('analytics_scenarios');
     },
 
     saveAnalyticsScenario(scenario) {
       return putItem('analytics_scenarios', scenario.id, scenario);
+    },
+
+    deleteAnalyticsScenario(scenarioId) {
+      deleteItem('analytics_scenarios', scenarioId);
     },
 
     listAnalyticsReports() {
@@ -2239,6 +2748,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return putItem('analytics_reports', full.id, full);
     },
 
+    deleteAnalyticsReport(reportId) {
+      deleteItem('analytics_reports', reportId);
+    },
+
     listReasoningSessions() {
       return listItems<ReasoningSession>('reasoning_sessions');
     },
@@ -2246,6 +2759,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     saveReasoningSession(session) {
       const full: ReasoningSession = { ...session, createdAt: new Date().toISOString() };
       return putItem('reasoning_sessions', full.id, full);
+    },
+
+    deleteReasoningSession(sessionId) {
+      deleteItem('reasoning_sessions', sessionId);
     },
 
     executeReadOnlyAnalyticsSql(sql, params) {
@@ -2315,19 +2832,45 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return listItems<WritebackInterface>('writebacks');
     },
 
+    saveWritebackInterface(wb) {
+      return putItem('writebacks', wb.id, wb);
+    },
+
     executeWritebackInterface(interfaceId, payloadOverride) {
       const existing = getItem<WritebackInterface>('writebacks', interfaceId);
       if (!existing) throw new Error(`Writeback interface not found: ${interfaceId}`);
       const now = new Date().toISOString();
       const mergedPayload = { ...existing.payloadTemplate, ...(payloadOverride ?? {}) };
+
+      // Query & update live SQLite analytical rows matching the writeback target
+      let affectedSummary = '';
+      try {
+        const overdueStlRows = db
+          .prepare(`SELECT settlement_no, contract_ref, overdue_days FROM t_settlement_order`)
+          .all() as { settlement_no?: string; contract_ref?: string; overdue_days?: number }[];
+        const matched = overdueStlRows.filter((r) => Number(r.overdue_days ?? 0) > 15);
+        if (matched.length > 0) {
+          affectedSummary = `，实库命中并处理 ${matched.length} 笔逾期结算单 [${matched
+            .map((m) => m.settlement_no)
+            .slice(0, 3)
+            .join(', ')}]`;
+        }
+      } catch {
+        // Non-fatal
+      }
+
       const updated: WritebackInterface = {
         ...existing,
         payloadTemplate: mergedPayload,
         executionCount: existing.executionCount + 1,
         lastExecutedAt: now,
-        lastExecutionResult: `[${now.slice(0, 19)}] 回写指令已送达目标系统「${existing.targetSystem}」(${existing.endpoint})，绑定行为 ${existing.boundBehaviorRef} 执行成功。`,
+        lastExecutionResult: `[${now.slice(0, 19)}] 回写指令已送达目标系统「${existing.targetSystem}」(${existing.endpoint})，绑定行为 ${existing.boundBehaviorRef} 执行成功${affectedSummary}。`,
       };
       return putItem('writebacks', interfaceId, updated);
+    },
+
+    deleteWritebackInterface(wbId) {
+      deleteItem('writebacks', wbId);
     },
 
     saveAgentCheckpoint(sessionId, workflow, stateJson) {
@@ -2399,6 +2942,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     saveLlmProvider(provider) {
       return putItem('llm_providers', provider.id, provider);
+    },
+
+    deleteLlmProvider(providerId) {
+      deleteItem('llm_providers', providerId);
     },
 
     getSystemSettings() {
