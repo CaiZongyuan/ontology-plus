@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { CONTRACT_LIFECYCLE_SUITE, validateOntologySuite } from '../../ontology-core/index.js';
 import { createWorkspaceStore } from '../../workspace-store/index.js';
@@ -5,7 +6,9 @@ import {
   LlmGatewayError,
   ONTOLOGY_TOOL_NAMES,
   OPENAI_ONTOLOGY_TOOLS,
+  abortActiveAgentSession,
   applyOntologyToolCall,
+  buildPiModelsForStore,
   buildTurnSseEvents,
   collectUnifiedAgentTurn,
   compactAgentSession,
@@ -21,6 +24,7 @@ import {
   runOntologyCopilotTurn,
   runRequirementGrillingTurn,
   runScenarioAttributionTurn,
+  runUnifiedAgentSessionStream,
   synthesizeOntologyFromPrototype,
   synthesizeRequirementDocFromSession,
   testLlmGatewayConnection,
@@ -341,5 +345,212 @@ describe('agent-runtime deep module', () => {
     const compacted = compactAgentSession(store, resumedTurn.session.id);
     expect(compacted.compactedSummary).toBeTruthy();
     expect(compacted.messages.length).toBeLessThanOrEqual(4);
+  }, 20000);
+
+  it('respects session.providerId, refreshes inactivity timeout while streaming, preserves partial tool traces on LLM_TIMEOUT, and avoids fake gateway errors on user abort', async () => {
+    let mode: 'ACTIVE_SLOW_STREAM' | 'STALL_ON_STEP_2' = 'ACTIVE_SLOW_STREAM';
+    let stepCounter = 0;
+
+    const server = http.createServer((req, res) => {
+      stepCounter += 1;
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+
+      if (stepCounter === 1) {
+        res.write(
+          `data: ${JSON.stringify({
+            id: 'cmpl-step-1',
+            object: 'chat.completion.chunk',
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  content: '我先查看当前本体工程的已有模型情况，再和你一起梳理需求。',
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call_inspect_m1',
+                      type: 'function',
+                      function: {
+                        name: 'inspect_ontology_model',
+                        arguments: '{"modelCode":"M1"}',
+                      },
+                    },
+                  ],
+                },
+                finish_reason: null,
+              },
+            ],
+          })}\n\n`,
+        );
+        res.write(
+          `data: ${JSON.stringify({
+            id: 'cmpl-step-1',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+          })}\n\n`,
+        );
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+
+      if (mode === 'ACTIVE_SLOW_STREAM') {
+        // Emit 6 chunks spaced 110ms apart (~660ms total > 350ms idleTimeoutMs), proving watchdog resets per chunk
+        let emitted = 0;
+        const timer = setInterval(() => {
+          if (res.writableEnded || res.destroyed) {
+            clearInterval(timer);
+            return;
+          }
+          emitted += 1;
+          if (emitted <= 5) {
+            res.write(
+              `data: ${JSON.stringify({
+                id: 'cmpl-step-2',
+                object: 'chat.completion.chunk',
+                choices: [
+                  {
+                    index: 0,
+                    delta: { reasoning_content: `思考分片#${emitted} ` },
+                    finish_reason: null,
+                  },
+                ],
+              })}\n\n`,
+            );
+          } else {
+            clearInterval(timer);
+            res.write(
+              `data: ${JSON.stringify({
+                id: 'cmpl-step-2',
+                object: 'chat.completion.chunk',
+                choices: [
+                  {
+                    index: 0,
+                    delta: { content: '\n已完成咖啡店订单与会员核心模型梳理。' },
+                    finish_reason: 'stop',
+                  },
+                ],
+              })}\n\n`,
+            );
+            res.write('data: [DONE]\n\n');
+            res.end();
+          }
+        }, 110);
+        req.on('close', () => clearInterval(timer));
+        return;
+      }
+
+      // STALL_ON_STEP_2: keep HTTP stream silent until idleTimeoutMs triggers
+      req.on('close', () => {
+        if (!res.writableEnded) res.end();
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    const mockGatewayUrl = `http://127.0.0.1:${port}/v1`;
+
+    try {
+      const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+      for (const p of store.listLlmProviders()) {
+        store.deleteLlmProvider(p.id);
+      }
+      store.saveLlmProvider({
+        id: 'prov-0-unused',
+        name: 'Unused First Gateway',
+        providerType: 'OPENAI_COMPATIBLE',
+        baseUrl: 'http://127.0.0.1:59998/v1',
+        apiKey: 'none',
+        defaultModel: 'unused-model',
+        availableModels: ['unused-model'],
+        enabled: true,
+      });
+      store.saveLlmProvider({
+        id: 'prov-1-selected',
+        name: 'Selected Gateway',
+        providerType: 'OPENAI_COMPATIBLE',
+        baseUrl: mockGatewayUrl,
+        apiKey: 'test-key',
+        defaultModel: 'auto/glm-5.3-flash',
+        availableModels: ['auto/glm-5.3-flash'],
+        enabled: true,
+      });
+      expect(store.listLlmProviders()[0]?.id).toBe('prov-0-unused');
+
+      const session = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'REQUIREMENT',
+        title: '新建需求探索会话',
+        providerId: 'prov-1-selected',
+      });
+
+      // 1. Verify session.providerId is honored over enabledProviders[0]
+      const built = buildPiModelsForStore(store, session, { mockMode: false });
+      expect(built.providerConfig?.id).toBe('prov-1-selected');
+      expect(built.selectedModel.id).toBe('auto/glm-5.3-flash');
+
+      // 2. Active slow stream (> idleTimeoutMs cumulative, < idleTimeoutMs between chunks) succeeds
+      stepCounter = 0;
+      mode = 'ACTIVE_SLOW_STREAM';
+      const okTurn = await collectUnifiedAgentTurn(store, {
+        sessionId: session.id,
+        prompt: '我要做一个咖啡店管理系统',
+        mockMode: false,
+        idleTimeoutMs: 350,
+      });
+      expect(okTurn.events.some((e) => e.event === 'message_end')).toBe(true);
+      expect(okTurn.session.messages.at(-1)?.errorDiagnostic).toBeUndefined();
+      expect(okTurn.session.messages.at(-1)?.content).toContain('已完成咖啡店订单与会员核心模型梳理');
+
+      // 3. Genuine stall on Step 2 reports LLM_TIMEOUT (not generic 会话生成已中止) and preserves Step 1 progress
+      stepCounter = 0;
+      mode = 'STALL_ON_STEP_2';
+      const stallTurn = await collectUnifiedAgentTurn(store, {
+        sessionId: session.id,
+        prompt: '继续细化库存批次模型',
+        mockMode: false,
+        idleTimeoutMs: 140,
+      });
+      const lastMsg = stallTurn.session.messages.at(-1);
+      expect(lastMsg?.errorDiagnostic?.code).toBe('LLM_TIMEOUT');
+      expect(lastMsg?.errorDiagnostic?.message).toContain('超时');
+      expect(lastMsg?.content).toContain('我先查看当前本体工程的已有模型情况');
+      expect(lastMsg?.toolCalls?.some((t) => t.toolName === 'inspect_ontology_model')).toBe(true);
+
+      // 4. Manual user abort stops cleanly without appending a fake errorDiagnostic bubble
+      stepCounter = 0;
+      mode = 'STALL_ON_STEP_2';
+      const abortSess = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'REQUIREMENT',
+        title: '手动中止测试',
+        providerId: 'prov-1-selected',
+      });
+      const abortEvents: string[] = [];
+      for await (const ev of runUnifiedAgentSessionStream(store, {
+        sessionId: abortSess.id,
+        prompt: '测试用户手动停止',
+        mockMode: false,
+        idleTimeoutMs: 5000,
+      })) {
+        abortEvents.push(ev.event);
+        if (ev.event === 'tool_result') {
+          abortActiveAgentSession(abortSess.id);
+        }
+      }
+      const afterAbort = store.getAgentSession(abortSess.id)!;
+      expect(abortEvents).not.toContain('run_error');
+      expect(afterAbort.status).toBe('IDLE');
+      expect(afterAbort.messages.every((m) => !m.errorDiagnostic)).toBe(true);
+      expect(
+        afterAbort.messages.at(-1)?.toolCalls?.some((t) => t.toolName === 'inspect_ontology_model'),
+      ).toBe(true);
+    } finally {
+      server.close();
+    }
   }, 20000);
 });

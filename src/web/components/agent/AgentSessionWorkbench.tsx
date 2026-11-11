@@ -79,6 +79,9 @@ interface StreamingDraftState {
   thinking: string;
   text: string;
   step: number;
+  phase: 'CONNECTING' | 'THINKING' | 'TOOL_CALLING' | 'ANSWERING';
+  activeToolName?: string;
+  startedAt: number;
   toolCalls: AgentToolCallTrace[];
   artifacts: AgentDomainArtifact[];
   askUser?: AgentAskUserPrompt;
@@ -195,12 +198,26 @@ export function AgentSessionWorkbench({
   const [deleteTarget, setDeleteTarget] = useState<AgentSession | null>(null);
 
   const [promptInput, setPromptInput] = useState('');
+  const [pendingProviderId, setPendingProviderId] = useState<string>('');
   const [reasoningMode, setReasoningMode] = useState<'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY'>(
     defaultReasoningMode,
   );
   const [streaming, setStreaming] = useState<StreamingDraftState | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const scrollEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!streaming || streaming.errorDiagnostic) {
+      setElapsedSec(0);
+      return;
+    }
+    setElapsedSec(Math.max(0, Math.floor((Date.now() - streaming.startedAt) / 1000)));
+    const timer = window.setInterval(() => {
+      setElapsedSec(Math.max(0, Math.floor((Date.now() - streaming.startedAt) / 1000)));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [streaming?.sessionId, streaming?.startedAt, Boolean(streaming?.errorDiagnostic)]);
 
   // Sync selected session when matchingSessions change
   useEffect(() => {
@@ -242,10 +259,13 @@ export function AgentSessionWorkbench({
   };
 
   const handleCreateSession = async (): Promise<AgentSession> => {
+    const defaultProviderId =
+      pendingProviderId || llmProviders.find((p) => p.enabled)?.id || undefined;
     const res = await apiCreateAgentSession({
       projectId,
       agentKind,
       ...(targetId ? { targetId } : {}),
+      ...(defaultProviderId ? { providerId: defaultProviderId } : {}),
       ...(agentKind === 'REASONING' ? { reasoningMode } : {}),
     });
     patchData({ agentSessions: res.agentSessions });
@@ -389,6 +409,8 @@ export function AgentSessionWorkbench({
       thinking: '',
       text: '',
       step: 1,
+      phase: 'CONNECTING',
+      startedAt: Date.now(),
       toolCalls: [],
       artifacts: [],
     });
@@ -406,27 +428,38 @@ export function AgentSessionWorkbench({
         {
           onThinkingDelta: (delta, step) => {
             setStreaming((cur) =>
-              cur ? { ...cur, step, thinking: cur.thinking + delta } : cur,
+              cur
+                ? { ...cur, step, phase: 'THINKING', thinking: cur.thinking + delta }
+                : cur,
             );
           },
           onTextDelta: (delta, step) => {
             setStreaming((cur) =>
-              cur ? { ...cur, step, text: cur.text + delta } : cur,
+              cur
+                ? { ...cur, step, phase: 'ANSWERING', text: cur.text + delta }
+                : cur,
             );
           },
           onToolCall: (call) => {
             setStreaming((cur) => {
               if (!cur) return cur;
+              const prev = cur.toolCalls.find((c) => c.id === call.id);
               const nextTrace: AgentToolCallTrace = {
                 id: call.id,
                 toolName: call.toolName,
                 arguments: call.arguments,
-                output: '',
+                output: prev?.output ?? '',
+                ...(prev?.durationMs !== undefined ? { durationMs: prev.durationMs } : {}),
               };
               return {
                 ...cur,
                 step: call.step,
-                toolCalls: [...cur.toolCalls.filter((c) => c.id !== call.id), nextTrace],
+                phase: 'TOOL_CALLING',
+                activeToolName: call.toolName,
+                toolCalls: [
+                  ...cur.toolCalls.filter((c) => c.id !== call.id),
+                  nextTrace,
+                ],
               };
             });
           },
@@ -437,6 +470,8 @@ export function AgentSessionWorkbench({
               return {
                 ...cur,
                 step,
+                phase: 'CONNECTING',
+                activeToolName: undefined,
                 toolCalls: exists
                   ? cur.toolCalls.map((c) => (c.id === trace.id ? trace : c))
                   : [...cur.toolCalls, trace],
@@ -459,10 +494,15 @@ export function AgentSessionWorkbench({
                   ? latest.map((s) => (s.id === session.id ? session : s))
                   : [session, ...latest],
               });
+              if (abortControllerRef.current === ac) {
+                setStreaming(null);
+              }
             } else if (diagnostic) {
-              setStreaming((cur) =>
-                cur ? { ...cur, errorDiagnostic: diagnostic } : cur,
-              );
+              if (abortControllerRef.current === ac) {
+                setStreaming((cur) =>
+                  cur ? { ...cur, errorDiagnostic: diagnostic } : cur,
+                );
+              }
             }
           },
           onMessageEnd: ({ session, project }) => {
@@ -486,7 +526,9 @@ export function AgentSessionWorkbench({
               patchData({ agentSessions: mergedSessions });
             }
 
-            setStreaming(null);
+            if (abortControllerRef.current === ac) {
+              setStreaming(null);
+            }
             if (agentKind === 'REASONING') {
               showToast(
                 t(
@@ -500,12 +542,18 @@ export function AgentSessionWorkbench({
         },
         ac.signal,
       );
+
+      if (abortControllerRef.current === ac) {
+        setStreaming((cur) => (cur?.errorDiagnostic ? cur : null));
+      }
     } catch (err) {
-      if ((err as Error)?.name !== 'AbortError') {
+      if ((err as Error)?.name !== 'AbortError' && abortControllerRef.current === ac) {
         setStreaming(null);
       }
     } finally {
-      abortControllerRef.current = null;
+      if (abortControllerRef.current === ac) {
+        abortControllerRef.current = null;
+      }
     }
   };
 
@@ -771,6 +819,7 @@ export function AgentSessionWorkbench({
               onTriggerWriteback={onTriggerWriteback}
               onOpenLlmCenter={() => setActiveNav('llm-center')}
               onEnableMockMode={() => void handleEnableMockModeQuickly()}
+              onRetry={() => void executeStreamTurn({ mode: 'CONTINUE' })}
               onAnswerHitl={(promptId, selectedAnswers, freeformText) =>
                 void executeStreamTurn({
                   askUserAnswer: {
@@ -787,12 +836,37 @@ export function AgentSessionWorkbench({
           {streaming && (!activeSession || streaming.sessionId === activeSession.id) && (
             <div className="space-y-2.5 rounded-window border border-accent/35 bg-inset/35 p-3.5 shadow-xs animate-[fade-up_180ms_var(--ease-out-strong)_both]">
               <ThinkingState
-                working={!streaming.errorDiagnostic}
-                activeLabel={t(
-                  `正在流式推理与工具编排 (Step ${streaming.step}/5)…`,
-                  `Streaming & running tools (Step ${streaming.step}/5)…`,
-                )}
-                doneLabel={t('已完成当前推理步骤', 'Reasoning step complete')}
+                working={!streaming.errorDiagnostic && streaming.phase !== 'ANSWERING'}
+                autoOpenWhileWorking
+                activeLabel={
+                  streaming.phase === 'THINKING'
+                    ? t(
+                        `正在深度思考${streaming.step > 1 ? `（第 ${streaming.step} 轮）` : ''} · ${elapsedSec}s · ${streaming.thinking.length} 字…`,
+                        `Thinking${streaming.step > 1 ? ` (round ${streaming.step})` : ''} · ${elapsedSec}s · ${streaming.thinking.length} chars…`,
+                      )
+                    : streaming.phase === 'TOOL_CALLING'
+                      ? t(
+                          `正在调用工具 ${streaming.activeToolName ?? ''} · ${elapsedSec}s…`,
+                          `Running tool ${streaming.activeToolName ?? ''} · ${elapsedSec}s…`,
+                        )
+                      : streaming.toolCalls.length > 0
+                        ? t(
+                            `已完成工具调用，正在继续推理 · ${elapsedSec}s…`,
+                            `Tool completed, continuing · ${elapsedSec}s…`,
+                          )
+                        : t(
+                            `正在连接网关并启动推理 · ${elapsedSec}s…`,
+                            `Connecting & starting · ${elapsedSec}s…`,
+                          )
+                }
+                doneLabel={
+                  streaming.thinking
+                    ? t(
+                        `已深度思考 ${elapsedSec}s（${streaming.thinking.length} 字 · 点击查看思维链）`,
+                        `Thought for ${elapsedSec}s (${streaming.thinking.length} chars · view trace)`,
+                      )
+                    : t('已完成当前推理步骤', 'Reasoning step complete')
+                }
                 thinkingText={streaming.thinking}
               />
 
@@ -837,6 +911,7 @@ export function AgentSessionWorkbench({
                   diagnostic={streaming.errorDiagnostic}
                   onOpenLlmCenter={() => setActiveNav('llm-center')}
                   onEnableMockMode={() => void handleEnableMockModeQuickly()}
+                  onRetry={() => void executeStreamTurn({ mode: 'CONTINUE' })}
                 />
               )}
             </div>
@@ -873,9 +948,15 @@ export function AgentSessionWorkbench({
               {llmProviders.length > 0 && (
                 <select
                   aria-label={t('选择模型网关', 'Select LLM Gateway')}
-                  value={activeSession?.providerId || llmProviders.find((p) => p.enabled)?.id || ''}
+                  value={
+                    activeSession?.providerId ||
+                    pendingProviderId ||
+                    llmProviders.find((p) => p.enabled)?.id ||
+                    ''
+                  }
                   onChange={async (e) => {
                     const providerId = e.target.value;
+                    setPendingProviderId(providerId);
                     if (activeSession) {
                       const res = await apiPatchAgentSession(activeSession.id, {
                         providerId,
@@ -1006,6 +1087,7 @@ function MessageTurnItem({
   onTriggerWriteback,
   onOpenLlmCenter,
   onEnableMockMode,
+  onRetry,
   onAnswerHitl,
 }: {
   message: AgentSessionMessage;
@@ -1016,6 +1098,7 @@ function MessageTurnItem({
   onTriggerWriteback?: (writebackInterfaceId: string, recommendationTitle: string) => void;
   onOpenLlmCenter: () => void;
   onEnableMockMode: () => void;
+  onRetry?: () => void;
   onAnswerHitl: (
     promptId: string,
     selectedAnswers: string[],
@@ -1078,7 +1161,14 @@ function MessageTurnItem({
       {message.thinking && (
         <ThinkingState
           working={false}
-          doneLabel={t('查看模型推理思维链', 'View reasoning trace')}
+          doneLabel={
+            message.thinkingDurationMs
+              ? t(
+                  `已深度思考 ${(message.thinkingDurationMs / 1000).toFixed(1)}s（点击查看思维链）`,
+                  `Thought for ${(message.thinkingDurationMs / 1000).toFixed(1)}s (view trace)`,
+                )
+              : t('查看模型推理思维链', 'View reasoning trace')
+          }
           thinkingText={message.thinking}
         />
       )}
@@ -1117,6 +1207,7 @@ function MessageTurnItem({
           diagnostic={message.errorDiagnostic}
           onOpenLlmCenter={onOpenLlmCenter}
           onEnableMockMode={onEnableMockMode}
+          onRetry={onRetry}
         />
       )}
     </div>
@@ -1296,23 +1387,69 @@ function DomainArtifactCard({
   }
 
   if (artifact.kind === 'REQUIREMENT_HINTS') {
+    const hasSignals =
+      artifact.aggregates.length > 0 ||
+      artifact.rules.length > 0 ||
+      artifact.openQuestions.length > 0;
+    if (!hasSignals) return null;
+
     return (
-      <div className="rounded-card border border-line bg-inset/45 p-2.5 text-[11.5px]">
-        <div className="mb-1.5 font-semibold text-ink">
-          {t('实时提炼的领域建模要素', 'Extracted Domain Modeling Signals')}
+      <div className="space-y-2 rounded-card border border-line bg-inset/45 p-2.5 text-[11.5px]">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-semibold text-ink">
+            {t('实时提炼的领域建模要素', 'Extracted Domain Modeling Signals')}
+          </span>
+          <span className="font-mono text-[10.5px] text-ink-3 tabular-nums">
+            {artifact.aggregates.length > 0 ? `M1×${artifact.aggregates.length} ` : ''}
+            {artifact.rules.length > 0 ? `M3×${artifact.rules.length} ` : ''}
+            {artifact.openQuestions.length > 0 ? `Q×${artifact.openQuestions.length}` : ''}
+          </span>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {artifact.aggregates.map((a) => (
-            <span key={a} className="rounded bg-accent-tint px-2 py-0.5 font-mono text-accent">
-              M1:{a}
-            </span>
-          ))}
-          {artifact.rules.map((r) => (
-            <span key={r} className="rounded bg-green-tint px-2 py-0.5 font-mono text-green">
-              Rule:{r}
-            </span>
-          ))}
-        </div>
+
+        {artifact.aggregates.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {artifact.aggregates.map((a) => (
+              <span
+                key={a}
+                className="max-w-full break-words rounded bg-accent-tint px-2 py-0.5 font-mono text-[11px] text-accent"
+              >
+                M1 · {a}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {artifact.rules.length > 0 && (
+          <div className="space-y-1">
+            {artifact.rules.map((r, i) => (
+              <div
+                key={`${i}-${r.slice(0, 24)}`}
+                className="flex items-start gap-1.5 rounded-control bg-surface px-2 py-1.5 text-[12px] leading-snug text-ink shadow-hairline"
+              >
+                <span className="mt-[1px] shrink-0 rounded bg-green-tint px-1.5 py-0.1 font-mono text-[10px] font-semibold text-green">
+                  M3
+                </span>
+                <span className="min-w-0 flex-1 break-words">{r}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {artifact.openQuestions.length > 0 && (
+          <div className="space-y-1">
+            {artifact.openQuestions.map((q, i) => (
+              <div
+                key={`${i}-${q.slice(0, 24)}`}
+                className="flex items-start gap-1.5 rounded-control bg-surface px-2 py-1.5 text-[12px] leading-snug text-ink shadow-hairline"
+              >
+                <span className="mt-[1px] shrink-0 rounded bg-orange-tint px-1.5 py-0.1 font-mono text-[10px] font-semibold text-orange">
+                  {t('待确认', 'Open')}
+                </span>
+                <span className="min-w-0 flex-1 break-words">{q}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -1347,12 +1484,23 @@ function GatewayDiagnosticBanner({
   diagnostic,
   onOpenLlmCenter,
   onEnableMockMode,
+  onRetry,
 }: {
   diagnostic: NonNullable<AgentSessionMessage['errorDiagnostic']>;
   onOpenLlmCenter: () => void;
   onEnableMockMode: () => void;
+  onRetry?: () => void;
 }) {
   const { t } = usePreferences();
+  const isTimeout = diagnostic.code === 'LLM_TIMEOUT';
+  const isGatewayUnreachable =
+    diagnostic.code === 'LLM_GATEWAY_ERROR' || diagnostic.code === 'HTTP_ERROR';
+  const bannerTitle = isTimeout
+    ? t('大模型推理响应超时', 'LLM Reasoning Timeout')
+    : isGatewayUnreachable
+      ? t('真实大模型网关不可达', 'Live LLM Gateway Unreachable')
+      : t('智能体运行异常', 'Agent Runtime Error');
+
   return (
     <div
       className="rounded-card border border-red/40 bg-red-tint/45 p-3 text-[12.5px]"
@@ -1362,11 +1510,22 @@ function GatewayDiagnosticBanner({
         <AlertTriangle size={15} className="mt-0.5 shrink-0 text-red" />
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="font-semibold text-red">
-            {t('真实大模型网关不可达', 'Live LLM Gateway Unreachable')} ({diagnostic.code})
+            {bannerTitle} ({diagnostic.code})
           </div>
           <div className="text-ink">{diagnostic.message}</div>
           <div className="text-[11.5px] text-ink-2">{diagnostic.remediation}</div>
           <div className="flex flex-wrap items-center gap-2 pt-1">
+            {onRetry && (
+              <Button
+                variant="secondary"
+                size="xs"
+                onClick={onRetry}
+                data-testid="agent-retry-continue-btn"
+              >
+                <RefreshCw size={11} />
+                {t('重试 / 继续推演', 'Retry / Continue')}
+              </Button>
+            )}
             <Button variant="secondary" size="xs" onClick={onOpenLlmCenter}>
               {t('前往 LLM 中心配置密钥/网关', 'Configure in LLM Center')}
             </Button>

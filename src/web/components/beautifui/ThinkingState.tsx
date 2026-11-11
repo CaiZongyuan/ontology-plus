@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/utils.js';
 
@@ -14,6 +14,7 @@ export interface ThinkingStateProps {
   thinkingText?: string;
   rows?: ThinkingRow[];
   defaultOpen?: boolean;
+  autoOpenWhileWorking?: boolean;
   className?: string;
 }
 
@@ -24,10 +25,24 @@ export function ThinkingState({
   thinkingText,
   rows = [],
   defaultOpen = false,
+  autoOpenWhileWorking = false,
   className,
 }: ThinkingStateProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const bodyScrollRef = useRef<HTMLDivElement>(null);
   const hasBody = Boolean((thinkingText && thinkingText.trim().length > 0) || rows.length > 0);
+  const open =
+    manualOpen !== null
+      ? manualOpen
+      : autoOpenWhileWorking
+        ? working && hasBody
+        : defaultOpen;
+
+  useEffect(() => {
+    if (working && open && bodyScrollRef.current) {
+      bodyScrollRef.current.scrollTop = bodyScrollRef.current.scrollHeight;
+    }
+  }, [working, open, thinkingText]);
 
   if (!working && !hasBody) {
     return null;
@@ -37,7 +52,7 @@ export function ThinkingState({
     <div className={cn('w-full text-[13px]', className)}>
       <button
         type="button"
-        onClick={() => hasBody && setOpen((o) => !o)}
+        onClick={() => hasBody && setManualOpen(!open)}
         aria-expanded={open}
         className={cn(
           'group inline-flex items-center gap-1.5 rounded-chip py-1 text-left transition-colors duration-150',
@@ -74,7 +89,13 @@ export function ThinkingState({
           )}
         >
           <div className="overflow-hidden">
-            <div className="relative ml-1.5 mt-1 space-y-2 border-l border-line pl-4 pb-1 pt-0.5 text-[12.5px] leading-[1.55] text-ink-2">
+            <div
+              ref={bodyScrollRef}
+              className={cn(
+                'relative ml-1.5 mt-1 space-y-2 border-l border-line pl-4 pb-1 pt-0.5 text-[12.5px] leading-[1.55] text-ink-2',
+                working && 'max-h-44 overflow-y-auto pr-1',
+              )}
+            >
               {rows.map((row, idx) => (
                 <div key={`${row.label}-${idx}`} className="animate-[fade-up_220ms_var(--ease-out-strong)_both]">
                   <span className="text-ink-3">{row.label}</span>

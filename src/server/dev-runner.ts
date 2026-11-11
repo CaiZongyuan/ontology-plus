@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-const serverProc = spawn('npx', ['tsx', 'src/server/node-server.ts'], {
+const serverProc = spawn('npx', ['tsx', 'watch', 'src/server/node-server.ts'], {
   stdio: 'inherit',
   shell: true,
 });

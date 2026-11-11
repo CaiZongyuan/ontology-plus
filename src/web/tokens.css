@@ -150,7 +150,8 @@
   --sidebar-w-collapsed: 56px;
 
   --scrollbar-track: transparent;
-  --scrollbar-thumb: #b9b6ac;
+  /* >= 3:1 non-text contrast against --surface (#fdfdfb) & --ground (#f3f2ee) */
+  --scrollbar-thumb: #868379;
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   accent-color: var(--accent);
@@ -188,7 +189,8 @@
 
     --paper-grain-url: none;
     --scrollbar-track: transparent;
-    --scrollbar-thumb: #3e3d38;
+    /* >= 3:1 non-text contrast against dark --surface (#1a1a18) & --surface-2 (#222220) */
+    --scrollbar-thumb: #737169;
     --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
@@ -225,7 +227,7 @@
 
   --paper-grain-url: none;
   --scrollbar-track: transparent;
-  --scrollbar-thumb: #3e3d38;
+  --scrollbar-thumb: #737169;
   --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
@@ -263,20 +265,76 @@ body,
   outline-offset: 2px;
 }
 
-*::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+/* Standard scrollbar styling on scrollable containers (modern-web-guidance: customize-scrollbar-color-and-thickness) */
+*,
+.bui-scroller {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
-*::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 999px;
-  border: 3px solid transparent;
-  background-clip: padding-box;
+@supports not (scrollbar-color: auto) {
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
 }
 
-*::-webkit-scrollbar-track {
-  background: transparent;
+/* Container-aware tool call inspector layout (modern-web-guidance: size-aware-styling) */
+.tool-trace-root {
+  container-type: inline-size;
+}
+
+.tool-scalar-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.tool-chip-inline-summary {
+  display: none;
+}
+
+@media (min-width: 640px) {
+  .tool-scalar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tool-chip-inline-summary {
+    display: inline;
+  }
+}
+
+@supports (container-type: inline-size) {
+  @media (min-width: 640px) {
+    .tool-scalar-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .tool-chip-inline-summary {
+      display: none;
+    }
+  }
+
+  @container (min-width: 440px) {
+    .tool-scalar-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @container (min-width: 520px) {
+    .tool-chip-inline-summary {
+      display: inline;
+    }
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

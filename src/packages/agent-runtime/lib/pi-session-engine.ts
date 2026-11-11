@@ -282,12 +282,36 @@ agentWorkbenchRegistry.install(
 
 // ─── Active Session Abort Registry ───────────────────────────────────────────
 
+type SessionAbortKind = 'IDLE_TIMEOUT' | 'USER_ABORT' | 'STEER_SUPERSEDED' | 'CLIENT_DISCONNECT';
+
+interface SessionAbortReason {
+  readonly kind: SessionAbortKind;
+  readonly message: string;
+}
+
+class SessionStreamAbortedError extends Error {
+  readonly kind: SessionAbortKind;
+
+  constructor(kind: SessionAbortKind, message: string) {
+    super(message);
+    this.name = 'SessionStreamAbortedError';
+    this.kind = kind;
+  }
+}
+
 const activeSessionAbortControllers = new Map<string, AbortController>();
 
-export function abortActiveAgentSession(sessionId: string): boolean {
+export function abortActiveAgentSession(
+  sessionId: string,
+  kind: 'USER_ABORT' | 'STEER_SUPERSEDED' = 'USER_ABORT',
+): boolean {
   const controller = activeSessionAbortControllers.get(sessionId);
   if (!controller) return false;
-  controller.abort(new Error('Aborted by user'));
+  const reason: SessionAbortReason =
+    kind === 'STEER_SUPERSEDED'
+      ? { kind: 'STEER_SUPERSEDED', message: '当前流式推演已被新指令接管' }
+      : { kind: 'USER_ABORT', message: '已由用户手动停止生成' };
+  controller.abort(reason);
   activeSessionAbortControllers.delete(sessionId);
   return true;
 }
@@ -740,7 +764,14 @@ export function buildPiModelsForStore(
     return { ...built, isMock: true };
   }
 
-  const enabledProviders = store.listLlmProviders().filter((p) => p.enabled);
+  const allProviders = store.listLlmProviders();
+  const explicitSelectedProvider = session.providerId
+    ? allProviders.find((p) => p.id === session.providerId && p.enabled) ??
+      allProviders.find((p) => p.id === session.providerId)
+    : undefined;
+  const enabledProviders = allProviders.filter(
+    (p) => p.enabled || (explicitSelectedProvider && p.id === explicitSelectedProvider.id),
+  );
   if (enabledProviders.length === 0) {
     throw new LlmGatewayError({
       message: '当前没有已启用的 LLM 网关提供商（Live 模式禁止静默伪造回复）。',
@@ -751,7 +782,7 @@ export function buildPiModelsForStore(
   }
 
   const models = createModels();
-  let preferredProvider: LlmProviderConfig = enabledProviders[0]!;
+  let preferredProvider: LlmProviderConfig = explicitSelectedProvider ?? enabledProviders[0]!;
   let preferredModelId = session.modelOverride || preferredProvider.defaultModel;
 
   for (const cfg of enabledProviders) {
@@ -777,7 +808,7 @@ export function buildPiModelsForStore(
       cost: ZERO_MODEL_COST,
       reasoning: true,
       contextWindow: 128000,
-      maxTokens: 4096,
+      maxTokens: 16384,
     }));
 
     const provider = createProvider({
@@ -803,7 +834,11 @@ export function buildPiModelsForStore(
     });
 
     models.setProvider(provider);
-    if (session.modelOverride && cfg.availableModels.includes(session.modelOverride)) {
+    if (
+      !explicitSelectedProvider &&
+      session.modelOverride &&
+      cfg.availableModels.includes(session.modelOverride)
+    ) {
       preferredProvider = cfg;
       preferredModelId = session.modelOverride;
     }
@@ -1580,6 +1615,8 @@ export interface UnifiedAgentStreamInput {
   reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
   mockMode?: boolean;
   signal?: AbortSignal;
+  idleTimeoutMs?: number;
+  stepTimeoutMs?: number;
 }
 
 export async function* runUnifiedAgentSessionStream(
@@ -1592,24 +1629,69 @@ export async function* runUnifiedAgentSessionStream(
   }
 
   if (input.mode === 'STEER') {
-    abortActiveAgentSession(existing.id);
+    abortActiveAgentSession(existing.id, 'STEER_SUPERSEDED');
   }
 
   const controller = new AbortController();
-  const timeoutTimer = setTimeout(
-    () => controller.abort(new Error('LLM 响应超时（超过 60 秒）')),
-    60_000,
-  );
+  const idleTimeoutMs = input.idleTimeoutMs ?? 90_000;
+  const stepTimeoutMs = input.stepTimeoutMs ?? Math.max(300_000, idleTimeoutMs * 2);
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const resetIdleTimer = () => {
+    if (idleTimer !== undefined) {
+      clearTimeout(idleTimer);
+    }
+    if (controller.signal.aborted) {
+      return;
+    }
+    idleTimer = setTimeout(() => {
+      if (!controller.signal.aborted) {
+        const sec = Math.max(0.1, Math.round((idleTimeoutMs / 1000) * 10) / 10);
+        const reason: SessionAbortReason = {
+          kind: 'IDLE_TIMEOUT',
+          message: `大模型流式推理响应超时（超过 ${sec} 秒未收到新分片）`,
+        };
+        controller.abort(reason);
+      }
+    }, idleTimeoutMs);
+  };
+
+  resetIdleTimer();
+
+  const abortFromClient = () => {
+    if (!controller.signal.aborted) {
+      const reason: SessionAbortReason = {
+        kind: 'CLIENT_DISCONNECT',
+        message: '客户端流式连接已断开',
+      };
+      controller.abort(reason);
+    }
+  };
+
   if (input.signal) {
     if (input.signal.aborted) {
-      controller.abort(input.signal.reason);
+      abortFromClient();
     } else {
-      input.signal.addEventListener('abort', () => controller.abort(input.signal?.reason), {
+      input.signal.addEventListener('abort', abortFromClient, {
         once: true,
       });
     }
   }
   activeSessionAbortControllers.set(existing.id, controller);
+
+  const toAbortedError = (): SessionStreamAbortedError => {
+    const r = controller.signal.reason as Partial<SessionAbortReason> | Error | undefined;
+    if (r && typeof r === 'object' && 'kind' in r && typeof r.kind === 'string') {
+      return new SessionStreamAbortedError(
+        r.kind as SessionAbortKind,
+        typeof r.message === 'string' && r.message ? r.message : '会话生成已中止',
+      );
+    }
+    if (r instanceof Error) {
+      return new SessionStreamAbortedError('IDLE_TIMEOUT', r.message);
+    }
+    return new SessionStreamAbortedError('USER_ABORT', '会话生成已中止');
+  };
 
   let seq = 1;
   const nextEventId = () => `${existing.id}-evt-${Date.now().toString(36)}-${seq++}`;
@@ -1670,9 +1752,19 @@ export async function* runUnifiedAgentSessionStream(
   });
 
   const turnStartMs = Date.now();
+  const assistantMsgId = `amsg-${Date.now().toString(36)}-a`;
+  let built: ReturnType<typeof buildPiModelsForStore> | undefined;
+  let accumulatedThinking = '';
+  let accumulatedText = '';
+  const allToolTraces: AgentToolCallTrace[] = [];
+  const allArtifacts: AgentDomainArtifact[] = [];
+  let pendingAskUser: AgentAskUserPrompt | undefined;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let hadValidatorError = false;
 
   try {
-    const built = buildPiModelsForStore(store, sessionState, {
+    built = buildPiModelsForStore(store, sessionState, {
       ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
       ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
     });
@@ -1691,22 +1783,13 @@ export async function* runUnifiedAgentSessionStream(
 
     const piMessages: Message[] = buildInitialPiMessages(sessionState);
     const tools = getToolsForAgentKind(sessionState.agentKind);
-    const assistantMsgId = `amsg-${Date.now().toString(36)}-a`;
 
-    let accumulatedThinking = '';
-    let accumulatedText = '';
-    const allToolTraces: AgentToolCallTrace[] = [];
-    const allArtifacts: AgentDomainArtifact[] = [];
-    let pendingAskUser: AgentAskUserPrompt | undefined;
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-    let hadValidatorError = false;
-
-    const MAX_STEPS = 5;
-    for (let step = 0; step < MAX_STEPS; step += 1) {
+    const MAX_TOOL_ROUNDS = 24;
+    for (let step = 0; step < MAX_TOOL_ROUNDS; step += 1) {
       if (controller.signal.aborted) {
-        throw new Error('会话生成已中止');
+        throw toAbortedError();
       }
+      resetIdleTimer();
 
       const systemPrompt = buildSystemPromptForSession(
         store,
@@ -1721,14 +1804,19 @@ export async function* runUnifiedAgentSessionStream(
 
       const eventStream = built.models.streamSimple(built.selectedModel, context, {
         signal: controller.signal,
-        timeoutMs: 60_000,
+        timeoutMs: stepTimeoutMs,
         temperature: 0.2,
-        maxTokens: 2400,
+        maxTokens: 8192,
       });
 
       let finalMessage: AssistantMessage | undefined;
+      const announcedToolCallIds = new Set<string>();
 
       for await (const ev of eventStream) {
+        if (ev.type !== 'error') {
+          resetIdleTimer();
+        }
+
         if (ev.type === 'thinking_delta') {
           accumulatedThinking += ev.delta;
           yield {
@@ -1743,13 +1831,47 @@ export async function* runUnifiedAgentSessionStream(
             event: 'delta',
             data: { step: step + 1, text: ev.delta },
           };
+        } else if (
+          ev.type === 'toolcall_start' ||
+          ev.type === 'toolcall_delta' ||
+          ev.type === 'toolcall_end'
+        ) {
+          const candidate =
+            ev.type === 'toolcall_end'
+              ? ev.toolCall
+              : ev.partial.content[ev.contentIndex];
+          if (
+            candidate &&
+            candidate.type === 'toolCall' &&
+            candidate.id &&
+            candidate.name &&
+            !announcedToolCallIds.has(candidate.id)
+          ) {
+            announcedToolCallIds.add(candidate.id);
+            yield {
+              id: nextEventId(),
+              event: 'tool_call',
+              data: {
+                id: candidate.id,
+                toolName: candidate.name,
+                arguments: (candidate.arguments ?? {}) as Record<string, unknown>,
+                step: step + 1,
+              },
+            };
+          }
         } else if (ev.type === 'done') {
           finalMessage = ev.message;
         } else if (ev.type === 'error') {
+          if (controller.signal.aborted) {
+            throw toAbortedError();
+          }
           const errText =
             ev.error.errorMessage || `网关流式请求失败 (reason=${ev.reason})`;
-          if (ev.reason === 'aborted' && controller.signal.aborted) {
-            throw new Error('会话生成已中止');
+          if (ev.reason === 'aborted' || /timed?\s*out|timeout/i.test(errText)) {
+            throw new SessionStreamAbortedError(
+              'IDLE_TIMEOUT',
+              `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
+            );
           }
           throw new LlmGatewayError({
             message: errText,
@@ -1777,6 +1899,10 @@ export async function* runUnifiedAgentSessionStream(
       }
 
       for (const tc of toolCalls) {
+        if (controller.signal.aborted) {
+          throw toAbortedError();
+        }
+        resetIdleTimer();
         yield {
           id: nextEventId(),
           event: 'tool_call',
@@ -1859,7 +1985,7 @@ export async function* runUnifiedAgentSessionStream(
       yield {
         id: nextEventId(),
         event: 'delta',
-        data: { step: MAX_STEPS, text: accumulatedText },
+        data: { step: 1, text: accumulatedText },
       };
     }
 
@@ -1936,21 +2062,106 @@ export async function* runUnifiedAgentSessionStream(
       },
     };
   } catch (err) {
+    const currentActive = activeSessionAbortControllers.get(existing.id);
+    const supersededByNewTurn = Boolean(currentActive && currentActive !== controller);
+    if (
+      supersededByNewTurn ||
+      (err instanceof SessionStreamAbortedError && err.kind === 'STEER_SUPERSEDED')
+    ) {
+      return;
+    }
+
+    const hasPartialProgress = Boolean(
+      accumulatedText.trim() ||
+        accumulatedThinking.trim() ||
+        allToolTraces.length > 0 ||
+        allArtifacts.length > 0 ||
+        pendingAskUser,
+    );
+
+    if (
+      err instanceof SessionStreamAbortedError &&
+      (err.kind === 'USER_ABORT' || err.kind === 'CLIENT_DISCONNECT')
+    ) {
+      const partialMessages = hasPartialProgress
+        ? [
+            ...sessionState.messages,
+            {
+              id: assistantMsgId,
+              role: 'assistant' as const,
+              content: accumulatedText,
+              ...(accumulatedThinking
+                ? {
+                    thinking: accumulatedThinking,
+                    thinkingDurationMs: Date.now() - turnStartMs,
+                  }
+                : {}),
+              ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
+              ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
+              ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
+              ...(built
+                ? {
+                    modelUsed: built.selectedModel.id,
+                    providerName: built.providerLabel,
+                  }
+                : {}),
+              timestamp: new Date().toISOString(),
+            },
+          ]
+        : sessionState.messages;
+
+      sessionState = store.saveAgentSession({
+        ...sessionState,
+        status: 'IDLE',
+        messages: partialMessages,
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
     const isGatewayErr = err instanceof LlmGatewayError;
+    const isTimeoutErr =
+      err instanceof SessionStreamAbortedError && err.kind === 'IDLE_TIMEOUT';
     const errMsg = err instanceof Error ? err.message : String(err);
+    const resolvedProviderName =
+      built?.providerConfig?.name ?? built?.providerLabel ?? sessionState.modelOverride;
+
+    const diagnostic: NonNullable<AgentSessionMessage['errorDiagnostic']> = isGatewayErr
+      ? err.toDiagnostic()
+      : isTimeoutErr
+        ? {
+            code: 'LLM_TIMEOUT',
+            ...(resolvedProviderName ? { providerName: resolvedProviderName } : {}),
+            ...(built
+              ? {
+                  baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+                }
+              : {}),
+            message: err.message,
+            remediation:
+              '当前推理模型思考或生成耗时较长。可点击「重试 / 继续推演」恢复，或在底部切换响应更快的模型网关。',
+          }
+        : {
+            code: 'AGENT_RUNTIME_ERROR',
+            ...(resolvedProviderName ? { providerName: resolvedProviderName } : {}),
+            message: errMsg,
+            remediation: '可点击「重试 / 继续推演」恢复，或检查 LLM 中心配置。',
+          };
 
     const errorAssistantMsg: AgentSessionMessage = {
       id: `amsg-${Date.now().toString(36)}-err`,
       role: 'assistant',
-      content: '',
-      errorDiagnostic: isGatewayErr
-        ? err.toDiagnostic()
-        : {
-            code: 'AGENT_RUNTIME_ERROR',
-            ...(sessionState.modelOverride ? { providerName: sessionState.modelOverride } : {}),
-            message: errMsg,
-            remediation: '可点击「重试 / 继续」恢复，或检查 LLM 中心配置。',
-          },
+      content: accumulatedText,
+      ...(accumulatedThinking
+        ? { thinking: accumulatedThinking, thinkingDurationMs: Date.now() - turnStartMs }
+        : {}),
+      ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
+      ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
+      ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
+      ...(built
+        ? { modelUsed: built.selectedModel.id, providerName: built.providerLabel }
+        : {}),
+      errorDiagnostic: diagnostic,
       timestamp: new Date().toISOString(),
     };
 
@@ -1970,8 +2181,15 @@ export async function* runUnifiedAgentSessionStream(
       },
     };
   } finally {
-    clearTimeout(timeoutTimer);
-    activeSessionAbortControllers.delete(existing.id);
+    if (idleTimer !== undefined) {
+      clearTimeout(idleTimer);
+    }
+    if (input.signal) {
+      input.signal.removeEventListener('abort', abortFromClient);
+    }
+    if (activeSessionAbortControllers.get(existing.id) === controller) {
+      activeSessionAbortControllers.delete(existing.id);
+    }
   }
 }
 
