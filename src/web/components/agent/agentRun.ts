@@ -72,6 +72,8 @@ export interface AgentRunView {
     revisionId: string;
     revisionNumber: number;
   };
+  /** Primary structured domain artifact produced by this run (SRS, Ontology Suite, Tech Arch, Insight, Report, etc.). */
+  artifact?: AgentDomainArtifact;
   /** Present once the run has succeeded. */
   result?: {
     summary: LocalizedText;
@@ -194,6 +196,49 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
     return { zh: '原型精修', en: 'Prototype refinement' };
   }
 
+  const actionMatch = /^\[ACTION:([A-Z_]+)(?:\s+(\{[^\r\n]*\}))?\]/.exec(trimmed);
+  if (actionMatch) {
+    const actionKind = actionMatch[1]!;
+    let params: Record<string, unknown> = {};
+    if (actionMatch[2]) {
+      try {
+        params = JSON.parse(actionMatch[2]) as Record<string, unknown>;
+      } catch {
+        params = {};
+      }
+    }
+    switch (actionKind) {
+      case 'SYNTHESIZE_SRS':
+        return { zh: '合成 9 章节需求规格书', en: 'Synthesize 9-Chapter SRS' };
+      case 'SYNTHESIZE_ONTOLOGY_SUITE':
+        return { zh: '合成 11 元模型本体', en: 'Synthesize 11-Model Ontology' };
+      case 'GENERATE_TECH_ARCH': {
+        const name = typeof params.name === 'string' && params.name.trim() ? params.name.trim() : '';
+        return name
+          ? { zh: `生成技术架构：${name}`, en: `Generate Tech Arch: ${name}` }
+          : { zh: '生成四层技术架构规范', en: 'Generate Tech Architecture Spec' };
+      }
+      case 'METRIC_INSIGHT': {
+        const label =
+          (typeof params.metricName === 'string' && params.metricName.trim()) ||
+          (typeof params.metricCode === 'string' && params.metricCode.trim()) ||
+          '';
+        return label
+          ? { zh: `AI 指标洞察：${label}`, en: `AI Metric Insight: ${label}` }
+          : { zh: 'AI 指标异动洞察', en: 'AI Metric Insight' };
+      }
+      case 'SCENARIO_ATTRIBUTION': {
+        const name =
+          typeof params.scenarioName === 'string' && params.scenarioName.trim()
+            ? params.scenarioName.trim()
+            : '';
+        return name
+          ? { zh: `AI 场景归因：${name}`, en: `AI Scenario Attribution: ${name}` }
+          : { zh: 'AI 场景归因分析', en: 'AI Scenario Attribution' };
+      }
+    }
+  }
+
   const globalMatch =
     /\[(?:全局补充精修要求|Additional Global Refinement Instruction)\]\s*\n+([^\n]+)/.exec(
       trimmed,
@@ -260,6 +305,78 @@ function extractRevisionArtifact(
   );
 }
 
+const ARTIFACT_PRIORITY: AgentDomainArtifact['kind'][] = [
+  'PROTOTYPE_REVISION',
+  'REQUIREMENT_DOC',
+  'ONTOLOGY_SUITE',
+  'TECH_ARCH_ASSET',
+  'ANALYTICS_REPORT',
+  'METRIC_INSIGHT',
+  'CODING_PACKAGE',
+  'ONTOLOGY_DIFF',
+  'REASONING_POLICY',
+  'SQL_PREVIEW',
+  'REQUIREMENT_HINTS',
+];
+
+function selectPrimaryDomainArtifact(
+  artifacts: AgentDomainArtifact[] | undefined,
+): AgentDomainArtifact | undefined {
+  if (!artifacts || artifacts.length === 0) return undefined;
+  for (const kind of ARTIFACT_PRIORITY) {
+    const matched = [...artifacts].reverse().find((a) => a.kind === kind);
+    if (matched) return matched;
+  }
+  return artifacts[artifacts.length - 1];
+}
+
+function formatDomainArtifactLabel(artifact: AgentDomainArtifact): LocalizedText {
+  switch (artifact.kind) {
+    case 'PROTOTYPE_REVISION':
+      return {
+        zh: `查看修订 v${artifact.revisionNumber}`,
+        en: `Open revision v${artifact.revisionNumber}`,
+      };
+    case 'REQUIREMENT_DOC':
+      return {
+        zh: `打开需求规格书 (${artifact.version})`,
+        en: `Open SRS (${artifact.version})`,
+      };
+    case 'ONTOLOGY_SUITE':
+      return {
+        zh: `查看 11 元模型 (${artifact.modelCount}/11)`,
+        en: `Open 11-Model Suite (${artifact.modelCount}/11)`,
+      };
+    case 'ONTOLOGY_DIFF':
+      return {
+        zh: `查看 ${artifact.modelCode} 模型变更`,
+        en: `Inspect ${artifact.modelCode} change`,
+      };
+    case 'TECH_ARCH_ASSET':
+      return {
+        zh: `查看技术架构 (${artifact.version})`,
+        en: `Open Tech Arch (${artifact.version})`,
+      };
+    case 'CODING_PACKAGE':
+      return {
+        zh: `查看开发包 (${artifact.files.length} 文件)`,
+        en: `Open Dev Package (${artifact.files.length} files)`,
+      };
+    case 'METRIC_INSIGHT':
+      return {
+        zh: `查看指标洞察 (${artifact.metricCode})`,
+        en: `View Insight (${artifact.metricCode})`,
+      };
+    case 'ANALYTICS_REPORT':
+      return {
+        zh: '打开归因分析报告',
+        en: 'Open Attribution Report',
+      };
+    default:
+      return { zh: '查看产物', en: 'View artifact' };
+  }
+}
+
 function buildCompletedSessionRun(
   session: AgentSession,
   uMsg: AgentSessionMessage,
@@ -279,6 +396,7 @@ function buildCompletedSessionRun(
   const steps = (aMsg.toolCalls ?? []).map((tc) => mapToolTraceToStep(tc, aMsg.cancelled));
   const thinking = aMsg.thinking?.trim();
   const revArtifact = extractRevisionArtifact(aMsg.artifacts);
+  const primaryArtifact = selectPrimaryDomainArtifact(aMsg.artifacts);
   const summaryText = aMsg.content.trim();
 
   const modifiedAnchors =
@@ -320,24 +438,18 @@ function buildCompletedSessionRun(
           },
         }
       : {}),
+    ...(primaryArtifact ? { artifact: primaryArtifact } : {}),
     ...(status === 'SUCCEEDED'
       ? {
           result: {
             summary: summaryText
               ? { zh: summaryText, en: summaryText }
-              : { zh: '已完成本轮修改。', en: 'Completed refinement run.' },
-            ...(revArtifact
+              : { zh: '已完成本轮运行。', en: 'Completed agent run.' },
+            ...(primaryArtifact
               ? {
-                  artifactLabel: {
-                    zh: `查看修订 v${revArtifact.revisionNumber}`,
-                    en: `Open revision v${revArtifact.revisionNumber}`,
-                  },
+                  artifactLabel: formatDomainArtifactLabel(primaryArtifact),
                 }
-              : aMsg.artifacts && aMsg.artifacts.length > 0
-                ? {
-                    artifactLabel: { zh: '查看产物', en: 'View artifact' },
-                  }
-                : {}),
+              : {}),
           },
         }
       : {}),
@@ -362,6 +474,7 @@ function buildRunFromLiveDraft(
   const startedAt = uMsg ? parseIsoMs(uMsg.timestamp, draft.startedAt) : draft.startedAt;
   const thinking = draft.thinking.trim();
   const revArtifact = extractRevisionArtifact(draft.artifacts);
+  const primaryArtifact = selectPrimaryDomainArtifact(draft.artifacts);
   return {
     id: uMsg?.id ?? draft.runId,
     title: summarizeUserPromptTitle(uMsg?.content ?? draft.userPrompt, draft.displayTitle),
@@ -384,6 +497,7 @@ function buildRunFromLiveDraft(
           },
         }
       : {}),
+    ...(primaryArtifact ? { artifact: primaryArtifact } : {}),
   };
 }
 

@@ -3,13 +3,11 @@ import type { AgentLocale } from './locale.js';
 import { LlmGatewayError } from './pi-session-engine.js';
 import {
   generatePrototypeFromDoc,
-  synthesizeOntologyFromPrototype,
-  synthesizeRequirementDocFromSession,
   type SrsSynthesisProgressEvent,
   type SrsSynthesisProgressPhase,
 } from './runtime.js';
 
-export type PipelineTaskKind = 'SRS_SYNTHESIS' | 'PROTOTYPE_GEN' | 'ONTOLOGY_SYNTH';
+export type PipelineTaskKind = 'PROTOTYPE_GEN';
 export type PipelineTaskStatus = 'RUNNING' | 'COMPLETED' | 'ERROR' | 'CANCELLED';
 
 export interface PipelineStageLogEntry {
@@ -117,28 +115,14 @@ function getStoreTaskMap(store: WorkspaceStore): Map<string, LivePipelineTaskEnt
   return map;
 }
 
-function targetViewForKind(kind: PipelineTaskKind): PipelineTaskSnapshot['targetView'] {
-  if (kind === 'SRS_SYNTHESIS') return 'req_docs';
-  if (kind === 'PROTOTYPE_GEN') return 'req_prototype';
-  return 'app_modeling';
+function targetViewForKind(_kind: PipelineTaskKind): PipelineTaskSnapshot['targetView'] {
+  return 'req_prototype';
 }
 
-function initialMessagesForKind(kind: PipelineTaskKind): { messageZh: string; messageEn: string } {
-  if (kind === 'SRS_SYNTHESIS') {
-    return {
-      messageZh: '正在启动后台持久化规格书合成任务，聚合会话记录与已确认决策…',
-      messageEn: 'Starting durable background SRS synthesis task and aggregating session context…',
-    };
-  }
-  if (kind === 'PROTOTYPE_GEN') {
-    return {
-      messageZh: '正在启动后台交互式 HTML5 原型生成任务…',
-      messageEn: 'Starting durable background interactive HTML5 prototype task…',
-    };
-  }
+function initialMessagesForKind(_kind: PipelineTaskKind): { messageZh: string; messageEn: string } {
   return {
-    messageZh: '正在启动后台 11 元模型结构化推导任务…',
-    messageEn: 'Starting durable background 11-model ontology synthesis task…',
+    messageZh: '正在启动后台交互式 HTML5 原型生成任务…',
+    messageEn: 'Starting durable background interactive HTML5 prototype task…',
   };
 }
 
@@ -203,49 +187,6 @@ function reconcileStaleCheckpointSnapshot(
     return liveMap.get(snapshot.id)!.snapshot;
   }
 
-  // Server restarted while this task was previously marked RUNNING — reconcile against stored artifacts
-  if (snapshot.kind === 'SRS_SYNTHESIS') {
-    const docs = store.listRequirementDocs(snapshot.projectId);
-    const matchedDoc = snapshot.draftDocId
-      ? docs.find((d) => d.id === snapshot.draftDocId)
-      : undefined;
-    if (matchedDoc && matchedDoc.status === 'CONFIRMED') {
-      const recovered: PipelineTaskSnapshot = {
-        ...snapshot,
-        status: 'COMPLETED',
-        step: 4,
-        phase: 'DONE',
-        finishedAt: Date.now(),
-        resultItemId: matchedDoc.id,
-        completedChapters: 9,
-        streamedText: snapshot.streamedText || matchedDoc.content,
-        streamedChars: (snapshot.streamedText || matchedDoc.content).length,
-        previewTail: (snapshot.streamedText || matchedDoc.content).slice(-1600),
-        messageZh: `已生成《${matchedDoc.title}》(${matchedDoc.version})`,
-        messageEn: `Generated "${matchedDoc.title}" (${matchedDoc.version})`,
-      };
-      persistSnapshotCheckpoint(store, recovered);
-      return recovered;
-    }
-    if (matchedDoc) {
-      const recoveredDraftErr: PipelineTaskSnapshot = {
-        ...snapshot,
-        status: 'ERROR',
-        phase: 'ERROR',
-        finishedAt: Date.now(),
-        resultItemId: matchedDoc.id,
-        streamedText: snapshot.streamedText || matchedDoc.content,
-        streamedChars: (snapshot.streamedText || matchedDoc.content).length,
-        previewTail: (snapshot.streamedText || matchedDoc.content).slice(-1600),
-        messageZh: `服务重启中断了流式合成，已为您自动保留阶段草稿《${matchedDoc.title}》，可查看草稿或重新合成完整版`,
-        messageEn: `Server restart interrupted streaming; partial draft "${matchedDoc.title}" was preserved automatically`,
-        errorMessage: 'SERVER_RESTART_INTERRUPTED',
-      };
-      persistSnapshotCheckpoint(store, recoveredDraftErr);
-      return recoveredDraftErr;
-    }
-  }
-
   const interrupted: PipelineTaskSnapshot = {
     ...snapshot,
     status: 'ERROR',
@@ -271,7 +212,7 @@ export function listServerPipelineTasks(
     for (const row of rows) {
       try {
         const parsed = JSON.parse(row.stateJson) as PipelineTaskSnapshot;
-        if (!parsed || !parsed.id) continue;
+        if (!parsed || !parsed.id || parsed.kind !== 'PROTOTYPE_GEN') continue;
         const reconciled = reconcileStaleCheckpointSnapshot(store, parsed);
         merged.set(reconciled.id, reconciled);
       } catch {
@@ -374,10 +315,7 @@ export function startServerPipelineTask(
     timestamp: nowIso,
   };
 
-  const preAssignedDocId =
-    input.kind === 'SRS_SYNTHESIS'
-      ? input.docId || `req-doc-${project.id}-${Date.now().toString(36)}`
-      : input.docId;
+  const preAssignedDocId = input.docId;
 
   const snapshot: PipelineTaskSnapshot = {
     id: taskId,
@@ -427,7 +365,7 @@ async function executeDetachedPipelineTask(
   store: WorkspaceStore,
   entry: LivePipelineTaskEntry,
   input: StartPipelineTaskInput,
-  preAssignedDocId?: string,
+  _preAssignedDocId?: string,
 ): Promise<PipelineTaskSnapshot> {
   const handleProgress = (ev: SrsSynthesisProgressEvent) => {
     const cur = entry.snapshot;
@@ -507,118 +445,18 @@ async function executeDetachedPipelineTask(
   };
 
   try {
-    if (input.kind === 'SRS_SYNTHESIS') {
-      const resolvedSessionId =
-        input.sessionId ||
-        store.listAgentSessions({ projectId: input.projectId, agentKind: 'REQUIREMENT' })[0]?.id ||
-        store.listRequirementSessions(input.projectId)[0]?.id;
-      if (!resolvedSessionId) {
-        throw new Error('No requirement exploration session found for SRS synthesis');
-      }
-
-      const res = await synthesizeRequirementDocFromSession(store, {
-        sessionId: resolvedSessionId,
-        projectId: input.projectId,
-        ...(preAssignedDocId ? { docId: preAssignedDocId } : {}),
-        ...(input.title ? { title: input.title } : {}),
-        ...(input.version ? { version: input.version } : {}),
-        ...(input.resumeFromText ? { resumeFromText: input.resumeFromText } : {}),
-        ...(input.locale ? { locale: input.locale } : {}),
-        signal: entry.controller.signal,
-        onProgress: handleProgress,
-      });
-
-      const doneMsgZh = `已生成《${res.doc.title}》(${res.doc.version})，共 ${res.doc.content.length.toLocaleString()} 字`;
-      const doneMsgEn = `Generated "${res.doc.title}" (${res.doc.version}), ${res.doc.content.length.toLocaleString()} chars`;
-      const { nextLogs } = appendOrUpdateStageLog(
-        entry.snapshot.stageLogs,
-        { step: 4, phase: 'DONE', messageZh: doneMsgZh, messageEn: doneMsgEn },
-        '4:DONE:complete',
-        entry.lastStageSignature,
-      );
-
-      const completed: PipelineTaskSnapshot = {
-        ...entry.snapshot,
-        status: 'COMPLETED',
-        step: 4,
-        phase: 'DONE',
-        messageZh: doneMsgZh,
-        messageEn: doneMsgEn,
-        completedChapters: 9,
-        streamedText: res.doc.content,
-        streamedChars: res.doc.content.length,
-        previewTail: res.doc.content.slice(-1600),
-        providerModel: res.providerUsed || entry.snapshot.providerModel,
-        draftDocId: res.doc.id,
-        resultItemId: res.doc.id,
-        stageLogs: nextLogs,
-        finishedAt: Date.now(),
-        unreadCompletion: true,
-      };
-      entry.snapshot = completed;
-      persistSnapshotCheckpoint(store, completed);
-      broadcastToTaskListeners(entry, 'complete', { task: completed, docId: res.doc.id }, true);
-      return completed;
-    }
-
-    if (input.kind === 'PROTOTYPE_GEN') {
-      const res = await generatePrototypeFromDoc(store, {
-        projectId: input.projectId,
-        ...(input.docId ? { docId: input.docId } : {}),
-        ...(input.prompt ? { prompt: input.prompt } : {}),
-        ...(input.resumeFromText ? { resumeFromText: input.resumeFromText } : {}),
-        ...(input.locale ? { locale: input.locale } : {}),
-        signal: entry.controller.signal,
-        onProgress: handleProgress,
-      });
-
-      const doneMsgZh = `已生成交互原型《${res.prototype.name}》（自动提取 ${res.prototype.extractedScreenCount} 个业务屏幕同步至 MU 模型）`;
-      const doneMsgEn = `Generated prototype "${res.prototype.name}" (${res.prototype.extractedScreenCount} screens synced to MU)`;
-      const { nextLogs } = appendOrUpdateStageLog(
-        entry.snapshot.stageLogs,
-        { step: 4, phase: 'DONE', messageZh: doneMsgZh, messageEn: doneMsgEn },
-        '4:DONE:complete',
-        entry.lastStageSignature,
-      );
-
-      const completed: PipelineTaskSnapshot = {
-        ...entry.snapshot,
-        status: 'COMPLETED',
-        step: 4,
-        phase: 'DONE',
-        messageZh: doneMsgZh,
-        messageEn: doneMsgEn,
-        streamedText: res.prototype.htmlContent,
-        streamedChars: res.prototype.htmlContent.length,
-        previewTail: res.prototype.htmlContent.slice(-1600),
-        providerModel: res.providerUsed || entry.snapshot.providerModel,
-        resultItemId: res.prototype.id,
-        stageLogs: nextLogs,
-        finishedAt: Date.now(),
-        unreadCompletion: true,
-      };
-      entry.snapshot = completed;
-      persistSnapshotCheckpoint(store, completed);
-      broadcastToTaskListeners(
-        entry,
-        'complete',
-        { task: completed, prototypeId: res.prototype.id },
-        true,
-      );
-      return completed;
-    }
-
-    const res = await synthesizeOntologyFromPrototype(store, {
+    const res = await generatePrototypeFromDoc(store, {
       projectId: input.projectId,
-      ...(input.prototypeId ? { prototypeId: input.prototypeId } : {}),
       ...(input.docId ? { docId: input.docId } : {}),
+      ...(input.prompt ? { prompt: input.prompt } : {}),
+      ...(input.resumeFromText ? { resumeFromText: input.resumeFromText } : {}),
       ...(input.locale ? { locale: input.locale } : {}),
       signal: entry.controller.signal,
       onProgress: handleProgress,
     });
 
-    const doneMsgZh = `11 元模型对齐完毕（已覆盖 ${res.synthesizedModels.length}/11 个模型，一致性错误 ${res.validation.errorCount} 项）`;
-    const doneMsgEn = `11-model suite synthesized (${res.synthesizedModels.length}/11 models · ${res.validation.errorCount} errors)`;
+    const doneMsgZh = `已生成交互原型《${res.prototype.name}》（自动提取 ${res.prototype.extractedScreenCount} 个业务屏幕同步至 MU 模型）`;
+    const doneMsgEn = `Generated prototype "${res.prototype.name}" (${res.prototype.extractedScreenCount} screens synced to MU)`;
     const { nextLogs } = appendOrUpdateStageLog(
       entry.snapshot.stageLogs,
       { step: 4, phase: 'DONE', messageZh: doneMsgZh, messageEn: doneMsgEn },
@@ -633,14 +471,23 @@ async function executeDetachedPipelineTask(
       phase: 'DONE',
       messageZh: doneMsgZh,
       messageEn: doneMsgEn,
-      resultItemId: res.project.id,
+      streamedText: res.prototype.htmlContent,
+      streamedChars: res.prototype.htmlContent.length,
+      previewTail: res.prototype.htmlContent.slice(-1600),
+      providerModel: res.providerUsed || entry.snapshot.providerModel,
+      resultItemId: res.prototype.id,
       stageLogs: nextLogs,
       finishedAt: Date.now(),
       unreadCompletion: true,
     };
     entry.snapshot = completed;
     persistSnapshotCheckpoint(store, completed);
-    broadcastToTaskListeners(entry, 'complete', { task: completed }, true);
+    broadcastToTaskListeners(
+      entry,
+      'complete',
+      { task: completed, prototypeId: res.prototype.id },
+      true,
+    );
     return completed;
   } catch (err) {
     if (
@@ -677,21 +524,9 @@ async function executeDetachedPipelineTask(
           ? err.message
           : String(err);
 
-    const preservedDraft =
-      input.kind === 'SRS_SYNTHESIS' && entry.snapshot.draftDocId
-        ? store.listRequirementDocs(input.projectId).find((d) => d.id === entry.snapshot.draftDocId)
-        : undefined;
-
-    const errZh = preservedDraft
-      ? `${rawMsg}（已自动保留已生成的阶段草稿《${preservedDraft.title}》）`
-      : rawMsg;
-    const errEn = preservedDraft
-      ? `${rawMsg} (Partial draft "${preservedDraft.title}" was automatically preserved)`
-      : rawMsg;
-
     const { nextLogs } = appendOrUpdateStageLog(
       entry.snapshot.stageLogs,
-      { step: entry.snapshot.step, phase: 'ERROR', messageZh: errZh, messageEn: errEn },
+      { step: entry.snapshot.step, phase: 'ERROR', messageZh: rawMsg, messageEn: rawMsg },
       'ERROR',
       entry.lastStageSignature,
     );
@@ -700,10 +535,9 @@ async function executeDetachedPipelineTask(
       ...entry.snapshot,
       status: 'ERROR',
       phase: 'ERROR',
-      messageZh: errZh,
-      messageEn: errEn,
+      messageZh: rawMsg,
+      messageEn: rawMsg,
       errorMessage: rawMsg,
-      ...(preservedDraft ? { resultItemId: preservedDraft.id } : {}),
       stageLogs: nextLogs,
       finishedAt: Date.now(),
       unreadCompletion: true,
@@ -841,8 +675,7 @@ export function resumeServerPipelineTask(
 
   const savedPrefix = stored.streamedText ?? '';
   const canContinueFromPrefix =
-    savedPrefix.trim().length >= 200 &&
-    (stored.kind === 'SRS_SYNTHESIS' || stored.kind === 'PROTOTYPE_GEN');
+    savedPrefix.trim().length >= 200 && stored.kind === 'PROTOTYPE_GEN';
 
   if (!canContinueFromPrefix) {
     return startServerPipelineTask(store, {
@@ -955,7 +788,7 @@ export function autoResumeInterruptedPipelineTasks(
   for (const row of store.listAgentCheckpoints(PIPELINE_WORKFLOW_KEY)) {
     try {
       const parsed = JSON.parse(row.stateJson) as PipelineTaskSnapshot;
-      if (!parsed?.id || parsed.dismissed) continue;
+      if (!parsed?.id || parsed.dismissed || parsed.kind !== 'PROTOTYPE_GEN') continue;
       if (liveMap.has(parsed.id)) continue;
       const updatedMs = row.updatedAt ? Date.parse(row.updatedAt) : parsed.startedAt;
       const ageMs = Number.isFinite(updatedMs) ? now - updatedMs : now - parsed.startedAt;

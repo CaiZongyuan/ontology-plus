@@ -131,6 +131,48 @@ export type AgentDomainArtifact =
       revisionId: string;
       revisionNumber: number;
       modifiedAnchors: PrototypeTargetAnchor[];
+    }
+  | {
+      kind: 'REQUIREMENT_DOC';
+      docId: string;
+      title: string;
+      version: string;
+      status: 'DRAFT' | 'CONFIRMED' | 'PUBLISHED';
+    }
+  | {
+      kind: 'ONTOLOGY_SUITE';
+      projectId: string;
+      prototypeId?: string;
+      modelCount: number;
+      errorCount: number;
+      warningCount: number;
+    }
+  | {
+      kind: 'TECH_ARCH_ASSET';
+      assetId: string;
+      name: string;
+      version: string;
+      tags: string[];
+      applicationId?: string;
+    }
+  | {
+      kind: 'METRIC_INSIGHT';
+      metricId: string;
+      metricCode: string;
+      metricName: string;
+      insightMarkdown: string;
+      anomalyDrivers: string[];
+      suggestedAction: string;
+      writebackInterfaceId: string;
+    }
+  | {
+      kind: 'ANALYTICS_REPORT';
+      reportId: string;
+      scenarioId?: string;
+      scenarioName?: string;
+      title: string;
+      recommendedWritebackId?: string;
+      causalBreakdown?: { factor: string; weight: string; evidence: string }[];
     };
 
 export type AgentImageAttachmentRole =

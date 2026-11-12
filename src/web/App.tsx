@@ -696,16 +696,9 @@ function ShellInner() {
               >
                 <Loader2 size={12} className="pipeline-spin" aria-hidden="true" />
                 <span>
-                  {runningTopbarTask.kind === 'SRS_SYNTHESIS'
-                    ? runningTopbarTask.completedChapters > 0
-                      ? t(
-                          `后台合成需求书 (${runningTopbarTask.completedChapters}/9 章)`,
-                          `SRS Synthesis (${runningTopbarTask.completedChapters}/9)`,
-                        )
-                      : t('后台合成需求规格书…', 'Synthesizing SRS…')
-                    : runningTopbarTask.kind === 'PROTOTYPE_GEN'
-                      ? t('后台生成交互原型…', 'Generating Prototype…')
-                      : t('后台合成 11 模型…', 'Synthesizing 11 Models…')}
+                  {runningTopbarTask.kind === 'PROTOTYPE_GEN'
+                    ? t('后台生成交互原型…', 'Generating Prototype…')
+                    : t(runningTopbarTask.titleZh, runningTopbarTask.titleEn)}
                 </span>
               </button>
             )}

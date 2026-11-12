@@ -18,6 +18,7 @@ import {
   useWorkbenchStore,
 } from '../api.js';
 import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
+import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import { usePreferences, type NavViewId } from '../i18n.js';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas.js';
 import './ontology-workbench.css';
@@ -27,6 +28,7 @@ import {
   Boxes,
   CheckCircle2,
   Crosshair,
+  Loader2,
   Search,
   Sparkles,
 } from 'lucide-react';
@@ -208,6 +210,7 @@ export function OntologyWorkbenchView({
     data,
     selectedModel,
     selectedElementId,
+    liveSessionDrafts,
     setSelectedModel,
     saveSuiteWithUndo,
     pushUndoSnapshot,
@@ -217,7 +220,7 @@ export function OntologyWorkbenchView({
     redoStack,
     patchData,
     showToast,
-    startOntologySynthTask,
+    startOntologySynthesisRun,
   } = useWorkbenchStore();
 
   const [activeTab, setActiveTab] = useState<'STRUCTURED' | 'GRAPH' | 'YAML'>('STRUCTURED');
@@ -1394,9 +1397,28 @@ export function OntologyWorkbenchView({
                       type="button"
                       variant="accent"
                       size="md"
-                      onClick={() => void startOntologySynthTask()}
+                      data-testid="synthesize-ontology-btn"
+                      disabled={(data?.agentSessions ?? []).some(
+                        (s) =>
+                          s.projectId === project.id &&
+                          s.agentKind === 'COPILOT' &&
+                          (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
+                      )}
+                      onClick={() => {
+                        useAgentPanelStore.getState().revealPanel();
+                        void startOntologySynthesisRun();
+                      }}
                     >
-                      <Sparkles size={14} />
+                      {(data?.agentSessions ?? []).some(
+                        (s) =>
+                          s.projectId === project.id &&
+                          s.agentKind === 'COPILOT' &&
+                          (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
+                      ) ? (
+                        <Loader2 size={14} className="pipeline-spin" aria-hidden="true" />
+                      ) : (
+                        <Sparkles size={14} />
+                      )}
                       {t('从当前界面原型一键推导 11 模型本体', 'Synthesize 11-Model Ontology from Prototype')}
                     </Button>
                   ) : (
