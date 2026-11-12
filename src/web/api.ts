@@ -49,8 +49,6 @@ import type {
   WritebackInterface,
 } from '../packages/workspace-store/index.js';
 import type {
-  AppCodingAgentResult,
-  CapabilitySmartChatResult,
   LlmPingResult,
   PrototypeRefinementSelection,
   TransientTurnImageInput,
@@ -2282,13 +2280,6 @@ export async function apiEnsurePrototypeCoDesignSession(
   );
 }
 
-export async function apiRunAppCodingAgent(
-  appId: string,
-  instruction: string,
-): Promise<AppCodingAgentResult & { assembledApplications: AssembledApplication[] }> {
-  return apiPostJson(`/api/applications/${appId}/coding-agent`, { instruction });
-}
-
 export async function apiCompileDevPackage(
   appId: string,
 ): Promise<{
@@ -2324,13 +2315,6 @@ export async function apiCallMcpTool(
     }),
   });
   return res.json();
-}
-
-export async function apiSendCapabilityChat(
-  agentId: string,
-  input: { sessionId?: string; userMessage: string },
-): Promise<CapabilitySmartChatResult & { capabilityChatSessions: CapabilityChatSession[] }> {
-  return apiPostJson(`/api/capability/agents/${agentId}/chat`, input);
 }
 
 export async function apiExecuteAnalyticsSql(
