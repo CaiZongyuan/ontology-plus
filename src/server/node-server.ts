@@ -1,12 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { serve } from '@hono/node-server';
+import { autoResumeInterruptedAgentSessions } from '../packages/agent-runtime/index.js';
 import { createWorkspaceStore } from '../packages/workspace-store/index.js';
 import { createApiApp } from './app.js';
 
 const port = Number(process.env.PORT ?? 4310);
 const store = createWorkspaceStore();
 const app = createApiApp(store);
+
+void autoResumeInterruptedAgentSessions(store).catch((err) => {
+  console.error('Failed to auto-resume interrupted agent sessions on startup:', err);
+});
 
 process.once('SIGINT', () => process.exit(0));
 process.once('SIGTERM', () => process.exit(0));

@@ -1,7 +1,9 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { desensitizeRecommendBriefWithAgent } from '../packages/agent-runtime/index.js';
 import { createWorkspaceStore, type VisualReferenceItem } from '../packages/workspace-store/index.js';
 import { createApiApp } from './app.js';
 import { buildSanitizedRecommendBrief } from './inspo-proxy.js';
@@ -354,5 +356,94 @@ describe('Inspo MCP proxy, privacy-safe recommend desensitization, and offline f
     expect(mdJson.ok).toBe(true);
     expect(mdJson.fallback).toBe(true);
     expect(mdJson.markdown).toContain('Increase');
+  });
+
+  it('rejects unrequested similar (find_similar) action with HTTP 400 on both /api/inspo and /api/prototype-inspo', async () => {
+    const store = createWorkspaceStore({ dbPath: createIsolatedDbPath(), enableFileMirror: false });
+    const app = createApiApp(store);
+
+    for (const endpoint of ['/api/inspo', '/api/prototype-inspo']) {
+      const res = await app.request(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'similar', slug: 'linear-app' }),
+      });
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { ok: boolean; code: string; error: string };
+      expect(json.ok).toBe(false);
+      expect(json.code).toBe('UNSUPPORTED_INSPO_ACTION');
+      expect(json.error).toContain('similar');
+    }
+  });
+
+  it('uses configured live LLM in desensitizeRecommendBriefWithAgent and strictly strips leaked secrets, numbers, URLs, emails, and Chinese text', async () => {
+    const llmServer = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      const chunk = {
+        id: 'chatcmpl-inspo-1',
+        object: 'chat.completion.chunk',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              content:
+                'Enterprise fintech ledger table and approval detail workspace for 华泰星辰 PROJ-HTXC-9921 DeepVault 987654 ops@htxc.corp https://htxc.corp/secret, clean high-density tabular light interface',
+            },
+            finish_reason: 'stop',
+          },
+        ],
+      };
+      res.write(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => llmServer.listen(0, '127.0.0.1', () => resolve()));
+    const addr = llmServer.address() as { port: number };
+    const prevLive = process.env.ONTOLOGY_LIVE_LLM;
+
+    try {
+      process.env.ONTOLOGY_LIVE_LLM = '1';
+      const store = createWorkspaceStore({ dbPath: createIsolatedDbPath(), enableFileMirror: false });
+      store.updateSystemSettings({ mockLlmMode: false });
+      store.saveLlmProvider({
+        id: 'prov-live-desensitize',
+        name: 'Local Test LLM',
+        providerType: 'OPENAI_COMPATIBLE',
+        baseUrl: `http://127.0.0.1:${addr.port}/v1`,
+        apiKey: 'test-key',
+        defaultModel: 'gpt-4o-mini',
+        availableModels: ['gpt-4o-mini'],
+        enabled: true,
+      });
+
+      for (const p of store.listLlmProviders()) {
+        if (p.id !== 'prov-live-desensitize') {
+          store.saveLlmProvider({ ...p, enabled: false });
+        }
+      }
+
+      const result = await desensitizeRecommendBriefWithAgent(store, {
+        projectName: '华泰星辰清结算系统',
+        projectCode: 'PROJ-HTXC-9921',
+        domain: '金融清结算',
+        srsText: 'Confidential ledger for DeepVault Holdings SEC-987654 ops@htxc.corp',
+      });
+
+      expect(result.brief.length).toBeLessThanOrEqual(200);
+      expect(result.brief).toContain('fintech');
+      expect(result.brief).toContain('ledger');
+      expect(result.brief).toContain('tabular');
+      expect(result.brief).not.toContain('华泰');
+      expect(result.brief).not.toContain('HTXC');
+      expect(result.brief).not.toContain('9921');
+      expect(result.brief).not.toContain('987654');
+      expect(result.brief).not.toContain('DeepVault');
+      expect(result.brief).not.toContain('htxc.corp');
+      expect(/[\u4e00-\u9fff\d]/.test(result.brief)).toBe(false);
+    } finally {
+      if (prevLive === undefined) delete process.env.ONTOLOGY_LIVE_LLM;
+      else process.env.ONTOLOGY_LIVE_LLM = prevLive;
+      llmServer.close();
+    }
   });
 });

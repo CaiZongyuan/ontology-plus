@@ -12,21 +12,29 @@ import type {
   AgentSession,
   AgentToolCallTrace,
   AnalyticsReport,
+  ExtractionJob,
   ProjectDetail,
-  PrototypeArtifact,
   RequirementDoc,
   RequirementSession,
   WorkspaceStore,
 } from '../../workspace-store/index.js';
+import {
+  applyLlmBlueprintToSuite,
+  type LlmSynthesizedDomainBlueprint,
+} from './blueprint.js';
 import { type AgentLocale, pickLocaleText } from './locale.js';
-import { applyOntologyToolCall, type OpenAiFunctionTool } from './tools.js';
+import { runSmartOntologyExtractionJob } from './runtime.js';
+import { type OpenAiFunctionTool } from './tools.js';
+
+export { applyLlmBlueprintToSuite, type LlmSynthesizedDomainBlueprint };
 
 export type StructuredDomainActionKind =
   | 'SYNTHESIZE_SRS'
   | 'SYNTHESIZE_ONTOLOGY_SUITE'
   | 'GENERATE_TECH_ARCH'
   | 'METRIC_INSIGHT'
-  | 'SCENARIO_ATTRIBUTION';
+  | 'SCENARIO_ATTRIBUTION'
+  | 'RUN_ONTOLOGY_EXTRACTION';
 
 export interface ParsedStructuredDomainAction {
   kind: StructuredDomainActionKind;
@@ -35,7 +43,7 @@ export interface ParsedStructuredDomainAction {
 }
 
 const ACTION_HEADER_RE =
-  /^\[ACTION:(SYNTHESIZE_SRS|SYNTHESIZE_ONTOLOGY_SUITE|GENERATE_TECH_ARCH|METRIC_INSIGHT|SCENARIO_ATTRIBUTION)(?:\s+(\{[^\r\n]*\}))?\]\s*/i;
+  /^\[ACTION:(SYNTHESIZE_SRS|SYNTHESIZE_ONTOLOGY_SUITE|GENERATE_TECH_ARCH|METRIC_INSIGHT|SCENARIO_ATTRIBUTION|RUN_ONTOLOGY_EXTRACTION)(?:\s+(\{[^\r\n]*\}))?\]\s*/i;
 
 export function parseStructuredActionFromPrompt(
   prompt: string,
@@ -183,6 +191,22 @@ export function collectMergedRequirementContext(
     resolvedDecisions: Array.from(resolvedDecisions),
     openQuestions: Array.from(openQuestions),
   };
+}
+
+export function findMissingCanonicalSrsHeadings(candidateMarkdown: string): string[] {
+  const cleaned = stripMarkdownFence(candidateMarkdown).trim();
+  const missing: string[] = [];
+  for (let idx = 1; idx <= 9; idx += 1) {
+    if (!new RegExp(`^##\\s+${idx}\\.\\s+`, 'm').test(cleaned)) {
+      missing.push(`## ${idx}.`);
+    }
+  }
+  for (let sub = 1; sub <= 7; sub += 1) {
+    if (!new RegExp(`^###\\s+9\\.${sub}\\s+`, 'm').test(cleaned)) {
+      missing.push(`### 9.${sub}`);
+    }
+  }
+  return missing;
 }
 
 export function ensureCanonicalNineChapterSrsStructure(
@@ -818,352 +842,6 @@ ${extraFormFieldsHtml}
   </section>
 </body>
 </html>`;
-}
-
-export interface LlmSynthesizedDomainBlueprint {
-  aggregates?: {
-    sourceQuote?: string;
-    id?: string;
-    name: string;
-    alias?: string;
-    lifecycle?: string[];
-    attributes?: { name: string; label?: string; type?: string; required?: boolean }[];
-  }[];
-  behaviors?: {
-    sourceQuote?: string;
-    id?: string;
-    name: string;
-    alias?: string;
-    ownerEntity?: string;
-    behaviorType?: 'COMMAND' | 'QUERY';
-  }[];
-  rules?: {
-    sourceQuote?: string;
-    id?: string;
-    name?: string;
-    alias?: string;
-    ruleType?: 'VALIDATION' | 'CALCULATION' | 'STATE_TRANSITION' | 'COORDINATION';
-    referencedObjects?: string[];
-    expression?: string;
-    violationMessage?: string;
-  }[];
-  events?: {
-    sourceQuote?: string;
-    id?: string;
-    name: string;
-    label?: string;
-    sourceAggregate?: string;
-  }[];
-  actors?: {
-    sourceQuote?: string;
-    actorId?: string;
-    actorName?: string;
-    actorType?: 'HUMAN' | 'SYSTEM' | 'EXTERNAL_ENTITY' | 'TIMER';
-    roleId?: string;
-    roleName?: string;
-    roleCode?: string;
-  }[];
-  flows?: {
-    sourceQuote?: string;
-    id?: string;
-    name: string;
-    flowType?: 'APPROVAL' | 'COLLABORATION' | 'SCHEDULED';
-    primaryAggregate?: string;
-  }[];
-  interfaces?: {
-    sourceQuote?: string;
-    interfaceId?: string;
-    name: string;
-    direction?: 'PROVIDED' | 'DEPENDENT';
-    interfaceCategory?: 'COMMAND' | 'QUERY' | 'EVENT_SUB' | 'EXTERNAL_GATEWAY';
-    protocol?: 'REST' | 'RPC' | 'MQ' | 'MCP';
-    relatedEntityRef?: string;
-  }[];
-}
-
-export function applyLlmBlueprintToSuite(
-  baseSuite: OntologySuite,
-  blueprint: LlmSynthesizedDomainBlueprint,
-  domain: string,
-  options?: { nonCollidingDocIds?: boolean },
-): OntologySuite {
-  let working: OntologySuite = JSON.parse(JSON.stringify(baseSuite));
-  const docMode = Boolean(options?.nonCollidingDocIds);
-  const nextDocId = (prefix: string, usedIds: Set<string>): string => {
-    let n = 1;
-    while (usedIds.has(`${prefix}-${String(n).padStart(2, '0')}`)) n += 1;
-    const id = `${prefix}-${String(n).padStart(2, '0')}`;
-    usedIds.add(id);
-    return id;
-  };
-  const usedAggIds = new Set((baseSuite.M1?.aggregates ?? []).map((a) => a.id));
-  const usedActorIds = new Set((baseSuite.M5?.actors ?? []).map((a) => a.id));
-  const usedRoleIds = new Set((baseSuite.M5?.roles ?? []).map((r) => r.id));
-  const usedBehIds = new Set((baseSuite.M2?.behaviors ?? []).map((b) => b.id));
-  const usedRuleIds = new Set((baseSuite.M3?.rules ?? []).map((r) => r.id));
-  const usedEvtIds = new Set((baseSuite.ME?.events ?? []).map((e) => e.id));
-  const usedFlwIds = new Set((baseSuite.M6?.flows ?? []).map((f) => f.id));
-  const usedIfIds = new Set((baseSuite.MI?.interfaces ?? []).map((i) => i.interfaceId));
-
-  for (const [idx, agg] of (blueprint.aggregates ?? []).slice(0, 8).entries()) {
-    if (!agg?.name) continue;
-    const cleanName = agg.name.replace(/[^A-Za-z0-9_]/g, '');
-    let aggId = agg.id || `AGG-0${idx + 1}`;
-    if (docMode) {
-      const existingByName = baseSuite.M1?.aggregates.find((a) => a.name === cleanName);
-      if (existingByName) {
-        aggId = existingByName.id;
-      } else if (agg.id && !usedAggIds.has(agg.id)) {
-        aggId = agg.id;
-        usedAggIds.add(aggId);
-      } else {
-        aggId = nextDocId('AGG-DOC', usedAggIds);
-      }
-    }
-    try {
-      working = applyOntologyToolCall(
-        working,
-        'upsert_aggregate',
-        {
-          id: aggId,
-          name: cleanName,
-          alias: agg.alias || agg.name,
-          lifecycle: agg.lifecycle,
-          attributes: agg.attributes,
-        },
-        domain,
-      ).nextSuite;
-    } catch {
-      // Skip malformed item; validator gate guards final suite
-    }
-  }
-
-  for (const [idx, act] of (blueprint.actors ?? []).slice(0, 6).entries()) {
-    if (!act?.actorName && !act?.roleName) continue;
-    const targetActorName = (act.actorName || act.roleName || '').trim();
-    const targetRoleName = (act.roleName || act.actorName || '').trim();
-    let actorId = act.actorId || `ACT-0${idx + 1}`;
-    let roleId = act.roleId || `ROLE-0${idx + 1}`;
-    if (docMode) {
-      const existingActor = baseSuite.M5?.actors.find(
-        (a) => a.name === targetActorName && (!act.actorId || a.id === act.actorId),
-      );
-      if (existingActor) {
-        actorId = existingActor.id;
-      } else if (act.actorId && !usedActorIds.has(act.actorId)) {
-        actorId = act.actorId;
-        usedActorIds.add(actorId);
-      } else {
-        actorId = nextDocId('ACT-DOC', usedActorIds);
-      }
-
-      const existingRole = baseSuite.M5?.roles.find(
-        (r) => r.name === targetRoleName && (!act.roleId || r.id === act.roleId),
-      );
-      if (existingRole) {
-        roleId = existingRole.id;
-      } else if (act.roleId && !usedRoleIds.has(act.roleId)) {
-        roleId = act.roleId;
-        usedRoleIds.add(roleId);
-      } else {
-        roleId = nextDocId('ROLE-DOC', usedRoleIds);
-      }
-    }
-    try {
-      working = applyOntologyToolCall(
-        working,
-        'upsert_actor_role',
-        {
-          actorId,
-          actorName: act.actorName || act.roleName,
-          actorType: act.actorType || 'HUMAN',
-          roleId,
-          roleName: act.roleName || act.actorName,
-          roleCode: act.roleCode,
-        },
-        domain,
-      ).nextSuite;
-    } catch {
-      // Skip malformed item
-    }
-  }
-
-  for (const [idx, beh] of (blueprint.behaviors ?? []).slice(0, 10).entries()) {
-    if (!beh?.name) continue;
-    const cleanBehName = beh.name.replace(/[^A-Za-z0-9_]/g, '');
-    let behId = beh.id || `BHV-0${idx + 1}`;
-    if (docMode) {
-      const existingBeh = baseSuite.M2?.behaviors.find(
-        (b) => b.name === cleanBehName && (!beh.id || b.id === beh.id),
-      );
-      if (existingBeh) {
-        behId = existingBeh.id;
-      } else if (beh.id && !usedBehIds.has(beh.id)) {
-        behId = beh.id;
-        usedBehIds.add(behId);
-      } else {
-        behId = nextDocId('BHV-DOC', usedBehIds);
-      }
-    }
-    try {
-      working = applyOntologyToolCall(
-        working,
-        'upsert_behavior',
-        {
-          id: behId,
-          name: cleanBehName,
-          alias: beh.alias || beh.name,
-          ownerEntity: beh.ownerEntity,
-          behaviorType: beh.behaviorType || 'COMMAND',
-        },
-        domain,
-      ).nextSuite;
-    } catch {
-      // Skip malformed item
-    }
-  }
-
-  for (const [idx, rl] of (blueprint.rules ?? []).slice(0, 10).entries()) {
-    if (!rl?.alias && !rl?.name) continue;
-    const cleanRuleName = (rl.name || `DomainRule0${idx + 1}`).replace(/[^A-Za-z0-9_]/g, '');
-    let ruleId = rl.id || `RULE-0${idx + 1}`;
-    if (docMode) {
-      const existingRule = baseSuite.M3?.rules.find(
-        (r) =>
-          ((rl.name && r.name === cleanRuleName) || (rl.alias && r.alias === rl.alias)) &&
-          (!rl.id || r.id === rl.id),
-      );
-      if (existingRule) {
-        ruleId = existingRule.id;
-      } else if (rl.id && !usedRuleIds.has(rl.id)) {
-        ruleId = rl.id;
-        usedRuleIds.add(ruleId);
-      } else {
-        ruleId = nextDocId('RULE-DOC', usedRuleIds);
-      }
-    }
-    try {
-      working = applyOntologyToolCall(
-        working,
-        'upsert_rule',
-        {
-          id: ruleId,
-          name: cleanRuleName,
-          alias: rl.alias || rl.name,
-          ruleType: rl.ruleType || 'VALIDATION',
-          referencedObjects: rl.referencedObjects,
-          expression: rl.expression,
-          violationMessage: rl.violationMessage,
-        },
-        domain,
-      ).nextSuite;
-    } catch {
-      // Skip malformed item
-    }
-  }
-
-  for (const [idx, ev] of (blueprint.events ?? []).slice(0, 8).entries()) {
-    if (!ev?.name) continue;
-    let evtId = ev.id || `EVT-0${idx + 1}`;
-    if (docMode) {
-      const existingEv = baseSuite.ME?.events.find(
-        (e) => e.name === ev.name && (!ev.id || e.id === ev.id),
-      );
-      if (existingEv) {
-        evtId = existingEv.id;
-      } else if (ev.id && !usedEvtIds.has(ev.id)) {
-        evtId = ev.id;
-        usedEvtIds.add(evtId);
-      } else {
-        evtId = nextDocId('EVT-DOC', usedEvtIds);
-      }
-    }
-    try {
-      working = applyOntologyToolCall(
-        working,
-        'upsert_event',
-        {
-          id: evtId,
-          name: ev.name,
-          label: ev.label || ev.name,
-          sourceAggregate: ev.sourceAggregate,
-        },
-        domain,
-      ).nextSuite;
-    } catch {
-      // Skip malformed item
-    }
-  }
-
-  for (const [idx, fl] of (blueprint.flows ?? []).slice(0, 4).entries()) {
-    if (!fl?.name) continue;
-    let flwId = fl.id || `FLW-0${idx + 1}`;
-    if (docMode) {
-      const existingFl = baseSuite.M6?.flows.find(
-        (f) => f.name === fl.name && (!fl.id || f.id === fl.id),
-      );
-      if (existingFl) {
-        flwId = existingFl.id;
-      } else if (fl.id && !usedFlwIds.has(fl.id)) {
-        flwId = fl.id;
-        usedFlwIds.add(flwId);
-      } else {
-        flwId = nextDocId('FLW-DOC', usedFlwIds);
-      }
-    }
-    try {
-      working = applyOntologyToolCall(
-        working,
-        'upsert_flow',
-        {
-          id: flwId,
-          name: fl.name,
-          flowType: fl.flowType,
-          primaryAggregate: fl.primaryAggregate,
-        },
-        domain,
-      ).nextSuite;
-    } catch {
-      // Skip malformed item
-    }
-  }
-
-  for (const [idx, itf] of (blueprint.interfaces ?? []).slice(0, 8).entries()) {
-    if (!itf?.name) continue;
-    let ifId = itf.interfaceId || `IF-0${idx + 1}`;
-    if (docMode) {
-      const existingItf = baseSuite.MI?.interfaces.find(
-        (i) => i.name === itf.name && (!itf.interfaceId || i.interfaceId === itf.interfaceId),
-      );
-      if (existingItf) {
-        ifId = existingItf.interfaceId;
-      } else if (itf.interfaceId && !usedIfIds.has(itf.interfaceId)) {
-        ifId = itf.interfaceId;
-        usedIfIds.add(ifId);
-      } else {
-        ifId = nextDocId('IF-DOC', usedIfIds);
-      }
-    }
-    try {
-      working = applyOntologyToolCall(
-        working,
-        'upsert_interface',
-        {
-          interfaceId: ifId,
-          name: itf.name,
-          direction: itf.direction || 'PROVIDED',
-          interfaceCategory: itf.interfaceCategory || 'COMMAND',
-          protocol: itf.protocol || 'REST',
-          relatedEntityRef: itf.relatedEntityRef,
-        },
-        domain,
-      ).nextSuite;
-    } catch {
-      // Skip malformed item
-    }
-  }
-
-  return working;
 }
 
 export function alignSuiteWithExtractedMu(
@@ -1892,6 +1570,7 @@ export const DOMAIN_RUN_TOOL_NAMES = [
   'save_tech_architecture_spec',
   'save_metric_insight',
   'save_scenario_attribution_report',
+  'run_ontology_extraction',
 ] as const;
 
 export type DomainRunToolName = (typeof DOMAIN_RUN_TOOL_NAMES)[number];
@@ -2167,6 +1846,47 @@ export const DOMAIN_RUN_OPENAI_TOOLS: OpenAiFunctionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'run_ontology_extraction',
+      description:
+        'Run two-round Ontology Extraction (structural scan + semantic alignment / quoted blueprint) on a DDL, OpenAPI, source code, or SOP document snippet for a registered legacy system, persisting an ExtractionJob candidate set.',
+      parameters: {
+        type: 'object',
+        properties: {
+          systemId: {
+            type: 'string',
+            description: 'Target LegacySystemConfig ID (e.g. sys-erp-01)',
+          },
+          title: {
+            type: 'string',
+            description: 'Extraction job title',
+          },
+          sourceType: {
+            type: 'string',
+            enum: [
+              'DDL_ONLY',
+              'OPENAPI_ONLY',
+              'DDL_AND_OPENAPI',
+              'SOURCE_CODE',
+              'LOG_AND_DOC',
+            ],
+            description: 'Artifact source category',
+          },
+          sourceSnippet: {
+            type: 'string',
+            description: 'Raw SQL DDL, OpenAPI spec, source code, or document snippet to extract',
+          },
+          applyImmediately: {
+            type: 'boolean',
+            description: 'Whether to immediately merge clean extraction candidates into the project',
+          },
+        },
+        required: ['sourceSnippet'],
+      },
+    },
+  },
 ];
 
 // ─── Deterministic Mock Tool Argument Builders (ONLY used when isMock === true) ─
@@ -2412,15 +2132,23 @@ export interface DomainToolExecutionResult {
   artifact?: AgentDomainArtifact;
 }
 
-export function executeDomainRunToolCall(
+export interface DomainToolExecutionOptions {
+  isMock?: boolean;
+  actionParams?: Record<string, unknown>;
+}
+
+export async function executeDomainRunToolCall(
   store: WorkspaceStore,
   session: AgentSession,
   toolCallId: string,
   toolName: string,
   args: Record<string, unknown>,
   locale: AgentLocale,
-): DomainToolExecutionResult | null {
+  options?: DomainToolExecutionOptions,
+): Promise<DomainToolExecutionResult | null> {
   const started = Date.now();
+  const isMock = Boolean(options?.isMock);
+  const actionParams = options?.actionParams;
 
   // 1. SRS Synthesis (`REQUIREMENT` session)
   if (toolName === 'save_synthesized_srs_doc') {
@@ -2449,6 +2177,33 @@ export function executeDomainRunToolCall(
       };
     }
 
+    if (!isMock) {
+      const missingHeadings = findMissingCanonicalSrsHeadings(rawContent);
+      if (missingHeadings.length > 0) {
+        const msg = pickLocaleText(
+          locale,
+          `SRS 章节结构不完整，缺失必填章节标题：${missingHeadings.join(', ')}。在实时大模型模式下禁止拼接本地模板，请补齐全部 9 章节（## 1. ~ ## 9. 及 ### 9.1 ~ ### 9.7）后重试。`,
+          `Incomplete SRS Markdown: missing required headings [${missingHeadings.join(', ')}]. Silent template splicing is disabled in live LLM mode; supply all canonical headings (## 1. through ## 9. and ### 9.1 through ### 9.7) and retry.`,
+        );
+        return {
+          trace: {
+            id: toolCallId,
+            toolName,
+            arguments: { chars: rawContent.length, missingHeadings },
+            output: msg,
+            isError: true,
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({
+            status: 'INCOMPLETE_SRS_MARKDOWN',
+            error: msg,
+            missingHeadings,
+          }),
+          isError: true,
+        };
+      }
+    }
+
     let reqSession =
       findRequirementSessionOptional(store, session.targetId) ??
       store.listRequirementSessions(project.id)[0];
@@ -2460,14 +2215,12 @@ export function executeDomainRunToolCall(
     }
 
     const mergedCtx = collectMergedRequirementContext(store, project.id, reqSession, session);
-    const structuralBaseline = buildDeterministicSrsMarkdown(
-      store,
-      project,
-      reqSession,
-      session,
-      locale,
-    );
-    const srsMarkdown = ensureCanonicalNineChapterSrsStructure(rawContent, structuralBaseline);
+    const srsMarkdown = isMock
+      ? ensureCanonicalNineChapterSrsStructure(
+          rawContent,
+          buildDeterministicSrsMarkdown(store, project, reqSession, session, locale),
+        )
+      : rawContent;
 
     const existingDocs = store.listRequirementDocs(project.id);
     const explicitDocId =
@@ -2567,7 +2320,7 @@ export function executeDomainRunToolCall(
 
   // 2. 11-Model Ontology Suite Synthesis (`COPILOT` session)
   if (toolName === 'synthesize_ontology_suite') {
-    let project = store.getProject(session.projectId);
+    const project = store.getProject(session.projectId);
     if (!project) {
       throw new Error(`Project not found: ${session.projectId}`);
     }
@@ -2575,56 +2328,62 @@ export function executeDomainRunToolCall(
     const explicitPrototypeId =
       typeof args.prototypeId === 'string' && args.prototypeId.trim()
         ? args.prototypeId.trim()
-        : undefined;
-    const explicitDocId =
-      typeof args.docId === 'string' && args.docId.trim() ? args.docId.trim() : undefined;
+        : typeof actionParams?.prototypeId === 'string' && actionParams.prototypeId.trim()
+          ? actionParams.prototypeId.trim()
+          : undefined;
 
-    let targetProto: PrototypeArtifact | undefined;
-    if (explicitPrototypeId) {
-      targetProto = store.getPrototype(explicitPrototypeId);
-      if (!targetProto) {
-        throw new Error(`Prototype not found: ${explicitPrototypeId}`);
-      }
-    } else {
-      const confirmed = store.getConfirmedPrototypeRevision(project.id);
-      if (confirmed) {
-        targetProto = {
-          ...confirmed.prototype,
-          htmlContent: confirmed.htmlContent,
-          extractedScreenCount: confirmed.revision.extractedScreenCount,
-        };
-      } else if (store.listPrototypes(project.id).length > 0) {
-        throw new Error(
-          `Project "${project.name}" has unconfirmed prototype(s) but no Confirmed Revision. Confirm a prototype revision before synthesizing the Ontology Suite.`,
-        );
-      }
-    }
-
-    if (!targetProto) {
-      const docs = store.listRequirementDocs(project.id);
-      const doc = explicitDocId ? docs.find((d) => d.id === explicitDocId) : docs[0];
-      const htmlContent = buildSemanticPrototypeHtmlForProject(project, doc);
-      const protoTitle =
-        locale === 'en-US'
-          ? `${project.name} · Interactive Prototype (prototype.html)`
-          : `${project.name} · 语义交互原型 (界面原型.html)`;
-      const created = store.createPrototype(project.id, {
-        name: protoTitle,
-        version: 'v5.0',
-        htmlContent,
-        source: 'GENERATED',
-      });
-      const confirmedGen = store.confirmPrototypeRevision(
-        project.id,
-        created.prototype.currentRevisionId,
+    // ADR 0010: MU and prototype HTML for ontology synthesis come EXCLUSIVELY from Confirmed Prototype Revision
+    const confirmed = store.getConfirmedPrototypeRevision(project.id);
+    if (explicitPrototypeId && confirmed?.prototype.id !== explicitPrototypeId) {
+      const unconfirmedMsg = pickLocaleText(
+        locale,
+        `已拦截未确认原型合成请求（prototypeId="${explicitPrototypeId}"）：合成 MU 界面模型与 11 模型本体套件必须基于「已确认界面原型修订 (Confirmed Prototype Revision)」。请先确认目标原型修订后再执行合成。`,
+        `Rejected unconfirmed prototype synthesis (prototypeId="${explicitPrototypeId}"): a Confirmed Prototype Revision (已确认界面原型修订) is required before synthesizing MU and the 11-model Ontology Suite.`,
       );
-      targetProto = {
-        ...confirmedGen.prototype,
-        htmlContent: confirmedGen.confirmed.htmlContent,
-        extractedScreenCount: confirmedGen.confirmed.revision.extractedScreenCount,
+      return {
+        trace: {
+          id: toolCallId,
+          toolName,
+          arguments: { prototypeId: explicitPrototypeId },
+          output: unconfirmedMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: 'CONFIRMED_PROTOTYPE_REQUIRED',
+          error: unconfirmedMsg,
+          requestedPrototypeId: explicitPrototypeId,
+          confirmedPrototypeId: confirmed?.prototype.id ?? null,
+        }),
+        isError: true,
       };
-      project = confirmedGen.project;
     }
+
+    if (!confirmed) {
+      const missingConfirmedMsg = pickLocaleText(
+        locale,
+        `当前工程「${project.name}」尚无「已确认界面原型修订 (Confirmed Prototype Revision)」，禁止从草稿修订或内置模板伪造 MU 与 11 模型本体套件。请先在交互原型环节确认目标原型修订后再执行合成。`,
+        `Project "${project.name}" has no Confirmed Prototype Revision (已确认界面原型修订). Confirm a prototype revision before synthesizing MU and the 11-model Ontology Suite.`,
+      );
+      return {
+        trace: {
+          id: toolCallId,
+          toolName,
+          arguments: explicitPrototypeId ? { prototypeId: explicitPrototypeId } : {},
+          output: missingConfirmedMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: 'CONFIRMED_PROTOTYPE_REQUIRED',
+          error: missingConfirmedMsg,
+        }),
+        isError: true,
+      };
+    }
+
+    const confirmedProtoId = confirmed.prototype.id;
+    const confirmedHtml = confirmed.htmlContent;
 
     let seedSuite: OntologySuite = hasForeignDemoTemplate(project)
       ? {}
@@ -2668,16 +2427,51 @@ export function executeDomainRunToolCall(
       seedSuite = applyLlmBlueprintToSuite(seedSuite, blueprint, project.domain);
     }
 
+    if (!isMock) {
+      const missingModels: string[] = [];
+      if ((seedSuite.M1?.aggregates.length ?? 0) === 0) missingModels.push('aggregates (M1)');
+      if ((seedSuite.M2?.behaviors.length ?? 0) === 0) missingModels.push('behaviors (M2)');
+      if ((seedSuite.M3?.rules.length ?? 0) === 0) missingModels.push('rules (M3)');
+      if ((seedSuite.ME?.events.length ?? 0) === 0) missingModels.push('events (ME)');
+      if ((seedSuite.M5?.actors.length ?? 0) === 0) missingModels.push('actors (M5)');
+      if ((seedSuite.M6?.flows.length ?? 0) === 0) missingModels.push('flows (M6)');
+      if ((seedSuite.MI?.interfaces.length ?? 0) === 0) missingModels.push('interfaces (MI)');
+
+      if (missingModels.length > 0) {
+        const missingBlueprintMsg = pickLocaleText(
+          locale,
+          `实时大模型模式下禁止使用兜底模板伪造本体模型，当前调用缺失必填领域蓝图字段：${missingModels.join(', ')}。请在 synthesize_ontology_suite 参数中补齐真实的领域模型定义后重试。`,
+          `Silent template fallback is disabled in live LLM mode; missing required domain blueprint models: [${missingModels.join(', ')}]. Supply complete domain models in synthesize_ontology_suite and retry.`,
+        );
+        return {
+          trace: {
+            id: toolCallId,
+            toolName,
+            arguments: { prototypeId: confirmedProtoId, missingModels },
+            output: missingBlueprintMsg,
+            isError: true,
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({
+            status: 'MISSING_BLUEPRINT_MODELS',
+            error: missingBlueprintMsg,
+            missingModels,
+          }),
+          isError: true,
+        };
+      }
+    }
+
     const currentWithSyncedMu: OntologySuite = {
       ...JSON.parse(JSON.stringify(seedSuite)),
-      MU: extractMuFromPrototypeHtml(targetProto.htmlContent, project.domain),
+      MU: extractMuFromPrototypeHtml(confirmedHtml, project.domain),
     };
     const currentCheck = validateOntologySuite(currentWithSyncedMu);
 
     const candidateSuite: OntologySuite =
       currentCheck.errorCount === 0 && currentCheck.presentModels.length === 11
         ? currentWithSyncedMu
-        : alignSuiteWithExtractedMu(seedSuite, targetProto.htmlContent, project.domain);
+        : alignSuiteWithExtractedMu(seedSuite, confirmedHtml, project.domain);
 
     const finalValidation = validateOntologySuite(candidateSuite);
     if (finalValidation.errorCount > 0) {
@@ -2691,7 +2485,7 @@ export function executeDomainRunToolCall(
         trace: {
           id: toolCallId,
           toolName,
-          arguments: { prototypeId: targetProto.id },
+          arguments: { prototypeId: confirmedProtoId },
           output: rejectMsg,
           isError: true,
           durationMs: Date.now() - started,
@@ -2708,7 +2502,7 @@ export function executeDomainRunToolCall(
     const updatedProject = store.updateSuite(
       project.id,
       candidateSuite,
-      `Synthesized 11-model ontology suite from prototype ${targetProto.id}`,
+      `Synthesized 11-model ontology suite from confirmed prototype ${confirmedProtoId} (rev ${confirmed.revisionId})`,
     );
     const synthesizedModels = MODEL_CODES.filter((c) => Boolean(updatedProject.suite[c]));
 
@@ -2717,7 +2511,7 @@ export function executeDomainRunToolCall(
         id: toolCallId,
         toolName,
         arguments: {
-          prototypeId: targetProto.id,
+          prototypeId: confirmedProtoId,
           synthesizedModels,
         },
         output: pickLocaleText(
@@ -2730,7 +2524,7 @@ export function executeDomainRunToolCall(
       },
       toolResultContent: JSON.stringify({
         projectId: updatedProject.id,
-        prototypeId: targetProto.id,
+        prototypeId: confirmedProtoId,
         synthesizedModels,
         errorCount: updatedProject.validation.errorCount,
         warningCount: updatedProject.validation.warningCount,
@@ -2739,7 +2533,7 @@ export function executeDomainRunToolCall(
       artifact: {
         kind: 'ONTOLOGY_SUITE',
         projectId: updatedProject.id,
-        prototypeId: targetProto.id,
+        prototypeId: confirmedProtoId,
         modelCount: synthesizedModels.length,
         errorCount: updatedProject.validation.errorCount,
         warningCount: updatedProject.validation.warningCount,
@@ -3107,5 +2901,136 @@ export function executeDomainRunToolCall(
     };
   }
 
+  // 6. Ontology Extraction (`CAPABILITY` session)
+  if (toolName === 'run_ontology_extraction') {
+    const project = store.getProject(session.projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${session.projectId}`);
+    }
+
+    const legacySystems = store.listLegacySystems();
+    const rawSystemId =
+      typeof args.systemId === 'string' && args.systemId.trim()
+        ? args.systemId.trim()
+        : typeof actionParams?.systemId === 'string' && actionParams.systemId.trim()
+          ? actionParams.systemId.trim()
+          : session.targetId && legacySystems.some((s) => s.id === session.targetId)
+            ? session.targetId
+            : legacySystems[0]?.id ?? 'sys-legacy-01';
+
+    const system = legacySystems.find((s) => s.id === rawSystemId);
+    const systemName = system?.name ?? rawSystemId;
+
+    const rawTitle =
+      typeof args.title === 'string' && args.title.trim()
+        ? args.title.trim()
+        : typeof actionParams?.title === 'string' && actionParams.title.trim()
+          ? actionParams.title.trim()
+          : pickLocaleText(
+              locale,
+              `${systemName} 本体萃取任务`,
+              `Ontology Extraction · ${systemName}`,
+            );
+
+    const rawSourceType =
+      typeof args.sourceType === 'string' && args.sourceType.trim()
+        ? args.sourceType.trim().toUpperCase()
+        : typeof actionParams?.sourceType === 'string' && actionParams.sourceType.trim()
+          ? actionParams.sourceType.trim().toUpperCase()
+          : 'DDL_AND_OPENAPI';
+
+    const normalizedSourceType: ExtractionJob['sourceType'] =
+      rawSourceType === 'SOURCE_CODE'
+        ? 'SOURCE_CODE'
+        : rawSourceType === 'LOG_AND_DOC'
+          ? 'LOG_AND_DOC'
+          : 'DDL_AND_OPENAPI';
+
+    const sourceSnippet =
+      typeof args.sourceSnippet === 'string' && args.sourceSnippet.trim()
+        ? args.sourceSnippet.trim()
+        : typeof actionParams?.sourceSnippet === 'string' && actionParams.sourceSnippet.trim()
+          ? actionParams.sourceSnippet.trim()
+          : '';
+
+    if (!sourceSnippet) {
+      const msg = pickLocaleText(
+        locale,
+        'run_ontology_extraction 缺少源材料片段 sourceSnippet（DDL / OpenAPI / 源码 / 文档）。',
+        'run_ontology_extraction requires a non-empty sourceSnippet (DDL / OpenAPI / source code / document).',
+      );
+      return {
+        trace: {
+          id: toolCallId,
+          toolName,
+          arguments: args,
+          output: msg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({ error: msg }),
+        isError: true,
+      };
+    }
+
+    const applyImmediately =
+      typeof args.applyImmediately === 'boolean'
+        ? args.applyImmediately
+        : typeof actionParams?.applyImmediately === 'boolean'
+          ? actionParams.applyImmediately
+          : undefined;
+
+    const res = await runSmartOntologyExtractionJob(store, {
+      systemId: rawSystemId,
+      projectId: project.id,
+      title: rawTitle,
+      sourceType: normalizedSourceType,
+      sourceSnippet,
+      ...(applyImmediately !== undefined ? { applyImmediately } : {}),
+      locale,
+      mockMode: isMock,
+    });
+
+    const candidateCount = res.job.candidates.length;
+
+    return {
+      trace: {
+        id: toolCallId,
+        toolName,
+        arguments: {
+          systemId: rawSystemId,
+          title: rawTitle,
+          sourceType: rawSourceType,
+          candidateCount,
+          ...(applyImmediately !== undefined ? { applyImmediately } : {}),
+        },
+        output: pickLocaleText(
+          locale,
+          `已完成「${systemName}」本体萃取任务（${res.job.id}），产出 ${candidateCount} 个待审阅候选`,
+          `Completed Ontology Extraction job (${res.job.id}) for "${systemName}" with ${candidateCount} candidate(s)`,
+        ),
+        isError: false,
+        durationMs: Date.now() - started,
+      },
+      toolResultContent: JSON.stringify({
+        jobId: res.job.id,
+        systemId: rawSystemId,
+        systemName,
+        status: res.job.status,
+        candidateCount,
+        summary: res.job.summary,
+      }),
+      isError: false,
+      artifact: {
+        kind: 'EXTRACTION_JOB',
+        jobId: res.job.id,
+        systemName,
+        candidateCount,
+      },
+    };
+  }
+
   return null;
 }
+
+export const executeDomainRunTool = executeDomainRunToolCall;

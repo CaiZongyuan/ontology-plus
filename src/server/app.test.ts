@@ -820,4 +820,213 @@ describe('server API & Cloudflare Worker integration', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('supports POST /api/projects/:id/design-brief-assist across synthesize/rewrite/decide in mock and live vision/non-vision modes and retires 4 uncalled legacy routes', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const app = createApiApp(store);
+
+    // 1. Verify the 4 retired legacy routes return 404
+    const retiredRoutes = [
+      '/api/requirements/req-sess-contract-01/grill',
+      '/api/prototypes/proto-contract-v1/revisions/rev-any/confirm',
+      '/api/applications/app-contract-clm/coding-agent',
+      '/api/capability/agents/cagent-01/chat',
+    ];
+    for (const route of retiredRoutes) {
+      const res = await app.request(route, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userMessage: 'ping', instruction: 'ping' }),
+      });
+      expect(res.status).toBe(404);
+    }
+
+    // 2. Mock mode design-brief-assist (synthesize -> rewrite -> decide)
+    store.updateSystemSettings({ mockLlmMode: true });
+    const synthRes = await app.request('/api/projects/proj-contract/design-brief-assist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'synthesize',
+        srsSummary: '企业合同全生命周期台账与法务风险审批工作台',
+        primaryReference: { title: 'Increase', surfaceHex: '#F8FAFC', mode: 'light' },
+      }),
+    });
+    expect(synthRes.status).toBe(200);
+    const synthJson = (await synthRes.json()) as {
+      ok: boolean;
+      source: string;
+      brief: Record<string, string>;
+    };
+    expect(synthJson.ok).toBe(true);
+    expect(synthJson.source).toBe('mock');
+    expect(synthJson.brief.positioning).toBeTruthy();
+    expect(synthJson.brief.colorMood).toContain('Increase');
+
+    const rewriteRes = await app.request('/api/projects/proj-contract/design-brief-assist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'rewrite',
+        currentBrief: synthJson.brief,
+        instruction: '改为更紧凑的台账行高密度',
+      }),
+    });
+    expect(rewriteRes.status).toBe(200);
+    const rewriteJson = (await rewriteRes.json()) as {
+      ok: boolean;
+      source: string;
+      brief: Record<string, string>;
+    };
+    expect(rewriteJson.brief.layoutDensity).toContain('更紧凑的台账行高密度');
+
+    const decideRes = await app.request('/api/projects/proj-contract/design-brief-assist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'decide',
+        currentBrief: rewriteJson.brief,
+      }),
+    });
+    expect(decideRes.status).toBe(200);
+    const decideJson = (await decideRes.json()) as {
+      ok: boolean;
+      source: string;
+      brief: Record<string, string>;
+    };
+    expect(decideJson.brief.openNotes).toContain('已收敛全部待决设计分歧');
+
+    // 3. Live LLM mode with vision image forwarding + supportsVision=false fallback
+    const httpMod = await import('node:http');
+    const capturedBodies: string[] = [];
+    const llmServer = httpMod.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => {
+        body += String(c);
+      });
+      req.on('end', () => {
+        capturedBodies.push(body);
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        const replyJson = JSON.stringify({
+          positioning: 'Live LLM enterprise contract workspace',
+          colorMood: 'Warm paper light surface #F8F5EF with ink contrast',
+          typography: 'Geometric sans + tabular monospace',
+          layoutDensity: 'Compact high-density ledger',
+          keyScreenStructure: 'Master list + approval detail drawer',
+          componentTone: 'Crisp 1px borders and semantic badges',
+          constraints: 'Semantic MU anchors and zero blocking alerts',
+          openNotes: 'None',
+        });
+        const chunk = {
+          id: 'chatcmpl-brief-1',
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: { content: replyJson }, finish_reason: 'stop' }],
+        };
+        res.write(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`);
+        res.end();
+      });
+    });
+
+    await new Promise<void>((resolve) => llmServer.listen(0, '127.0.0.1', () => resolve()));
+    const port = (llmServer.address() as { port: number }).port;
+    const prevLive = process.env.ONTOLOGY_LIVE_LLM;
+
+    try {
+      process.env.ONTOLOGY_LIVE_LLM = '1';
+      store.updateSystemSettings({ mockLlmMode: false });
+      for (const p of store.listLlmProviders()) {
+        store.saveLlmProvider({ ...p, enabled: false });
+      }
+      store.saveLlmProvider({
+        id: 'prov-brief-vision',
+        name: 'Vision Provider',
+        providerType: 'OPENAI_COMPATIBLE',
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        apiKey: 'test-key',
+        defaultModel: 'gpt-4o',
+        availableModels: ['gpt-4o'],
+        supportsVision: true,
+        enabled: true,
+      });
+
+      const onePxPng =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+      const liveVisionRes = await app.request('/api/projects/proj-contract/design-brief-assist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'synthesize',
+          locale: 'en-US',
+          srsSummary: 'Enterprise CLM contract approval workbench',
+          images: [
+            {
+              imageId: 'img-ref-1',
+              role: 'primary_reference',
+              mimeType: 'image/png',
+              dataBase64: onePxPng,
+              label: 'Ledger Reference Screenshot',
+            },
+          ],
+        }),
+      });
+      expect(liveVisionRes.status).toBe(200);
+      const liveVisionJson = (await liveVisionRes.json()) as {
+        ok: boolean;
+        source: string;
+        visionFallbackUsed?: boolean;
+        brief: Record<string, string>;
+      };
+      expect(liveVisionJson.ok).toBe(true);
+      expect(liveVisionJson.source).toBe('llm');
+      expect(liveVisionJson.visionFallbackUsed).toBeUndefined();
+      expect(liveVisionJson.brief.positioning).toBe('Live LLM enterprise contract workspace');
+      expect(capturedBodies[0]).toContain('image_url');
+
+      // Flip supportsVision to false -> sends text metadata only and sets visionFallbackUsed: true
+      store.saveLlmProvider({
+        id: 'prov-brief-vision',
+        name: 'Text-Only Provider',
+        providerType: 'OPENAI_COMPATIBLE',
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        apiKey: 'test-key',
+        defaultModel: 'gpt-4o-text',
+        availableModels: ['gpt-4o-text'],
+        supportsVision: false,
+        enabled: true,
+      });
+
+      const liveTextOnlyRes = await app.request('/api/projects/proj-contract/design-brief-assist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'synthesize',
+          locale: 'en-US',
+          images: [
+            {
+              imageId: 'img-ref-1',
+              role: 'primary_reference',
+              mimeType: 'image/png',
+              dataBase64: onePxPng,
+              label: 'Ledger Reference Screenshot',
+            },
+          ],
+        }),
+      });
+      expect(liveTextOnlyRes.status).toBe(200);
+      const liveTextOnlyJson = (await liveTextOnlyRes.json()) as {
+        ok: boolean;
+        source: string;
+        visionFallbackUsed?: boolean;
+      };
+      expect(liveTextOnlyJson.source).toBe('llm');
+      expect(liveTextOnlyJson.visionFallbackUsed).toBe(true);
+      expect(capturedBodies[1]).not.toContain('image_url');
+      expect(capturedBodies[1]).toContain('Ledger Reference Screenshot');
+    } finally {
+      if (prevLive === undefined) delete process.env.ONTOLOGY_LIVE_LLM;
+      else process.env.ONTOLOGY_LIVE_LLM = prevLive;
+      llmServer.close();
+    }
+  });
 });

@@ -35,7 +35,7 @@ import type {
 import {
   applyLlmBlueprintToSuite,
   type LlmSynthesizedDomainBlueprint,
-} from './domain-run-tools.js';
+} from './blueprint.js';
 import {
   type AgentLocale,
   normalizeAgentLocale,
@@ -48,7 +48,7 @@ import {
   ontologyToolRegistry,
   type OpenAiFunctionTool,
 } from './tools.js';
-import { LlmGatewayError, isMockLlmActive } from './pi-session-engine.js';
+import { LlmGatewayError, isMockLlmActive } from './gateway-boundary.js';
 import {
   buildProjectDataGrounding,
   describeJoinWarnings,
@@ -1263,6 +1263,7 @@ export async function runSmartOntologyExtractionJob(
     sourceSnippet: string;
     applyImmediately?: boolean;
     locale?: AgentLocale | string;
+    mockMode?: boolean;
   },
 ): Promise<ExtractionMergeResult> {
   const project = store.getProject(input.projectId);
@@ -1272,7 +1273,7 @@ export async function runSmartOntologyExtractionJob(
     normalizeAgentLocale(input.locale) ?? resolveEffectiveLocale(store, undefined, input.title);
   const sys = store.listLegacySystems().find((s) => s.id === input.systemId);
   const systemName = sys?.name ?? input.systemId;
-  const mock = isMockLlmActive(store);
+  const mock = isMockLlmActive(store, input.mockMode);
 
   const scan = scanSourceStructure({ baseSuite: project.suite, source, domain: project.domain });
   const jobBase = {
