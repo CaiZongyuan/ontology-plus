@@ -52,12 +52,7 @@ import type {
   AppCodingAgentResult,
   CapabilitySmartChatResult,
   LlmPingResult,
-  PipelineStageLogEntry,
-  PipelineTaskProgressFrame,
-  PipelineTaskSnapshot,
-  PrototypeGenerationResult,
   PrototypeRefinementSelection,
-  SrsSynthesisProgressPhase,
   TransientTurnImageInput,
 } from '../packages/agent-runtime/index.js';
 import type {
@@ -96,10 +91,7 @@ export interface BootstrapPayload {
   writebackInterfaces: WritebackInterface[];
   llmProviders: LlmProviderConfig[];
   systemSettings: SystemSettingsState;
-  pipelineTasks?: PipelineTaskSnapshot[];
 }
-
-export type { PipelineStageLogEntry };
 
 export interface ProjectLifecycleState {
   hasExploration: boolean;
@@ -325,160 +317,6 @@ export function writeUrlNavState(patch: UrlNavState): void {
   window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
-export type BackgroundPipelineTaskKind =
-  | 'SRS_SYNTHESIS'
-  | 'PROTOTYPE_GEN'
-  | 'ONTOLOGY_SYNTH';
-
-export type BackgroundPipelineTaskStatus =
-  | 'RUNNING'
-  | 'COMPLETED'
-  | 'ERROR'
-  | 'CANCELLED';
-
-export interface BackgroundPipelineTask {
-  id: string;
-  kind: BackgroundPipelineTaskKind;
-  projectId: string;
-  projectName: string;
-  status: BackgroundPipelineTaskStatus;
-  phase: SrsSynthesisProgressPhase | 'ERROR' | 'CANCELLED';
-  step: 1 | 2 | 3 | 4;
-  totalSteps: 4;
-  titleZh: string;
-  titleEn: string;
-  messageZh: string;
-  messageEn: string;
-  currentChapter?: string;
-  completedChapters: number;
-  thinkingChars: number;
-  thinkingText: string;
-  streamedChars: number;
-  streamedText: string;
-  previewTail: string;
-  providerModel?: string;
-  draftDocId?: string;
-  stageLogs: PipelineStageLogEntry[];
-  startedAt: number;
-  completedAt?: number;
-  originNav: string;
-  targetNav: string;
-  resultItemId?: string;
-  resultLabelZh?: string;
-  resultLabelEn?: string;
-  unreadCompletion: boolean;
-  errorDiagnostic?: {
-    code?: string;
-    message: string;
-    remediation?: string;
-  };
-  retrySessionId?: string;
-  retryDocId?: string;
-  retryPrototypeId?: string;
-}
-
-const activePipelineAborters = new Map<string, AbortController>();
-
-function titlesAndNavForKind(kind: BackgroundPipelineTaskKind): {
-  titleZh: string;
-  titleEn: string;
-  defaultOriginNav: string;
-  targetNav: string;
-} {
-  if (kind === 'SRS_SYNTHESIS') {
-    return {
-      titleZh: '合成 9 章节《软件需求规格说明书》',
-      titleEn: 'Synthesizing 9-Chapter SRS Document',
-      defaultOriginNav: 'app-req-explore',
-      targetNav: 'app-req-docs',
-    };
-  }
-  if (kind === 'PROTOTYPE_GEN') {
-    return {
-      titleZh: '生成可交互 HTML 原型并同步 MU 模型',
-      titleEn: 'Generating Interactive HTML Prototype & MU Sync',
-      defaultOriginNav: 'app-req-docs',
-      targetNav: 'app-prototype',
-    };
-  }
-  return {
-    titleZh: '反向收敛 11 元模型业务本体',
-    titleEn: 'Synthesizing 11-Model Ontology Suite',
-    defaultOriginNav: 'app-prototype',
-    targetNav: 'app-ontology',
-  };
-}
-
-function mapServerSnapshotToBackgroundTask(
-  snap: PipelineTaskSnapshot,
-  existing?: BackgroundPipelineTask,
-): BackgroundPipelineTask {
-  const meta = titlesAndNavForKind(snap.kind);
-  const streamedText = snap.streamedText ?? existing?.streamedText ?? '';
-  const thinkingText = snap.thinkingText ?? existing?.thinkingText ?? '';
-  return {
-    id: snap.id,
-    kind: snap.kind,
-    projectId: snap.projectId,
-    projectName: snap.projectName,
-    status: snap.status,
-    phase: (snap.phase as BackgroundPipelineTask['phase']) || 'CONTEXT',
-    step: snap.step,
-    totalSteps: 4,
-    titleZh: meta.titleZh,
-    titleEn: meta.titleEn,
-    messageZh: snap.messageZh,
-    messageEn: snap.messageEn,
-    ...(snap.currentChapter ? { currentChapter: snap.currentChapter } : {}),
-    completedChapters: snap.completedChapters ?? existing?.completedChapters ?? 0,
-    thinkingChars: snap.thinkingChars ?? thinkingText.length,
-    thinkingText,
-    streamedChars: snap.streamedChars ?? streamedText.length,
-    streamedText,
-    previewTail: snap.previewTail ?? existing?.previewTail ?? streamedText.slice(-1600),
-    ...(snap.providerModel || existing?.providerModel
-      ? { providerModel: snap.providerModel || existing?.providerModel }
-      : {}),
-    ...(snap.draftDocId || existing?.draftDocId
-      ? { draftDocId: snap.draftDocId || existing?.draftDocId }
-      : {}),
-    stageLogs: snap.stageLogs?.length ? snap.stageLogs : (existing?.stageLogs ?? []),
-    startedAt: snap.startedAt,
-    ...(snap.finishedAt ? { completedAt: snap.finishedAt } : {}),
-    originNav: existing?.originNav || meta.defaultOriginNav,
-    targetNav: meta.targetNav,
-    ...(snap.resultItemId ? { resultItemId: snap.resultItemId } : {}),
-    ...(existing?.resultLabelZh ? { resultLabelZh: existing.resultLabelZh } : {}),
-    ...(existing?.resultLabelEn ? { resultLabelEn: existing.resultLabelEn } : {}),
-    unreadCompletion: snap.unreadCompletion,
-    ...(snap.status === 'ERROR'
-      ? {
-          errorDiagnostic: {
-            code: snap.errorMessage || 'PIPELINE_ERROR',
-            message: snap.messageZh,
-            remediation:
-              streamedText.trim().length >= 200 && snap.kind === 'PROTOTYPE_GEN'
-                ? getCurrentClientLocale() === 'en-US'
-                  ? `Saved ${streamedText.length.toLocaleString()} chars in checkpoint — click "Resume from Checkpoint" to continue without starting over.`
-                  : `已持久化保存前序 ${streamedText.length.toLocaleString()} 字内容，点击「断点续写」即可直接接着往下生成，无需从头重来。`
-                : getCurrentClientLocale() === 'en-US'
-                  ? 'Click Retry or check LLM gateway settings in LLM Center.'
-                  : '可点击「重试」，或前往 LLM 中心检查大模型网关状态。',
-          },
-        }
-      : {}),
-    ...(snap.sessionId || existing?.retrySessionId
-      ? { retrySessionId: snap.sessionId || existing?.retrySessionId }
-      : {}),
-    ...(snap.docId || existing?.retryDocId
-      ? { retryDocId: snap.docId || existing?.retryDocId }
-      : {}),
-    ...(snap.prototypeId || existing?.retryPrototypeId
-      ? { retryPrototypeId: snap.prototypeId || existing?.retryPrototypeId }
-      : {}),
-  };
-}
-
 export interface SessionLiveStep {
   id: string;
   label: { zh: string; en: string };
@@ -501,6 +339,7 @@ export interface SessionLiveDraft {
   text: string;
   steps: SessionLiveStep[];
   artifacts?: AgentDomainArtifact[];
+  askUser?: AgentAskUserPrompt;
   activeAnchor?: PrototypeTargetAnchor;
 }
 
@@ -508,9 +347,17 @@ export interface QueuedSessionPromptItem {
   id: string;
   prompt: string;
   displayTitle?: string;
+  askUserAnswer?: {
+    promptId: string;
+    selectedAnswers: string[];
+    freeformText?: string;
+  };
   images?: TransientTurnImageInput[];
   designBrief?: DesignBrief;
   prototypeName?: string;
+  activeModelCode?: ModelCode;
+  reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+  mockMode?: boolean;
   enqueuedAt: number;
 }
 
@@ -661,8 +508,6 @@ interface WorkbenchStoreState {
   redoStack: OntologySuite[];
   selectedModel: ModelCode;
   selectedElementId: string | null;
-  backgroundTasks: BackgroundPipelineTask[];
-  expandedStreamTaskIds: Record<string, boolean>;
   liveAnnouncement: string;
   setActiveNav: (nav: string, opts?: { itemId?: string | null; sessionId?: string | null }) => void;
   setActiveItemId: (itemId: string | null) => void;
@@ -670,7 +515,6 @@ interface WorkbenchStoreState {
   setActivePrototypeId: (projectId: string, prototypeId: string) => void;
   setSelectedModel: (code: ModelCode, elementId?: string | null) => void;
   setSelectedElementId: (elementId: string | null) => void;
-  setTaskStreamExpanded: (taskId: string, expanded: boolean) => void;
   showToast: (msg: string) => void;
   announcePolite: (msg: string) => void;
   bootstrap: (projectId?: string) => Promise<void>;
@@ -688,18 +532,6 @@ interface WorkbenchStoreState {
   undo: () => Promise<void>;
   redo: () => Promise<void>;
   patchData: (patch: Partial<BootstrapPayload>) => void;
-  attachPipelineTaskStream: (
-    taskId: string,
-    opts?: { autoNavigateOnComplete?: boolean; originNav?: string },
-  ) => Promise<BackgroundPipelineTask | null>;
-  startPrototypeGenTask: (opts?: { docId?: string; prompt?: string }) => Promise<void>;
-  cancelBackgroundTask: (taskId: string) => void;
-  dismissBackgroundTask: (taskId: string) => void;
-  openBackgroundTaskResult: (
-    taskId: string,
-    opts?: { expandStream?: boolean; keepCard?: boolean },
-  ) => Promise<void>;
-  retryBackgroundTask: (taskId: string, opts?: { fromScratch?: boolean }) => Promise<void>;
   ensureProjectAgentSession: (
     projectId: string,
     agentKind: AgentSessionKind,
@@ -719,6 +551,11 @@ interface WorkbenchStoreState {
     sessionId: string;
     prompt: string;
     displayTitle?: string;
+    askUserAnswer?: {
+      promptId: string;
+      selectedAnswers: string[];
+      freeformText?: string;
+    };
     images?: TransientTurnImageInput[];
     designBrief?: DesignBrief;
     prototypeName?: string;
@@ -809,32 +646,16 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   redoStack: [],
   selectedModel: 'M1',
   selectedElementId: null,
-  backgroundTasks: [],
-  expandedStreamTaskIds: {},
   liveAnnouncement: '',
 
   setActiveNav: (nav, opts) => {
     const nextItem = opts?.itemId !== undefined ? opts.itemId : get().activeItemId;
     const nextSess = opts?.sessionId !== undefined ? opts.sessionId : get().activeSessionId;
-    const newlyReadIds: string[] = [];
-    const updatedTasks = get().backgroundTasks.map((tk) => {
-      if (tk.targetNav === nav && tk.unreadCompletion) {
-        newlyReadIds.push(tk.id);
-        return { ...tk, unreadCompletion: false };
-      }
-      return tk;
-    });
     set({
       activeNav: nav,
       activeItemId: nextItem,
       activeSessionId: nextSess,
-      backgroundTasks: updatedTasks,
     });
-    for (const id of newlyReadIds) {
-      void fetch(`/api/pipeline-tasks/${encodeURIComponent(id)}/read`, { method: 'POST' }).catch(
-        () => undefined,
-      );
-    }
     writeUrlNavState({
       nav,
       itemId: nextItem ?? '',
@@ -869,15 +690,6 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
 
   setSelectedElementId: (elementId) => set({ selectedElementId: elementId }),
 
-  setTaskStreamExpanded: (taskId, expanded) => {
-    set({
-      expandedStreamTaskIds: {
-        ...get().expandedStreamTaskIds,
-        [taskId]: expanded,
-      },
-    });
-  },
-
   showToast: (msg) => {
     set({ toast: msg });
     setTimeout(() => {
@@ -909,28 +721,15 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     const res = await fetch(`/api/bootstrap${qs}`);
     const payload = (await res.json()) as BootstrapPayload;
 
-    const existingMap = new Map(get().backgroundTasks.map((tk) => [tk.id, tk]));
-    const hydratedTasks = (payload.pipelineTasks ?? []).map((snap) =>
-      mapServerSnapshotToBackgroundTask(snap, existingMap.get(snap.id)),
-    );
-
     set({
       data: payload,
       loading: false,
       undoStack: [],
       redoStack: [],
       selectedElementId: null,
-      backgroundTasks: hydratedTasks,
     });
     writeLastProjectIdToStorage(payload.activeProject.id);
     writeUrlNavState({ projectId: payload.activeProject.id });
-
-    // Reconnect live SSE streams for any durable background tasks still running on the server
-    for (const tk of hydratedTasks) {
-      if (tk.status === 'RUNNING') {
-        void get().attachPipelineTaskStream(tk.id, { autoNavigateOnComplete: false });
-      }
-    }
 
     // Reconnect live SSE streams for any durable background Agent Sessions still running on the server
     for (const sess of payload.agentSessions ?? []) {
@@ -1036,416 +835,6 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       undoStack: [...undoStack, current],
       redoStack: redoStack.slice(0, -1),
     });
-  },
-
-  attachPipelineTaskStream: async (taskId, opts) => {
-    if (activePipelineAborters.has(taskId)) {
-      return get().backgroundTasks.find((tk) => tk.id === taskId) ?? null;
-    }
-
-    const controller = new AbortController();
-    activePipelineAborters.set(taskId, controller);
-
-    const refreshProjectArtifacts = async (projectId: string) => {
-      try {
-        const pRes = await fetch(`/api/projects/${encodeURIComponent(projectId)}`);
-        if (!pRes.ok) return;
-        const pData = (await pRes.json()) as {
-          project: ProjectDetail;
-          projectSnapshots: ProjectSnapshot[];
-          agentSessions: AgentSession[];
-          requirementSessions: RequirementSession[];
-          requirementDocs: RequirementDoc[];
-          prototypes: PrototypeArtifact[];
-          extractionJobs: ExtractionJob[];
-          pipelineTasks?: PipelineTaskSnapshot[];
-        };
-        const cur = get().data;
-        if (cur && cur.activeProject.id === projectId) {
-          const otherAgentSessions = (cur.agentSessions ?? []).filter(
-            (s) => s.projectId !== projectId,
-          );
-          set({
-            data: {
-              ...cur,
-              activeProject: pData.project,
-              projectSnapshots: pData.projectSnapshots,
-              agentSessions: [...pData.agentSessions, ...otherAgentSessions],
-              requirementSessions: pData.requirementSessions,
-              requirementDocs: pData.requirementDocs,
-              prototypes: pData.prototypes,
-            },
-          });
-        }
-      } catch {
-        // Non-blocking artifact refresh
-      }
-    };
-
-    const upsertSnapshot = (snap: PipelineTaskSnapshot): BackgroundPipelineTask => {
-      const existing = get().backgroundTasks.find((tk) => tk.id === snap.id);
-      const mapped = mapServerSnapshotToBackgroundTask(snap, {
-        ...existing,
-        ...(opts?.originNav && !existing?.originNav ? { originNav: opts.originNav } : {}),
-      } as BackgroundPipelineTask | undefined);
-      const others = get().backgroundTasks.filter((tk) => tk.id !== snap.id);
-      set({ backgroundTasks: [mapped, ...others].sort((a, b) => b.startedAt - a.startedAt) });
-      return mapped;
-    };
-
-    let lastDraftSyncAt = 0;
-
-    try {
-      const res = await fetch(`/api/pipeline-tasks/${encodeURIComponent(taskId)}/stream`, {
-        method: 'GET',
-        headers: buildLocaleHeaders(),
-        signal: controller.signal,
-      });
-
-      if (!res.ok || !res.body) {
-        return get().backgroundTasks.find((tk) => tk.id === taskId) ?? null;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      const handleSseBlock = async (rawBlock: string) => {
-        const lines = rawBlock.split(/\r?\n/);
-        let eventName = '';
-        const dataLines: string[] = [];
-        for (const line of lines) {
-          if (line.startsWith(':')) continue;
-          if (line.startsWith('event:')) {
-            eventName = line.slice(6).trim();
-          } else if (line.startsWith('data:')) {
-            dataLines.push(line.slice(5).trim());
-          }
-        }
-        if (!eventName || dataLines.length === 0) return;
-        let payload: Record<string, unknown>;
-        try {
-          payload = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
-        } catch {
-          return;
-        }
-
-        if (eventName === 'snapshot' && payload.task) {
-          upsertSnapshot(payload.task as PipelineTaskSnapshot);
-          return;
-        }
-
-        if (eventName === 'progress') {
-          const frame = payload as unknown as PipelineTaskProgressFrame;
-          set({
-            backgroundTasks: get().backgroundTasks.map((tk) => {
-              if (tk.id !== taskId) return tk;
-              const nextThinking = frame.thinkingDelta
-                ? `${tk.thinkingText}${frame.thinkingDelta}`
-                : tk.thinkingText;
-              const nextStreamed =
-                frame.replaceStreamedText ??
-                (frame.contentDelta
-                  ? `${tk.streamedText}${frame.contentDelta}`
-                  : tk.streamedText);
-              return {
-                ...tk,
-                status: frame.status,
-                step: frame.step,
-                phase: frame.phase as BackgroundPipelineTask['phase'],
-                messageZh: frame.messageZh,
-                messageEn: frame.messageEn,
-                ...(frame.currentChapter ? { currentChapter: frame.currentChapter } : {}),
-                completedChapters: frame.completedChapters ?? tk.completedChapters,
-                thinkingText: nextThinking,
-                thinkingChars: frame.thinkingChars ?? nextThinking.length,
-                streamedText: nextStreamed,
-                streamedChars: frame.streamedChars ?? nextStreamed.length,
-                ...(frame.previewTail ? { previewTail: frame.previewTail } : {}),
-                ...(frame.providerModel ? { providerModel: frame.providerModel } : {}),
-                ...(frame.draftDocId ? { draftDocId: frame.draftDocId } : {}),
-                stageLogs: frame.stageLogs?.length ? frame.stageLogs : tk.stageLogs,
-              };
-            }),
-          });
-
-          // Periodically sync incremental DRAFT doc to sidebar when user is watching req_docs
-          const curTask = get().backgroundTasks.find((tk) => tk.id === taskId);
-          if (
-            curTask?.kind === 'SRS_SYNTHESIS' &&
-            frame.draftDocId &&
-            frame.streamedChars >= 200 &&
-            Date.now() - lastDraftSyncAt >= 4000 &&
-            get().data?.activeProject.id === curTask.projectId
-          ) {
-            lastDraftSyncAt = Date.now();
-            void refreshProjectArtifacts(curTask.projectId);
-          }
-          return;
-        }
-
-        if (eventName === 'complete' && payload.task) {
-          const snap = payload.task as PipelineTaskSnapshot;
-          const mapped = upsertSnapshot(snap);
-          await refreshProjectArtifacts(mapped.projectId);
-
-          const sameProject = get().data?.activeProject.id === mapped.projectId;
-          const curNav = get().activeNav;
-          const stayed =
-            sameProject && (curNav === mapped.originNav || curNav === mapped.targetNav);
-
-          if (stayed) {
-            set({
-              backgroundTasks: get().backgroundTasks.map((tk) =>
-                tk.id === mapped.id ? { ...tk, unreadCompletion: false } : tk,
-              ),
-            });
-            void fetch(`/api/pipeline-tasks/${encodeURIComponent(mapped.id)}/read`, {
-              method: 'POST',
-            }).catch(() => undefined);
-
-            const curLoc = getCurrentClientLocale();
-            get().showToast(curLoc === 'en-US' ? mapped.messageEn : mapped.messageZh);
-
-            if (
-              opts?.autoNavigateOnComplete !== false &&
-              (mapped.kind === 'SRS_SYNTHESIS' || mapped.kind === 'PROTOTYPE_GEN')
-            ) {
-              get().setActiveNav(mapped.targetNav, {
-                ...(mapped.resultItemId ? { itemId: mapped.resultItemId } : {}),
-              });
-            }
-          } else {
-            const curLoc = getCurrentClientLocale();
-            get().announcePolite(curLoc === 'en-US' ? mapped.messageEn : mapped.messageZh);
-          }
-          return;
-        }
-
-        if (eventName === 'cancelled' && payload.task) {
-          upsertSnapshot(payload.task as PipelineTaskSnapshot);
-          return;
-        }
-
-        if (eventName === 'run_error') {
-          if (payload.task) {
-            const snap = payload.task as PipelineTaskSnapshot;
-            upsertSnapshot(snap);
-            await refreshProjectArtifacts(snap.projectId);
-          } else {
-            const errMsg = String(payload.message || 'Pipeline task failed');
-            set({
-              backgroundTasks: get().backgroundTasks.map((tk) =>
-                tk.id === taskId
-                  ? {
-                      ...tk,
-                      status: 'ERROR',
-                      completedAt: Date.now(),
-                      messageZh: errMsg,
-                      messageEn: errMsg,
-                      errorDiagnostic: { code: 'PIPELINE_ERROR', message: errMsg },
-                    }
-                  : tk,
-              ),
-            });
-          }
-        }
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let sepIdx = buffer.indexOf('\n\n');
-        let crlfIdx = buffer.indexOf('\r\n\r\n');
-        while (sepIdx !== -1 || crlfIdx !== -1) {
-          const useCrlf = crlfIdx !== -1 && (sepIdx === -1 || crlfIdx < sepIdx);
-          const cutAt = useCrlf ? crlfIdx : sepIdx;
-          const sepLen = useCrlf ? 4 : 2;
-          const rawBlock = buffer.slice(0, cutAt);
-          buffer = buffer.slice(cutAt + sepLen);
-          await handleSseBlock(rawBlock);
-          sepIdx = buffer.indexOf('\n\n');
-          crlfIdx = buffer.indexOf('\r\n\r\n');
-        }
-      }
-      if (buffer.trim()) {
-        await handleSseBlock(buffer);
-      }
-    } catch {
-      // If SSE socket dropped unintentionally while task is still running on server, poll & reconnect
-      if (!controller.signal.aborted) {
-        try {
-          const checkRes = await fetch(`/api/pipeline-tasks/${encodeURIComponent(taskId)}`);
-          if (checkRes.ok) {
-            const { task: latestSnap } = (await checkRes.json()) as { task: PipelineTaskSnapshot };
-            upsertSnapshot(latestSnap);
-            if (latestSnap.status === 'COMPLETED') {
-              await refreshProjectArtifacts(latestSnap.projectId);
-            } else if (latestSnap.status === 'RUNNING') {
-              setTimeout(() => {
-                void get().attachPipelineTaskStream(taskId, opts);
-              }, 1500);
-            }
-          }
-        } catch {
-          // Ignore transient offline state
-        }
-      }
-    } finally {
-      activePipelineAborters.delete(taskId);
-    }
-
-    return get().backgroundTasks.find((tk) => tk.id === taskId) ?? null;
-  },
-
-  startPrototypeGenTask: async (opts) => {
-    const curData = get().data;
-    if (!curData) return;
-    const projectId = curData.activeProject.id;
-    const existingRunning = get().backgroundTasks.find(
-      (tk) =>
-        tk.projectId === projectId &&
-        tk.kind === 'PROTOTYPE_GEN' &&
-        tk.status === 'RUNNING',
-    );
-    if (existingRunning) {
-      void get().attachPipelineTaskStream(existingRunning.id, { autoNavigateOnComplete: true });
-      return;
-    }
-
-    const locale = getCurrentClientLocale();
-    const originNav = get().activeNav;
-    const started = await apiPostJson<{
-      task: PipelineTaskSnapshot;
-      reusedRunning: boolean;
-      pipelineTasks: PipelineTaskSnapshot[];
-    }>('/api/pipeline-tasks', {
-      kind: 'PROTOTYPE_GEN',
-      projectId,
-      ...(opts?.docId ? { docId: opts.docId } : {}),
-      ...(opts?.prompt ? { prompt: opts.prompt } : {}),
-      locale,
-    });
-
-    const mapped = mapServerSnapshotToBackgroundTask(started.task, {
-      originNav,
-    } as BackgroundPipelineTask);
-
-    set({
-      backgroundTasks: [
-        mapped,
-        ...get().backgroundTasks.filter(
-          (tk) => tk.id !== mapped.id && !(tk.projectId === projectId && tk.kind === 'PROTOTYPE_GEN'),
-        ),
-      ],
-    });
-
-    await get().attachPipelineTaskStream(mapped.id, {
-      autoNavigateOnComplete: true,
-      originNav,
-    });
-  },
-
-  cancelBackgroundTask: (taskId) => {
-    const aborter = activePipelineAborters.get(taskId);
-    if (aborter) {
-      aborter.abort();
-      activePipelineAborters.delete(taskId);
-    }
-    void fetch(`/api/pipeline-tasks/${encodeURIComponent(taskId)}/cancel`, {
-      method: 'POST',
-    }).catch(() => undefined);
-    set({
-      backgroundTasks: get().backgroundTasks.map((tk) =>
-        tk.id === taskId && tk.status === 'RUNNING'
-          ? {
-              ...tk,
-              status: 'CANCELLED',
-              phase: 'CANCELLED',
-              completedAt: Date.now(),
-              messageZh: '已手动取消后台生成任务。',
-              messageEn: 'Background generation task cancelled.',
-            }
-          : tk,
-      ),
-    });
-  },
-
-  dismissBackgroundTask: (taskId) => {
-    void fetch(`/api/pipeline-tasks/${encodeURIComponent(taskId)}/dismiss`, {
-      method: 'POST',
-    }).catch(() => undefined);
-    const nextExpanded = { ...get().expandedStreamTaskIds };
-    delete nextExpanded[taskId];
-    set({
-      backgroundTasks: get().backgroundTasks.filter((tk) => tk.id !== taskId),
-      expandedStreamTaskIds: nextExpanded,
-    });
-  },
-
-  openBackgroundTaskResult: async (taskId, opts) => {
-    const task = get().backgroundTasks.find((tk) => tk.id === taskId);
-    if (!task) return;
-    if (opts?.expandStream) {
-      get().setTaskStreamExpanded(taskId, true);
-    }
-    if (get().data?.activeProject.id !== task.projectId) {
-      await get().switchProject(task.projectId);
-    }
-    get().setActiveNav(task.targetNav, {
-      ...(task.resultItemId ? { itemId: task.resultItemId } : {}),
-    });
-    if (task.status === 'COMPLETED' && !opts?.expandStream && !opts?.keepCard) {
-      set({
-        backgroundTasks: get().backgroundTasks.map((tk) =>
-          tk.id === taskId ? { ...tk, unreadCompletion: false } : tk,
-        ),
-      });
-    }
-  },
-
-  retryBackgroundTask: async (taskId, opts) => {
-    const task = get().backgroundTasks.find((tk) => tk.id === taskId);
-    if (!task) return;
-    if (get().data?.activeProject.id !== task.projectId) {
-      await get().switchProject(task.projectId);
-    }
-
-    const canResumeCheckpoint =
-      !opts?.fromScratch &&
-      task.streamedChars >= 200 &&
-      task.kind === 'PROTOTYPE_GEN';
-
-    if (canResumeCheckpoint) {
-      const locale = getCurrentClientLocale();
-      const originNav = get().activeNav;
-      const resumed = await apiPostJson<{
-        task: PipelineTaskSnapshot;
-        reusedRunning: boolean;
-        pipelineTasks: PipelineTaskSnapshot[];
-      }>(`/api/pipeline-tasks/${encodeURIComponent(taskId)}/resume`, { locale });
-
-      const mapped = mapServerSnapshotToBackgroundTask(resumed.task, task);
-      set({
-        backgroundTasks: [
-          mapped,
-          ...get().backgroundTasks.filter((tk) => tk.id !== mapped.id && tk.id !== taskId),
-        ],
-      });
-
-      await get().attachPipelineTaskStream(mapped.id, {
-        autoNavigateOnComplete: true,
-        originNav,
-      });
-      return;
-    }
-
-    if (task.kind === 'PROTOTYPE_GEN') {
-      await get().startPrototypeGenTask(
-        task.retryDocId ? { docId: task.retryDocId } : undefined,
-      );
-    }
   },
 
   ensureProjectAgentSession: async (projectId, agentKind, opts) => {
@@ -1573,17 +962,27 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
 
   startSessionAgentRun: async (input) => {
     const { sessionId, prompt } = input;
-    if (!prompt.trim()) return;
+    const answerSummary = input.askUserAnswer
+      ? [input.askUserAnswer.selectedAnswers.join(', '), input.askUserAnswer.freeformText]
+          .filter(Boolean)
+          .join(' · ')
+      : '';
+    const effectivePrompt = prompt.trim() || answerSummary;
+    if (!effectivePrompt && !input.askUserAnswer) return;
 
     if (activeSessionStreamAborters.has(sessionId) || Boolean(get().liveSessionDrafts[sessionId])) {
       const existingQueue = get().sessionQueues[sessionId] ?? [];
       const item: QueuedSessionPromptItem = {
         id: `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-        prompt,
+        prompt: effectivePrompt,
         ...(input.displayTitle ? { displayTitle: input.displayTitle } : {}),
+        ...(input.askUserAnswer ? { askUserAnswer: input.askUserAnswer } : {}),
         ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
         ...(input.designBrief ? { designBrief: input.designBrief } : {}),
         ...(input.prototypeName ? { prototypeName: input.prototypeName } : {}),
+        ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
+        ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
+        ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
         enqueuedAt: Date.now(),
       };
       set({
@@ -1606,7 +1005,7 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
         [sessionId]: {
           runId: draftRunId,
           sessionId,
-          userPrompt: prompt,
+          userPrompt: effectivePrompt,
           ...(input.displayTitle ? { displayTitle: input.displayTitle } : {}),
           startedAt: Date.now(),
           liveStatus: { zh: '正在理解指令并分析锚点…', en: 'Analyzing instruction & anchors…' },
@@ -1621,7 +1020,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       await streamAgentSessionTurn(
         sessionId,
         {
-          prompt,
+          ...(prompt.trim() ? { prompt } : {}),
+          ...(input.askUserAnswer ? { askUserAnswer: input.askUserAnswer } : {}),
           ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
           ...(input.designBrief ? { designBrief: input.designBrief } : {}),
           ...(input.prototypeName ? { prototypeName: input.prototypeName } : {}),
@@ -1654,9 +1054,13 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
                 sessionId,
                 prompt: nextItem.prompt,
                 ...(nextItem.displayTitle ? { displayTitle: nextItem.displayTitle } : {}),
+                ...(nextItem.askUserAnswer ? { askUserAnswer: nextItem.askUserAnswer } : {}),
                 ...(nextItem.images ? { images: nextItem.images } : {}),
                 ...(nextItem.designBrief ? { designBrief: nextItem.designBrief } : {}),
                 ...(nextItem.prototypeName ? { prototypeName: nextItem.prototypeName } : {}),
+                ...(nextItem.activeModelCode ? { activeModelCode: nextItem.activeModelCode } : {}),
+                ...(nextItem.reasoningMode ? { reasoningMode: nextItem.reasoningMode } : {}),
+                ...(nextItem.mockMode !== undefined ? { mockMode: nextItem.mockMode } : {}),
               });
             }
           }
@@ -2568,6 +1972,13 @@ function buildStoreSessionStreamCallbacks(
         };
       });
     },
+    onAskUser: (askUser) => {
+      patchDraft((cur) => ({
+        ...cur,
+        askUser,
+        liveStatus: { zh: '等待确认关键业务决策…', en: 'Waiting for user decision…' },
+      }));
+    },
     onArtifact: (artifact) => {
       patchDraft((cur) => ({
         ...cur,
@@ -2840,13 +2251,6 @@ export async function apiDeletePrototype(
   return apiDeleteResource(
     `/api/prototypes/${encodeURIComponent(prototypeId)}?projectId=${encodeURIComponent(projectId)}`,
   );
-}
-
-export async function apiGeneratePrototype(
-  projectId: string,
-  input: { docId?: string; prompt?: string },
-): Promise<PrototypeGenerationResult> {
-  return apiPostJson(`/api/projects/${projectId}/prototypes/generate`, input);
 }
 
 export async function apiCreateUnboundPrototypeCoDesignSession(

@@ -14,8 +14,6 @@ import {
   LayoutList,
   Layers,
   Loader2,
-  PanelRightClose,
-  PanelRightOpen,
   Plus,
   RotateCcw,
   Search,
@@ -57,7 +55,6 @@ import {
   useWorkbenchStore,
 } from '../api.js';
 import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
-import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
 import { resolveActiveVisionCapability } from '../components/agent/VisionAttachmentControls.js';
 import {
   Button,
@@ -70,6 +67,7 @@ import {
   runImportPrototypeHtml,
   type PrototypeCanvasStageProps,
 } from '../components/prototype/PrototypeCanvasStage.js';
+import { decideDesignBriefForMe } from '../components/prototype/DesignBriefAndStyleTile.js';
 import { PrototypeCoDesignStudio } from '../components/prototype/PrototypeCoDesignStudio.js';
 import {
   toRefinementSelections,
@@ -90,7 +88,6 @@ import {
   MarkdownRenderer,
   TiptapMarkdownEditor,
 } from '../components/markdown/index.js';
-import { PipelineInlinePanel } from '../components/pipeline/PipelineTaskCard.js';
 import { usePreferences, type NavViewId } from '../i18n.js';
 import { cn } from '../lib/utils.js';
 
@@ -1077,10 +1074,12 @@ export function RequirementExploreView({
     data,
     activeSessionId,
     liveSessionDrafts,
+    ensureProjectAgentSession,
+    setActiveSessionId,
+    startSessionAgentRun,
     startSrsSynthesisRun,
   } = useWorkbenchStore();
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<ConvergenceTab>('ALL');
   const [signalFilter, setSignalFilter] = useState('');
 
@@ -1380,21 +1379,13 @@ export function RequirementExploreView({
               type="button"
               variant="secondary"
               size="sm"
-              onClick={() => setRightPanelOpen((v) => !v)}
-              title={
-                rightPanelOpen
-                  ? t('收起右侧识别成果栏', 'Collapse extracted signals rail')
-                  : t('展开右侧识别成果栏', 'Expand extracted signals rail')
-              }
+              onClick={() => {
+                useAgentPanelStore.getState().revealPanel();
+                useAgentPanelStore.getState().setWideMode(true);
+              }}
             >
-              {rightPanelOpen ? (
-                <PanelRightClose size={13.5} />
-              ) : (
-                <PanelRightOpen size={13.5} />
-              )}
-              {rightPanelOpen
-                ? t('收起成果栏', 'Hide Signals')
-                : t(`展开成果栏 (${totalSignalCount})`, `Signals (${totalSignalCount})`)}
+              <Sparkles size={13.5} />
+              {t('打开右侧需求探索 Agent →', 'Open Requirement Agent →')}
             </Button>
 
             <Button
@@ -1417,31 +1408,84 @@ export function RequirementExploreView({
         </div>
       </div>
 
-      {/* Viewport-Locked Split Workbench: Center Agent + Bounded Right Convergence Inspector */}
-      <div
-        className={cn(
-          'grid gap-3.5 lg:h-[max(540px,calc(100dvh-184px))]',
-          rightPanelOpen ? 'lg:grid-cols-[minmax(0,1fr)_368px]' : 'grid-cols-1',
-        )}
-      >
-        <AgentSessionWorkbench
-          agentKind="REQUIREMENT"
-          targetId={session?.id}
-          height="100%"
-          className="min-h-[540px] lg:min-h-0"
-          title={t('需求探索与边界澄清智能体', 'Requirement Discovery Agent')}
-          subtitle={t(
-            'A 类常规项自动补全；遇到 B 类模糊业务边界时自动弹出交互式确认卡片',
-            'Auto-completes Class-A defaults; pops up Scoped HITL card for Class-B decisions',
-          )}
-        />
+      {/* Requirement Discovery Canvas: Quick Starter Prompts + Converged Requirement Signals */}
+      <div className="grid gap-3.5 lg:h-[max(540px,calc(100dvh-184px))] lg:grid-cols-[280px_minmax(0,1fr)]">
+        <div
+          className="card flex flex-col justify-between gap-3"
+          data-testid="requirement-explore-context-card"
+        >
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-1.5">
+              <Sparkles size={14} className="text-accent" />
+              <h4 className="card-title text-[13px]">
+                {t('需求探索引导与边界澄清', 'Discovery & Scoped HITL')}
+              </h4>
+            </div>
+            <p className="text-[12px] leading-relaxed text-ink-2">
+              {t(
+                '需求探索智能体已在右侧 Agent 面板展开（宽幅模式）。A 类常规项自动补全，遇到 B 类模糊业务边界时自动弹出交互式确认卡片。',
+                'Requirement Discovery Agent runs in the unified right Agent Panel (Wide Mode). Class-A defaults auto-complete; Class-B ambiguities surface interactive HITL cards.',
+              )}
+            </p>
+            <div className="pt-1 text-[11px] font-semibold text-ink-3">
+              {t('一键发起探索示例', 'Quick Discovery Starters')}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {[
+                t(
+                  '梳理核心业务单据聚合根、关键状态流转与审批准入红线',
+                  'Identify core domain aggregates, lifecycles, and approval gate rules',
+                ),
+                t(
+                  '识别跨系统数据交换、外部准入接口与异常补偿策略',
+                  'Clarify cross-system integrations, external credit checks, and compensations',
+                ),
+                t(
+                  '核对当前未决 B 类业务边界并给出推荐决策方案',
+                  'Review open Class-B business ambiguities and propose options',
+                ),
+              ].map((starter, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  disabled={synthesizingSrs}
+                  onClick={() => {
+                    useAgentPanelStore.getState().revealPanel();
+                    void (async () => {
+                      const targetSess =
+                        preferredAgentSession ??
+                        (await ensureProjectAgentSession(data.activeProject.id, 'REQUIREMENT', {
+                          ...(session?.id ? { targetId: session.id } : {}),
+                          title: t('需求探索与边界澄清智能体', 'Requirement Discovery Agent'),
+                        }));
+                      setActiveSessionId(targetSess.id);
+                      await startSessionAgentRun({
+                        sessionId: targetSess.id,
+                        prompt: starter,
+                      });
+                    })();
+                  }}
+                  className="rounded-control border border-line bg-surface-2 px-2.5 py-2 text-left text-[12px] leading-snug text-ink transition-colors hover:border-accent hover:bg-accent-soft cursor-pointer disabled:opacity-50"
+                >
+                  {starter}
+                </button>
+              ))}
+            </div>
+          </div>
 
-        {/* Bounded Right Panel: Fixed Height, Internal Contained Scroll, Pinned Footer */}
-        {rightPanelOpen && (
-          <aside
-            aria-label={t('已收敛需求要素面板', 'Converged Requirement Signals')}
-            className="flex max-h-[680px] min-h-[420px] flex-col overflow-hidden rounded-window border border-line bg-surface shadow-card lg:h-full lg:max-h-none lg:min-h-0"
-          >
+          <div className="rounded-control border border-line bg-inset/45 p-2.5 text-[11.5px] text-ink-3">
+            {t(
+              `当前项目：${data.activeProject.name} · 已沉淀 ${totalSignalCount} 项结构化信号`,
+              `Active Project: ${data.activeProject.name} · ${totalSignalCount} converged signals`,
+            )}
+          </div>
+        </div>
+
+        {/* Bounded Signals Panel: Fixed Height, Internal Contained Scroll, Pinned Footer */}
+        <aside
+          aria-label={t('已收敛需求要素面板', 'Converged Requirement Signals')}
+          className="flex max-h-[680px] min-h-[420px] flex-col overflow-hidden rounded-window border border-line bg-surface shadow-card lg:h-full lg:max-h-none lg:min-h-0"
+        >
             {/* Zone 1: Sticky Header + Search + Accessible Tablist */}
             <div className="shrink-0 border-b border-line bg-inset/35">
               <div className="flex items-center justify-between gap-2 px-3.5 pt-2.5 pb-2">
@@ -1709,8 +1753,7 @@ export function RequirementExploreView({
                 </Button>
               </div>
             </div>
-          </aside>
-        )}
+        </aside>
       </div>
     </div>
   );
@@ -1726,10 +1769,11 @@ export function RequirementDocsView({
   const {
     data,
     activeItemId,
-    backgroundTasks,
+    liveSessionDrafts,
     patchData,
+    setActiveItemId,
+    setActiveNav,
     showToast,
-    startPrototypeGenTask,
   } = useWorkbenchStore();
   const [pageMode, setPageMode] = useState<'WORKSPACE' | 'REGISTRY'>('WORKSPACE');
   const [selectedDocId, setSelectedDocId] = useState<string>('');
@@ -1784,11 +1828,12 @@ export function RequirementDocsView({
 
   if (!data) return null;
 
-  const activeProtoTask = backgroundTasks.find(
-    (tk) =>
-      tk.projectId === data.activeProject.id && tk.kind === 'PROTOTYPE_GEN',
+  const generatingProto = (data.agentSessions ?? []).some(
+    (s) =>
+      s.projectId === data.activeProject.id &&
+      s.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+      (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
   );
-  const generatingProto = activeProtoTask?.status === 'RUNNING';
 
   const handleSaveDoc = async (mdToSave = content) => {
     const targetId = selectedDoc?.id ?? `doc-${Date.now()}`;
@@ -1907,7 +1952,10 @@ export function RequirementDocsView({
       patchData({ requirementDocs: saveJson.docs });
       targetDocId = saveJson.doc.id;
     }
-    void startPrototypeGenTask(targetDocId ? { docId: targetDocId } : undefined);
+    setActiveItemId(targetDocId ?? null);
+    setActiveNav('app-prototype', { itemId: targetDocId ?? null });
+    onNavigate?.('app-prototype');
+    useAgentPanelStore.getState().revealPanel();
   };
 
   return (
@@ -1944,22 +1992,12 @@ export function RequirementDocsView({
             >
               {generatingProto && <Loader2 size={13.5} className="pipeline-spin" aria-hidden="true" />}
               {generatingProto
-                ? t('正在后台生成交互原型…', 'Generating Prototype…')
+                ? t('正在生成交互原型…', 'Generating Prototype…')
                 : t('基于此需求生成可交互 HTML 原型 →', 'Generate HTML Prototype →')}
             </Button>
           </>
         }
       />
-
-      {/* Compact Prototype Generation Progress Strip (Full Stream lives on 界面原型) */}
-      {activeProtoTask && (
-        <PipelineInlinePanel
-          variant="compact"
-          task={activeProtoTask}
-          onNavigateTarget={onNavigate ? () => onNavigate('app-prototype') : undefined}
-          onNavigateLlmCenter={onNavigate ? () => onNavigate('llm-center') : undefined}
-        />
-      )}
 
       {pageMode === 'REGISTRY' ? (
         <RegistryTable<RequirementDoc>
@@ -2165,11 +2203,9 @@ export function PrototypeStudioView({
     activeItemId,
     activePrototypeIdByProject,
     liveSessionDrafts,
-    backgroundTasks,
     patchData,
     showToast,
     setActivePrototypeId,
-    startPrototypeGenTask,
     startPrototypeBriefGenerationRun,
     startPrototypeBriefRestyleRun,
     startOntologySynthesisRun,
@@ -2254,17 +2290,6 @@ export function PrototypeStudioView({
     setStageOverride(defaultStageOverride);
   }, [defaultStageOverride]);
 
-  const activeProtoForEffect = data
-    ? backgroundTasks.find(
-        (tk) => tk.projectId === data.activeProject.id && tk.kind === 'PROTOTYPE_GEN',
-      )
-    : undefined;
-  const lastHandledProtoResultRef = useRef<string | null>(
-    activeProtoForEffect?.status === 'COMPLETED'
-      ? (activeProtoForEffect.resultItemId ?? null)
-      : null,
-  );
-
   // Reset transient studio state when switching projects
   useEffect(() => {
     setSynthesisSummary(null);
@@ -2273,10 +2298,6 @@ export function PrototypeStudioView({
     setCanvasFocusMode(false);
     setStageOverride(defaultStageOverride);
     pendingBriefTransitionRef.current = { active: false, baselineSignature: '' };
-    lastHandledProtoResultRef.current =
-      activeProtoForEffect?.status === 'COMPLETED'
-        ? (activeProtoForEffect.resultItemId ?? null)
-        : null;
   }, [data?.activeProject.id]);
 
   // Hydrate confirmedRevision from server if bootstrap did not populate it yet
@@ -2323,23 +2344,6 @@ export function PrototypeStudioView({
     revisionSignature,
   ]);
 
-  // Automatically select newly completed streaming prototype versions & enter Canvas Stage
-  useEffect(() => {
-    if (!data || !activeProtoForEffect) return;
-    if (
-      activeProtoForEffect.status === 'COMPLETED' &&
-      activeProtoForEffect.resultItemId &&
-      lastHandledProtoResultRef.current !== activeProtoForEffect.resultItemId
-    ) {
-      const created = data.prototypes.find((p) => p.id === activeProtoForEffect.resultItemId);
-      if (created) {
-        lastHandledProtoResultRef.current = created.id;
-        setSelectedProtoId(created.id);
-        setStageOverride('CANVAS');
-      }
-    }
-  }, [activeProtoForEffect?.status, activeProtoForEffect?.resultItemId, data?.prototypes]);
-
   useEffect(() => {
     if (docs.length === 0) {
       setSelectedDocId('');
@@ -2352,12 +2356,20 @@ export function PrototypeStudioView({
 
   useEffect(() => {
     if (!data || !activeItemId) return;
-    const target = data.prototypes.find((p) => p.id === activeItemId);
-    if (target && target.id !== selectedProtoId) {
-      setSelectedProtoId(target.id);
+    const targetProto = data.prototypes.find((p) => p.id === activeItemId);
+    if (targetProto) {
+      if (targetProto.id !== selectedProtoId) {
+        setSelectedProtoId(targetProto.id);
+      }
       setStageOverride('CANVAS');
+      return;
     }
-  }, [activeItemId, data?.prototypes]);
+    const targetDoc = data.requirementDocs.find((d) => d.id === activeItemId);
+    if (targetDoc) {
+      setSelectedDocId(targetDoc.id);
+      setStageOverride('BRIEFING');
+    }
+  }, [activeItemId, data?.prototypes, data?.requirementDocs]);
 
   useEffect(() => {
     if (!data) return;
@@ -2381,9 +2393,6 @@ export function PrototypeStudioView({
   if (!data) return null;
 
   const project = data.activeProject;
-  const activeProtoTask = backgroundTasks.find(
-    (tk) => tk.projectId === project.id && tk.kind === 'PROTOTYPE_GEN',
-  );
   const synthesizingOntology = (data.agentSessions ?? []).some(
     (s) =>
       s.projectId === project.id &&
@@ -2396,8 +2405,7 @@ export function PrototypeStudioView({
       s.agentKind === 'PROTOTYPE_CO_DESIGN' &&
       (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
   );
-  const isBusyProto =
-    refining || activeProtoTask?.status === 'RUNNING' || isRunningCoDesignSession;
+  const isBusyProto = refining || isRunningCoDesignSession;
   const visionCapability = resolveActiveVisionCapability(data);
 
   const currentStage = resolvePrototypeStudioStage(prototypes.length, stageOverride);
@@ -2440,12 +2448,26 @@ export function PrototypeStudioView({
   };
 
   const handleGenerateNewPrototype = async (options?: { prompt?: string; docId?: string }) => {
-    if (refining || activeProtoTask?.status === 'RUNNING') return;
-    const promptText = options?.prompt?.trim();
-    const targetDoc = options?.docId || selectedDocId || undefined;
-    void startPrototypeGenTask({
-      ...(targetDoc ? { docId: targetDoc } : {}),
-      ...(promptText ? { prompt: promptText } : {}),
+    if (refining || isRunningCoDesignSession) return;
+    const targetDocId = options?.docId || selectedDocId || undefined;
+    const srsDoc = docs.find((d) => d.id === targetDocId) ?? docs[0];
+    const promptNote = options?.prompt?.trim() || `${project.name} 交互界面原型`;
+    const decided = await decideDesignBriefForMe({
+      project,
+      ...(srsDoc ? { doc: srsDoc } : {}),
+      userFeelNote: promptNote,
+      locale,
+    });
+    pendingBriefTransitionRef.current = {
+      active: true,
+      baselineSignature: revisionSignature,
+    };
+    useAgentPanelStore.getState().revealPanel();
+    await startPrototypeBriefGenerationRun({
+      projectId: project.id,
+      prototypeName: `${project.name} 交互界面原型`,
+      prompt: promptNote,
+      designBrief: decided.brief,
     });
   };
 
@@ -2515,37 +2537,25 @@ export function PrototypeStudioView({
     }
   };
 
-  const statusBanners =
-    activeProtoTask || synthesisSummary ? (
-      <div className="flex flex-col gap-2">
-        {activeProtoTask && (
-          <PipelineInlinePanel
-            task={activeProtoTask}
-            onNavigateLlmCenter={onNavigate ? () => onNavigate('llm-center') : undefined}
-          />
-        )}
-
-        {synthesisSummary && (
-          <div className="flex items-center justify-between gap-2.5 rounded-[6px] border border-line bg-green-tint p-[8px_12px]">
-            <div className="text-[12.5px]">
-              <strong>
-                {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
-              </strong>
-              {synthesisSummary.modelCount}/11 Models · {synthesisSummary.errorCount}{' '}
-              Consistency Errors
-            </div>
-            <Button
-              type="button"
-              variant="accent"
-              size="sm"
-              onClick={() => onNavigate?.('app-ontology')}
-            >
-              {t('前往 11 模型本体工作台查看 →', 'Open 11-Model Ontology Workbench →')}
-            </Button>
-          </div>
-        )}
+  const statusBanners = synthesisSummary ? (
+    <div className="flex items-center justify-between gap-2.5 rounded-[6px] border border-line bg-green-tint p-[8px_12px]">
+      <div className="text-[12.5px]">
+        <strong>
+          {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
+        </strong>
+        {synthesisSummary.modelCount}/11 Models · {synthesisSummary.errorCount}{' '}
+        Consistency Errors
       </div>
-    ) : null;
+      <Button
+        type="button"
+        variant="accent"
+        size="sm"
+        onClick={() => onNavigate?.('app-ontology')}
+      >
+        {t('前往 11 模型本体工作台查看 →', 'Open 11-Model Ontology Workbench →')}
+      </Button>
+    </div>
+  ) : null;
 
   const combinedCanvasAnnotations: PrototypeVisualAnnotation[] = [
     ...(protoSelectionAttachments ?? []).map((att, idx) => ({
@@ -3541,7 +3551,17 @@ export function ApplicationAssemblyDevView({
   onNavigate?: (view: NavViewId) => void;
 } = {}) {
   const { t } = usePreferences();
-  const { data, patchData, showToast, switchProject } = useWorkbenchStore();
+  const {
+    data,
+    liveSessionDrafts,
+    ensureProjectAgentSession,
+    patchData,
+    setActiveItemId,
+    setActiveSessionId,
+    showToast,
+    startSessionAgentRun,
+    switchProject,
+  } = useWorkbenchStore();
   const [pageMode, setPageMode] = useState<'WORKSPACE' | 'REGISTRY'>('WORKSPACE');
   const [selectedAppId, setSelectedAppId] = useState<string>('');
   const [compiledPkg, setCompiledPkg] = useState<CompiledDevelopmentPackage | null>(null);
@@ -3579,6 +3599,12 @@ export function ApplicationAssemblyDevView({
     if (!selFoundationId && fnAssets[0]) setSelFoundationId(fnAssets[0].id);
     if (!selArchId && arAssets[0]) setSelArchId(arAssets[0].id);
   }, [data?.activeProject.id, data?.assembledApplications.length, data?.fourLayerAssets.length]);
+
+  useEffect(() => {
+    if (app?.id) {
+      setActiveItemId(app.id);
+    }
+  }, [app?.id, setActiveItemId]);
 
   if (!data) return null;
   const lifecycle = getProjectLifecycleState(data);
@@ -4077,19 +4103,96 @@ export function ApplicationAssemblyDevView({
             </div>
           )}
 
-          {/* Unified Streaming AI Coding Agent + Real-Time Logs */}
+          {/* Unified AI Coding Agent Quick Actions (Runs in Right Agent Panel) + Real-Time Logs */}
           {app && (
             <div className="grid grid-cols-[minmax(0,1fr)_340px] gap-3">
-              <AgentSessionWorkbench
-                height="max(480px, calc(100vh - 372px))"
-                agentKind="CODING"
-                targetId={app.id}
-                title={t('四层架构 AI 研发智能体', '4-Layer AI Coding Agent')}
-                subtitle={t(
-                  '基于渐进式《开发资料包》执行代码骨架生成、包编译与门禁校验',
-                  'Generates domain repositories, routes, UI components & compiles dev packages',
-                )}
-              />
+              <div className="card flex flex-col justify-between gap-3" data-testid="coding-agent-context-card">
+                <div className="space-y-2.5">
+                  <div className="card-header" style={{ marginBottom: 0 }}>
+                    <div>
+                      <h4 className="card-title inline-flex items-center gap-1.5">
+                        <Code2 size={15} className="text-accent" />
+                        {t('四层架构 AI 研发智能体', '4-Layer AI Coding Agent')}
+                      </h4>
+                      <div className="text-[12px] text-muted-foreground mt-0.5">
+                        {t(
+                          '基于渐进式《开发资料包》执行代码骨架生成、包编译与门禁校验（已在右侧 Agent 面板就绪）',
+                          'Generates domain repositories, routes, UI components & compiles dev packages in the unified Agent Panel',
+                        )}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="accent"
+                      size="sm"
+                      onClick={() => {
+                        setActiveItemId(app.id);
+                        useAgentPanelStore.getState().revealPanel();
+                      }}
+                    >
+                      {t('打开右侧研发 Agent →', 'Open Coding Agent →')}
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-1.5 pt-1">
+                    {[
+                      t(
+                        '基于当前四层装配生成 M1/M3 领域聚合仓储与门禁校验代码骨架',
+                        'Generate M1/M3 domain repository and rule guard code scaffolding',
+                      ),
+                      t(
+                        '编译渐进式《开发资料包》并核验完成度门禁清单',
+                        'Compile progressive Development Package and verify completion gates',
+                      ),
+                    ].map((starter, idx) => {
+                      const codingRunning = (data.agentSessions ?? []).some(
+                        (s) =>
+                          s.projectId === data.activeProject.id &&
+                          s.agentKind === 'CODING' &&
+                          s.targetId === app.id &&
+                          (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
+                      );
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          disabled={codingRunning}
+                          onClick={() => {
+                            setActiveItemId(app.id);
+                            useAgentPanelStore.getState().revealPanel();
+                            void (async () => {
+                              const codingSess = await ensureProjectAgentSession(
+                                data.activeProject.id,
+                                'CODING',
+                                {
+                                  targetId: app.id,
+                                  title: `${app.name} · ${t('四层架构 AI 研发智能体', '4-Layer AI Coding Agent')}`,
+                                },
+                              );
+                              setActiveSessionId(codingSess.id);
+                              await startSessionAgentRun({
+                                sessionId: codingSess.id,
+                                prompt: starter,
+                              });
+                            })();
+                          }}
+                          className="flex items-center justify-between gap-2 rounded-control border border-line bg-surface-2 px-3 py-2 text-left text-[12.5px] text-ink transition-colors hover:border-accent hover:bg-accent-soft cursor-pointer disabled:opacity-50"
+                        >
+                          <span>{starter}</span>
+                          <ArrowRight size={13} className="shrink-0 text-accent" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-control border border-line bg-inset/45 p-2.5 text-[11.5px] text-ink-3">
+                  {t(
+                    `装配应用：${app.name} (${app.status} · ${app.publishedVersion || 'v1.0.0'})`,
+                    `Application: ${app.name} (${app.status} · ${app.publishedVersion || 'v1.0.0'})`,
+                  )}
+                </div>
+              </div>
 
               <div className="card" style={{ maxHeight: 480, overflowY: 'auto' }}>
                 <div className="card-header">
@@ -4272,7 +4375,9 @@ export function OntologySkillsView({
     const res = await apiPutJson<{ skill: GeneratedSkill; skills: GeneratedSkill[] }>(
       `/api/skills/${activeSkill.id}`,
       {
+        ...activeSkill,
         skillMarkdown: mdToSave,
+        isCustomRefined: true,
       },
     );
     patchData({ generatedSkills: res.skills });

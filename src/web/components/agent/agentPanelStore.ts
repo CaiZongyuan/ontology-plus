@@ -4,6 +4,7 @@ import type { PrototypeTargetAnchor } from '../../../packages/workspace-store/in
 export const AGENT_PANEL_MIN_WIDTH = 320;
 export const AGENT_PANEL_MAX_WIDTH = 640;
 export const AGENT_PANEL_DEFAULT_WIDTH = 384;
+export const AGENT_PANEL_WIDE_CSS_WIDTH = 'min(760px, 56vw)';
 /** Below this viewport width the panel is an overlay instead of a shell column. */
 export const AGENT_PANEL_OVERLAY_QUERY = '(max-width: 1100px)';
 
@@ -12,6 +13,7 @@ const STORAGE_KEY = 'onto_agent_panel';
 export interface AgentPanelPrefs {
   open: boolean;
   width: number;
+  wideMode: boolean;
 }
 
 export function clampAgentPanelWidth(width: number): number {
@@ -20,7 +22,11 @@ export function clampAgentPanelWidth(width: number): number {
 }
 
 export function parseAgentPanelPrefs(raw: string | null | undefined): AgentPanelPrefs {
-  const fallback: AgentPanelPrefs = { open: true, width: AGENT_PANEL_DEFAULT_WIDTH };
+  const fallback: AgentPanelPrefs = {
+    open: true,
+    width: AGENT_PANEL_DEFAULT_WIDTH,
+    wideMode: false,
+  };
   if (!raw) return fallback;
   try {
     const parsed = JSON.parse(raw) as Partial<AgentPanelPrefs> | null;
@@ -29,6 +35,7 @@ export function parseAgentPanelPrefs(raw: string | null | undefined): AgentPanel
       open: typeof parsed.open === 'boolean' ? parsed.open : fallback.open,
       width:
         typeof parsed.width === 'number' ? clampAgentPanelWidth(parsed.width) : fallback.width,
+      wideMode: typeof parsed.wideMode === 'boolean' ? parsed.wideMode : fallback.wideMode,
     };
   } catch {
     return fallback;
@@ -63,6 +70,8 @@ interface AgentPanelState extends AgentPanelPrefs {
   setHoveredAnchor: (anchor: PrototypeTargetAnchor | null) => void;
   /** `commit: false` while dragging, so storage is written once when the drag ends. */
   setWidth: (width: number, opts?: { commit?: boolean }) => void;
+  setWideMode: (wideMode: boolean, opts?: { commit?: boolean }) => void;
+  toggleWideMode: () => void;
 }
 
 /**
@@ -75,7 +84,7 @@ export const useAgentPanelStore = create<AgentPanelState>((set, get) => ({
   hoveredAnchor: null,
   setOpen: (open) => {
     set({ open });
-    writePrefs({ open, width: get().width });
+    writePrefs({ open, width: get().width, wideMode: get().wideMode });
   },
   setOverlayOpen: (overlayOpen) => set({ overlayOpen }),
   revealPanel: () => {
@@ -88,12 +97,23 @@ export const useAgentPanelStore = create<AgentPanelState>((set, get) => ({
     } else {
       set({ open: true });
     }
-    writePrefs({ open: true, width: get().width });
+    writePrefs({ open: true, width: get().width, wideMode: get().wideMode });
   },
   setHoveredAnchor: (hoveredAnchor) => set({ hoveredAnchor }),
   setWidth: (width, opts) => {
     const next = clampAgentPanelWidth(width);
-    set({ width: next });
-    if (opts?.commit !== false) writePrefs({ open: get().open, width: next });
+    set({ width: next, wideMode: false });
+    if (opts?.commit !== false) writePrefs({ open: get().open, width: next, wideMode: false });
+  },
+  setWideMode: (wideMode, opts) => {
+    set({ wideMode });
+    if (opts?.commit !== false) {
+      writePrefs({ open: get().open, width: get().width, wideMode });
+    }
+  },
+  toggleWideMode: () => {
+    const next = !get().wideMode;
+    set({ wideMode: next, open: true });
+    writePrefs({ open: true, width: get().width, wideMode: next });
   },
 }));

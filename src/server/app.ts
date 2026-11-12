@@ -33,30 +33,20 @@ import {
   abortActiveAgentSessionAsync,
   attachUnifiedAgentSessionLiveStream,
   buildTurnSseEvents,
-  cancelServerPipelineTask,
   compactAgentSessionWithLlm,
-  createPipelineTaskSseStream,
   createSseEventStream,
   createUnifiedSseStream,
-  dismissServerPipelineTask,
   ensurePrototypeCoDesignSession,
-  generatePrototypeFromDoc,
   getLiveAgentSessionStatus,
-  getServerPipelineTask,
-  listServerPipelineTasks,
-  markServerPipelineTaskRead,
   normalizeAgentLocale,
-  resumeServerPipelineTask,
   runAppCodingAgentTurn,
   runCapabilitySmartChatTurn,
   runDataOntologyReasoning,
   runRequirementGrillingTurn,
   runSmartOntologyExtractionJob,
   runUnifiedAgentSessionStream,
-  startServerPipelineTask,
   testLlmGatewayConnection,
   type AgentLocale,
-  type PipelineTaskKind,
   type TransientTurnImageInput,
 } from '../packages/agent-runtime/index.js';
 import {
@@ -161,99 +151,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       writebackInterfaces: store.listWritebackInterfaces(),
       llmProviders: store.listLlmProviders(),
       systemSettings: store.getSystemSettings(),
-      pipelineTasks: listServerPipelineTasks(store),
-    });
-  });
-
-  // ─── Durable Background Pipeline Tasks (Detached from HTTP socket) ─────────
-
-  app.get('/api/pipeline-tasks', (c) => {
-    const projectId = c.req.query('projectId') || undefined;
-    return c.json({ pipelineTasks: listServerPipelineTasks(store, projectId) });
-  });
-
-  app.get('/api/pipeline-tasks/:taskId', (c) => {
-    const task = getServerPipelineTask(store, c.req.param('taskId'));
-    if (!task) return c.json({ error: 'Pipeline task not found' }, 404);
-    return c.json({ task });
-  });
-
-  app.post('/api/pipeline-tasks', async (c) => {
-    const body = await c.req.json<{
-      kind: PipelineTaskKind;
-      projectId: string;
-      sessionId?: string;
-      docId?: string;
-      prototypeId?: string;
-      prompt?: string;
-      title?: string;
-      version?: string;
-      locale?: string;
-    }>();
-    if (body.kind !== 'PROTOTYPE_GEN') {
-      return c.json(
-        {
-          error: `Unsupported pipeline task kind "${String(body.kind)}". Use unified Agent Session runs instead.`,
-        },
-        400,
-      );
-    }
-    const locale = getReqLocale(c, body);
-    const { task, reusedRunning } = startServerPipelineTask(store, {
-      kind: body.kind,
-      projectId: body.projectId,
-      ...(body.sessionId ? { sessionId: body.sessionId } : {}),
-      ...(body.docId ? { docId: body.docId } : {}),
-      ...(body.prototypeId ? { prototypeId: body.prototypeId } : {}),
-      ...(body.prompt ? { prompt: body.prompt } : {}),
-      ...(body.title ? { title: body.title } : {}),
-      ...(body.version ? { version: body.version } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      task,
-      reusedRunning,
-      pipelineTasks: listServerPipelineTasks(store),
-    });
-  });
-
-  app.get('/api/pipeline-tasks/:taskId/stream', (c) => {
-    const taskId = c.req.param('taskId');
-    const stream = createPipelineTaskSseStream(store, taskId, c.req.raw.signal);
-    return new Response(stream, {
-      headers: SSE_RESPONSE_HEADERS,
-    });
-  });
-
-  app.post('/api/pipeline-tasks/:taskId/cancel', (c) => {
-    const task = cancelServerPipelineTask(store, c.req.param('taskId'));
-    if (!task) return c.json({ error: 'Pipeline task not found' }, 404);
-    return c.json({ task, pipelineTasks: listServerPipelineTasks(store) });
-  });
-
-  app.post('/api/pipeline-tasks/:taskId/dismiss', (c) => {
-    const task = dismissServerPipelineTask(store, c.req.param('taskId'));
-    if (!task) return c.json({ error: 'Pipeline task not found' }, 404);
-    return c.json({ task, pipelineTasks: listServerPipelineTasks(store) });
-  });
-
-  app.post('/api/pipeline-tasks/:taskId/read', (c) => {
-    const task = markServerPipelineTaskRead(store, c.req.param('taskId'));
-    if (!task) return c.json({ error: 'Pipeline task not found' }, 404);
-    return c.json({ task, pipelineTasks: listServerPipelineTasks(store) });
-  });
-
-  app.post('/api/pipeline-tasks/:taskId/resume', async (c) => {
-    const body = await c.req
-      .json<{ locale?: string }>()
-      .catch(() => ({ locale: undefined }));
-    const locale = getReqLocale(c, body);
-    const resumed = resumeServerPipelineTask(store, c.req.param('taskId'), locale);
-    if (!resumed) return c.json({ error: 'Pipeline task not found' }, 404);
-    return c.json({
-      task: resumed.task,
-      reusedRunning: resumed.reusedRunning,
-      pipelineTasks: listServerPipelineTasks(store),
     });
   });
 
@@ -453,7 +350,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       prototypes: store.listPrototypes(project.id),
       confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(project.id) ?? null,
       extractionJobs: store.listExtractionJobs(project.id),
-      pipelineTasks: listServerPipelineTasks(store),
     });
   });
 
@@ -592,8 +488,13 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
 
   app.put('/api/skills/:id', async (c) => {
     const id = c.req.param('id');
-    const body = await c.req.json<Omit<GeneratedSkill, 'updatedAt'>>();
+    const existing = store.listGeneratedSkills().find((s) => s.id === id);
+    const body = await c.req.json<Partial<Omit<GeneratedSkill, 'updatedAt'>>>();
+    if (!existing && (!body.projectId || !body.name || !body.slug)) {
+      return c.json({ error: 'Skill not found' }, 404);
+    }
     const saved = store.saveGeneratedSkill({
+      ...(existing ?? ({} as Omit<GeneratedSkill, 'updatedAt'>)),
       ...body,
       id,
       isCustomRefined: body.isCustomRefined ?? true,
@@ -916,21 +817,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       }
       throw err;
     }
-  });
-
-  app.post('/api/projects/:id/prototypes/generate', async (c) => {
-    const projectId = c.req.param('id');
-    const body = await c.req
-      .json<{ docId?: string; prompt?: string; locale?: string }>()
-      .catch(() => ({ docId: undefined, prompt: undefined, locale: undefined }));
-    const locale = getReqLocale(c, body);
-    const result = await generatePrototypeFromDoc(store, {
-      projectId,
-      ...(body.docId ? { docId: body.docId } : {}),
-      ...(body.prompt ? { prompt: body.prompt } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(result);
   });
 
   app.post('/api/projects/:id/prototype-co-design-sessions', async (c) => {

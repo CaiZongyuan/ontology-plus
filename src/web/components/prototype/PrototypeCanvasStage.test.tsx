@@ -668,14 +668,14 @@ function setMockWorkbenchData(patch: Partial<BootstrapPayload>) {
     },
     ...patch,
   };
-  Object.assign(useWorkbenchStore.getInitialState(), { data: payload, backgroundTasks: [] });
-  useWorkbenchStore.setState({ data: payload, backgroundTasks: [] });
+  Object.assign(useWorkbenchStore.getInitialState(), { data: payload });
+  useWorkbenchStore.setState({ data: payload });
 }
 
 describe('PrototypeStudioView two-stage architecture: Briefing Stage <-> Canvas Stage (#27)', () => {
   afterEach(() => {
-    Object.assign(useWorkbenchStore.getInitialState(), { data: null, backgroundTasks: [] });
-    useWorkbenchStore.setState({ data: null, backgroundTasks: [] });
+    Object.assign(useWorkbenchStore.getInitialState(), { data: null });
+    useWorkbenchStore.setState({ data: null });
   });
 
   it('automatically enters Canvas Stage when prototypes exist and removes Version Registry and 3-step wizard', () => {

@@ -1,4 +1,5 @@
 import type {
+  AgentAskUserPrompt,
   AgentDomainArtifact,
   AgentSession,
   AgentSessionMessage,
@@ -8,7 +9,6 @@ import type {
 import {
   formatAnchorBadgeLabel,
   formatToolStepLabel,
-  type BackgroundPipelineTask,
   type QueuedSessionPromptItem,
   type SessionLiveDraft,
 } from '../../api.js';
@@ -23,8 +23,7 @@ export {
 
 /**
  * The one shape every piece of agent work takes in the Agent Panel (ADR 0009).
- * Sources of agent work (session turns, legacy pipeline tasks) adapt into this
- * view model; `AgentRunCard` renders nothing else.
+ * Every Agent Session turn adapts into this view model; `AgentRunCard` renders nothing else.
  */
 export type AgentRunStatus = 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 
@@ -63,7 +62,10 @@ export interface AgentRunView {
   /** Source session metadata when adapted from an `AgentSession` turn. */
   sourceSessionId?: string;
   sourceUserMessageId?: string;
+  sourceAssistantMessageId?: string;
   retryPrompt?: string;
+  /** Structured Scoped HITL question emitted by `ask_user` during this run. */
+  askUser?: AgentAskUserPrompt;
   /** Semantic anchors modified during this run (for canvas highlighting). */
   modifiedAnchors?: PrototypeTargetAnchor[];
   /** Immutable prototype revision created at the end of this run, when HTML changed. */
@@ -100,90 +102,6 @@ export function formatStepClock(iso: string | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : d.toTimeString().slice(0, 8);
-}
-
-const RUN_STATUS_BY_TASK_STATUS: Record<BackgroundPipelineTask['status'], AgentRunStatus> = {
-  RUNNING: 'RUNNING',
-  COMPLETED: 'SUCCEEDED',
-  ERROR: 'FAILED',
-  CANCELLED: 'CANCELLED',
-};
-
-/**
- * Adapts a legacy background pipeline task into an Agent Run. Pipeline tasks are
- * retired once their callers post to an Agent Session instead; until then this
- * keeps them on the same card as everything else.
- */
-export function agentRunFromPipelineTask(task: BackgroundPipelineTask): AgentRunView {
-  const status = RUN_STATUS_BY_TASK_STATUS[task.status];
-  const lastIndex = task.stageLogs.length - 1;
-
-  const steps: AgentRunStep[] = task.stageLogs.map((log, index) => {
-    let stepStatus: AgentRunStepStatus = 'DONE';
-    if (log.phase === 'ERROR') stepStatus = 'FAILED';
-    else if (log.phase === 'CANCELLED') stepStatus = 'STOPPED';
-    else if (index === lastIndex) {
-      if (status === 'RUNNING') stepStatus = 'RUNNING';
-      else if (status === 'FAILED') stepStatus = 'FAILED';
-      else if (status === 'CANCELLED') stepStatus = 'STOPPED';
-    }
-    const tail = index === lastIndex && status === 'RUNNING' ? task.previewTail.trim() : '';
-    return {
-      id: log.id,
-      label: { zh: log.messageZh, en: log.messageEn },
-      status: stepStatus,
-      at: log.timestamp,
-      ...(tail ? { detail: tail } : {}),
-    };
-  });
-
-  // A finished task logs its closing message as the last stage; the card already
-  // shows that as the result, so it is not repeated as a step.
-  const lastLog = task.stageLogs[lastIndex];
-  if (
-    status === 'SUCCEEDED' &&
-    lastLog &&
-    lastLog.messageZh === task.messageZh &&
-    lastLog.messageEn === task.messageEn
-  ) {
-    steps.pop();
-  }
-
-  const thinking = task.thinkingText.trim();
-
-  return {
-    id: task.id,
-    title: { zh: task.titleZh, en: task.titleEn },
-    status,
-    liveStatus: { zh: task.messageZh, en: task.messageEn },
-    startedAt: task.startedAt,
-    ...(task.completedAt !== undefined ? { completedAt: task.completedAt } : {}),
-    ...(task.providerModel ? { model: task.providerModel } : {}),
-    steps,
-    ...(thinking ? { thinking } : {}),
-    ...(status === 'SUCCEEDED'
-      ? {
-          result: {
-            summary: { zh: task.messageZh, en: task.messageEn },
-            artifactLabel: {
-              zh: task.resultLabelZh ?? task.resultLabelEn ?? '查看结果',
-              en: task.resultLabelEn ?? task.resultLabelZh ?? 'View result',
-            },
-          },
-        }
-      : {}),
-    ...(status === 'FAILED'
-      ? {
-      failure: {
-        message: task.errorDiagnostic?.message ?? task.messageEn,
-        ...(task.errorDiagnostic?.remediation
-          ? { remediation: task.errorDiagnostic.remediation }
-          : {}),
-        ...(task.errorDiagnostic?.code ? { code: task.errorDiagnostic.code } : {}),
-      },
-    }
-  : {}),
-  };
 }
 
 export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: string): LocalizedText {
@@ -372,6 +290,16 @@ function formatDomainArtifactLabel(artifact: AgentDomainArtifact): LocalizedText
         zh: '打开归因分析报告',
         en: 'Open Attribution Report',
       };
+    case 'REASONING_POLICY':
+      return {
+        zh: '查看三段式推理看板',
+        en: 'View 3-stage reasoning',
+      };
+    case 'SQL_PREVIEW':
+      return {
+        zh: `查看 SQL 结果 (${artifact.rows.length} 行)`,
+        en: `View SQL preview (${artifact.rows.length} rows)`,
+      };
     default:
       return { zh: '查看产物', en: 'View artifact' };
   }
@@ -427,7 +355,9 @@ function buildCompletedSessionRun(
     ...(thinking ? { thinking } : {}),
     sourceSessionId: session.id,
     sourceUserMessageId: uMsg.id,
+    sourceAssistantMessageId: aMsg.id,
     retryPrompt: uMsg.content,
+    ...(aMsg.askUser ? { askUser: aMsg.askUser } : {}),
     ...(modifiedAnchors.length > 0 ? { modifiedAnchors } : {}),
     ...(revArtifact
       ? {
@@ -487,6 +417,7 @@ function buildRunFromLiveDraft(
     sourceSessionId: draft.sessionId,
     ...(uMsg ? { sourceUserMessageId: uMsg.id } : {}),
     retryPrompt: uMsg?.content ?? draft.userPrompt,
+    ...(draft.askUser ? { askUser: draft.askUser } : {}),
     ...(draft.activeAnchor ? { modifiedAnchors: [draft.activeAnchor] } : {}),
     ...(revArtifact
       ? {

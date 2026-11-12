@@ -1,5 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Clock, PanelRightClose, Send, X } from 'lucide-react';
+import {
+  Clock,
+  GitFork,
+  Maximize2,
+  Minimize2,
+  PanelRightClose,
+  Plus,
+  Send,
+  X,
+} from 'lucide-react';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { Button } from '../beautifui/index.js';
@@ -28,21 +37,46 @@ export interface AgentPanelQueuedPrompt {
   label: string;
 }
 
+export interface AgentPanelSessionOption {
+  id: string;
+  title: string;
+  isFork?: boolean;
+}
+
 export interface AgentPanelProps {
   /** Name of the Agent Session shown for the module in view. */
   title: LocalizedText;
   /** Oldest first, like a conversation. */
   runs: AgentRunView[];
   width: number;
+  /** Wide docked mode for conversation-primary surfaces or side-by-side deep review. */
+  wideMode?: boolean;
+  onToggleWideMode?: () => void;
   /** Overlay presentation for narrow viewports. */
   overlay?: boolean;
   onClose: () => void;
   onResize: (width: number, opts: { commit: boolean }) => void;
   onCancelRun?: (runId: string) => void;
   onRetryRun?: (runId: string) => void;
+  onForkRun?: (runId: string) => void;
   onOpenRunArtifact?: (runId: string) => void;
   onOpenLlmCenter?: () => void;
   onHoverAnchor?: (anchor: PrototypeTargetAnchor | null) => void;
+  onAnswerAskUser?: (
+    runId: string,
+    promptId: string,
+    selectedAnswers: string[],
+    freeformText?: string,
+  ) => void;
+  onTriggerWriteback?: (writebackInterfaceId: string, actionTitle: string) => void;
+  /** Optional multi-session switcher & New Session action. */
+  sessions?: AgentPanelSessionOption[];
+  activeSessionId?: string;
+  isForkSession?: boolean;
+  onSelectSession?: (sessionId: string) => void;
+  onCreateSession?: () => void;
+  /** Optional module-specific header context slot (e.g. Reasoning Mode pills, Capability Agent selector). */
+  headerContextSlot?: React.ReactNode;
   /** Interactive composer submission handler. When supplied, renders the composer footer. */
   onSubmitPrompt?: (prompt: string) => void | Promise<void>;
   composerValue?: string;
@@ -69,14 +103,25 @@ export function AgentPanel({
   title,
   runs,
   width,
+  wideMode = false,
+  onToggleWideMode,
   overlay = false,
   onClose,
   onResize,
   onCancelRun,
   onRetryRun,
+  onForkRun,
   onOpenRunArtifact,
   onOpenLlmCenter,
   onHoverAnchor,
+  onAnswerAskUser,
+  onTriggerWriteback,
+  sessions,
+  activeSessionId,
+  isForkSession = false,
+  onSelectSession,
+  onCreateSession,
+  headerContextSlot,
   onSubmitPrompt,
   composerValue,
   onComposerValueChange,
@@ -101,6 +146,7 @@ export function AgentPanel({
   const runningCount = runs.filter((r) => r.status === 'RUNNING').length;
   const latestRunId = runs[runs.length - 1]?.id;
   const canSend = !composerDisabled && draft.trim().length > 0;
+  const hasSessionSelect = Boolean(sessions && sessions.length > 1 && onSelectSession);
 
   const handleComposerSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -170,8 +216,9 @@ export function AgentPanel({
       <aside
         ref={panelRef}
         id="agent-panel"
-        className={cn('agent-panel', overlay && 'is-overlay')}
+        className={cn('agent-panel', overlay && 'is-overlay', wideMode && 'is-wide')}
         data-testid="agent-panel"
+        data-wide-mode={wideMode ? 'true' : 'false'}
         aria-label={t('智能体面板', 'Agent Panel')}
         tabIndex={-1}
       >
@@ -197,7 +244,15 @@ export function AgentPanel({
 
         <header className="agent-panel-head">
           <div className="agent-panel-heading">
-            <span className="agent-panel-kicker">{t('智能体', 'Agent')}</span>
+            <div className="agent-panel-kicker-row">
+              <span className="agent-panel-kicker">{t('智能体', 'Agent')}</span>
+              {isForkSession && (
+                <span className="agent-panel-fork-badge" data-testid="agent-panel-fork-badge">
+                  <GitFork size={10} aria-hidden="true" />
+                  {t('分叉会话', 'Fork')}
+                </span>
+              )}
+            </div>
             <h2 className="agent-panel-title">{t(title.zh, title.en)}</h2>
           </div>
           {runningCount > 0 && (
@@ -205,6 +260,43 @@ export function AgentPanel({
               <span className="agent-panel-running-dot" aria-hidden="true" />
               {t(`${runningCount} 个运行中`, `${runningCount} running`)}
             </span>
+          )}
+          {onCreateSession && (
+            <Button
+              variant="ghost"
+              size="xs"
+              data-testid="agent-new-session-btn"
+              aria-label={t('新建会话', 'New Session')}
+              title={t('新建会话', 'New Session')}
+              onClick={onCreateSession}
+            >
+              <Plus size={13} aria-hidden="true" />
+            </Button>
+          )}
+          {!overlay && onToggleWideMode && (
+            <Button
+              variant="ghost"
+              size="xs"
+              data-testid="agent-panel-wide-toggle"
+              aria-pressed={wideMode}
+              aria-label={
+                wideMode
+                  ? t('恢复标准面板宽度', 'Restore standard panel width')
+                  : t('展开为宽屏对话模式', 'Expand to Wide Mode')
+              }
+              title={
+                wideMode
+                  ? t('恢复标准宽度', 'Standard width')
+                  : t('宽屏模式', 'Wide mode')
+              }
+              onClick={onToggleWideMode}
+            >
+              {wideMode ? (
+                <Minimize2 size={13} aria-hidden="true" />
+              ) : (
+                <Maximize2 size={13} aria-hidden="true" />
+              )}
+            </Button>
           )}
           <Button
             variant="ghost"
@@ -217,6 +309,27 @@ export function AgentPanel({
             <PanelRightClose size={14} aria-hidden="true" />
           </Button>
         </header>
+
+        {(hasSessionSelect || headerContextSlot) && (
+          <div className="agent-panel-subhead" data-testid="agent-panel-subhead">
+            {hasSessionSelect && (
+              <select
+                className="agent-panel-session-select"
+                data-testid="agent-panel-session-select"
+                aria-label={t('切换智能体会话', 'Switch Agent Session')}
+                value={activeSessionId ?? sessions![0]!.id}
+                onChange={(e) => onSelectSession!(e.target.value)}
+              >
+                {sessions!.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.isFork ? `⑂ ${s.title}` : s.title}
+                  </option>
+                ))}
+              </select>
+            )}
+            {headerContextSlot}
+          </div>
+        )}
 
         {visionSupported === false && (
           <VisionCapabilityBanner
@@ -243,9 +356,17 @@ export function AgentPanel({
                 {...(now !== undefined ? { now } : {})}
                 {...(onCancelRun ? { onCancel: () => onCancelRun(run.id) } : {})}
                 {...(onRetryRun ? { onRetry: () => onRetryRun(run.id) } : {})}
+                {...(onForkRun ? { onFork: () => onForkRun(run.id) } : {})}
                 {...(onOpenRunArtifact ? { onOpenArtifact: () => onOpenRunArtifact(run.id) } : {})}
                 {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
                 {...(onHoverAnchor ? { onHoverAnchor } : {})}
+                {...(onAnswerAskUser
+                  ? {
+                      onAnswerAskUser: (promptId, selectedAnswers, freeformText) =>
+                        onAnswerAskUser(run.id, promptId, selectedAnswers, freeformText),
+                    }
+                  : {})}
+                {...(onTriggerWriteback ? { onTriggerWriteback } : {})}
               />
             ))
           )}

@@ -728,10 +728,10 @@ input[type='checkbox']:disabled {
   cursor: not-allowed;
 }
 
-/* ─── Three-Pane Ontology Workbench ─── */
+/* ─── Two-Pane Ontology Workbench (Copilot lives in ShellAgentPanel) ─── */
 .ontology-workbench {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr) 340px;
+  grid-template-columns: 248px minmax(0, 1fr);
   height: calc(100vh - var(--topbar-h) - 34px);
   width: 100%;
   overflow: hidden;
@@ -2553,6 +2553,124 @@ dialog.inspo-lightbox-dialog::backdrop {
   gap: 1px;
   min-width: 0;
   margin-inline-end: auto;
+}
+
+.agent-panel-kicker-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-panel-fork-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.agent-panel-subhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.agent-panel-session-select {
+  flex: 1;
+  min-width: 140px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line);
+  background: var(--ground-2);
+  color: var(--ink);
+  font-size: var(--text-xs);
+}
+
+.agent-panel-mode-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--ground-2);
+}
+
+.agent-panel-mode-pill {
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.agent-panel-mode-pill:hover {
+  color: var(--ink);
+}
+
+.agent-panel-mode-pill.is-active {
+  background: var(--accent);
+  color: var(--accent-ink, #ffffff);
+}
+
+.agent-run-hitl {
+  margin-top: 4px;
+}
+
+.agent-run-policy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+
+.agent-run-policy-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line);
+  background: var(--inset);
+}
+
+.agent-run-policy-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--text-xs);
+}
+
+.agent-run-policy-info strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.agent-run-policy-info span {
+  color: var(--ink-3);
+  font-size: var(--text-2xs);
 }
 
 .agent-panel-kicker {

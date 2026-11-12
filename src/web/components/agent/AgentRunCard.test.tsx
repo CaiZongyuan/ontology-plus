@@ -6,7 +6,7 @@ import {
   type AgentSession,
 } from '../../../packages/workspace-store/index.js';
 import { createApiApp } from '../../../server/app.js';
-import { useWorkbenchStore, type BackgroundPipelineTask } from '../../api.js';
+import { useWorkbenchStore } from '../../api.js';
 import { PreferencesProvider } from '../../i18n.js';
 import { AgentPanel, shouldSubmitComposerKey } from './AgentPanel.js';
 import { AgentRunCard, type AgentRunCardProps } from './AgentRunCard.js';
@@ -16,15 +16,19 @@ import {
   AGENT_PANEL_MIN_WIDTH,
   clampAgentPanelWidth,
   parseAgentPanelPrefs,
+  useAgentPanelStore,
 } from './agentPanelStore.js';
 import {
-  agentRunFromPipelineTask,
   agentRunsFromSession,
   formatRunElapsed,
   type AgentRunView,
   type SessionLiveDraft,
 } from './agentRun.js';
-import { ShellAgentPanel, agentPanelSurfaceFor } from './ShellAgentPanel.js';
+import {
+  ShellAgentPanel,
+  agentPanelSurfaceFor,
+  resolveActiveWorkspaceRuns,
+} from './ShellAgentPanel.js';
 
 const STARTED_AT = Date.UTC(2026, 10, 12, 10, 0, 0);
 const noop = () => {};
@@ -82,13 +86,21 @@ afterEach(() => {
   vi.unstubAllGlobals();
   const cleanPatch = {
     data: null,
-    backgroundTasks: [],
     liveSessionDrafts: {},
     sessionQueues: {},
     activePrototypeIdByProject: {},
   };
   useWorkbenchStore.setState(cleanPatch);
   Object.assign(useWorkbenchStore.getInitialState(), cleanPatch);
+  const cleanPanel = {
+    open: true,
+    overlayOpen: false,
+    width: AGENT_PANEL_DEFAULT_WIDTH,
+    wideMode: false,
+    hoveredAnchor: null,
+  };
+  useAgentPanelStore.setState(cleanPanel);
+  Object.assign(useAgentPanelStore.getInitialState(), cleanPanel);
 });
 
 describe('AgentRunCard', () => {
@@ -246,122 +258,7 @@ describe('AgentPanel', () => {
   });
 });
 
-describe('agentRunFromPipelineTask', () => {
-  function makeTask(overrides: Partial<BackgroundPipelineTask> = {}): BackgroundPipelineTask {
-    return {
-      id: 'task-1',
-      kind: 'PROTOTYPE_GEN',
-      projectId: 'p1',
-      projectName: 'Demo',
-      status: 'RUNNING',
-      phase: 'GENERATING',
-      step: 2,
-      totalSteps: 4,
-      titleZh: '生成界面原型',
-      titleEn: 'Generate prototype',
-      messageZh: '正在生成…',
-      messageEn: 'Generating…',
-      completedChapters: 0,
-      thinkingChars: 0,
-      thinkingText: '',
-      streamedChars: 0,
-      streamedText: '',
-      previewTail: '<main>',
-      stageLogs: [
-        {
-          id: 'l1',
-          step: 1,
-          phase: 'CONTEXT',
-          messageZh: '读取需求',
-          messageEn: 'Read SRS',
-          timestamp: '2026-11-12T10:00:00.000Z',
-        },
-        {
-          id: 'l2',
-          step: 2,
-          phase: 'GENERATING',
-          messageZh: '生成 HTML',
-          messageEn: 'Generate HTML',
-          timestamp: '2026-11-12T10:00:02.000Z',
-        },
-      ],
-      startedAt: STARTED_AT,
-      originNav: 'app-prototype',
-      targetNav: 'app-prototype',
-      unreadCompletion: false,
-      ...overrides,
-    };
-  }
-  it('maps a running task to a running run whose last step carries the stream tail', () => {
-    const run = agentRunFromPipelineTask(makeTask());
-
-    expect(run.status).toBe('RUNNING');
-    expect(run.steps.map((s) => s.status)).toEqual(['DONE', 'RUNNING']);
-    expect(run.steps[1]?.detail).toBe('<main>');
-    expect(run.result).toBeUndefined();
-    expect(run.failure).toBeUndefined();
-  });
-
-  it('maps a completed task to a succeeded run with its artifact label', () => {
-    const run = agentRunFromPipelineTask(
-      makeTask({
-        status: 'COMPLETED',
-        completedAt: STARTED_AT + 5_000,
-        messageZh: '原型已生成',
-        messageEn: 'Prototype generated',
-        resultLabelZh: '查看原型',
-        resultLabelEn: 'View prototype',
-      }),
-    );
-
-    expect(run.status).toBe('SUCCEEDED');
-    expect(run.steps.every((s) => s.status === 'DONE')).toBe(true);
-    expect(run.steps.some((s) => s.detail)).toBe(false);
-    expect(run.result).toEqual({
-      summary: { zh: '原型已生成', en: 'Prototype generated' },
-      artifactLabel: { zh: '查看原型', en: 'View prototype' },
-    });
-  });
-
-  it('does not repeat the closing message of a completed task as a step', () => {
-    const task = makeTask({ status: 'COMPLETED', messageZh: '生成 HTML', messageEn: 'Generate HTML' });
-    const run = agentRunFromPipelineTask(task);
-
-    expect(run.steps.map((s) => s.id)).toEqual(['l1']);
-    expect(run.result?.summary).toEqual({ zh: '生成 HTML', en: 'Generate HTML' });
-    // Tasks that name no artifact still link to their result.
-    expect(run.result?.artifactLabel).toEqual({ zh: '查看结果', en: 'View result' });
-  });
-
-  it('maps an errored task to a failed run that keeps the real diagnostic', () => {
-    const run = agentRunFromPipelineTask(
-      makeTask({
-        status: 'ERROR',
-        errorDiagnostic: { code: 'GATEWAY_TIMEOUT', message: 'timed out', remediation: 'retry' },
-      }),
-    );
-
-    expect(run.status).toBe('FAILED');
-    expect(run.steps.map((s) => s.status)).toEqual(['DONE', 'FAILED']);
-    expect(run.failure).toEqual({
-      code: 'GATEWAY_TIMEOUT',
-      message: 'timed out',
-      remediation: 'retry',
-    });
-    expect(run.result).toBeUndefined();
-  });
-
-  it('maps a cancelled task to a cancelled run with no result or failure', () => {
-    const run = agentRunFromPipelineTask(makeTask({ status: 'CANCELLED' }));
-
-    expect(run.status).toBe('CANCELLED');
-    expect(run.steps.map((s) => s.status)).toEqual(['DONE', 'STOPPED']);
-    expect(run.result).toBeUndefined();
-    expect(run.failure).toBeUndefined();
-  });
-});
-
-describe('Agent Panel preferences', () => {
+describe('Agent Panel preferences & Wide Mode (#35)', () => {
   it('formats elapsed time and rolls over to hours', () => {
     expect(formatRunElapsed(0, 84_000)).toBe('01:24');
     expect(formatRunElapsed(0, 3_725_000)).toBe('1:02:05');
@@ -375,20 +272,71 @@ describe('Agent Panel preferences', () => {
     expect(clampAgentPanelWidth(412.6)).toBe(413);
   });
 
-  it('restores stored state and falls back on missing or corrupt data', () => {
+  it('restores stored state including wideMode and falls back on missing or corrupt data', () => {
     expect(parseAgentPanelPrefs('{"open":false,"width":500}')).toEqual({
       open: false,
       width: 500,
+      wideMode: false,
+    });
+    expect(parseAgentPanelPrefs('{"open":true,"width":420,"wideMode":true}')).toEqual({
+      open: true,
+      width: 420,
+      wideMode: true,
     });
     expect(parseAgentPanelPrefs('{"open":false,"width":9999}')).toEqual({
       open: false,
       width: AGENT_PANEL_MAX_WIDTH,
+      wideMode: false,
     });
-    expect(parseAgentPanelPrefs(null)).toEqual({ open: true, width: AGENT_PANEL_DEFAULT_WIDTH });
+    expect(parseAgentPanelPrefs(null)).toEqual({
+      open: true,
+      width: AGENT_PANEL_DEFAULT_WIDTH,
+      wideMode: false,
+    });
     expect(parseAgentPanelPrefs('not json')).toEqual({
       open: true,
       width: AGENT_PANEL_DEFAULT_WIDTH,
+      wideMode: false,
     });
+  });
+
+  it('toggles Wide Mode in useAgentPanelStore and renders agent-panel-wide-toggle & data-wide-mode in AgentPanel', () => {
+    expect(useAgentPanelStore.getState().wideMode).toBe(false);
+    useAgentPanelStore.getState().toggleWideMode();
+    expect(useAgentPanelStore.getState().wideMode).toBe(true);
+    expect(useAgentPanelStore.getState().open).toBe(true);
+
+    // Drag-resizing explicitly exits Wide Mode
+    useAgentPanelStore.getState().setWidth(440);
+    expect(useAgentPanelStore.getState().wideMode).toBe(false);
+    expect(useAgentPanelStore.getState().width).toBe(440);
+
+    const wideHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <AgentPanel
+          title={{ zh: '需求探索', en: 'Requirement Discovery' }}
+          runs={[]}
+          width={AGENT_PANEL_DEFAULT_WIDTH}
+          wideMode
+          onToggleWideMode={noop}
+          onCreateSession={noop}
+          isForkSession
+          sessions={[
+            { id: 's-1', title: '需求会话 #1' },
+            { id: 's-2', title: '需求会话 #2 [分支]', isFork: true },
+          ]}
+          activeSessionId="s-2"
+          onSelectSession={noop}
+          onClose={noop}
+          onResize={noop}
+        />
+      </PreferencesProvider>,
+    );
+    expect(wideHtml).toContain('data-wide-mode="true"');
+    expect(wideHtml).toContain('data-testid="agent-panel-wide-toggle"');
+    expect(wideHtml).toContain('data-testid="agent-new-session-btn"');
+    expect(wideHtml).toContain('data-testid="agent-panel-fork-badge"');
+    expect(wideHtml).toContain('data-testid="agent-panel-session-select"');
   });
 });
 
@@ -852,5 +800,376 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(reasoningPanelHtml).toContain('查看指标洞察');
     expect(reasoningPanelHtml).toContain('AI 场景归因：');
     expect(reasoningPanelHtml).toContain('打开归因分析报告');
+  });
+
+  it('covers all 10 agent-backed surfaces, askUser ApprovalCard, REASONING policy write-back, session fork, and resolveActiveWorkspaceRuns (#35)', async () => {
+    vi.stubEnv('ONTO_MOCK_LLM', '1');
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const app = createApiApp(store);
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlStr =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const fullUrl = urlStr.startsWith('http') ? urlStr : `http://localhost${urlStr}`;
+      return app.request(fullUrl, init);
+    });
+
+    await useWorkbenchStore.getState().bootstrap('proj-contract');
+
+    // Verify all 10 surfaces & conversationPrimary flags
+    expect(agentPanelSurfaceFor('app-req-explore')?.conversationPrimary).toBe(true);
+    expect(agentPanelSurfaceFor('cap-agents')?.sessionKind).toBe('CAPABILITY');
+    expect(agentPanelSurfaceFor('cap-agents')?.conversationPrimary).toBe(true);
+    expect(agentPanelSurfaceFor('cap-extraction')?.sessionKind).toBe('COPILOT');
+    expect(agentPanelSurfaceFor('data-reasoning')?.sessionKind).toBe('REASONING');
+    expect(agentPanelSurfaceFor('data-reasoning')?.conversationPrimary).toBe(true);
+
+    // Render data-reasoning ShellAgentPanel and verify 3-stage mode selector pills
+    Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+    const dataReasoningHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ShellAgentPanel
+          surface={agentPanelSurfaceFor('data-reasoning')!}
+          overlay={false}
+          onClose={noop}
+          onNavigate={noop}
+        />
+      </PreferencesProvider>,
+    );
+    expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_DATA"');
+    expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_WHY"');
+    expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_POLICY"');
+
+    // Render AgentRunCard with askUser prompt & REASONING_POLICY write-back button + fork button
+    const interactiveCardHtml = renderCard({
+      run: makeRun({
+        status: 'SUCCEEDED',
+        completedAt: STARTED_AT + 4_000,
+        sourceAssistantMessageId: 'msg-assist-01',
+        result: {
+          summary: { zh: '已完成 ASK_POLICY 决策推理', en: 'Completed ASK_POLICY reasoning' },
+        },
+        askUser: {
+          id: 'ask-01',
+          question: '超额采购合同是否强制要求法务总监会签？',
+          options: ['强制法务总监会签', '仅财务总监审批'],
+          answered: false,
+        },
+        artifact: {
+          kind: 'REASONING_POLICY',
+          mode: 'ASK_POLICY',
+          dataSummary: [],
+          causalAnalysis: [],
+          policyRecommendations: [
+            {
+              actionTitle: '对资信低于 BBB 的供应商触发 WB-01 冻结策略',
+              targetObject: 'Contract',
+              expectedImpact: '风险降低 40%',
+              writebackInterfaceId: 'WB-01',
+            },
+          ],
+        },
+      }),
+      onFork: noop,
+      onAnswerAskUser: noop,
+      onTriggerWriteback: noop,
+    });
+    expect(interactiveCardHtml).toContain('data-testid="agent-fork-msg-btn"');
+    expect(interactiveCardHtml).toContain('data-testid="agent-hitl-card"');
+    expect(interactiveCardHtml).toContain('强制法务总监会签');
+    expect(interactiveCardHtml).toContain('data-testid="trigger-policy-writeback-btn"');
+    expect(interactiveCardHtml).toContain('WB-01');
+
+    // Verify resolveActiveWorkspaceRuns maps live drafts & running sessions to exact NavViewId jump targets
+    const capAgent = useWorkbenchStore.getState().data!.capabilityAgents[0]!;
+    const capSession = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'CAPABILITY',
+      targetId: capAgent.id,
+      title: '能力对话',
+    });
+    useWorkbenchStore.setState((prev) => ({
+      data: prev.data
+        ? { ...prev.data, agentSessions: [...prev.data.agentSessions, capSession] }
+        : prev.data,
+      liveSessionDrafts: {
+        ...prev.liveSessionDrafts,
+        [capSession.id]: {
+          runId: 'live-cap-1',
+          sessionId: capSession.id,
+          userPrompt: '查询合同台账',
+          startedAt: Date.now(),
+          liveStatus: { zh: '正在调用 MCP…', en: 'Calling MCP…' },
+          thinking: '',
+          text: '',
+          steps: [],
+        },
+      },
+    }));
+
+    const activeTargets = resolveActiveWorkspaceRuns(
+      useWorkbenchStore.getState().data,
+      useWorkbenchStore.getState().liveSessionDrafts,
+    );
+    expect(activeTargets).toHaveLength(1);
+    expect(activeTargets[0]).toMatchObject({
+      sessionId: capSession.id,
+      projectId: 'proj-contract',
+      targetNav: 'cap-agents',
+      targetId: capAgent.id,
+    });
+  });
+
+  it('enforces the Concurrency Contract: strict FIFO serialization within the same session and parallel execution across different sessions (#35)', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const app = createApiApp(store);
+
+    const protoA = store.createPrototype('proj-contract', {
+      name: '原型A.html',
+      htmlContent:
+        '<main data-prototype-root="true"><section data-screen-id="SCR-A" data-screen-name="A" data-screen-type="LIST"><button data-element-id="EL-A">A</button></section></main>',
+    });
+    const protoB = store.createPrototype('proj-contract', {
+      name: '原型B.html',
+      htmlContent:
+        '<main data-prototype-root="true"><section data-screen-id="SCR-B" data-screen-name="B" data-screen-type="LIST"><button data-element-id="EL-B">B</button></section></main>',
+    });
+
+    const sameSession = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'REQUIREMENT',
+      title: '单会话串行队列测试',
+    });
+    const reqParallel = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'REQUIREMENT',
+      title: '并行需求会话',
+    });
+    const codingParallel = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'CODING',
+      targetId: 'app-contract-clm',
+      title: '并行研发会话',
+    });
+    const protoSessionA = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      targetId: protoA.prototype.id,
+      title: '原型A会话',
+    });
+    const protoSessionB = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      targetId: protoB.prototype.id,
+      title: '原型B会话',
+    });
+
+    interface GateEntry {
+      sessionId: string;
+      content: string;
+      release: () => void;
+    }
+    const pendingGates: GateEntry[] = [];
+    const activeBySession = new Map<string, number>();
+    let maxSameSessionConcurrency = 0;
+    let totalActiveStreams = 0;
+    let peakCrossSessionConcurrency = 0;
+    const executionOrderBySession = new Map<string, string[]>();
+
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlStr =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const fullUrl = urlStr.startsWith('http') ? urlStr : `http://localhost${urlStr}`;
+      const match = fullUrl.match(/\/api\/agent-sessions\/([^/]+)\/stream$/);
+      if (!match) {
+        return app.request(fullUrl, init);
+      }
+
+      const targetSessionId = decodeURIComponent(match[1]!);
+      const bodyJson = init?.body
+        ? (JSON.parse(String(init.body)) as { prompt?: string; content?: string })
+        : {};
+      const promptContent = bodyJson.prompt ?? bodyJson.content ?? '';
+
+      const curForSess = (activeBySession.get(targetSessionId) ?? 0) + 1;
+      activeBySession.set(targetSessionId, curForSess);
+      if (targetSessionId === sameSession.id && curForSess > maxSameSessionConcurrency) {
+        maxSameSessionConcurrency = curForSess;
+      }
+
+      totalActiveStreams += 1;
+      if (totalActiveStreams > peakCrossSessionConcurrency) {
+        peakCrossSessionConcurrency = totalActiveStreams;
+      }
+
+      const prevOrder = executionOrderBySession.get(targetSessionId) ?? [];
+      prevOrder.push(promptContent);
+      executionOrderBySession.set(targetSessionId, prevOrder);
+
+      let releaseFn!: () => void;
+      const gatePromise = new Promise<void>((resolve) => {
+        releaseFn = resolve;
+      });
+      pendingGates.push({
+        sessionId: targetSessionId,
+        content: promptContent,
+        release: releaseFn,
+      });
+
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ type: 'text_delta', delta: `Ack: ${promptContent}` })}\n\n`,
+            ),
+          );
+          await gatePromise;
+          const currentSession = store.getAgentSession(targetSessionId)!;
+          const updatedSession = store.saveAgentSession({
+            ...currentSession,
+            messages: [
+              ...currentSession.messages,
+              {
+                id: `u-${Date.now()}-${Math.random()}`,
+                role: 'user',
+                content: promptContent,
+                timestamp: new Date().toISOString(),
+              },
+              {
+                id: `a-${Date.now()}-${Math.random()}`,
+                role: 'assistant',
+                content: `Done: ${promptContent}`,
+                timestamp: new Date().toISOString(),
+              },
+            ],
+            updatedAt: new Date().toISOString(),
+          });
+          activeBySession.set(
+            targetSessionId,
+            Math.max(0, (activeBySession.get(targetSessionId) ?? 1) - 1),
+          );
+          totalActiveStreams = Math.max(0, totalActiveStreams - 1);
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ type: 'done', session: updatedSession })}\n\n`,
+            ),
+          );
+          controller.close();
+        },
+      });
+
+      return new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+
+    await useWorkbenchStore.getState().bootstrap('proj-contract');
+
+    // Part A: Same-session FIFO queueing (R1 runs immediately; R2 and R3 queue in order)
+    const p1 = useWorkbenchStore.getState().startSessionAgentRun({
+      sessionId: sameSession.id,
+      prompt: 'R1',
+    });
+    await vi.waitFor(() => {
+      expect(pendingGates.filter((g) => g.sessionId === sameSession.id)).toHaveLength(1);
+    });
+
+    const p2 = useWorkbenchStore.getState().startSessionAgentRun({
+      sessionId: sameSession.id,
+      prompt: 'R2',
+    });
+    const p3 = useWorkbenchStore.getState().startSessionAgentRun({
+      sessionId: sameSession.id,
+      prompt: 'R3',
+    });
+
+    expect(useWorkbenchStore.getState().sessionQueues[sameSession.id]?.map((q) => q.prompt)).toEqual(
+      ['R2', 'R3'],
+    );
+    expect(maxSameSessionConcurrency).toBe(1);
+
+    // Release R1 -> R2 starts automatically while R3 stays queued
+    pendingGates.find((g) => g.sessionId === sameSession.id && g.content === 'R1')!.release();
+    await vi.waitFor(() => {
+      expect(pendingGates.filter((g) => g.sessionId === sameSession.id)).toHaveLength(2);
+    });
+    expect(useWorkbenchStore.getState().sessionQueues[sameSession.id]?.map((q) => q.prompt)).toEqual(
+      ['R3'],
+    );
+    expect(maxSameSessionConcurrency).toBe(1);
+
+    // Release R2 -> R3 starts automatically
+    pendingGates.find((g) => g.sessionId === sameSession.id && g.content === 'R2')!.release();
+    await vi.waitFor(() => {
+      expect(pendingGates.filter((g) => g.sessionId === sameSession.id)).toHaveLength(3);
+    });
+    expect(useWorkbenchStore.getState().sessionQueues[sameSession.id] ?? []).toHaveLength(0);
+    expect(maxSameSessionConcurrency).toBe(1);
+
+    // Release R3 -> all 3 drained in strict FIFO order
+    pendingGates.find((g) => g.sessionId === sameSession.id && g.content === 'R3')!.release();
+    await Promise.all([p1, p2, p3]);
+    expect(executionOrderBySession.get(sameSession.id)).toEqual(['R1', 'R2', 'R3']);
+    expect(maxSameSessionConcurrency).toBe(1);
+
+    // Part B: Cross-session parallel execution (REQUIREMENT + CODING simultaneously)
+    peakCrossSessionConcurrency = 0;
+    const parReq = useWorkbenchStore.getState().startSessionAgentRun({
+      sessionId: reqParallel.id,
+      prompt: 'REQ-PARALLEL',
+    });
+    const parCoding = useWorkbenchStore.getState().startSessionAgentRun({
+      sessionId: codingParallel.id,
+      prompt: 'CODING-PARALLEL',
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        pendingGates.filter(
+          (g) => g.sessionId === reqParallel.id || g.sessionId === codingParallel.id,
+        ),
+      ).toHaveLength(2);
+    });
+    expect(peakCrossSessionConcurrency).toBe(2);
+
+    pendingGates
+      .filter((g) => g.sessionId === reqParallel.id || g.sessionId === codingParallel.id)
+      .forEach((g) => g.release());
+    await Promise.all([parReq, parCoding]);
+
+    // Part C: Cross-session parallel execution across two different PROTOTYPE_CO_DESIGN prototypes
+    peakCrossSessionConcurrency = 0;
+    const parProtoA = useWorkbenchStore.getState().startSessionAgentRun({
+      sessionId: protoSessionA.id,
+      prompt: 'PROTO-A-PARALLEL',
+    });
+    const parProtoB = useWorkbenchStore.getState().startSessionAgentRun({
+      sessionId: protoSessionB.id,
+      prompt: 'PROTO-B-PARALLEL',
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        pendingGates.filter(
+          (g) => g.sessionId === protoSessionA.id || g.sessionId === protoSessionB.id,
+        ),
+      ).toHaveLength(2);
+    });
+    expect(peakCrossSessionConcurrency).toBe(2);
+
+    pendingGates
+      .filter((g) => g.sessionId === protoSessionA.id || g.sessionId === protoSessionB.id)
+      .forEach((g) => g.release());
+    await Promise.all([parProtoA, parProtoB]);
   });
 });

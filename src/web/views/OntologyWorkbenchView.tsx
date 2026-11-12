@@ -17,7 +17,6 @@ import {
   getProjectLifecycleState,
   useWorkbenchStore,
 } from '../api.js';
-import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
 import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import { usePreferences, type NavViewId } from '../i18n.js';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas.js';
@@ -1509,23 +1508,6 @@ export function OntologyWorkbenchView({
               </>
             )}
           </div>
-        </div>
-
-        {/* ─── Right Pane: Unified Live Streaming AI Ontology Copilot ─── */}
-        <div className="workbench-right">
-          <AgentSessionWorkbench
-            agentKind="COPILOT"
-            activeModelCode={selectedModel}
-            compactRailByDefault
-            height="100%"
-            inputTestId="copilot-input"
-            sendBtnTestId="copilot-send-btn"
-            onJumpToOntology={(m, id) => {
-              setSelectedModel(m, id ?? null);
-              setActiveTab('STRUCTURED');
-            }}
-            className="rounded-none border-0 shadow-none"
-          />
         </div>
       </div>
 

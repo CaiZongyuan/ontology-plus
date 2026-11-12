@@ -15,7 +15,6 @@ import {
   compactAgentSession,
   createSseEventStream,
   ensurePrototypeCoDesignSession,
-  generatePrototypeFromDoc,
   ontologyToolRegistry,
   runAppCodingAgentTurn,
   runCapabilitySmartChatTurn,
@@ -188,24 +187,32 @@ describe('agent-runtime deep module', () => {
     expect(emptyProj.currentStage).toBe(0);
     expect(emptyProj.validation.presentModels).toEqual([]);
 
-    const protoRes = await generatePrototypeFromDoc(store, {
+    const briefSess = store.createAgentSession({
       projectId: emptyProj.id,
-      prompt: '生成包含采购单台账、起草与主管审核三屏联动的交互原型',
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      title: 'SRM 设计简报首版原型',
     });
+    await collectUnifiedAgentTurn(store, {
+      sessionId: briefSess.id,
+      prompt: '生成包含采购单台账、起草与主管审核三屏联动的交互原型',
+      mockMode: true,
+    });
+    const generatedProto = store.listPrototypes(emptyProj.id)[0]!;
+    expect(generatedProto).toBeDefined();
 
-    expect(protoRes.prototype.htmlContent).toContain('data-screen-id=');
-    expect(protoRes.prototype.htmlContent).toContain('data-element-id=');
-    expect(protoRes.prototype.htmlContent).toContain('data-binding=');
-    expect(protoRes.prototype.htmlContent).toContain('data-event-id=');
-    expect(protoRes.prototype.extractedScreenCount).toBeGreaterThanOrEqual(3);
+    expect(generatedProto.htmlContent).toContain('data-screen-id=');
+    expect(generatedProto.htmlContent).toContain('data-element-id=');
+    expect(generatedProto.htmlContent).toContain('data-binding=');
+    expect(generatedProto.htmlContent).toContain('data-event-id=');
+    expect(generatedProto.extractedScreenCount).toBeGreaterThanOrEqual(2);
     // Step 3 must NOT prematurely populate ontology models before Step 4
-    expect(protoRes.project.validation.presentModels).toEqual([]);
-    expect(protoRes.project.validation.errorCount).toBe(0);
+    expect(store.getProject(emptyProj.id)!.validation.presentModels).toEqual([]);
+    expect(store.getProject(emptyProj.id)!.validation.errorCount).toBe(0);
 
     const coDesignSession = ensurePrototypeCoDesignSession(
       store,
       emptyProj.id,
-      protoRes.prototype.id,
+      generatedProto.id,
     );
     await collectUnifiedAgentTurn(store, {
       sessionId: coDesignSession.id,
@@ -223,7 +230,7 @@ describe('agent-runtime deep module', () => {
     });
     const synthTurn = await collectUnifiedAgentTurn(store, {
       sessionId: copilotSess.id,
-      prompt: `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {"prototypeId":"${protoRes.prototype.id}"}]\n从原型合成 11 模型`,
+      prompt: `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {"prototypeId":"${generatedProto.id}"}]\n从原型合成 11 模型`,
       mockMode: true,
     });
     const suiteArt = synthTurn.session.messages

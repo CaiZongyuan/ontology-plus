@@ -5,13 +5,15 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleSlash,
+  GitFork,
   Loader2,
   RotateCcw,
+  Send,
   Square,
 } from 'lucide-react';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
-import { Button } from '../beautifui/index.js';
+import { ApprovalCard, Button } from '../beautifui/index.js';
 import {
   formatAnchorBadgeLabel,
   formatRunElapsed,
@@ -26,9 +28,12 @@ export interface AgentRunCardProps {
   run: AgentRunView;
   onCancel?: () => void;
   onRetry?: () => void;
+  onFork?: () => void;
   onOpenArtifact?: () => void;
   onOpenLlmCenter?: () => void;
   onHoverAnchor?: (anchor: PrototypeTargetAnchor | null) => void;
+  onAnswerAskUser?: (promptId: string, selectedAnswers: string[], freeformText?: string) => void;
+  onTriggerWriteback?: (writebackInterfaceId: string, actionTitle: string) => void;
   /** Fixed clock for deterministic rendering; defaults to a live one-second tick while running. */
   now?: number;
   className?: string;
@@ -69,9 +74,12 @@ export function AgentRunCard({
   run,
   onCancel,
   onRetry,
+  onFork,
   onOpenArtifact,
   onOpenLlmCenter,
   onHoverAnchor,
+  onAnswerAskUser,
+  onTriggerWriteback,
   now: fixedNow,
   className,
 }: AgentRunCardProps) {
@@ -115,6 +123,18 @@ export function AgentRunCard({
             {elapsed}
           </time>
         </span>
+        {!running && onFork && (
+          <Button
+            variant="ghost"
+            size="xs"
+            data-testid="agent-fork-msg-btn"
+            aria-label={t('从此处分叉会话', 'Fork session from here')}
+            title={t('从此处分叉会话', 'Fork session from here')}
+            onClick={onFork}
+          >
+            <GitFork size={11} aria-hidden="true" />
+          </Button>
+        )}
         {running && onCancel && (
           <Button
             variant="ghost"
@@ -170,6 +190,7 @@ export function AgentRunCard({
                 key={step.id}
                 className="agent-run-step"
                 data-step-status={step.status}
+                {...(step.toolName ? { 'data-tool-name': step.toolName } : {})}
                 {...(onHoverAnchor && step.targetAnchor
                   ? {
                       onMouseEnter: () => onHoverAnchor(step.targetAnchor ?? null),
@@ -204,11 +225,52 @@ export function AgentRunCard({
         </details>
       )}
 
+      {run.askUser && (
+        <div className="agent-run-hitl">
+          <ApprovalCard
+            prompt={run.askUser}
+            disabled={running && Boolean(run.askUser.answered)}
+            {...(onAnswerAskUser
+              ? {
+                  onSubmit: (selectedOptions, customNote) =>
+                    onAnswerAskUser(run.askUser!.id, selectedOptions, customNote),
+                }
+              : {})}
+          />
+        </div>
+      )}
+
       {run.status === 'SUCCEEDED' && run.result && (
         <footer className="agent-run-outcome" data-testid="agent-run-result">
           <p className="agent-run-outcome-text">
             {t(run.result.summary.zh, run.result.summary.en)}
           </p>
+          {run.artifact?.kind === 'REASONING_POLICY' &&
+            run.artifact.policyRecommendations.length > 0 && (
+              <div className="agent-run-policy-list" data-testid="agent-run-policy-list">
+                {run.artifact.policyRecommendations.map((rec, idx) => (
+                  <div key={`${rec.writebackInterfaceId}-${idx}`} className="agent-run-policy-item">
+                    <div className="agent-run-policy-info">
+                      <strong>{rec.actionTitle}</strong>
+                      <span>
+                        {rec.targetObject} · {rec.expectedImpact}
+                      </span>
+                    </div>
+                    {onTriggerWriteback && (
+                      <Button
+                        variant="accent"
+                        size="xs"
+                        data-testid="trigger-policy-writeback-btn"
+                        onClick={() => onTriggerWriteback(rec.writebackInterfaceId, rec.actionTitle)}
+                      >
+                        <Send size={10} aria-hidden="true" />
+                        {t('回写业务动作', 'Write Back')}
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           {run.result.artifactLabel && onOpenArtifact && (
             <Button
               variant="secondary"

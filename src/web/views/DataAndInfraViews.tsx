@@ -32,7 +32,6 @@ import {
   triggerBrowserDownload,
   useWorkbenchStore,
 } from '../api.js';
-import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
 import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import {
   Button,
@@ -1643,18 +1642,26 @@ export function DataMetricsReportsView() {
 
 export function DataReasoningView() {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
+  const { data, patchData, showToast, ensureProjectAgentSession, setActiveSessionId, startSessionAgentRun } =
+    useWorkbenchStore();
 
   if (!data) return null;
 
   const seededSession = data.reasoningSessions[0];
+  const latestReasoningRunSession = data.agentSessions.find(
+    (s) => s.projectId === data.activeProject.id && s.agentKind === 'REASONING',
+  );
+  const latestPolicyArtifact = [...(latestReasoningRunSession?.messages ?? [])]
+    .reverse()
+    .flatMap((m) => m.artifacts ?? [])
+    .find((a) => a.kind === 'REASONING_POLICY');
 
   const handleTriggerWriteback = async (interfaceId: string, actionTitle?: string) => {
     const json = await apiPostJson<{ writebackInterfaces: WritebackInterface[] }>(
       `/api/analytics/writebacks/${interfaceId}/execute`,
       {
         payloadOverride: {
-          triggeredBy: 'REASONING_AGENT_WORKBENCH',
+          triggeredBy: 'REASONING_AGENT_PANEL',
           ...(actionTitle ? { actionTitle } : {}),
         },
       },
@@ -1663,27 +1670,149 @@ export function DataReasoningView() {
     showToast(`已通过回写接口 ${interfaceId} 将决策指令回写至业务系统`);
   };
 
+  const handleQuickReasoningPrompt = async (
+    mode: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY',
+    prompt: string,
+  ) => {
+    useAgentPanelStore.getState().revealPanel();
+    const sess = await ensureProjectAgentSession(data.activeProject.id, 'REASONING', {
+      reasoningMode: mode,
+    });
+    setActiveSessionId(sess.id);
+    await startSessionAgentRun({
+      sessionId: sess.id,
+      prompt,
+      reasoningMode: mode,
+    });
+  };
+
+  const policyRecommendations =
+    latestPolicyArtifact?.kind === 'REASONING_POLICY' &&
+    latestPolicyArtifact.policyRecommendations.length > 0
+      ? latestPolicyArtifact.policyRecommendations
+      : (seededSession?.policyRecommendations ?? []);
+
   return (
     <div className="flex flex-col gap-3.5">
-      <AgentSessionWorkbench
-        agentKind="REASONING"
-        defaultReasoningMode="ASK_POLICY"
-        defaultPromptWhenEmpty="为什么本季度高风险合同逾期未结算率上升到了 14.8%？应该采取什么策略并回写业务系统？"
-        title={t(
-          '数据本体三阶流式推理引擎 (智能问数 ASK_DATA → 智能问因 ASK_WHY → 智能问策 ASK_POLICY)',
-          'Data Ontology 3-Stage Streaming Reasoning Engine',
-        )}
-        subtitle={t(
-          '自动穿透 M1 对象关联链、MM 物理表实时只读 SQL 查询与 M3 规则阈值，支持多会话分叉与闭环策略写回',
-          'Live SQL + M1/MM/M3 causal reasoning with multi-session history and closed-loop write-back',
-        )}
-        inputTestId="reasoning-question-input"
-        sendBtnTestId="run-reasoning-btn"
-        onTriggerWriteback={(wbId, recTitle) => void handleTriggerWriteback(wbId, recTitle)}
-      />
+      <div className="card flex flex-col gap-3" data-testid="data-reasoning-overview-card">
+        <div className="card-header" style={{ marginBottom: 0 }}>
+          <div>
+            <h3 className="card-title">
+              {t(
+                '数据本体三阶流式推理（1. 问数 ASK_DATA → 2. 问因 ASK_WHY → 3. 问策 ASK_POLICY）',
+                '3-Stage Data Ontology Reasoning (Ask Data → Ask Why → Ask Policy)',
+              )}
+            </h3>
+            <div className="text-[12.5px] text-muted-foreground">
+              {t(
+                '推理对话与实时 SQL / 归因步骤统一在右侧智能体面板（支持宽屏模式与会话分叉）中执行；下方展示最新沉淀的三段式结论与受治理回写动作。',
+                'Reasoning runs and live SQL/causal steps execute in the unified Agent Panel on the right; latest 3-stage conclusions and governed write-backs appear below.',
+              )}
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="accent"
+            size="sm"
+            data-testid="open-reasoning-agent-panel-btn"
+            onClick={() => {
+              const panel = useAgentPanelStore.getState();
+              panel.revealPanel();
+              panel.setWideMode(true, { commit: false });
+            }}
+          >
+            {t('展开推理面板', 'Open Reasoning Panel')}
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2.5">
+          {[
+            {
+              mode: 'ASK_DATA' as const,
+              titleZh: '阶段 1 · 智能问数 (ASK_DATA)',
+              titleEn: 'Stage 1 · Ask Data',
+              descZh: '基于 MM 物理表映射与只读 SQL 沙箱探查真实指标切片',
+              descEn: 'Query real slices via MM physical table mappings & read-only SQL',
+              samplePrompt: t(
+                '统计本季度各区域高风险合同逾期未结算金额与占比',
+                'Summarize Q3 high-risk contract overdue settlement amounts by region',
+              ),
+            },
+            {
+              mode: 'ASK_WHY' as const,
+              titleZh: '阶段 2 · 智能问因 (ASK_WHY)',
+              titleEn: 'Stage 2 · Ask Why',
+              descZh: '穿透 M1 对象关联链与 M3 规则阈值定位异动根因',
+              descEn: 'Trace M1 object links & M3 rule thresholds to isolate root causes',
+              samplePrompt: t(
+                '为什么本季度高风险合同逾期未结算率上升到了 14.8%？',
+                'Why did the high-risk contract overdue settlement rate rise to 14.8%?',
+              ),
+            },
+            {
+              mode: 'ASK_POLICY' as const,
+              titleZh: '阶段 3 · 智能问策 (ASK_POLICY)',
+              titleEn: 'Stage 3 · Ask Policy',
+              descZh: '输出量化策略建议并绑定 MI / Writeback 回写接口闭环执行',
+              descEn: 'Propose quantified policy actions bound to governed MI write-backs',
+              samplePrompt: t(
+                '为什么本季度高风险合同逾期未结算率上升到了 14.8%？应该采取什么策略并回写业务系统？',
+                'Why did overdue rate hit 14.8% and what policy actions should we write back?',
+              ),
+            },
+          ].map((stage) => (
+            <div
+              key={stage.mode}
+              className="p-3 bg-inset rounded-[6px] border border-line flex flex-col justify-between gap-2"
+            >
+              <div>
+                <div className="flex items-center justify-between gap-1.5">
+                  <strong className="text-[13px]">{t(stage.titleZh, stage.titleEn)}</strong>
+                  <span className="badge">{stage.mode}</span>
+                </div>
+                <p className="text-[12px] text-muted-foreground mt-1 mb-0">
+                  {t(stage.descZh, stage.descEn)}
+                </p>
+              </div>
+              <div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  data-testid={`quick-reasoning-${stage.mode}-btn`}
+                  onClick={() => void handleQuickReasoningPrompt(stage.mode, stage.samplePrompt)}
+                >
+                  <Play size={11} />
+                  {t('在智能体面板运行示例', 'Run in Agent Panel')}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {(latestPolicyArtifact?.kind === 'REASONING_POLICY'
+          ? latestPolicyArtifact.dataSummary
+          : seededSession?.dataSummary
+        )?.length ? (
+          <div className="grid grid-cols-3 gap-2.5">
+            {(latestPolicyArtifact?.kind === 'REASONING_POLICY'
+              ? latestPolicyArtifact.dataSummary
+              : seededSession!.dataSummary
+            ).map((kpi, idx) => (
+              <div key={idx} className="p-2.5 rounded-[6px] border border-line bg-surface">
+                <div className="text-[11.5px] text-muted-foreground">{kpi.label}</div>
+                <div className="flex items-baseline justify-between gap-2 mt-0.5">
+                  <strong className="text-[15px] font-mono">{kpi.value}</strong>
+                  {kpi.delta && <span className="badge badge-warn">{kpi.delta}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
 
       {/* Governed Policy Write-Back Quick Cards */}
-      {seededSession && seededSession.policyRecommendations.length > 0 && (
+      {policyRecommendations.length > 0 && (
         <div className="card">
           <div className="card-header" style={{ marginBottom: 8 }}>
             <div>
@@ -1697,11 +1826,15 @@ export function DataReasoningView() {
                 )}
               </div>
             </div>
-            <span className="badge badge-accent">{seededSession.mode}</span>
+            <span className="badge badge-accent">
+              {latestPolicyArtifact?.kind === 'REASONING_POLICY'
+                ? latestPolicyArtifact.mode
+                : (seededSession?.mode ?? 'ASK_POLICY')}
+            </span>
           </div>
 
           <div className="grid grid-cols-2 gap-2.5">
-            {seededSession.policyRecommendations.map((rec, i) => (
+            {policyRecommendations.map((rec, i) => (
               <div
                 key={i} className="p-3 bg-inset rounded-[6px] border border-line flex flex-col justify-between gap-2"
               >

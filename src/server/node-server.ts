@@ -2,35 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { serve } from '@hono/node-server';
 import { createWorkspaceStore } from '../packages/workspace-store/index.js';
-import {
-  autoResumeInterruptedPipelineTasks,
-  flushRunningPipelineCheckpoints,
-} from '../packages/agent-runtime/index.js';
 import { createApiApp } from './app.js';
 
 const port = Number(process.env.PORT ?? 4310);
 const store = createWorkspaceStore();
 const app = createApiApp(store);
 
-// Seamlessly resume any active pipeline tasks that were mid-stream when the server reloaded
-const autoResumed = autoResumeInterruptedPipelineTasks(store);
-if (autoResumed.length > 0) {
-  console.log(
-    `[Ontology Plus] Auto-resumed ${autoResumed.length} interrupted pipeline task(s) from SQLite checkpoint: ${autoResumed.map((t) => `${t.id}(${t.streamedChars} chars)`).join(', ')}`,
-  );
-}
-
-const flushOnExit = (signalName: string) => {
-  const flushed = flushRunningPipelineCheckpoints(store);
-  if (flushed > 0) {
-    console.log(
-      `[Ontology Plus] Flushed ${flushed} active pipeline task checkpoint(s) on ${signalName}`,
-    );
-  }
-  process.exit(0);
-};
-process.once('SIGINT', () => flushOnExit('SIGINT'));
-process.once('SIGTERM', () => flushOnExit('SIGTERM'));
+process.once('SIGINT', () => process.exit(0));
+process.once('SIGTERM', () => process.exit(0));
 
 // Serve built frontend assets in production/start mode if dist/client exists
 const distDir = path.resolve(process.cwd(), 'dist', 'client');

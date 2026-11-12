@@ -343,7 +343,6 @@ function setWorkbenchDataForTest(
 
   const next = {
     data: payload,
-    backgroundTasks: [],
     liveSessionDrafts: {},
     sessionQueues: {},
     activePrototypeIdByProject: {},
@@ -361,24 +360,24 @@ afterEach(async () => {
     open: true,
     overlayOpen: false,
     width: 384,
+    wideMode: false,
     hoveredAnchor: null,
   });
   useAgentPanelStore.setState({
     open: true,
     overlayOpen: false,
     width: 384,
+    wideMode: false,
     hoveredAnchor: null,
   });
   Object.assign(useWorkbenchStore.getInitialState(), {
     data: null,
-    backgroundTasks: [],
     liveSessionDrafts: {},
     sessionQueues: {},
     activePrototypeIdByProject: {},
   });
   useWorkbenchStore.setState({
     data: null,
-    backgroundTasks: [],
     liveSessionDrafts: {},
     sessionQueues: {},
     activePrototypeIdByProject: {},

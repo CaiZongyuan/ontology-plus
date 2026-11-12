@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createWorkspaceStore } from '../packages/workspace-store/index.js';
@@ -311,18 +314,10 @@ describe('server API & Cloudflare Worker integration', () => {
     store.updateSystemSettings({ mockLlmMode: true });
     const app = createApiApp(store);
 
-    // 1. Retired pipeline-task kinds return 400; PROTOTYPE_GEN remains accepted
-    for (const retiredKind of ['SRS_SYNTHESIS', 'ONTOLOGY_SYNTH']) {
-      const badTaskRes = await app.request('/api/pipeline-tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: retiredKind, projectId: 'proj-contract' }),
-      });
-      expect(badTaskRes.status).toBe(400);
-    }
-
-    // 2. All 8 retired synchronous/streaming one-shot HTTP routes return 404
+    // 1. All retired pipeline-tasks & synchronous/streaming one-shot HTTP routes return 404
     const retiredRoutes = [
+      '/api/pipeline-tasks',
+      '/api/projects/proj-contract/prototypes/generate',
       '/api/projects/proj-contract/copilot',
       '/api/projects/proj-contract/copilot/stream',
       '/api/requirements/req-sess-contract-01/synthesize-doc',
@@ -526,135 +521,47 @@ describe('server API & Cloudflare Worker integration', () => {
     expect(store.getAgentSession(codingSess.id)?.status).toBe('ERROR');
   });
 
-  it('resumes an interrupted PROTOTYPE_GEN task from its persisted SQLite checkpoint instead of starting from 0', async () => {
-    process.env.ONTOLOGY_LIVE_LLM = '1';
+  it('runs multiple distinct Agent Sessions in parallel via /api/agent-sessions/:id/stream', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
-    store.updateSystemSettings({ mockLlmMode: false });
-    for (const existing of store.listLlmProviders()) {
-      store.saveLlmProvider({ ...existing, enabled: false });
-    }
-    store.saveLlmProvider({
-      id: 'prov-test-proto-resume',
-      name: 'Test Proto Resume Gateway',
-      providerType: 'OPENAI_COMPATIBLE',
-      baseUrl: 'http://127.0.0.1:19997/v1',
-      apiKey: 'sk-test-proto-resume',
-      defaultModel: 'auto/glm-5.3-flash',
-      availableModels: ['auto/glm-5.3-flash'],
-      enabled: true,
-    });
+    store.updateSystemSettings({ mockLlmMode: true });
     const app = createApiApp(store);
 
-    const proj = store.createProject({
-      name: '咖啡店管理系统',
-      code: 'COFFEE_POS',
-      domain: '精品咖啡门店运营',
-      template: 'EMPTY',
+    const reqSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'REQUIREMENT',
+      title: '并行需求探索会话',
+    });
+    const codingSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'CODING',
+      title: '并行编码规范会话',
     });
 
-    const partialHtmlPrefix = [
-      '<!DOCTYPE html>',
-      '<html lang="zh-CN"><head><meta charset="UTF-8"><title>咖啡店管理系统</title></head><body>',
-      '<section data-screen-id="SCR-POS-CASHIER" data-screen-name="点单收银台" data-screen-type="FORM" data-route="/pos" data-role-refs="ROLE-01">',
-      '  <input data-element-id="EL-CUP-SIZE" data-element-name="cupSize" data-element-label="杯型" data-element-type="INPUT" data-binding="CoffeeOrder.cupSize" />',
-      '  <button data-element-id="EL-SUBMIT-ORDER" data-element-name="submitBtn" data-element-label="下单结算" data-element-type="BUTTON" data-event-id="UIE-SUBMIT" data-event-name="提交订单" data-behavior-ref="BHV-01">下单</button>',
-      '</section>',
-      '<section data-screen-id="SCR-INVENTORY" data-screen-name="原料库存台账" data-screen-type="LIST" data-route="/inventory" data-role-refs="ROLE-01">',
-      '  <table data-element-id="EL-INV-TABLE" data-element-name="invTable" data-element-label="库存列表" data-element-type="TABLE" data-source="QRY-01"><tbody><tr><td>咖啡豆</td></tr></tbody></table>',
-      '</section>',
-      '<script>',
-      "  function addFlow(item, kind, qty) { console.info(item, kind, qty); }",
-      "  addFlow('咖啡豆','扣减",
-    ].join('\n');
-
-    // Simulate a SERVER_RESTART_INTERRUPTED checkpoint saved in SQLite
-    const interruptedId = 'ptask-prototype_gen-interrupted-test';
-    store.saveAgentCheckpoint(
-      interruptedId,
-      'PIPELINE_TASK',
-      JSON.stringify({
-        id: interruptedId,
-        kind: 'PROTOTYPE_GEN',
-        projectId: proj.id,
-        projectName: proj.name,
-        status: 'ERROR',
-        step: 3,
-        phase: 'ERROR',
-        messageZh: '后台生成任务因服务重启中断，请点击重试继续生成',
-        messageEn: 'Background generation was interrupted by a server restart; please retry',
-        errorMessage: 'SERVER_RESTART_INTERRUPTED',
-        completedChapters: 2,
-        thinkingChars: 0,
-        streamedChars: partialHtmlPrefix.length,
-        streamedText: partialHtmlPrefix,
-        previewTail: partialHtmlPrefix.slice(-400),
-        stageLogs: [],
-        startedAt: Date.now() - 60_000,
-        finishedAt: Date.now() - 5_000,
-        targetView: 'req_prototype',
-        unreadCompletion: false,
+    const [reqRes, codingRes] = await Promise.all([
+      app.request(`/api/agent-sessions/${reqSess.id}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: '确认：大额跨境合同需财务总监复核',
+          mockMode: true,
+        }),
       }),
-    );
-
-    const encoder = new TextEncoder();
-    let capturedUserPrompt = '';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: unknown, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body ?? '{}')) as {
-          messages?: { role: string; content: string }[];
-        };
-        capturedUserPrompt = body.messages?.find((m) => m.role === 'user')?.content ?? '';
-        // Upstream repeats the unfinished tail statement and closes </script></body></html>
-        const continuationChunk = "addFlow('咖啡豆','扣减','-18g');\n</script>\n</body>\n</html>";
-        const stream = new ReadableStream<Uint8Array>({
-          start(ctrl) {
-            ctrl.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ choices: [{ delta: { content: continuationChunk } }] })}\n\n`,
-              ),
-            );
-            ctrl.enqueue(encoder.encode('data: [DONE]\n\n'));
-            ctrl.close();
-          },
-        });
-        return new Response(stream, {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
+      app.request(`/api/agent-sessions/${codingSess.id}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: '[ACTION:GENERATE_TECH_ARCH {"name":"并行技术架构资产","stackTags":["TypeScript","Hono"]}]\n生成技术架构',
+          mockMode: true,
+        }),
       }),
-    );
+    ]);
 
-    const resumeRes = await app.request(`/api/pipeline-tasks/${interruptedId}/resume`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ locale: 'zh-CN' }),
-    });
-    expect(resumeRes.status).toBe(200);
-
-    for (let i = 0; i < 30; i += 1) {
-      const checkRes = await app.request(`/api/pipeline-tasks/${interruptedId}`);
-      const { task } = (await checkRes.json()) as { task: { status: string } };
-      if (task.status !== 'RUNNING') break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-
-    expect(capturedUserPrompt).toContain('已生成前序内容');
-    expect(capturedUserPrompt).toContain('SCR-POS-CASHIER');
-
-    const finalRes = await app.request(`/api/pipeline-tasks/${interruptedId}`);
-    const { task: finalTask } = (await finalRes.json()) as {
-      task: { status: string; streamedText: string; resultItemId?: string };
-    };
-    expect(finalTask.status).toBe('COMPLETED');
-    expect(finalTask.resultItemId).toBeTruthy();
-
-    const protos = store.listPrototypes(proj.id);
-    expect(protos.length).toBe(1);
-    expect(protos[0]!.extractedScreenCount).toBe(2);
-    // Seam overlap deduplicated cleanly: no double `addFlow('咖啡豆','扣减addFlow(`!
-    expect(protos[0]!.htmlContent).toContain("addFlow('咖啡豆','扣减','-18g');");
-    expect(protos[0]!.htmlContent).not.toContain("扣减addFlow");
+    expect(reqRes.status).toBe(200);
+    expect(codingRes.status).toBe(200);
+    const [reqSse, codingSse] = await Promise.all([reqRes.text(), codingRes.text()]);
+    expect(reqSse).toContain('event: message_end');
+    expect(codingSse).toContain('event: artifact');
+    expect(codingSse).toContain('event: message_end');
   });
 
   it('replaces synchronous /refine with PROTOTYPE_CO_DESIGN session anchored edits + /live SSE attach', async () => {
@@ -893,5 +800,24 @@ describe('server API & Cloudflare Worker integration', () => {
       method: 'DELETE',
     });
     expect(okDel.status).toBe(200);
+  });
+
+  it('isolates SQLite database and file mirror into ONTOLOGY_WORKSPACE_ROOT when createWorkspaceStore() is called without arguments', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-isolated-store-'));
+    const prevRoot = process.env.ONTOLOGY_WORKSPACE_ROOT;
+    const prevDb = process.env.ONTOLOGY_DB_PATH;
+    try {
+      process.env.ONTOLOGY_WORKSPACE_ROOT = tmpDir;
+      delete process.env.ONTOLOGY_DB_PATH;
+      const isolatedStore = createWorkspaceStore();
+      expect(isolatedStore.listProjects().length).toBeGreaterThanOrEqual(2);
+      expect(fs.existsSync(path.join(tmpDir, 'onto-cs.db'))).toBe(true);
+    } finally {
+      if (prevRoot === undefined) delete process.env.ONTOLOGY_WORKSPACE_ROOT;
+      else process.env.ONTOLOGY_WORKSPACE_ROOT = prevRoot;
+      if (prevDb === undefined) delete process.env.ONTOLOGY_DB_PATH;
+      else process.env.ONTOLOGY_DB_PATH = prevDb;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

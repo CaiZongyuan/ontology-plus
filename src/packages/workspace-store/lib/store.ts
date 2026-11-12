@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
+import nodeModule from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
@@ -491,7 +491,7 @@ function createEdgeMemoryFallbackDb(): SqliteDbLike {
 
 function openSqliteOrMemoryDb(dbPath: string): SqliteDbLike {
   try {
-    const req = createRequire(import.meta.url);
+    const req = nodeModule.createRequire(import.meta.url);
     const modName = ['node', 'sqlite'].join(':');
     const sqliteMod = req(modName) as { DatabaseSync: new (p: string) => SqliteDbLike };
     return new sqliteMod.DatabaseSync(dbPath);
@@ -778,9 +778,21 @@ function sanitizeAgentSessionForPersistence(session: AgentSession): AgentSession
 }
 
 export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): WorkspaceStore {
-  const workspaceRoot = options.workspaceRoot ?? path.resolve(process.cwd(), '.onto-cs');
+  const envWorkspaceRoot =
+    typeof process !== 'undefined' ? process.env.ONTOLOGY_WORKSPACE_ROOT?.trim() : undefined;
+  const envDbPath =
+    typeof process !== 'undefined' ? process.env.ONTOLOGY_DB_PATH?.trim() : undefined;
+  const workspaceRoot =
+    options.workspaceRoot ??
+    (envWorkspaceRoot ? path.resolve(envWorkspaceRoot) : path.resolve(process.cwd(), '.onto-cs'));
   const enableFileMirror = options.enableFileMirror ?? true;
-  const dbPath = options.dbPath ?? path.join(workspaceRoot, 'onto-cs.db');
+  const dbPath =
+    options.dbPath ??
+    (envDbPath
+      ? envDbPath === ':memory:'
+        ? ':memory:'
+        : path.resolve(envDbPath)
+      : path.join(workspaceRoot, 'onto-cs.db'));
   const d1Database = options.d1Database;
 
   if (dbPath !== ':memory:') {
