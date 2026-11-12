@@ -22,6 +22,8 @@ export type {
   GeneratedSkill,
   LegacySystemConfig,
   ExtractionJob,
+  ExtractionMergeResult,
+  ExtractionResultInput,
   McpServerConfig,
   CapabilityAgent,
   CapabilityChatMessage,

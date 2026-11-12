@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BookOpen,
@@ -22,11 +22,13 @@ import type {
   LegacySystemConfig,
   McpServerConfig,
 } from '../../packages/workspace-store/index.js';
+import { parseSourceStructure, type CandidateDecision } from '../../packages/ontology-core/index.js';
 import {
   apiCallMcpTool,
   apiDeleteResource,
   apiInspectMcp,
   apiPostJson,
+  apiPutJson,
   triggerBrowserDownload,
   useWorkbenchStore,
 } from '../api.js';
@@ -40,6 +42,7 @@ import {
 } from '../components/beautifui/index.js';
 import { TiptapMarkdownEditor } from '../components/markdown/index.js';
 import { usePreferences } from '../i18n.js';
+import { ExtractionJobCard } from './ExtractionJobCard.js';
 
 // ─── 1. Capability Center: Legacy System Registry (存量系统接入管理) ──────────
 
@@ -461,10 +464,21 @@ export function CapabilityExtractionView() {
   );
   const [title, setTitle] = useState(EXTRACTION_PRESETS[0]!.title);
   const [ddlSnippet, setDdlSnippet] = useState(EXTRACTION_PRESETS[0]!.snippet);
-  const [applyImmediately, setApplyImmediately] = useState(true);
+  const [applyImmediately, setApplyImmediately] = useState(false);
   const [busy, setBusy] = useState(false);
   const [applyingJobId, setApplyingJobId] = useState<string | null>(null);
   const [deleteTargetJob, setDeleteTargetJob] = useState<ExtractionJob | null>(null);
+  const [extractionError, setExtractionError] = useState<{
+    message: string;
+    diagnostic?: {
+      code?: string;
+      providerName?: string;
+      message?: string;
+      remediation?: string;
+    };
+  } | null>(null);
+  const latestReqSeqRef = useRef<Record<string, number>>({});
+  const inFlightDecisionRef = useRef<Record<string, Promise<unknown> | undefined>>({});
 
   useEffect(() => {
     if (data && !systemId && data.legacySystems[0]) {
@@ -486,18 +500,25 @@ export function CapabilityExtractionView() {
   const handleSelectPreset = (presetId: string) => {
     const found = EXTRACTION_PRESETS.find((p) => p.id === presetId);
     if (!found) return;
+    setExtractionError(null);
     setTitle(found.title);
     setSourceType(found.sourceType);
     setDdlSnippet(found.snippet);
   };
 
+  // Round one runs right here in the browser: the same structural scan the
+  // server will run, so what is recognised is visible before submitting.
+  const scanPreview = useMemo(() => parseSourceStructure(ddlSnippet), [ddlSnippet]);
+
   const handleRunExtraction = async () => {
     if (busy) return;
     setBusy(true);
+    setExtractionError(null);
     try {
       const json = await apiPostJson<{
         job: ExtractionJob;
         project?: typeof data.activeProject;
+        blockedBy?: { elementId?: string }[];
         extractionJobs: ExtractionJob[];
       }>('/api/capability/extraction-jobs', {
         systemId: effectiveSystemId,
@@ -507,35 +528,149 @@ export function CapabilityExtractionView() {
         sourceSnippet: ddlSnippet,
         applyImmediately,
       });
-      if (json.project) {
-        patchData({ activeProject: json.project, extractionJobs: json.extractionJobs });
-      } else {
-        patchData({ extractionJobs: json.extractionJobs });
-      }
-      showToast(
-        applyImmediately
-          ? `本体萃取任务已完成并合并至工程：${json.job.summary}`
-          : `本体萃取候选模型已生成（两阶段复核模式）：${json.job.summary}`,
+      patchData({
+        extractionJobs: json.extractionJobs,
+        ...(json.project && json.project.id === data.activeProject.id
+          ? { activeProject: json.project }
+          : {}),
+      });
+      const blockedIds = Array.from(
+        new Set((json.blockedBy ?? []).map((b) => b.elementId).filter((id): id is string => Boolean(id))),
       );
+      const blockedSuffixZh = blockedIds.length > 0 ? `（涉及：${blockedIds.slice(0, 6).join('、')}）` : '';
+      const blockedSuffixEn = blockedIds.length > 0 ? ` (${blockedIds.slice(0, 6).join(', ')})` : '';
+      showToast(
+        json.blockedBy?.length
+          ? t(
+              `本体萃取已完成，但立即合并被一致性门禁阻止（${json.blockedBy.length} 个新增一致性错误）${blockedSuffixZh}，已转为逐项确认。`,
+              `Ontology Extraction finished, but merging immediately was blocked by ${json.blockedBy.length} new Consistency Errors${blockedSuffixEn}; review the candidates instead.`,
+            )
+          : json.job.appliedToProject
+            ? t(
+                `本体萃取任务已完成并合并至工程：${json.job.summary}`,
+                `Ontology Extraction finished and merged into the project: ${json.job.summary}`,
+              )
+            : t(
+                `本体萃取候选已生成，请逐项确认后合并：${json.job.summary}`,
+                `Ontology Extraction candidates are ready for confirmation: ${json.job.summary}`,
+              ),
+      );
+    } catch (err) {
+      const typedErr = err as Error & {
+        diagnostic?: {
+          code?: string;
+          providerName?: string;
+          message?: string;
+          remediation?: string;
+        };
+      };
+      const message = typedErr instanceof Error ? typedErr.message : String(typedErr);
+      setExtractionError({
+        message,
+        ...(typedErr?.diagnostic ? { diagnostic: typedErr.diagnostic } : {}),
+      });
+      showToast(message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleSaveDecisions = async (
+    jobId: string,
+    changes: Record<string, CandidateDecision | null>,
+  ) => {
+    const seq = (latestReqSeqRef.current[jobId] ?? 0) + 1;
+    latestReqSeqRef.current[jobId] = seq;
+
+    const latestJobs = useWorkbenchStore.getState().data?.extractionJobs ?? data.extractionJobs;
+    patchData({
+      extractionJobs: latestJobs.map((job) => {
+        if (job.id !== jobId) return job;
+        const nextDecisions = { ...job.decisions };
+        for (const [key, value] of Object.entries(changes)) {
+          if (value) nextDecisions[key] = value;
+          else delete nextDecisions[key];
+        }
+        return { ...job, decisions: nextDecisions };
+      }),
+    });
+
+    const prevInFlight = inFlightDecisionRef.current[jobId];
+    const putPromise = (prevInFlight ? prevInFlight.catch(() => undefined) : Promise.resolve()).then(
+      () =>
+        apiPutJson<{ extractionJobs: ExtractionJob[] }>(
+          `/api/capability/extraction-jobs/${jobId}/decisions`,
+          { decisions: changes },
+        ),
+    );
+    inFlightDecisionRef.current[jobId] = putPromise;
+
+    try {
+      const json = await putPromise;
+      if (latestReqSeqRef.current[jobId] === seq) {
+        patchData({ extractionJobs: json.extractionJobs });
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (inFlightDecisionRef.current[jobId] === putPromise) {
+        delete inFlightDecisionRef.current[jobId];
+      }
     }
   };
 
   const handleApplyCandidateJob = async (jobId: string) => {
     setApplyingJobId(jobId);
     try {
+      await inFlightDecisionRef.current[jobId]?.catch(() => undefined);
       const json = await apiPostJson<{
         job: ExtractionJob;
         project?: typeof data.activeProject;
         extractionJobs: ExtractionJob[];
       }>(`/api/capability/extraction-jobs/${jobId}/apply`, {});
-      if (json.project) {
-        patchData({ activeProject: json.project, extractionJobs: json.extractionJobs });
-      } else {
-        patchData({ extractionJobs: json.extractionJobs });
+      latestReqSeqRef.current[jobId] = (latestReqSeqRef.current[jobId] ?? 0) + 1;
+      patchData({
+        extractionJobs: json.extractionJobs,
+        ...(json.project && json.project.id === data.activeProject.id
+          ? { activeProject: json.project }
+          : {}),
+      });
+      showToast(
+        t(
+          `已将 ${json.job.appliedCandidateCount ?? 0} 个已采纳的萃取候选合并至工程：${json.job.title}`,
+          `Merged ${json.job.appliedCandidateCount ?? 0} accepted extraction candidates into the project: ${json.job.title}`,
+        ),
+      );
+    } catch (err) {
+      const typedErr = err as Error & {
+        status?: number;
+        blockedBy?: { elementId?: string }[];
+        extractionJobs?: ExtractionJob[];
+        project?: typeof data.activeProject;
+      };
+      if (typedErr.extractionJobs || typedErr.project) {
+        patchData({
+          ...(Array.isArray(typedErr.extractionJobs) ? { extractionJobs: typedErr.extractionJobs } : {}),
+          ...(typedErr.project && typedErr.project.id === data.activeProject.id
+            ? { activeProject: typedErr.project }
+            : {}),
+        });
       }
-      showToast(`已将本体萃取候选结果合并至工程：${json.job.title}`);
+      if (typedErr.status === 409) {
+        const blockedIds = Array.from(
+          new Set((typedErr.blockedBy ?? []).map((b) => b.elementId).filter((id): id is string => Boolean(id))),
+        );
+        const idsZh = blockedIds.length > 0 ? `（涉及元素：${blockedIds.slice(0, 6).join('、')}）` : '';
+        const idsEn = blockedIds.length > 0 ? ` (${blockedIds.slice(0, 6).join(', ')})` : '';
+        showToast(
+          t(
+            `合并被一致性门禁阻止：按当前采纳项合并会引入新的一致性错误${idsZh}，请调整后重试。`,
+            `Merge blocked by the consistency gate: this selection would introduce new Consistency Errors${idsEn}. Adjust it and retry.`,
+          ),
+        );
+        return;
+      }
+      showToast(typedErr instanceof Error ? typedErr.message : String(typedErr));
     } finally {
       setApplyingJobId(null);
     }
@@ -582,7 +717,35 @@ export function CapabilityExtractionView() {
           </Button>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 p-[8px_10px] mb-3 rounded-[6px] bg-inset border border-line"
+        {extractionError && (
+          <div
+            className="p-2.5 mb-3 rounded-[6px] border border-line bg-surface flex items-start justify-between gap-2 text-[12.5px]"
+            data-testid="extraction-error-banner"
+            role="alert"
+          >
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <div className="font-medium text-red">
+                {extractionError.diagnostic?.providerName
+                  ? `${extractionError.diagnostic.providerName} · `
+                  : ''}
+                {extractionError.diagnostic?.message || extractionError.message}
+              </div>
+              {extractionError.diagnostic?.remediation && (
+                <div className="text-muted-foreground">{extractionError.diagnostic.remediation}</div>
+              )}
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() => setExtractionError(null)}
+            >
+              {t('关闭', 'Dismiss')}
+            </Button>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2 mb-3 rounded-[6px] bg-inset border border-line"
         >
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[11.5px] font-semibold text-muted-foreground">
@@ -609,8 +772,8 @@ export function CapabilityExtractionView() {
             />
             <span>
               {t(
-                '萃取后立即合并至目标工程（取消勾选启用两阶段候选复核）',
-                'Apply immediately to project (uncheck for Two-Stage Review)',
+                '萃取后立即合并（一次性采纳本次全部候选，仍过一致性门禁）',
+                'Merge immediately (accept every candidate at once; the consistency gate still applies)',
               )}
             </span>
           </label>
@@ -660,9 +823,15 @@ export function CapabilityExtractionView() {
                     )
                   }
                 >
-                  <option value="DDL_AND_OPENAPI">DDL_AND_OPENAPI (库表+接口规范)</option>
-                  <option value="SOURCE_CODE">SOURCE_CODE (领域服务代码)</option>
-                  <option value="LOG_AND_DOC">LOG_AND_DOC (审计日志+制度文档)</option>
+                  <option value="DDL_AND_OPENAPI">
+                    {t('DDL_AND_OPENAPI (库表+接口规范)', 'DDL_AND_OPENAPI (Schema + OpenAPI Spec)')}
+                  </option>
+                  <option value="SOURCE_CODE">
+                    {t('SOURCE_CODE (领域服务代码)', 'SOURCE_CODE (Domain Service Code)')}
+                  </option>
+                  <option value="LOG_AND_DOC">
+                    {t('LOG_AND_DOC (审计日志+制度文档)', 'LOG_AND_DOC (Audit Logs + Policy Docs)')}
+                  </option>
                 </select>
               </div>
             </div>
@@ -685,101 +854,69 @@ export function CapabilityExtractionView() {
                 value={ddlSnippet}
                 onChange={(e) => setDdlSnippet(e.target.value)}
               />
+              <div className="text-[12.5px] text-muted-foreground" data-testid="extraction-scan-preview">
+                {scanPreview.tables.length === 0 && scanPreview.operations.length === 0
+                  ? t(
+                      '结构扫描预览：未识别到表或接口结构，该输入将完全依赖语义萃取（需要 LLM）。',
+                      'Structural scan preview: no table or operation recognised; this input relies entirely on semantic extraction (needs the LLM).',
+                    )
+                  : t(
+                      `结构扫描预览：识别到 ${scanPreview.tables.length} 张表${
+                        scanPreview.tables.length > 0
+                          ? `（${scanPreview.tables.map((tb) => tb.tableName).join('、')}）`
+                          : ''
+                      }、${scanPreview.operations.length} 个接口${
+                        scanPreview.operations.length > 0
+                          ? `（${scanPreview.operations
+                              .map((op) => `${op.method} ${op.routePath}`)
+                              .join('、')}）`
+                          : ''
+                      }。`,
+                      `Structural scan preview: ${scanPreview.tables.length} ${
+                        scanPreview.tables.length === 1 ? 'table' : 'tables'
+                      }${
+                        scanPreview.tables.length > 0
+                          ? ` (${scanPreview.tables.map((tb) => tb.tableName).join(', ')})`
+                          : ''
+                      }, ${scanPreview.operations.length} ${
+                        scanPreview.operations.length === 1 ? 'operation' : 'operations'
+                      }${
+                        scanPreview.operations.length > 0
+                          ? ` (${scanPreview.operations
+                              .map((op) => `${op.method} ${op.routePath}`)
+                              .join(', ')})`
+                          : ''
+                      }.`,
+                    )}
+              </div>
             </div>
           </div>
 
           <div className="flex flex-col gap-2">
             <div className="flex justify-between items-center">
               <span className="text-[12.5px] font-semibold">
-                {t('本体萃取任务与候选复核队列', 'Ontology Extraction Jobs & Review Queue')} (
+                {t('本体萃取任务与候选确认', 'Ontology Extraction Jobs & Candidate Confirmation')} (
                 {data.extractionJobs.length})
               </span>
               <span className="badge badge-accent">
                 {applyImmediately
-                  ? t('直通合并模式', 'Auto-Merge')
-                  : t('两阶段复核模式', 'Two-Stage Review')}
+                  ? t('立即合并', 'Merge immediately')
+                  : t('逐项确认', 'Per-candidate confirmation')}
               </span>
             </div>
 
-            <div className="flex flex-col gap-2 max-h-[380px] overflow-y-auto"
-            >
-              {data.extractionJobs.map((job) => {
-                const entitiesCnt =
-                  job.extractedEntitiesCount ?? job.candidateSuite?.M1?.aggregates.length ?? 0;
-                const tablesCnt =
-                  job.extractedTablesCount ?? job.candidateSuite?.MM?.mappings.length ?? 0;
-                const ifacesCnt =
-                  job.extractedInterfacesCount ?? job.candidateSuite?.MI?.interfaces.length ?? 0;
-                const isApplied = job.appliedToProject !== false;
-
-                return (
-                  <div
-                    key={job.id} className="p-2.5 rounded-[6px] bg-inset border border-line flex flex-col gap-1.5"
-                  >
-                    <div className="flex justify-between items-start gap-2"
-                    >
-                      <div>
-                        <strong>{job.title}</strong>
-                        <div className="text-[11.5px] text-muted-foreground font-mono"
-                        >
-                          {job.sourceType} · Project: {job.projectId}
-                        </div>
-                      </div>
-                      <div className="flex gap-1 shrink-0 items-center">
-                        <span className="badge badge-ok">
-                          {(job.confidenceScore * 100).toFixed(0)}%
-                        </span>
-                        <span className={`badge ${isApplied ? 'badge-ok' : 'badge-warn'}`}>
-                          {isApplied
-                            ? t('已合并至工程', 'Merged')
-                            : t('待复核候选', 'Pending Review')}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="xs"
-                          onClick={() => setDeleteTargetJob(job)}
-                          title={t('删除任务记录', 'Delete job')}
-                        >
-                          <Trash2 size={11.5} className="text-red" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="text-[12.5px] text-muted-foreground">{job.summary}</div>
-
-                    <div className="flex flex-wrap gap-1.5 text-[11.5px] font-mono"
-                    >
-                      <span className="badge">M1 实体: {entitiesCnt}</span>
-                      <span className="badge">MM 映射表: {tablesCnt}</span>
-                      <span className="badge">MI 接口: {ifacesCnt}</span>
-                    </div>
-
-                    <div className="flex justify-between items-center gap-2 flex-wrap"
-                    >
-                      <div className="flex flex-wrap gap-1">
-                        {job.extractedModels.map((m) => (
-                          <span key={m} className="badge badge-accent">
-                            {m}
-                          </span>
-                        ))}
-                      </div>
-
-                      {!isApplied && (
-                        <Button
-                          type="button"
-                          variant="accent" size="sm"
-                          disabled={applyingJobId === job.id}
-                          onClick={() => void handleApplyCandidateJob(job.id)}
-                        >
-                          {applyingJobId === job.id
-                            ? t('正在合并...', 'Merging...')
-                            : t('合并候选本体至工程', 'Merge Candidate Ontology')}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="flex flex-col gap-2 max-h-[640px] overflow-y-auto">
+              {data.extractionJobs.map((job) => (
+                <ExtractionJobCard
+                  key={job.id}
+                  job={job}
+                  project={job.projectId === data.activeProject.id ? data.activeProject : undefined}
+                  merging={applyingJobId === job.id}
+                  onSaveDecisions={(jobId, changes) => void handleSaveDecisions(jobId, changes)}
+                  onMerge={(jobId) => void handleApplyCandidateJob(jobId)}
+                  onDelete={setDeleteTargetJob}
+                />
+              ))}
             </div>
           </div>
         </div>

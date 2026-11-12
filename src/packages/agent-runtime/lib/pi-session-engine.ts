@@ -25,6 +25,7 @@ import {
 } from '@earendil-works/pi-durable';
 import {
   MODEL_CODES,
+  checkSqlGrounding,
   validateOntologySuite,
   type ModelCode,
   type OntologySuite,
@@ -50,6 +51,12 @@ import {
   pickLocaleText,
   resolveEffectiveLocale,
 } from './locale.js';
+import {
+  buildProjectDataGrounding,
+  describeGroundingRefusal,
+  describeJoinWarnings,
+  renderDataGrounding,
+} from './reasoning-grounding.js';
 import {
   ONTOLOGY_DURABLE_TOOLS,
   ONTOLOGY_TOOL_NAMES,
@@ -1134,6 +1141,14 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
   }
 }
 
+function latestUserPrompt(session: AgentSession): string | undefined {
+  for (let i = session.messages.length - 1; i >= 0; i -= 1) {
+    const message = session.messages[i]!;
+    if (message.role === 'user' && message.content.trim()) return message.content;
+  }
+  return undefined;
+}
+
 function buildSystemPromptForSession(
   store: WorkspaceStore,
   session: AgentSession,
@@ -1141,6 +1156,20 @@ function buildSystemPromptForSession(
   locale: AgentLocale = 'zh-CN',
 ): string {
   const project = resolveProjectDetail(store, session.projectId);
+  const writebacks =
+    session.agentKind === 'REASONING'
+      ? store
+          .listWritebackInterfaces()
+          .map((wb) => `${wb.id}(${wb.name} -> ${wb.boundBehaviorRef})`)
+          .join(', ')
+      : '';
+  const renderedGrounding =
+    session.agentKind === 'REASONING'
+      ? renderDataGrounding(
+          buildProjectDataGrounding(store, project, latestUserPrompt(session)),
+          locale,
+        )
+      : '';
 
   if (locale === 'en-US') {
     const baseHeaderEn = [
@@ -1161,31 +1190,12 @@ function buildSystemPromptForSession(
       .join('\n');
 
     if (session.agentKind === 'REASONING') {
-      const dbTables = store
-        .listDatabaseResources()
-        .flatMap((db) =>
-          db.tables.map(
-            (tbl) => `${tbl.tableName}(${tbl.columns.slice(0, 6).map((c) => c.name).join(', ')})`,
-          ),
-        );
-      const mmTables = (project?.suite.MM?.mappings ?? []).flatMap((m) =>
-        m.tableMappings.map(
-          (tm) => `${tm.tableName}(${tm.columnMappings.slice(0, 6).map((c) => c.column).join(', ')})`,
-        ),
-      );
-      const availableTables = Array.from(new Set([...mmTables, ...dbTables]));
-      const writebacks = store
-        .listWritebackInterfaces()
-        .map((wb) => `${wb.id}(${wb.name} -> ${wb.boundBehaviorRef})`)
-        .join(', ');
       return [
         baseHeaderEn,
         `Current reasoning mode: ${session.reasoningMode ?? 'ASK_DATA'} (ASK_DATA=data query, ASK_WHY=root-cause attribution, ASK_POLICY=policy writeback).`,
-        availableTables.length > 0
-          ? `Available analytics tables & columns: ${availableTables.join('; ')} (plus dictionary table __dict).`
-          : '',
+        renderedGrounding,
         writebacks ? `Registered writeback interfaces: ${writebacks}.` : '',
-        `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; in ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
+        `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; every figure you state must come from a query result. In ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
       ]
         .filter(Boolean)
         .join('\n');
@@ -1222,31 +1232,12 @@ function buildSystemPromptForSession(
     .join('\n');
 
   if (session.agentKind === 'REASONING') {
-    const dbTables = store
-      .listDatabaseResources()
-      .flatMap((db) =>
-        db.tables.map(
-          (tbl) => `${tbl.tableName}(${tbl.columns.slice(0, 6).map((c) => c.name).join(', ')})`,
-        ),
-      );
-    const mmTables = (project?.suite.MM?.mappings ?? []).flatMap((m) =>
-      m.tableMappings.map(
-        (tm) => `${tm.tableName}(${tm.columnMappings.slice(0, 6).map((c) => c.column).join(', ')})`,
-      ),
-    );
-    const availableTables = Array.from(new Set([...mmTables, ...dbTables]));
-    const writebacks = store
-      .listWritebackInterfaces()
-      .map((wb) => `${wb.id}(${wb.name} -> ${wb.boundBehaviorRef})`)
-      .join(', ');
     return [
       baseHeader,
       `当前分析推理模式：${session.reasoningMode ?? 'ASK_DATA'}（ASK_DATA=智能问数，ASK_WHY=智能问因，ASK_POLICY=智能问策）。`,
-      availableTables.length > 0
-        ? `当前可用分析数据表与核心列：${availableTables.join('；')}（及数据字典表 __dict）。`
-        : '',
+      renderedGrounding,
       writebacks ? `当前已注册闭环回写接口：${writebacks}。` : '',
-      `优先调用 run_readonly_sql 获取真实表数据后再输出结论；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
+      `优先调用 run_readonly_sql 获取真实表数据后再输出结论，结论中的每个数字都必须来自查询结果；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -1802,22 +1793,55 @@ function executeUnifiedToolCall(
       store.listDatabaseResources()[0]?.tables[0]?.tableName ??
       't_contract';
     const sql = String(args.sql || `SELECT * FROM ${firstMappedTable} LIMIT 10`);
-    try {
-      const queryResult = store.executeReadOnlyAnalyticsSql(sql);
+
+    // Grounding check before anything runs: a table outside the grounding is
+    // refused with the list to choose from; a join the ontology does not back
+    // runs, with a warning attached to the result.
+    const grounding = buildProjectDataGrounding(store, project);
+    const groundingReport = checkSqlGrounding(grounding, sql);
+    if (groundingReport.unknownTables.length > 0) {
+      const refusal = describeGroundingRefusal(grounding, groundingReport, locale);
       return {
         trace: {
           id: tc.id,
           toolName: tc.name,
           arguments: args,
-          output: pickLocaleText(
-            locale,
-            `SQLite 实查返回 ${queryResult.rowCount} 行（${queryResult.columns.join(', ')}）`,
-            `SQLite query returned ${queryResult.rowCount} rows (${queryResult.columns.join(', ')})`,
-          ),
+          output: refusal,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          error: refusal,
+          unknownTables: groundingReport.unknownTables,
+          availableTables: grounding.tables.map((t) => t.table),
+        }),
+        isError: true,
+      };
+    }
+    const groundingWarnings = describeJoinWarnings(groundingReport, locale, grounding);
+
+    try {
+      const queryResult = store.executeReadOnlyAnalyticsSql(sql);
+      const rowsSummary = pickLocaleText(
+        locale,
+        `SQLite 实查返回 ${queryResult.rowCount} 行（${queryResult.columns.join(', ')}）`,
+        `SQLite query returned ${queryResult.rowCount} rows (${queryResult.columns.join(', ')})`,
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output:
+            groundingWarnings.length > 0
+              ? `${rowsSummary}\n${groundingWarnings.join('\n')}`
+              : rowsSummary,
           isError: false,
           durationMs: Date.now() - started,
         },
-        toolResultContent: JSON.stringify(queryResult),
+        toolResultContent: JSON.stringify(
+          groundingWarnings.length > 0 ? { ...queryResult, groundingWarnings } : queryResult,
+        ),
         isError: false,
         artifact: {
           kind: 'SQL_PREVIEW',

@@ -99,7 +99,14 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
         503,
       );
     }
+    const errCode = (err as { code?: string } | null)?.code;
     const msg = err instanceof Error ? err.message : String(err);
+    if (errCode === 'ALREADY_MERGED' || msg.includes('already merged')) {
+      return c.json({ error: msg, code: 'ALREADY_MERGED' }, 409);
+    }
+    if (errCode === 'NOTHING_ACCEPTED' || msg.includes('No accepted candidates')) {
+      return c.json({ error: msg, code: 'NOTHING_ACCEPTED' }, 400);
+    }
     if (
       msg.includes('Cannot delete') ||
       msg.includes('referenced by') ||
@@ -1268,12 +1275,29 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     });
   });
 
+  app.put('/api/capability/extraction-jobs/:jobId/decisions', async (c) => {
+    const body = await c.req.json<{
+      decisions: Record<string, 'ACCEPTED' | 'REJECTED' | null>;
+    }>();
+    const job = store.saveExtractionDecisions(c.req.param('jobId'), body.decisions ?? {});
+    return c.json({ job, extractionJobs: store.listExtractionJobs() });
+  });
+
   app.post('/api/capability/extraction-jobs/:jobId/apply', (c) => {
     const res = store.applyExtractionJobToProject(c.req.param('jobId'));
-    return c.json({
-      ...res,
-      extractionJobs: store.listExtractionJobs(),
-    });
+    return c.json(
+      {
+        ...res,
+        ...(res.blockedBy.length > 0
+          ? {
+              code: 'MERGE_BLOCKED',
+              error: 'Merge blocked: the accepted candidates would introduce new Consistency Errors.',
+            }
+          : {}),
+        extractionJobs: store.listExtractionJobs(),
+      },
+      res.blockedBy.length > 0 ? 409 : 200,
+    );
   });
 
   app.delete('/api/capability/extraction-jobs/:jobId', (c) => {

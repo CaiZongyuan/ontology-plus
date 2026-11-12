@@ -172,11 +172,12 @@ export function DataResourcesView({
       const json = await apiPostJson<{
         job: { summary: string };
         project?: typeof data.activeProject;
+        blockedBy?: unknown[];
         extractionJobs: typeof data.extractionJobs;
       }>('/api/capability/extraction-jobs', {
         systemId: data.legacySystems[0]?.id ?? 'sys-erp-contract',
         projectId: data.activeProject.id,
-        title: '从数仓资源萃取数据本体 (M1+MM)',
+        title: t('从数仓资源萃取数据本体 (M1+MM)', 'Extract Data Ontology from Data Resources (M1+MM)'),
         sourceType: 'DDL_AND_OPENAPI',
         sourceSnippet:
           ddlFromTables ||
@@ -188,8 +189,24 @@ export function DataResourcesView({
       } else {
         patchData({ extractionJobs: json.extractionJobs });
       }
-      showToast(`已从数据资源完成数据本体萃取 (M1+MM)：${json.job.summary}`);
+      if (json.blockedBy?.length) {
+        showToast(
+          t(
+            `数据本体萃取已完成，但合并被一致性门禁阻止（${json.blockedBy.length} 个新增一致性错误）。请到「能力中心 → 本体萃取」逐项确认。`,
+            `Data ontology extraction finished, but the merge was blocked by ${json.blockedBy.length} new Consistency Errors. Confirm the candidates under Capability Center → Ontology Extraction.`,
+          ),
+        );
+        return;
+      }
+      showToast(
+        t(
+          `已从数据资源完成数据本体萃取 (M1+MM)：${json.job.summary}`,
+          `Extracted data ontology (M1+MM) from data resources: ${json.job.summary}`,
+        ),
+      );
       onNavigate?.('data-mappings');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
     } finally {
       setExtractingDataOntology(false);
     }

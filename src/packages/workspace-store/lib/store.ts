@@ -15,15 +15,13 @@ import {
   renameOntologySymbol,
   serializeManifestJson,
   serializeSuiteToYamlFiles,
+  buildExtractionCandidates,
+  previewCandidateMerge,
+  scanSourceStructure,
   validateOntologySuite,
-  type AggregateRoot,
-  type Attribute,
-  type BehaviorItem,
-  type InterfaceItem,
+  type ExtractionCandidate,
   type ModelCode,
-  type ObjectTableMapping,
   type OntologySuite,
-  type QueryReportItem,
 } from '../../ontology-core/index.js';
 import { BOOTSTRAP_SQLITE_DDL } from './schema.js';
 import {
@@ -530,343 +528,46 @@ function bindNamedSqlParams(sql: string, params?: Record<string, unknown>): stri
   return out;
 }
 
-function toCamelCase(snake: string): string {
-  const clean = snake.trim().replace(/^`+|`+$/g, '').replace(/^"+|"+$/g, '');
-  return clean
-    .toLowerCase()
-    .replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
-}
-
-function toPascalCaseFromTable(tableName: string): string {
-  const stripped = tableName
-    .trim()
-    .replace(/^`+|`+$/g, '')
-    .replace(/^"+|"+$/g, '')
-    .replace(/^t_/i, '');
-  const camel = toCamelCase(stripped);
-  return camel ? camel[0].toUpperCase() + camel.slice(1) : 'ExtractedEntity';
-}
-
-function mapSqlTypeToOntologyType(sqlType: string): Attribute['type'] {
-  const upper = sqlType.toUpperCase();
-  if (/(INT|SERIAL)/.test(upper)) return 'Integer';
-  if (/(DECIMAL|NUMERIC|NUMBER|REAL|FLOAT|DOUBLE)/.test(upper)) return 'Decimal';
-  if (/(BOOL)/.test(upper)) return 'Boolean';
-  if (/(TIMESTAMP|DATETIME)/.test(upper)) return 'DateTime';
-  if (/\bDATE\b/.test(upper)) return 'Date';
-  return 'String';
-}
-
-interface ParsedDdlColumn {
-  name: string;
-  sqlType: string;
-  nullable: boolean;
-  unique: boolean;
-  isPrimaryKey: boolean;
-  fkTargetTable?: string;
-  fkTargetColumn?: string;
-}
-
-interface ParsedDdlTable {
-  tableName: string;
-  primaryKey: string;
-  columns: ParsedDdlColumn[];
-  foreignKeys: {
-    fkName: string;
-    localColumn: string;
-    targetTable: string;
-    targetColumn: string;
-  }[];
-}
-
-function splitTopLevelCommas(body: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let current = '';
-  for (let i = 0; i < body.length; i += 1) {
-    const ch = body[i];
-    if (ch === '(') depth += 1;
-    else if (ch === ')' && depth > 0) depth -= 1;
-    if (ch === ',' && depth === 0) {
-      if (current.trim()) parts.push(current.trim());
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-  if (current.trim()) parts.push(current.trim());
-  return parts;
-}
-
-function parseCreateTablesFromSnippet(snippet: string): ParsedDdlTable[] {
-  const results: ParsedDdlTable[] = [];
-  const headerRegex = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"a-zA-Z0-9_.]+)\s*\(/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = headerRegex.exec(snippet)) !== null) {
-    const rawName = match[1].replace(/^[a-zA-Z0-9_]+\./, '').replace(/[`"]/g, '');
-    let idx = headerRegex.lastIndex;
-    let depth = 1;
-    while (idx < snippet.length && depth > 0) {
-      if (snippet[idx] === '(') depth += 1;
-      else if (snippet[idx] === ')') depth -= 1;
-      idx += 1;
-    }
-    const body = snippet.slice(headerRegex.lastIndex, Math.max(headerRegex.lastIndex, idx - 1));
-    const items = splitTopLevelCommas(body);
-
-    const columns: ParsedDdlColumn[] = [];
-    const foreignKeys: ParsedDdlTable['foreignKeys'] = [];
-    let primaryKey = '';
-
-    for (const rawItem of items) {
-      const item = rawItem.replace(/--.*$/gm, '').trim();
-      if (!item) continue;
-
-      const pkConstraint = item.match(/^(?:CONSTRAINT\s+\S+\s+)?PRIMARY\s+KEY\s*\(([^)]+)\)/i);
-      if (pkConstraint) {
-        const firstPk = pkConstraint[1].split(',')[0].trim().replace(/[`"]/g, '');
-        if (firstPk) primaryKey = firstPk;
-        continue;
-      }
-
-      const fkConstraint = item.match(
-        /^(?:CONSTRAINT\s+(\S+)\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+([`"a-zA-Z0-9_]+)\s*\(([^)]+)\)/i,
-      );
-      if (fkConstraint) {
-        const localColumn = fkConstraint[2].trim().replace(/[`"]/g, '');
-        const targetTable = fkConstraint[3].trim().replace(/[`"]/g, '');
-        const targetColumn = fkConstraint[4].trim().replace(/[`"]/g, '');
-        const fkName = fkConstraint[1]?.replace(/[`"]/g, '') ?? `fk_${rawName}_${localColumn}`;
-        foreignKeys.push({ fkName, localColumn, targetTable, targetColumn });
-        continue;
-      }
-
-      if (/^(?:CONSTRAINT|UNIQUE|INDEX|KEY|CHECK)\b/i.test(item)) {
-        continue;
-      }
-
-      const colMatch = item.match(
-        /^([`"a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+(?:\s*\([^)]*\))?)([\s\S]*)$/,
-      );
-      if (!colMatch) continue;
-      const colName = colMatch[1].replace(/[`"]/g, '');
-      const sqlType = colMatch[2].replace(/\s+/g, '');
-      const rest = colMatch[3] ?? '';
-      const isPk = /\bPRIMARY\s+KEY\b/i.test(rest);
-      const notNull = isPk || /\bNOT\s+NULL\b/i.test(rest);
-      const unique = /\bUNIQUE\b/i.test(rest);
-      if (isPk && !primaryKey) primaryKey = colName;
-
-      let fkTargetTable: string | undefined;
-      let fkTargetColumn: string | undefined;
-      const inlineRef = rest.match(/REFERENCES\s+([`"a-zA-Z0-9_]+)\s*(?:\(([^)]+)\))?/i);
-      if (inlineRef) {
-        fkTargetTable = inlineRef[1].replace(/[`"]/g, '');
-        fkTargetColumn = (inlineRef[2] ?? 'id').trim().replace(/[`"]/g, '');
-        foreignKeys.push({
-          fkName: `fk_${rawName}_${colName}`,
-          localColumn: colName,
-          targetTable: fkTargetTable,
-          targetColumn: fkTargetColumn,
-        });
-      }
-
-      columns.push({
-        name: colName,
-        sqlType,
-        nullable: !notNull,
-        unique,
-        isPrimaryKey: isPk,
-        fkTargetTable,
-        fkTargetColumn,
-      });
-    }
-
-    for (const fk of foreignKeys) {
-      const col = columns.find((c) => c.name === fk.localColumn);
-      if (col) {
-        col.fkTargetTable = fk.targetTable;
-        col.fkTargetColumn = fk.targetColumn;
-      }
-    }
-
-    if (!primaryKey) {
-      const idCol = columns.find((c) => c.name === 'id') ?? columns[0];
-      primaryKey = idCol?.name ?? 'id';
-      if (idCol) idCol.isPrimaryKey = true;
-    } else {
-      const pkCol = columns.find((c) => c.name === primaryKey);
-      if (pkCol) pkCol.isPrimaryKey = true;
-    }
-
-    results.push({
-      tableName: rawName,
-      primaryKey,
-      columns,
-      foreignKeys,
-    });
-  }
-
-  // Fallback for SOURCE_CODE snippets (TypeScript interface/type/class or Prisma model blocks)
-  if (results.length === 0) {
-    const codeEntityRegex =
-      /(?:export\s+)?(?:interface|class|model|type)\s+([A-Z][A-Za-z0-9_]*)\s*(?:=\s*)?\{([\s\S]*?)\}/g;
-    let codeMatch: RegExpExecArray | null;
-    while ((codeMatch = codeEntityRegex.exec(snippet)) !== null) {
-      const entityName = codeMatch[1];
-      const body = codeMatch[2] ?? '';
-      const tableName = `t_${entityName
-        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-        .toLowerCase()}`;
-      const columns: ParsedDdlColumn[] = [];
-      for (const rawLine of body.split(/\r?\n|;/)) {
-        const line = rawLine.replace(/\/\/.*$/, '').trim();
-        if (!line) continue;
-        // TypeScript `field?: string` or Prisma `field String`
-        const tsField = line.match(
-          /^(?:readonly\s+|public\s+|private\s+)?([a-zA-Z_][a-zA-Z0-9_]*)(\?)?\s*:\s*([A-Za-z0-9_[\]|<>'" ]+)/,
-        );
-        const prismaField = !tsField
-          ? line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s+(String|Int|Float|Decimal|Boolean|DateTime)\b(\?)?/)
-          : null;
-        if (!tsField && !prismaField) continue;
-        const rawFieldName = (tsField?.[1] ?? prismaField?.[1])!;
-        const optional = Boolean(tsField?.[2] || prismaField?.[3]);
-        const rawType = (tsField?.[3] ?? prismaField?.[2] ?? 'string').toLowerCase();
-        const colSnake = rawFieldName
-          .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-          .toLowerCase();
-        const sqlType = rawType.includes('number') || rawType.includes('decimal') || rawType.includes('float')
-          ? 'DECIMAL(18,2)'
-          : rawType.includes('int')
-            ? 'INTEGER'
-            : rawType.includes('bool')
-              ? 'BOOLEAN'
-              : rawType.includes('date')
-                ? 'TIMESTAMP'
-                : 'VARCHAR(128)';
-        columns.push({
-          name: colSnake,
-          sqlType,
-          nullable: optional,
-          unique: colSnake === 'id' || colSnake.endsWith('_no') || colSnake.endsWith('_code'),
-          isPrimaryKey: colSnake === 'id',
-        });
-      }
-      if (columns.length > 0) {
-        if (!columns.some((c) => c.isPrimaryKey)) {
-          columns.unshift({
-            name: 'id',
-            sqlType: 'VARCHAR(36)',
-            nullable: false,
-            unique: true,
-            isPrimaryKey: true,
-          });
-        }
-        results.push({
-          tableName,
-          primaryKey: 'id',
-          columns,
-          foreignKeys: [],
-        });
-      }
-    }
-  }
-
-  return results;
-}
-
-interface ParsedOpenApiOperation {
-  method: string;
-  routePath: string;
-  operationId?: string;
-  summary?: string;
-}
-
-function parseOpenApiOperationsFromSnippet(snippet: string): ParsedOpenApiOperation[] {
-  const ops: ParsedOpenApiOperation[] = [];
-  const seen = new Set<string>();
-
-  const pushOp = (method: string, routePath: string, operationId?: string, summary?: string) => {
-    const upper = method.toUpperCase();
-    const key = `${upper} ${routePath}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    ops.push({ method: upper, routePath, operationId, summary });
+/** Extraction jobs as stored before candidates existed: a whole-suite snapshot. */
+type StoredExtractionJob = Omit<ExtractionJob, 'candidates' | 'decisions' | 'semanticAlignment'> &
+  Partial<Pick<ExtractionJob, 'candidates' | 'decisions' | 'semanticAlignment'>> & {
+    candidateSuite?: OntologySuite;
+    confidenceScore?: number;
   };
 
-  // 1. Try parsing embedded OpenAPI YAML / JSON section if `paths:` or `"paths":` is present
-  if (/\bpaths\s*:/i.test(snippet)) {
-    const openapiStart = snippet.search(/(?:openapi\s*:|swagger\s*:|\{\s*"openapi"|\{\s*"paths"|paths\s*:)/i);
-    if (openapiStart >= 0) {
-      const candidateText = snippet.slice(openapiStart);
-      try {
-        const parsed = yaml.load(candidateText) as Record<string, unknown> | null;
-        const pathsObj =
-          parsed && typeof parsed === 'object'
-            ? ((parsed.paths ?? (parsed as Record<string, unknown>)) as Record<string, unknown>)
-            : undefined;
-        if (pathsObj && typeof pathsObj === 'object') {
-          for (const [routePath, methodsObj] of Object.entries(pathsObj)) {
-            if (!routePath.startsWith('/') || !methodsObj || typeof methodsObj !== 'object') continue;
-            for (const [m, spec] of Object.entries(methodsObj as Record<string, unknown>)) {
-              if (!/^(get|post|put|patch|delete)$/i.test(m)) continue;
-              const specRec = (spec && typeof spec === 'object' ? spec : {}) as Record<string, unknown>;
-              pushOp(
-                m,
-                routePath,
-                specRec.operationId ? String(specRec.operationId) : undefined,
-                specRec.summary ? String(specRec.summary) : undefined,
-              );
-            }
-          }
-        }
-      } catch {
-        // Fall through to regex-based path extraction
-      }
-    }
-
-    // Regex fallback for YAML/JSON paths blocks mixed with SQL DDL
-    const lines = snippet.split(/\r?\n/);
-    let currentPath: string | undefined;
-    for (const line of lines) {
-      const pathMatch = line.match(/^\s*['"]?(\/[a-zA-Z0-9_/{}-]+)['"]?\s*:\s*$/);
-      if (pathMatch) {
-        currentPath = pathMatch[1];
-        continue;
-      }
-      if (currentPath) {
-        const methodMatch = line.match(/^\s{2,8}['"]?(get|post|put|patch|delete)['"]?\s*:\s*(.*)$/i);
-        if (methodMatch) {
-          pushOp(methodMatch[1], currentPath);
-          continue;
-        }
-        if (/^\S/.test(line)) {
-          currentPath = undefined;
-        }
-      }
-    }
+/**
+ * Bring a stored job to the current shape. An unmerged snapshot job becomes
+ * the candidates that separate its snapshot from the suite as it is now.
+ */
+function upgradeExtractionJob(
+  stored: StoredExtractionJob,
+  currentSuite: () => OntologySuite | undefined,
+): { job: ExtractionJob; upgraded: boolean } {
+  if (stored.candidates && stored.decisions && stored.semanticAlignment) {
+    return { job: stored as ExtractionJob, upgraded: false };
   }
-
-  // 2. Also support inline REST endpoint lines e.g. `-- POST /api/v1/contracts/draft -> ...`
-  const inlineEndpointRegex = /\b(GET|POST|PUT|PATCH|DELETE)\s+(\/[a-zA-Z0-9_/{}-]+)(?:\s*(?:->|:|-)\s*([^\r\n]+))?/g;
-  let inlineMatch: RegExpExecArray | null;
-  while ((inlineMatch = inlineEndpointRegex.exec(snippet)) !== null) {
-    pushOp(inlineMatch[1], inlineMatch[2], undefined, inlineMatch[3]?.trim());
-  }
-
-  return ops;
+  const { candidateSuite, confidenceScore: _confidenceScore, ...rest } = stored;
+  const suite = !stored.appliedToProject && candidateSuite ? currentSuite() : undefined;
+  return {
+    job: {
+      ...rest,
+      candidates:
+        stored.candidates ?? (suite ? buildExtractionCandidates(suite, candidateSuite!) : []),
+      decisions: stored.decisions ?? {},
+      semanticAlignment: stored.semanticAlignment ?? { status: 'SKIPPED', reason: 'LEGACY_JOB' },
+    },
+    upgraded: true,
+  };
 }
 
-const AUDIT_SKIP_COLUMNS = new Set([
-  'created_at',
-  'updated_at',
-  'created_by',
-  'updated_by',
-  'deleted_at',
-  'flag',
-]);
+function codedError(code: 'ALREADY_MERGED' | 'NOTHING_ACCEPTED', message: string): Error {
+  return Object.assign(new Error(message), { code });
+}
+
+function modelsOfCandidates(candidates: ExtractionCandidate[]): ModelCode[] {
+  const present = new Set(candidates.map((c) => c.modelCode));
+  return MODEL_CODES.filter((code) => present.has(code));
+}
 
 function discoverPiModelsJsonProviders(
   workspaceRoot: string,
@@ -1418,6 +1119,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
   function nextUniqueId(prefix: string): string {
     seqCounter += 1;
     return `${prefix}-${Date.now().toString(36)}-${seqCounter.toString(36)}`;
+  }
+
+  function getProjectSuite(projectId: string): OntologySuite | undefined {
+    const row = db.prepare(`SELECT * FROM projects WHERE id = ?`).get(projectId) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? (JSON.parse(String(row.suite_json)) as OntologySuite) : undefined;
+  }
+
+  function getUpgradedExtractionJob(jobId: string): ExtractionJob | undefined {
+    const stored = getItem<StoredExtractionJob>('extraction_jobs', jobId);
+    if (!stored) return undefined;
+    const { job, upgraded } = upgradeExtractionJob(stored, () => getProjectSuite(stored.projectId));
+    if (upgraded) putItem('extraction_jobs', job.id, job, job.projectId);
+    return job;
   }
 
   return {
@@ -2058,532 +1774,44 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     listExtractionJobs(projectId) {
-      return listItems<ExtractionJob>('extraction_jobs', projectId);
+      return listItems<StoredExtractionJob>('extraction_jobs', projectId).map((stored) => {
+        const { job, upgraded } = upgradeExtractionJob(stored, () =>
+          getProjectSuite(stored.projectId),
+        );
+        if (upgraded) putItem('extraction_jobs', job.id, job, job.projectId);
+        return job;
+      });
     },
 
     runOntologyExtractionJob(input) {
       const project = this.getProject(input.projectId);
       if (!project) throw new Error(`Project not found: ${input.projectId}`);
 
-      if (input.synthesizedSuite) {
-        const shouldApply = input.applyImmediately !== false;
-        const extractedModels = MODEL_CODES.filter((c) => Boolean(input.synthesizedSuite![c]));
-        const entitiesCount =
-          input.synthesizedEntitiesCount ?? input.synthesizedSuite.M1?.aggregates.length ?? 0;
-        const tablesCount = input.synthesizedSuite.MM?.mappings.length ?? 0;
-        const interfacesCount =
-          input.synthesizedInterfacesCount ?? input.synthesizedSuite.MI?.interfaces.length ?? 0;
-
-        const job: ExtractionJob = {
-          id: nextUniqueId('ext-job'),
-          systemId: input.systemId,
-          projectId: input.projectId,
-          title: input.title,
-          sourceType: input.sourceType,
-          sourceSnippet: input.sourceSnippet,
-          extractedModels,
-          confidenceScore: 0.94,
-          status: 'COMPLETED',
-          summary:
-            input.synthesizedSummary ||
-            `本体萃取完成：AI 语义解析提炼 ${entitiesCount} 个领域聚合根、${interfacesCount} 个服务接口契约，并通过一致性门禁校验。`,
-          candidateSuite: input.synthesizedSuite,
-          extractedEntitiesCount: entitiesCount,
-          extractedTablesCount: tablesCount,
-          extractedInterfacesCount: interfacesCount,
-          appliedToProject: shouldApply,
-          createdAt: new Date().toISOString(),
-        };
-        putItem('extraction_jobs', job.id, job, input.projectId);
-        const finalProject = shouldApply
-          ? this.updateSuite(
-              input.projectId,
-              input.synthesizedSuite,
-              `Applied AI semantic ontology extraction job: ${input.title}`,
-            )
-          : project;
-        return { job, project: finalProject };
-      }
-
-      const parsedTables = parseCreateTablesFromSnippet(input.sourceSnippet);
-      const parsedOps = parseOpenApiOperationsFromSnippet(input.sourceSnippet);
-      const candidateSuite: OntologySuite = JSON.parse(JSON.stringify(project.suite));
-
-      if (!candidateSuite.M1) {
-        candidateSuite.M1 = {
-          model_type: 'OBJECT',
-          version: '5.0',
+      let extraction = input.extraction;
+      let scannedTableNames: string[] = [];
+      if (!extraction) {
+        const scan = scanSourceStructure({
+          baseSuite: project.suite,
+          source: input.sourceSnippet,
           domain: project.domain,
-          aggregates: [],
-          data_dictionaries: [],
-          aggregate_associations: [],
-        };
-      }
-      if (!candidateSuite.M2) {
-        candidateSuite.M2 = {
-          model_type: 'BEHAVIOR',
-          version: '5.0',
-          domain: project.domain,
-          behaviors: [],
-        };
-      }
-      if (!candidateSuite.M7) {
-        candidateSuite.M7 = {
-          model_type: 'QUERY_REPORT',
-          version: '5.0',
-          domain: project.domain,
-          query_reports: [],
-        };
-      }
-      if (!candidateSuite.MM) {
-        candidateSuite.MM = {
-          model_type: 'MAPPING',
-          version: '1.0',
-          domain: project.domain,
-          mappings: [],
-        };
-      }
-      if (!candidateSuite.MI) {
-        candidateSuite.MI = {
-          model_type: 'INTERFACE',
-          version: '1.0',
-          domain: project.domain,
-          interfaces: [],
+        });
+        scannedTableNames = scan.tables.map((t) => t.tableName);
+        extraction = {
+          candidates: buildExtractionCandidates(project.suite, scan.suite, scan.evidenceByKey),
+          semanticAlignment: { status: 'SKIPPED', reason: 'NOT_REQUESTED' },
+          tablesCount: scan.tables.length,
         };
       }
 
-      // Ensure any pre-existing QUERY behaviors in M2 have valid M7 bindings when M7 becomes active
-      for (const existingBhv of candidateSuite.M2.behaviors) {
-        if (existingBhv.behaviorType === 'QUERY' && !existingBhv.queryReportRef) {
-          const fallbackQryId = `QRY-AUTO-${existingBhv.id}`;
-          existingBhv.queryReportRef = fallbackQryId;
-          if (!candidateSuite.M7.query_reports.some((q) => q.id === fallbackQryId)) {
-            candidateSuite.M7.query_reports.push({
-              id: fallbackQryId,
-              name: `${existingBhv.name}Query`,
-              alias: existingBhv.alias,
-              queryType: 'LIST_QUERY',
-              behaviorRef: existingBhv.id,
-              primarySource: { aggregateRef: existingBhv.ownerEntity, alias: 't' },
-              joins: [],
-              parameters: [],
-              conditions: [],
-              resultColumns: [],
-              groupBy: [],
-              orderBy: [],
-              referenceSql: {
-                dialect: 'SQLite',
-                sql: `SELECT * FROM ${existingBhv.ownerEntity.toLowerCase()} t`,
-                parameterMappings: [],
-                resultMappings: [],
-              },
-            });
-          }
-        }
-      }
-
-      // First pass: map tableName -> aggregate so FK associations resolve cleanly across multi-table DDL
-      const tableToAggName = new Map<string, string>();
-      for (const existingMapping of candidateSuite.MM.mappings) {
-        for (const tm of existingMapping.tableMappings) {
-          tableToAggName.set(tm.tableName.toLowerCase(), existingMapping.objectName);
-        }
-      }
-      for (const tbl of parsedTables) {
-        tableToAggName.set(tbl.tableName.toLowerCase(), toPascalCaseFromTable(tbl.tableName));
-      }
-
-      let extractedEntitiesCount = 0;
-      const createdBehaviorByAgg = new Map<string, { cmdId: string; qryId: string }>();
-
-      for (const tbl of parsedTables) {
-        const objectName = toPascalCaseFromTable(tbl.tableName);
-        const upperTag = tbl.tableName
-          .replace(/^t_/i, '')
-          .toUpperCase()
-          .replace(/[^A-Z0-9]+/g, '_');
-
-        let agg: AggregateRoot | undefined = candidateSuite.M1.aggregates.find(
-          (a) => a.name.toLowerCase() === objectName.toLowerCase(),
-        );
-        const extractedAttributes: Attribute[] = [];
-
-        for (const col of tbl.columns) {
-          if (col.isPrimaryKey || col.name.toLowerCase() === 'id') continue;
-          if (AUDIT_SKIP_COLUMNS.has(col.name.toLowerCase())) continue;
-
-          const attrName = toCamelCase(col.name);
-          const targetAggName = col.fkTargetTable
-            ? tableToAggName.get(col.fkTargetTable.toLowerCase())
-            : undefined;
-          const targetExistsInM1 =
-            Boolean(targetAggName) &&
-            (candidateSuite.M1.aggregates.some((a) => a.name === targetAggName) ||
-              parsedTables.some((pt) => toPascalCaseFromTable(pt.tableName) === targetAggName));
-
-          if (targetAggName && targetExistsInM1 && targetAggName !== objectName) {
-            extractedAttributes.push({
-              name: attrName,
-              label: col.name,
-              type: 'AggregateRootRef',
-              required: !col.nullable,
-              unique: col.unique || undefined,
-              targetAggregate: targetAggName,
-            });
-          } else {
-            extractedAttributes.push({
-              name: attrName,
-              label: col.name,
-              type: mapSqlTypeToOntologyType(col.sqlType),
-              required: !col.nullable,
-              unique: col.unique || undefined,
-            });
-          }
-        }
-
-        if (extractedAttributes.length === 0) {
-          extractedAttributes.push({
-            name: 'code',
-            label: '业务编码',
-            type: 'String',
-            required: false,
-          });
-        }
-
-        if (!agg) {
-          agg = {
-            id: `AGG-EXT-${upperTag}`,
-            name: objectName,
-            alias: `${objectName} (${tbl.tableName})`,
-            aggregateType: 'AGGREGATE_ROOT',
-            description: `从物理数据表 ${tbl.tableName} 自动萃取生成的领域聚合根。`,
-            lifecycle: ['ACTIVE', 'ARCHIVED'],
-            tags: ['EXTRACTED'],
-            attributes: extractedAttributes,
-            entities: [],
-            valueObjects: [],
-            invariants: [],
-          };
-          candidateSuite.M1.aggregates.push(agg);
-          extractedEntitiesCount += 1;
-        } else {
-          for (const newAttr of extractedAttributes) {
-            if (!agg.attributes.some((a) => a.name === newAttr.name)) {
-              agg.attributes.push(newAttr);
-            }
-          }
-          extractedEntitiesCount += 1;
-        }
-
-        // Add AggregateAssociation for resolved FKs
-        for (const fk of tbl.foreignKeys) {
-          const targetAggName = tableToAggName.get(fk.targetTable.toLowerCase());
-          if (targetAggName && targetAggName !== agg.name) {
-            const assocId = `ASSOC-EXT-${upperTag}-${toCamelCase(fk.localColumn).toUpperCase()}`;
-            if (!candidateSuite.M1.aggregate_associations.some((a) => a.id === assocId)) {
-              candidateSuite.M1.aggregate_associations.push({
-                id: assocId,
-                sourceAggregate: agg.name,
-                targetAggregate: targetAggName,
-                associationType: 'REFERENCE',
-                sourceRole: toCamelCase(agg.name),
-                targetRole: toCamelCase(targetAggName),
-                cardinality: 'MANY_TO_ONE',
-                referenceField: toCamelCase(fk.localColumn),
-              });
-            }
-          }
-        }
-
-        // MM ObjectTableMapping
-        const mappingId = `MAP-EXT-${upperTag}`;
-        const columnMappings: ObjectTableMapping['tableMappings'][number]['columnMappings'] =
-          tbl.columns
-            .filter((col) => !AUDIT_SKIP_COLUMNS.has(col.name.toLowerCase()))
-            .map((col) => {
-              const isPk = col.isPrimaryKey || col.name === tbl.primaryKey;
-              const isFk = Boolean(col.fkTargetTable);
-              return {
-                attributeRef: isPk ? `${agg!.name}.id` : `${agg!.name}.${toCamelCase(col.name)}`,
-                column: col.name,
-                columnType: col.sqlType,
-                nullable: col.nullable,
-                unique: col.unique || undefined,
-                isPrimaryKey: isPk || undefined,
-                isForeignKey: isFk || undefined,
-                fkTargetTable: col.fkTargetTable,
-                fkTargetColumn: col.fkTargetColumn,
-              };
-            });
-
-        const tableMappingEntry: ObjectTableMapping['tableMappings'][number] = {
-          tableName: tbl.tableName,
-          tableRole: 'MASTER',
-          primaryKey: tbl.primaryKey,
-          foreignKeys: tbl.foreignKeys.map((fk) => ({
-            fkName: fk.fkName,
-            localColumn: fk.localColumn,
-            targetTable: fk.targetTable,
-            targetColumn: fk.targetColumn,
-          })),
-          columnMappings,
-        };
-
-        const existingMapIdx = candidateSuite.MM.mappings.findIndex(
-          (m) => m.id === mappingId || m.objectName === agg!.name,
-        );
-        if (existingMapIdx >= 0) {
-          const existingMap: ObjectTableMapping = candidateSuite.MM.mappings[existingMapIdx];
-          const tblIdx = existingMap.tableMappings.findIndex(
-            (t) => t.tableName === tbl.tableName,
-          );
-          if (tblIdx >= 0) {
-            existingMap.tableMappings[tblIdx] = tableMappingEntry;
-          } else {
-            existingMap.tableMappings.push(tableMappingEntry);
-          }
-        } else {
-          candidateSuite.MM.mappings.push({
-            id: mappingId,
-            objectRef: agg.id,
-            objectRole: 'AGGREGATE_ROOT',
-            objectName: agg.name,
-            mappingNote: `Extracted from DDL table ${tbl.tableName}`,
-            tableMappings: [tableMappingEntry],
-          });
-        }
-
-        // M2 COMMAND + QUERY behaviors & M7 LIST_QUERY
-        const cmdBhvId = `BHV-EXT-CMD-${upperTag}`;
-        const qryBhvId = `BHV-EXT-QRY-${upperTag}`;
-        const qryReportId = `QRY-EXT-${upperTag}`;
-
-        if (!candidateSuite.M2.behaviors.some((b) => b.id === cmdBhvId)) {
-          const cmdBhv: BehaviorItem = {
-            id: cmdBhvId,
-            name: `save${agg.name}`,
-            alias: `保存${agg.name}`,
-            ownerEntity: agg.name,
-            behaviorType: 'COMMAND',
-            triggerType: 'EXTERNAL',
-            description: `由存量表 ${tbl.tableName} 萃取生成的标准命令行为。`,
-            inputParameters: agg.attributes.slice(0, 5).map((a) => ({
-              name: a.name,
-              label: a.label,
-              type: a.type,
-              required: a.required,
-            })),
-            outputParameters: [{ name: 'id', label: '主键ID', type: 'String', required: true }],
-            preconditions: [],
-            stateChanges: [],
-            invokedRules: [],
-            producedEvents: [],
-            requiredPermissions: [],
-          };
-          candidateSuite.M2.behaviors.push(cmdBhv);
-        }
-
-        if (!candidateSuite.M2.behaviors.some((b) => b.id === qryBhvId)) {
-          const qryBhv: BehaviorItem = {
-            id: qryBhvId,
-            name: `list${agg.name}`,
-            alias: `分页查询${agg.name}`,
-            ownerEntity: agg.name,
-            behaviorType: 'QUERY',
-            triggerType: 'EXTERNAL',
-            description: `由存量表 ${tbl.tableName} 萃取生成的标准列表查询行为。`,
-            inputParameters: [],
-            outputParameters: [{ name: 'items', label: '列表记录', type: 'Array', required: true }],
-            preconditions: [],
-            stateChanges: [],
-            invokedRules: [],
-            producedEvents: [],
-            requiredPermissions: [],
-            queryReportRef: qryReportId,
-          };
-          candidateSuite.M2.behaviors.push(qryBhv);
-        }
-
-        if (!candidateSuite.M7.query_reports.some((q) => q.id === qryReportId)) {
-          const selectCols = tbl.columns
-            .filter((c) => !AUDIT_SKIP_COLUMNS.has(c.name.toLowerCase()))
-            .slice(0, 6);
-          const resultCols: QueryReportItem['resultColumns'] = selectCols.map((c) => ({
-            name: toCamelCase(c.name),
-            label: c.name,
-            sourceExpr: `t.${c.name}`,
-            dataType: mapSqlTypeToOntologyType(c.sqlType),
-          }));
-          const sqlProjection =
-            selectCols.length > 0
-              ? selectCols.map((c) => `t.${c.name} AS ${toCamelCase(c.name)}`).join(', ')
-              : 't.*';
-          const qryItem: QueryReportItem = {
-            id: qryReportId,
-            name: `${agg.name}ListQuery`,
-            alias: `${agg.name}台账列表查询`,
-            queryType: 'LIST_QUERY',
-            behaviorRef: qryBhvId,
-            description: `针对物理表 ${tbl.tableName} 的分页查询语义定义。`,
-            primarySource: {
-              aggregateRef: agg.name,
-              alias: 't',
-            },
-            joins: [],
-            parameters: [],
-            conditions: [],
-            resultColumns: resultCols,
-            groupBy: [],
-            orderBy: [],
-            pagination: { enabled: true, defaultPageSize: 20, maxPageSize: 100 },
-            referenceSql: {
-              dialect: 'SQLite',
-              sql: `SELECT ${sqlProjection} FROM ${tbl.tableName} t`,
-              parameterMappings: [],
-              resultMappings: resultCols.map((rc) => rc.name),
-            },
-          };
-          candidateSuite.M7.query_reports.push(qryItem);
-        }
-
-        createdBehaviorByAgg.set(agg.name.toLowerCase(), { cmdId: cmdBhvId, qryId: qryBhvId });
-      }
-
-      // OpenAPI paths -> MI interfaces
-      const primaryAgg = candidateSuite.M1.aggregates[candidateSuite.M1.aggregates.length - 1];
-      let extractedInterfacesCount = 0;
-
-      for (let i = 0; i < parsedOps.length; i += 1) {
-        const op = parsedOps[i];
-        const slug = `${op.method}_${op.routePath}`
-          .toUpperCase()
-          .replace(/[^A-Z0-9]+/g, '_')
-          .replace(/^_+|_+$/g, '')
-          .slice(0, 32);
-        const interfaceId = `IF-EXT-${slug || i + 1}`;
-        if (candidateSuite.MI.interfaces.some((it) => it.interfaceId === interfaceId)) {
-          extractedInterfacesCount += 1;
-          continue;
-        }
-
-        const isQuery = op.method === 'GET';
-        let relatedBehaviorRef: string | undefined;
-        let relatedReportRef: string | undefined;
-
-        // Match an existing or newly created M2 behavior so PROVIDED interface validation always passes
-        if (primaryAgg) {
-          const pair = createdBehaviorByAgg.get(primaryAgg.name.toLowerCase());
-          if (pair) {
-            relatedBehaviorRef = isQuery ? pair.qryId : pair.cmdId;
-          }
-        }
-        if (!relatedBehaviorRef) {
-          const existingMatch = candidateSuite.M2.behaviors.find((b) =>
-            isQuery ? b.behaviorType === 'QUERY' : b.behaviorType === 'COMMAND',
-          );
-          if (existingMatch) {
-            relatedBehaviorRef = existingMatch.id;
-          } else if (primaryAgg) {
-            const autoBhvId = `BHV-API-${slug || i + 1}`;
-            if (isQuery) {
-              const autoQryId = `QRY-API-${slug || i + 1}`;
-              candidateSuite.M2.behaviors.push({
-                id: autoBhvId,
-                name: op.operationId ?? `queryApi${i + 1}`,
-                alias: op.summary ?? `${op.method} ${op.routePath}`,
-                ownerEntity: primaryAgg.name,
-                behaviorType: 'QUERY',
-                triggerType: 'EXTERNAL',
-                inputParameters: [],
-                outputParameters: [],
-                preconditions: [],
-                stateChanges: [],
-                invokedRules: [],
-                producedEvents: [],
-                requiredPermissions: [],
-                queryReportRef: autoQryId,
-              });
-              candidateSuite.M7.query_reports.push({
-                id: autoQryId,
-                name: `${op.operationId ?? `ApiQuery${i + 1}`}Report`,
-                alias: op.summary ?? `${op.method} ${op.routePath}`,
-                queryType: 'LIST_QUERY',
-                behaviorRef: autoBhvId,
-                primarySource: { aggregateRef: primaryAgg.name, alias: 't' },
-                joins: [],
-                parameters: [],
-                conditions: [],
-                resultColumns: [],
-                groupBy: [],
-                orderBy: [],
-                referenceSql: {
-                  dialect: 'SQLite',
-                  sql: `SELECT * FROM ${primaryAgg.name.toLowerCase()} t`,
-                  parameterMappings: [],
-                  resultMappings: [],
-                },
-              });
-              relatedReportRef = autoQryId;
-            } else {
-              candidateSuite.M2.behaviors.push({
-                id: autoBhvId,
-                name: op.operationId ?? `invokeApi${i + 1}`,
-                alias: op.summary ?? `${op.method} ${op.routePath}`,
-                ownerEntity: primaryAgg.name,
-                behaviorType: 'COMMAND',
-                triggerType: 'EXTERNAL',
-                inputParameters: [],
-                outputParameters: [],
-                preconditions: [],
-                stateChanges: [],
-                invokedRules: [],
-                producedEvents: [],
-                requiredPermissions: [],
-              });
-            }
-            relatedBehaviorRef = autoBhvId;
-          }
-        }
-
-        if (!relatedReportRef && isQuery && relatedBehaviorRef) {
-          const boundBhv = candidateSuite.M2.behaviors.find((b) => b.id === relatedBehaviorRef);
-          relatedReportRef = boundBhv?.queryReportRef;
-        }
-
-        const intfItem: InterfaceItem = {
-          interfaceId,
-          name: op.summary ?? op.operationId ?? `${op.method} ${op.routePath}`,
-          direction: 'PROVIDED',
-          interfaceCategory: isQuery ? 'QUERY' : 'COMMAND',
-          protocol: 'REST',
-          format: 'JSON',
-          contractNote: `${op.method} ${op.routePath}`,
-          description: `从 OpenAPI 接口契约 ${op.method} ${op.routePath} 萃取生成。`,
-          relatedBehaviorRef,
-          relatedEntityRef: primaryAgg?.name,
-          relatedReportRef,
-          inputFields: [],
-          outputFields: [
-            { name: 'code', label: '状态码', type: 'Integer', required: true },
-            { name: 'data', label: '响应载荷', type: 'Object', required: false },
-          ],
-          returnRules: [{ code: '200', scenario: '调用成功', httpStatus: 200, message: 'OK' }],
-        };
-        candidateSuite.MI.interfaces.push(intfItem);
-        extractedInterfacesCount += 1;
-      }
-
-      const extractedTableNames = parsedTables.map((t) => t.tableName);
-      const extractedModels: ModelCode[] = ['M1', 'M2', 'M7', 'MM', 'MI'];
-      const shouldApply = input.applyImmediately !== false;
+      const { candidates } = extraction;
+      const interfacesCount = candidates.filter((c) => c.collection === 'interfaces').length;
+      const entitiesCount = candidates.filter((c) => c.collection === 'aggregates').length;
 
       const summaryParts: string[] = [];
-      if (extractedTableNames.length > 0) {
-        summaryParts.push(`识别物理表 [${extractedTableNames.join(', ')}]`);
+      if (scannedTableNames.length > 0) {
+        summaryParts.push(`识别物理表 [${scannedTableNames.join(', ')}]`);
       }
-      if (extractedInterfacesCount > 0) {
-        summaryParts.push(`解析服务接口 ${extractedInterfacesCount} 个`);
-      }
+      if (interfacesCount > 0) summaryParts.push(`解析服务接口 ${interfacesCount} 个`);
 
       const job: ExtractionJob = {
         id: nextUniqueId('ext-job'),
@@ -2592,51 +1820,106 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         title: input.title,
         sourceType: input.sourceType,
         sourceSnippet: input.sourceSnippet,
-        extractedModels,
-        confidenceScore: 0.95,
+        extractedModels: modelsOfCandidates(candidates),
         status: 'COMPLETED',
         summary:
-          summaryParts.length > 0
-            ? `本体萃取完成：从数据源${summaryParts.join('，')}，已对齐生成 M1 聚合根、M2 行为、M7 查询与 MM/MI 映射。`
-            : `本体萃取完成：已从存量系统规范提炼领域对象、业务规则与服务接口契约。`,
-        candidateSuite,
-        extractedEntitiesCount,
-        extractedTablesCount: parsedTables.length,
-        extractedInterfacesCount,
-        appliedToProject: shouldApply,
+          extraction.summary ??
+          (summaryParts.length > 0
+            ? `本体萃取完成：从数据源${summaryParts.join('，')}，产出 ${candidates.length} 个萃取候选。`
+            : `本体萃取完成：产出 ${candidates.length} 个萃取候选。`),
+        candidates,
+        decisions: {},
+        semanticAlignment: extraction.semanticAlignment,
+        extractedEntitiesCount: entitiesCount,
+        extractedTablesCount: extraction.tablesCount,
+        extractedInterfacesCount: interfacesCount,
+        appliedToProject: false,
         createdAt: new Date().toISOString(),
       };
 
+      if (input.applyImmediately === false || candidates.length === 0) {
+        putItem('extraction_jobs', job.id, job, input.projectId);
+        return { job, project, blockedBy: [] };
+      }
+
+      // "Merge immediately" is a blanket acceptance, held to the same gate.
+      job.decisions = Object.fromEntries(candidates.map((c) => [c.key, 'ACCEPTED' as const]));
+      const preview = previewCandidateMerge({
+        current: project.suite,
+        candidates,
+        decisions: job.decisions,
+        domain: project.domain,
+      });
+      if (preview.newErrors.length > 0) {
+        putItem('extraction_jobs', job.id, job, input.projectId);
+        return { job, project, blockedBy: preview.newErrors };
+      }
+      job.appliedToProject = true;
+      job.appliedCandidateCount = preview.acceptedCount;
       putItem('extraction_jobs', job.id, job, input.projectId);
-      const finalProject = shouldApply
-        ? this.updateSuite(
-            input.projectId,
-            candidateSuite,
-            `Applied ontology extraction job: ${input.title}`,
-          )
-        : project;
-      return { job, project: finalProject };
+      const merged = this.updateSuite(
+        input.projectId,
+        preview.suite,
+        `Applied ontology extraction job: ${input.title}`,
+      );
+      return { job, project: merged, blockedBy: [] };
+    },
+
+    saveExtractionDecisions(jobId, decisions) {
+      const existing = getUpgradedExtractionJob(jobId);
+      if (!existing) throw new Error(`Extraction job not found: ${jobId}`);
+      if (existing.appliedToProject) {
+        throw codedError('ALREADY_MERGED', `Extraction job already merged: ${jobId}`);
+      }
+      const known = new Set(existing.candidates.map((c) => c.key));
+      const next = { ...existing.decisions };
+      for (const [key, decision] of Object.entries(decisions)) {
+        if (!known.has(key)) continue;
+        if (decision === 'ACCEPTED' || decision === 'REJECTED') next[key] = decision;
+        else delete next[key];
+      }
+      const updated: ExtractionJob = { ...existing, decisions: next };
+      return putItem('extraction_jobs', updated.id, updated, updated.projectId);
     },
 
     applyExtractionJobToProject(jobId) {
-      const existing = getItem<ExtractionJob>('extraction_jobs', jobId);
+      const existing = getUpgradedExtractionJob(jobId);
       if (!existing) throw new Error(`Extraction job not found: ${jobId}`);
       const currentProject = this.getProject(existing.projectId);
       if (!currentProject) throw new Error(`Project not found: ${existing.projectId}`);
+      if (existing.appliedToProject) {
+        throw codedError('ALREADY_MERGED', `Extraction job already merged: ${jobId}`);
+      }
 
-      const suiteToApply = existing.candidateSuite ?? currentProject.suite;
+      const preview = previewCandidateMerge({
+        current: currentProject.suite,
+        candidates: existing.candidates,
+        decisions: existing.decisions,
+        domain: currentProject.domain,
+      });
+      if (preview.acceptedCount === 0) {
+        throw codedError(
+          'NOTHING_ACCEPTED',
+          `No accepted candidates to merge for extraction job: ${jobId}`,
+        );
+      }
+      if (preview.newErrors.length > 0) {
+        return { job: existing, project: currentProject, blockedBy: preview.newErrors };
+      }
+
       const updatedProject = this.updateSuite(
         existing.projectId,
-        suiteToApply,
+        preview.suite,
         `Applied reviewed extraction job (${existing.id}): ${existing.title}`,
       );
       const updatedJob: ExtractionJob = {
         ...existing,
         status: 'REVIEWED',
         appliedToProject: true,
+        appliedCandidateCount: preview.acceptedCount,
       };
       putItem('extraction_jobs', updatedJob.id, updatedJob, updatedJob.projectId);
-      return { job: updatedJob, project: updatedProject };
+      return { job: updatedJob, project: updatedProject, blockedBy: [] };
     },
 
     deleteExtractionJob(jobId) {

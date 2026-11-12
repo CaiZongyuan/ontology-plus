@@ -1,8 +1,12 @@
 import type {
+  CandidateDecision,
+  ExtractionCandidate,
   ImpactAnalysisReport,
   KnowledgeGraphData,
   ModelCode,
   OntologySuite,
+  SemanticAlignmentReport,
+  ValidationDiagnostic,
   ValidationReport,
 } from '../../ontology-core/index.js';
 
@@ -261,15 +265,39 @@ export interface ExtractionJob {
   sourceType: 'DDL_AND_OPENAPI' | 'SOURCE_CODE' | 'LOG_AND_DOC';
   sourceSnippet: string;
   extractedModels: ModelCode[];
-  confidenceScore: number;
   status: 'COMPLETED' | 'RUNNING' | 'REVIEWED';
   summary: string;
-  candidateSuite?: OntologySuite;
+  /** What this extraction proposes. A delta, never a copy of the suite. */
+  candidates: ExtractionCandidate[];
+  /** Confirmations so far, keyed by candidate key. No entry means undecided. */
+  decisions: Record<string, CandidateDecision>;
+  semanticAlignment: SemanticAlignmentReport;
   extractedEntitiesCount?: number;
   extractedTablesCount?: number;
   extractedInterfacesCount?: number;
   appliedToProject?: boolean;
+  /** How many candidates the merge wrote into the project. */
+  appliedCandidateCount?: number;
   createdAt: string;
+}
+
+/** What a caller that already ran an extraction (structural scan plus an LLM round) hands over. */
+export interface ExtractionResultInput {
+  candidates: ExtractionCandidate[];
+  semanticAlignment: SemanticAlignmentReport;
+  tablesCount: number;
+  summary?: string;
+}
+
+/**
+ * Outcome of merging candidates into a project. `blockedBy` lists the
+ * Consistency Errors the merge would have introduced; non-empty means nothing
+ * was written.
+ */
+export interface ExtractionMergeResult {
+  job: ExtractionJob;
+  project: ProjectDetail;
+  blockedBy: ValidationDiagnostic[];
 }
 
 export interface McpServerConfig {
@@ -445,6 +473,14 @@ export interface ReasoningSession {
     writebackInterfaceId: string;
   }[];
   answerMarkdown: string;
+  /** What the answer was grounded on; absent on sessions saved before grounding existed. */
+  grounding?: {
+    referenceQueryId?: string;
+    tables: string[];
+    /** Models whose absence limited what could be queried. */
+    missingModels: ModelCode[];
+    warnings: string[];
+  };
   createdAt: string;
 }
 
@@ -612,6 +648,11 @@ export interface WorkspaceStore {
   saveLegacySystem(sys: LegacySystemConfig): LegacySystemConfig;
   deleteLegacySystem(systemId: string): void;
   listExtractionJobs(projectId?: string): ExtractionJob[];
+  /**
+   * Create an Ontology Extraction job. Without `extraction` the store runs the
+   * structural scan itself. `applyImmediately` (default true) accepts every
+   * candidate and merges through the same gate as a reviewed merge.
+   */
   runOntologyExtractionJob(input: {
     systemId: string;
     projectId: string;
@@ -619,12 +660,15 @@ export interface WorkspaceStore {
     sourceType: ExtractionJob['sourceType'];
     sourceSnippet: string;
     applyImmediately?: boolean;
-    synthesizedSuite?: OntologySuite;
-    synthesizedSummary?: string;
-    synthesizedEntitiesCount?: number;
-    synthesizedInterfacesCount?: number;
-  }): { job: ExtractionJob; project: ProjectDetail };
-  applyExtractionJobToProject(jobId: string): { job: ExtractionJob; project: ProjectDetail };
+    extraction?: ExtractionResultInput;
+  }): ExtractionMergeResult;
+  /** Record confirmations on an unmerged job; `null` clears one. */
+  saveExtractionDecisions(
+    jobId: string,
+    decisions: Record<string, CandidateDecision | null>,
+  ): ExtractionJob;
+  /** Merge the accepted candidates into the project's suite as it is now. */
+  applyExtractionJobToProject(jobId: string): ExtractionMergeResult;
   deleteExtractionJob(jobId: string): void;
   listMcpServers(): McpServerConfig[];
   saveMcpServer(mcp: Omit<McpServerConfig, 'updatedAt'>): McpServerConfig;

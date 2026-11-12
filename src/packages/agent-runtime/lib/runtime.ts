@@ -1,12 +1,24 @@
 import {
   CONTRACT_PROTOTYPE_HTML,
   MODEL_CODES,
+  applyAlignment,
+  buildAlignmentSkeleton,
+  buildExtractionCandidates,
+  candidateKey,
+  checkSqlGrounding,
   extractMuFromPrototypeHtml,
+  locateQuote,
+  sanitizeAlignment,
+  scanSourceStructure,
   validateOntologySuite,
   type AggregateRoot,
   type Attribute,
+  type DataGrounding,
   type ModelCode,
+  type ExtractionEvidence,
   type OntologySuite,
+  type SemanticAlignmentReport,
+  type StructuralScanResult,
   type ValidationReport,
 } from '../../ontology-core/index.js';
 import {
@@ -24,6 +36,7 @@ import type {
   CapabilityChatMessage,
   CapabilityChatSession,
   ExtractionJob,
+  ExtractionMergeResult,
   FourLayerAsset,
   LlmProviderConfig,
   MetricDefinition,
@@ -37,6 +50,7 @@ import type {
 } from '../../workspace-store/index.js';
 import {
   type AgentLocale,
+  normalizeAgentLocale,
   pickLocaleText,
   resolveEffectiveLocale,
 } from './locale.js';
@@ -51,6 +65,11 @@ import {
   type OpenAiFunctionTool,
 } from './tools.js';
 import { LlmGatewayError, isMockLlmActive } from './pi-session-engine.js';
+import {
+  buildProjectDataGrounding,
+  describeJoinWarnings,
+  describeMissingModels,
+} from './reasoning-grounding.js';
 
 export { ONTOLOGY_DURABLE_TOOLS, LlmGatewayError, isMockLlmActive };
 
@@ -3976,6 +3995,7 @@ export async function refinePrototypeWithAi(
 
 interface LlmSynthesizedDomainBlueprint {
   aggregates?: {
+    sourceQuote?: string;
     id?: string;
     name: string;
     alias?: string;
@@ -3983,6 +4003,7 @@ interface LlmSynthesizedDomainBlueprint {
     attributes?: { name: string; label?: string; type?: string; required?: boolean }[];
   }[];
   behaviors?: {
+    sourceQuote?: string;
     id?: string;
     name: string;
     alias?: string;
@@ -3990,6 +4011,7 @@ interface LlmSynthesizedDomainBlueprint {
     behaviorType?: 'COMMAND' | 'QUERY';
   }[];
   rules?: {
+    sourceQuote?: string;
     id?: string;
     name?: string;
     alias?: string;
@@ -3999,12 +4021,14 @@ interface LlmSynthesizedDomainBlueprint {
     violationMessage?: string;
   }[];
   events?: {
+    sourceQuote?: string;
     id?: string;
     name: string;
     label?: string;
     sourceAggregate?: string;
   }[];
   actors?: {
+    sourceQuote?: string;
     actorId?: string;
     actorName?: string;
     actorType?: 'HUMAN' | 'SYSTEM' | 'EXTERNAL_ENTITY' | 'TIMER';
@@ -4013,12 +4037,14 @@ interface LlmSynthesizedDomainBlueprint {
     roleCode?: string;
   }[];
   flows?: {
+    sourceQuote?: string;
     id?: string;
     name: string;
     flowType?: 'APPROVAL' | 'COLLABORATION' | 'SCHEDULED';
     primaryAggregate?: string;
   }[];
   interfaces?: {
+    sourceQuote?: string;
     interfaceId?: string;
     name: string;
     direction?: 'PROVIDED' | 'DEPENDENT';
@@ -4032,18 +4058,48 @@ function applyLlmBlueprintToSuite(
   baseSuite: OntologySuite,
   blueprint: LlmSynthesizedDomainBlueprint,
   domain: string,
+  options?: { nonCollidingDocIds?: boolean },
 ): OntologySuite {
   let working: OntologySuite = JSON.parse(JSON.stringify(baseSuite));
+  const docMode = Boolean(options?.nonCollidingDocIds);
+  const nextDocId = (prefix: string, usedIds: Set<string>): string => {
+    let n = 1;
+    while (usedIds.has(`${prefix}-${String(n).padStart(2, '0')}`)) n += 1;
+    const id = `${prefix}-${String(n).padStart(2, '0')}`;
+    usedIds.add(id);
+    return id;
+  };
+  const usedAggIds = new Set((baseSuite.M1?.aggregates ?? []).map((a) => a.id));
+  const usedActorIds = new Set((baseSuite.M5?.actors ?? []).map((a) => a.id));
+  const usedRoleIds = new Set((baseSuite.M5?.roles ?? []).map((r) => r.id));
+  const usedBehIds = new Set((baseSuite.M2?.behaviors ?? []).map((b) => b.id));
+  const usedRuleIds = new Set((baseSuite.M3?.rules ?? []).map((r) => r.id));
+  const usedEvtIds = new Set((baseSuite.ME?.events ?? []).map((e) => e.id));
+  const usedFlwIds = new Set((baseSuite.M6?.flows ?? []).map((f) => f.id));
+  const usedIfIds = new Set((baseSuite.MI?.interfaces ?? []).map((i) => i.interfaceId));
 
   for (const [idx, agg] of (blueprint.aggregates ?? []).slice(0, 8).entries()) {
     if (!agg?.name) continue;
+    const cleanName = agg.name.replace(/[^A-Za-z0-9_]/g, '');
+    let aggId = agg.id || `AGG-0${idx + 1}`;
+    if (docMode) {
+      const existingByName = baseSuite.M1?.aggregates.find((a) => a.name === cleanName);
+      if (existingByName) {
+        aggId = existingByName.id;
+      } else if (agg.id && !usedAggIds.has(agg.id)) {
+        aggId = agg.id;
+        usedAggIds.add(aggId);
+      } else {
+        aggId = nextDocId('AGG-DOC', usedAggIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_aggregate',
         {
-          id: agg.id || `AGG-0${idx + 1}`,
-          name: agg.name.replace(/[^A-Za-z0-9_]/g, ''),
+          id: aggId,
+          name: cleanName,
           alias: agg.alias || agg.name,
           lifecycle: agg.lifecycle,
           attributes: agg.attributes,
@@ -4057,15 +4113,44 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, act] of (blueprint.actors ?? []).slice(0, 6).entries()) {
     if (!act?.actorName && !act?.roleName) continue;
+    const targetActorName = (act.actorName || act.roleName || '').trim();
+    const targetRoleName = (act.roleName || act.actorName || '').trim();
+    let actorId = act.actorId || `ACT-0${idx + 1}`;
+    let roleId = act.roleId || `ROLE-0${idx + 1}`;
+    if (docMode) {
+      const existingActor = baseSuite.M5?.actors.find(
+        (a) => a.name === targetActorName && (!act.actorId || a.id === act.actorId),
+      );
+      if (existingActor) {
+        actorId = existingActor.id;
+      } else if (act.actorId && !usedActorIds.has(act.actorId)) {
+        actorId = act.actorId;
+        usedActorIds.add(actorId);
+      } else {
+        actorId = nextDocId('ACT-DOC', usedActorIds);
+      }
+
+      const existingRole = baseSuite.M5?.roles.find(
+        (r) => r.name === targetRoleName && (!act.roleId || r.id === act.roleId),
+      );
+      if (existingRole) {
+        roleId = existingRole.id;
+      } else if (act.roleId && !usedRoleIds.has(act.roleId)) {
+        roleId = act.roleId;
+        usedRoleIds.add(roleId);
+      } else {
+        roleId = nextDocId('ROLE-DOC', usedRoleIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_actor_role',
         {
-          actorId: act.actorId || `ACT-0${idx + 1}`,
+          actorId,
           actorName: act.actorName || act.roleName,
           actorType: act.actorType || 'HUMAN',
-          roleId: act.roleId || `ROLE-0${idx + 1}`,
+          roleId,
           roleName: act.roleName || act.actorName,
           roleCode: act.roleCode,
         },
@@ -4078,13 +4163,28 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, beh] of (blueprint.behaviors ?? []).slice(0, 10).entries()) {
     if (!beh?.name) continue;
+    const cleanBehName = beh.name.replace(/[^A-Za-z0-9_]/g, '');
+    let behId = beh.id || `BHV-0${idx + 1}`;
+    if (docMode) {
+      const existingBeh = baseSuite.M2?.behaviors.find(
+        (b) => b.name === cleanBehName && (!beh.id || b.id === beh.id),
+      );
+      if (existingBeh) {
+        behId = existingBeh.id;
+      } else if (beh.id && !usedBehIds.has(beh.id)) {
+        behId = beh.id;
+        usedBehIds.add(behId);
+      } else {
+        behId = nextDocId('BHV-DOC', usedBehIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_behavior',
         {
-          id: beh.id || `BHV-0${idx + 1}`,
-          name: beh.name.replace(/[^A-Za-z0-9_]/g, ''),
+          id: behId,
+          name: cleanBehName,
           alias: beh.alias || beh.name,
           ownerEntity: beh.ownerEntity,
           behaviorType: beh.behaviorType || 'COMMAND',
@@ -4098,13 +4198,30 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, rl] of (blueprint.rules ?? []).slice(0, 10).entries()) {
     if (!rl?.alias && !rl?.name) continue;
+    const cleanRuleName = (rl.name || `DomainRule0${idx + 1}`).replace(/[^A-Za-z0-9_]/g, '');
+    let ruleId = rl.id || `RULE-0${idx + 1}`;
+    if (docMode) {
+      const existingRule = baseSuite.M3?.rules.find(
+        (r) =>
+          ((rl.name && r.name === cleanRuleName) || (rl.alias && r.alias === rl.alias)) &&
+          (!rl.id || r.id === rl.id),
+      );
+      if (existingRule) {
+        ruleId = existingRule.id;
+      } else if (rl.id && !usedRuleIds.has(rl.id)) {
+        ruleId = rl.id;
+        usedRuleIds.add(ruleId);
+      } else {
+        ruleId = nextDocId('RULE-DOC', usedRuleIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_rule',
         {
-          id: rl.id || `RULE-0${idx + 1}`,
-          name: (rl.name || `DomainRule0${idx + 1}`).replace(/[^A-Za-z0-9_]/g, ''),
+          id: ruleId,
+          name: cleanRuleName,
           alias: rl.alias || rl.name,
           ruleType: rl.ruleType || 'VALIDATION',
           referencedObjects: rl.referencedObjects,
@@ -4120,12 +4237,26 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, ev] of (blueprint.events ?? []).slice(0, 8).entries()) {
     if (!ev?.name) continue;
+    let evtId = ev.id || `EVT-0${idx + 1}`;
+    if (docMode) {
+      const existingEv = baseSuite.ME?.events.find(
+        (e) => e.name === ev.name && (!ev.id || e.id === ev.id),
+      );
+      if (existingEv) {
+        evtId = existingEv.id;
+      } else if (ev.id && !usedEvtIds.has(ev.id)) {
+        evtId = ev.id;
+        usedEvtIds.add(evtId);
+      } else {
+        evtId = nextDocId('EVT-DOC', usedEvtIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_event',
         {
-          id: ev.id || `EVT-0${idx + 1}`,
+          id: evtId,
           name: ev.name,
           label: ev.label || ev.name,
           sourceAggregate: ev.sourceAggregate,
@@ -4139,12 +4270,26 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, fl] of (blueprint.flows ?? []).slice(0, 4).entries()) {
     if (!fl?.name) continue;
+    let flwId = fl.id || `FLW-0${idx + 1}`;
+    if (docMode) {
+      const existingFl = baseSuite.M6?.flows.find(
+        (f) => f.name === fl.name && (!fl.id || f.id === fl.id),
+      );
+      if (existingFl) {
+        flwId = existingFl.id;
+      } else if (fl.id && !usedFlwIds.has(fl.id)) {
+        flwId = fl.id;
+        usedFlwIds.add(flwId);
+      } else {
+        flwId = nextDocId('FLW-DOC', usedFlwIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_flow',
         {
-          id: fl.id || `FLW-0${idx + 1}`,
+          id: flwId,
           name: fl.name,
           flowType: fl.flowType,
           primaryAggregate: fl.primaryAggregate,
@@ -4158,12 +4303,26 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, itf] of (blueprint.interfaces ?? []).slice(0, 8).entries()) {
     if (!itf?.name) continue;
+    let ifId = itf.interfaceId || `IF-0${idx + 1}`;
+    if (docMode) {
+      const existingItf = baseSuite.MI?.interfaces.find(
+        (i) => i.name === itf.name && (!itf.interfaceId || i.interfaceId === itf.interfaceId),
+      );
+      if (existingItf) {
+        ifId = existingItf.interfaceId;
+      } else if (itf.interfaceId && !usedIfIds.has(itf.interfaceId)) {
+        ifId = itf.interfaceId;
+        usedIfIds.add(ifId);
+      } else {
+        ifId = nextDocId('IF-DOC', usedIfIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_interface',
         {
-          interfaceId: itf.interfaceId || `IF-0${idx + 1}`,
+          interfaceId: ifId,
           name: itf.name,
           direction: itf.direction || 'PROVIDED',
           interfaceCategory: itf.interfaceCategory || 'COMMAND',
@@ -4744,6 +4903,177 @@ export async function runAppCodingAgentTurn(
   };
 }
 
+/**
+ * Semantic alignment: one LLM call over the structural-scan skeleton. The LLM
+ * labels what was read and picks reference targets from listed candidates; it
+ * cannot add structure. A failed or unusable call leaves the scan untouched
+ * and says so in the report (ADR-0007).
+ */
+async function runSemanticAlignment(
+  store: WorkspaceStore,
+  scan: StructuralScanResult,
+  input: { projectId: string; source: string; locale: AgentLocale },
+): Promise<{ scan: StructuralScanResult; report: SemanticAlignmentReport }> {
+  const skeleton = buildAlignmentSkeleton(scan);
+  const omitted = skeleton.omitted ? { omitted: skeleton.omitted } : {};
+  const provider = resolvePreferredProvider(store, input.projectId);
+
+  let content: string | undefined;
+  try {
+    const res = await callOpenAiCompatibleChat(
+      provider,
+      [
+        {
+          role: 'system',
+          content: [
+            'You are the semantic alignment step of Ontology Extraction in Ontology Plus (always "Ontology Extraction", never "reverse engineering").',
+            'A deterministic structural scan already read the tables below from the source. Do not add, rename, or remove tables or columns.',
+            `For each table give a short business alias and a one-sentence description, and a short business label for each column, written in ${input.locale === 'en-US' ? 'English' : 'Simplified Chinese'}.`,
+            'A column that lists "refCandidates" may be an undeclared reference. Answer "refTable" with exactly one of the listed table names, or null when it is not a reference or you are not sure. Never answer a name that is not listed. A column without "refCandidates" must not get a "refTable".',
+            'Return ONLY JSON: {"tables":[{"table":"<name>","alias":"...","description":"...","columns":[{"column":"<name>","label":"...","refTable":null}]}]}',
+          ].join('\n'),
+        },
+        { role: 'user', content: JSON.stringify(skeleton) },
+      ],
+      { store, maxTokens: 6144 },
+    );
+    content = res?.content;
+  } catch (err) {
+    if (!(err instanceof LlmGatewayError)) throw err;
+    const diag = err.toDiagnostic(input.locale);
+    return {
+      scan,
+      report: {
+        status: 'FAILED',
+        reason: 'GATEWAY_ERROR',
+        diagnostic: {
+          message: diag.message,
+          providerName: diag.providerName,
+          baseUrl: diag.baseUrl,
+          model: diag.model,
+          remediation: diag.remediation,
+        },
+        ...omitted,
+      },
+    };
+  }
+
+  const parsed = content ? extractFirstJsonObject(content) : null;
+  const hasTablesArray = Array.isArray((parsed as { tables?: unknown } | null)?.tables);
+  const sanitized = sanitizeAlignment(skeleton, parsed);
+  if (!hasTablesArray) {
+    return {
+      scan,
+      report: {
+        status: 'FAILED',
+        reason: 'UNUSABLE_RESPONSE',
+        dropped: sanitized.dropped,
+        ...omitted,
+      },
+    };
+  }
+  const applied = applyAlignment(scan, sanitized, input.source);
+  return {
+    scan: applied.scan,
+    report: {
+      status: 'DONE',
+      ...(applied.dropped.length > 0 ? { dropped: applied.dropped } : {}),
+      ...omitted,
+    },
+  };
+}
+
+/** Evidence for blueprint-derived elements: the LLM's quote, kept only if it is really in the source. */
+function collectBlueprintEvidence(
+  suite: OntologySuite,
+  blueprint: LlmSynthesizedDomainBlueprint,
+  source: string,
+  locale: AgentLocale,
+): Record<string, ExtractionEvidence[]> {
+  const evidenceByKey: Record<string, ExtractionEvidence[]> = {};
+  const clean = (name: string | undefined) => (name ?? '').replace(/[^A-Za-z0-9_]/g, '');
+  const cite = (key: string, quote: string | undefined) => {
+    const located = locateQuote(source, quote);
+    const snippet = quote?.trim().slice(0, 80) ?? '';
+    const noteZhLocated = 'LLM 依据此段原文归纳';
+    const noteEnLocated = 'Inferred by the LLM from this passage';
+    const noteZhUnverified = snippet
+      ? `LLM 给出的引用在源材料中核对不到：「${snippet}」`
+      : 'LLM 未给出原文引用';
+    const noteEnUnverified = snippet
+      ? `The quote the LLM cited is not in the source: "${snippet}"`
+      : 'The LLM cited no passage';
+    evidenceByKey[key] = [
+      located
+        ? {
+            origin: 'INFERRED',
+            note: pickLocaleText(locale, noteZhLocated, noteEnLocated),
+            noteEn: noteEnLocated,
+            lines: located.lines,
+            excerpt: located.excerpt,
+          }
+        : {
+            origin: 'INFERRED',
+            note: pickLocaleText(locale, noteZhUnverified, noteEnUnverified),
+            noteEn: noteEnUnverified,
+            unverified: true,
+          },
+    ];
+  };
+
+  for (const agg of suite.M1?.aggregates ?? []) {
+    const item = blueprint.aggregates?.find((a) => clean(a.name) === agg.name);
+    if (item) cite(candidateKey('M1', 'aggregates', agg.id), item.sourceQuote);
+  }
+  for (const act of suite.M5?.actors ?? []) {
+    const item = blueprint.actors?.find(
+      (a) =>
+        (a.actorId && a.actorId === act.id) ||
+        (a.actorName && a.actorName.trim() === act.name) ||
+        (!a.actorName && a.roleName && a.roleName.trim().replace(/角色$/, '') === act.name),
+    );
+    if (item) cite(candidateKey('M5', 'actors', act.id), item.sourceQuote);
+  }
+  for (const role of suite.M5?.roles ?? []) {
+    const item = blueprint.actors?.find(
+      (a) =>
+        (a.roleId && a.roleId === role.id) ||
+        (a.roleName && a.roleName.trim() === role.name) ||
+        (!a.roleName && a.actorName && a.actorName.trim() === role.name),
+    );
+    if (item) cite(candidateKey('M5', 'roles', role.id), item.sourceQuote);
+  }
+  for (const bhv of suite.M2?.behaviors ?? []) {
+    const item = blueprint.behaviors?.find((b) => clean(b.name) === bhv.name);
+    if (item) cite(candidateKey('M2', 'behaviors', bhv.id), item.sourceQuote);
+  }
+  for (const rule of suite.M3?.rules ?? []) {
+    const item = blueprint.rules?.find(
+      (r) => (r.name && clean(r.name) === rule.name) || (r.alias && r.alias === rule.alias),
+    );
+    if (item) cite(candidateKey('M3', 'rules', rule.id), item.sourceQuote);
+  }
+  for (const evt of suite.ME?.events ?? []) {
+    const item = blueprint.events?.find((e) => e.name === evt.name);
+    if (item) cite(candidateKey('ME', 'events', evt.id), item.sourceQuote);
+  }
+  for (const flow of suite.M6?.flows ?? []) {
+    const item = blueprint.flows?.find((f) => f.name === flow.name);
+    if (item) cite(candidateKey('M6', 'flows', flow.id), item.sourceQuote);
+  }
+  for (const itf of suite.MI?.interfaces ?? []) {
+    const item = blueprint.interfaces?.find((i) => i.name === itf.name);
+    if (item) cite(candidateKey('MI', 'interfaces', itf.interfaceId), item.sourceQuote);
+  }
+  return evidenceByKey;
+}
+
+/**
+ * Ontology Extraction in two rounds. Round one, the structural scan, is
+ * deterministic. Round two is the LLM: semantic alignment when the scan read
+ * tables, a quoted blueprint when the source is prose. Either way the result
+ * is a set of Extraction Candidates, never a replacement suite.
+ */
 export async function runSmartOntologyExtractionJob(
   store: WorkspaceStore,
   input: {
@@ -4755,96 +5085,223 @@ export async function runSmartOntologyExtractionJob(
     applyImmediately?: boolean;
     locale?: AgentLocale | string;
   },
-): Promise<{ job: ExtractionJob; project: ProjectDetail }> {
-  const snippet = input.sourceSnippet.trim();
-  const locale = resolveEffectiveLocale(store, input.locale, snippet || input.title);
-  const hasExplicitDdl = /CREATE\s+TABLE/i.test(snippet);
-  const hasExplicitOpenApi = snippet.includes('"paths"') || /\/api\/[a-zA-Z0-9/_-]+/.test(snippet);
+): Promise<ExtractionMergeResult> {
+  const project = store.getProject(input.projectId);
+  if (!project) throw new Error(`Project not found: ${input.projectId}`);
+  const source = input.sourceSnippet;
+  const locale =
+    normalizeAgentLocale(input.locale) ?? resolveEffectiveLocale(store, undefined, input.title);
+  const sys = store.listLegacySystems().find((s) => s.id === input.systemId);
+  const systemName = sys?.name ?? input.systemId;
+  const mock = isMockLlmActive(store);
 
-  // Use LLM semantic extraction when Live mode is active and input is unstructured docs/logs/code
-  if (!isMockLlmActive(store) && (!hasExplicitDdl || input.sourceType === 'LOG_AND_DOC')) {
-    const sys = store.listLegacySystems().find((s) => s.id === input.systemId);
-    const targetProject =
-      store.getProject(input.projectId) ?? store.getProject(store.listProjects()[0]!.id)!;
-    const domainLabel = targetProject?.domain || (sys?.name ? `${sys.name}业务域` : '萃取业务域');
-    const activeProvider = resolvePreferredProvider(store, input.projectId);
-
-    try {
-      const llmExtractRes = await callOpenAiCompatibleChat(
-        activeProvider,
-        [
-          {
-            role: 'system',
-            content: [
-              'You are the Ontology Extraction Engine of Ontology Plus (strictly "Ontology Extraction", never "reverse engineering").',
-              'Extract structured domain aggregates, behaviors, business rules, events, actors, flows, and service interfaces from the provided source code, API spec, SOP document, or runtime logs.',
-              'Return ONLY valid JSON matching:',
-              '{"aggregates":[{"name":"PascalCase","alias":"...","lifecycle":["CREATED","COMPLETED"],"attributes":[{"name":"camelCase","label":"...","type":"String|Integer|Decimal|Money|Boolean|Date","required":true}]}],"behaviors":[{"name":"camelCase","alias":"...","ownerEntity":"PascalCase","behaviorType":"COMMAND|QUERY"}],"rules":[{"name":"PascalRule","alias":"...","ruleType":"VALIDATION","referencedObjects":["PascalCase"],"expression":"...","violationMessage":"..."}],"events":[{"name":"PascalCase.Completed","label":"...","sourceAggregate":"PascalCase"}],"interfaces":[{"name":"...","direction":"PROVIDED","interfaceCategory":"COMMAND|QUERY","protocol":"REST","relatedEntityRef":"PascalCase"}]}',
-            ].join('\n'),
-          },
-          {
-            role: 'user',
-            content: `System: ${sys?.name ?? input.systemId} (Source Type: ${input.sourceType})\n\n--- Raw Artifact ---\n${snippet.slice(0, 12000)}`,
-          },
-        ],
-        { store, maxTokens: 6144 },
-      );
-
-      const parsed = llmExtractRes?.content
-        ? extractFirstJsonObject<LlmSynthesizedDomainBlueprint>(llmExtractRes.content)
-        : null;
-
-      if (parsed && (parsed.aggregates?.length || parsed.interfaces?.length)) {
-        const baseSuite: OntologySuite = targetProject
-          ? JSON.parse(JSON.stringify(targetProject.suite))
-          : {};
-        const seeded = applyLlmBlueprintToSuite(baseSuite, parsed, domainLabel);
-        const placeholderHtml = buildSemanticPrototypeHtmlForProject({
-          ...targetProject,
-          name: input.title || sys?.name || targetProject.name,
-          domain: domainLabel,
-          suite: seeded,
-          validation: validateOntologySuite(seeded),
-        });
-        const alignedSuite = alignSuiteWithExtractedMu(seeded, placeholderHtml, domainLabel);
-        const validation = validateOntologySuite(alignedSuite);
-
-        if (validation.errorCount === 0) {
-          const aggsCount = alignedSuite.M1?.aggregates.length ?? 0;
-          const ifCount = alignedSuite.MI?.interfaces.length ?? 0;
-          return store.runOntologyExtractionJob({
-            systemId: input.systemId,
-            projectId: input.projectId,
-            title: input.title,
-            sourceType: input.sourceType,
-            sourceSnippet: input.sourceSnippet,
-            ...(input.applyImmediately !== undefined
-              ? { applyImmediately: input.applyImmediately }
-              : {}),
-            synthesizedSuite: alignedSuite,
-            synthesizedEntitiesCount: aggsCount,
-            synthesizedInterfacesCount: ifCount,
-            synthesizedSummary: pickLocaleText(
-              locale,
-              `已完成「${sys?.name ?? input.systemId}」AI 语义本体萃取：提炼 ${aggsCount} 个领域聚合根、${alignedSuite.M3?.rules.length ?? 0} 条业务规则与 ${ifCount} 个服务接口契约（0 一致性错误）`,
-              `Completed AI semantic Ontology Extraction for "${sys?.name ?? input.systemId}": extracted ${aggsCount} aggregates, ${alignedSuite.M3?.rules.length ?? 0} rules, and ${ifCount} interfaces (0 consistency errors)`,
-            ),
-          });
-        }
-      }
-    } catch {
-      // Fall back cleanly to deterministic parser if gateway is temporarily unavailable during job
-    }
-  }
-
-  void hasExplicitOpenApi;
-  return store.runOntologyExtractionJob({
+  const scan = scanSourceStructure({ baseSuite: project.suite, source, domain: project.domain });
+  const jobBase = {
     systemId: input.systemId,
     projectId: input.projectId,
     title: input.title,
     sourceType: input.sourceType,
-    sourceSnippet: input.sourceSnippet,
+    sourceSnippet: source,
     ...(input.applyImmediately !== undefined ? { applyImmediately: input.applyImmediately } : {}),
+  };
+  const fromScan = (
+    result: StructuralScanResult,
+    semanticAlignment: SemanticAlignmentReport,
+  ): ExtractionMergeResult => {
+    const candidates = buildExtractionCandidates(project.suite, result.suite, result.evidenceByKey);
+    const tableList = scan.tables.map((t) => t.tableName).join(', ');
+    const scope =
+      semanticAlignment.status === 'DONE'
+        ? pickLocaleText(locale, '结构扫描 + 语义对齐', 'structural scan + semantic alignment')
+        : pickLocaleText(locale, '仅结构扫描', 'structural scan only');
+    return store.runOntologyExtractionJob({
+      ...jobBase,
+      extraction: {
+        candidates,
+        semanticAlignment,
+        tablesCount: scan.tables.length,
+        summary: pickLocaleText(
+          locale,
+          `本体萃取完成（${scope}）：${tableList ? `识别物理表 [${tableList}]，` : ''}${scan.operations.length > 0 ? `解析服务接口 ${scan.operations.length} 个，` : ''}产出 ${candidates.length} 个萃取候选。`,
+          `Ontology Extraction finished (${scope}): ${tableList ? `read tables [${tableList}], ` : ''}${scan.operations.length > 0 ? `${scan.operations.length} service operations, ` : ''}${candidates.length} extraction candidates.`,
+        ),
+      },
+    });
+  };
+
+  if (mock) {
+    if (scan.tables.length === 0 && scan.operations.length === 0 && source.trim().length >= 4) {
+      const domainLabel = project.domain || `${systemName}业务域`;
+      const firstLine =
+        source
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => line.length >= 2) ?? source.trim().slice(0, 80);
+      const heading =
+        firstLine.replace(/^#+\s*/, '').trim().slice(0, 20) || input.title.trim().slice(0, 20) || '文档规范';
+      const primaryAgg = project.suite.M1?.aggregates[0];
+      const demoBlueprint: LlmSynthesizedDomainBlueprint = primaryAgg
+        ? {
+            rules: [
+              {
+                name: 'DocExtractedComplianceRule',
+                alias: `${heading}合规规则`,
+                ruleType: 'VALIDATION',
+                referencedObjects: [primaryAgg.name],
+                violationMessage: `违反「${heading}」源文档合规要求`,
+              },
+            ],
+          }
+        : {
+            aggregates: [
+              {
+                name: 'DocExtractedRecord',
+                alias: heading,
+                attributes: [{ name: 'recordCode', label: '单据编号', type: 'String', required: true }],
+              },
+            ],
+          };
+      const demoSuite = applyLlmBlueprintToSuite(
+        JSON.parse(JSON.stringify(project.suite)) as OntologySuite,
+        demoBlueprint,
+        domainLabel,
+        { nonCollidingDocIds: true },
+      );
+      const located = locateQuote(source, firstLine.slice(0, 80));
+      const noteZh = 'Mock 演示：提取自源文档片段（Mock 模式下跳过 LLM 语义归纳）';
+      const noteEn = 'Mock demo: extracted from source document snippet (LLM semantic synthesis skipped in Mock mode)';
+      const rawCandidates = buildExtractionCandidates(project.suite, demoSuite, {});
+      const evidenceByKey = Object.fromEntries(
+        rawCandidates.map((cand) => [
+          cand.key,
+          [
+            {
+              origin: 'INFERRED',
+              note: pickLocaleText(locale, noteZh, noteEn),
+              noteEn,
+              ...(located ? { lines: located.lines, excerpt: located.excerpt } : {}),
+            } satisfies ExtractionEvidence,
+          ],
+        ]),
+      );
+      const candidates = buildExtractionCandidates(project.suite, demoSuite, evidenceByKey);
+      return store.runOntologyExtractionJob({
+        ...jobBase,
+        extraction: {
+          candidates,
+          semanticAlignment: { status: 'SKIPPED', reason: 'MOCK_MODE' },
+          tablesCount: 0,
+          summary: pickLocaleText(
+            locale,
+            `本体萃取完成（Mock 演示 · LLM 已跳过）：产出 ${candidates.length} 个文档候选供审阅。`,
+            `Ontology Extraction finished (Mock demo · LLM skipped): ${candidates.length} document candidate(s) ready for review.`,
+          ),
+        },
+      });
+    }
+    return fromScan(scan, { status: 'SKIPPED', reason: 'MOCK_MODE' });
+  }
+
+  if (scan.tables.length > 0) {
+    const aligned = await runSemanticAlignment(store, scan, {
+      projectId: input.projectId,
+      source,
+      locale,
+    });
+    return fromScan(aligned.scan, aligned.report);
+  }
+
+  // No table structure to align: the source is prose (or bare endpoints), so
+  // the LLM proposes the elements and must quote the passage each one rests on.
+  const domainLabel = project.domain || `${systemName}业务域`;
+  const provider = resolvePreferredProvider(store, input.projectId);
+  const hasScannedStructure = scan.operations.length > 0;
+
+  let blueprint: LlmSynthesizedDomainBlueprint | null = null;
+  try {
+    const res = await callOpenAiCompatibleChat(
+      provider,
+      [
+        {
+          role: 'system',
+          content: [
+            'You are the Ontology Extraction Engine of Ontology Plus (strictly "Ontology Extraction", never "reverse engineering").',
+            'Extract structured domain aggregates, behaviors, business rules, events, flows, and service interfaces from the provided source code, API spec, SOP document, or runtime logs.',
+            'Every item MUST carry "sourceQuote": a short passage (at most 120 characters) copied verbatim from the artifact that the item rests on. Do not paraphrase the quote. Leave out anything you cannot quote.',
+            'Return ONLY valid JSON matching:',
+            '{"aggregates":[{"sourceQuote":"...","name":"PascalCase","alias":"...","lifecycle":["CREATED","COMPLETED"],"attributes":[{"name":"camelCase","label":"...","type":"String|Integer|Decimal|Money|Boolean|Date","required":true}]}],"behaviors":[{"sourceQuote":"...","name":"camelCase","alias":"...","ownerEntity":"PascalCase","behaviorType":"COMMAND|QUERY"}],"rules":[{"sourceQuote":"...","name":"PascalRule","alias":"...","ruleType":"VALIDATION","referencedObjects":["PascalCase"],"expression":"...","violationMessage":"..."}],"events":[{"sourceQuote":"...","name":"PascalCase.Completed","label":"...","sourceAggregate":"PascalCase"}],"interfaces":[{"sourceQuote":"...","name":"...","direction":"PROVIDED","interfaceCategory":"COMMAND|QUERY","protocol":"REST","relatedEntityRef":"PascalCase"}]}',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: `System: ${systemName} (Source Type: ${input.sourceType})\n\n--- Raw Artifact ---\n${source.trim().slice(0, 12000)}`,
+        },
+      ],
+      { store, maxTokens: 6144 },
+    );
+    blueprint = res?.content
+      ? extractFirstJsonObject<LlmSynthesizedDomainBlueprint>(res.content)
+      : null;
+  } catch (err) {
+    // What the structural scan read is still true; with nothing read there is
+    // no honest result to return, so the failure surfaces (ADR-0007).
+    if (!hasScannedStructure || !(err instanceof LlmGatewayError)) throw err;
+    const diag = err.toDiagnostic(locale);
+    return fromScan(scan, {
+      status: 'FAILED',
+      reason: 'GATEWAY_ERROR',
+      diagnostic: {
+        message: diag.message,
+        providerName: diag.providerName,
+        baseUrl: diag.baseUrl,
+        model: diag.model,
+        remediation: diag.remediation,
+      },
+    });
+  }
+
+  if (!blueprint || !(blueprint.aggregates?.length || blueprint.interfaces?.length)) {
+    if (hasScannedStructure) return fromScan(scan, { status: 'FAILED', reason: 'UNUSABLE_RESPONSE' });
+    throw new LlmGatewayError({
+      message: pickLocaleText(
+        locale,
+        'LLM 未返回可用的萃取结果：响应中解析不出任何聚合根或接口。',
+        'The LLM returned no usable extraction: no aggregate or interface could be parsed from its response.',
+      ),
+      providerName: provider?.name ?? '未配置网关',
+      baseUrl: provider?.baseUrl ?? '(none)',
+      model: provider?.defaultModel ?? '(none)',
+      locale,
+    });
+  }
+
+  const seeded = applyLlmBlueprintToSuite(
+    JSON.parse(JSON.stringify(project.suite)) as OntologySuite,
+    blueprint,
+    domainLabel,
+    { nonCollidingDocIds: true },
+  );
+  const candidates = buildExtractionCandidates(
+    project.suite,
+    seeded,
+    collectBlueprintEvidence(seeded, blueprint, source, locale),
+  );
+  const aggsCount = candidates.filter((c) => c.collection === 'aggregates').length;
+  const rulesCount = candidates.filter((c) => c.collection === 'rules').length;
+  const ifCount = candidates.filter((c) => c.collection === 'interfaces').length;
+
+  return store.runOntologyExtractionJob({
+    ...jobBase,
+    extraction: {
+      candidates,
+      semanticAlignment: { status: 'DONE' },
+      tablesCount: 0,
+      summary: pickLocaleText(
+        locale,
+        `已完成「${systemName}」语义本体萃取：产出 ${candidates.length} 个萃取候选（聚合根 ${aggsCount}、业务规则 ${rulesCount}、服务接口 ${ifCount}），每项附原文引用供核对。`,
+        `Completed semantic Ontology Extraction for "${systemName}": ${candidates.length} extraction candidates (${aggsCount} aggregates, ${rulesCount} rules, ${ifCount} interfaces), each citing the source passage it rests on.`,
+      ),
+    },
   });
 }
 
@@ -5303,50 +5760,103 @@ function computeLiveAnalyticsStats(store: WorkspaceStore): LiveAnalyticsComputed
   };
 }
 
-function buildReadOnlyAnalyticsSqlCandidates(
+interface GroundedQueryResult {
+  sql: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  referenceQueryId?: string;
+  referencedTables: string[];
+  warnings: string[];
+}
+
+/**
+ * Queries the reasoning endpoint may run, most specific first: tables the
+ * question names, M7 reference queries that fit the question, then a plain
+ * read of the first mapped table. All of it comes from the grounding; nothing
+ * is written for a particular domain.
+ */
+function groundedSqlCandidates(
+  grounding: DataGrounding,
   question: string,
-  mode: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY',
-  project?: ProjectDetail,
-  store?: WorkspaceStore,
-): string[] {
-  const mappedTables = (project?.suite.MM?.mappings ?? []).flatMap((m) =>
-    m.tableMappings.map((tm) => tm.tableName),
-  );
-  const dbTables = (store?.listDatabaseResources() ?? []).flatMap((db) =>
-    db.tables.map((t) => t.tableName),
-  );
-
-  // If project explicitly maps to a non-contract table that exists in SQLite, prioritize it!
-  const customPrimaryTable = mappedTables.find((t) => t !== 't_contract');
-  const lower = question.toLowerCase();
-  const mentionsMilestone =
-    question.includes('里程碑') ||
-    question.includes('逾期') ||
-    lower.includes('milestone') ||
-    lower.includes('overdue') ||
-    mode !== 'ASK_DATA';
-
-  const primaryMilestoneSql =
-    'SELECT c.contract_no, c.contract_type, c.risk_level, cp.company_name, cp.credit_rating, c.total_amount, COUNT(pm.id) AS milestone_count, COALESCE(SUM(pm.planned_amount), 0) AS milestone_amount FROM t_contract c LEFT JOIN t_counterparty cp ON c.counterparty_id = cp.id LEFT JOIN t_payment_milestone pm ON pm.contract_id = c.id GROUP BY c.id, c.contract_no, c.contract_type, c.risk_level, cp.company_name, cp.credit_rating, c.total_amount ORDER BY c.total_amount DESC LIMIT 20';
-
-  const summaryContractSql =
-    'SELECT c.contract_type, c.risk_level, cp.credit_rating, COUNT(c.id) AS total_contracts, SUM(c.total_amount) AS contract_sum FROM t_contract c LEFT JOIN t_counterparty cp ON c.counterparty_id = cp.id GROUP BY c.contract_type, c.risk_level, cp.credit_rating ORDER BY contract_sum DESC LIMIT 20';
-
-  const candidates: string[] = [];
-  if (customPrimaryTable) {
-    candidates.push(`SELECT * FROM ${customPrimaryTable} LIMIT 20`);
-  }
-  for (const tbl of dbTables) {
-    if (tbl !== 't_contract' && question.toLowerCase().includes(tbl.toLowerCase())) {
-      candidates.unshift(`SELECT * FROM ${tbl} LIMIT 20`);
+): { sql: string; referenceQueryId?: string }[] {
+  const lowerQuestion = question.toLowerCase();
+  const candidates: { sql: string; referenceQueryId?: string }[] = [];
+  for (const table of grounding.tables) {
+    if (lowerQuestion.includes(table.table.toLowerCase())) {
+      candidates.push({ sql: `SELECT * FROM ${table.table} LIMIT 20` });
     }
   }
-  candidates.push(
-    ...(mentionsMilestone
-      ? [primaryMilestoneSql, summaryContractSql]
-      : [summaryContractSql, primaryMilestoneSql]),
-  );
+  for (const query of grounding.referenceQueries) {
+    if (query.score > 0) candidates.push({ sql: query.sql, referenceQueryId: query.id });
+  }
+  const firstMapped = grounding.tables.find((t) => t.mapped);
+  if (firstMapped) candidates.push({ sql: `SELECT * FROM ${firstMapped.table} LIMIT 20` });
   return candidates;
+}
+
+/** Run candidates in order; prefer the first that returns rows. Ungrounded SQL never runs. */
+function runGroundedCandidates(
+  store: WorkspaceStore,
+  grounding: DataGrounding,
+  candidates: { sql: string; referenceQueryId?: string }[],
+  locale: AgentLocale,
+): GroundedQueryResult | null {
+  let firstEmpty: GroundedQueryResult | null = null;
+  for (const candidate of candidates) {
+    const report = checkSqlGrounding(grounding, candidate.sql);
+    if (report.unknownTables.length > 0) continue;
+    let res: ReturnType<WorkspaceStore['executeReadOnlyAnalyticsSql']>;
+    try {
+      res = store.executeReadOnlyAnalyticsSql(candidate.sql);
+    } catch {
+      // The suite describes a table or column the workspace database does not hold.
+      continue;
+    }
+    const result: GroundedQueryResult = {
+      sql: res.sql || candidate.sql,
+      columns: res.columns,
+      rows: res.rows,
+      ...(candidate.referenceQueryId ? { referenceQueryId: candidate.referenceQueryId } : {}),
+      referencedTables: report.referencedTables,
+      warnings: describeJoinWarnings(report, locale, grounding),
+    };
+    if (res.rows.length > 0) return result;
+    firstEmpty ??= result;
+  }
+  return firstEmpty;
+}
+
+/** Figures read straight off the result rows: a row count and sums of numeric columns. */
+function summarizeQueryRows(
+  result: GroundedQueryResult,
+  locale: AgentLocale,
+): ReasoningSession['dataSummary'] {
+  const summary: ReasoningSession['dataSummary'] = [
+    {
+      label: pickLocaleText(locale, '实时命中数据行', 'Live Matched Rows'),
+      value: pickLocaleText(locale, `${result.rows.length} 行`, `${result.rows.length} rows`),
+      delta: pickLocaleText(locale, 'SQLite 实查', 'Live SQLite'),
+    },
+  ];
+  for (const column of result.columns) {
+    if (summary.length >= 3) break;
+    if (column === 'id' || column.endsWith('_id') || column.endsWith('__label')) continue;
+    const values = result.rows.map((row) => row[column]).filter((v) => v !== null && v !== undefined);
+    if (values.length === 0 || !values.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+      continue;
+    }
+    const total = (values as number[]).reduce((sum, v) => sum + v, 0);
+    summary.push({
+      label: pickLocaleText(locale, `${column} 合计`, `Sum of ${column}`),
+      value: Number.isInteger(total) ? String(total) : total.toFixed(2),
+      delta: pickLocaleText(
+        locale,
+        `${values.length} 行求和`,
+        `summed over ${values.length} rows`,
+      ),
+    });
+  }
+  return summary;
 }
 
 function executeSafeAnalyticsCandidates(
@@ -5369,6 +5879,12 @@ function executeSafeAnalyticsCandidates(
   return null;
 }
 
+/**
+ * One-shot Data Ontology Reasoning. Shares its grounding with the REASONING
+ * Agent Session: SQL comes from `M7` reference queries and `MM` tables, and
+ * every figure in the answer is read off rows that a query returned. With
+ * nothing to query it says which model is missing instead of filling in.
+ */
 export async function runDataOntologyReasoning(
   store: WorkspaceStore,
   input: {
@@ -5384,22 +5900,40 @@ export async function runDataOntologyReasoning(
     : store.getProject(store.listProjects()[0]?.id ?? 'proj-contract');
   const activeProvider = resolvePreferredProvider(store, project?.id);
 
-  const sqlCandidates = buildReadOnlyAnalyticsSqlCandidates(
-    input.question,
-    input.mode,
-    project,
+  const grounding = buildProjectDataGrounding(store, project, input.question);
+  const liveQuery = runGroundedCandidates(
     store,
+    grounding,
+    groundedSqlCandidates(grounding, input.question),
+    locale,
   );
-  const liveQuery = executeSafeAnalyticsCandidates(store, sqlCandidates);
-  const chosenSql = liveQuery?.sql ?? sqlCandidates[0];
-  const liveStats = computeLiveAnalyticsStats(store);
+  const missingNotes = describeMissingModels(grounding, locale);
+  const hasRows = Boolean(liveQuery && liveQuery.rows.length > 0);
 
-  const aggNames =
-    (project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.alias})`).join(', ') ||
-    'Contract, Counterparty, SettlementOrder';
+  const basis = !liveQuery
+    ? pickLocaleText(
+        locale,
+        '未能执行任何有据查询，因此不给出统计数字。',
+        'No grounded query could be run, so no figures are reported.',
+      )
+    : liveQuery.referenceQueryId
+      ? pickLocaleText(
+          locale,
+          `取数口径：复用 M7 参考查询 ${liveQuery.referenceQueryId}，涉及表 ${liveQuery.referencedTables.join(', ')}。`,
+          `Basis: M7 reference query ${liveQuery.referenceQueryId}, reading ${liveQuery.referencedTables.join(', ')}.`,
+        )
+      : pickLocaleText(
+          locale,
+          `取数口径：直接读取 ${liveQuery.referencedTables.join(', ')}（没有与问题匹配的 M7 参考查询）。`,
+          `Basis: a direct read of ${liveQuery.referencedTables.join(', ')} (no M7 reference query matches the question).`,
+        );
+  const causalAnalysis = [basis, ...(liveQuery?.warnings ?? []), ...missingNotes];
+
+  const aggNames = (project?.suite.M1?.aggregates ?? [])
+    .map((a) => `${a.name}(${a.alias})`)
+    .join(', ');
   const defaultWb = store.listWritebackInterfaces()[0];
-  const wbId = defaultWb?.id ?? 'WB-01';
-  const primaryAgg = project?.suite.M1?.aggregates[0]?.name ?? 'Contract';
+  const primaryAgg = project?.suite.M1?.aggregates[0]?.name;
 
   const llmRes = await callOpenAiCompatibleChat(
     activeProvider,
@@ -5408,90 +5942,89 @@ export async function runDataOntologyReasoning(
         role: 'system',
         content: pickLocaleText(
           locale,
-          `你是数据分析中心的数据本体推理引擎，支持智能问数(ASK_DATA)、智能问因(ASK_WHY)、智能问策(ASK_POLICY)。请基于实时 SQLite 查询结果与当前工程本体模型（${aggNames}）给出简洁、结构化的 Markdown 分析结论（控制在 220 字以内）。`,
-          `You are the Data Ontology Reasoning Engine supporting ASK_DATA, ASK_WHY, and ASK_POLICY modes. Ground your structured Markdown conclusion in the live SQLite query results and active domain aggregates (${aggNames}) within 200 words.`,
+          `你是数据分析中心的数据本体推理引擎，支持智能问数(ASK_DATA)、智能问因(ASK_WHY)、智能问策(ASK_POLICY)。只依据下面给出的查询结果${aggNames ? `与当前工程本体模型（${aggNames}）` : ''}作答，给出简洁、结构化的 Markdown 结论（220 字以内）。结论中的每个数字都必须出自查询结果；没有查询结果时，说明缺少哪个模型或哪份数据，不要给出任何数字。`,
+          `You are the Data Ontology Reasoning Engine supporting ASK_DATA, ASK_WHY, and ASK_POLICY modes. Answer only from the query result below${aggNames ? ` and the active domain aggregates (${aggNames})` : ''}, as a concise structured Markdown conclusion within 200 words. Every figure must come from the query result; with no query result, say which model or data is missing and state no figures.`,
         ),
       },
       {
         role: 'user',
-        content: `[Mode: ${input.mode}] ${input.question}${liveQuery ? `\nLive SQL (${chosenSql}) returned ${liveQuery.rows.length} rows: ${JSON.stringify(liveQuery.rows.slice(0, 5))}` : ''}`,
+        content: [
+          `[Mode: ${input.mode}] ${input.question}`,
+          liveQuery
+            ? `Query (${liveQuery.sql}) returned ${liveQuery.rows.length} rows: ${JSON.stringify(liveQuery.rows.slice(0, 5))}`
+            : 'No query was run.',
+          ...causalAnalysis,
+        ].join('\n'),
       },
     ],
     { store },
   );
 
-  const dataSummary: ReasoningSession['dataSummary'] = [
-    {
-      label: pickLocaleText(
-        locale,
-        liveQuery && liveQuery.rows.length > 0 ? '实时命中数据行' : '在管单据总数',
-        liveQuery && liveQuery.rows.length > 0 ? 'Live Matched Rows' : 'Managed Records',
-      ),
-      value:
-        liveQuery && liveQuery.rows.length > 0
-          ? pickLocaleText(locale, `${liveQuery.rows.length} 行`, `${liveQuery.rows.length} rows`)
-          : `${liveStats.totalContracts}`,
-      delta: pickLocaleText(locale, 'SQLite 实查', 'Live SQLite'),
-    },
-    {
-      label: pickLocaleText(locale, '履约核销达成率', 'Fulfillment Rate'),
-      value: liveStats.settlementCompletionRatePct,
-      delta: pickLocaleText(
-        locale,
-        `总额 ¥${(liveStats.totalAmount / 10000).toFixed(1)}万`,
-        `Total ¥${(liveStats.totalAmount / 10000).toFixed(1)}0k`,
-      ),
-    },
-    {
-      label: pickLocaleText(locale, '高风险单据占比', 'High-Risk Share'),
-      value: liveStats.highRiskOverdueRatePct,
-      delta: pickLocaleText(locale, '实时聚合计算', 'Live Aggregation'),
-    },
-  ];
+  const fallbackAnswer = [
+    pickLocaleText(
+      locale,
+      `### 本体推理结论 (${input.mode})\n针对问题「${input.question}」：`,
+      `### Ontology Reasoning Conclusion (${input.mode})\nFor **"${input.question}"**:`,
+    ),
+    liveQuery
+      ? pickLocaleText(
+          locale,
+          `- 有据查询返回 **${liveQuery.rows.length}** 行。${basis}`,
+          `- The grounded query returned **${liveQuery.rows.length}** rows. ${basis}`,
+        )
+      : `- ${basis}`,
+    ...[...(liveQuery?.warnings ?? []), ...missingNotes].map((note) => `- ${note}`),
+    ...(defaultWb && input.mode === 'ASK_POLICY'
+      ? [
+          pickLocaleText(
+            locale,
+            `- 如需处置，可调用回写接口 **\`${defaultWb.id}\`** 执行受控闭环。`,
+            `- To act on it, invoke writeback interface **\`${defaultWb.id}\`** for governed closed-loop handling.`,
+          ),
+        ]
+      : []),
+  ].join('\n');
 
   const session = store.saveReasoningSession({
     id: `reas-${Date.now().toString(36)}`,
     question: input.question,
     mode: input.mode,
-    sqlGenerated: chosenSql,
+    sqlGenerated: liveQuery?.sql ?? '',
     ...(liveQuery
       ? {
           queryColumns: liveQuery.columns,
           queryRows: liveQuery.rows,
         }
       : {}),
-    dataSummary,
-    causalAnalysis:
-      locale === 'en-US'
-        ? [
-            `Tracing along M1 domain associations (${aggNames}), primary risk concentration accounts for ${liveStats.outsourcingHighRiskSharePct}.`,
-            `Cross-checking against M3 rules (${(project?.suite.M3?.rules ?? []).map((r) => r.id).join(', ') || 'RULE-01'}), threshold-boundary records represent ${liveStats.midThresholdSharePct}.`,
-          ]
-        : [
-            `沿着 M1 对象关联链（${aggNames}）实查穿透，主风险类型占待核销敞口的 ${liveStats.outsourcingHighRiskSharePct}。`,
-            `对照 M3 规则模型（${(project?.suite.M3?.rules ?? []).map((r) => r.id).join('、') || 'RULE-01'}），阈值敏感区间单据占总额的 ${liveStats.midThresholdSharePct}。`,
-          ],
-    policyRecommendations: [
-      {
-        actionTitle: pickLocaleText(
-          locale,
-          defaultWb?.name ?? `执行高风险 ${primaryAgg} 闭环策略回写`,
-          defaultWb?.name ?? `Execute governed policy writeback on ${primaryAgg}`,
-        ),
-        targetObject: primaryAgg,
-        expectedImpact: pickLocaleText(
-          locale,
-          `覆盖当前 ${liveStats.highRiskOverdueRatePct} 高风险单据并写入受控审计流水`,
-          `Covers ${liveStats.highRiskOverdueRatePct} high-risk records with audited state writeback`,
-        ),
-        writebackInterfaceId: wbId,
-      },
-    ],
-    answerMarkdown:
-      llmRes?.content ||
-      (locale === 'en-US'
-        ? `### Ontology Reasoning Conclusion (${input.mode})\nFor **"${input.question}"**:\n1. **ASK_DATA**: Executed live SQL via \`MM\` mappings${liveQuery ? ` (returned **${liveQuery.rows.length}** rows)` : ''}; fulfillment rate is **${liveStats.settlementCompletionRatePct}**, high-risk share is **${liveStats.highRiskOverdueRatePct}**.\n2. **ASK_WHY**: Tracing across \`${aggNames}\`, primary risk drivers contribute **${liveStats.outsourcingHighRiskSharePct}** of exposure.\n3. **ASK_POLICY**: Recommend invoking writeback interface **\`${wbId}\`** to enforce closed-loop governance.`
-        : `### 本体推理结论 (${input.mode})\n针对问题「${input.question}」：\n1. **智能问数**：通过 \`MM\` 数据映射执行实时 SQL${liveQuery ? `（实查返回 **${liveQuery.rows.length}** 行）` : ''}，当前实查达成率为 **${liveStats.settlementCompletionRatePct}**，高风险占比 **${liveStats.highRiskOverdueRatePct}**。\n2. **智能问因**：沿 \`${aggNames}\` 穿透归因，核心风险因子贡献了 **${liveStats.outsourcingHighRiskSharePct}** 的风险暴露额。\n3. **智能问策**：建议调用回写接口 **\`${wbId}\`** 执行受控闭环处置。`),
+    dataSummary: liveQuery ? summarizeQueryRows(liveQuery, locale) : [],
+    causalAnalysis,
+    policyRecommendations: defaultWb
+      ? [
+          {
+            actionTitle: defaultWb.name,
+            targetObject: primaryAgg ?? defaultWb.boundBehaviorRef,
+            expectedImpact: hasRows
+              ? pickLocaleText(
+                  locale,
+                  `对本次查询命中的 ${liveQuery!.rows.length} 行记录执行受控回写并留存审计流水`,
+                  `Governed writeback over the ${liveQuery!.rows.length} rows this query matched, with an audit trail`,
+                )
+              : pickLocaleText(
+                  locale,
+                  '执行受控回写并留存审计流水（本次没有查询到可处置的记录）',
+                  'Governed writeback with an audit trail (this query matched no records to act on)',
+                ),
+            writebackInterfaceId: defaultWb.id,
+          },
+        ]
+      : [],
+    answerMarkdown: llmRes?.content || fallbackAnswer,
+    grounding: {
+      ...(liveQuery?.referenceQueryId ? { referenceQueryId: liveQuery.referenceQueryId } : {}),
+      tables: liveQuery?.referencedTables ?? [],
+      missingModels: grounding.missing,
+      warnings: liveQuery?.warnings ?? [],
+    },
   });
 
   saveCheckpointSafe(store, session.id, 'DATA_ONTOLOGY_REASONING', {

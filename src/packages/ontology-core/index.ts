@@ -95,3 +95,35 @@ export {
   CONTRACT_PROTOTYPE_HTML,
   MFT_ENTERPRISE_SUITE,
 } from './lib/benchmark-contract-suite.js';
+
+export {
+  applyAlignment,
+  buildAlignmentSkeleton,
+  buildExtractionCandidates,
+  candidateKey,
+  classifyCandidates,
+  formatDroppedReason,
+  formatEvidenceNote,
+  locateQuote,
+  parseSourceStructure,
+  previewCandidateMerge,
+  sanitizeAlignment,
+  scanSourceStructure,
+  tallyCandidates,
+  ALIGNMENT_MAX_TABLES,
+  type CandidateDecision,
+  type EvidenceOrigin,
+  type ExtractionCandidate,
+  type ExtractionEvidence,
+  type SemanticAlignmentReport,
+  type StructuralScanResult,
+} from './lib/extraction.js';
+
+export {
+  buildDataGrounding,
+  checkSqlGrounding,
+  findJoinPath,
+  type DataGrounding,
+  type GroundingJoin,
+  type SqlGroundingReport,
+} from './lib/data-grounding.js';
