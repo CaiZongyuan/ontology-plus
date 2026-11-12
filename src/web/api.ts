@@ -55,6 +55,7 @@ import type {
   SrsSynthesisProgressEvent,
   SrsSynthesisProgressPhase,
   TechArchitectureGenerationResult,
+  TransientTurnImageInput,
 } from '../packages/agent-runtime/index.js';
 import type {
   CompiledDevelopmentPackage,
@@ -1484,6 +1485,8 @@ export interface StreamAgentSessionCallbacks {
     provider: string;
     model: string;
     isMock: boolean;
+    visionSupported?: boolean;
+    visionFallbackNotice?: string;
   }) => void;
   onThinkingDelta?: (delta: string, step: number) => void;
   onTextDelta?: (delta: string, step: number) => void;
@@ -1524,6 +1527,7 @@ export async function streamAgentSessionTurn(
       selectedAnswers: string[];
       freeformText?: string;
     };
+    images?: TransientTurnImageInput[];
     activeModelCode?: ModelCode;
     reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
     locale?: string;

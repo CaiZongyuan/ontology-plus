@@ -1066,6 +1066,7 @@ export const SEED_LLM_PROVIDERS: LlmProviderConfig[] = [
       'auto/glm-5.2',
     ],
     enabled: true,
+    supportsVision: true,
     lastTestedStatus: 'OK',
     lastTestedMessage: 'Connected to local Pi gateway (http://127.0.0.1:3425/v1 · auto/glm-5.3-flash)',
   },

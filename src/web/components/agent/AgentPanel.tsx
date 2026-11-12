@@ -4,6 +4,7 @@ import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { Button } from '../beautifui/index.js';
 import { AgentRunCard } from './AgentRunCard.js';
+import { VisionCapabilityBanner } from './VisionAttachmentControls.js';
 import {
   AGENT_PANEL_DEFAULT_WIDTH,
   AGENT_PANEL_MAX_WIDTH,
@@ -28,6 +29,9 @@ export interface AgentPanelProps {
   onRetryRun?: (runId: string) => void;
   onOpenRunArtifact?: (runId: string) => void;
   onOpenLlmCenter?: () => void;
+  /** Whether the active provider/model supports multimodal vision input (`false` shows explicit fallback banner). */
+  visionSupported?: boolean;
+  visionProviderLabel?: string;
   /** Fixed clock passed through to the run cards for deterministic rendering. */
   now?: number;
 }
@@ -47,6 +51,8 @@ export function AgentPanel({
   onRetryRun,
   onOpenRunArtifact,
   onOpenLlmCenter,
+  visionSupported,
+  visionProviderLabel,
   now,
 }: AgentPanelProps) {
   const { t } = usePreferences();
@@ -162,6 +168,15 @@ export function AgentPanel({
             <PanelRightClose size={14} aria-hidden="true" />
           </Button>
         </header>
+
+        {visionSupported === false && (
+          <VisionCapabilityBanner
+            visionSupported={false}
+            {...(visionProviderLabel ? { providerLabel: visionProviderLabel } : {})}
+            {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
+            className="agent-panel-vision-banner"
+          />
+        )}
 
         <div className="agent-panel-body" ref={bodyRef}>
           {runs.length === 0 ? (

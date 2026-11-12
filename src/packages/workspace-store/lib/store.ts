@@ -60,10 +60,14 @@ import {
   SEED_SYSTEM_SETTINGS,
   SEED_WRITEBACK_INTERFACES,
 } from './seed-data.js';
-import type {
-  AgentCheckpointRecord,
-  AgentSession,
-  AnalyticsQueryResult,
+import {
+  doesProviderSupportVision,
+  type AgentCheckpointRecord,
+  type AgentImageAttachmentRef,
+  type AgentImageAttachmentRole,
+  type AgentSession,
+  type AgentSessionMessage,
+  type AnalyticsQueryResult,
   AnalyticsReport,
   AnalyticsScenario,
   AssembledApplication,
@@ -636,15 +640,29 @@ function discoverPiModelsJsonProviders(
           const id = `llm-pi-${provKey.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`;
           if (result.some((existing) => existing.id === id)) continue;
           const apiStr = typeof rec.api === 'string' ? rec.api : '';
+          const providerType: LlmProviderConfig['providerType'] = apiStr.includes('anthropic')
+            ? 'ANTHROPIC'
+            : 'OPENAI_COMPATIBLE';
+          const defaultModel = modelIds[0] ?? 'auto/glm-5.3-flash';
+          const hasExplicitVisionModel = rawModels.some(
+            (m) =>
+              m &&
+              typeof m === 'object' &&
+              Array.isArray((m as Record<string, unknown>).input) &&
+              ((m as Record<string, unknown>).input as unknown[]).includes('image'),
+          );
           result.push({
             id,
             name: `Pi Discovered (${provKey})`,
-            providerType: apiStr.includes('anthropic') ? 'ANTHROPIC' : 'OPENAI_COMPATIBLE',
+            providerType,
             baseUrl,
             apiKey: typeof rec.apiKey === 'string' ? rec.apiKey : '',
-            defaultModel: modelIds[0] ?? 'auto/glm-5.3-flash',
+            defaultModel,
             availableModels: modelIds.length > 0 ? modelIds : ['auto/glm-5.3-flash'],
             enabled: true,
+            supportsVision: hasExplicitVisionModel
+              ? true
+              : doesProviderSupportVision({ providerType, defaultModel }),
             lastTestedStatus: 'OK',
             lastTestedMessage: `Auto-discovered from .pi/agent/models.json`,
           });
@@ -656,6 +674,87 @@ function discoverPiModelsJsonProviders(
   }
 
   return result;
+}
+
+const VALID_IMAGE_ROLES = new Set<AgentImageAttachmentRole>([
+  'primary_ref',
+  'borrowed_ref',
+  'user_upload',
+  'selection_crop',
+]);
+
+/**
+ * Enforce zero-byte image persistence on SQLite: strip any accidental base64/binary fields
+ * or inline `data:` / `blob:` URIs so only lightweight `AgentImageAttachmentRef` metadata lands in SQLite.
+ */
+function sanitizeAgentImageAttachmentRef(raw: unknown): AgentImageAttachmentRef | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const rec = raw as Record<string, unknown>;
+  const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+  if (!id) return null;
+  const name = typeof rec.name === 'string' && rec.name.trim() ? rec.name.trim() : 'image';
+  const mimeType =
+    typeof rec.mimeType === 'string' && rec.mimeType.trim()
+      ? rec.mimeType.trim()
+      : 'image/webp';
+  const rawRemoteUrl = typeof rec.remoteUrl === 'string' ? rec.remoteUrl.trim() : '';
+  const isSafeRemoteUrl =
+    Boolean(rawRemoteUrl) &&
+    (/^https?:\/\//i.test(rawRemoteUrl) ||
+      (rawRemoteUrl.startsWith('/') && !rawRemoteUrl.startsWith('//'))) &&
+    !/^(?:data|blob):/i.test(rawRemoteUrl) &&
+    rawRemoteUrl.length <= 2048;
+  const source: 'local' | 'remote' =
+    rec.source === 'remote' && isSafeRemoteUrl ? 'remote' : 'local';
+  const width =
+    typeof rec.width === 'number' && Number.isFinite(rec.width) && rec.width > 0
+      ? Math.round(rec.width)
+      : undefined;
+  const height =
+    typeof rec.height === 'number' && Number.isFinite(rec.height) && rec.height > 0
+      ? Math.round(rec.height)
+      : undefined;
+  const role =
+    typeof rec.role === 'string' && VALID_IMAGE_ROLES.has(rec.role as AgentImageAttachmentRole)
+      ? (rec.role as AgentImageAttachmentRole)
+      : undefined;
+
+  return {
+    id,
+    name,
+    mimeType,
+    source,
+    ...(isSafeRemoteUrl && source === 'remote' ? { remoteUrl: rawRemoteUrl } : {}),
+    ...(width !== undefined ? { width } : {}),
+    ...(height !== undefined ? { height } : {}),
+    ...(role ? { role } : {}),
+  };
+}
+
+function sanitizeAgentSessionMessage(msg: AgentSessionMessage): AgentSessionMessage {
+  const cleanContent = msg.content.replace(
+    /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]{32,}/gi,
+    '[inline-image-stripped]',
+  );
+  if (!Array.isArray(msg.images)) {
+    return cleanContent === msg.content ? msg : { ...msg, content: cleanContent };
+  }
+  const cleanImages = msg.images
+    .map((item) => sanitizeAgentImageAttachmentRef(item))
+    .filter((item): item is AgentImageAttachmentRef => item !== null);
+  const { images: _origImages, ...rest } = msg;
+  return {
+    ...rest,
+    content: cleanContent,
+    ...(cleanImages.length > 0 ? { images: cleanImages } : {}),
+  };
+}
+
+function sanitizeAgentSessionForPersistence(session: AgentSession): AgentSession {
+  return {
+    ...session,
+    messages: (session.messages ?? []).map(sanitizeAgentSessionMessage),
+  };
 }
 
 export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): WorkspaceStore {
@@ -1505,7 +1604,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         CAPABILITY: '新建智能体工具对话',
         REASONING: '新建数据本体推演会话',
       };
-      const session: AgentSession = {
+      const session = sanitizeAgentSessionForPersistence({
         id: input.id ?? nextUniqueId('asess'),
         projectId: input.projectId,
         agentKind: input.agentKind,
@@ -1519,15 +1618,15 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         messages: input.initialMessages ?? [],
         createdAt: now,
         updatedAt: now,
-      };
+      });
       return putItem('agent_sessions', session.id, session, session.projectId);
     },
 
     saveAgentSession(session) {
-      const updated: AgentSession = {
+      const updated = sanitizeAgentSessionForPersistence({
         ...session,
         updatedAt: new Date().toISOString(),
-      };
+      });
       return putItem('agent_sessions', updated.id, updated, updated.projectId);
     },
 
@@ -1542,7 +1641,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
           slicedMessages = slicedMessages.slice(0, idx + 1);
         }
       }
-      const forked: AgentSession = {
+      const forked = sanitizeAgentSessionForPersistence({
         ...existing,
         id: nextUniqueId('asess-fork'),
         title: newTitle?.trim() || `${existing.title} · 分支`,
@@ -1553,7 +1652,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         messages: JSON.parse(JSON.stringify(slicedMessages)),
         createdAt: now,
         updatedAt: now,
-      };
+      });
       return putItem('agent_sessions', forked.id, forked, forked.projectId);
     },
 
