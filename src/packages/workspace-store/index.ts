@@ -3,6 +3,8 @@ export {
   type WorkspaceStoreOptions,
 } from './lib/store.js';
 
+export { PrototypeConfirmedDeleteError } from './lib/prototype-revisions.js';
+
 export type {
   ProjectSummary,
   ProjectDetail,
@@ -16,7 +18,17 @@ export type {
   RequirementMessage,
   RequirementSession,
   RequirementDoc,
+  DesignBriefItem,
+  DesignBriefBorrowedReference,
+  DesignBrief,
+  PrototypeRevisionSource,
+  PrototypeRevision,
+  InteractivePrototype,
   PrototypeArtifact,
+  ConfirmedPrototypeRevisionRecord,
+  ConfirmedPrototypeRevision,
+  CreatePrototypeInput,
+  AppendPrototypeRevisionInput,
   FourLayerAsset,
   AssembledApplication,
   GeneratedSkill,

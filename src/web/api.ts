@@ -13,16 +13,23 @@ import type {
   AnalyticsQueryResult,
   AnalyticsReport,
   AnalyticsScenario,
+  AppendPrototypeRevisionInput,
   AssembledApplication,
   CapabilityAgent,
   CapabilityChatSession,
+  ConfirmedPrototypeRevision,
+  CreatePrototypeInput,
   CrossSystemFlow,
   DataDocument,
   DataMappingRule,
   DatabaseResource,
+  DesignBrief,
+  DesignBriefBorrowedReference,
+  DesignBriefItem,
   ExtractionJob,
   FourLayerAsset,
   GeneratedSkill,
+  InteractivePrototype,
   KnowledgeEntry,
   LegacySystemConfig,
   LlmProviderConfig,
@@ -32,6 +39,8 @@ import type {
   ProjectSnapshot,
   ProjectSummary,
   PrototypeArtifact,
+  PrototypeRevision,
+  PrototypeRevisionSource,
   ReasoningSession,
   RequirementDoc,
   RequirementSession,
@@ -70,6 +79,7 @@ export interface BootstrapPayload {
   requirementSessions: RequirementSession[];
   requirementDocs: RequirementDoc[];
   prototypes: PrototypeArtifact[];
+  confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
   fourLayerAssets: FourLayerAsset[];
   assembledApplications: AssembledApplication[];
   generatedSkills: GeneratedSkill[];
@@ -1644,8 +1654,9 @@ export async function apiDeleteResource<T = Record<string, unknown>>(
   if (!res.ok) {
     const err = new Error(
       body.error || (locale === 'en-US' ? 'Delete failed' : '删除失败'),
-    ) as Error & { status?: number };
+    ) as Error & { status?: number; code?: string };
     err.status = res.status;
+    if (typeof body.code === 'string') err.code = body.code;
     throw err;
   }
   return body as T;
@@ -1858,6 +1869,152 @@ export async function streamSynthesizeSrsDoc(
   if (buffer.trim()) {
     processBlock(buffer);
   }
+}
+
+export type {
+  AppendPrototypeRevisionInput,
+  ConfirmedPrototypeRevision,
+  CreatePrototypeInput,
+  DesignBrief,
+  DesignBriefBorrowedReference,
+  DesignBriefItem,
+  InteractivePrototype,
+  PrototypeArtifact,
+  PrototypeRevision,
+  PrototypeRevisionSource,
+};
+
+export async function apiListPrototypes(projectId: string): Promise<{
+  prototypes: InteractivePrototype[];
+  confirmedRevision: ConfirmedPrototypeRevision | null;
+}> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/prototypes`, {
+    headers: buildLocaleHeaders(),
+  });
+  if (!res.ok) throw new Error((await res.json()).error || 'Failed to list prototypes');
+  return res.json();
+}
+
+export async function apiSavePrototype(
+  projectId: string,
+  input: CreatePrototypeInput,
+): Promise<{
+  prototype: InteractivePrototype;
+  revision: PrototypeRevision;
+  project: ProjectDetail;
+  prototypes: InteractivePrototype[];
+  confirmedRevision: ConfirmedPrototypeRevision | null;
+}> {
+  return apiPostJson(`/api/projects/${encodeURIComponent(projectId)}/prototypes`, input);
+}
+
+export async function apiAppendPrototypeRevision(
+  prototypeId: string,
+  input: AppendPrototypeRevisionInput,
+): Promise<{
+  prototype: InteractivePrototype;
+  revision: PrototypeRevision;
+  project: ProjectDetail;
+  prototypes: InteractivePrototype[];
+  confirmedRevision: ConfirmedPrototypeRevision | null;
+}> {
+  return apiPostJson(`/api/prototypes/${encodeURIComponent(prototypeId)}/revisions`, input);
+}
+
+export async function apiRestorePrototypeRevision(
+  prototypeId: string,
+  revisionId: string,
+  input?: { title?: string },
+): Promise<{
+  prototype: InteractivePrototype;
+  revision: PrototypeRevision;
+  prototypes: InteractivePrototype[];
+  confirmedRevision: ConfirmedPrototypeRevision | null;
+}> {
+  return apiPostJson(
+    `/api/prototypes/${encodeURIComponent(prototypeId)}/revisions/${encodeURIComponent(revisionId)}/restore`,
+    input ?? {},
+  );
+}
+
+export async function apiUpdatePrototypeRevisionMeta(
+  prototypeId: string,
+  revisionId: string,
+  patch: { title?: string; starred?: boolean },
+): Promise<{
+  prototype: InteractivePrototype;
+  revision: PrototypeRevision;
+  prototypes: InteractivePrototype[];
+  confirmedRevision: ConfirmedPrototypeRevision | null;
+}> {
+  const res = await fetch(
+    `/api/prototypes/${encodeURIComponent(prototypeId)}/revisions/${encodeURIComponent(revisionId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...buildLocaleHeaders() },
+      body: JSON.stringify(patch),
+    },
+  );
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || 'Failed to update revision metadata');
+  return body;
+}
+
+export async function apiUpdatePrototypeDesignBrief(
+  prototypeId: string,
+  designBrief: DesignBrief,
+): Promise<{
+  prototype: InteractivePrototype;
+  prototypes: InteractivePrototype[];
+  confirmedRevision: ConfirmedPrototypeRevision | null;
+}> {
+  const res = await fetch(`/api/prototypes/${encodeURIComponent(prototypeId)}/design-brief`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...buildLocaleHeaders() },
+    body: JSON.stringify({ designBrief }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || 'Failed to update design brief');
+  return body;
+}
+
+export async function apiConfirmPrototypeRevision(
+  projectId: string,
+  revisionId: string,
+): Promise<{
+  confirmed: ConfirmedPrototypeRevision;
+  confirmedRevision: ConfirmedPrototypeRevision;
+  prototype: InteractivePrototype;
+  project: ProjectDetail;
+  prototypes: InteractivePrototype[];
+}> {
+  return apiPostJson(`/api/projects/${encodeURIComponent(projectId)}/prototypes/confirm-revision`, {
+    revisionId,
+  });
+}
+
+export async function apiClonePrototype(
+  prototypeId: string,
+  input?: { name?: string },
+): Promise<{
+  prototype: InteractivePrototype;
+  prototypes: InteractivePrototype[];
+  confirmedRevision: ConfirmedPrototypeRevision | null;
+}> {
+  return apiPostJson(`/api/prototypes/${encodeURIComponent(prototypeId)}/clone`, input ?? {});
+}
+
+export async function apiDeletePrototype(
+  prototypeId: string,
+  projectId: string,
+): Promise<{
+  deletedId: string;
+  prototypes: InteractivePrototype[];
+  confirmedRevision: ConfirmedPrototypeRevision | null;
+}> {
+  return apiDeleteResource(
+    `/api/prototypes/${encodeURIComponent(prototypeId)}?projectId=${encodeURIComponent(projectId)}`,
+  );
 }
 
 export async function apiGeneratePrototype(

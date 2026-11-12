@@ -7,13 +7,17 @@ import {
   type OntologySuite,
 } from '../packages/ontology-core/index.js';
 import {
+  PrototypeConfirmedDeleteError,
   createWorkspaceStore,
   type AgentSessionKind,
   type AnalyticsScenario,
+  type AppendPrototypeRevisionInput,
+  type CreatePrototypeInput,
   type CrossSystemFlow,
   type DataDocument,
   type DataMappingRule,
   type DatabaseResource,
+  type DesignBrief,
   type GeneratedSkill,
   type LegacySystemConfig,
   type LlmProviderConfig,
@@ -138,6 +142,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       requirementSessions: store.listRequirementSessions(activeProject.id),
       requirementDocs: store.listRequirementDocs(activeProject.id),
       prototypes: store.listPrototypes(activeProject.id),
+      confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(activeProject.id) ?? null,
       fourLayerAssets: store.listFourLayerAssets(),
       assembledApplications: store.listAssembledApplications(),
       generatedSkills: store.listGeneratedSkills(),
@@ -421,6 +426,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       requirementSessions: store.listRequirementSessions(project.id),
       requirementDocs: store.listRequirementDocs(project.id),
       prototypes: store.listPrototypes(project.id),
+      confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(project.id) ?? null,
       extractionJobs: store.listExtractionJobs(project.id),
       pipelineTasks: listServerPipelineTasks(store),
     });
@@ -833,39 +839,206 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     });
   });
 
-  app.post('/api/projects/:id/prototypes', async (c) => {
+  app.get('/api/projects/:id/prototypes', (c) => {
     const projectId = c.req.param('id');
-    const body = await c.req.json<{
-      id?: string;
-      name: string;
-      version?: string;
-      htmlContent: string;
-      syncMu?: boolean;
-    }>();
-    const result = store.savePrototypeAndSyncMu(projectId, body);
+    const project = store.getProject(projectId);
+    if (!project) return c.json({ error: 'Project not found' }, 404);
     return c.json({
-      ...result,
       prototypes: store.listPrototypes(projectId),
+      confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
     });
   });
 
-  app.post('/api/prototypes/:id/clone', (c) => {
+  app.post('/api/projects/:id/prototypes', async (c) => {
+    const projectId = c.req.param('id');
+    const body = await c.req.json<CreatePrototypeInput & { syncMu?: boolean }>();
+    if (body.id) {
+      const existing = store.getPrototype(body.id);
+      if (existing && existing.projectId === projectId) {
+        const appended = store.appendPrototypeRevision(body.id, {
+          name: body.name,
+          version: body.version,
+          title: body.title,
+          instruction: body.instruction,
+          starred: body.starred,
+          htmlContent: body.htmlContent,
+          source: body.source ?? 'MANUAL_SAVE',
+          agentRunId: body.agentRunId,
+        });
+        return c.json({
+          ...appended,
+          prototypes: store.listPrototypes(projectId),
+          confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+        });
+      }
+    }
+    const created = store.createPrototype(projectId, {
+      ...body,
+      source: body.source ?? 'MANUAL_SAVE',
+    });
+    return c.json({
+      ...created,
+      prototypes: store.listPrototypes(projectId),
+      confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+    });
+  });
+
+  app.post('/api/prototypes/:id/revisions', async (c) => {
+    const prototypeId = c.req.param('id');
+    const existing = store.getPrototype(prototypeId);
+    if (!existing) return c.json({ error: 'Prototype not found' }, 404);
+    const body = await c.req.json<AppendPrototypeRevisionInput>();
+    const appended = store.appendPrototypeRevision(prototypeId, body);
+    return c.json({
+      ...appended,
+      prototypes: store.listPrototypes(existing.projectId),
+      confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+    });
+  });
+
+  app.post('/api/prototypes/:id/revisions/:revisionId/restore', async (c) => {
+    const prototypeId = c.req.param('id');
+    const revisionId = c.req.param('revisionId');
+    const existing = store.getPrototype(prototypeId);
+    if (!existing) return c.json({ error: 'Prototype not found' }, 404);
+    const body = await c.req
+      .json<{ title?: string }>()
+      .catch(() => ({ title: undefined }));
+    try {
+      const restored = store.restorePrototypeRevision(prototypeId, revisionId, body.title);
+      return c.json({
+        ...restored,
+        prototypes: store.listPrototypes(existing.projectId),
+        confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
+    }
+  });
+
+  app.patch('/api/prototypes/:id/revisions/:revisionId', async (c) => {
+    const prototypeId = c.req.param('id');
+    const revisionId = c.req.param('revisionId');
+    const existing = store.getPrototype(prototypeId);
+    if (!existing) return c.json({ error: 'Prototype not found' }, 404);
+    const body = await c.req.json<{ title?: string; starred?: boolean }>();
+    try {
+      const updated = store.updatePrototypeRevisionMeta(prototypeId, revisionId, body);
+      return c.json({
+        ...updated,
+        prototypes: store.listPrototypes(existing.projectId),
+        confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
+    }
+  });
+
+  app.patch('/api/prototypes/:id/design-brief', async (c) => {
+    const prototypeId = c.req.param('id');
+    const existing = store.getPrototype(prototypeId);
+    if (!existing) return c.json({ error: 'Prototype not found' }, 404);
+    const body = await c.req.json<{ designBrief: DesignBrief }>();
+    const prototype = store.updatePrototypeDesignBrief(prototypeId, body.designBrief);
+    return c.json({
+      prototype,
+      prototypes: store.listPrototypes(existing.projectId),
+      confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+    });
+  });
+
+  app.post('/api/projects/:id/prototypes/confirm-revision', async (c) => {
+    const projectId = c.req.param('id');
+    const body = await c.req.json<{ revisionId: string }>();
+    if (!body.revisionId) {
+      return c.json({ error: 'revisionId is required' }, 400);
+    }
+    try {
+      const res = store.confirmPrototypeRevision(projectId, body.revisionId);
+      return c.json({
+        confirmed: res.confirmed,
+        confirmedRevision: res.confirmed,
+        prototype: res.prototype,
+        project: res.project,
+        prototypes: store.listPrototypes(projectId),
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
+    }
+  });
+
+  app.post('/api/prototypes/:id/revisions/:revisionId/confirm', (c) => {
+    const prototypeId = c.req.param('id');
+    const revisionId = c.req.param('revisionId');
+    const existing = store.getPrototype(prototypeId);
+    if (!existing) return c.json({ error: 'Prototype not found' }, 404);
+    try {
+      const res = store.confirmPrototypeRevision(existing.projectId, revisionId);
+      return c.json({
+        confirmed: res.confirmed,
+        confirmedRevision: res.confirmed,
+        prototype: res.prototype,
+        project: res.project,
+        prototypes: store.listPrototypes(existing.projectId),
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
+    }
+  });
+
+  app.post('/api/prototypes/:id/clone', async (c) => {
     const id = c.req.param('id');
-    const prototype = store.clonePrototype(id);
+    const body = await c.req
+      .json<{ name?: string }>()
+      .catch(() => ({ name: undefined }));
+    const prototype = store.clonePrototype(id, body.name ? { name: body.name } : undefined);
     return c.json({
       prototype,
       prototypes: store.listPrototypes(prototype.projectId),
+      confirmedRevision: store.getConfirmedPrototypeRevision(prototype.projectId) ?? null,
     });
   });
 
   app.delete('/api/prototypes/:id', (c) => {
     const id = c.req.param('id');
-    const projectId = c.req.query('projectId') || store.listProjects()[0]?.id || 'proj-contract';
-    store.deletePrototype(id);
-    return c.json({
-      deletedId: id,
-      prototypes: store.listPrototypes(projectId),
-    });
+    const locale = getReqLocale(c);
+    const existing = store.getPrototype(id);
+    const projectId =
+      existing?.projectId ||
+      c.req.query('projectId') ||
+      store.listProjects()[0]?.id ||
+      'proj-contract';
+    try {
+      store.deletePrototype(id);
+      return c.json({
+        deletedId: id,
+        prototypes: store.listPrototypes(projectId),
+        confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+      });
+    } catch (err) {
+      if (
+        err instanceof PrototypeConfirmedDeleteError ||
+        (err instanceof Error &&
+          (err as { code?: string }).code === 'PROTOTYPE_HOLDS_CONFIRMED_REVISION')
+      ) {
+        const displayError =
+          err instanceof PrototypeConfirmedDeleteError
+            ? locale === 'en-US'
+              ? err.messageEn
+              : err.messageZh
+            : err.message;
+        return c.json(
+          {
+            error: displayError,
+            code: 'PROTOTYPE_HOLDS_CONFIRMED_REVISION' as const,
+            messageZh: err instanceof PrototypeConfirmedDeleteError ? err.messageZh : err.message,
+            messageEn: err instanceof PrototypeConfirmedDeleteError ? err.messageEn : err.message,
+          },
+          409,
+        );
+      }
+      throw err;
+    }
   });
 
   app.post('/api/projects/:id/prototypes/generate', async (c) => {
@@ -1122,7 +1295,14 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       assets.find((a) => a.id === appItem.techArchAssetId) ??
       assets.find((a) => a.layer === 'TECH_ARCH')!;
     const reqDoc = store.listRequirementDocs(project.id)[0];
-    const proto = store.listPrototypes(project.id)[0];
+    const confirmedProto = store.getConfirmedPrototypeRevision(project.id);
+    const proto = confirmedProto
+      ? {
+          ...confirmedProto.prototype,
+          htmlContent: confirmedProto.htmlContent,
+          extractedScreenCount: confirmedProto.revision.extractedScreenCount,
+        }
+      : undefined;
 
     return { appItem, project, uiAsset, foundationAsset, archAsset, reqDoc, proto };
   };

@@ -793,4 +793,65 @@ describe('agent-runtime deep module', () => {
     ).rejects.toMatchObject({ name: 'AbortError' });
     expect(store.listRequirementDocs(proj.id).length).toBe(docsBeforeAbort);
   });
+
+  it('never mutates suite.MU during prototype generation/refinement and synthesizes ontology from the Confirmed Revision when prototypeId is omitted', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+
+    // 1. On proj-contract (which has 11 models), refining a prototype MUST NOT mutate suite.MU
+    const beforeContractMu = JSON.stringify(store.getProject('proj-contract')!.suite.MU);
+    const seedProto = store.listPrototypes('proj-contract')[0]!;
+    const refinedSeed = await refinePrototypeWithAi(store, {
+      projectId: 'proj-contract',
+      prototypeId: seedProto.id,
+      instruction: '增加实验性合同批量作废危险按钮',
+    });
+    expect(refinedSeed.prototype.revisions).toHaveLength(2);
+    expect(refinedSeed.prototype.aheadOfConfirmedCount).toBe(1);
+    expect(JSON.stringify(store.getProject('proj-contract')!.suite.MU)).toBe(beforeContractMu);
+
+    // 2. When prototypeId is omitted, synthesizeOntologyFromPrototype MUST read Confirmed Revision, NOT newest unconfirmed revision/prototype
+    const proj = store.createProject({
+      name: '设备巡检协同平台',
+      code: 'EAM-INSP',
+      domain: '工业设备点巡检',
+      template: 'EMPTY',
+    });
+
+    const protoA = store.createPrototype(proj.id, {
+      name: '巡检方向 A',
+      htmlContent:
+        '<section data-screen-id="SCR-INSP-TASK" data-screen-name="巡检工单台账"><input data-element-id="EL-TASK-CODE" data-binding="InspectionTask.taskCode" /><button data-element-id="EL-COMPLETE" data-event-id="EVT-INSP-DONE">提交巡检</button></section>',
+      source: 'GENERATED',
+    });
+    store.confirmPrototypeRevision(proj.id, protoA.revision.id);
+
+    // Append an unconfirmed experimental revision 2 on protoA
+    store.appendPrototypeRevision(protoA.prototype.id, {
+      htmlContent:
+        '<section data-screen-id="SCR-UNCONFIRMED-EXP" data-screen-name="未确认实验屏"><input data-element-id="EL-EXP" data-binding="UnconfirmedExperiment.expCode" /></section>',
+      instruction: '临时尝试完全不同的实验聚合',
+      source: 'REFINED',
+    });
+
+    // Also create a brand-new unconfirmed prototype B (which sits at listPrototypes(proj.id)[0]!)
+    store.createPrototype(proj.id, {
+      name: '巡检方向 B（未确认最新行）',
+      htmlContent:
+        '<section data-screen-id="SCR-NEWER-DRAFT" data-screen-name="未确认方向B"><input data-element-id="EL-DRAFT" data-binding="UnconfirmedDirectionB.draftCode" /></section>',
+      source: 'GENERATED',
+    });
+    expect(store.listPrototypes(proj.id)[0]!.name).toBe('巡检方向 B（未确认最新行）');
+
+    const synth = await synthesizeOntologyFromPrototype(store, {
+      projectId: proj.id,
+    });
+    expect(synth.validation.errorCount).toBe(0);
+    const aggNames = synth.project.suite.M1!.aggregates.map((a) => a.name);
+    expect(aggNames).toContain('InspectionTask');
+    expect(aggNames).not.toContain('UnconfirmedExperiment');
+    expect(aggNames).not.toContain('UnconfirmedDirectionB');
+    expect(synth.project.suite.MU?.screens.map((s) => s.screenId)).toContain('SCR-INSP-TASK');
+    expect(synth.project.suite.MU?.screens.map((s) => s.screenId)).not.toContain('SCR-NEWER-DRAFT');
+  }, 30000);
 });

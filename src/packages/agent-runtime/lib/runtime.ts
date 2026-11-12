@@ -3706,37 +3706,25 @@ export async function generatePrototypeFromDoc(
       ? `${project.name} · Interactive Prototype (prototype.html)`
       : `${project.name} · 语义交互原型 (界面原型.html)`;
 
-  const hasDomainOntology = (project.suite.M1?.aggregates.length ?? 0) > 0;
-  const saved = store.savePrototypeAndSyncMu(input.projectId, {
+  // Creating a prototype produces an immutable PrototypeRevision and NEVER mutates suite.MU (ADR 0010).
+  const created = store.createPrototype(input.projectId, {
     name: protoTitle,
     version,
     htmlContent,
-    syncMu: hasDomainOntology,
+    instruction: input.prompt,
+    source: 'GENERATED',
   });
-
-  let finalProject = saved.project;
-  if (hasDomainOntology && finalProject.validation.errorCount > 0) {
-    const alignedSuite = alignSuiteWithExtractedMu(
-      finalProject.suite,
-      htmlContent,
-      finalProject.domain,
-    );
-    finalProject = store.updateSuite(
-      input.projectId,
-      alignedSuite,
-      `Generated semantic HTML prototype (${saved.prototype.id}) and aligned MU bindings`,
-    );
-  }
 
   saveCheckpointSafe(store, `proto-${input.projectId}`, 'PROTOTYPE_GENERATION', {
     projectId: input.projectId,
-    prototypeId: saved.prototype.id,
-    screens: saved.prototype.extractedScreenCount,
+    prototypeId: created.prototype.id,
+    revisionId: created.revision.id,
+    screens: created.prototype.extractedScreenCount,
   });
 
   return {
-    prototype: saved.prototype,
-    project: finalProject,
+    prototype: created.prototype,
+    project: created.project,
     prototypes: store.listPrototypes(input.projectId),
     providerUsed: modelUsed,
   };
@@ -3957,37 +3945,22 @@ export async function refinePrototypeWithAi(
     return `${targetProto.version}-r1`;
   })();
 
-  const hasDomainOntology = (project.suite.M1?.aggregates.length ?? 0) > 0;
-  const saved = store.savePrototypeAndSyncMu(input.projectId, {
-    id: targetProto.id,
-    name: targetProto.name,
+  // Appending a refinement revision NEVER mutates suite.MU (ADR 0010).
+  const appended = store.appendPrototypeRevision(targetProto.id, {
     version: nextRevisionVersion,
     htmlContent: nextHtml,
-    syncMu: hasDomainOntology,
+    instruction: effectiveInstruction,
+    source: 'REFINED',
   });
 
-  let finalProject = saved.project;
-  if (hasDomainOntology && finalProject.validation.errorCount > 0) {
-    const aligned = alignSuiteWithExtractedMu(
-      finalProject.suite,
-      nextHtml,
-      finalProject.domain,
-    );
-    finalProject = store.updateSuite(
-      input.projectId,
-      aligned,
-      `Aligned ontology suite with AI-refined prototype (${saved.prototype.id})`,
-    );
-  }
-
   return {
-    prototype: saved.prototype,
-    project: finalProject,
+    prototype: appended.prototype,
+    project: appended.project,
     prototypes: store.listPrototypes(input.projectId),
     summary: pickLocaleText(
       locale,
-      `已根据指令「${effectiveInstruction}」微调交互原型（${summaryLabel}）并同步更新 MU 屏幕控件模型`,
-      `Refined interactive prototype per "${effectiveInstruction}" and synced MU screen elements`,
+      `已根据指令「${effectiveInstruction}」生成新的原型修订（${summaryLabel}）`,
+      `Created new prototype revision per "${effectiveInstruction}" (${summaryLabel})`,
     ),
     providerUsed: modelUsed,
   };
@@ -4368,9 +4341,23 @@ export async function synthesizeOntologyFromPrototype(
     providerModel,
   });
 
-  let targetProto = input.prototypeId
-    ? store.listPrototypes(input.projectId).find((p) => p.id === input.prototypeId)
-    : store.listPrototypes(input.projectId)[0];
+  let targetProto: PrototypeArtifact | undefined;
+  if (input.prototypeId) {
+    targetProto = store.getPrototype(input.prototypeId);
+  } else {
+    const confirmed = store.getConfirmedPrototypeRevision(input.projectId);
+    if (confirmed) {
+      targetProto = {
+        ...confirmed.prototype,
+        htmlContent: confirmed.htmlContent,
+        extractedScreenCount: confirmed.revision.extractedScreenCount,
+      };
+    } else if (store.listPrototypes(input.projectId).length > 0) {
+      throw new Error(
+        `Project "${project.name}" has unconfirmed prototype(s) but no Confirmed Revision. Confirm a prototype revision before synthesizing the Ontology Suite.`,
+      );
+    }
+  }
 
   if (!targetProto) {
     const gen = await generatePrototypeFromDoc(store, {
@@ -4379,8 +4366,16 @@ export async function synthesizeOntologyFromPrototype(
       locale: input.locale,
       ...(input.signal ? { signal: input.signal } : {}),
     });
-    targetProto = gen.prototype;
-    project = gen.project;
+    const confirmedGen = store.confirmPrototypeRevision(
+      input.projectId,
+      gen.prototype.currentRevisionId,
+    );
+    targetProto = {
+      ...confirmedGen.prototype,
+      htmlContent: confirmedGen.confirmed.htmlContent,
+      extractedScreenCount: confirmedGen.confirmed.revision.extractedScreenCount,
+    };
+    project = confirmedGen.project;
   }
 
   const extractedMuPreview = extractMuFromPrototypeHtml(targetProto.htmlContent, project.domain);
@@ -4750,7 +4745,14 @@ export async function runAppCodingAgentTurn(
     assets.find((a) => a.id === appItem.techArchAssetId) ??
     assets.find((a) => a.layer === 'TECH_ARCH')!;
   const requirementDoc = store.listRequirementDocs(project.id)[0];
-  const prototype = store.listPrototypes(project.id)[0];
+  const confirmedProto = store.getConfirmedPrototypeRevision(project.id);
+  const prototype = confirmedProto
+    ? {
+        ...confirmedProto.prototype,
+        htmlContent: confirmedProto.htmlContent,
+        extractedScreenCount: confirmedProto.revision.extractedScreenCount,
+      }
+    : undefined;
 
   const activeProvider = resolvePreferredProvider(store, project.id);
 

@@ -68,13 +68,16 @@ import type {
   AssembledApplication,
   CapabilityAgent,
   CapabilityChatSession,
+  ConfirmedPrototypeRevisionRecord,
   CrossSystemFlow,
   DataDocument,
   DataMappingRule,
   DatabaseResource,
+  DesignBrief,
   ExtractionJob,
   FourLayerAsset,
   GeneratedSkill,
+  InteractivePrototype,
   KnowledgeEntry,
   LegacySystemConfig,
   LlmProviderConfig,
@@ -91,6 +94,19 @@ import type {
   WorkspaceStore,
   WritebackInterface,
 } from './types.js';
+import {
+  PrototypeConfirmedDeleteError,
+  applyRevisionMetadataPatch,
+  buildStoredPrototypeOnAppend,
+  buildStoredPrototypeOnCreate,
+  buildStoredPrototypeOnRestore,
+  hydrateConfirmedPrototypeRevision,
+  hydrateInteractivePrototype,
+  isLegacyStoredPrototype,
+  upgradeLegacyPrototype,
+  type AnyStoredPrototype,
+  type StoredInteractivePrototype,
+} from './prototype-revisions.js';
 
 export interface D1PreparedStatementBinding {
   bind(...values: unknown[]): D1PreparedStatementBinding;
@@ -417,12 +433,16 @@ function createEdgeMemoryFallbackDb(): SqliteDbLike {
             if (s.includes('AND project_id = ?')) {
               const [col, pid] = params;
               return [...entitiesMap.entries()]
+                .reverse()
                 .filter(([k, v]) => k.startsWith(`${col}::`) && v.project_id === String(pid))
+                .sort((a, b) => b[1].updated_at.localeCompare(a[1].updated_at))
                 .map(([, v]) => ({ payload_json: v.payload_json }));
             }
             const [col] = params;
             return [...entitiesMap.entries()]
+              .reverse()
               .filter(([k]) => k.startsWith(`${col}::`))
+              .sort((a, b) => b[1].updated_at.localeCompare(a[1].updated_at))
               .map(([, v]) => ({ payload_json: v.payload_json }));
           }
           if (s.includes('FROM agent_checkpoints')) {
@@ -782,8 +802,14 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     }
   }
 
-  function putItem<T>(collection: string, itemId: string, payload: T, projectId?: string): T {
-    const now = new Date().toISOString();
+  function putItem<T>(
+    collection: string,
+    itemId: string,
+    payload: T,
+    projectId?: string,
+    updatedAtOverride?: string,
+  ): T {
+    const now = updatedAtOverride ?? new Date().toISOString();
     const payloadJson = JSON.stringify(payload);
     const stmt = db.prepare(`
       INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at)
@@ -808,13 +834,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
   function listItems<T>(collection: string, projectId?: string): T[] {
     if (projectId) {
       const stmt = db.prepare(
-        `SELECT payload_json FROM workspace_entities WHERE collection = ? AND project_id = ? ORDER BY updated_at DESC`,
+        `SELECT payload_json FROM workspace_entities WHERE collection = ? AND project_id = ? ORDER BY updated_at DESC, rowid DESC`,
       );
       const rows = stmt.all(collection, projectId) as { payload_json: string }[];
       return rows.map((r) => JSON.parse(r.payload_json) as T);
     }
     const stmt = db.prepare(
-      `SELECT payload_json FROM workspace_entities WHERE collection = ? ORDER BY updated_at DESC`,
+      `SELECT payload_json FROM workspace_entities WHERE collection = ? ORDER BY updated_at DESC, rowid DESC`,
     );
     const rows = stmt.all(collection) as { payload_json: string }[];
     return rows.map((r) => JSON.parse(r.payload_json) as T);
@@ -1030,7 +1056,31 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     for (const s of SEED_REQUIREMENT_SESSIONS) putItem('req_sessions', s.id, s, s.projectId);
     for (const d of SEED_REQUIREMENT_DOCS) putItem('req_docs', d.id, d, d.projectId);
-    for (const pr of SEED_PROTOTYPES) putItem('prototypes', pr.id, pr, pr.projectId);
+    for (const pr of SEED_PROTOTYPES) {
+      const storedSeed: StoredInteractivePrototype = {
+        id: pr.id,
+        projectId: pr.projectId,
+        name: pr.name,
+        version: pr.version,
+        baseVersion: pr.version,
+        ...(pr.designBrief ? { designBrief: pr.designBrief } : {}),
+        ...(pr.coDesignSessionId ? { coDesignSessionId: pr.coDesignSessionId } : {}),
+        revisions: pr.revisions,
+        currentRevisionId: pr.currentRevisionId,
+        createdAt: pr.createdAt,
+        updatedAt: pr.updatedAt,
+      };
+      putItem('prototypes', pr.id, storedSeed, pr.projectId);
+      if (pr.isConfirmed && pr.confirmedRevisionId) {
+        const confirmation: ConfirmedPrototypeRevisionRecord = {
+          projectId: pr.projectId,
+          prototypeId: pr.id,
+          revisionId: pr.confirmedRevisionId,
+          confirmedAt: pr.updatedAt,
+        };
+        putItem('prototype_confirmations', pr.projectId, confirmation, pr.projectId);
+      }
+    }
     for (const a of SEED_FOUR_LAYER_ASSETS) putItem('four_layer_assets', a.id, a);
     for (const app of SEED_ASSEMBLED_APPS) putItem('assembled_apps', app.id, app, app.projectId);
     for (const sk of SEED_SKILLS) putItem('skills', sk.id, sk, sk.projectId);
@@ -1114,6 +1164,66 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     }
     return map;
   }
+
+  function ensurePrototypesMigrated(projectId?: string): void {
+    const rawItems = listItems<AnyStoredPrototype>('prototypes', projectId);
+    const byProject = new Map<string, AnyStoredPrototype[]>();
+    for (const item of rawItems) {
+      if (!item || !item.projectId) continue;
+      const list = byProject.get(item.projectId) ?? [];
+      list.push(item);
+      byProject.set(item.projectId, list);
+    }
+
+    for (const [projId, items] of byProject.entries()) {
+      const hasLegacy = items.some((item) => isLegacyStoredPrototype(item));
+      if (!hasLegacy) continue;
+
+      const migratedList: StoredInteractivePrototype[] = items.map((item) => {
+        if (!isLegacyStoredPrototype(item)) {
+          return item;
+        }
+        const upgraded = upgradeLegacyPrototype(item);
+        putItem('prototypes', upgraded.id, upgraded, upgraded.projectId, upgraded.updatedAt);
+        return upgraded;
+      });
+
+      const existingConfirmation = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        projId,
+      );
+      if (!existingConfirmation && migratedList.length > 0) {
+        const sortedNewestFirst = [...migratedList].sort((a, b) =>
+          b.updatedAt.localeCompare(a.updatedAt),
+        );
+        const newest = sortedNewestFirst[0]!;
+        putItem<ConfirmedPrototypeRevisionRecord>(
+          'prototype_confirmations',
+          projId,
+          {
+            projectId: projId,
+            prototypeId: newest.id,
+            revisionId: newest.currentRevisionId,
+            confirmedAt: newest.updatedAt,
+          },
+          projId,
+          newest.updatedAt,
+        );
+      }
+    }
+  }
+
+  function getStoredPrototype(prototypeId: string): StoredInteractivePrototype | undefined {
+    const raw = getItem<AnyStoredPrototype>('prototypes', prototypeId);
+    if (!raw) return undefined;
+    if (isLegacyStoredPrototype(raw)) {
+      ensurePrototypesMigrated(raw.projectId);
+      return getItem<StoredInteractivePrototype>('prototypes', prototypeId);
+    }
+    return raw;
+  }
+
+  ensurePrototypesMigrated();
 
   let seqCounter = 0;
   function nextUniqueId(prefix: string): string {
@@ -1294,14 +1404,54 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         });
       }
       for (const proto of this.listPrototypes(projectId)) {
-        const clonedProto: PrototypeArtifact = {
-          ...proto,
-          id: nextUniqueId('proto'),
+        const newProtoId = nextUniqueId('proto');
+        const revisionIdMap = new Map<string, string>();
+        const clonedRevisions = proto.revisions.map((rev) => {
+          const newRevId = nextUniqueId('prev');
+          revisionIdMap.set(rev.id, newRevId);
+          return {
+            ...rev,
+            id: newRevId,
+            prototypeId: newProtoId,
+            projectId: id,
+            ...(rev.restoredFromRevisionId
+              ? {
+                  restoredFromRevisionId:
+                    revisionIdMap.get(rev.restoredFromRevisionId) ?? rev.restoredFromRevisionId,
+                }
+              : {}),
+          };
+        });
+        const newCurrentRevId =
+          revisionIdMap.get(proto.currentRevisionId) ??
+          clonedRevisions[clonedRevisions.length - 1]!.id;
+        const clonedStored: StoredInteractivePrototype = {
+          id: newProtoId,
           projectId: id,
           name: `${proto.name} (副本)`,
+          version: proto.version,
+          baseVersion: proto.version.replace(/-r\d+$/i, ''),
+          ...(proto.designBrief ? { designBrief: structuredClone(proto.designBrief) } : {}),
+          revisions: clonedRevisions,
+          currentRevisionId: newCurrentRevId,
+          createdAt: now,
           updatedAt: now,
         };
-        putItem('prototypes', clonedProto.id, clonedProto, id);
+        putItem('prototypes', clonedStored.id, clonedStored, id);
+        if (proto.isConfirmed && proto.confirmedRevisionId) {
+          const mappedRevId = revisionIdMap.get(proto.confirmedRevisionId) ?? newCurrentRevId;
+          putItem<ConfirmedPrototypeRevisionRecord>(
+            'prototype_confirmations',
+            id,
+            {
+              projectId: id,
+              prototypeId: newProtoId,
+              revisionId: mappedRevId,
+              confirmedAt: now,
+            },
+            id,
+          );
+        }
       }
 
       return this.getProject(id)!;
@@ -1641,44 +1791,268 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     listPrototypes(projectId) {
-      return listItems<PrototypeArtifact>('prototypes', projectId);
+      ensurePrototypesMigrated(projectId);
+      const confirmation = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        projectId,
+      );
+      return listItems<StoredInteractivePrototype>('prototypes', projectId).map((stored) =>
+        hydrateInteractivePrototype(stored, confirmation),
+      );
+    },
+
+    getPrototype(prototypeId) {
+      const stored = getStoredPrototype(prototypeId);
+      if (!stored) return undefined;
+      const confirmation = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        stored.projectId,
+      );
+      return hydrateInteractivePrototype(stored, confirmation);
+    },
+
+    createPrototype(projectId, input) {
+      ensurePrototypesMigrated(projectId);
+      const current = this.getProject(projectId);
+      if (!current) throw new Error(`Project not found: ${projectId}`);
+      const prototypeId = input.id ?? nextUniqueId('proto');
+      const revisionId = nextUniqueId('prev');
+      const now = new Date().toISOString();
+      const { stored, revision } = buildStoredPrototypeOnCreate({
+        projectId,
+        prototypeId,
+        revisionId,
+        now,
+        input,
+      });
+      putItem('prototypes', stored.id, stored, projectId);
+      const confirmation = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        projectId,
+      );
+      return {
+        prototype: hydrateInteractivePrototype(stored, confirmation),
+        revision,
+        project: current,
+      };
+    },
+
+    appendPrototypeRevision(prototypeId, input) {
+      const existing = getStoredPrototype(prototypeId);
+      if (!existing) throw new Error(`Prototype not found: ${prototypeId}`);
+      const current = this.getProject(existing.projectId);
+      if (!current) throw new Error(`Project not found: ${existing.projectId}`);
+      const revisionId = nextUniqueId('prev');
+      const now = new Date().toISOString();
+      const { stored, revision } = buildStoredPrototypeOnAppend({
+        stored: existing,
+        revisionId,
+        now,
+        input,
+      });
+      putItem('prototypes', stored.id, stored, stored.projectId);
+      const confirmation = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        stored.projectId,
+      );
+      return {
+        prototype: hydrateInteractivePrototype(stored, confirmation),
+        revision,
+        project: current,
+      };
+    },
+
+    restorePrototypeRevision(prototypeId, revisionId, title) {
+      const existing = getStoredPrototype(prototypeId);
+      if (!existing) throw new Error(`Prototype not found: ${prototypeId}`);
+      const newRevisionId = nextUniqueId('prev');
+      const now = new Date().toISOString();
+      const { stored, revision } = buildStoredPrototypeOnRestore({
+        stored: existing,
+        targetRevisionId: revisionId,
+        newRevisionId,
+        now,
+        title,
+      });
+      putItem('prototypes', stored.id, stored, stored.projectId);
+      const confirmation = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        stored.projectId,
+      );
+      return {
+        prototype: hydrateInteractivePrototype(stored, confirmation),
+        revision,
+      };
+    },
+
+    updatePrototypeRevisionMeta(prototypeId, revisionId, patch) {
+      const existing = getStoredPrototype(prototypeId);
+      if (!existing) throw new Error(`Prototype not found: ${prototypeId}`);
+      const { stored, revision } = applyRevisionMetadataPatch(existing, revisionId, patch);
+      putItem('prototypes', stored.id, stored, stored.projectId, stored.updatedAt);
+      const confirmation = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        stored.projectId,
+      );
+      return {
+        prototype: hydrateInteractivePrototype(stored, confirmation),
+        revision,
+      };
+    },
+
+    updatePrototypeDesignBrief(prototypeId, designBrief: DesignBrief) {
+      const existing = getStoredPrototype(prototypeId);
+      if (!existing) throw new Error(`Prototype not found: ${prototypeId}`);
+      const now = new Date().toISOString();
+      const nextStored: StoredInteractivePrototype = {
+        ...existing,
+        designBrief: structuredClone(designBrief),
+        updatedAt: now,
+      };
+      putItem('prototypes', nextStored.id, nextStored, nextStored.projectId);
+      const confirmation = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        nextStored.projectId,
+      );
+      return hydrateInteractivePrototype(nextStored, confirmation);
+    },
+
+    confirmPrototypeRevision(projectId, revisionId) {
+      ensurePrototypesMigrated(projectId);
+      const current = this.getProject(projectId);
+      if (!current) throw new Error(`Project not found: ${projectId}`);
+      const projectProtos = listItems<StoredInteractivePrototype>('prototypes', projectId);
+      let matchedProto: StoredInteractivePrototype | undefined;
+      let matchedRevision: StoredInteractivePrototype['revisions'][number] | undefined;
+      for (const proto of projectProtos) {
+        const rev = proto.revisions.find((r) => r.id === revisionId);
+        if (rev) {
+          matchedProto = proto;
+          matchedRevision = rev;
+          break;
+        }
+      }
+      if (!matchedProto || !matchedRevision) {
+        throw new Error(`Prototype revision not found in project ${projectId}: ${revisionId}`);
+      }
+
+      const extractedMu = extractMuFromPrototypeHtml(matchedRevision.htmlContent, current.domain);
+      const updatedProject = this.updateSuite(
+        projectId,
+        {
+          ...current.suite,
+          MU: extractedMu,
+        },
+        `Confirmed prototype revision "${matchedRevision.title}" (${matchedRevision.id}) and extracted MU UI Model`,
+      );
+
+      const record: ConfirmedPrototypeRevisionRecord = {
+        projectId,
+        prototypeId: matchedProto.id,
+        revisionId: matchedRevision.id,
+        confirmedAt: new Date().toISOString(),
+      };
+      putItem('prototype_confirmations', projectId, record, projectId);
+      const confirmed = hydrateConfirmedPrototypeRevision(record, matchedProto)!;
+      return {
+        confirmed,
+        prototype: confirmed.prototype,
+        project: updatedProject,
+      };
+    },
+
+    getConfirmedPrototypeRevision(projectId) {
+      ensurePrototypesMigrated(projectId);
+      const record = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        projectId,
+      );
+      if (!record) return undefined;
+      const storedProto = getStoredPrototype(record.prototypeId);
+      if (!storedProto) return undefined;
+      return hydrateConfirmedPrototypeRevision(record, storedProto);
     },
 
     savePrototypeAndSyncMu(projectId, input) {
-      const current = this.getProject(projectId);
-      if (!current) throw new Error(`Project not found: ${projectId}`);
-      const extractedMu = extractMuFromPrototypeHtml(input.htmlContent, current.domain);
-      const proto: PrototypeArtifact = {
-        id: input.id ?? nextUniqueId('proto'),
-        projectId,
+      ensurePrototypesMigrated(projectId);
+      // Saving a prototype or appending a revision NEVER extracts or mutates suite.MU (ADR 0010).
+      if (input.id) {
+        const existing = getStoredPrototype(input.id);
+        if (existing && existing.projectId === projectId) {
+          const appended = this.appendPrototypeRevision(input.id, {
+            name: input.name,
+            version: input.version,
+            title: input.title,
+            instruction: input.instruction,
+            htmlContent: input.htmlContent,
+            source: input.source ?? 'MANUAL_SAVE',
+          });
+          return { prototype: appended.prototype, project: appended.project };
+        }
+      }
+      const created = this.createPrototype(projectId, {
+        id: input.id,
         name: input.name,
         version: input.version ?? 'v5.1',
+        title: input.title,
+        instruction: input.instruction,
         htmlContent: input.htmlContent,
-        extractedScreenCount: extractedMu.screens.length,
-        updatedAt: new Date().toISOString(),
-      };
-      putItem('prototypes', proto.id, proto, projectId);
-
-      let updatedProject = current;
-      if (input.syncMu !== false && extractedMu.screens.length > 0) {
-        updatedProject = this.updateModel(projectId, 'MU', extractedMu);
-      }
-      return { prototype: proto, project: updatedProject };
+        source: input.source ?? 'MANUAL_SAVE',
+        designBrief: input.designBrief,
+        coDesignSessionId: input.coDesignSessionId,
+      });
+      return { prototype: created.prototype, project: created.project };
     },
 
-    clonePrototype(protoId) {
-      const existing = getItem<PrototypeArtifact>('prototypes', protoId);
+    clonePrototype(protoId, options) {
+      const existing = getStoredPrototype(protoId);
       if (!existing) throw new Error(`Prototype not found: ${protoId}`);
-      const cloned: PrototypeArtifact = {
-        ...existing,
-        id: nextUniqueId('proto'),
-        name: `${existing.name} (副本)`,
-        updatedAt: new Date().toISOString(),
-      };
-      return putItem('prototypes', cloned.id, cloned, cloned.projectId);
+      const hydrated = hydrateInteractivePrototype(existing);
+      const currentRev =
+        hydrated.revisions.find((r) => r.id === hydrated.currentRevisionId) ??
+        hydrated.revisions[hydrated.revisions.length - 1]!;
+      let forkedSessionId: string | undefined;
+      if (existing.coDesignSessionId) {
+        const origSess = this.getAgentSession(existing.coDesignSessionId);
+        if (origSess) {
+          const forked = this.forkAgentSession(
+            origSess.id,
+            undefined,
+            `${origSess.title} (副本)`,
+          );
+          forkedSessionId = forked.id;
+        }
+      }
+      const nextName = options?.name?.trim() || `${existing.name} (副本)`;
+      const created = this.createPrototype(existing.projectId, {
+        name: nextName,
+        version: existing.baseVersion || existing.version.replace(/-r\d+$/i, ''),
+        title: `另存自「${existing.name}」(#${currentRev.revisionNumber})`,
+        htmlContent: currentRev.htmlContent,
+        source: 'CLONED',
+        ...(existing.designBrief ? { designBrief: structuredClone(existing.designBrief) } : {}),
+        ...(forkedSessionId ? { coDesignSessionId: forkedSessionId } : {}),
+      });
+      return created.prototype;
     },
 
     deletePrototype(protoId) {
+      const existing = getStoredPrototype(protoId);
+      if (existing) {
+        const confirmation = getItem<ConfirmedPrototypeRevisionRecord>(
+          'prototype_confirmations',
+          existing.projectId,
+        );
+        if (confirmation && confirmation.prototypeId === existing.id) {
+          const confirmedRev = existing.revisions.find((r) => r.id === confirmation.revisionId);
+          throw new PrototypeConfirmedDeleteError({
+            prototypeId: existing.id,
+            prototypeName: existing.name,
+            confirmedRevisionId: confirmation.revisionId,
+            ...(confirmedRev ? { confirmedRevisionTitle: confirmedRev.title } : {}),
+          });
+        }
+      }
       deleteItem('prototypes', protoId);
     },
 
