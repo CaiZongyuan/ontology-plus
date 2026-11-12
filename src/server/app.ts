@@ -741,6 +741,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       prototype,
       prototypes: store.listPrototypes(prototype.projectId),
       confirmedRevision: store.getConfirmedPrototypeRevision(prototype.projectId) ?? null,
+      agentSessions: store.listAgentSessions(),
     });
   });
 

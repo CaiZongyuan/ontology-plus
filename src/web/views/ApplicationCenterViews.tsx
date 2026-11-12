@@ -2636,9 +2636,15 @@ export function PrototypeStudioView({
                 ? { confirmedPrototypeRevision: payload.confirmedRevision }
                 : {}),
               ...(payload.project ? { activeProject: payload.project } : {}),
+              ...(payload.agentSessions ? { agentSessions: payload.agentSessions } : {}),
             });
             if (payload.selectedPrototypeId !== undefined) {
               setSelectedProtoId(payload.selectedPrototypeId);
+              setActivePrototypeId(project.id, payload.selectedPrototypeId);
+              const nextProto = payload.prototypes.find((p) => p.id === payload.selectedPrototypeId);
+              if (nextProto?.coDesignSessionId) {
+                useWorkbenchStore.getState().setActiveSessionId(nextProto.coDesignSessionId);
+              }
             }
           }}
           onBackToBrief={() => {

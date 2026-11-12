@@ -2139,22 +2139,29 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const currentRev =
         hydrated.revisions.find((r) => r.id === hydrated.currentRevisionId) ??
         hydrated.revisions[hydrated.revisions.length - 1]!;
-      let forkedSession: AgentSession | undefined;
+      const nextName = options?.name?.trim() || `${existing.name} (副本)`;
       const sourceSession =
         (existing.coDesignSessionId ? this.getAgentSession(existing.coDesignSessionId) : undefined) ??
         this.listAgentSessions({
           projectId: existing.projectId,
           agentKind: 'PROTOTYPE_CO_DESIGN',
           targetId: existing.id,
-        })[0];
-      if (sourceSession) {
-        forkedSession = this.forkAgentSession(
-          sourceSession.id,
-          undefined,
-          `${sourceSession.title} (副本)`,
-        );
-      }
-      const nextName = options?.name?.trim() || `${existing.name} (副本)`;
+        })[0] ??
+        (() => {
+          const createdSourceSession = this.createAgentSession({
+            projectId: existing.projectId,
+            agentKind: 'PROTOTYPE_CO_DESIGN',
+            targetId: existing.id,
+            title: existing.name,
+          });
+          this.linkPrototypeCoDesignSession(existing.id, createdSourceSession.id);
+          return createdSourceSession;
+        })();
+      const forkedSession = this.forkAgentSession(
+        sourceSession.id,
+        undefined,
+        nextName,
+      );
       const created = this.createPrototype(existing.projectId, {
         name: nextName,
         version: existing.baseVersion || existing.version.replace(/-r\d+$/i, ''),
@@ -2162,14 +2169,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         htmlContent: currentRev.htmlContent,
         source: 'CLONED',
         ...(existing.designBrief ? { designBrief: structuredClone(existing.designBrief) } : {}),
-        ...(forkedSession ? { coDesignSessionId: forkedSession.id } : {}),
+        coDesignSessionId: forkedSession.id,
       });
-      if (forkedSession) {
-        this.saveAgentSession({
-          ...forkedSession,
-          targetId: created.prototype.id,
-        });
-      }
+      this.saveAgentSession({
+        ...forkedSession,
+        targetId: created.prototype.id,
+      });
       return created.prototype;
     },
 

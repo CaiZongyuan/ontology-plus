@@ -2335,6 +2335,7 @@ export async function apiClonePrototype(
   prototype: InteractivePrototype;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  agentSessions?: AgentSession[];
 }> {
   return apiPostJson(`/api/prototypes/${encodeURIComponent(prototypeId)}/clone`, input ?? {});
 }

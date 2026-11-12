@@ -20,6 +20,7 @@ import {
   Upload,
 } from 'lucide-react';
 import type {
+  AgentSession,
   ConfirmedPrototypeRevision,
   InteractivePrototype,
   ProjectDetail,
@@ -93,6 +94,7 @@ export interface PrototypeCanvasStageProps {
     confirmedRevision?: ConfirmedPrototypeRevision | null;
     project?: ProjectDetail;
     selectedPrototypeId?: string;
+    agentSessions?: AgentSession[];
   }) => void;
   onBackToBrief: () => void;
   onNotify?: (message: string) => void;
@@ -614,6 +616,7 @@ export function PrototypeCanvasStage({
         prototypes: res.prototypes,
         confirmedRevision: res.confirmedRevision,
         selectedPrototypeId: res.prototype.id,
+        ...(res.agentSessions ? { agentSessions: res.agentSessions } : {}),
       });
       onSelectPrototype(res.prototype.id);
       setSwitcherOpen(false);
