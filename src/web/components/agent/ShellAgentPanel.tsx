@@ -5,9 +5,6 @@ import type {
   WritebackInterface,
 } from '../../../packages/workspace-store/index.js';
 import {
-  apiCreateAgentSession,
-  apiCreateUnboundPrototypeCoDesignSession,
-  apiForkAgentSession,
   apiPatchAgentSession,
   apiPostJson,
   getCurrentClientLocale,
@@ -16,6 +13,7 @@ import {
   type SessionLiveDraft,
 } from '../../api.js';
 import { usePreferences, type NavViewId } from '../../i18n.js';
+import { Button } from '../beautifui/index.js';
 import { decideDesignBriefForMe } from '../prototype/DesignBriefAndStyleTile.js';
 import { SelectionAttachmentStrip } from '../prototype/SelectionAttachmentStrip.js';
 import {
@@ -45,9 +43,18 @@ export interface AgentPanelSurface {
 }
 
 /**
- * Modules that show the unified Agent Panel (ADR 0009).
+ * Every workbench view maps to its owning project specialist Agent Session (ADR 0009),
+ * so the right-hand ShellAgentPanel stays available across all 24 views.
  */
-const AGENT_PANEL_SURFACES: Partial<Record<NavViewId, AgentPanelSurface>> = {
+export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
+  overview: {
+    title: { zh: '工程概览与全流程助手', en: 'Project Overview Copilot' },
+    sessionKind: 'COPILOT',
+    placeholder: {
+      zh: '询问工程阶段进展或发起本体协同操作…',
+      en: 'Ask about project lifecycle status or run ontology copilot actions…',
+    },
+  },
   'app-req-explore': {
     title: { zh: '需求探索与 SRS 合成', en: 'Requirement & SRS Agent' },
     sessionKind: 'REQUIREMENT',
@@ -82,6 +89,22 @@ const AGENT_PANEL_SURFACES: Partial<Record<NavViewId, AgentPanelSurface>> = {
       en: 'Describe an ontology change (e.g. upsert M3 rule or synthesize 11-model suite)…',
     },
   },
+  'app-model-files': {
+    title: { zh: '本体模型文件与校验助手', en: 'Model Files & Validation Copilot' },
+    sessionKind: 'COPILOT',
+    placeholder: {
+      zh: '询问模型 YAML 契约或修复一致性校验问题…',
+      en: 'Inspect YAML contracts or resolve consistency validation findings…',
+    },
+  },
+  'app-knowledge-graph': {
+    title: { zh: '本体知识图谱助手', en: 'Knowledge Graph Copilot' },
+    sessionKind: 'COPILOT',
+    placeholder: {
+      zh: '询问聚合根跨层关联、血缘影响或补充模型映射…',
+      en: 'Explore cross-model lineage, impact paths, or ontology links…',
+    },
+  },
   'app-four-layer-assets': {
     title: { zh: '技术架构规范生成助手', en: 'Tech Architecture Agent' },
     sessionKind: 'CODING',
@@ -98,12 +121,44 @@ const AGENT_PANEL_SURFACES: Partial<Record<NavViewId, AgentPanelSurface>> = {
       en: 'Ask the Coding Agent to inspect bindings or compile the Dev Guidebook…',
     },
   },
-  'cap-extraction': {
-    title: { zh: '存量系统本体萃取助手', en: 'Ontology Extraction Copilot' },
+  'app-skills': {
+    title: { zh: '领域 SKILL 资产助手', en: 'Domain SKILL Copilot' },
     sessionKind: 'COPILOT',
     placeholder: {
-      zh: '询问萃取候选对齐策略或补充业务本体规则…',
-      en: 'Ask about extraction candidate alignment or refine ontology rules…',
+      zh: '围绕本体派生 SKILL 指令集提出优化或校验问题…',
+      en: 'Refine or inspect ontology-derived SKILL assets…',
+    },
+  },
+  'app-publish': {
+    title: { zh: '研发资料包与发布助手', en: 'Package & Release Agent' },
+    sessionKind: 'CODING',
+    placeholder: {
+      zh: '检查交付资料包清单或编译导出研发指导资产…',
+      en: 'Check release artifacts or compile progressive-disclosure dev guides…',
+    },
+  },
+  'cap-systems': {
+    title: { zh: '存量系统接入与能力助手', en: 'Legacy Systems Capability Agent' },
+    sessionKind: 'CAPABILITY',
+    placeholder: {
+      zh: '询问存量系统接入契约、数据源配置或发起能力萃取…',
+      en: 'Ask about legacy system contracts, connectors, or capability extraction…',
+    },
+  },
+  'cap-extraction': {
+    title: { zh: '存量系统本体萃取智能体', en: 'Ontology Extraction Agent' },
+    sessionKind: 'CAPABILITY',
+    placeholder: {
+      zh: '解析 DDL / OpenAPI 萃取本体候选，或询问候选对齐策略…',
+      en: 'Extract ontology candidates from DDL / OpenAPI or align candidates…',
+    },
+  },
+  'cap-mcp': {
+    title: { zh: '本体 MCP 服务助手', en: 'Ontology MCP Capability Agent' },
+    sessionKind: 'CAPABILITY',
+    placeholder: {
+      zh: '探查本体编译生成的 MCP 工具契约与资源端点…',
+      en: 'Inspect compiled Ontology MCP tool schemas and resource endpoints…',
     },
   },
   'cap-agents': {
@@ -113,6 +168,38 @@ const AGENT_PANEL_SURFACES: Partial<Record<NavViewId, AgentPanelSurface>> = {
     placeholder: {
       zh: '输入业务指令以调用本体 MCP 工具与领域 SKILL（Enter 发送）…',
       en: 'Send a business query to invoke Ontology MCP tools & SKILL rules…',
+    },
+  },
+  'cap-cross-flows': {
+    title: { zh: '跨系统编排能力助手', en: 'Cross-System Flow Agent' },
+    sessionKind: 'CAPABILITY',
+    placeholder: {
+      zh: '梳理跨系统事件编排、接口调用链与补偿规则…',
+      en: 'Design cross-system event orchestration and compensation rules…',
+    },
+  },
+  'cap-knowledge': {
+    title: { zh: '领域知识库与能力助手', en: 'Domain Knowledge Agent' },
+    sessionKind: 'CAPABILITY',
+    placeholder: {
+      zh: '结合领域知识条目与 MCP 能力进行检索问答…',
+      en: 'Query domain knowledge entries alongside Ontology MCP capabilities…',
+    },
+  },
+  'data-resources': {
+    title: { zh: '数据资源与数据本体助手', en: 'Data Resource Copilot' },
+    sessionKind: 'COPILOT',
+    placeholder: {
+      zh: '分析数据库表结构、元数据约定或发起数据本体抽取…',
+      en: 'Inspect database schemas, metadata conventions, or data ontology alignment…',
+    },
+  },
+  'data-mappings': {
+    title: { zh: '语义映射与字段对齐助手', en: 'Semantic Mapping Copilot' },
+    sessionKind: 'COPILOT',
+    placeholder: {
+      zh: '检查 M1 聚合属性与物理库表字段之间的 ME/MM 语义映射…',
+      en: 'Verify ME/MM semantic mappings between M1 attributes and physical columns…',
     },
   },
   'data-metrics-reports': {
@@ -132,9 +219,33 @@ const AGENT_PANEL_SURFACES: Partial<Record<NavViewId, AgentPanelSurface>> = {
       en: 'Ask Data / Why / Policy questions grounded in M1 objects, M3 rules & write-backs…',
     },
   },
+  'data-writeback': {
+    title: { zh: '策略回写与闭环推理助手', en: 'Policy Write-Back Reasoning Agent' },
+    sessionKind: 'REASONING',
+    placeholder: {
+      zh: '推演策略回写动作影响并校验 M7/ME 执行契约…',
+      en: 'Evaluate policy write-back impact and M7/ME execution contracts…',
+    },
+  },
+  'llm-center': {
+    title: { zh: '模型网关与工作台助手', en: 'LLM Gateway & Workbench Copilot' },
+    sessionKind: 'COPILOT',
+    placeholder: {
+      zh: '询问网关配置要求、多模态视觉支持或测试建议…',
+      en: 'Ask about gateway configuration, vision support, or model routing…',
+    },
+  },
+  'system-settings': {
+    title: { zh: '平台治理与工作台助手', en: 'Platform Governance Copilot' },
+    sessionKind: 'COPILOT',
+    placeholder: {
+      zh: '询问工作区设置、离线演示模式或本体治理规范…',
+      en: 'Ask about workspace settings, demo mock mode, or governance rules…',
+    },
+  },
 };
 
-export function agentPanelSurfaceFor(view: NavViewId): AgentPanelSurface | undefined {
+export function agentPanelSurfaceFor(view: NavViewId): AgentPanelSurface {
   return AGENT_PANEL_SURFACES[view];
 }
 
@@ -280,7 +391,12 @@ export function resolveSurfaceAgentSession(
       );
     return {
       session,
-      matchingSessions: scopedProtoSessions.length > 0 ? scopedProtoSessions : protoSessions,
+      matchingSessions:
+        prototypes.length > 1
+          ? protoSessions
+          : scopedProtoSessions.length > 0
+            ? scopedProtoSessions
+            : protoSessions,
       activePrototypeId: activeProto?.id,
       activeCapabilityAgentId: undefined,
     };
@@ -288,20 +404,32 @@ export function resolveSurfaceAgentSession(
 
   if (surface.sessionKind === 'CAPABILITY') {
     const capAgents = data?.capabilityAgents ?? [];
+    const explicitCapAgent = opts?.activeItemId
+      ? capAgents.find((a) => a.id === opts.activeItemId)
+      : undefined;
     const activeCapAgent =
-      (opts?.activeItemId ? capAgents.find((a) => a.id === opts.activeItemId) : undefined) ??
+      explicitCapAgent ??
       capAgents.find((a) => a.projectId === activeProjectId) ??
       capAgents[0];
     const allCapSessions = sessions
       .filter((s) => s.agentKind === 'CAPABILITY')
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    const matching = activeCapAgent
+    const projectCapSessions = allCapSessions.filter((s) => s.projectId === activeProjectId);
+    const matching = explicitCapAgent
       ? allCapSessions.filter(
           (s) =>
-            s.targetId === activeCapAgent.id ||
-            (!s.targetId && s.projectId === activeCapAgent.projectId),
+            s.targetId === explicitCapAgent.id ||
+            (!s.targetId && s.projectId === explicitCapAgent.projectId),
         )
-      : allCapSessions.filter((s) => s.projectId === activeProjectId);
+      : projectCapSessions.length > 0
+        ? projectCapSessions
+        : activeCapAgent
+          ? allCapSessions.filter(
+              (s) =>
+                s.targetId === activeCapAgent.id ||
+                (!s.targetId && s.projectId === activeCapAgent.projectId),
+            )
+          : allCapSessions;
     const list = matching.length > 0 ? matching : allCapSessions;
     const session = list.find((s) => s.id === opts?.activeSessionId) ?? list[0];
     return {
@@ -507,16 +635,18 @@ export function ShellAgentPanel({
       return (
         <div className="agent-panel-mode-pills" role="group" aria-label={t('推理阶段', 'Reasoning stage')}>
           {modes.map((m) => (
-            <button
+            <Button
               key={m.id}
               type="button"
+              variant="toggle"
+              size="xs"
               data-testid={`reasoning-mode-${m.id}`}
               aria-pressed={reasoningMode === m.id}
               className={`agent-panel-mode-pill ${reasoningMode === m.id ? 'is-active' : ''}`}
               onClick={() => void handleChangeReasoningMode(m.id)}
             >
               {t(m.zh, m.en)}
-            </button>
+            </Button>
           ))}
         </div>
       );
@@ -552,67 +682,6 @@ export function ShellAgentPanel({
     t,
     setActiveItemId,
   ]);
-
-  const handleCreateSession = async () => {
-    if (!activeProjectId || !data) return;
-    const locale = getCurrentClientLocale();
-    if (surface.sessionKind === 'PROTOTYPE_CO_DESIGN' && !activePrototypeId) {
-      const created = await apiCreateUnboundPrototypeCoDesignSession(
-        activeProjectId,
-        locale === 'en-US'
-          ? `Prototype Co-Design #${matchingSessions.length + 1}`
-          : `原型共创会话 #${matchingSessions.length + 1}`,
-      );
-      patchData({ agentSessions: created.agentSessions });
-      setActiveSessionId(created.session.id);
-      return;
-    }
-
-    const capAgent =
-      surface.sessionKind === 'CAPABILITY'
-        ? data.capabilityAgents.find((a) => a.id === activeCapabilityAgentId) ??
-          data.capabilityAgents[0]
-        : undefined;
-    const targetProjectId = capAgent?.projectId ?? activeProjectId;
-    const targetId =
-      surface.sessionKind === 'PROTOTYPE_CO_DESIGN'
-        ? activePrototypeId
-        : surface.sessionKind === 'CAPABILITY'
-          ? capAgent?.id
-          : undefined;
-
-    const created = await apiCreateAgentSession({
-      projectId: targetProjectId,
-      agentKind: surface.sessionKind,
-      ...(targetId ? { targetId } : {}),
-      title:
-        locale === 'en-US'
-          ? `${surface.title.en} #${matchingSessions.length + 1}`
-          : `${surface.title.zh} #${matchingSessions.length + 1}`,
-      ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
-    });
-    patchData({ agentSessions: created.agentSessions });
-    setActiveSessionId(created.session.id);
-    showToast(t('已创建新智能体会话', 'Created new Agent Session'));
-  };
-
-  const handleForkRun = async (runId: string) => {
-    if (!activeSession) return;
-    const target = runs.find((r) => r.id === runId);
-    const fromMessageId = target?.sourceAssistantMessageId ?? target?.sourceUserMessageId;
-    const forked = await apiForkAgentSession(
-      activeSession.id,
-      fromMessageId ? { fromMessageId } : undefined,
-    );
-    patchData({ agentSessions: forked.agentSessions });
-    setActiveSessionId(forked.session.id);
-    showToast(
-      t(
-        `已从该轮对话分叉新会话「${forked.session.title}」`,
-        `Forked session "${forked.session.title}"`,
-      ),
-    );
-  };
 
   const handleAnswerAskUser = async (
     runId: string,
@@ -775,8 +844,26 @@ export function ShellAgentPanel({
       case 'SQL_PREVIEW':
         setActiveNav('data-reasoning');
         return;
+      case 'EXTRACTION_JOB':
+        setActiveNav('cap-extraction', { itemId: art.jobId });
+        return;
       default:
         break;
+    }
+  };
+
+  const allowPrototypeSessionSelect =
+    surface.sessionKind === 'PROTOTYPE_CO_DESIGN' && (data?.prototypes?.length ?? 0) > 1;
+
+  const handleSelectPrototypeSession = (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    if (!activeProjectId || !data) return;
+    const picked = matchingSessions.find((s) => s.id === sessionId);
+    const matchedProto = data.prototypes.find(
+      (p) => p.coDesignSessionId === sessionId || (picked?.targetId && p.id === picked.targetId),
+    );
+    if (matchedProto) {
+      setActivePrototypeId(activeProjectId, matchedProto.id);
     }
   };
 
@@ -792,7 +879,6 @@ export function ShellAgentPanel({
       onResize={(next, opts) => setWidth(next, opts)}
       onCancelRun={handleCancelRun}
       onRetryRun={handleRetryRun}
-      onForkRun={(runId) => void handleForkRun(runId)}
       onOpenRunArtifact={handleOpenArtifact}
       onOpenLlmCenter={() => onNavigate('llm-center')}
       onHoverAnchor={setHoveredAnchor}
@@ -802,11 +888,14 @@ export function ShellAgentPanel({
       onTriggerWriteback={(writebackId, actionTitle) =>
         void handleTriggerWriteback(writebackId, actionTitle)
       }
-      sessions={sessionOptions}
+      {...(allowPrototypeSessionSelect
+        ? {
+            sessions: sessionOptions,
+            onSelectSession: handleSelectPrototypeSession,
+          }
+        : {})}
       {...(activeSession?.id ? { activeSessionId: activeSession.id } : {})}
       isForkSession={Boolean(activeSession?.parentSessionId)}
-      onSelectSession={(sessionId) => setActiveSessionId(sessionId)}
-      onCreateSession={() => void handleCreateSession()}
       {...(headerContextSlot ? { headerContextSlot } : {})}
       onSubmitPrompt={handleSubmitPrompt}
       {...(surface.placeholder ? { composerPlaceholder: surface.placeholder } : {})}

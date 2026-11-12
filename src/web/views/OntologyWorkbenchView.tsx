@@ -1352,11 +1352,17 @@ export function OntologyWorkbenchView({
                       step: '3',
                       titleZh: '界面原型',
                       titleEn: 'Prototype',
-                      done: Boolean(lifecycle?.hasPrototype),
-                      statusZh: lifecycle?.hasPrototype
-                        ? `已生成 (${lifecycle.prototypeCount})`
-                        : '待生成',
-                      statusEn: lifecycle?.hasPrototype ? 'Ready' : 'Pending',
+                      done: Boolean(data?.confirmedPrototypeRevision),
+                      statusZh: data?.confirmedPrototypeRevision
+                        ? `已确认 (${data.confirmedPrototypeRevision.revision.extractedScreenCount} 屏)`
+                        : lifecycle?.hasPrototype
+                          ? '草稿待确认'
+                          : '待生成',
+                      statusEn: data?.confirmedPrototypeRevision
+                        ? 'Confirmed'
+                        : lifecycle?.hasPrototype
+                          ? 'Draft Unconfirmed'
+                          : 'Pending',
                     },
                     {
                       step: '4',
@@ -1391,7 +1397,7 @@ export function OntologyWorkbenchView({
                 )}
 
                 <div className="flex flex-wrap items-center gap-2">
-                  {lifecycle?.hasPrototype ? (
+                  {data?.confirmedPrototypeRevision ? (
                     <Button
                       type="button"
                       variant="accent"
@@ -1404,8 +1410,12 @@ export function OntologyWorkbenchView({
                           (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
                       )}
                       onClick={() => {
+                        const confirmedProtoId =
+                          data.confirmedPrototypeRevision?.prototype.id ??
+                          data.confirmedPrototypeRevision?.prototypeId;
+                        if (!confirmedProtoId) return;
                         useAgentPanelStore.getState().revealPanel();
-                        void startOntologySynthesisRun();
+                        void startOntologySynthesisRun({ prototypeId: confirmedProtoId });
                       }}
                     >
                       {(data?.agentSessions ?? []).some(

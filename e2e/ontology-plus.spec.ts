@@ -156,14 +156,21 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
 
     const agentPanel = page.getByTestId('agent-panel');
 
-    // 1. Capability Center: Ontology Extraction (verify "本体萃取" and zero "逆向")
+    // 1. Capability Center: Ontology Extraction via Unified ShellAgentPanel (verify "本体萃取" and zero "逆向")
     await page.getByTestId('nav-cap-extraction').click();
     await expect(page.getByTestId('run-extraction-btn')).toBeVisible();
     const bodyText = await page.locator('.platform-content').innerText();
     expect(bodyText).toContain('本体萃取');
     expect(bodyText).not.toContain('逆向');
     await page.getByTestId('run-extraction-btn').click();
-    await expect(page.getByTestId('toast-banner')).toContainText('本体萃取');
+    await expect(agentPanel).toBeVisible();
+    await expect(
+      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+    ).toBeVisible({ timeout: 25_000 });
+    await expect(page.locator('.platform-content')).toContainText(
+      '增量合同变更表与审批接口本体萃取',
+      { timeout: 15_000 },
+    );
 
     // 2. Capability Center: Dynamic MCP JSON-RPC 2.0 Tool Call
     await page.getByTestId('nav-cap-mcp').click();
@@ -282,27 +289,28 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await expect(page.getByTestId('analytics-reports-registry')).toBeVisible();
     await expect(page.getByTestId('analytics-report-markdown-editor')).toBeVisible();
 
-    // 6. Unified ShellAgentPanel: New Session, Live SSE Stream, Session Fork & Persistence across reload
-    await page.getByTestId('nav-app-ontology').click();
+    // 6. Prototype Switcher "另存为新原型" (Save as New Prototype): creates a new InteractivePrototype with its own forked PROTOTYPE_CO_DESIGN session & persists across reload
+    await page.getByTestId('nav-app-prototype').click();
+    await expect(page.getByTestId('prototype-canvas-stage')).toBeVisible();
     const agentPanel = page.getByTestId('agent-panel');
     await expect(agentPanel).toBeVisible();
 
-    await agentPanel.getByTestId('agent-new-session-btn').click();
-    await page
-      .getByTestId('agent-panel-composer-input')
-      .fill('请校验当前合同本体模型的完整性并给出建议');
-    await page.getByTestId('agent-panel-send-btn').click();
+    await page.getByTestId('prototype-switcher-trigger').click();
+    await expect(page.getByTestId('prototype-switcher-menu')).toBeVisible();
+    await page.getByTestId('prototype-clone-action-btn').click();
+    await page.getByTestId('prototype-clone-name-input').fill('合同工作台原型 · 分支方向');
+    await page.getByTestId('prototype-clone-confirm-btn').click();
 
-    const forkBtn = agentPanel.getByTestId('agent-fork-msg-btn').first();
-    await expect(forkBtn).toBeVisible({ timeout: 25_000 });
-    await forkBtn.click();
-
-    await expect(agentPanel.getByTestId('agent-panel-fork-badge')).toBeVisible();
+    await expect(page.getByTestId('prototype-switcher-trigger')).toContainText(
+      '合同工作台原型 · 分支方向',
+      { timeout: 15_000 },
+    );
+    await expect(agentPanel.getByTestId('agent-panel-fork-badge')).toBeVisible({ timeout: 15_000 });
     await expect(agentPanel.getByTestId('agent-panel-session-select')).toBeVisible();
 
-    // Reload page and verify forked multi-session state is persisted in SQLite
+    // Reload page and verify cloned prototype + forked multi-prototype session selector persist in SQLite
     await page.reload();
-    await page.getByTestId('nav-app-ontology').click();
+    await page.getByTestId('nav-app-prototype').click();
     await expect(page.getByTestId('agent-panel').getByTestId('agent-panel-session-select')).toBeVisible();
   });
 });

@@ -7,6 +7,7 @@ import type {
 import type {
   AgentAskUserPrompt,
   AgentDomainArtifact,
+  AgentImageAttachmentRef,
   AgentSession,
   AgentSessionKind,
   AgentToolCallTrace,
@@ -97,6 +98,7 @@ export interface ProjectLifecycleState {
   hasSrsDoc: boolean;
   srsDocCount: number;
   hasPrototype: boolean;
+  hasConfirmedPrototype: boolean;
   prototypeCount: number;
   presentModelCount: number;
   hasOntology: boolean;
@@ -131,6 +133,7 @@ export function getProjectLifecycleState(data: BootstrapPayload): ProjectLifecyc
   const hasSrsDoc = srsDocCount > 0;
   const prototypeCount = data.prototypes.length;
   const hasPrototype = prototypeCount > 0;
+  const hasConfirmedPrototype = Boolean(data.confirmedPrototypeRevision);
   const presentModelCount = active.validation.presentModels.length;
   const hasOntology = presentModelCount > 0;
 
@@ -166,15 +169,24 @@ export function getProjectLifecycleState(data: BootstrapPayload): ProjectLifecyc
       hintZh: '您已完成需求探索对话，下一步请合成《软件需求说明书》，作为原型与本体的输入依据。',
       hintEn: 'Exploration session found. Next, synthesize the Software Requirements Specification (SRS).',
     };
-  } else if (!hasPrototype) {
-    nextStep = {
-      step: 3,
-      targetView: 'app-req-docs',
-      labelZh: '前往需求文档：生成交互界面原型',
-      labelEn: 'Step 3: Generate UI Prototype',
-      hintZh: '《需求文档》已就绪，下一步请生成交互式 HTML 原型以确认页面布局与业务操作流。',
-      hintEn: 'SRS is ready. Next, generate an interactive HTML prototype to confirm screens and actions.',
-    };
+  } else if (!hasConfirmedPrototype) {
+    nextStep = hasPrototype
+      ? {
+          step: 3,
+          targetView: 'app-prototype',
+          labelZh: '前往界面原型：确认为当前原型',
+          labelEn: 'Step 3: Confirm Current Prototype',
+          hintZh: '草稿原型已生成，请先在「界面原型」中点击「确认为当前原型」，再推导 11 元模型业务本体。',
+          hintEn: 'Draft prototype exists. Confirm a prototype revision ("Confirm Current Prototype") first before synthesizing the 11-model ontology.',
+        }
+      : {
+          step: 3,
+          targetView: 'app-req-docs',
+          labelZh: '前往需求文档：生成交互界面原型',
+          labelEn: 'Step 3: Generate UI Prototype',
+          hintZh: '《需求文档》已就绪，下一步请生成交互式 HTML 原型以确认页面布局与业务操作流。',
+          hintEn: 'SRS is ready. Next, generate an interactive HTML prototype to confirm screens and actions.',
+        };
   } else if (!hasOntology) {
     nextStep = {
       step: 4,
@@ -201,6 +213,7 @@ export function getProjectLifecycleState(data: BootstrapPayload): ProjectLifecyc
     hasSrsDoc,
     srsDocCount,
     hasPrototype,
+    hasConfirmedPrototype,
     prototypeCount,
     presentModelCount,
     hasOntology,
@@ -330,6 +343,7 @@ export interface SessionLiveDraft {
   sessionId: string;
   userPrompt: string;
   displayTitle?: string;
+  images?: AgentImageAttachmentRef[];
   startedAt: number;
   liveStatus: { zh: string; en: string };
   model?: string;
@@ -401,6 +415,9 @@ export function formatToolStepLabel(toolName: string): { zh: string; en: string 
       return { zh: '拟定策略回写动作草案', en: 'Propose policy writeback action' };
     case 'invoke_mcp_tool':
       return { zh: '调用本体 MCP 工具', en: 'Invoke ontology MCP tool' };
+    case 'run_ontology_extraction':
+    case 'extract_ontology_candidates':
+      return { zh: '解析源码契约并萃取本体候选', en: 'Extract ontology candidates from source' };
     case 'upsert_term':
     case 'upsert_aggregate':
     case 'upsert_process':
@@ -615,6 +632,15 @@ interface WorkbenchStoreState {
     scenarioId: string,
     opts?: { question?: string; saveAsReport?: boolean; mockMode?: boolean },
   ) => Promise<{ sessionId: string } | null>;
+  startOntologyExtractionRun: (input: {
+    systemId: string;
+    projectId?: string;
+    title: string;
+    sourceType: 'DDL_ONLY' | 'OPENAPI_ONLY' | 'DDL_AND_OPENAPI';
+    sourceSnippet: string;
+    applyImmediately?: boolean;
+    mockMode?: boolean;
+  }) => Promise<{ sessionId: string } | null>;
   startPrototypeRefinementRun: (input: {
     projectId: string;
     prototypeId: string;
@@ -930,6 +956,7 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
             runId: lastUser?.id ?? `live-${sessionId}`,
             sessionId,
             userPrompt: lastUser?.content ?? '',
+            ...(lastUser?.images && lastUser.images.length > 0 ? { images: lastUser.images } : {}),
             startedAt: lastUser ? Date.parse(lastUser.timestamp) || Date.now() : Date.now(),
             liveStatus: { zh: '正在同步后台运行进展…', en: 'Reconnecting to live run…' },
             thinking: '',
@@ -997,6 +1024,19 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     activeSessionStreamAborters.set(sessionId, controller);
 
     const draftRunId = `lrun-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const draftImages: AgentImageAttachmentRef[] | undefined =
+      input.images && input.images.length > 0
+        ? input.images.map((img) => ({
+            id: img.id,
+            name: img.name,
+            mimeType: img.mimeType,
+            source: img.remoteUrl ? 'remote' : 'local',
+            ...(img.remoteUrl ? { remoteUrl: img.remoteUrl } : {}),
+            ...(img.width !== undefined ? { width: img.width } : {}),
+            ...(img.height !== undefined ? { height: img.height } : {}),
+            ...(img.role ? { role: img.role } : {}),
+          }))
+        : undefined;
     set({
       liveSessionDrafts: {
         ...get().liveSessionDrafts,
@@ -1005,6 +1045,7 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
           sessionId,
           userPrompt: effectivePrompt,
           ...(input.displayTitle ? { displayTitle: input.displayTitle } : {}),
+          ...(draftImages ? { images: draftImages } : {}),
           startedAt: Date.now(),
           liveStatus: { zh: '正在理解指令并分析锚点…', en: 'Analyzing instruction & anchors…' },
           thinking: '',
@@ -1356,6 +1397,49 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     return { sessionId: session.id };
   },
 
+  startOntologyExtractionRun: async (input) => {
+    const curData = get().data;
+    if (!curData) return null;
+    const targetProjectId = input.projectId || curData.activeProject.id;
+    const locale = getCurrentClientLocale();
+    const sys = curData.legacySystems.find((s) => s.id === input.systemId);
+    const sysName = sys?.name || input.systemId;
+    const session = await get().ensureProjectAgentSession(targetProjectId, 'CAPABILITY', {
+      title:
+        locale === 'en-US'
+          ? `${curData.activeProject.name} Capability & Extraction Agent`
+          : `${curData.activeProject.name} 能力与本体萃取智能体`,
+    });
+    get().setActiveSessionId(session.id);
+    useAgentPanelStore.getState().revealPanel();
+
+    const payload = {
+      systemId: input.systemId,
+      title: input.title.trim() || `${sysName} Ontology Extraction`,
+      sourceType: input.sourceType,
+      sourceSnippet: input.sourceSnippet,
+      applyImmediately: Boolean(input.applyImmediately),
+    };
+    const header = `[ACTION:RUN_ONTOLOGY_EXTRACTION ${JSON.stringify(payload)}]`;
+    const instruction =
+      locale === 'en-US'
+        ? `Extract ontology candidates (M1 objects, M3 rules, M7 commands, ME mappings) from legacy system "${sysName}" (${input.sourceType}) and record the extraction job.`
+        : `请解析存量系统「${sysName}」的 ${input.sourceType} 契约片段，智能萃取 M1 业务对象、M3 业务规则、M7 接口指令与 ME 外部映射候选并记录萃取任务。`;
+    const displayTitle =
+      locale === 'en-US'
+        ? `Ontology Extraction: ${payload.title}`
+        : `本体萃取：${payload.title}`;
+
+    await get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: `${header}\n${instruction}`,
+      displayTitle,
+      ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
+    });
+
+    return { sessionId: session.id };
+  },
+
   startPrototypeRefinementRun: async (input) => {
     const locale = getCurrentClientLocale();
     get().setActivePrototypeId(input.projectId, input.prototypeId);
@@ -1658,6 +1742,7 @@ export interface StreamAgentSessionCallbacks {
     confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
     fourLayerAssets?: FourLayerAsset[];
     assembledApplications?: AssembledApplication[];
+    extractionJobs?: ExtractionJob[];
     metrics?: MetricDefinition[];
     analyticsReports?: AnalyticsReport[];
     reasoningSessions?: ReasoningSession[];
@@ -1839,6 +1924,7 @@ function buildStoreSessionStreamCallbacks(
     confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
     fourLayerAssets?: FourLayerAsset[];
     assembledApplications?: AssembledApplication[];
+    extractionJobs?: ExtractionJob[];
     metrics?: MetricDefinition[];
     analyticsReports?: AnalyticsReport[];
     reasoningSessions?: ReasoningSession[];
@@ -1850,12 +1936,26 @@ function buildStoreSessionStreamCallbacks(
     const nextSessions = exists
       ? (cur.agentSessions ?? []).map((s) => (s.id === updatedSession.id ? updatedSession : s))
       : [updatedSession, ...(cur.agentSessions ?? [])];
-    const isSameProject = cur.activeProject.id === updatedSession.projectId;
+    const isSameProject =
+      cur.activeProject.id === (payload.project?.id ?? updatedSession.projectId);
     set({
       data: {
         ...cur,
         agentSessions: nextSessions,
-        ...(isSameProject && payload.project ? { activeProject: payload.project } : {}),
+        ...(isSameProject && payload.project
+          ? {
+              activeProject: payload.project,
+              projects: cur.projects.map((p) =>
+                p.id === payload.project!.id
+                  ? {
+                      ...p,
+                      currentStage: payload.project!.currentStage,
+                      updatedAt: payload.project!.updatedAt,
+                    }
+                  : p,
+              ),
+            }
+          : {}),
         ...(isSameProject && payload.requirementDocs
           ? { requirementDocs: payload.requirementDocs }
           : {}),
@@ -1870,6 +1970,7 @@ function buildStoreSessionStreamCallbacks(
         ...(isSameProject && payload.assembledApplications
           ? { assembledApplications: payload.assembledApplications }
           : {}),
+        ...(payload.extractionJobs ? { extractionJobs: payload.extractionJobs } : {}),
         ...(payload.metrics ? { metrics: payload.metrics } : {}),
         ...(payload.analyticsReports ? { analyticsReports: payload.analyticsReports } : {}),
         ...(isSameProject && payload.reasoningSessions

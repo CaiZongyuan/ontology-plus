@@ -4,7 +4,7 @@ import type { PrototypeTargetAnchor } from '../../../packages/workspace-store/in
 export const AGENT_PANEL_MIN_WIDTH = 320;
 export const AGENT_PANEL_MAX_WIDTH = 640;
 export const AGENT_PANEL_DEFAULT_WIDTH = 384;
-export const AGENT_PANEL_WIDE_CSS_WIDTH = 'min(760px, 56vw)';
+export const AGENT_PANEL_WIDE_CSS_WIDTH = 'min(48vw, 680px)';
 /** Below this viewport width the panel is an overlay instead of a shell column. */
 export const AGENT_PANEL_OVERLAY_QUERY = '(max-width: 1100px)';
 

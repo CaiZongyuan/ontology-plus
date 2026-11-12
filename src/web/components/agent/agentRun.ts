@@ -1,6 +1,7 @@
 import type {
   AgentAskUserPrompt,
   AgentDomainArtifact,
+  AgentImageAttachmentRef,
   AgentSession,
   AgentSessionMessage,
   AgentToolCallTrace,
@@ -64,6 +65,8 @@ export interface AgentRunView {
   sourceUserMessageId?: string;
   sourceAssistantMessageId?: string;
   retryPrompt?: string;
+  /** User-attached or visual-reference images submitted on this run (IndexedDB local or remote). */
+  images?: AgentImageAttachmentRef[];
   /** Structured Scoped HITL question emitted by `ask_user` during this run. */
   askUser?: AgentAskUserPrompt;
   /** Semantic anchors modified during this run (for canvas highlighting). */
@@ -154,6 +157,13 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
           ? { zh: `AI 场景归因：${name}`, en: `AI Scenario Attribution: ${name}` }
           : { zh: 'AI 场景归因分析', en: 'AI Scenario Attribution' };
       }
+      case 'RUN_ONTOLOGY_EXTRACTION': {
+        const jobTitle =
+          typeof params.title === 'string' && params.title.trim() ? params.title.trim() : '';
+        return jobTitle
+          ? { zh: `本体萃取：${jobTitle}`, en: `Ontology Extraction: ${jobTitle}` }
+          : { zh: '执行存量系统本体萃取', en: 'Run Ontology Extraction' };
+      }
     }
   }
 
@@ -227,6 +237,7 @@ const ARTIFACT_PRIORITY: AgentDomainArtifact['kind'][] = [
   'PROTOTYPE_REVISION',
   'REQUIREMENT_DOC',
   'ONTOLOGY_SUITE',
+  'EXTRACTION_JOB',
   'TECH_ARCH_ASSET',
   'ANALYTICS_REPORT',
   'METRIC_INSIGHT',
@@ -300,6 +311,11 @@ function formatDomainArtifactLabel(artifact: AgentDomainArtifact): LocalizedText
         zh: `查看 SQL 结果 (${artifact.rows.length} 行)`,
         en: `View SQL preview (${artifact.rows.length} rows)`,
       };
+    case 'EXTRACTION_JOB':
+      return {
+        zh: `查看萃取候选 (${artifact.systemName} · ${artifact.candidateCount} 项)`,
+        en: `Review Extraction (${artifact.systemName} · ${artifact.candidateCount} candidates)`,
+      };
     default:
       return { zh: '查看产物', en: 'View artifact' };
   }
@@ -357,6 +373,7 @@ function buildCompletedSessionRun(
     sourceUserMessageId: uMsg.id,
     sourceAssistantMessageId: aMsg.id,
     retryPrompt: uMsg.content,
+    ...(uMsg.images && uMsg.images.length > 0 ? { images: uMsg.images } : {}),
     ...(aMsg.askUser ? { askUser: aMsg.askUser } : {}),
     ...(modifiedAnchors.length > 0 ? { modifiedAnchors } : {}),
     ...(revArtifact
@@ -405,6 +422,12 @@ function buildRunFromLiveDraft(
   const thinking = draft.thinking.trim();
   const revArtifact = extractRevisionArtifact(draft.artifacts);
   const primaryArtifact = selectPrimaryDomainArtifact(draft.artifacts);
+  const images =
+    uMsg?.images && uMsg.images.length > 0
+      ? uMsg.images
+      : draft.images && draft.images.length > 0
+        ? draft.images
+        : undefined;
   return {
     id: uMsg?.id ?? draft.runId,
     title: summarizeUserPromptTitle(uMsg?.content ?? draft.userPrompt, draft.displayTitle),
@@ -417,6 +440,7 @@ function buildRunFromLiveDraft(
     sourceSessionId: draft.sessionId,
     ...(uMsg ? { sourceUserMessageId: uMsg.id } : {}),
     retryPrompt: uMsg?.content ?? draft.userPrompt,
+    ...(images ? { images } : {}),
     ...(draft.askUser ? { askUser: draft.askUser } : {}),
     ...(draft.activeAnchor ? { modifiedAnchors: [draft.activeAnchor] } : {}),
     ...(revArtifact
@@ -489,6 +513,7 @@ export function agentRunsFromSession(
       sourceSessionId: session.id,
       sourceUserMessageId: msg.id,
       retryPrompt: msg.content,
+      ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
     });
   }
 

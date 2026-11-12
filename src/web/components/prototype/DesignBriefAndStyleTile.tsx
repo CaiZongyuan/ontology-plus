@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type {
   AgentImageAttachmentRef,
+  AgentImageAttachmentRole,
   DesignBrief,
   DesignBriefBorrowedReference,
   DesignBriefItem,
@@ -23,8 +24,8 @@ import type {
 } from '../../../packages/workspace-store/index.js';
 import type { TransientTurnImageInput } from '../../../packages/agent-runtime/index.js';
 import { usePreferences } from '../../i18n.js';
-import { resolveTurnImagesForRequest } from '../../lib/localImageStore.js';
-import { VisionCapabilityBanner } from '../agent/VisionAttachmentControls.js';
+import { loadLocalImage, resolveTurnImagesForRequest } from '../../lib/localImageStore.js';
+import { LocalImageThumbnail, VisionCapabilityBanner } from '../agent/VisionAttachmentControls.js';
 import { Button } from '../beautifui/index.js';
 import {
   DEFAULT_ALIGNMENT_STATE,
@@ -44,6 +45,7 @@ import {
   CURATED_INSPO_CATALOG,
   LIKED_ASPECT_OPTIONS,
   createInitialVisualReferenceSelection,
+  inspoFullUrl,
   inspoHeroUrl,
   recommendVisualReferences,
   upsertBorrowedReference,
@@ -320,6 +322,7 @@ export function synthesizeDesignBriefItems({
 export function buildDesignBriefFromState(
   params: SynthesizeDesignBriefParams & {
     existingItems?: DesignBriefItem[];
+    userImageRefs?: AgentImageAttachmentRef[];
     approved?: boolean;
   },
 ): DesignBrief {
@@ -340,6 +343,9 @@ export function buildDesignBriefFromState(
     primaryReferenceTitle: params.referenceSelection.primary.title,
     primaryReferenceSourceUrl: params.referenceSelection.primary.sourceUrl,
     ...(borrowedReferences.length > 0 ? { borrowedReferences } : {}),
+    ...(params.userImageRefs && params.userImageRefs.length > 0
+      ? { userImageRefs: params.userImageRefs.map((r) => ({ ...r })) }
+      : {}),
     motionSchematicIds: collectSelectedMotionSchematicIds(params.alignment),
     ...(params.approved ? { approvedAt: now } : {}),
     updatedAt: now,
@@ -515,6 +521,7 @@ export function rewriteDesignBriefWithInstruction(params: {
     referenceSelection: nextReferenceSelection,
     alignment: nextAlignment,
     userFeelNote: nextUserFeelNote,
+    ...(params.brief.userImageRefs ? { userImageRefs: params.brief.userImageRefs } : {}),
     existingItems: [directiveItem, ...baseItems, ...preservedCustom],
     locale,
   });
@@ -609,6 +616,168 @@ export async function decideDesignBriefForMe(params: {
   };
 }
 
+export interface DesignBriefAssistFields {
+  positioning: string;
+  colorMood: string;
+  typography: string;
+  layoutDensity: string;
+  keyScreenStructure: string;
+  componentTone: string;
+  constraints: string;
+  openNotes?: string;
+}
+
+export function mapAssistBriefFieldsToItems(
+  fields: DesignBriefAssistFields,
+  preservedCustom: DesignBriefItem[] = [],
+): DesignBriefItem[] {
+  const items: DesignBriefItem[] = [];
+  const pushIfPresent = (id: string, category: string, val: string | undefined) => {
+    const clean = val?.trim();
+    if (clean) items.push({ id, category, statement: clean });
+  };
+  pushIfPresent('brief-positioning', 'positioning', fields.positioning);
+  pushIfPresent('brief-tone', 'tone_palette', fields.colorMood);
+  pushIfPresent('brief-typography', 'typography', fields.typography);
+  pushIfPresent('brief-density', 'density_layout', fields.layoutDensity);
+  pushIfPresent('brief-scope', 'screen_scope', fields.keyScreenStructure);
+  pushIfPresent('brief-motion', 'motion_interaction', fields.componentTone);
+  pushIfPresent('brief-constraints', 'constraints', fields.constraints);
+  pushIfPresent('brief-user-feel', 'user_feel', fields.openNotes);
+  return [...items, ...preservedCustom];
+}
+
+export interface RequestDesignBriefAssistParams {
+  projectId?: string;
+  mode: 'synthesize' | 'rewrite' | 'decide';
+  project?: ProjectDetail;
+  doc?: RequirementDoc;
+  currentBrief?: Partial<DesignBrief>;
+  instruction?: string;
+  referenceSelection?: VisualReferenceSelection;
+  visionImages?: readonly AgentImageAttachmentRef[];
+  fetchFn?: typeof fetch;
+}
+
+export async function requestDesignBriefAssist(
+  params: RequestDesignBriefAssistParams,
+): Promise<{
+  items: DesignBriefItem[];
+  brief: DesignBriefAssistFields;
+  source: 'agent' | 'mock';
+} | null> {
+  const projectId = params.projectId?.trim();
+  if (!projectId) return null;
+  const fetchFn = params.fetchFn ?? globalThis.fetch;
+  if (typeof fetchFn !== 'function') return null;
+
+  const images: Array<{
+    imageId: string;
+    role: AgentImageAttachmentRole;
+    mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+    dataBase64: string;
+    label?: string;
+  }> = [];
+
+  for (const att of params.visionImages ?? []) {
+    if (att.source !== 'local') continue;
+    const rec = await loadLocalImage(att.id);
+    if (!rec || !rec.dataBase64) continue;
+    const normalizedMime: 'image/png' | 'image/jpeg' | 'image/webp' =
+      rec.mimeType === 'image/png' || rec.mimeType === 'image/jpeg' || rec.mimeType === 'image/webp'
+        ? rec.mimeType
+        : 'image/webp';
+    images.push({
+      imageId: att.id,
+      role: att.role ?? 'user_upload',
+      mimeType: normalizedMime,
+      dataBase64: rec.dataBase64,
+      ...(att.name ? { label: att.name } : {}),
+    });
+  }
+
+  const primary = params.referenceSelection?.primary;
+  const borrowedReferences: DesignBriefBorrowedReference[] | undefined =
+    params.referenceSelection && params.referenceSelection.borrowed.length > 0
+      ? params.referenceSelection.borrowed.map((b) => ({
+          referenceId: b.item.slug,
+          aspect: b.aspect,
+          title: b.item.title,
+          sourceUrl: b.item.sourceUrl,
+        }))
+      : params.currentBrief?.borrowedReferences;
+
+  const payload = {
+    mode: params.mode,
+    ...(params.doc?.content?.trim()
+      ? { srsSummary: params.doc.content.trim().slice(0, 3200) }
+      : {}),
+    ...(params.project?.name ? { projectName: params.project.name } : {}),
+    ...(params.currentBrief ? { currentBrief: params.currentBrief } : {}),
+    ...(params.instruction?.trim() ? { instruction: params.instruction.trim() } : {}),
+    ...(primary
+      ? {
+          primaryReference: {
+            slug: primary.slug,
+            title: primary.title,
+            colors: [primary.surfaceHex, ...primary.palette],
+            fonts: primary.fonts,
+            styleTags: [
+              primary.vibeGroup,
+              primary.mode,
+              ...(primary.tags ? [primary.tags] : []),
+            ],
+            industry: primary.vibeGroup,
+          },
+        }
+      : {}),
+    ...(borrowedReferences && borrowedReferences.length > 0 ? { borrowedReferences } : {}),
+    ...(images.length > 0 ? { images } : {}),
+  };
+
+  try {
+    const res = await fetchFn(
+      `/api/projects/${encodeURIComponent(projectId)}/design-brief-assist`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      ok?: boolean;
+      brief?: Partial<DesignBriefAssistFields>;
+      source?: 'agent' | 'mock';
+    };
+    if (!json?.ok || !json.brief || typeof json.brief.positioning !== 'string') {
+      return null;
+    }
+    const briefFields: DesignBriefAssistFields = {
+      positioning: json.brief.positioning,
+      colorMood: json.brief.colorMood ?? '',
+      typography: json.brief.typography ?? '',
+      layoutDensity: json.brief.layoutDensity ?? '',
+      keyScreenStructure: json.brief.keyScreenStructure ?? '',
+      componentTone: json.brief.componentTone ?? '',
+      constraints: json.brief.constraints ?? '',
+      ...(json.brief.openNotes ? { openNotes: json.brief.openNotes } : {}),
+    };
+    const preservedCustom = (params.currentBrief?.items ?? []).filter(
+      (i) => i.category === 'custom',
+    );
+    const items = mapAssistBriefFieldsToItems(briefFields, preservedCustom);
+    if (items.length === 0) return null;
+    return {
+      items,
+      brief: briefFields,
+      source: json.source ?? 'mock',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function hydrateBriefingStateFromDesignBrief(
   designBrief: DesignBrief,
   catalog: VisualReferenceItem[] = CURATED_INSPO_CATALOG,
@@ -617,6 +786,7 @@ export function hydrateBriefingStateFromDesignBrief(
   referenceSelection: VisualReferenceSelection;
   alignment: RequirementAlignmentState;
   userFeelNote: string;
+  userImageRefs: AgentImageAttachmentRef[];
   items: DesignBriefItem[];
 } {
   const primary =
@@ -649,6 +819,9 @@ export function hydrateBriefingStateFromDesignBrief(
     referenceSelection,
     alignment,
     userFeelNote: designBrief.userFeelNote ?? '',
+    userImageRefs: designBrief.userImageRefs
+      ? designBrief.userImageRefs.map((r) => ({ ...r }))
+      : [],
     items: designBrief.items.map((item) => ({ ...item })),
   };
 }
@@ -660,13 +833,18 @@ export async function gatherBriefingTurnImages(params: {
 }): Promise<TransientTurnImageInput[]> {
   const locale = params.locale ?? 'zh-CN';
   const primary = params.referenceSelection.primary;
+  const url =
+    primary.fullPageUrl ||
+    inspoFullUrl(primary.slug) ||
+    primary.heroUrl ||
+    inspoHeroUrl(primary.slug);
   const refs: AgentImageAttachmentRef[] = [
     {
       id: `inspo-primary-${primary.slug}`,
       name: `${primary.title} (${primary.sourceDomain})`,
       mimeType: 'image/webp',
       source: 'remote',
-      remoteUrl: primary.heroUrl || inspoHeroUrl(primary.slug),
+      remoteUrl: url,
       role: 'primary_ref',
     },
   ];
@@ -830,12 +1008,14 @@ export interface DesignBriefCardProps {
   onUpdateItem: (itemId: string, statement: string) => void;
   onAddItem: (statement: string) => void;
   onRemoveItem: (itemId: string) => void;
-  onResetAutoBrief?: () => void;
-  onOneSentenceRewrite: (instruction: string) => void;
+  onRemoveImageRef?: (imageId: string) => void;
+  onResetAutoBrief?: () => Promise<void> | void;
+  onOneSentenceRewrite: (instruction: string) => Promise<void> | void;
   onDecideForMe: () => Promise<void> | void;
   onConfirmGenerate: () => Promise<void> | void;
   onConfirmRestyle?: () => Promise<void> | void;
   decidingForMe?: boolean;
+  assistingBrief?: boolean;
   isBusy: boolean;
   visionSupported?: boolean;
   visionProviderLabel?: string;
@@ -851,12 +1031,14 @@ export function DesignBriefCard({
   onUpdateItem,
   onAddItem,
   onRemoveItem,
+  onRemoveImageRef,
   onResetAutoBrief,
   onOneSentenceRewrite,
   onDecideForMe,
   onConfirmGenerate,
   onConfirmRestyle,
   decidingForMe = false,
+  assistingBrief = false,
   isBusy,
   visionSupported = true,
   visionProviderLabel,
@@ -872,6 +1054,8 @@ export function DesignBriefCard({
 
   const categoryBadgeLabel = (category: string): string => {
     switch (category) {
+      case 'positioning':
+        return t('整体定位', 'Positioning');
       case 'tone_palette':
         return t('色调与参考', 'Tone & Palette');
       case 'typography':
@@ -880,6 +1064,8 @@ export function DesignBriefCard({
         return t('密度与响应式', 'Density & Layout');
       case 'motion_interaction':
         return t('交互与动效', 'Motion');
+      case 'constraints':
+        return t('体验约束', 'Constraints');
       case 'user_feel':
         return t('直白感受', 'User Feel');
       case 'screen_scope':
@@ -901,7 +1087,7 @@ export function DesignBriefCard({
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="m-0 font-serif text-[16px] font-semibold text-ink">
-              {t('设计简报 (Design Brief)', 'Design Brief')}
+              {t('设计简报', 'Design Brief')}
             </h3>
             <span className="badge badge-accent font-mono text-[10.5px] tabular-nums">
               {brief.items.length} {t('条共识', 'items')}
@@ -914,7 +1100,7 @@ export function DesignBriefCard({
                   `Editing Design Brief for "${activePrototype?.name ?? ''}"; confirming restyles the prototype as a new revision.`,
                 )
               : t(
-                  '把参考图、直白感受与动效选择翻译成可读可改的设计共识，确认后交给原型共创智能体生成 R1。',
+                  '把参考图、直白感受与动效选择翻译成可读可改的设计共识，确认后交给原型共创智能体生成首版原型。',
                   'Plain-language design contract synthesized from your references, feel notes, and schematics.',
                 )}
           </p>
@@ -926,10 +1112,16 @@ export function DesignBriefCard({
               type="button"
               variant="ghost"
               size="xs"
-              onClick={onResetAutoBrief}
+              data-testid="brief-resync-btn"
+              disabled={assistingBrief || isBusy}
+              onClick={() => void onResetAutoBrief()}
               title={t('根据左侧最新选择重新汇总简报', 'Re-sync brief from left-hand selections')}
             >
-              <RefreshCw size={12} />
+              {assistingBrief ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <RefreshCw size={12} />
+              )}
               {t('同步汇总', 'Re-sync')}
             </Button>
           )}
@@ -938,7 +1130,7 @@ export function DesignBriefCard({
             variant="secondary"
             size="xs"
             data-testid="decide-for-me-btn"
-            disabled={decidingForMe || isBusy}
+            disabled={decidingForMe || assistingBrief || isBusy}
             onClick={() => void onDecideForMe()}
           >
             {decidingForMe ? (
@@ -957,10 +1149,26 @@ export function DesignBriefCard({
         {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
       />
 
+      {brief.userImageRefs && brief.userImageRefs.length > 0 && (
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-control border border-line bg-inset/40 p-2"
+          data-testid="design-brief-image-refs"
+        >
+          {brief.userImageRefs.map((imgRef) => (
+            <LocalImageThumbnail
+              key={imgRef.id}
+              attachment={imgRef}
+              compact
+              {...(onRemoveImageRef ? { onRemove: onRemoveImageRef } : {})}
+            />
+          ))}
+        </div>
+      )}
+
       {docs.length > 0 && onSelectDocId && (
         <div className="flex flex-col gap-1">
           <label className="text-[11.5px] font-medium text-ink-2">
-            {t('关联需求规格说明书 (SRS)：', 'Linked SRS Specification:')}
+            {t('关联需求规格说明书：', 'Linked SRS Specification:')}
           </label>
           <select
             className="input text-[12.5px]"
@@ -983,8 +1191,9 @@ export function DesignBriefCard({
         onSubmit={(e) => {
           e.preventDefault();
           if (!rewriteDraft.trim()) return;
-          onOneSentenceRewrite(rewriteDraft.trim());
+          const next = rewriteDraft.trim();
           setRewriteDraft('');
+          void onOneSentenceRewrite(next);
         }}
       >
         <input
@@ -1003,9 +1212,13 @@ export function DesignBriefCard({
           variant="secondary"
           size="xs"
           data-testid="brief-one-sentence-submit-btn"
-          disabled={!rewriteDraft.trim() || isBusy}
+          disabled={!rewriteDraft.trim() || assistingBrief || isBusy}
         >
-          <Sparkles size={12} className="text-accent" />
+          {assistingBrief ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <Sparkles size={12} className="text-accent" />
+          )}
           {t('一句话改写', 'Rewrite')}
         </Button>
       </form>
@@ -1155,7 +1368,7 @@ export function DesignBriefCard({
               onClick={() => void onConfirmGenerate()}
             >
               <Plus size={13} />
-              {t('按此简报另建新原型 (R1)', 'Generate as New Prototype (R1)')}
+              {t('按此简报另建新原型', 'Generate as New Prototype (R1)')}
             </Button>
           </>
         ) : (
@@ -1228,7 +1441,7 @@ export function StyleTileCard({
         <div className="flex items-center gap-2">
           <Palette size={15} className="text-accent" />
           <h3 className="m-0 font-serif text-[15.5px] font-semibold text-ink">
-            {t('实时风格样张 (Style Tile)', 'Live Style Tile')}
+            {t('实时风格样张', 'Live Style Tile')}
           </h3>
         </div>
         <span className="badge font-mono text-[10.5px]">
