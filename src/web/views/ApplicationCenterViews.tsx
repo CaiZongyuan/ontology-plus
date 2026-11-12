@@ -66,6 +66,7 @@ import {
   ConfirmDialog,
   RegistryTable,
 } from '../components/beautifui/index.js';
+import { resolveActiveVisionCapability } from '../components/agent/VisionAttachmentControls.js';
 import {
   PrototypeCanvasStage,
   runImportPrototypeHtml,
@@ -77,6 +78,16 @@ import {
   type PrototypeSelectionTarget,
   type PrototypeVisualAnnotation,
 } from '../components/prototype/PrototypeVisualInspector.js';
+import { PrototypePostRunBanner } from '../components/prototype/SelectionAttachmentStrip.js';
+import {
+  ingestSelectionTargetAsAttachment,
+  resolveLiveRunningPrototypeAnchor,
+  resolvePostRunPrototypeReview,
+  revertPostRunToPreviousRevision,
+  submitPrototypeComposerTurnWithSelections,
+  upgradeSelectionAttachmentCrop,
+  usePrototypeSelectionStore,
+} from '../components/prototype/prototypeSelectionStore.js';
 import {
   MarkdownRenderer,
   TiptapMarkdownEditor,
@@ -2176,11 +2187,11 @@ export function PrototypeStudioView({
     data,
     activeItemId,
     backgroundTasks,
+    liveSessionDrafts,
     patchData,
     showToast,
     setActivePrototypeId,
     startPrototypeGenTask,
-    startPrototypeRefinementRun,
     startOntologySynthTask,
   } = useWorkbenchStore();
 
@@ -2190,6 +2201,7 @@ export function PrototypeStudioView({
   const [selectedProtoId, setSelectedProtoId] = useState<string>('');
   const [selectedDocId, setSelectedDocId] = useState<string>('');
   const [refining, setRefining] = useState(false);
+  const [revertingPostRun, setRevertingPostRun] = useState(false);
   const [inspectMode, setInspectMode] = useState(false);
   const [visualAnnotations, setVisualAnnotations] = useState<PrototypeVisualAnnotation[]>([]);
   const [canvasFocusMode, setCanvasFocusMode] = useState(false);
@@ -2204,6 +2216,52 @@ export function PrototypeStudioView({
   const confirmedRevision = data?.confirmedPrototypeRevision ?? null;
   const proto = prototypes.find((p) => p.id === selectedProtoId) ?? prototypes[0];
   const docs = data?.requirementDocs ?? [];
+
+  const protoSelectionAttachments = usePrototypeSelectionStore((s) =>
+    proto ? s.attachmentsByPrototype[proto.id] : undefined,
+  );
+  const dismissedRevisionByPrototype = usePrototypeSelectionStore(
+    (s) => s.dismissedRevisionByPrototype,
+  );
+  const flashedRevisionByPrototype = usePrototypeSelectionStore(
+    (s) => s.flashedRevisionByPrototype,
+  );
+  const beforeAfterMode = usePrototypeSelectionStore((s) =>
+    proto ? s.getBeforeAfterMode(proto.id, proto.currentRevisionId) : 'AFTER',
+  );
+
+  const coDesignSession = useMemo(() => {
+    if (!data || !proto) return undefined;
+    return data.agentSessions.find(
+      (s) =>
+        (proto.coDesignSessionId && s.id === proto.coDesignSessionId) ||
+        (s.projectId === data.activeProject.id &&
+          s.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+          s.targetId === proto.id),
+    );
+  }, [data, proto]);
+
+  const liveDraft = coDesignSession ? liveSessionDrafts[coDesignSession.id] : undefined;
+  const activeRunningAnchor = resolveLiveRunningPrototypeAnchor(coDesignSession, liveDraft);
+  const postRunReview =
+    activeRunningAnchor === null
+      ? resolvePostRunPrototypeReview(proto, coDesignSession, dismissedRevisionByPrototype)
+      : null;
+  const shouldFlashModifiedAnchors = Boolean(
+    postRunReview &&
+      postRunReview.modifiedAnchors.length > 0 &&
+      flashedRevisionByPrototype[postRunReview.prototypeId] !== postRunReview.revision.id,
+  );
+
+  useEffect(() => {
+    if (!postRunReview || !shouldFlashModifiedAnchors) return;
+    const timer = setTimeout(() => {
+      usePrototypeSelectionStore
+        .getState()
+        .markRevisionFlashed(postRunReview.prototypeId, postRunReview.revision.id);
+    }, 1800);
+    return () => clearTimeout(timer);
+  }, [postRunReview?.prototypeId, postRunReview?.revision.id, shouldFlashModifiedAnchors]);
 
   useEffect(() => {
     setStageOverride(defaultStageOverride);
@@ -2386,17 +2444,34 @@ export function PrototypeStudioView({
     if (selections.length === 0 && !note.trim()) return;
     setRefining(true);
     try {
+      const pendingAnnotations = visualAnnotations;
       setVisualAnnotations([]);
       setInspectMode(false);
       useAgentPanelStore.getState().revealPanel();
-      await startPrototypeRefinementRun({
+      const visionSupported = resolveActiveVisionCapability(data).visionSupported;
+      await submitPrototypeComposerTurnWithSelections({
         projectId: project.id,
         prototypeId: proto.id,
         instruction: note.trim(),
-        ...(selections.length > 0 ? { selections } : {}),
+        visionSupported,
+        additionalAnnotations: pendingAnnotations,
+        immediateDraft: { target, note },
       });
     } finally {
       setRefining(false);
+    }
+  };
+
+  const handleRevertPostRun = async () => {
+    if (!postRunReview || revertingPostRun) return;
+    setRevertingPostRun(true);
+    try {
+      await revertPostRunToPreviousRevision(
+        postRunReview.prototypeId,
+        postRunReview.previousRevision.id,
+      );
+    } finally {
+      setRevertingPostRun(false);
     }
   };
 
@@ -2450,6 +2525,44 @@ export function PrototypeStudioView({
       </div>
     ) : null;
 
+  const combinedCanvasAnnotations: PrototypeVisualAnnotation[] = [
+    ...(protoSelectionAttachments ?? []).map((att, idx) => ({
+      id: att.id,
+      index: idx + 1,
+      target: att.target,
+      note: att.note,
+    })),
+    ...visualAnnotations.map((ann, idx) => ({
+      ...ann,
+      index: (protoSelectionAttachments?.length ?? 0) + idx + 1,
+    })),
+  ];
+
+  const canvasBannerContent =
+    postRunReview || statusBanners ? (
+      <>
+        {postRunReview && (
+          <PrototypePostRunBanner
+            review={postRunReview}
+            mode={beforeAfterMode}
+            busy={revertingPostRun}
+            onModeChange={(nextMode) =>
+              usePrototypeSelectionStore
+                .getState()
+                .setBeforeAfterMode(postRunReview.prototypeId, nextMode, postRunReview.revision.id)
+            }
+            onRevert={() => void handleRevertPostRun()}
+            onDismiss={() =>
+              usePrototypeSelectionStore
+                .getState()
+                .dismissPostRunReview(postRunReview.prototypeId, postRunReview.revision.id)
+            }
+          />
+        )}
+        {statusBanners && <div className="p-2.5">{statusBanners}</div>}
+      </>
+    ) : null;
+
   return (
     <div
       className="flex flex-col gap-3"
@@ -2493,13 +2606,31 @@ export function PrototypeStudioView({
           synthesizingOntology={synthesizingOntology}
           inspectMode={inspectMode}
           onInspectModeChange={setInspectMode}
-          annotations={visualAnnotations}
+          showInlineInspectorPopover={false}
+          onSelectTarget={(target, crop) => {
+            useAgentPanelStore.getState().revealPanel();
+            void ingestSelectionTargetAsAttachment(proto.id, target, { crop: crop ?? null });
+          }}
+          onSelectionCropUpgrade={(cssSelector, crop) => {
+            void upgradeSelectionAttachmentCrop(proto.id, cssSelector, crop);
+          }}
+          annotations={combinedCanvasAnnotations}
           onAddAnnotation={handleAddVisualAnnotation}
           onApplyImmediate={(target, note) => void handleImmediateSelectionRefine(target, note)}
-          busy={isBusyProto}
+          activeRunningAnchor={activeRunningAnchor}
+          flashedAnchors={
+            shouldFlashModifiedAnchors && postRunReview ? postRunReview.modifiedAnchors : []
+          }
+          flashKey={postRunReview?.revision.id ?? null}
+          htmlOverride={
+            postRunReview && beforeAfterMode === 'BEFORE'
+              ? postRunReview.previousRevision.htmlContent
+              : null
+          }
+          busy={isBusyProto || Boolean(activeRunningAnchor)}
           focusMode={canvasFocusMode}
           onFocusModeChange={setCanvasFocusMode}
-          canvasBannerSlot={statusBanners ? <div className="p-2.5">{statusBanners}</div> : null}
+          canvasBannerSlot={canvasBannerContent}
           {...(renderRevisionHistory ? { renderRevisionHistory } : {})}
           {...(renderConfirmModal ? { renderConfirmModal } : {})}
         />

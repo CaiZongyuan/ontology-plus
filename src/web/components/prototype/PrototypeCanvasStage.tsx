@@ -24,6 +24,7 @@ import type {
   InteractivePrototype,
   ProjectDetail,
   PrototypeRevision,
+  PrototypeTargetAnchor,
 } from '../../../packages/workspace-store/index.js';
 import {
   apiClonePrototype,
@@ -47,11 +48,13 @@ import {
   computeViewportFitScale,
   openCleanPrototypeInNewTab,
   stripVisualInspectorFromHtml,
+  type PrototypeSelectionCropPayload,
   type PrototypeSelectionTarget,
   type PrototypeViewportPreset,
   type PrototypeVisualAnnotation,
   type PrototypeZoomMode,
 } from './PrototypeVisualInspector.js';
+import { resolveHighlightSelectorFromAnchor } from './prototypeSelectionStore.js';
 
 export interface RevisionHistorySlotProps {
   prototype: InteractivePrototype;
@@ -100,11 +103,18 @@ export interface PrototypeCanvasStageProps {
   inspectMode?: boolean;
   defaultInspectMode?: boolean;
   onInspectModeChange?: (next: boolean) => void;
-  onSelectTarget?: (target: PrototypeSelectionTarget) => void;
+  onSelectTarget?: (
+    target: PrototypeSelectionTarget,
+    crop?: PrototypeSelectionCropPayload | null,
+  ) => void;
+  onSelectionCropUpgrade?: (cssSelector: string, crop: PrototypeSelectionCropPayload) => void;
   annotations?: PrototypeVisualAnnotation[];
   onAddAnnotation?: (target: PrototypeSelectionTarget, note: string) => void;
   onApplyImmediate?: (target: PrototypeSelectionTarget, note: string) => void;
   highlightedSelector?: string | null;
+  activeRunningAnchor?: PrototypeTargetAnchor | null;
+  flashedAnchors?: PrototypeTargetAnchor[];
+  flashKey?: string | null;
   showInlineInspectorPopover?: boolean;
   canvasBannerSlot?: React.ReactNode;
   htmlOverride?: string | null;
@@ -341,10 +351,14 @@ export function PrototypeCanvasStage({
   defaultInspectMode = false,
   onInspectModeChange,
   onSelectTarget,
+  onSelectionCropUpgrade,
   annotations,
   onAddAnnotation,
   onApplyImmediate,
   highlightedSelector = null,
+  activeRunningAnchor = null,
+  flashedAnchors,
+  flashKey = null,
   showInlineInspectorPopover,
   canvasBannerSlot,
   htmlOverride = null,
@@ -381,6 +395,9 @@ export function PrototypeCanvasStage({
   const agentPanelOpen = useAgentPanelStore((s) => s.open);
   const agentPanelOverlayOpen = useAgentPanelStore((s) => s.overlayOpen);
   const agentPanelWidth = useAgentPanelStore((s) => s.width);
+  const hoveredAnchor = useAgentPanelStore((s) => s.hoveredAnchor);
+  const effectiveHighlightedSelector =
+    highlightedSelector ?? resolveHighlightSelectorFromAnchor(hoveredAnchor);
 
   const agentPanelVisible = agentPanelOverlay ? agentPanelOverlayOpen : agentPanelOpen;
   const toggleShellAgentPanel = useCallback(() => {
@@ -1331,10 +1348,14 @@ export function PrototypeCanvasStage({
             {...(onAddAnnotation ? { onAddAnnotation } : {})}
             {...(onApplyImmediate ? { onApplyImmediate } : {})}
             {...(onSelectTarget ? { onSelectTarget } : {})}
+            {...(onSelectionCropUpgrade ? { onSelectionCropUpgrade } : {})}
             {...(showInlineInspectorPopover !== undefined
               ? { showInlinePopover: showInlineInspectorPopover }
               : {})}
-            highlightedSelector={highlightedSelector}
+            highlightedSelector={effectiveHighlightedSelector}
+            activeRunningAnchor={activeRunningAnchor}
+            {...(flashedAnchors ? { flashedAnchors } : {})}
+            flashKey={flashKey}
             onEscape={focusMode ? () => setFocusMode(false) : undefined}
             busy={busy}
             allowInspectWhileBusy

@@ -1,9 +1,17 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Crosshair, Layers, Plus, Sparkles, X } from 'lucide-react';
+import { Crosshair, Layers, Loader2, Plus, Sparkles, X } from 'lucide-react';
 import type { PrototypeRefinementSelection } from '../../../packages/agent-runtime/index.js';
+import type { PrototypeTargetAnchor } from '../../../packages/workspace-store/index.js';
 import { Button } from '../beautifui/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
+
+export interface PrototypeSelectionCropPayload {
+  mimeType: string;
+  dataBase64: string;
+  width: number;
+  height: number;
+}
 
 export interface PrototypeSelectionRect {
   x: number;
@@ -258,6 +266,48 @@ export function sanitizeInspectorSelectionPayload(raw: unknown): PrototypeSelect
   };
 }
 
+const ALLOWED_CROP_MIME_TYPES = new Set(['image/webp', 'image/png', 'image/jpeg']);
+const MAX_CROP_BASE64_LENGTH = 3_500_000;
+
+export function sanitizeInspectorCropPayload(raw: unknown): PrototypeSelectionCropPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const rawData = typeof obj.dataBase64 === 'string' ? obj.dataBase64.trim() : '';
+  if (!rawData || rawData.length > MAX_CROP_BASE64_LENGTH) return null;
+
+  let mimeType = typeof obj.mimeType === 'string' ? obj.mimeType.trim().toLowerCase() : '';
+  let cleanBase64 = rawData;
+  const dataUriMatch = /^data:([^;]+);base64,([\s\S]+)$/i.exec(rawData);
+  if (dataUriMatch) {
+    if (!mimeType) mimeType = dataUriMatch[1]!.trim().toLowerCase();
+    cleanBase64 = dataUriMatch[2]!;
+  }
+  cleanBase64 = cleanBase64.replace(/\s+/g, '');
+  if (!cleanBase64 || !ALLOWED_CROP_MIME_TYPES.has(mimeType)) return null;
+  if (!/^[A-Za-z0-9+/=]+$/.test(cleanBase64)) return null;
+
+  const width = Number(obj.width);
+  const height = Number(obj.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  return {
+    mimeType,
+    dataBase64: cleanBase64,
+    width: Math.max(1, Math.min(2400, Math.round(width))),
+    height: Math.max(1, Math.min(2400, Math.round(height))),
+  };
+}
+
+function summarizeAnchorText(anchor: PrototypeTargetAnchor | null | undefined): string {
+  if (!anchor) return '';
+  if (anchor.screenId && anchor.elementId) {
+    return `${anchor.screenId} · ${anchor.elementId}`;
+  }
+  return anchor.elementId || anchor.screenId || anchor.cssSelector || anchor.label || '';
+}
+
 export function computeFloatingPopoverPosition(
   rect: PrototypeSelectionRect,
   stageSize: { width: number; height: number },
@@ -374,6 +424,10 @@ export function injectVisualInspectorIntoHtml(
   var activeElements = [];
   var pins = [];
   var highlightedSelector = '';
+  var activeRunningAnchor = null;
+  var flashedAnchors = [];
+  var flashKey = '';
+  var lastFlashedKey = '';
   var rafPending = false;
 
   function postToHost(type, extra) {
@@ -396,10 +450,14 @@ export function injectVisualInspectorIntoHtml(
     '.onto-vi-selected { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid #4c50c4; background: rgba(76, 80, 196, 0.10); box-shadow: 0 0 0 3px rgba(76, 80, 196, 0.16); border-radius: 6px; box-sizing: border-box; display: none; }',
     '.onto-vi-marquee { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 1.5px solid #4c50c4; background: rgba(76, 80, 196, 0.13); border-radius: 4px; box-sizing: border-box; display: none; }',
     '.onto-vi-highlight { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid #4c50c4; background: rgba(76, 80, 196, 0.09); border-radius: 6px; box-sizing: border-box; display: none; pointer-events: none; }',
+    '.onto-vi-running { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid #4c50c4; background: rgba(76, 80, 196, 0.12); box-shadow: 0 0 0 4px rgba(76, 80, 196, 0.22); border-radius: 6px; box-sizing: border-box; display: none; pointer-events: none; animation: onto-vi-running-pulse 1.3s ease-in-out infinite; }',
+    '.onto-vi-flash { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid #2e7d5b; background: rgba(46, 125, 91, 0.16); border-radius: 6px; box-sizing: border-box; pointer-events: none; animation: onto-vi-flash-once 1.7s cubic-bezier(0.22, 1, 0.36, 1) 1 forwards; }',
     '.onto-vi-tag { position: absolute; left: -1px; top: -22px; max-width: 320px; padding: 2px 6px; border-radius: 4px; background: #4c50c4; color: #ffffff; font-size: 10.5px; font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 6px rgba(26, 26, 24, 0.18); }',
     '.onto-vi-tag.is-inside { top: 4px; left: 4px; }',
     '.onto-vi-pin { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: #4c50c4; color: #ffffff; border: 2px solid #fdfdfb; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(26, 26, 24, 0.25); transform: translate(-35%, -35%); }',
-    '@media (prefers-reduced-motion: reduce) { .onto-vi-hover { transition: none; } }'
+    '@keyframes onto-vi-running-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.48; } }',
+    '@keyframes onto-vi-flash-once { 0% { opacity: 0.96; box-shadow: 0 0 0 0 rgba(46, 125, 91, 0.42); } 45% { opacity: 1; box-shadow: 0 0 0 8px rgba(46, 125, 91, 0.16); } 100% { opacity: 0; box-shadow: 0 0 0 12px rgba(46, 125, 91, 0); } }',
+    '@media (prefers-reduced-motion: reduce) { .onto-vi-hover { transition: none; } .onto-vi-running, .onto-vi-flash { animation: none; } }'
   ].join('\\n');
 
   var rootEl = document.createElement('div');
@@ -425,6 +483,15 @@ export function injectVisualInspectorIntoHtml(
   var highlightBox = document.createElement('div');
   highlightBox.className = 'onto-vi-highlight';
 
+  var runningBox = document.createElement('div');
+  runningBox.className = 'onto-vi-running';
+  var runningTag = document.createElement('span');
+  runningTag.className = 'onto-vi-tag';
+  runningBox.appendChild(runningTag);
+
+  var flashLayer = document.createElement('div');
+  flashLayer.setAttribute('data-onto-inspector-ignore', '1');
+
   var pinsLayer = document.createElement('div');
   pinsLayer.setAttribute('data-onto-inspector-ignore', '1');
 
@@ -432,6 +499,8 @@ export function injectVisualInspectorIntoHtml(
   rootEl.appendChild(selectedBox);
   rootEl.appendChild(marqueeBox);
   rootEl.appendChild(highlightBox);
+  rootEl.appendChild(runningBox);
+  rootEl.appendChild(flashLayer);
   rootEl.appendChild(pinsLayer);
 
   function mountOverlay() {
@@ -689,13 +758,7 @@ export function injectVisualInspectorIntoHtml(
     }
 
     if (highlightedSelector) {
-      var hlTarget = null;
-      try {
-        hlTarget =
-          document.querySelector('[data-element-id="' + escapeAttr(highlightedSelector) + '"]') ||
-          document.querySelector('[data-screen-id="' + escapeAttr(highlightedSelector) + '"]') ||
-          document.querySelector(highlightedSelector);
-      } catch (_hlErr) {}
+      var hlTarget = resolveAnchorTarget(highlightedSelector);
       if (hlTarget) {
         var hlr = hlTarget.getBoundingClientRect();
         if (hlr.width > 0 && hlr.height > 0) {
@@ -710,6 +773,266 @@ export function injectVisualInspectorIntoHtml(
     } else {
       highlightBox.style.display = 'none';
     }
+
+    if (activeRunningAnchor) {
+      var runTarget = resolveAnchorTarget(activeRunningAnchor);
+      if (runTarget) {
+        var rr = runTarget.getBoundingClientRect();
+        if (rr.width > 0 && rr.height > 0) {
+          var anchorText = formatAnchorShort(activeRunningAnchor);
+          var prefix = CFG.locale === 'en-US' ? 'Modifying...' : 'Agent 正在修改';
+          setBoxVars(
+            runningBox,
+            runningTag,
+            rr,
+            anchorText ? (prefix + ' · ' + anchorText) : prefix
+          );
+          runningBox.style.display = 'block';
+        } else {
+          runningBox.style.display = 'none';
+        }
+      } else {
+        runningBox.style.display = 'none';
+      }
+    } else {
+      runningBox.style.display = 'none';
+    }
+
+    if (flashKey && flashKey !== lastFlashedKey && Array.isArray(flashedAnchors) && flashedAnchors.length > 0) {
+      lastFlashedKey = flashKey;
+      while (flashLayer.firstChild) {
+        flashLayer.removeChild(flashLayer.firstChild);
+      }
+      for (var f = 0; f < flashedAnchors.length; f++) {
+        var fTarget = resolveAnchorTarget(flashedAnchors[f]);
+        if (!fTarget) continue;
+        var fr = fTarget.getBoundingClientRect();
+        if (fr.width <= 0 || fr.height <= 0) continue;
+        var fBox = document.createElement('div');
+        fBox.className = 'onto-vi-flash';
+        setBoxVars(fBox, null, fr, '');
+        flashLayer.appendChild(fBox);
+      }
+      setTimeout(function () {
+        while (flashLayer.firstChild) {
+          flashLayer.removeChild(flashLayer.firstChild);
+        }
+      }, 1900);
+    }
+  }
+
+  function formatAnchorShort(anchor) {
+    if (!anchor || typeof anchor !== 'object') return '';
+    if (anchor.screenId && anchor.elementId) return anchor.screenId + ' · ' + anchor.elementId;
+    return anchor.elementId || anchor.screenId || anchor.cssSelector || anchor.label || '';
+  }
+
+  function resolveAnchorTarget(anchorOrSelector) {
+    if (!anchorOrSelector) return null;
+    if (typeof anchorOrSelector === 'string') {
+      try {
+        return (
+          document.querySelector('[data-element-id="' + escapeAttr(anchorOrSelector) + '"]') ||
+          document.querySelector('[data-screen-id="' + escapeAttr(anchorOrSelector) + '"]') ||
+          document.querySelector(anchorOrSelector)
+        );
+      } catch (_err) {
+        return null;
+      }
+    }
+    if (typeof anchorOrSelector === 'object') {
+      var scr = anchorOrSelector.screenId ? String(anchorOrSelector.screenId) : '';
+      var elId = anchorOrSelector.elementId ? String(anchorOrSelector.elementId) : '';
+      var sel = anchorOrSelector.cssSelector ? String(anchorOrSelector.cssSelector) : '';
+      try {
+        if (scr && elId) {
+          var scoped = document.querySelector(
+            '[data-screen-id="' + escapeAttr(scr) + '"] [data-element-id="' + escapeAttr(elId) + '"]'
+          );
+          if (scoped) return scoped;
+        }
+        if (elId) {
+          var byEl = document.querySelector('[data-element-id="' + escapeAttr(elId) + '"]');
+          if (byEl) return byEl;
+        }
+        if (sel) {
+          var bySel = document.querySelector(sel);
+          if (bySel) return bySel;
+        }
+        if (scr) {
+          var byScr = document.querySelector('[data-screen-id="' + escapeAttr(scr) + '"]');
+          if (byScr) return byScr;
+        }
+      } catch (_err2) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  function resolveOpaqueAncestorBg(el) {
+    var cur = el;
+    while (cur && cur.nodeType === 1) {
+      var bg = window.getComputedStyle(cur).backgroundColor;
+      if (bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)') return bg;
+      cur = cur.parentElement;
+    }
+    return '#f7f5f0';
+  }
+
+  function encodeCanvasCrop(canvas, w, h) {
+    try {
+      var dataUrl = canvas.toDataURL('image/webp', 0.84);
+      var mime = 'image/webp';
+      if (!dataUrl || dataUrl.indexOf('data:image/webp') !== 0) {
+        dataUrl = canvas.toDataURL('image/png');
+        mime = 'image/png';
+      }
+      var comma = dataUrl.indexOf(',');
+      if (comma < 0) return null;
+      return {
+        mimeType: mime,
+        dataBase64: dataUrl.slice(comma + 1),
+        width: w,
+        height: h
+      };
+    } catch (_encErr) {
+      return null;
+    }
+  }
+
+  function renderDirectCanvasCrop(els, rectObj) {
+    if (!els || els.length === 0 || !rectObj) return null;
+    var pad = 4;
+    var rx = Math.max(0, Math.round(rectObj.x - pad));
+    var ry = Math.max(0, Math.round(rectObj.y - pad));
+    var rw = Math.max(24, Math.round(rectObj.width + pad * 2));
+    var rh = Math.max(24, Math.round(rectObj.height + pad * 2));
+    var maxEdge = 560;
+    var scale = Math.max(rw, rh) > maxEdge ? maxEdge / Math.max(rw, rh) : 1;
+    var cw = Math.max(24, Math.round(rw * scale));
+    var ch = Math.max(24, Math.round(rh * scale));
+
+    var canvas = document.createElement('canvas');
+    canvas.width = cw;
+    canvas.height = ch;
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.scale(scale, scale);
+    ctx.fillStyle = resolveOpaqueAncestorBg(els[0]);
+    ctx.fillRect(0, 0, rw, rh);
+
+    var queue = [];
+    for (var i = 0; i < els.length; i++) {
+      queue.push(els[i]);
+      if (els[i].querySelectorAll) {
+        var desc = els[i].querySelectorAll('*');
+        for (var d = 0; d < desc.length && queue.length < 48; d++) {
+          if (!isIgnored(desc[d])) queue.push(desc[d]);
+        }
+      }
+    }
+
+    for (var q = 0; q < queue.length; q++) {
+      var node = queue[q];
+      var nr = node.getBoundingClientRect();
+      if (nr.width < 2 || nr.height < 2) continue;
+      var st = window.getComputedStyle(node);
+      if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) continue;
+      var lx = nr.left - rx;
+      var ly = nr.top - ry;
+      var bg = st.backgroundColor;
+      if (bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)') {
+        ctx.fillStyle = bg;
+        ctx.fillRect(lx, ly, nr.width, nr.height);
+      }
+      var bw = parseFloat(st.borderTopWidth || '0');
+      if (bw > 0 && st.borderTopColor && st.borderTopColor !== 'transparent') {
+        ctx.strokeStyle = st.borderTopColor;
+        ctx.lineWidth = Math.min(3, bw);
+        ctx.strokeRect(lx, ly, nr.width, nr.height);
+      }
+      if (node.children.length === 0) {
+        var txt = cleanText(node.textContent || node.value || node.getAttribute('placeholder') || '');
+        if (txt) {
+          ctx.fillStyle = st.color || '#1a1a18';
+          var fs = Math.max(10, Math.min(22, parseFloat(st.fontSize || '13')));
+          ctx.font = (st.fontWeight || '500') + ' ' + fs + 'px sans-serif';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(txt.slice(0, 36), lx + 6, ly + nr.height / 2, Math.max(16, nr.width - 12));
+        }
+      }
+    }
+
+    return encodeCanvasCrop(canvas, cw, ch);
+  }
+
+  function cloneWithInlineStyles(srcEl, budget) {
+    if (!srcEl || srcEl.nodeType !== 1 || budget.count > 90) return null;
+    var tag = srcEl.tagName.toUpperCase();
+    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'IFRAME') return null;
+    budget.count++;
+    if (tag === 'IMG') {
+      var ph = document.createElement('div');
+      var ir = srcEl.getBoundingClientRect();
+      ph.style.width = Math.max(8, Math.round(ir.width)) + 'px';
+      ph.style.height = Math.max(8, Math.round(ir.height)) + 'px';
+      ph.style.background = '#ece9e1';
+      return ph;
+    }
+    var clone = srcEl.cloneNode(false);
+    var cs = window.getComputedStyle(srcEl);
+    var props = ['display', 'boxSizing', 'backgroundColor', 'color', 'border', 'borderRadius', 'padding', 'margin', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'textAlign', 'gap', 'alignItems', 'justifyContent', 'flexDirection'];
+    for (var p = 0; p < props.length; p++) {
+      var k = props[p];
+      if (cs[k]) clone.style[k] = cs[k];
+    }
+    for (var c = 0; c < srcEl.childNodes.length; c++) {
+      var child = srcEl.childNodes[c];
+      if (child.nodeType === 3) {
+        clone.appendChild(document.createTextNode(child.textContent || ''));
+      } else if (child.nodeType === 1 && !isIgnored(child)) {
+        var cc = cloneWithInlineStyles(child, budget);
+        if (cc) clone.appendChild(cc);
+      }
+    }
+    return clone;
+  }
+
+  function captureSelectionCrop(els, rectObj, cssSelector) {
+    var immediateCrop = renderDirectCanvasCrop(els, rectObj);
+    try {
+      if (els && els.length === 1 && rectObj && typeof XMLSerializer !== 'undefined') {
+        var w = Math.max(24, Math.min(560, Math.round(rectObj.width)));
+        var h = Math.max(24, Math.min(360, Math.round(rectObj.height)));
+        var cloned = cloneWithInlineStyles(els[0], { count: 0 });
+        if (cloned) {
+          cloned.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+          cloned.style.margin = '0';
+          var serialized = new XMLSerializer().serializeToString(cloned);
+          var bg = resolveOpaqueAncestorBg(els[0]);
+          var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
+            '<rect width="100%" height="100%" fill="' + escapeAttr(bg) + '"/>' +
+            '<foreignObject width="100%" height="100%">' + serialized + '</foreignObject></svg>';
+          var img = new Image();
+          img.onload = function () {
+            var c = document.createElement('canvas');
+            c.width = w;
+            c.height = h;
+            var cx = c.getContext('2d');
+            if (!cx) return;
+            cx.drawImage(img, 0, 0, w, h);
+            var upgraded = encodeCanvasCrop(c, w, h);
+            if (upgraded && cssSelector) {
+              postToHost('SELECTION_CROP', { cssSelector: cssSelector, crop: upgraded });
+            }
+          };
+          img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+        }
+      }
+    } catch (_foErr) {}
+    return immediateCrop;
   }
 
   function scheduleSyncVisuals() {
@@ -776,7 +1099,8 @@ export function injectVisualInspectorIntoHtml(
       setBoxVars(selectedBox, selectedTag, clicked.getBoundingClientRect(), describeElementBadge(clicked));
       selectedBox.style.display = 'block';
       hoverBox.style.display = 'none';
-      postToHost('SELECT', { selection: sel });
+      var clickedCrop = captureSelectionCrop([clicked], sel.rect, sel.cssSelector);
+      postToHost('SELECT', { selection: sel, crop: clickedCrop });
       return;
     }
 
@@ -800,7 +1124,8 @@ export function injectVisualInspectorIntoHtml(
       var singleSel = buildElementSelection(single);
       setBoxVars(selectedBox, selectedTag, single.getBoundingClientRect(), describeElementBadge(single));
       selectedBox.style.display = 'block';
-      postToHost('SELECT', { selection: singleSel });
+      var singleCrop = captureSelectionCrop([single], singleSel.rect, singleSel.cssSelector);
+      postToHost('SELECT', { selection: singleSel, crop: singleCrop });
       return;
     }
 
@@ -827,11 +1152,14 @@ export function injectVisualInspectorIntoHtml(
     selectedBox.style.display = 'block';
 
     var containerEl = firstScreenEl || matches[0].parentElement || matches[0];
+    var regionRect = { x: union.left, y: union.top, width: union.width, height: union.height };
+    var regionSel = buildSelector(containerEl);
+    var regionCrop = captureSelectionCrop(matches, regionRect, regionSel);
     postToHost('SELECT', {
       selection: {
         kind: 'REGION',
         tagName: containerEl.tagName.toLowerCase(),
-        cssSelector: buildSelector(containerEl),
+        cssSelector: regionSel,
         label: regionTitle,
         textPreview: summaries.slice(0, 3).join(' / '),
         htmlSnippet: snippets.join('\\n'),
@@ -839,8 +1167,9 @@ export function injectVisualInspectorIntoHtml(
         screenName: regionScreenName || undefined,
         matchedElementCount: matches.length,
         matchedElementsSummary: summaries,
-        rect: { x: union.left, y: union.top, width: union.width, height: union.height }
-      }
+        rect: regionRect
+      },
+      crop: regionCrop
     });
   }, true);
 
@@ -886,6 +1215,9 @@ export function injectVisualInspectorIntoHtml(
       isActive = Boolean(msg.active);
       if (Array.isArray(msg.pins)) pins = msg.pins;
       highlightedSelector = typeof msg.highlightedSelector === 'string' ? msg.highlightedSelector : '';
+      activeRunningAnchor = msg.activeRunningAnchor && typeof msg.activeRunningAnchor === 'object' ? msg.activeRunningAnchor : null;
+      flashedAnchors = Array.isArray(msg.flashedAnchors) ? msg.flashedAnchors : [];
+      flashKey = typeof msg.flashKey === 'string' ? msg.flashKey : '';
       if (msg.clearSelection) {
         activeElements = [];
         selectedBox.style.display = 'none';
@@ -915,6 +1247,7 @@ export function injectVisualInspectorIntoHtml(
 }
 
 const EMPTY_ANNOTATIONS: PrototypeVisualAnnotation[] = [];
+const EMPTY_ANCHORS: PrototypeTargetAnchor[] = [];
 
 export interface PrototypeVisualPreviewStageProps {
   htmlContent: string;
@@ -923,9 +1256,16 @@ export interface PrototypeVisualPreviewStageProps {
   annotations?: PrototypeVisualAnnotation[];
   onAddAnnotation?: (target: PrototypeSelectionTarget, note: string) => void;
   onApplyImmediate?: (target: PrototypeSelectionTarget, note: string) => void;
-  onSelectTarget?: (target: PrototypeSelectionTarget) => void;
+  onSelectTarget?: (
+    target: PrototypeSelectionTarget,
+    crop?: PrototypeSelectionCropPayload | null,
+  ) => void;
+  onSelectionCropUpgrade?: (cssSelector: string, crop: PrototypeSelectionCropPayload) => void;
   onEscape?: () => void;
   highlightedSelector?: string | null;
+  activeRunningAnchor?: PrototypeTargetAnchor | null;
+  flashedAnchors?: PrototypeTargetAnchor[];
+  flashKey?: string | null;
   busy?: boolean;
   allowInspectWhileBusy?: boolean;
   showInlinePopover?: boolean;
@@ -944,10 +1284,14 @@ export function PrototypeVisualPreviewStage({
   onAddAnnotation,
   onApplyImmediate,
   onSelectTarget,
+  onSelectionCropUpgrade,
   onEscape,
   highlightedSelector = null,
+  activeRunningAnchor = null,
+  flashedAnchors = EMPTY_ANCHORS,
+  flashKey = null,
   busy = false,
-  allowInspectWhileBusy = false,
+  allowInspectWhileBusy = true,
   showInlinePopover,
   viewport = 'DESKTOP',
   zoomMode = 'FIT',
@@ -1024,6 +1368,9 @@ export function PrototypeVisualPreviewStage({
           active: inspectorActive,
           clearSelection,
           highlightedSelector: highlightedSelector ?? '',
+          activeRunningAnchor: activeRunningAnchor ?? null,
+          flashedAnchors,
+          flashKey: flashKey ?? '',
           pins: annotations.map((a) => ({
             index: a.index,
             cssSelector: a.target.cssSelector,
@@ -1033,7 +1380,15 @@ export function PrototypeVisualPreviewStage({
         '*',
       );
     },
-    [annotations, channelToken, highlightedSelector, inspectorActive],
+    [
+      activeRunningAnchor,
+      annotations,
+      channelToken,
+      flashKey,
+      flashedAnchors,
+      highlightedSelector,
+      inspectorActive,
+    ],
   );
 
   useEffect(() => {
@@ -1042,7 +1397,16 @@ export function PrototypeVisualPreviewStage({
       setActiveSelection(null);
       setDraftNote('');
     }
-  }, [inspectMode, inspectorActive, annotations, highlightedSelector, syncIframeInspectorState]);
+  }, [
+    inspectMode,
+    inspectorActive,
+    annotations,
+    highlightedSelector,
+    activeRunningAnchor,
+    flashedAnchors,
+    flashKey,
+    syncIframeInspectorState,
+  ]);
 
   useEffect(() => {
     setActiveSelection(null);
@@ -1078,7 +1442,8 @@ export function PrototypeVisualPreviewStage({
       if (data.type === 'SELECT') {
         const parsed = sanitizeInspectorSelectionPayload(data.selection);
         if (!parsed) return;
-        onSelectTarget?.(parsed);
+        const parsedCrop = sanitizeInspectorCropPayload(data.crop);
+        onSelectTarget?.(parsed, parsedCrop);
         if (shouldShowPopover) {
           setActiveSelection(parsed);
           setDraftNote('');
@@ -1091,6 +1456,14 @@ export function PrototypeVisualPreviewStage({
           requestAnimationFrame(() => {
             popoverInputRef.current?.focus();
           });
+        }
+        return;
+      }
+      if (data.type === 'SELECTION_CROP') {
+        const cssSelector = cleanShortString(data.cssSelector, 260);
+        const parsedCrop = sanitizeInspectorCropPayload(data.crop);
+        if (cssSelector && parsedCrop) {
+          onSelectionCropUpgrade?.(cssSelector, parsedCrop);
         }
         return;
       }
@@ -1132,6 +1505,7 @@ export function PrototypeVisualPreviewStage({
     onEscape,
     onInspectModeChange,
     onSelectTarget,
+    onSelectionCropUpgrade,
     originValidator,
     shouldShowPopover,
     syncIframeInspectorState,
@@ -1153,7 +1527,7 @@ export function PrototypeVisualPreviewStage({
 
   const handleApplyCurrent = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeSelection || busy) return;
+    if (!activeSelection || controlsDisabled) return;
     const target = activeSelection;
     const note = draftNote.trim();
     setActiveSelection(null);
@@ -1202,6 +1576,9 @@ export function PrototypeVisualPreviewStage({
   const nextPinNumber = annotations.length + 1;
   const visualHeight = fillHeight ? Math.max(480, stageSize.height - 16) : 560;
   const unscaledIframeHeight = Math.max(480, Math.round(visualHeight / fitMetrics.scale));
+  const runningAnchorSummary = summarizeAnchorText(activeRunningAnchor);
+  const flashedAnchorsSummary = flashedAnchors.map(summarizeAnchorText).filter(Boolean).join(', ');
+  const controlsDisabled = busy && !allowInspectWhileBusy;
 
   return (
     <div
@@ -1210,13 +1587,39 @@ export function PrototypeVisualPreviewStage({
       data-viewport={viewport}
       data-zoom-mode={zoomMode}
       data-scale={String(fitMetrics.scale)}
+      data-highlighted-selector={highlightedSelector ?? ''}
+      data-flashed-anchors={flashedAnchorsSummary}
       className={cn(
         'proto-inspector-stage flex flex-col',
-        inspectMode && 'is-inspecting',
+        inspectorActive && 'is-inspecting',
         fillHeight && 'h-full min-h-0 flex-1',
       )}
     >
-      {inspectMode && (
+      {activeRunningAnchor && (
+        <div
+          data-testid="prototype-live-modifying-badge"
+          role="status"
+          aria-live="polite"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-accent-tint/55 px-3 py-1.5 text-[12px] text-ink shrink-0"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <Loader2 size={13} className="agent-run-spin text-accent shrink-0" aria-hidden="true" />
+            <span className="font-medium text-ink">
+              {t('Agent 正在修改', 'Modifying...')}
+            </span>
+            {runningAnchorSummary && (
+              <span className="badge badge-accent font-mono text-[10.5px]">
+                {runningAnchorSummary}
+              </span>
+            )}
+          </div>
+          <span className="text-[11px] text-muted">
+            {t('修改期间仍可自由浏览或框选下一轮目标', 'You can keep browsing or box-selecting for the next queued turn')}
+          </span>
+        </div>
+      )}
+
+      {inspectorActive && (
         <div className="proto-inspector-banner shrink-0" data-testid="visual-select-banner">
           <div className="flex flex-wrap items-center gap-2">
             <span className="proto-inspector-dot" aria-hidden="true" />
@@ -1356,7 +1759,7 @@ export function PrototypeVisualPreviewStage({
               'Tell AI how to modify this selection (Enter to apply, or pin to queue)…',
             )}
             value={draftNote}
-            disabled={busy}
+            disabled={controlsDisabled}
             onCompositionEnd={() => {
               lastCompositionEndRef.current = Date.now();
             }}
@@ -1395,7 +1798,7 @@ export function PrototypeVisualPreviewStage({
               variant="secondary"
               size="sm"
               data-testid="pin-visual-annotation-btn"
-              disabled={busy}
+              disabled={controlsDisabled}
               onClick={handlePinCurrent}
             >
               <Plus size={12.5} aria-hidden="true" />
@@ -1406,7 +1809,7 @@ export function PrototypeVisualPreviewStage({
               variant="accent"
               size="sm"
               data-testid="apply-visual-refine-btn"
-              disabled={busy || (!draftNote.trim() && annotations.length === 0)}
+              disabled={controlsDisabled || (!draftNote.trim() && annotations.length === 0)}
             >
               <Sparkles size={12.5} aria-hidden="true" />
               {annotations.length > 0

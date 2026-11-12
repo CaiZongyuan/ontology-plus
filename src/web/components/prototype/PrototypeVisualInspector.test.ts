@@ -12,6 +12,7 @@ import {
   injectVisualInspectorIntoHtml,
   mapIframeRectToStageRect,
   openCleanPrototypeInNewTab,
+  sanitizeInspectorCropPayload,
   sanitizeInspectorSelectionPayload,
   stripVisualInspectorFromHtml,
   toRefinementSelections,
@@ -271,5 +272,113 @@ describe('PrototypeVisualInspector helpers', () => {
     expect(mobileHtml).toContain('data-viewport="MOBILE"');
     expect(mobileHtml).toContain('width:390px');
     expect(mobileHtml).toContain('data-testid="visual-select-banner"');
+  });
+
+  it('captures browser-side cropped screenshots inside sandboxed iframe script and sanitizes crop payloads (#28)', () => {
+    const injected = injectVisualInspectorIntoHtml(SAMPLE_PROTOTYPE_HTML, {
+      token: 'tok-crop-test',
+      targetOrigin: 'http://localhost:5173',
+      initialActive: true,
+      locale: 'zh-CN',
+    });
+
+    // Sandboxed iframe script includes SVG foreignObject + direct 2D canvas crop capture & live/flash overlays
+    expect(injected).toContain('foreignObject');
+    expect(injected).toContain('captureSelectionCrop');
+    expect(injected).toContain('onto-vi-running');
+    expect(injected).toContain('onto-vi-flash');
+    expect(stripVisualInspectorFromHtml(injected).trim()).toBe(SAMPLE_PROTOTYPE_HTML.trim());
+
+    expect(sanitizeInspectorCropPayload(null)).toBeNull();
+    expect(
+      sanitizeInspectorCropPayload({
+        mimeType: 'text/html',
+        dataBase64: 'SGVsbG8=',
+        width: 100,
+        height: 40,
+      }),
+    ).toBeNull();
+    expect(
+      sanitizeInspectorCropPayload({
+        mimeType: 'image/webp',
+        dataBase64: '   ',
+        width: 100,
+        height: 40,
+      }),
+    ).toBeNull();
+
+    const validWebp = sanitizeInspectorCropPayload({
+      mimeType: 'image/webp',
+      dataBase64: 'data:image/webp;base64,UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAfQ//73v/+BiOh/AAA=',
+      width: 320.4,
+      height: 88.9,
+    });
+    expect(validWebp).toEqual({
+      mimeType: 'image/webp',
+      dataBase64: 'UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAfQ//73v/+BiOh/AAA=',
+      width: 320,
+      height: 89,
+    });
+  });
+
+  it('renders live running anchor indicator, flashed anchors, and keeps Box-Select enabled while busy (#28)', () => {
+    const noop = () => {};
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => (key === 'onto_locale' ? 'zh-CN' : null),
+      setItem: noop,
+      removeItem: noop,
+    });
+
+    const zhRunningHtml = renderToStaticMarkup(
+      React.createElement(
+        PreferencesProvider,
+        null,
+        React.createElement(PrototypeVisualPreviewStage, {
+          htmlContent: SAMPLE_PROTOTYPE_HTML,
+          inspectMode: true,
+          onInspectModeChange: noop,
+          busy: true,
+          highlightedSelector: '[data-screen-id="SCR-CONTRACT-LIST"] [data-element-id="EL-SEARCH"]',
+          activeRunningAnchor: {
+            screenId: 'SCR-CONTRACT-LIST',
+            elementId: 'EL-APPROVE',
+            label: '批量审批',
+          },
+          flashedAnchors: [{ screenId: 'SCR-CONTRACT-LIST', elementId: 'EL-SEARCH' }],
+        }),
+      ),
+    );
+    expect(zhRunningHtml).toContain('is-inspecting');
+    expect(zhRunningHtml).toContain('data-testid="prototype-live-modifying-badge"');
+    expect(zhRunningHtml).toContain('Agent 正在修改');
+    expect(zhRunningHtml).toContain('SCR-CONTRACT-LIST · EL-APPROVE');
+    expect(zhRunningHtml).toContain(
+      'data-highlighted-selector="[data-screen-id=&quot;SCR-CONTRACT-LIST&quot;] [data-element-id=&quot;EL-SEARCH&quot;]"',
+    );
+    expect(zhRunningHtml).toContain('data-flashed-anchors="SCR-CONTRACT-LIST · EL-SEARCH"');
+
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => (key === 'onto_locale' ? 'en-US' : null),
+      setItem: noop,
+      removeItem: noop,
+    });
+    const enRunningHtml = renderToStaticMarkup(
+      React.createElement(
+        PreferencesProvider,
+        null,
+        React.createElement(PrototypeVisualPreviewStage, {
+          htmlContent: SAMPLE_PROTOTYPE_HTML,
+          inspectMode: true,
+          onInspectModeChange: noop,
+          busy: true,
+          activeRunningAnchor: {
+            screenId: 'SCR-CONTRACT-LIST',
+            elementId: 'EL-APPROVE',
+          },
+        }),
+      ),
+    );
+    expect(enRunningHtml).toContain('Modifying...');
+    expect(enRunningHtml).toContain('SCR-CONTRACT-LIST · EL-APPROVE');
   });
 });

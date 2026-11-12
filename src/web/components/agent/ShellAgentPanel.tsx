@@ -17,6 +17,11 @@ import {
   type LocalizedText,
 } from './agentRun.js';
 import { resolveActiveVisionCapability } from './VisionAttachmentControls.js';
+import { SelectionAttachmentStrip } from '../prototype/SelectionAttachmentStrip.js';
+import {
+  submitPrototypeComposerTurnWithSelections,
+  usePrototypeSelectionStore,
+} from '../prototype/prototypeSelectionStore.js';
 
 export interface AgentPanelSurface {
   /** Name of the Agent Session this module shows. */
@@ -165,7 +170,6 @@ export function ShellAgentPanel({
     setActivePrototypeId,
     startPrototypeGenTask,
     startSessionAgentRun,
-    startPrototypeRefinementRun,
     cancelSessionAgentRun,
     retrySessionAgentRun,
     removeQueuedSessionPrompt,
@@ -213,14 +217,28 @@ export function ShellAgentPanel({
     [data, surface.usesVision],
   );
 
+  const prototypeSelectionAttachments = usePrototypeSelectionStore((s) =>
+    activePrototypeId ? s.attachmentsByPrototype[activePrototypeId] : undefined,
+  );
+
+  const effectiveComposerHeaderSlot =
+    composerHeaderSlot ??
+    (surface.sessionKind === 'PROTOTYPE_CO_DESIGN' &&
+    activePrototypeId &&
+    prototypeSelectionAttachments &&
+    prototypeSelectionAttachments.length > 0 ? (
+      <SelectionAttachmentStrip prototypeId={activePrototypeId} />
+    ) : undefined);
+
   const handleSubmitPrompt = async (prompt: string) => {
     if (!activeProjectId) return;
     if (surface.sessionKind === 'PROTOTYPE_CO_DESIGN') {
       if (activePrototypeId) {
-        await startPrototypeRefinementRun({
+        await submitPrototypeComposerTurnWithSelections({
           projectId: activeProjectId,
           prototypeId: activePrototypeId,
           instruction: prompt,
+          visionSupported: visionState?.visionSupported ?? true,
         });
       } else {
         await startPrototypeGenTask({ prompt });
@@ -280,7 +298,9 @@ export function ShellAgentPanel({
       onOpenLlmCenter={() => onNavigate('llm-center')}
       onHoverAnchor={setHoveredAnchor}
       {...(surface.sessionKind ? { onSubmitPrompt: handleSubmitPrompt } : {})}
-      {...(composerHeaderSlot ? { composerHeaderSlot } : {})}
+      {...(effectiveComposerHeaderSlot
+        ? { composerHeaderSlot: effectiveComposerHeaderSlot }
+        : {})}
       {...(queuedPrompts.length > 0 ? { queuedPrompts } : {})}
       {...(activeSession
         ? {
