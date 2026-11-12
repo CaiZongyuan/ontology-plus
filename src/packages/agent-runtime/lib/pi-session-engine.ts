@@ -10,10 +10,12 @@ import {
   type Api,
   type AssistantMessage,
   type Context,
+  type ImageContent,
   type JsonObject,
   type Message,
   type Model,
   type MutableModels,
+  type TextContent,
   type Tool,
   type ToolCall,
   type ToolResultMessage,
@@ -35,16 +37,19 @@ import {
   handleOntologyMcpRequest,
   inspectOntologyMcpCapabilities,
 } from '../../package-compiler/index.js';
-import type {
-  AgentAskUserPrompt,
-  AgentDomainArtifact,
-  AgentSession,
-  AgentSessionKind,
-  AgentSessionMessage,
-  AgentToolCallTrace,
-  LlmProviderConfig,
-  ProjectDetail,
-  WorkspaceStore,
+import {
+  doesProviderSupportVision,
+  type AgentAskUserPrompt,
+  type AgentDomainArtifact,
+  type AgentImageAttachmentRef,
+  type AgentImageAttachmentRole,
+  type AgentSession,
+  type AgentSessionKind,
+  type AgentSessionMessage,
+  type AgentToolCallTrace,
+  type LlmProviderConfig,
+  type ProjectDetail,
+  type WorkspaceStore,
 } from '../../workspace-store/index.js';
 import {
   type AgentLocale,
@@ -409,14 +414,33 @@ function getLazyApiForType(providerType: LlmProviderConfig['providerType']) {
   return lazyOpenAiCompletions;
 }
 
+function extractUserMessageText(msg: Extract<Message, { role: 'user' }> | undefined): string {
+  if (!msg) return '';
+  if (typeof msg.content === 'string') return msg.content;
+  return msg.content
+    .filter((b): b is TextContent => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n');
+}
+
 function buildFauxMockModels(
   store: WorkspaceStore,
   session: AgentSession,
   activeModelCode?: ModelCode,
   explicitLocale?: AgentLocale,
-): { models: MutableModels; selectedModel: Model<Api>; providerLabel: string } {
+): {
+  models: MutableModels;
+  selectedModel: Model<Api>;
+  providerLabel: string;
+  visionSupported: boolean;
+} {
   const project = resolveProjectDetail(store, session.projectId);
   const modelId = session.modelOverride || 'faux/ontology-pi-durable-v1';
+  const allProviders = store.listLlmProviders();
+  const selectedProvider = session.providerId
+    ? allProviders.find((p) => p.id === session.providerId)
+    : allProviders.find((p) => p.enabled) ?? allProviders[0];
+  const visionSupported = selectedProvider?.supportsVision === false ? false : true;
 
   const faux = fauxProvider({
     provider: 'faux-mock',
@@ -424,6 +448,7 @@ function buildFauxMockModels(
       {
         id: modelId,
         name: 'Ontology Pi Durable Mock Engine',
+        input: visionSupported ? ['text', 'image'] : ['text'],
         reasoning: true,
         contextWindow: 128000,
         maxTokens: 4096,
@@ -439,13 +464,7 @@ function buildFauxMockModels(
       const lastUserMsg = [...context.messages]
         .reverse()
         .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
-      const userPrompt =
-        typeof lastUserMsg?.content === 'string'
-          ? lastUserMsg.content
-          : (lastUserMsg?.content ?? [])
-              .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-              .map((b) => b.text)
-              .join('\n');
+      const userPrompt = extractUserMessageText(lastUserMsg);
       const lower = userPrompt.toLowerCase();
       const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
 
@@ -820,8 +839,7 @@ function buildFauxMockModels(
       const lastUserMsg = [...context.messages]
         .reverse()
         .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
-      const userPrompt =
-        typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const userPrompt = extractUserMessageText(lastUserMsg);
       const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
 
       const toolResults = context.messages.filter(
@@ -911,8 +929,7 @@ function buildFauxMockModels(
       const lastUserMsg = [...context.messages]
         .reverse()
         .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
-      const userPrompt =
-        typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const userPrompt = extractUserMessageText(lastUserMsg);
       const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
 
       const toolResults = context.messages.filter(
@@ -953,6 +970,7 @@ function buildFauxMockModels(
     models,
     selectedModel,
     providerLabel: 'Pi Durable Mock Engine (fauxProvider)',
+    visionSupported,
   };
 }
 
@@ -970,6 +988,7 @@ export function buildPiModelsForStore(
   providerConfig?: LlmProviderConfig;
   providerLabel: string;
   isMock: boolean;
+  visionSupported: boolean;
 } {
   const loc = resolveEffectiveLocale(store, options?.locale);
   const isMock = isMockLlmActive(store, options?.mockMode);
@@ -1023,7 +1042,7 @@ export function buildPiModelsForStore(
       api,
       provider: cfg.id,
       baseUrl: cleanBaseUrl,
-      input: ['text'],
+      input: doesProviderSupportVision(cfg, id) ? ['text', 'image'] : ['text'],
       cost: ZERO_MODEL_COST,
       reasoning: true,
       contextWindow: 128000,
@@ -1088,6 +1107,7 @@ export function buildPiModelsForStore(
     providerConfig: preferredProvider,
     providerLabel: preferredProvider.name,
     isMock: false,
+    visionSupported: selectedModel.input.includes('image'),
   };
 }
 
@@ -2188,6 +2208,18 @@ export async function compactAgentSessionWithLlm(
 
 // ─── Unified Multi-Step Streaming Session Runner ─────────────────────────────
 
+export interface TransientTurnImageInput {
+  id: string;
+  name: string;
+  mimeType: string;
+  dataBase64?: string;
+  remoteUrl?: string;
+  width?: number;
+  height?: number;
+  role?: AgentImageAttachmentRole;
+  textFallbackNote?: string;
+}
+
 export interface UnifiedAgentStreamInput {
   sessionId: string;
   prompt?: string;
@@ -2197,6 +2229,7 @@ export interface UnifiedAgentStreamInput {
     selectedAnswers: string[];
     freeformText?: string;
   };
+  images?: TransientTurnImageInput[];
   activeModelCode?: ModelCode;
   reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
   locale?: AgentLocale | string;
@@ -2204,6 +2237,105 @@ export interface UnifiedAgentStreamInput {
   signal?: AbortSignal;
   idleTimeoutMs?: number;
   stepTimeoutMs?: number;
+}
+
+function toPersistedImageRef(
+  img: TransientTurnImageInput,
+  index: number,
+): AgentImageAttachmentRef {
+  const hasSafeRemoteUrl =
+    typeof img.remoteUrl === 'string' &&
+    (/^https?:\/\//i.test(img.remoteUrl) ||
+      (img.remoteUrl.startsWith('/') && !img.remoteUrl.startsWith('//'))) &&
+    !/^(?:data|blob):/i.test(img.remoteUrl);
+  const isRemote = hasSafeRemoteUrl && !img.dataBase64;
+  return {
+    id: img.id?.trim() || `img-${Date.now().toString(36)}-${index + 1}`,
+    name: img.name?.trim() || `image-${index + 1}`,
+    mimeType: img.mimeType?.trim() || 'image/webp',
+    source: isRemote ? 'remote' : 'local',
+    ...(isRemote && img.remoteUrl ? { remoteUrl: img.remoteUrl.trim() } : {}),
+    ...(typeof img.width === 'number' && Number.isFinite(img.width) && img.width > 0
+      ? { width: Math.round(img.width) }
+      : {}),
+    ...(typeof img.height === 'number' && Number.isFinite(img.height) && img.height > 0
+      ? { height: Math.round(img.height) }
+      : {}),
+    ...(img.role ? { role: img.role } : {}),
+  };
+}
+
+async function resolveTransientImagesForVisionTurn(
+  images: TransientTurnImageInput[],
+  locale: AgentLocale,
+): Promise<{
+  imageBlocks: ImageContent[];
+  manifestLines: string[];
+  fallbackNotes: string[];
+}> {
+  const imageBlocks: ImageContent[] = [];
+  const manifestLines: string[] = [];
+  const fallbackNotes: string[] = [];
+
+  for (let i = 0; i < images.length; i += 1) {
+    const img = images[i]!;
+    const roleLabel = img.role ? ` (${img.role})` : '';
+    const trimmedBase64 = typeof img.dataBase64 === 'string' ? img.dataBase64.trim() : '';
+
+    if (trimmedBase64.length > 0) {
+      const dataUriMatch = /^data:([^;]+);base64,([\s\S]+)$/i.exec(trimmedBase64);
+      const rawBase64 = (dataUriMatch ? dataUriMatch[2]! : trimmedBase64).replace(/\s+/g, '');
+      const resolvedMime = (dataUriMatch ? dataUriMatch[1]! : img.mimeType) || 'image/webp';
+      if (rawBase64.length > 0) {
+        imageBlocks.push({
+          type: 'image',
+          data: rawBase64,
+          mimeType: resolvedMime,
+        });
+        manifestLines.push(
+          `- [Image #${imageBlocks.length}] ${img.name}${roleLabel}${img.textFallbackNote ? ` — ${img.textFallbackNote}` : ''}`,
+        );
+        continue;
+      }
+    }
+
+    if (typeof img.remoteUrl === 'string' && /^https?:\/\//i.test(img.remoteUrl.trim())) {
+      try {
+        const resp = await fetch(img.remoteUrl.trim(), {
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        const headerMime = resp.headers.get('content-type')?.split(';')[0]?.trim();
+        const buf = Buffer.from(await resp.arrayBuffer());
+        if (buf.byteLength > 0) {
+          imageBlocks.push({
+            type: 'image',
+            data: buf.toString('base64'),
+            mimeType: headerMime || img.mimeType || 'image/webp',
+          });
+          manifestLines.push(
+            `- [Image #${imageBlocks.length}] ${img.name}${roleLabel}${img.textFallbackNote ? ` — ${img.textFallbackNote}` : ''}`,
+          );
+          continue;
+        }
+      } catch {
+        // Fall through to text fallback note when remote screenshot cannot be fetched
+      }
+    }
+
+    fallbackNotes.push(
+      img.textFallbackNote?.trim() ||
+        pickLocaleText(
+          locale,
+          `[参考图「${img.name}」未加载图像字节，仅使用文字说明]`,
+          `[Reference image "${img.name}" bytes unavailable; using text description only]`,
+        ),
+    );
+  }
+
+  return { imageBlocks, manifestLines, fallbackNotes };
 }
 
 export async function* runUnifiedAgentSessionStream(
@@ -2338,11 +2470,27 @@ export async function* runUnifiedAgentSessionStream(
     }
   }
 
+  const incomingImages = Array.isArray(input.images) ? input.images : [];
+  const turnAttachmentRefs: AgentImageAttachmentRef[] = incomingImages.map((img, idx) =>
+    toPersistedImageRef(img, idx),
+  );
+
+  if (!synthesizedPrompt && turnAttachmentRefs.length > 0) {
+    synthesizedPrompt = pickLocaleText(
+      effectiveLocale,
+      `请结合附带的 ${turnAttachmentRefs.length} 张参考图进行分析与设计调整。`,
+      `Please inspect the ${turnAttachmentRefs.length} attached reference image(s) and apply appropriate design updates.`,
+    );
+  }
+
+  let currentTurnUserMsgId: string | undefined;
   if (synthesizedPrompt) {
+    currentTurnUserMsgId = `amsg-${Date.now().toString(36)}-u`;
     workingMessages.push({
-      id: `amsg-${Date.now().toString(36)}-u`,
+      id: currentTurnUserMsgId,
       role: 'user',
       content: synthesizedPrompt,
+      ...(turnAttachmentRefs.length > 0 ? { images: turnAttachmentRefs } : {}),
       timestamp: nowIso,
     });
   }
@@ -2377,12 +2525,26 @@ export async function* runUnifiedAgentSessionStream(
   let totalOutputTokens = 0;
   let hadValidatorError = false;
 
+  let usedVisionFallback = false;
+  let activeVisionFallbackNotice: string | undefined;
+
   try {
     built = buildPiModelsForStore(store, sessionState, {
       ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
       ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
       locale: effectiveLocale,
     });
+
+    if (!built.visionSupported) {
+      activeVisionFallbackNotice = pickLocaleText(
+        effectiveLocale,
+        '当前模型看不了图，将只使用文字设计说明',
+        'Current model cannot view images; only text design notes will be used',
+      );
+      if (incomingImages.length > 0) {
+        usedVisionFallback = true;
+      }
+    }
 
     yield {
       id: nextEventId(),
@@ -2393,10 +2555,80 @@ export async function* runUnifiedAgentSessionStream(
         provider: built.providerLabel,
         model: built.selectedModel.id,
         isMock: built.isMock,
+        visionSupported: built.visionSupported,
+        ...(activeVisionFallbackNotice ? { visionFallbackNotice: activeVisionFallbackNotice } : {}),
       },
     };
 
     const piMessages: Message[] = buildInitialPiMessages(sessionState);
+
+    if (incomingImages.length > 0) {
+      const lastPiUserIdx = (() => {
+        for (let i = piMessages.length - 1; i >= 0; i -= 1) {
+          if (piMessages[i]?.role === 'user') return i;
+        }
+        return -1;
+      })();
+
+      if (lastPiUserIdx >= 0) {
+        const targetUserMsg = piMessages[lastPiUserIdx] as Extract<Message, { role: 'user' }>;
+        const basePromptText = extractUserMessageText(targetUserMsg);
+
+        if (built.visionSupported) {
+          const resolvedVision = await resolveTransientImagesForVisionTurn(
+            incomingImages,
+            effectiveLocale,
+          );
+          const extraSections: string[] = [];
+          if (resolvedVision.manifestLines.length > 0) {
+            extraSections.push(
+              pickLocaleText(
+                effectiveLocale,
+                `[视觉参考清单]\n${resolvedVision.manifestLines.join('\n')}`,
+                `[Visual Reference Manifest]\n${resolvedVision.manifestLines.join('\n')}`,
+              ),
+            );
+          }
+          if (resolvedVision.fallbackNotes.length > 0) {
+            extraSections.push(resolvedVision.fallbackNotes.join('\n'));
+          }
+          const combinedText = [basePromptText, ...extraSections].filter(Boolean).join('\n\n');
+          if (resolvedVision.imageBlocks.length > 0) {
+            piMessages[lastPiUserIdx] = {
+              ...targetUserMsg,
+              content: [{ type: 'text', text: combinedText }, ...resolvedVision.imageBlocks],
+            };
+          } else if (combinedText !== basePromptText) {
+            piMessages[lastPiUserIdx] = {
+              ...targetUserMsg,
+              content: combinedText,
+            };
+          }
+        } else {
+          const fallbackLines = incomingImages.map((img, idx) => {
+            const roleTag = img.role ? ` (${img.role})` : '';
+            const detail =
+              img.textFallbackNote?.trim() ||
+              pickLocaleText(
+                effectiveLocale,
+                `图片「${img.name}」仅使用文字说明`,
+                `Image "${img.name}" represented by text notes only`,
+              );
+            return `- [${idx + 1}] ${img.name}${roleTag}: ${detail}`;
+          });
+          const fallbackBlock = pickLocaleText(
+            effectiveLocale,
+            `[文字设计说明（当前模型不支持看图）]\n${fallbackLines.join('\n')}`,
+            `[Text Design Notes (current model does not support vision input)]\n${fallbackLines.join('\n')}`,
+          );
+          piMessages[lastPiUserIdx] = {
+            ...targetUserMsg,
+            content: [basePromptText, fallbackBlock].filter(Boolean).join('\n\n'),
+          };
+        }
+      }
+    }
+
     const tools = getToolsForAgentKind(sessionState.agentKind);
 
     const MAX_TOOL_ROUNDS = 24;
@@ -2636,12 +2868,35 @@ export async function* runUnifiedAgentSessionStream(
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
       ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
+      ...(usedVisionFallback
+        ? {
+            visionFallbackUsed: true,
+            ...(activeVisionFallbackNotice
+              ? { visionFallbackNotice: activeVisionFallbackNotice }
+              : {}),
+          }
+        : {}),
       modelUsed: built.selectedModel.id,
       providerName: built.providerLabel,
       timestamp: new Date().toISOString(),
     };
 
-    const nextMessages = [...sessionState.messages, assistantRecord];
+    const updatedPriorMessages =
+      usedVisionFallback && currentTurnUserMsgId
+        ? sessionState.messages.map((m) =>
+            m.id === currentTurnUserMsgId
+              ? {
+                  ...m,
+                  visionFallbackUsed: true,
+                  ...(activeVisionFallbackNotice
+                    ? { visionFallbackNotice: activeVisionFallbackNotice }
+                    : {}),
+                }
+              : m,
+          )
+        : sessionState.messages;
+
+    const nextMessages = [...updatedPriorMessages, assistantRecord];
     const finalStatus: AgentSession['status'] = pendingAskUser ? 'WAITING_INPUT' : 'IDLE';
     const completedSession: AgentSession = {
       ...sessionState,

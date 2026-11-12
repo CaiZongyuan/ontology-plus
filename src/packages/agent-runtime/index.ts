@@ -30,6 +30,7 @@ export {
   runUnifiedAgentSessionStream,
   collectUnifiedAgentTurn,
   createUnifiedSseStream,
+  type TransientTurnImageInput,
   type UnifiedAgentSseEventType,
   type UnifiedAgentSseEvent,
   type UnifiedAgentStreamInput,

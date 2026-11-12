@@ -15,16 +15,17 @@ import type {
   MetricInsightResult,
   ScenarioAttributionResult,
 } from '../../packages/agent-runtime/index.js';
-import type {
-  AnalyticsQueryResult,
-  AnalyticsReport,
-  AnalyticsScenario,
-  DataDocument,
-  DataMappingRule,
-  DatabaseResource,
-  LlmProviderConfig,
-  MetricDefinition,
-  WritebackInterface,
+import {
+  doesProviderSupportVision,
+  type AnalyticsQueryResult,
+  type AnalyticsReport,
+  type AnalyticsScenario,
+  type DataDocument,
+  type DataMappingRule,
+  type DatabaseResource,
+  type LlmProviderConfig,
+  type MetricDefinition,
+  type WritebackInterface,
 } from '../../packages/workspace-store/index.js';
 import {
   apiDeleteResource,
@@ -1901,6 +1902,7 @@ export function LlmCenterView() {
   const [defaultModel, setDefaultModel] = useState('auto/glm-5.3-flash');
   const [modelsCsv, setModelsCsv] = useState('auto/glm-5.3-flash, auto/glm-5.2');
   const [enabled, setEnabled] = useState(true);
+  const [supportsVision, setSupportsVision] = useState(true);
 
   if (!data) return null;
 
@@ -1928,6 +1930,7 @@ export function LlmCenterView() {
     setDefaultModel('auto/glm-5.3-flash');
     setModelsCsv('auto/glm-5.3-flash, gemini-2.5-flash');
     setEnabled(true);
+    setSupportsVision(true);
     setModalOpen(true);
   };
 
@@ -1940,6 +1943,7 @@ export function LlmCenterView() {
     setDefaultModel(p.defaultModel);
     setModelsCsv(p.availableModels.join(', '));
     setEnabled(p.enabled);
+    setSupportsVision(doesProviderSupportVision(p));
     setModalOpen(true);
   };
 
@@ -1957,6 +1961,7 @@ export function LlmCenterView() {
         .map((m) => m.trim())
         .filter(Boolean),
       enabled,
+      supportsVision,
     };
     const json = await apiPostJson<{ llmProviders: LlmProviderConfig[] }>(
       '/api/llm/providers',
@@ -2015,14 +2020,23 @@ export function LlmCenterView() {
         </Button>
       </div>
 
-      {data.llmProviders.map((p, idx) => (
+      {data.llmProviders.map((p, idx) => {
+        const visionOk = doesProviderSupportVision(p);
+        return (
         <div key={p.id} className="card">
           <div className="card-header">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="card-title">{p.name}</h3>
                 <span className={`badge ${p.enabled ? 'badge-ok' : 'badge-warn'}`}>
                   {p.enabled ? 'ENABLED' : 'DISABLED'}
+                </span>
+                <span
+                  className={`badge ${visionOk ? 'badge-accent' : 'badge-warn'}`}
+                  data-testid={idx === 0 ? 'llm-provider-vision-badge' : `llm-provider-vision-badge-${idx}`}
+                  data-vision-supported={visionOk ? 'true' : 'false'}
+                >
+                  {visionOk ? t('支持看图', 'Vision Input') : t('仅文本', 'Text Only')}
                 </span>
               </div>
               <div className="font-mono text-[12.5px] text-muted-foreground">
@@ -2080,7 +2094,8 @@ export function LlmCenterView() {
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
 
       <ConfirmDialog
         open={modalOpen}
@@ -2144,6 +2159,28 @@ export function LlmCenterView() {
               onChange={(e) => setModelsCsv(e.target.value)}
             />
           </div>
+        </div>
+        <div className="mt-2 rounded-control border border-line bg-inset px-3 py-2.5">
+          <label className="inline-flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              data-testid="llm-provider-supports-vision-checkbox"
+              checked={supportsVision}
+              onChange={(e) => setSupportsVision(e.target.checked)}
+            />
+            <span className="flex flex-col gap-0.5">
+              <strong className="text-[13px] text-ink">
+                {t('支持看图 (Vision Input)', 'Vision Input')}
+              </strong>
+              <span className="text-[12px] text-muted-foreground">
+                {t(
+                  '开启后，智能体运行会将主参考、借鉴参考、上传图片与框选截图直接发送给模型；关闭后改用文字设计说明。',
+                  'When enabled, Agent Runs send Visual References, uploaded images, and selection crops directly to the model; when off, text design notes are used instead.',
+                )}
+              </span>
+            </span>
+          </label>
         </div>
       </ConfirmDialog>
 

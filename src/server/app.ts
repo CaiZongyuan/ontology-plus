@@ -57,6 +57,7 @@ import {
   type AgentLocale,
   type PipelineTaskKind,
   type PrototypeRefinementSelection,
+  type TransientTurnImageInput,
 } from '../packages/agent-runtime/index.js';
 import {
   buildMcpClientConfigJson,
@@ -372,6 +373,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
           selectedAnswers: string[];
           freeformText?: string;
         };
+        images?: TransientTurnImageInput[];
         activeModelCode?: ModelCode;
         reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
         mockMode?: boolean;

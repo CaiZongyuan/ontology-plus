@@ -3,6 +3,8 @@ export {
   type WorkspaceStoreOptions,
 } from './lib/store.js';
 
+export { doesProviderSupportVision } from './lib/types.js';
+
 export type {
   ProjectSummary,
   ProjectDetail,
@@ -11,6 +13,8 @@ export type {
   AgentToolCallTrace,
   AgentAskUserPrompt,
   AgentDomainArtifact,
+  AgentImageAttachmentRole,
+  AgentImageAttachmentRef,
   AgentSessionMessage,
   AgentSession,
   RequirementMessage,

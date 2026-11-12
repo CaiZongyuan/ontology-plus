@@ -116,6 +116,23 @@ export type AgentDomainArtifact =
       files: string[];
     };
 
+export type AgentImageAttachmentRole =
+  | 'primary_ref'
+  | 'borrowed_ref'
+  | 'user_upload'
+  | 'selection_crop';
+
+export interface AgentImageAttachmentRef {
+  id: string;
+  name: string;
+  mimeType: string;
+  source: 'local' | 'remote';
+  remoteUrl?: string;
+  width?: number;
+  height?: number;
+  role?: AgentImageAttachmentRole;
+}
+
 export interface AgentSessionMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -125,6 +142,9 @@ export interface AgentSessionMessage {
   timestamp: string;
   modelUsed?: string;
   providerName?: string;
+  images?: AgentImageAttachmentRef[];
+  visionFallbackUsed?: boolean;
+  visionFallbackNotice?: string;
   toolCalls?: AgentToolCallTrace[];
   askUser?: AgentAskUserPrompt;
   artifacts?: AgentDomainArtifact[];
@@ -506,8 +526,32 @@ export interface LlmProviderConfig {
   defaultModel: string;
   availableModels: string[];
   enabled: boolean;
+  /** Whether this provider/model accepts multimodal image input (Visual References, uploads, selection crops). */
+  supportsVision?: boolean;
   lastTestedStatus?: 'OK' | 'ERROR';
   lastTestedMessage?: string;
+}
+
+const KNOWN_VISION_MODEL_PATTERN =
+  /(?:glm-5\.3-flash|glm-4(?:\.\d+)?v|gpt-4o|gpt-4\.1|gpt-4\.5|gpt-5|\bo1\b|\bo3\b|\bo4-mini\b|claude-3|claude-sonnet-4|claude-opus-4|claude-haiku-4|gemini-|qwen(?:\d+(?:\.\d+)?)?-vl|pixtral|llava|vision|-vl\b)/i;
+
+/**
+ * Determine whether a configured LLM provider (and optional target model ID) supports vision input.
+ * Always honors an explicit boolean saved on `provider.supportsVision`; otherwise falls back to
+ * verified provider/model defaults (`auto/glm-5.3-flash`, Anthropic, Google Gemini, OpenAI vision models).
+ */
+export function doesProviderSupportVision(
+  provider: Pick<LlmProviderConfig, 'providerType' | 'defaultModel' | 'supportsVision'>,
+  modelId?: string,
+): boolean {
+  if (typeof provider.supportsVision === 'boolean') {
+    return provider.supportsVision;
+  }
+  if (provider.providerType === 'ANTHROPIC' || provider.providerType === 'GOOGLE_GEMINI') {
+    return true;
+  }
+  const targetModel = (modelId || provider.defaultModel || '').trim();
+  return KNOWN_VISION_MODEL_PATTERN.test(targetModel);
 }
 
 export interface SystemSettingsState {

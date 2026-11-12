@@ -4,12 +4,15 @@ import type { NavViewId } from '../../i18n.js';
 import { AgentPanel } from './AgentPanel.js';
 import { AGENT_PANEL_OVERLAY_QUERY, useAgentPanelStore } from './agentPanelStore.js';
 import { agentRunFromPipelineTask, type LocalizedText } from './agentRun.js';
+import { resolveActiveVisionCapability } from './VisionAttachmentControls.js';
 
 export interface AgentPanelSurface {
   /** Name of the Agent Session this module shows. */
   title: LocalizedText;
   /** Legacy pipeline tasks that belong to this module's agent until they become session runs. */
   taskKinds: BackgroundPipelineTaskKind[];
+  /** Whether this module's agent uses visual references/uploads and should warn if vision is unsupported. */
+  usesVision?: boolean;
 }
 
 /**
@@ -20,6 +23,7 @@ const AGENT_PANEL_SURFACES: Partial<Record<NavViewId, AgentPanelSurface>> = {
   'app-prototype': {
     title: { zh: '原型共创', en: 'Prototype Co-Design' },
     taskKinds: ['PROTOTYPE_GEN'],
+    usesVision: true,
   },
 };
 
@@ -74,6 +78,11 @@ export function ShellAgentPanel({ surface, overlay, onClose, onNavigate }: Shell
     [backgroundTasks, activeProjectId, surface],
   );
 
+  const visionState = useMemo(
+    () => (surface.usesVision ? resolveActiveVisionCapability(data) : undefined),
+    [data, surface.usesVision],
+  );
+
   return (
     <AgentPanel
       title={surface.title}
@@ -86,6 +95,12 @@ export function ShellAgentPanel({ surface, overlay, onClose, onNavigate }: Shell
       onRetryRun={(runId) => void retryBackgroundTask(runId)}
       onOpenRunArtifact={(runId) => void openBackgroundTaskResult(runId)}
       onOpenLlmCenter={() => onNavigate('llm-center')}
+      {...(visionState
+        ? {
+            visionSupported: visionState.visionSupported,
+            ...(visionState.providerLabel ? { visionProviderLabel: visionState.providerLabel } : {}),
+          }
+        : {})}
     />
   );
 }
