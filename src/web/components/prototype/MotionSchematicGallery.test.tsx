@@ -4,10 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectDetail } from '../../../packages/workspace-store/index.js';
 import { PreferencesProvider } from '../../i18n.js';
 import {
+  buildDesignBriefFromState,
+  compileDesignBriefGenerationPrompt,
+} from './DesignBriefAndStyleTile.js';
+import {
   CURATED_INSPO_CATALOG,
   PrototypeCoDesignStudio,
-  buildAgentPrototypeContextPrompt,
 } from './PrototypeCoDesignStudio.js';
+import { createInitialVisualReferenceSelection } from './VisualReferencePicker.js';
 import {
   DEFAULT_ALIGNMENT_STATE,
   InteractiveMiniStage,
@@ -499,21 +503,6 @@ describe('Reduced motion accessibility (prefers-reduced-motion: reduce)', () => 
 describe('PrototypeCoDesignStudio integration & backward compatibility', () => {
   it('wires 7-group SRS pre-selection, domain nouns, and hard-constraint MotionSpecs into PrototypeCoDesignStudio', () => {
     stubLocale('zh-CN');
-    const prompt = buildAgentPrototypeContextPrompt(
-      [
-        {
-          item: CURATED_INSPO_CATALOG[0]!,
-          likedAspects: ['bgColor', 'accentColor'],
-          likedSwatches: [],
-          reasonNote: '',
-        },
-      ],
-      DEFAULT_ALIGNMENT_STATE,
-      'zh-CN',
-    );
-    expect(prompt.match(/\[硬性约束 \/ MUST SATISFY\]/g)).toHaveLength(7);
-    expect(prompt.match(/\[示例代码（可按页面结构改写） \/ ADAPTIVE EXAMPLE\]/g)).toHaveLength(7);
-
     const mockProject: ProjectDetail = {
       id: 'proj-contract',
       name: '采购合同管理工程',
@@ -536,6 +525,23 @@ describe('PrototypeCoDesignStudio integration & backward compatibility', () => {
       knowledgeGraph: { nodes: [], edges: [] },
       changelog: '',
     };
+
+    const referenceSelection = createInitialVisualReferenceSelection(CURATED_INSPO_CATALOG[0]!);
+    const brief = buildDesignBriefFromState({
+      project: mockProject,
+      referenceSelection,
+      alignment: DEFAULT_ALIGNMENT_STATE,
+      locale: 'zh-CN',
+    });
+    const prompt = compileDesignBriefGenerationPrompt({
+      project: mockProject,
+      brief,
+      referenceSelection,
+      alignment: DEFAULT_ALIGNMENT_STATE,
+      locale: 'zh-CN',
+    });
+    expect(prompt.match(/\[硬性约束 \/ MUST SATISFY\]/g)).toHaveLength(7);
+    expect(prompt.match(/\[示例代码（可按页面结构改写） \/ ADAPTIVE EXAMPLE\]/g)).toHaveLength(7);
 
     const noop = () => {};
     const studioStep2Html = renderToStaticMarkup(

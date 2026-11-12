@@ -71,6 +71,21 @@ export function resolveSurfaceAgentSession(
   const sessions = data?.agentSessions ?? [];
   if (surface.sessionKind === 'PROTOTYPE_CO_DESIGN') {
     const prototypes = data?.prototypes ?? [];
+    // If activeSessionId explicitly points to an unbound PROTOTYPE_CO_DESIGN session (e.g. Briefing Stage Revision #1 run), surface it immediately
+    const explicitUnbound = opts?.activeSessionId
+      ? sessions.find(
+          (s) =>
+            s.id === opts.activeSessionId &&
+            s.projectId === activeProjectId &&
+            s.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+            !s.targetId &&
+            !prototypes.some((p) => p.coDesignSessionId === s.id),
+        )
+      : undefined;
+    if (explicitUnbound) {
+      return { session: explicitUnbound, activePrototypeId: undefined };
+    }
+
     const preferredProtoId =
       opts?.activePrototypeIdByProject?.[activeProjectId] ||
       opts?.activeItemId ||
@@ -239,6 +254,11 @@ export function ShellAgentPanel({
           prototypeId: activePrototypeId,
           instruction: prompt,
           visionSupported: visionState?.visionSupported ?? true,
+        });
+      } else if (activeSession) {
+        await startSessionAgentRun({
+          sessionId: activeSession.id,
+          prompt,
         });
       } else {
         await startPrototypeGenTask({ prompt });

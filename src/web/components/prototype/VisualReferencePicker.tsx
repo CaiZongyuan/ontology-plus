@@ -278,6 +278,14 @@ export interface FetchVisualReferenceParams {
 
 export interface FetchVisualReferenceResult {
   items: VisualReferenceItem[];
+  pick?: VisualReferenceItem;
+  source: 'live' | 'cache' | 'curated';
+  fallback: boolean;
+}
+
+export interface FetchVisualReferenceDesignSystemResult {
+  slug: string;
+  markdown: string;
   source: 'live' | 'cache' | 'curated';
   fallback: boolean;
 }
@@ -300,10 +308,14 @@ export async function fetchVisualReferenceCatalog(
       source?: 'live' | 'cache' | 'curated';
       fallback?: boolean;
       items?: RawVisualReferenceInput[];
+      pick?: RawVisualReferenceInput;
     };
     if (json.ok && Array.isArray(json.items) && json.items.length > 0) {
+      const items = json.items.map((raw) => normalizeVisualReferenceItem(raw));
+      const pick = json.pick ? normalizeVisualReferenceItem(json.pick) : items[0];
       return {
-        items: json.items.map((raw) => normalizeVisualReferenceItem(raw)),
+        items,
+        ...(pick ? { pick } : {}),
         source: json.source ?? 'live',
         fallback: Boolean(json.fallback),
       };
@@ -311,6 +323,58 @@ export async function fetchVisualReferenceCatalog(
     return { items: CURATED_INSPO_CATALOG, source: 'curated', fallback: true };
   } catch {
     return { items: CURATED_INSPO_CATALOG, source: 'curated', fallback: true };
+  }
+}
+
+export async function recommendVisualReferences(
+  params: Omit<FetchVisualReferenceParams, 'action'> = {},
+  fetchFn: typeof fetch = globalThis.fetch,
+): Promise<FetchVisualReferenceResult> {
+  return fetchVisualReferenceCatalog({ action: 'recommend', ...params }, fetchFn);
+}
+
+export async function fetchVisualReferenceDesignSystem(
+  slug: string,
+  fetchFn: typeof fetch = globalThis.fetch,
+): Promise<FetchVisualReferenceDesignSystemResult> {
+  const curatedMatch =
+    CURATED_INSPO_CATALOG.find((c) => c.slug === slug) ?? CURATED_INSPO_CATALOG[0]!;
+  const fallbackMarkdown = [
+    `# ${curatedMatch.title} — Extracted Design System (DESIGN.md)`,
+    `- **Source**: ${curatedMatch.sourceUrl}`,
+    `- **Mode**: ${curatedMatch.mode}`,
+    `- **Surface**: ${curatedMatch.surfaceHex}`,
+    `- **Fonts**: ${curatedMatch.fonts.join(', ')}`,
+    `- **Radius**: ${curatedMatch.radiusPx}px`,
+    `- **Palette**: ${curatedMatch.palette.join(', ')}`,
+  ].join('\n');
+
+  try {
+    const res = await fetchFn('/api/prototype-inspo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'design_system', slug }),
+    });
+    if (!res.ok) {
+      return { slug, markdown: fallbackMarkdown, source: 'curated', fallback: true };
+    }
+    const json = (await res.json()) as {
+      ok?: boolean;
+      source?: 'live' | 'cache' | 'curated';
+      fallback?: boolean;
+      markdown?: string;
+    };
+    if (typeof json.markdown === 'string' && json.markdown.trim().length > 0) {
+      return {
+        slug,
+        markdown: json.markdown.trim(),
+        source: json.source ?? 'live',
+        fallback: Boolean(json.fallback),
+      };
+    }
+    return { slug, markdown: fallbackMarkdown, source: 'curated', fallback: true };
+  } catch {
+    return { slug, markdown: fallbackMarkdown, source: 'curated', fallback: true };
   }
 }
 

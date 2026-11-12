@@ -807,3 +807,423 @@ describe('Durable Background Session Runner, SSE Re-Attach, USER_ABORT & Queue (
   });
 });
 
+describe('Briefing Stage: Unbound Initial Generation (R1), Brief Restyle (R2), Non-Mock Failure & Clone (Issue #31)', () => {
+  it('runs an unbound PROTOTYPE_CO_DESIGN session in Mock mode to create Revision #1 with persisted DesignBrief, links session.targetId, emits PROTOTYPE_REVISION, and leaves MU untouched even when other prototypes exist', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    // Seed an existing prototype in the project to prove unbound session creates a NEW prototype instead of mutating list[0]
+    const existingProto = store.createPrototype('proj-contract', {
+      name: '既有原型草稿',
+      htmlContent: MULTI_SCREEN_PROTOTYPE_HTML,
+      source: 'UPLOADED',
+    });
+    const muBefore = JSON.stringify(store.getProject('proj-contract')!.suite.MU);
+    const confirmedBefore = store.getConfirmedPrototypeRevision('proj-contract');
+
+    const unboundSession = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      title: '设计简报首版原型生成',
+    });
+    expect(unboundSession.targetId).toBeUndefined();
+
+    const sampleBrief = {
+      items: [
+        {
+          id: 'brief-tone',
+          category: 'tone_palette',
+          statement: '主参考 Linear 深色高密度风格（背景 #0f172a，强调色 #5e6ad2）。',
+        },
+        {
+          id: 'brief-feel',
+          category: 'user_feel',
+          statement: '想要像银行内部台账那样稳重紧凑、一眼看清待审批金额。',
+        },
+      ],
+      userFeelNote: '想要像银行内部台账那样稳重紧凑、一眼看清待审批金额。',
+      primaryReferenceId: 'linear-app',
+      primaryReferenceTitle: 'Linear',
+      primaryReferenceSourceUrl: 'https://linear.app',
+      borrowedReferences: [
+        {
+          referenceId: 'stripe-billing',
+          aspect: 'dataClarity',
+          title: 'Stripe Billing',
+          sourceUrl: 'https://stripe.com/billing',
+        },
+      ],
+      motionSchematicIds: ['DRAWER', 'COMPACT_LEDGER', 'STEPPER_CORNER_TOAST'],
+      approvedAt: '2026-11-12T10:00:00.000Z',
+      updatedAt: '2026-11-12T10:00:00.000Z',
+    };
+
+    const result = await collectUnifiedAgentTurn(store, {
+      sessionId: unboundSession.id,
+      prompt: '请按照已确认设计简报生成响应式采购合同台账原型（1440px / 768px / 390px）',
+      designBrief: sampleBrief,
+      prototypeName: '采购合同简报原型 V1',
+      mockMode: true,
+    });
+
+    expect(result.events.some((e) => e.event === 'run_error')).toBe(false);
+    expect(result.events.some((e) => e.event === 'message_end')).toBe(true);
+
+    // Existing prototype must NOT have been mutated
+    expect(store.getPrototype(existingProto.prototype.id)?.revisions).toHaveLength(1);
+    expect(store.getPrototype(existingProto.prototype.id)?.htmlContent).toBe(
+      MULTI_SCREEN_PROTOTYPE_HTML,
+    );
+
+    const revEvent = result.events.find(
+      (e) =>
+        e.event === 'artifact' &&
+        (e.data.artifact as { kind?: string } | undefined)?.kind === 'PROTOTYPE_REVISION',
+    );
+    expect(revEvent).toBeDefined();
+    const artifact = revEvent!.data.artifact as {
+      kind: 'PROTOTYPE_REVISION';
+      prototypeId: string;
+      revisionId: string;
+      revisionNumber: number;
+    };
+    expect(artifact.revisionNumber).toBe(1);
+    expect(artifact.prototypeId).not.toBe(existingProto.prototype.id);
+
+    const createdProto = store.getPrototype(artifact.prototypeId);
+    expect(createdProto).toBeDefined();
+    expect(createdProto!.name).toBe('采购合同简报原型 V1');
+    expect(createdProto!.revisions).toHaveLength(1);
+    expect(createdProto!.revisions[0]!.revisionNumber).toBe(1);
+    expect(createdProto!.revisions[0]!.source).toBe('AGENT_RUN');
+    expect(createdProto!.coDesignSessionId).toBe(unboundSession.id);
+    expect(createdProto!.designBrief?.userFeelNote).toBe(sampleBrief.userFeelNote);
+    expect(createdProto!.designBrief?.primaryReferenceId).toBe('linear-app');
+    expect(createdProto!.htmlContent).toContain('data-screen-id=');
+    expect(createdProto!.htmlContent).toContain('data-element-id=');
+
+    // Unbound session is now bound to the newly created prototype
+    const updatedSession = store.getAgentSession(unboundSession.id);
+    expect(updatedSession?.targetId).toBe(createdProto!.id);
+
+    // ADR 0010: MU model and confirmed pointer must remain untouched prior to explicit Confirmation
+    const muAfter = JSON.stringify(store.getProject('proj-contract')!.suite.MU);
+    expect(muAfter).toBe(muBefore);
+    expect(store.getConfirmedPrototypeRevision('proj-contract')?.revisionId).toBe(
+      confirmedBefore?.revisionId,
+    );
+    expect(store.getConfirmedPrototypeRevision('proj-contract')?.prototypeId).not.toBe(
+      createdProto!.id,
+    );
+  });
+
+  it('supports Live HTTP unbound generation (Revision #1) and subsequent Brief Restyle (Revision #2), and NEVER fabricates template HTML when non-Mock gateway fails', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: false });
+    let shouldFailGateway = false;
+    let callStep = 0;
+
+    const generatedR1Html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live Brief R1</title>
+  <style>
+    :root { --bg: #faf8f5; --accent: #2563eb; }
+    .grid-shell { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 768px) { .grid-shell { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 390px) { .grid-shell { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <section data-screen-id="SCR-LEDGER" data-screen-name="采购台账" data-screen-type="LIST" class="grid-shell">
+    <input type="search" placeholder="检索合同" data-element-id="EL-SEARCH" data-element-type="INPUT" data-binding="Contract.contractNo" />
+    <button type="button" data-element-id="EL-CREATE" data-element-type="BUTTON" data-event-id="UIE-CREATE">新建合同</button>
+  </section>
+</body>
+</html>`;
+
+    const restyledR2Html = generatedR1Html
+      .replace('--bg: #faf8f5; --accent: #2563eb;', '--bg: #0b1120; --accent: #38bdf8;')
+      .replace('Live Brief R1', 'Live Brief R2 Dark Trading');
+
+    const server = http.createServer(async (req, res) => {
+      for await (const _chunk of req) {
+        // drain
+      }
+      if (shouldFailGateway) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'Upstream gateway unavailable' } }));
+        return;
+      }
+
+      callStep += 1;
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+      });
+
+      if (callStep === 1) {
+        const chunk = {
+          id: 'chatcmpl-r1-tool',
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: 'live-brief-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_r1_rewrite',
+                    type: 'function',
+                    function: {
+                      name: 'rewrite_prototype_page',
+                      arguments: JSON.stringify({
+                        htmlContent: generatedR1Html,
+                        allowAnchorReset: true,
+                      }),
+                    },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        };
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+
+      if (callStep === 2) {
+        const chunk = {
+          id: 'chatcmpl-r1-done',
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: 'live-brief-model',
+          choices: [
+            {
+              index: 0,
+              delta: { role: 'assistant', content: '已按确认简报生成首版响应式原型 R1。' },
+              finish_reason: 'stop',
+            },
+          ],
+        };
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+
+      if (callStep === 3) {
+        const chunk = {
+          id: 'chatcmpl-r2-tool',
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: 'live-brief-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_r2_restyle',
+                    type: 'function',
+                    function: {
+                      name: 'rewrite_prototype_page',
+                      arguments: JSON.stringify({
+                        htmlContent: restyledR2Html,
+                        allowAnchorReset: false,
+                      }),
+                    },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        };
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+
+      const chunk = {
+        id: 'chatcmpl-r2-done',
+        object: 'chat.completion.chunk',
+        created: Math.floor(Date.now() / 1000),
+        model: 'live-brief-model',
+        choices: [
+          {
+            index: 0,
+            delta: { role: 'assistant', content: '已按更新后的简报重做整页深色高密度风格 R2。' },
+            finish_reason: 'stop',
+          },
+        ],
+      };
+      res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const addr = server.address();
+    if (!addr || typeof addr === 'string') throw new Error('Failed to bind test server');
+
+    try {
+      for (const p of store.listLlmProviders()) {
+        store.saveLlmProvider({ ...p, enabled: false });
+      }
+      store.saveLlmProvider({
+        id: 'llm-live-brief',
+        name: 'Live Brief Gateway',
+        providerType: 'OPENAI_COMPATIBLE',
+        baseUrl: `http://127.0.0.1:${addr.port}/v1`,
+        apiKey: 'live-key',
+        defaultModel: 'live-brief-model',
+        availableModels: ['live-brief-model'],
+        supportsVision: true,
+        enabled: true,
+      });
+
+      // 1) Non-Mock gateway failure MUST report run_error and create ZERO fake prototypes
+      const preCount = store.listPrototypes('proj-contract').length;
+      shouldFailGateway = true;
+      const failedSession = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'PROTOTYPE_CO_DESIGN',
+        title: '失败时不伪造模板测试',
+      });
+      const failedRun = await collectUnifiedAgentTurn(store, {
+        sessionId: failedSession.id,
+        prompt: '确认简报生成原型',
+        designBrief: {
+          items: [{ id: 'i1', category: 'tone_palette', statement: '清爽白底台账' }],
+          updatedAt: '2026-11-12T10:00:00.000Z',
+        },
+        mockMode: false,
+      });
+      expect(failedRun.events.some((e) => e.event === 'run_error')).toBe(true);
+      expect(store.listPrototypes('proj-contract')).toHaveLength(preCount);
+      expect(store.getAgentSession(failedSession.id)?.targetId).toBeUndefined();
+
+      // 2) Live HTTP unbound session -> Revision #1
+      shouldFailGateway = false;
+      const liveSession = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'PROTOTYPE_CO_DESIGN',
+        title: '真实网关首版生成',
+      });
+      const r1Run = await collectUnifiedAgentTurn(store, {
+        sessionId: liveSession.id,
+        prompt: '按简报生成首版原型',
+        prototypeName: '合同审批原型 Live',
+        designBrief: {
+          items: [{ id: 'i1', category: 'tone_palette', statement: '温暖纸感浅色风格' }],
+          primaryReferenceId: 'amie-so',
+          updatedAt: '2026-11-12T10:05:00.000Z',
+        },
+        mockMode: false,
+      });
+      expect(r1Run.events.some((e) => e.event === 'run_error')).toBe(false);
+      const boundProtoId = store.getAgentSession(liveSession.id)?.targetId;
+      expect(boundProtoId).toBeTruthy();
+      const protoAfterR1 = store.getPrototype(boundProtoId!)!;
+      expect(protoAfterR1.revisions).toHaveLength(1);
+      expect(protoAfterR1.revisions[0]!.revisionNumber).toBe(1);
+      expect(protoAfterR1.designBrief?.primaryReferenceId).toBe('amie-so');
+
+      // 3) Returning to Brief & running "按新简报重做风格" updates designBrief and appends Revision #2
+      const updatedBrief = {
+        items: [{ id: 'i1', category: 'tone_palette', statement: '深色高密度交易风 (#0b1120)' }],
+        userFeelNote: '改成深色高密度交易风',
+        primaryReferenceId: 'linear-app',
+        updatedAt: '2026-11-12T10:15:00.000Z',
+      };
+      const r2Run = await collectUnifiedAgentTurn(store, {
+        sessionId: liveSession.id,
+        prompt: '[PROTOTYPE_BRIEF_RESTYLE] 按新简报重做风格：深色高密度交易风',
+        designBrief: updatedBrief,
+        mockMode: false,
+      });
+      expect(r2Run.events.some((e) => e.event === 'run_error')).toBe(false);
+      const protoAfterR2 = store.getPrototype(boundProtoId!)!;
+      expect(protoAfterR2.revisions).toHaveLength(2);
+      expect(protoAfterR2.revisions.at(-1)!.revisionNumber).toBe(2);
+      expect(protoAfterR2.htmlContent).toContain('--bg: #0b1120');
+      expect(protoAfterR2.designBrief?.userFeelNote).toBe('改成深色高密度交易风');
+      expect(protoAfterR2.designBrief?.primaryReferenceId).toBe('linear-app');
+
+      // 4) Cloning prototype ("另存为新原型") copies designBrief and forks coDesignSessionId
+      const cloned = store.clonePrototype(boundProtoId!, { name: '合同审批原型分支 B' });
+      expect(cloned.id).not.toBe(boundProtoId);
+      expect(cloned.designBrief).toEqual(updatedBrief);
+      expect(cloned.coDesignSessionId).toBeTruthy();
+      expect(cloned.coDesignSessionId).not.toBe(liveSession.id);
+      const forkedSess = store.getAgentSession(cloned.coDesignSessionId!);
+      expect(forkedSess?.agentKind).toBe('PROTOTYPE_CO_DESIGN');
+      expect(forkedSess?.targetId).toBe(cloned.id);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('supports Mock mode whole-page Brief Restyle (Revision #2) preserving semantic anchors while updating style tokens', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const created = store.createPrototype('proj-contract', {
+      name: '待重做风格原型',
+      htmlContent: MULTI_SCREEN_PROTOTYPE_HTML,
+      source: 'AGENT_RUN',
+      designBrief: {
+        items: [{ id: 'b1', category: 'tone_palette', statement: '浅色默认风格' }],
+        updatedAt: '2026-11-12T09:00:00.000Z',
+      },
+    });
+    const ensuredSession = ensurePrototypeCoDesignSession(
+      store,
+      'proj-contract',
+      created.prototype.id,
+    );
+
+    const restyledBrief = {
+      items: [
+        {
+          id: 'b1',
+          category: 'tone_palette',
+          statement: '深色高密度交易风（画布 #0b1120，强调色 #38bdf8）',
+        },
+      ],
+      userFeelNote: '改成深色高密度交易风',
+      primaryReferenceId: 'linear-app',
+      updatedAt: '2026-11-12T09:30:00.000Z',
+    };
+
+    const restyleTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: ensuredSession.id,
+      prompt: '[PROTOTYPE_BRIEF_RESTYLE] 按新简报重做风格：画布 #0b1120，强调色 #38bdf8',
+      designBrief: restyledBrief,
+      mockMode: true,
+    });
+
+    expect(restyleTurn.events.some((e) => e.event === 'run_error')).toBe(false);
+    const updatedProto = store.getPrototype(created.prototype.id)!;
+    expect(updatedProto.revisions).toHaveLength(2);
+    expect(updatedProto.revisions.at(-1)!.revisionNumber).toBe(2);
+    expect(updatedProto.designBrief?.userFeelNote).toBe('改成深色高密度交易风');
+    // Preserves semantic anchors from original screens
+    expect(updatedProto.htmlContent).toContain('data-screen-id="SCR-CONTRACT-LIST"');
+    expect(updatedProto.htmlContent).toContain('data-screen-id="SCR-CONTRACT-APPROVAL"');
+    expect(updatedProto.htmlContent).toContain('data-element-id="EL-BTN-APPROVE"');
+    expect(updatedProto.htmlContent).toContain('data-brief-restyle="true"');
+  });
+});
+
+

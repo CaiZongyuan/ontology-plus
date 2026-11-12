@@ -60,13 +60,13 @@ import {
 } from '../api.js';
 import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
+import { resolveActiveVisionCapability } from '../components/agent/VisionAttachmentControls.js';
 import {
   Button,
   CodeBlock,
   ConfirmDialog,
   RegistryTable,
 } from '../components/beautifui/index.js';
-import { resolveActiveVisionCapability } from '../components/agent/VisionAttachmentControls.js';
 import {
   PrototypeCanvasStage,
   runImportPrototypeHtml,
@@ -2186,12 +2186,15 @@ export function PrototypeStudioView({
   const {
     data,
     activeItemId,
-    backgroundTasks,
+    activePrototypeIdByProject,
     liveSessionDrafts,
+    backgroundTasks,
     patchData,
     showToast,
     setActivePrototypeId,
     startPrototypeGenTask,
+    startPrototypeBriefGenerationRun,
+    startPrototypeBriefRestyleRun,
     startOntologySynthTask,
   } = useWorkbenchStore();
 
@@ -2216,6 +2219,13 @@ export function PrototypeStudioView({
   const confirmedRevision = data?.confirmedPrototypeRevision ?? null;
   const proto = prototypes.find((p) => p.id === selectedProtoId) ?? prototypes[0];
   const docs = data?.requirementDocs ?? [];
+  const revisionSignature = prototypes
+    .map((p) => `${p.id}:${p.currentRevisionId ?? ''}:${p.revisions?.length ?? 0}`)
+    .join('|');
+  const pendingBriefTransitionRef = useRef<{ active: boolean; baselineSignature: string }>({
+    active: false,
+    baselineSignature: '',
+  });
 
   const protoSelectionAttachments = usePrototypeSelectionStore((s) =>
     proto ? s.attachmentsByPrototype[proto.id] : undefined,
@@ -2285,6 +2295,7 @@ export function PrototypeStudioView({
     setVisualAnnotations([]);
     setCanvasFocusMode(false);
     setStageOverride(defaultStageOverride);
+    pendingBriefTransitionRef.current = { active: false, baselineSignature: '' };
     lastHandledProtoResultRef.current =
       activeProtoForEffect?.status === 'COMPLETED'
         ? (activeProtoForEffect.resultItemId ?? null)
@@ -2310,6 +2321,30 @@ export function PrototypeStudioView({
       cancelled = true;
     };
   }, [data?.activeProject.id, data?.prototypes.length, data?.confirmedPrototypeRevision]);
+
+  // Automatically enter Canvas Stage when a PROTOTYPE_CO_DESIGN brief generation (R1) or restyle (R2+) produces a revision
+  useEffect(() => {
+    if (!data || !pendingBriefTransitionRef.current.active) return;
+    if (
+      prototypes.length > 0 &&
+      revisionSignature !== pendingBriefTransitionRef.current.baselineSignature
+    ) {
+      pendingBriefTransitionRef.current = { active: false, baselineSignature: revisionSignature };
+      const preferredId =
+        activePrototypeIdByProject[data.activeProject.id] || prototypes[0]?.id || '';
+      if (preferredId && prototypes.some((p) => p.id === preferredId)) {
+        setSelectedProtoId(preferredId);
+      } else if (prototypes[0]) {
+        setSelectedProtoId(prototypes[0].id);
+      }
+      setStageOverride('CANVAS');
+    }
+  }, [
+    activePrototypeIdByProject,
+    data,
+    prototypes,
+    revisionSignature,
+  ]);
 
   // Automatically select newly completed streaming prototype versions & enter Canvas Stage
   useEffect(() => {
@@ -2376,7 +2411,15 @@ export function PrototypeStudioView({
     (tk) => tk.projectId === project.id && tk.kind === 'PROTOTYPE_GEN',
   );
   const synthesizingOntology = activeOntoTask?.status === 'RUNNING';
-  const isBusyProto = refining || activeProtoTask?.status === 'RUNNING';
+  const isRunningCoDesignSession = (data.agentSessions ?? []).some(
+    (s) =>
+      s.projectId === project.id &&
+      s.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+      (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
+  );
+  const isBusyProto =
+    refining || activeProtoTask?.status === 'RUNNING' || isRunningCoDesignSession;
+  const visionCapability = resolveActiveVisionCapability(data);
 
   const currentStage = resolvePrototypeStudioStage(prototypes.length, stageOverride);
 
@@ -2641,6 +2684,38 @@ export function PrototypeStudioView({
           selectedDocId={selectedDocId}
           onSelectDocId={setSelectedDocId}
           prototypes={prototypes}
+          {...(prototypes.length > 0 && proto ? { activePrototype: proto } : {})}
+          visionSupported={visionCapability.visionSupported}
+          {...(visionCapability.providerLabel
+            ? { visionProviderLabel: visionCapability.providerLabel }
+            : {})}
+          {...(onNavigate ? { onOpenLlmCenter: () => onNavigate('llm-center') } : {})}
+          onConfirmGenerateBrief={async ({ brief, compiledPrompt, prototypeName, images }) => {
+            pendingBriefTransitionRef.current = {
+              active: true,
+              baselineSignature: revisionSignature,
+            };
+            await startPrototypeBriefGenerationRun({
+              projectId: project.id,
+              prototypeName,
+              prompt: compiledPrompt,
+              designBrief: brief,
+              images,
+            });
+          }}
+          onConfirmRestyleBrief={async ({ prototypeId, brief, compiledPrompt, images }) => {
+            pendingBriefTransitionRef.current = {
+              active: true,
+              baselineSignature: revisionSignature,
+            };
+            await startPrototypeBriefRestyleRun({
+              projectId: project.id,
+              prototypeId,
+              prompt: compiledPrompt,
+              designBrief: brief,
+              images,
+            });
+          }}
           onGenerateWithAi={async (compiledPrompt, docId) => {
             await handleGenerateNewPrototype({ prompt: compiledPrompt, docId });
           }}
