@@ -96,6 +96,7 @@ export function summarizeRevisionTitle(input: {
     case 'GENERATED':
       return `生成首版原型 (#${input.revisionNumber})`;
     case 'REFINED':
+    case 'AGENT_RUN':
       return `AI 精修修订 (#${input.revisionNumber})`;
     case 'UPLOADED':
       return `导入 HTML 原型 (#${input.revisionNumber})`;

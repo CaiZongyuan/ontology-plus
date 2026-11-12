@@ -1749,6 +1749,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const now = new Date().toISOString();
       const defaultTitles: Record<AgentSession['agentKind'], string> = {
         REQUIREMENT: '新建需求探索会话',
+        PROTOTYPE_CO_DESIGN: '原型共创会话',
         COPILOT: '新建本体建模对话',
         CODING: '新建四层编码任务会话',
         CAPABILITY: '新建智能体工具对话',
@@ -2017,6 +2018,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return hydrateInteractivePrototype(nextStored, confirmation);
     },
 
+    linkPrototypeCoDesignSession(prototypeId, sessionId) {
+      const existing = getStoredPrototype(prototypeId);
+      if (!existing) throw new Error(`Prototype not found: ${prototypeId}`);
+      const nextStored: StoredInteractivePrototype = {
+        ...existing,
+        coDesignSessionId: sessionId,
+      };
+      putItem('prototypes', nextStored.id, nextStored, nextStored.projectId, existing.updatedAt);
+      const confirmation = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        nextStored.projectId,
+      );
+      return hydrateInteractivePrototype(nextStored, confirmation);
+    },
+
     confirmPrototypeRevision(projectId, revisionId) {
       ensurePrototypesMigrated(projectId);
       const current = this.getProject(projectId);
@@ -2111,17 +2127,20 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const currentRev =
         hydrated.revisions.find((r) => r.id === hydrated.currentRevisionId) ??
         hydrated.revisions[hydrated.revisions.length - 1]!;
-      let forkedSessionId: string | undefined;
-      if (existing.coDesignSessionId) {
-        const origSess = this.getAgentSession(existing.coDesignSessionId);
-        if (origSess) {
-          const forked = this.forkAgentSession(
-            origSess.id,
-            undefined,
-            `${origSess.title} (副本)`,
-          );
-          forkedSessionId = forked.id;
-        }
+      let forkedSession: AgentSession | undefined;
+      const sourceSession =
+        (existing.coDesignSessionId ? this.getAgentSession(existing.coDesignSessionId) : undefined) ??
+        this.listAgentSessions({
+          projectId: existing.projectId,
+          agentKind: 'PROTOTYPE_CO_DESIGN',
+          targetId: existing.id,
+        })[0];
+      if (sourceSession) {
+        forkedSession = this.forkAgentSession(
+          sourceSession.id,
+          undefined,
+          `${sourceSession.title} (副本)`,
+        );
       }
       const nextName = options?.name?.trim() || `${existing.name} (副本)`;
       const created = this.createPrototype(existing.projectId, {
@@ -2131,8 +2150,14 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         htmlContent: currentRev.htmlContent,
         source: 'CLONED',
         ...(existing.designBrief ? { designBrief: structuredClone(existing.designBrief) } : {}),
-        ...(forkedSessionId ? { coDesignSessionId: forkedSessionId } : {}),
+        ...(forkedSession ? { coDesignSessionId: forkedSession.id } : {}),
       });
+      if (forkedSession) {
+        this.saveAgentSession({
+          ...forkedSession,
+          targetId: created.prototype.id,
+        });
+      }
       return created.prototype;
     },
 

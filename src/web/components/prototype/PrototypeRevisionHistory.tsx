@@ -842,6 +842,8 @@ function formatRevisionSourceBadge(
   switch (source) {
     case 'GENERATED':
       return t('AI 生成', 'Generated');
+    case 'AGENT_RUN':
+      return t('Agent 运行', 'Agent Run');
     case 'REFINED':
       return t('AI 精修', 'Refined');
     case 'UPLOADED':

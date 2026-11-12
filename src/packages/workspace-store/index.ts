@@ -11,6 +11,7 @@ export type {
   ProjectDetail,
   ProjectSnapshot,
   AgentSessionKind,
+  PrototypeTargetAnchor,
   AgentToolCallTrace,
   AgentAskUserPrompt,
   AgentDomainArtifact,

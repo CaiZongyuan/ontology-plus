@@ -51,7 +51,6 @@ import {
   apiListPrototypes,
   apiPostJson,
   apiPutJson,
-  apiRefinePrototype,
   apiRestoreProjectSnapshot,
   apiSynthesizeSrsDoc,
   apiUpdateProjectMeta,
@@ -59,6 +58,7 @@ import {
   triggerBrowserDownload,
   useWorkbenchStore,
 } from '../api.js';
+import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
 import {
   Button,
@@ -2178,7 +2178,9 @@ export function PrototypeStudioView({
     backgroundTasks,
     patchData,
     showToast,
+    setActivePrototypeId,
     startPrototypeGenTask,
+    startPrototypeRefinementRun,
     startOntologySynthTask,
   } = useWorkbenchStore();
 
@@ -2301,7 +2303,10 @@ export function PrototypeStudioView({
 
   useEffect(() => {
     setVisualAnnotations([]);
-  }, [data?.activeProject.id, proto?.id, proto?.updatedAt]);
+    if (data?.activeProject.id && proto?.id) {
+      setActivePrototypeId(data.activeProject.id, proto.id);
+    }
+  }, [data?.activeProject.id, proto?.id, proto?.updatedAt, proto?.htmlContent, setActivePrototypeId]);
 
   if (!data) return null;
 
@@ -2381,25 +2386,15 @@ export function PrototypeStudioView({
     if (selections.length === 0 && !note.trim()) return;
     setRefining(true);
     try {
-      const res = await apiRefinePrototype(
-        project.id,
-        proto.id,
-        note.trim(),
-        selections.length > 0 ? selections : undefined,
-      );
-      patchData({
-        activeProject: res.project,
-        prototypes: res.prototypes,
-      });
-      setSelectedProtoId(res.prototype.id);
       setVisualAnnotations([]);
       setInspectMode(false);
-      showToast(
-        t(
-          `AI 原型精修已完成（共 ${res.prototype.extractedScreenCount} 个业务屏幕）`,
-          `AI prototype refinement complete (${res.prototype.extractedScreenCount} screens)`,
-        ),
-      );
+      useAgentPanelStore.getState().revealPanel();
+      await startPrototypeRefinementRun({
+        projectId: project.id,
+        prototypeId: proto.id,
+        instruction: note.trim(),
+        ...(selections.length > 0 ? { selections } : {}),
+      });
     } finally {
       setRefining(false);
     }

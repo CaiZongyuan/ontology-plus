@@ -82,6 +82,7 @@ import { GlobalPipelineTaskTray } from './components/pipeline/PipelineTaskCard.j
 import {
   ShellAgentPanel,
   agentPanelSurfaceFor,
+  countSurfaceRunningRuns,
   useAgentPanelOverlayMode,
 } from './components/agent/ShellAgentPanel.js';
 import { useAgentPanelStore } from './components/agent/agentPanelStore.js';
@@ -307,6 +308,10 @@ function ShellInner() {
     loading,
     toast,
     activeNav,
+    activeItemId,
+    activeSessionId,
+    activePrototypeIdByProject,
+    liveSessionDrafts,
     backgroundTasks,
     liveAnnouncement,
     setActiveNav,
@@ -343,14 +348,14 @@ function ShellInner() {
     if (agentPanelOverlay) panel.setOverlayOpen(visible);
     else panel.setOpen(visible);
   };
-  const agentPanelRunningCount = agentSurface
-    ? backgroundTasks.filter(
-        (tk) =>
-          tk.status === 'RUNNING' &&
-          tk.projectId === data?.activeProject.id &&
-          agentSurface.taskKinds.includes(tk.kind),
-      ).length
-    : 0;
+  const agentPanelRunningCount = countSurfaceRunningRuns(agentSurface, {
+    data,
+    backgroundTasks,
+    liveSessionDrafts,
+    activePrototypeIdByProject,
+    activeItemId,
+    activeSessionId,
+  });
 
   const toggleCollapsed = () => {
     setCollapsedState((prev) => {

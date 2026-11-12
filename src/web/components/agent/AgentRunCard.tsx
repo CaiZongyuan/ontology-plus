@@ -13,11 +13,13 @@ import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { Button } from '../beautifui/index.js';
 import {
+  formatAnchorBadgeLabel,
   formatRunElapsed,
   formatStepClock,
   type AgentRunStatus,
   type AgentRunStepStatus,
   type AgentRunView,
+  type PrototypeTargetAnchor,
 } from './agentRun.js';
 
 export interface AgentRunCardProps {
@@ -26,6 +28,7 @@ export interface AgentRunCardProps {
   onRetry?: () => void;
   onOpenArtifact?: () => void;
   onOpenLlmCenter?: () => void;
+  onHoverAnchor?: (anchor: PrototypeTargetAnchor | null) => void;
   /** Fixed clock for deterministic rendering; defaults to a live one-second tick while running. */
   now?: number;
   className?: string;
@@ -68,6 +71,7 @@ export function AgentRunCard({
   onRetry,
   onOpenArtifact,
   onOpenLlmCenter,
+  onHoverAnchor,
   now: fixedNow,
   className,
 }: AgentRunCardProps) {
@@ -135,18 +139,44 @@ export function AgentRunCard({
           {run.steps.map((step) => {
             const label = t(step.label.zh, step.label.en);
             const clock = formatStepClock(step.at);
+            const anchorBadge = formatAnchorBadgeLabel(step.targetAnchor);
             const row = (
               <>
                 <span className="agent-run-step-glyph">
                   <StepGlyph status={step.status} />
                 </span>
                 <span className="agent-run-step-label">{label}</span>
+                {anchorBadge && (
+                  <span
+                    className="agent-run-step-anchor"
+                    data-testid="agent-run-step-anchor"
+                    {...(step.targetAnchor?.screenId
+                      ? { 'data-anchor-screen-id': step.targetAnchor.screenId }
+                      : {})}
+                    {...(step.targetAnchor?.elementId
+                      ? { 'data-anchor-element-id': step.targetAnchor.elementId }
+                      : {})}
+                    title={step.targetAnchor?.label || anchorBadge}
+                  >
+                    {anchorBadge}
+                  </span>
+                )}
                 <span className="visually-hidden">{stepStatusLabel[step.status]}</span>
                 {clock && <span className="agent-run-step-clock">{clock}</span>}
               </>
             );
             return (
-              <li key={step.id} className="agent-run-step" data-step-status={step.status}>
+              <li
+                key={step.id}
+                className="agent-run-step"
+                data-step-status={step.status}
+                {...(onHoverAnchor && step.targetAnchor
+                  ? {
+                      onMouseEnter: () => onHoverAnchor(step.targetAnchor ?? null),
+                      onMouseLeave: () => onHoverAnchor(null),
+                    }
+                  : {})}
+              >
                 {step.detail ? (
                   <details>
                     <summary className="agent-run-step-row">

@@ -2800,6 +2800,142 @@ summary.agent-run-step-row:focus-visible,
   overflow-wrap: anywhere;
 }
 
+.agent-run-step-anchor {
+  display: inline-flex;
+  align-items: center;
+  max-width: 170px;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line);
+  background: var(--inset);
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  line-height: 1.35;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.agent-panel-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.agent-panel-composer-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-panel-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.agent-panel-queue-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.agent-panel-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.agent-panel-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+}
+
+.agent-panel-queue-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-panel-queue-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.agent-panel-queue-remove:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.agent-panel-composer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-panel-composer-input {
+  width: 100%;
+  min-height: 54px;
+  max-height: 140px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--ground-2);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.agent-panel-composer-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.agent-panel-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-panel-composer-hint {
+  font-size: var(--text-2xs);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-run-step-clock {
   flex-shrink: 0;
   font-size: var(--text-2xs);
