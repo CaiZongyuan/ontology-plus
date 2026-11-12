@@ -1,0 +1,4 @@
+interface:
+  display_name: "可视化开发规格"
+  short_description: "长 Spec → 开发依赖图、数据流、交互 UI、验收追溯"
+  brand_color: "#355BC6"
