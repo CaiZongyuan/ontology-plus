@@ -232,7 +232,29 @@ describe('PrototypeCanvasStage toolbar, revision status & preview controls (#27)
     expect(confirmedHtml).toContain('已确认此修订');
     expect(confirmedHtml).toContain('R1');
 
-    // Supports pluggable renderRevisionHistory & renderConfirmModal slots for Ticket 04
+    // Built-in default History & Confirm Modal render Ticket 04 (#26) PrototypeRevisionHistoryDrawer & ConfirmRevisionMuDiffModal
+    const builtInHistoryAndConfirmHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <PrototypeCanvasStage
+          project={project}
+          prototypes={prototypes}
+          selectedPrototypeId="proto-a"
+          confirmedRevision={confirmedRevision}
+          onSelectPrototype={noop}
+          onPrototypesUpdated={noop}
+          onBackToBrief={noop}
+          defaultHistoryOpen
+          defaultConfirmModalOpen
+        />
+      </PreferencesProvider>,
+    );
+    expect(builtInHistoryAndConfirmHtml).toContain(
+      'data-testid="prototype-revision-history-drawer"',
+    );
+    expect(builtInHistoryAndConfirmHtml).toContain('data-testid="confirm-revision-mu-diff-modal"');
+    expect(builtInHistoryAndConfirmHtml).toContain('data-testid="confirm-modal-mu-diff"');
+
+    // Also supports pluggable renderRevisionHistory & renderConfirmModal slots for overrides
     const customSlotsHtml = renderToStaticMarkup(
       <PreferencesProvider>
         <PrototypeCanvasStage

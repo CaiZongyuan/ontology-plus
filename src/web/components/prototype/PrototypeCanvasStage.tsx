@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -15,13 +15,10 @@ import {
   RotateCcw,
   Smartphone,
   Sparkles,
-  Star,
   Tablet,
   Trash2,
   Upload,
-  X,
 } from 'lucide-react';
-import { extractMuFromPrototypeHtml } from '../../../packages/ontology-core/index.js';
 import type {
   ConfirmedPrototypeRevision,
   InteractivePrototype,
@@ -34,7 +31,12 @@ import {
   apiDeletePrototype,
   apiRestorePrototypeRevision,
   apiSavePrototype,
+  apiUpdatePrototypeRevisionMeta,
 } from '../../api.js';
+import {
+  ConfirmRevisionMuDiffModal,
+  PrototypeRevisionHistoryDrawer,
+} from './PrototypeRevisionHistory.js';
 import { useAgentPanelOverlayMode } from '../agent/ShellAgentPanel.js';
 import { useAgentPanelStore } from '../agent/agentPanelStore.js';
 import { Button } from '../beautifui/index.js';
@@ -531,27 +533,11 @@ export function PrototypeCanvasStage({
     confirmedRevision,
     locale,
   );
-
-  const muPreviewSummary = useMemo(() => {
-    const clean = stripVisualInspectorFromHtml(activeRevision.htmlContent);
-    if (!clean.trim()) return { screenCount: 0, elementCount: 0, eventCount: 0 };
-    try {
-      const mu = extractMuFromPrototypeHtml(clean, project.domain);
-      let elementCount = 0;
-      let eventCount = 0;
-      for (const s of mu.screens) {
-        elementCount += s.elements.length;
-        eventCount += s.events.length;
-      }
-      return { screenCount: mu.screens.length, elementCount, eventCount };
-    } catch {
-      return {
-        screenCount: activeRevision.extractedScreenCount,
-        elementCount: 0,
-        eventCount: 0,
-      };
-    }
-  }, [activeRevision.extractedScreenCount, activeRevision.htmlContent, project.domain]);
+  const [confirmTargetRevision, setConfirmTargetRevision] = useState<PrototypeRevision | null>(
+    null,
+  );
+  const [busyRevisionId, setBusyRevisionId] = useState<string | null>(null);
+  const effectiveConfirmRevision = confirmTargetRevision ?? activeRevision;
 
   const handleOpenInNewTab = () => {
     openCleanPrototypeInNewTab(displayedHtml);
@@ -675,11 +661,45 @@ export function PrototypeCanvasStage({
     }
   };
 
-  const handleFallbackConfirmRevision = async () => {
-    if (actionBusy || revStatus.isConfirmed) return;
+  const handleRenameRevision = async (revisionId: string, newTitle: string) => {
+    setBusyRevisionId(revisionId);
+    try {
+      const res = await apiUpdatePrototypeRevisionMeta(activePrototype.id, revisionId, {
+        title: newTitle,
+      });
+      onPrototypesUpdated({
+        prototypes: res.prototypes,
+        confirmedRevision: res.confirmedRevision,
+        selectedPrototypeId: res.prototype.id,
+      });
+    } finally {
+      setBusyRevisionId(null);
+    }
+  };
+
+  const handleToggleStarRevision = async (revisionId: string, nextStarred: boolean) => {
+    setBusyRevisionId(revisionId);
+    try {
+      const res = await apiUpdatePrototypeRevisionMeta(activePrototype.id, revisionId, {
+        starred: nextStarred,
+      });
+      onPrototypesUpdated({
+        prototypes: res.prototypes,
+        confirmedRevision: res.confirmedRevision,
+        selectedPrototypeId: res.prototype.id,
+      });
+    } finally {
+      setBusyRevisionId(null);
+    }
+  };
+
+  const handleConfirmRevisionById = async (revisionId: string) => {
+    if (actionBusy) return;
     setActionBusy(true);
     try {
-      const res = await apiConfirmPrototypeRevision(project.id, activeRevision.id);
+      const res = await apiConfirmPrototypeRevision(project.id, revisionId);
+      const confirmedNum =
+        res.confirmedRevision?.revision.revisionNumber ?? effectiveConfirmRevision.revisionNumber;
       onPrototypesUpdated({
         prototypes: res.prototypes,
         confirmedRevision: res.confirmedRevision,
@@ -687,10 +707,11 @@ export function PrototypeCanvasStage({
         selectedPrototypeId: res.prototype.id,
       });
       setConfirmModalOpen(false);
+      setConfirmTargetRevision(null);
       onNotify?.(
         t(
-          `已确认修订 R${activeRevision.revisionNumber}，MU 模型已同步更新`,
-          `Confirmed revision R${activeRevision.revisionNumber} and synced MU model`,
+          `已确认修订 R${confirmedNum}，MU 模型已同步更新`,
+          `Confirmed revision R${confirmedNum} and synced MU model`,
         ),
       );
     } finally {
@@ -1243,6 +1264,7 @@ export function PrototypeCanvasStage({
               if (onRequestConfirmRevision) {
                 onRequestConfirmRevision(activePrototype, activeRevision);
               } else {
+                setConfirmTargetRevision(activeRevision);
                 setConfirmModalOpen(true);
               }
             }}
@@ -1336,112 +1358,41 @@ export function PrototypeCanvasStage({
               onClose: () => setHistoryOpen(false),
             })
           ) : (
-            <aside
-              data-testid="prototype-history-drawer"
-              aria-label={t('原型修订历史', 'Prototype Revision History')}
-              className="flex w-[320px] shrink-0 flex-col border-l border-line bg-surface"
-            >
-              <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
-                <div className="flex items-center gap-1.5 font-medium text-[13px] text-ink">
-                  <History size={14} className="text-muted" aria-hidden="true" />
-                  <span>{t('修订历史时间线', 'Revision History')}</span>
-                  <span className="badge font-mono text-[10.5px]">
-                    {activePrototype.revisions.length}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  aria-label={t('关闭修订历史', 'Close revision history')}
-                  onClick={() => setHistoryOpen(false)}
-                  className="icon-btn"
-                >
-                  <X size={14} aria-hidden="true" />
-                </button>
-              </div>
-              <div className="flex flex-1 flex-col gap-1.5 overflow-y-auto p-2.5">
-                {[...activePrototype.revisions].reverse().map((rev) => {
-                  const isCurrentView = rev.id === activeRevision.id;
-                  const isConfirmedRev =
-                    confirmedRevision?.revisionId === rev.id ||
-                    activePrototype.confirmedRevisionId === rev.id;
-                  return (
-                    <div
-                      key={rev.id}
-                      data-testid={`prototype-revision-item-${rev.id}`}
-                      className={cn(
-                        'flex flex-col gap-1.5 rounded-[6px] border p-2.5 text-[12px]',
-                        isCurrentView
-                          ? 'border-accent bg-accent-tint/30'
-                          : 'border-line bg-surface-2/60',
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-1.5">
-                        <div className="flex min-w-0 items-center gap-1.5">
-                          <span className="font-mono font-semibold text-ink">
-                            R{rev.revisionNumber}
-                          </span>
-                          {rev.starred && (
-                            <Star
-                              size={11.5}
-                              className="fill-amber-500 text-amber-500 shrink-0"
-                              aria-label={t('已标星', 'Starred')}
-                            />
-                          )}
-                          <span className="truncate font-medium text-ink">{rev.title}</span>
-                        </div>
-                        {isConfirmedRev && (
-                          <span className="badge badge-ok text-[10px]">
-                            {t('已确认', 'Confirmed')}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center justify-between text-[11px] text-muted">
-                        <span className="font-mono">
-                          {rev.createdAt.slice(0, 16).replace('T', ' ')}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          {rev.id !== activeRevision.id && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="xs"
-                              onClick={() =>
-                                setPreviewRevisionId(
-                                  rev.id === currentRevision.id ? null : rev.id,
-                                )
-                              }
-                            >
-                              {t('预览', 'Preview')}
-                            </Button>
-                          )}
-                          {rev.id !== currentRevision.id && (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="xs"
-                              disabled={actionBusy}
-                              onClick={() => void handleRestoreRevision(rev.id)}
-                            >
-                              {t('恢复', 'Restore')}
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </aside>
+            <PrototypeRevisionHistoryDrawer
+              open
+              prototype={activePrototype}
+              confirmedRevision={confirmedRevision}
+              {...(project.suite.MU ? { currentMu: project.suite.MU } : {})}
+              domain={project.domain}
+              previewRevisionId={previewRevisionId}
+              busyRevisionId={busyRevisionId}
+              onClose={() => setHistoryOpen(false)}
+              onSelectPreviewRevision={(revId) =>
+                setPreviewRevisionId(revId === currentRevision.id ? null : revId)
+              }
+              onRestoreRevision={handleRestoreRevision}
+              onRenameRevision={handleRenameRevision}
+              onToggleStarRevision={handleToggleStarRevision}
+              onRequestConfirmRevision={(rev) => {
+                if (onRequestConfirmRevision) {
+                  onRequestConfirmRevision(activePrototype, rev);
+                } else {
+                  setConfirmTargetRevision(rev);
+                  setConfirmModalOpen(true);
+                }
+              }}
+              className="w-[380px] shrink-0 border-y-0 border-r-0 rounded-none"
+            />
           ))}
       </div>
 
-      {/* ─── Confirm Revision Modal Slot or Built-in MU Summary Fallback ─── */}
+      {/* ─── Confirm Revision Modal Slot or Built-in MU-Diff Confirmation Modal (#26) ─── */}
       {confirmModalOpen &&
         (renderConfirmModal ? (
           renderConfirmModal({
             project,
             prototype: activePrototype,
-            revision: activeRevision,
+            revision: effectiveConfirmRevision,
             confirmedRevision,
             onConfirmed: (res) => {
               onPrototypesUpdated({
@@ -1451,72 +1402,28 @@ export function PrototypeCanvasStage({
                 selectedPrototypeId: res.prototype.id,
               });
               setConfirmModalOpen(false);
+              setConfirmTargetRevision(null);
             },
-            onClose: () => setConfirmModalOpen(false),
+            onClose: () => {
+              setConfirmModalOpen(false);
+              setConfirmTargetRevision(null);
+            },
           })
         ) : (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={t('确认此修订并同步 MU 模型', 'Confirm Revision & Sync MU Model')}
-            data-testid="prototype-confirm-modal"
-            className="fixed inset-0 z-[1060] flex items-center justify-center bg-ink/35 p-4"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) setConfirmModalOpen(false);
+          <ConfirmRevisionMuDiffModal
+            open
+            revision={effectiveConfirmRevision}
+            prototypeName={activePrototype.name}
+            suite={project.suite}
+            confirmedRevision={confirmedRevision}
+            domain={project.domain}
+            busy={actionBusy}
+            onConfirm={handleConfirmRevisionById}
+            onClose={() => {
+              setConfirmModalOpen(false);
+              setConfirmTargetRevision(null);
             }}
-          >
-            <div className="flex w-[min(460px,94vw)] flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-lg">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <h3 className="m-0 font-serif text-[16px] font-semibold text-ink">
-                    {t('确认此原型修订并同步 MU', 'Confirm Revision & Sync MU')}
-                  </h3>
-                  <p className="m-0 mt-1 text-[12.5px] text-ink-2">
-                    {t(
-                      `即将把「${activePrototype.name}」的修订 R${activeRevision.revisionNumber} 设为本工程唯一已确认修订，并更新 MU UI 模型。`,
-                      `Set R${activeRevision.revisionNumber} of "${activePrototype.name}" as the project's Confirmed Revision and extract MU.`,
-                    )}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  aria-label={t('关闭', 'Close')}
-                  onClick={() => setConfirmModalOpen(false)}
-                  className="icon-btn"
-                >
-                  <X size={14} aria-hidden="true" />
-                </button>
-              </div>
-
-              <div className="rounded-[6px] border border-line bg-surface-2 px-3 py-2 text-[12px] text-ink-2">
-                <span className="font-mono">
-                  MU: {muPreviewSummary.screenCount} Screens · {muPreviewSummary.elementCount}{' '}
-                  Elements · {muPreviewSummary.eventCount} Events
-                </span>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-1">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setConfirmModalOpen(false)}
-                >
-                  {t('取消', 'Cancel')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="accent"
-                  size="sm"
-                  data-testid="prototype-confirm-modal-submit-btn"
-                  disabled={actionBusy}
-                  onClick={() => void handleFallbackConfirmRevision()}
-                >
-                  {t('确认并提取 MU', 'Confirm & Sync MU')}
-                </Button>
-              </div>
-            </div>
-          </div>
+          />
         ))}
     </section>
   );
