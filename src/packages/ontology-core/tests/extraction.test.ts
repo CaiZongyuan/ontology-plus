@@ -7,6 +7,8 @@ import {
   buildAlignmentSkeleton,
   buildExtractionCandidates,
   classifyCandidates,
+  formatDroppedReason,
+  formatEvidenceNote,
   locateQuote,
   parseSourceStructure,
   previewCandidateMerge,
@@ -97,6 +99,58 @@ paths:
     expect(operations[0]!.lines?.startLine).toBe(4);
     expect(operations[2]!.lines?.startLine).toBe(9);
     expect(operations[2]!.summary).toBe('下线集群');
+  });
+
+  it('reads embedded OpenAPI 3.0 JSON mixed with SQL DDL and trailing notes', () => {
+    const source = `CREATE TABLE t_contract_amendment (
+  id VARCHAR(36) PRIMARY KEY,
+  contract_id VARCHAR(36) NOT NULL,
+  amendment_no VARCHAR(32) NOT NULL
+);
+
+{
+  "openapi": "3.0.3",
+  "paths": {
+    "/api/v1/contracts/amend": {
+      "post": {
+        "operationId": "submitContractAmendment",
+        "summary": "提交合同补充协议变更并触发法务会签"
+      }
+    }
+  }
+}
+-- trailing comment after JSON block`;
+
+    const { tables, operations } = parseSourceStructure(source);
+    expect(tables.map((t) => t.tableName)).toEqual(['t_contract_amendment']);
+    expect(operations).toEqual([
+      {
+        method: 'POST',
+        routePath: '/api/v1/contracts/amend',
+        operationId: 'submitContractAmendment',
+        summary: '提交合同补充协议变更并触发法务会签',
+        lines: { startLine: 11, endLine: 11 },
+      },
+    ]);
+  });
+
+  it('falls back to line scanning for partial JSON-style OpenAPI paths', () => {
+    const source = `"paths": {
+  "/api/v1/contracts/amend": {
+    "post": {
+      "operationId": "submitContractAmendment",
+      "summary": "提交合同补充协议变更"`;
+
+    const { operations } = parseSourceStructure(source);
+    expect(operations).toEqual([
+      {
+        method: 'POST',
+        routePath: '/api/v1/contracts/amend',
+        operationId: 'submitContractAmendment',
+        summary: '提交合同补充协议变更',
+        lines: { startLine: 3, endLine: 3 },
+      },
+    ]);
   });
 
   it('reads TypeScript interfaces and Prisma models when there is no DDL', () => {
@@ -465,5 +519,42 @@ describe('ontology-core: quote verification', () => {
     expect(locateQuote(doc, '合同金额超过 500 万元')).toBeNull();
     expect(locateQuote(doc, undefined)).toBeNull();
     expect(locateQuote(doc, '合同')).toBeNull();
+  });
+
+  it('formats evidence notes and dropped reasons bilingually without leaking the wrong locale', () => {
+    const { scan } = scanOrders();
+    const skeleton = buildAlignmentSkeleton(scan);
+    const sanitized = sanitizeAlignment(skeleton, {
+      tables: [
+        {
+          table: 't_sales_order',
+          alias: '销售订单',
+          columns: [{ column: 'customer_id', label: '客户', refTable: 't_customer' }],
+        },
+        { table: 't_invented', alias: '编造表' },
+      ],
+    });
+    const aligned = applyAlignment(scan, sanitized, ORDER_DDL);
+    const candidates = buildExtractionCandidates({}, aligned.scan.suite, aligned.scan.evidenceByKey);
+
+    const bhv = candidates.find((c) => c.elementId === 'BHV-EXT-CMD-SALES_ORDER')!;
+    expect(formatEvidenceNote(bhv.evidence[0]!, 'zh-CN')).toContain('按表 t_sales_order');
+    expect(formatEvidenceNote(bhv.evidence[0]!, 'en-US')).toContain('t_sales_order');
+    expect(formatEvidenceNote(bhv.evidence[0]!, 'en-US')).not.toMatch(/[\u4e00-\u9fff]/);
+
+    const agg = candidates.find((c) => c.elementId === 'AGG-EXT-SALES_ORDER')!;
+    const inferredNote = agg.evidence.find((e) => e.origin === 'INFERRED')!;
+    expect(formatEvidenceNote(inferredNote, 'zh-CN')).toContain('语义对齐');
+    expect(formatEvidenceNote(inferredNote, 'en-US')).toContain('Semantic alignment');
+    expect(formatEvidenceNote(inferredNote, 'en-US')).not.toMatch(/[\u4e00-\u9fff]/);
+
+    const assoc = candidates.find((c) => c.elementId === 'ASSOC-INF-SALES_ORDER-CUSTOMERID')!;
+    expect(formatEvidenceNote(assoc.evidence[0]!, 'zh-CN')).toContain('未声明的引用');
+    expect(formatEvidenceNote(assoc.evidence[0]!, 'en-US')).toContain('Undeclared reference');
+
+    const droppedEntry = aligned.dropped[0]!;
+    expect(droppedEntry.reason).toBe('table is not in the scanned source');
+    expect(formatDroppedReason(droppedEntry, 'en-US')).toBe('table is not in the scanned source');
+    expect(formatDroppedReason(droppedEntry, 'zh-CN')).toMatch(/[\u4e00-\u9fff]/);
   });
 });

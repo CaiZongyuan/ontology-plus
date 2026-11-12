@@ -351,6 +351,14 @@ paths:
       }
       raw.close();
 
+      // Direct single-row lookup upgrades legacy jobs without listExtractionJobs() and throws typed error codes.
+      expect(() => store.applyExtractionJobToProject('ext-legacy-open')).toThrow(
+        expect.objectContaining({ code: 'NOTHING_ACCEPTED' }),
+      );
+      expect(() => store.applyExtractionJobToProject('ext-legacy-merged')).toThrow(
+        expect.objectContaining({ code: 'ALREADY_MERGED' }),
+      );
+
       const jobs = store.listExtractionJobs('proj-mft');
       const open = jobs.find((j) => j.id === 'ext-legacy-open')!;
       expect(open.candidates.map((c) => c.elementId)).toEqual(['AGG-LEGACY-01']);

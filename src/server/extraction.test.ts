@@ -96,14 +96,16 @@ async function createJob(
   app: TestApp,
   overrides: Partial<{
     projectId: string;
+    title: string;
     sourceType: ExtractionJob['sourceType'];
     sourceSnippet: string;
     applyImmediately: boolean;
   }> = {},
+  extraHeaders: Record<string, string> = {},
 ) {
   const res = await app.request('/api/capability/extraction-jobs', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify({
       systemId: 'sys-mft-transfer',
       projectId: 'proj-mft',
@@ -263,6 +265,47 @@ describe('Ontology Extraction over HTTP: candidates, confirmation, merge gate', 
     expect(aggregateNames(project)).toEqual(expect.arrayContaining(['Customer', 'SalesOrder']));
     expect(project.validation.errorCount).toBe(0);
   });
+
+  it('"merge immediately" falls back to pending confirmation when the gate blocks the merge, leaving the project untouched', async () => {
+    const { app, store } = setup();
+    const stagedProj = store.createProject({
+      name: '阶段行为测试工程',
+      code: 'STAGE_GATE_TEST',
+      domain: '测试',
+      template: 'EMPTY',
+    });
+    const baselineSuite = {
+      M2: { model_type: 'BEHAVIOR' as const, version: '5.0' as const, domain: '测试', behaviors: [] },
+    };
+    store.updateSuite(stagedProj.id, baselineSuite, 'Initialize empty M2 behavior model');
+    expect(store.getProject(stagedProj.id)!.validation.errorCount).toBe(0);
+
+    const created = await createJob(app, {
+      projectId: stagedProj.id,
+      sourceSnippet: 'POST /api/v1/orders -> createOrder',
+      applyImmediately: true,
+    });
+    expect(created.status).toBe(200);
+    const { job, project, blockedBy } = created.json;
+    expect(job.appliedToProject).toBe(false);
+    expect(blockedBy.length).toBeGreaterThan(0);
+    expect(blockedBy.every((d) => d.tier === 'ERROR')).toBe(true);
+    expect(blockedBy.map((d) => d.elementId).join(',')).toContain('IF-EXT-POST_API_V1_ORDERS');
+    expect(project.suite).toEqual(baselineSuite);
+    expect(store.getProject(stagedProj.id)!.suite).toEqual(baselineSuite);
+  });
+
+  it('respects an explicit X-Onto-Locale: zh-CN header even when the DDL snippet and title are pure ASCII', async () => {
+    const { app } = setup();
+    const created = await createJob(
+      app,
+      { title: 'Sales Order DDL Extraction', sourceSnippet: ORDER_DDL },
+      { 'X-Onto-Locale': 'zh-CN' },
+    );
+    expect(created.status).toBe(200);
+    expect(created.json.job.summary).toContain('本体萃取完成');
+    expect(created.json.job.summary).not.toContain('Ontology Extraction finished');
+  });
 });
 
 describe('Ontology Extraction over HTTP: semantic alignment', () => {
@@ -377,6 +420,24 @@ describe('Ontology Extraction over HTTP: semantic alignment', () => {
     expect(json.job.summary).toMatch(/仅结构扫描|structural scan only/);
     expect(json.job.candidates.some((c) => c.elementId === 'AGG-EXT-CUSTOMER')).toBe(true);
   }, 20000);
+
+  it('marks semantic alignment DONE when the LLM returns a valid tables array with no extra labels or inferred references', async () => {
+    const { app } = setupLive(
+      JSON.stringify({
+        tables: [
+          {
+            table: 't_sales_order',
+            columns: [{ column: 'customer_id', refTable: null }],
+          },
+          { table: 't_customer', columns: [] },
+        ],
+      }),
+    );
+    const { status, json } = await createJob(app);
+    expect(status).toBe(200);
+    expect(alignmentOf(json.job)).toEqual({ status: 'DONE' });
+    expect(json.job.summary).toMatch(/结构扫描 \+ 语义对齐|structural scan \+ semantic alignment/);
+  });
 });
 
 describe('Ontology Extraction over HTTP: prose sources', () => {
@@ -475,7 +536,108 @@ describe('Ontology Extraction over HTTP: prose sources', () => {
     expect(store.listExtractionJobs()).toHaveLength(jobsBefore);
   });
 
-  it('in Mock mode says the LLM round did not run instead of pretending it did', async () => {
+  it('assigns non-colliding *-DOC-* IDs, attaches M5 actor/role evidence, and omits synthetic MU/AuditLog bloat', async () => {
+    const { app, store } = setupLive(
+      JSON.stringify({
+        aggregates: [
+          {
+            sourceQuote: '采购合同由采购专员起草',
+            name: 'PurchaseContract',
+            alias: '采购合同',
+            attributes: [{ name: 'amount', label: '合同金额', type: 'Decimal', required: true }],
+          },
+        ],
+        actors: [
+          {
+            sourceQuote: '采购合同由采购专员起草',
+            actorName: '采购专员',
+            roleName: '采购经办',
+            roleCode: 'PROCUREMENT_SPEC',
+          },
+        ],
+        behaviors: [
+          {
+            sourceQuote: '合同签署后生成付款计划',
+            name: 'signContract',
+            alias: '签署合同',
+            ownerEntity: 'PurchaseContract',
+            behaviorType: 'COMMAND',
+          },
+        ],
+        rules: [
+          {
+            sourceQuote: '合同金额超过 100 万元的须经财务总监审批',
+            name: 'HighValueApprovalRule',
+            alias: '大额合同审批规则',
+            ruleType: 'VALIDATION',
+            referencedObjects: ['PurchaseContract'],
+            expression: 'amount <= 1000000',
+            violationMessage: '须经财务总监审批',
+          },
+        ],
+      }),
+    );
+    const baselineAggIds = new Set(store.getProject('proj-mft')!.suite.M1!.aggregates.map((a) => a.id));
+
+    const { status, json } = await createJob(app, {
+      sourceType: 'LOG_AND_DOC',
+      sourceSnippet: POLICY_DOC,
+    });
+    expect(status).toBe(200);
+
+    const contract = json.job.candidates.find(
+      (c) => c.collection === 'aggregates' && (c.element as { name: string }).name === 'PurchaseContract',
+    )!;
+    expect(contract.change).toBe('ADDED');
+    expect(contract.elementId).toMatch(/^AGG-DOC-/);
+    expect(baselineAggIds.has(contract.elementId)).toBe(false);
+
+    const behavior = json.job.candidates.find(
+      (c) => c.collection === 'behaviors' && (c.element as { name: string }).name === 'signContract',
+    )!;
+    expect(behavior.change).toBe('ADDED');
+    expect(behavior.elementId).toMatch(/^BHV-DOC-/);
+
+    const rule = json.job.candidates.find(
+      (c) => c.collection === 'rules' && (c.element as { name: string }).name === 'HighValueApprovalRule',
+    )!;
+    expect(rule.change).toBe('ADDED');
+    expect(rule.elementId).toMatch(/^RULE-DOC-/);
+
+    const actor = json.job.candidates.find(
+      (c) => c.modelCode === 'M5' && c.collection === 'actors' && (c.element as { name: string }).name === '采购专员',
+    )!;
+    expect(actor.change).toBe('ADDED');
+    expect(actor.elementId).toMatch(/^ACT-DOC-/);
+    expect(actor.evidence).toHaveLength(1);
+    expect(actor.evidence[0]).toMatchObject({
+      origin: 'INFERRED',
+      lines: { startLine: 3, endLine: 3 },
+    });
+
+    const role = json.job.candidates.find(
+      (c) => c.modelCode === 'M5' && c.collection === 'roles' && (c.element as { name: string }).name === '采购经办',
+    )!;
+    expect(role.change).toBe('ADDED');
+    expect(role.elementId).toMatch(/^ROLE-DOC-/);
+    expect(role.evidence).toHaveLength(1);
+    expect(role.evidence[0]).toMatchObject({
+      origin: 'INFERRED',
+      lines: { startLine: 3, endLine: 3 },
+    });
+
+    // No synthetic AuditLog aggregate, MU screens, or M4 scenarios injected into prose extraction.
+    expect(
+      json.job.candidates.some(
+        (c) =>
+          c.modelCode === 'MU' ||
+          c.modelCode === 'M4' ||
+          JSON.stringify(c.element).includes('AuditLog'),
+      ),
+    ).toBe(false);
+  });
+
+  it('in Mock mode says the LLM round did not run instead of pretending it did, while producing a reviewable demo candidate', async () => {
     const { app } = setup();
     const { status, json } = await createJob(app, {
       sourceType: 'LOG_AND_DOC',
@@ -483,6 +645,16 @@ describe('Ontology Extraction over HTTP: prose sources', () => {
     });
     expect(status).toBe(200);
     expect(json.job.semanticAlignment).toEqual({ status: 'SKIPPED', reason: 'MOCK_MODE' });
-    expect(json.job.candidates.every((c) => c.evidence.every((e) => e.origin !== 'INFERRED'))).toBe(true);
+    expect(json.job.candidates.length).toBeGreaterThan(0);
+    expect(json.job.candidates.every((c) => c.evidence.every((e) => e.origin === 'INFERRED'))).toBe(true);
+    expect(json.job.candidates[0]!.evidence[0]).toMatchObject({
+      origin: 'INFERRED',
+      lines: { startLine: 1, endLine: 1 },
+    });
+
+    await decide(app, json.job.id, all(json.job.candidates, 'ACCEPTED'));
+    const merged = await merge(app, json.job.id);
+    expect(merged.status).toBe(200);
+    expect(merged.json.project.validation.errorCount).toBe(0);
   });
 });

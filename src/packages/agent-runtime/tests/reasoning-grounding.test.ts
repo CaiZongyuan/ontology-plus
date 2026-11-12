@@ -176,4 +176,75 @@ describe('agent-runtime: grounded Data Ontology Reasoning session', () => {
       gateway.server.close();
     }
   }, 20000);
+
+  it('renders multi-hop join paths in both locales and guides bogus non-adjacent joins through intermediate tables', async () => {
+    const gateway = await startScriptedGateway([
+      {
+        sql: 'SELECT li.item_name, cp.company_name FROM t_contract_line_item li JOIN t_counterparty cp ON li.item_name = cp.company_name',
+      },
+      { text: 'Should join via t_contract.' },
+      {
+        sql: 'SELECT li.item_name, cp.company_name FROM t_contract_line_item li JOIN t_counterparty cp ON li.item_name = cp.company_name',
+      },
+      { text: '需经中间表 t_contract 关联。' },
+    ]);
+    try {
+      const store = storeWithGateway(gateway.baseUrl);
+      const sessionEn = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'REASONING',
+        title: 'Multi-hop grounding',
+        providerId: 'prov-reasoning',
+      });
+      const turnEn = await collectUnifiedAgentTurn(store, {
+        sessionId: sessionEn.id,
+        prompt: 'Break down contract line items by counterparty',
+        locale: 'en-US',
+        mockMode: false,
+      });
+
+      const promptEn = systemPromptOf(gateway.requests[0]!);
+      expect(promptEn).toContain('Multi-hop join paths');
+      expect(promptEn).toContain(
+        't_contract_line_item <-> t_counterparty: t_contract_line_item.contract_id = t_contract.id -> t_contract.counterparty_id = t_counterparty.id',
+      );
+      const sqlCallEn = turnEn.session.messages
+        .flatMap((m) => m.toolCalls ?? [])
+        .find((t) => t.toolName === 'run_readonly_sql')!;
+      expect(sqlCallEn.output).toContain('no direct join');
+      expect(sqlCallEn.output).toContain('t_contract');
+      expect(sqlCallEn.output).toContain(
+        't_contract_line_item.contract_id = t_contract.id -> t_contract.counterparty_id = t_counterparty.id',
+      );
+
+      const sessionZh = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'REASONING',
+        title: '多跳路径问数',
+        providerId: 'prov-reasoning',
+      });
+      const turnZh = await collectUnifiedAgentTurn(store, {
+        sessionId: sessionZh.id,
+        prompt: '按相对方统计合同标的明细',
+        locale: 'zh-CN',
+        mockMode: false,
+      });
+
+      const promptZh = systemPromptOf(gateway.requests[2]!);
+      expect(promptZh).toContain('多跳关联路径');
+      expect(promptZh).toContain(
+        't_contract_line_item <-> t_counterparty: t_contract_line_item.contract_id = t_contract.id -> t_contract.counterparty_id = t_counterparty.id',
+      );
+      const sqlCallZh = turnZh.session.messages
+        .flatMap((m) => m.toolCalls ?? [])
+        .find((t) => t.toolName === 'run_readonly_sql')!;
+      expect(sqlCallZh.output).toContain('没有直接连接');
+      expect(sqlCallZh.output).toContain('t_contract');
+      expect(sqlCallZh.output).toContain(
+        't_contract_line_item.contract_id = t_contract.id -> t_contract.counterparty_id = t_counterparty.id',
+      );
+    } finally {
+      gateway.server.close();
+    }
+  }, 20000);
 });

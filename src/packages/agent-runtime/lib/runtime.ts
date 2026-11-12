@@ -50,6 +50,7 @@ import type {
 } from '../../workspace-store/index.js';
 import {
   type AgentLocale,
+  normalizeAgentLocale,
   pickLocaleText,
   resolveEffectiveLocale,
 } from './locale.js';
@@ -4057,18 +4058,48 @@ function applyLlmBlueprintToSuite(
   baseSuite: OntologySuite,
   blueprint: LlmSynthesizedDomainBlueprint,
   domain: string,
+  options?: { nonCollidingDocIds?: boolean },
 ): OntologySuite {
   let working: OntologySuite = JSON.parse(JSON.stringify(baseSuite));
+  const docMode = Boolean(options?.nonCollidingDocIds);
+  const nextDocId = (prefix: string, usedIds: Set<string>): string => {
+    let n = 1;
+    while (usedIds.has(`${prefix}-${String(n).padStart(2, '0')}`)) n += 1;
+    const id = `${prefix}-${String(n).padStart(2, '0')}`;
+    usedIds.add(id);
+    return id;
+  };
+  const usedAggIds = new Set((baseSuite.M1?.aggregates ?? []).map((a) => a.id));
+  const usedActorIds = new Set((baseSuite.M5?.actors ?? []).map((a) => a.id));
+  const usedRoleIds = new Set((baseSuite.M5?.roles ?? []).map((r) => r.id));
+  const usedBehIds = new Set((baseSuite.M2?.behaviors ?? []).map((b) => b.id));
+  const usedRuleIds = new Set((baseSuite.M3?.rules ?? []).map((r) => r.id));
+  const usedEvtIds = new Set((baseSuite.ME?.events ?? []).map((e) => e.id));
+  const usedFlwIds = new Set((baseSuite.M6?.flows ?? []).map((f) => f.id));
+  const usedIfIds = new Set((baseSuite.MI?.interfaces ?? []).map((i) => i.interfaceId));
 
   for (const [idx, agg] of (blueprint.aggregates ?? []).slice(0, 8).entries()) {
     if (!agg?.name) continue;
+    const cleanName = agg.name.replace(/[^A-Za-z0-9_]/g, '');
+    let aggId = agg.id || `AGG-0${idx + 1}`;
+    if (docMode) {
+      const existingByName = baseSuite.M1?.aggregates.find((a) => a.name === cleanName);
+      if (existingByName) {
+        aggId = existingByName.id;
+      } else if (agg.id && !usedAggIds.has(agg.id)) {
+        aggId = agg.id;
+        usedAggIds.add(aggId);
+      } else {
+        aggId = nextDocId('AGG-DOC', usedAggIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_aggregate',
         {
-          id: agg.id || `AGG-0${idx + 1}`,
-          name: agg.name.replace(/[^A-Za-z0-9_]/g, ''),
+          id: aggId,
+          name: cleanName,
           alias: agg.alias || agg.name,
           lifecycle: agg.lifecycle,
           attributes: agg.attributes,
@@ -4082,15 +4113,44 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, act] of (blueprint.actors ?? []).slice(0, 6).entries()) {
     if (!act?.actorName && !act?.roleName) continue;
+    const targetActorName = (act.actorName || act.roleName || '').trim();
+    const targetRoleName = (act.roleName || act.actorName || '').trim();
+    let actorId = act.actorId || `ACT-0${idx + 1}`;
+    let roleId = act.roleId || `ROLE-0${idx + 1}`;
+    if (docMode) {
+      const existingActor = baseSuite.M5?.actors.find(
+        (a) => a.name === targetActorName && (!act.actorId || a.id === act.actorId),
+      );
+      if (existingActor) {
+        actorId = existingActor.id;
+      } else if (act.actorId && !usedActorIds.has(act.actorId)) {
+        actorId = act.actorId;
+        usedActorIds.add(actorId);
+      } else {
+        actorId = nextDocId('ACT-DOC', usedActorIds);
+      }
+
+      const existingRole = baseSuite.M5?.roles.find(
+        (r) => r.name === targetRoleName && (!act.roleId || r.id === act.roleId),
+      );
+      if (existingRole) {
+        roleId = existingRole.id;
+      } else if (act.roleId && !usedRoleIds.has(act.roleId)) {
+        roleId = act.roleId;
+        usedRoleIds.add(roleId);
+      } else {
+        roleId = nextDocId('ROLE-DOC', usedRoleIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_actor_role',
         {
-          actorId: act.actorId || `ACT-0${idx + 1}`,
+          actorId,
           actorName: act.actorName || act.roleName,
           actorType: act.actorType || 'HUMAN',
-          roleId: act.roleId || `ROLE-0${idx + 1}`,
+          roleId,
           roleName: act.roleName || act.actorName,
           roleCode: act.roleCode,
         },
@@ -4103,13 +4163,28 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, beh] of (blueprint.behaviors ?? []).slice(0, 10).entries()) {
     if (!beh?.name) continue;
+    const cleanBehName = beh.name.replace(/[^A-Za-z0-9_]/g, '');
+    let behId = beh.id || `BHV-0${idx + 1}`;
+    if (docMode) {
+      const existingBeh = baseSuite.M2?.behaviors.find(
+        (b) => b.name === cleanBehName && (!beh.id || b.id === beh.id),
+      );
+      if (existingBeh) {
+        behId = existingBeh.id;
+      } else if (beh.id && !usedBehIds.has(beh.id)) {
+        behId = beh.id;
+        usedBehIds.add(behId);
+      } else {
+        behId = nextDocId('BHV-DOC', usedBehIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_behavior',
         {
-          id: beh.id || `BHV-0${idx + 1}`,
-          name: beh.name.replace(/[^A-Za-z0-9_]/g, ''),
+          id: behId,
+          name: cleanBehName,
           alias: beh.alias || beh.name,
           ownerEntity: beh.ownerEntity,
           behaviorType: beh.behaviorType || 'COMMAND',
@@ -4123,13 +4198,30 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, rl] of (blueprint.rules ?? []).slice(0, 10).entries()) {
     if (!rl?.alias && !rl?.name) continue;
+    const cleanRuleName = (rl.name || `DomainRule0${idx + 1}`).replace(/[^A-Za-z0-9_]/g, '');
+    let ruleId = rl.id || `RULE-0${idx + 1}`;
+    if (docMode) {
+      const existingRule = baseSuite.M3?.rules.find(
+        (r) =>
+          ((rl.name && r.name === cleanRuleName) || (rl.alias && r.alias === rl.alias)) &&
+          (!rl.id || r.id === rl.id),
+      );
+      if (existingRule) {
+        ruleId = existingRule.id;
+      } else if (rl.id && !usedRuleIds.has(rl.id)) {
+        ruleId = rl.id;
+        usedRuleIds.add(ruleId);
+      } else {
+        ruleId = nextDocId('RULE-DOC', usedRuleIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_rule',
         {
-          id: rl.id || `RULE-0${idx + 1}`,
-          name: (rl.name || `DomainRule0${idx + 1}`).replace(/[^A-Za-z0-9_]/g, ''),
+          id: ruleId,
+          name: cleanRuleName,
           alias: rl.alias || rl.name,
           ruleType: rl.ruleType || 'VALIDATION',
           referencedObjects: rl.referencedObjects,
@@ -4145,12 +4237,26 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, ev] of (blueprint.events ?? []).slice(0, 8).entries()) {
     if (!ev?.name) continue;
+    let evtId = ev.id || `EVT-0${idx + 1}`;
+    if (docMode) {
+      const existingEv = baseSuite.ME?.events.find(
+        (e) => e.name === ev.name && (!ev.id || e.id === ev.id),
+      );
+      if (existingEv) {
+        evtId = existingEv.id;
+      } else if (ev.id && !usedEvtIds.has(ev.id)) {
+        evtId = ev.id;
+        usedEvtIds.add(evtId);
+      } else {
+        evtId = nextDocId('EVT-DOC', usedEvtIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_event',
         {
-          id: ev.id || `EVT-0${idx + 1}`,
+          id: evtId,
           name: ev.name,
           label: ev.label || ev.name,
           sourceAggregate: ev.sourceAggregate,
@@ -4164,12 +4270,26 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, fl] of (blueprint.flows ?? []).slice(0, 4).entries()) {
     if (!fl?.name) continue;
+    let flwId = fl.id || `FLW-0${idx + 1}`;
+    if (docMode) {
+      const existingFl = baseSuite.M6?.flows.find(
+        (f) => f.name === fl.name && (!fl.id || f.id === fl.id),
+      );
+      if (existingFl) {
+        flwId = existingFl.id;
+      } else if (fl.id && !usedFlwIds.has(fl.id)) {
+        flwId = fl.id;
+        usedFlwIds.add(flwId);
+      } else {
+        flwId = nextDocId('FLW-DOC', usedFlwIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_flow',
         {
-          id: fl.id || `FLW-0${idx + 1}`,
+          id: flwId,
           name: fl.name,
           flowType: fl.flowType,
           primaryAggregate: fl.primaryAggregate,
@@ -4183,12 +4303,26 @@ function applyLlmBlueprintToSuite(
 
   for (const [idx, itf] of (blueprint.interfaces ?? []).slice(0, 8).entries()) {
     if (!itf?.name) continue;
+    let ifId = itf.interfaceId || `IF-0${idx + 1}`;
+    if (docMode) {
+      const existingItf = baseSuite.MI?.interfaces.find(
+        (i) => i.name === itf.name && (!itf.interfaceId || i.interfaceId === itf.interfaceId),
+      );
+      if (existingItf) {
+        ifId = existingItf.interfaceId;
+      } else if (itf.interfaceId && !usedIfIds.has(itf.interfaceId)) {
+        ifId = itf.interfaceId;
+        usedIfIds.add(ifId);
+      } else {
+        ifId = nextDocId('IF-DOC', usedIfIds);
+      }
+    }
     try {
       working = applyOntologyToolCall(
         working,
         'upsert_interface',
         {
-          interfaceId: itf.interfaceId || `IF-0${idx + 1}`,
+          interfaceId: ifId,
           name: itf.name,
           direction: itf.direction || 'PROVIDED',
           interfaceCategory: itf.interfaceCategory || 'COMMAND',
@@ -4824,10 +4958,10 @@ async function runSemanticAlignment(
     };
   }
 
-  const sanitized = sanitizeAlignment(skeleton, content ? extractFirstJsonObject(content) : null);
-  const usable =
-    sanitized.tableLabels.length + sanitized.columnLabels.length + sanitized.inferredRefs.length;
-  if (usable === 0) {
+  const parsed = content ? extractFirstJsonObject(content) : null;
+  const hasTablesArray = Array.isArray((parsed as { tables?: unknown } | null)?.tables);
+  const sanitized = sanitizeAlignment(skeleton, parsed);
+  if (!hasTablesArray) {
     return {
       scan,
       report: {
@@ -4860,23 +4994,28 @@ function collectBlueprintEvidence(
   const clean = (name: string | undefined) => (name ?? '').replace(/[^A-Za-z0-9_]/g, '');
   const cite = (key: string, quote: string | undefined) => {
     const located = locateQuote(source, quote);
+    const snippet = quote?.trim().slice(0, 80) ?? '';
+    const noteZhLocated = 'LLM 依据此段原文归纳';
+    const noteEnLocated = 'Inferred by the LLM from this passage';
+    const noteZhUnverified = snippet
+      ? `LLM 给出的引用在源材料中核对不到：「${snippet}」`
+      : 'LLM 未给出原文引用';
+    const noteEnUnverified = snippet
+      ? `The quote the LLM cited is not in the source: "${snippet}"`
+      : 'The LLM cited no passage';
     evidenceByKey[key] = [
       located
         ? {
             origin: 'INFERRED',
-            note: pickLocaleText(locale, 'LLM 依据此段原文归纳', 'Inferred by the LLM from this passage'),
+            note: pickLocaleText(locale, noteZhLocated, noteEnLocated),
+            noteEn: noteEnLocated,
             lines: located.lines,
             excerpt: located.excerpt,
           }
         : {
             origin: 'INFERRED',
-            note: quote?.trim()
-              ? pickLocaleText(
-                  locale,
-                  `LLM 给出的引用在源材料中核对不到：「${quote.trim().slice(0, 80)}」`,
-                  `The quote the LLM cited is not in the source: "${quote.trim().slice(0, 80)}"`,
-                )
-              : pickLocaleText(locale, 'LLM 未给出原文引用', 'The LLM cited no passage'),
+            note: pickLocaleText(locale, noteZhUnverified, noteEnUnverified),
+            noteEn: noteEnUnverified,
             unverified: true,
           },
     ];
@@ -4885,6 +5024,24 @@ function collectBlueprintEvidence(
   for (const agg of suite.M1?.aggregates ?? []) {
     const item = blueprint.aggregates?.find((a) => clean(a.name) === agg.name);
     if (item) cite(candidateKey('M1', 'aggregates', agg.id), item.sourceQuote);
+  }
+  for (const act of suite.M5?.actors ?? []) {
+    const item = blueprint.actors?.find(
+      (a) =>
+        (a.actorId && a.actorId === act.id) ||
+        (a.actorName && a.actorName.trim() === act.name) ||
+        (!a.actorName && a.roleName && a.roleName.trim().replace(/角色$/, '') === act.name),
+    );
+    if (item) cite(candidateKey('M5', 'actors', act.id), item.sourceQuote);
+  }
+  for (const role of suite.M5?.roles ?? []) {
+    const item = blueprint.actors?.find(
+      (a) =>
+        (a.roleId && a.roleId === role.id) ||
+        (a.roleName && a.roleName.trim() === role.name) ||
+        (!a.roleName && a.actorName && a.actorName.trim() === role.name),
+    );
+    if (item) cite(candidateKey('M5', 'roles', role.id), item.sourceQuote);
   }
   for (const bhv of suite.M2?.behaviors ?? []) {
     const item = blueprint.behaviors?.find((b) => clean(b.name) === bhv.name);
@@ -4932,7 +5089,8 @@ export async function runSmartOntologyExtractionJob(
   const project = store.getProject(input.projectId);
   if (!project) throw new Error(`Project not found: ${input.projectId}`);
   const source = input.sourceSnippet;
-  const locale = resolveEffectiveLocale(store, input.locale, source.trim() || input.title);
+  const locale =
+    normalizeAgentLocale(input.locale) ?? resolveEffectiveLocale(store, undefined, input.title);
   const sys = store.listLegacySystems().find((s) => s.id === input.systemId);
   const systemName = sys?.name ?? input.systemId;
   const mock = isMockLlmActive(store);
@@ -4971,7 +5129,78 @@ export async function runSmartOntologyExtractionJob(
     });
   };
 
-  if (mock) return fromScan(scan, { status: 'SKIPPED', reason: 'MOCK_MODE' });
+  if (mock) {
+    if (scan.tables.length === 0 && scan.operations.length === 0 && source.trim().length >= 4) {
+      const domainLabel = project.domain || `${systemName}业务域`;
+      const firstLine =
+        source
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => line.length >= 2) ?? source.trim().slice(0, 80);
+      const heading =
+        firstLine.replace(/^#+\s*/, '').trim().slice(0, 20) || input.title.trim().slice(0, 20) || '文档规范';
+      const primaryAgg = project.suite.M1?.aggregates[0];
+      const demoBlueprint: LlmSynthesizedDomainBlueprint = primaryAgg
+        ? {
+            rules: [
+              {
+                name: 'DocExtractedComplianceRule',
+                alias: `${heading}合规规则`,
+                ruleType: 'VALIDATION',
+                referencedObjects: [primaryAgg.name],
+                violationMessage: `违反「${heading}」源文档合规要求`,
+              },
+            ],
+          }
+        : {
+            aggregates: [
+              {
+                name: 'DocExtractedRecord',
+                alias: heading,
+                attributes: [{ name: 'recordCode', label: '单据编号', type: 'String', required: true }],
+              },
+            ],
+          };
+      const demoSuite = applyLlmBlueprintToSuite(
+        JSON.parse(JSON.stringify(project.suite)) as OntologySuite,
+        demoBlueprint,
+        domainLabel,
+        { nonCollidingDocIds: true },
+      );
+      const located = locateQuote(source, firstLine.slice(0, 80));
+      const noteZh = 'Mock 演示：提取自源文档片段（Mock 模式下跳过 LLM 语义归纳）';
+      const noteEn = 'Mock demo: extracted from source document snippet (LLM semantic synthesis skipped in Mock mode)';
+      const rawCandidates = buildExtractionCandidates(project.suite, demoSuite, {});
+      const evidenceByKey = Object.fromEntries(
+        rawCandidates.map((cand) => [
+          cand.key,
+          [
+            {
+              origin: 'INFERRED',
+              note: pickLocaleText(locale, noteZh, noteEn),
+              noteEn,
+              ...(located ? { lines: located.lines, excerpt: located.excerpt } : {}),
+            } satisfies ExtractionEvidence,
+          ],
+        ]),
+      );
+      const candidates = buildExtractionCandidates(project.suite, demoSuite, evidenceByKey);
+      return store.runOntologyExtractionJob({
+        ...jobBase,
+        extraction: {
+          candidates,
+          semanticAlignment: { status: 'SKIPPED', reason: 'MOCK_MODE' },
+          tablesCount: 0,
+          summary: pickLocaleText(
+            locale,
+            `本体萃取完成（Mock 演示 · LLM 已跳过）：产出 ${candidates.length} 个文档候选供审阅。`,
+            `Ontology Extraction finished (Mock demo · LLM skipped): ${candidates.length} document candidate(s) ready for review.`,
+          ),
+        },
+      });
+    }
+    return fromScan(scan, { status: 'SKIPPED', reason: 'MOCK_MODE' });
+  }
 
   if (scan.tables.length > 0) {
     const aligned = await runSemanticAlignment(store, scan, {
@@ -5050,19 +5279,12 @@ export async function runSmartOntologyExtractionJob(
     JSON.parse(JSON.stringify(project.suite)) as OntologySuite,
     blueprint,
     domainLabel,
+    { nonCollidingDocIds: true },
   );
-  const placeholderHtml = buildSemanticPrototypeHtmlForProject({
-    ...project,
-    name: input.title || systemName || project.name,
-    domain: domainLabel,
-    suite: seeded,
-    validation: validateOntologySuite(seeded),
-  });
-  const synthesized = alignSuiteWithExtractedMu(seeded, placeholderHtml, domainLabel);
   const candidates = buildExtractionCandidates(
     project.suite,
-    synthesized,
-    collectBlueprintEvidence(synthesized, blueprint, source, locale),
+    seeded,
+    collectBlueprintEvidence(seeded, blueprint, source, locale),
   );
   const aggsCount = candidates.filter((c) => c.collection === 'aggregates').length;
   const rulesCount = candidates.filter((c) => c.collection === 'rules').length;
@@ -5596,7 +5818,7 @@ function runGroundedCandidates(
       rows: res.rows,
       ...(candidate.referenceQueryId ? { referenceQueryId: candidate.referenceQueryId } : {}),
       referencedTables: report.referencedTables,
-      warnings: describeJoinWarnings(report, locale),
+      warnings: describeJoinWarnings(report, locale, grounding),
     };
     if (res.rows.length > 0) return result;
     firstEmpty ??= result;

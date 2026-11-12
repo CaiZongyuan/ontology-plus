@@ -173,6 +173,37 @@ describe('ontology-core: SQL grounding check', () => {
       check('SELECT * FROM (SELECT * FROM agent_sessions) s JOIN t_contract c ON c.id = s.id')
         .unknownTables,
     ).toEqual(['agent_sessions']);
+    // Schema-qualified table cannot be masked by a CTE of the same name.
+    expect(
+      check('WITH workspace_entities AS (SELECT 1) SELECT * FROM main.workspace_entities')
+        .unknownTables,
+    ).toEqual(['workspace_entities']);
+    expect(
+      check('WITH workspace_entities AS (SELECT 1) SELECT * FROM "main"."workspace_entities"')
+        .unknownTables,
+    ).toEqual(['workspace_entities']);
+    // Subquery-scoped CTE does not leak to outer query.
+    expect(
+      check(
+        'SELECT * FROM (WITH workspace_entities AS (SELECT 1) SELECT * FROM workspace_entities) s, workspace_entities',
+      ).unknownTables,
+    ).toEqual(['workspace_entities']);
+    // Comma-join after JOIN ... ON / USING still checks the trailing table.
+    expect(
+      check(
+        'SELECT * FROM t_contract c JOIN t_counterparty cp ON c.counterparty_id = cp.id, workspace_entities',
+      ).unknownTables,
+    ).toEqual(['workspace_entities']);
+    expect(
+      check('SELECT * FROM t_contract JOIN t_counterparty USING (id), workspace_entities')
+        .unknownTables,
+    ).toEqual(['workspace_entities']);
+    // Commas inside function calls in ON (...) do not trigger false table expectations.
+    expect(
+      check(
+        "SELECT * FROM t_contract c JOIN t_counterparty cp ON COALESCE(c.counterparty_id, '') = cp.id",
+      ).unknownTables,
+    ).toEqual([]);
   });
 
   it('does not mistake CTE names, derived-table aliases, or functions for tables', () => {

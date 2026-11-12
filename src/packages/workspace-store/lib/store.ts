@@ -560,6 +560,10 @@ function upgradeExtractionJob(
   };
 }
 
+function codedError(code: 'ALREADY_MERGED' | 'NOTHING_ACCEPTED', message: string): Error {
+  return Object.assign(new Error(message), { code });
+}
+
 function modelsOfCandidates(candidates: ExtractionCandidate[]): ModelCode[] {
   const present = new Set(candidates.map((c) => c.modelCode));
   return MODEL_CODES.filter((code) => present.has(code));
@@ -1115,6 +1119,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
   function nextUniqueId(prefix: string): string {
     seqCounter += 1;
     return `${prefix}-${Date.now().toString(36)}-${seqCounter.toString(36)}`;
+  }
+
+  function getProjectSuite(projectId: string): OntologySuite | undefined {
+    const row = db.prepare(`SELECT * FROM projects WHERE id = ?`).get(projectId) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? (JSON.parse(String(row.suite_json)) as OntologySuite) : undefined;
+  }
+
+  function getUpgradedExtractionJob(jobId: string): ExtractionJob | undefined {
+    const stored = getItem<StoredExtractionJob>('extraction_jobs', jobId);
+    if (!stored) return undefined;
+    const { job, upgraded } = upgradeExtractionJob(stored, () => getProjectSuite(stored.projectId));
+    if (upgraded) putItem('extraction_jobs', job.id, job, job.projectId);
+    return job;
   }
 
   return {
@@ -1756,9 +1775,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     listExtractionJobs(projectId) {
       return listItems<StoredExtractionJob>('extraction_jobs', projectId).map((stored) => {
-        const { job, upgraded } = upgradeExtractionJob(
-          stored,
-          () => this.getProject(stored.projectId)?.suite,
+        const { job, upgraded } = upgradeExtractionJob(stored, () =>
+          getProjectSuite(stored.projectId),
         );
         if (upgraded) putItem('extraction_jobs', job.id, job, job.projectId);
         return job;
@@ -1848,10 +1866,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     saveExtractionDecisions(jobId, decisions) {
-      const existing = this.listExtractionJobs().find((j) => j.id === jobId);
+      const existing = getUpgradedExtractionJob(jobId);
       if (!existing) throw new Error(`Extraction job not found: ${jobId}`);
       if (existing.appliedToProject) {
-        throw new Error(`Extraction job already merged: ${jobId}`);
+        throw codedError('ALREADY_MERGED', `Extraction job already merged: ${jobId}`);
       }
       const known = new Set(existing.candidates.map((c) => c.key));
       const next = { ...existing.decisions };
@@ -1865,12 +1883,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     applyExtractionJobToProject(jobId) {
-      const existing = this.listExtractionJobs().find((j) => j.id === jobId);
+      const existing = getUpgradedExtractionJob(jobId);
       if (!existing) throw new Error(`Extraction job not found: ${jobId}`);
       const currentProject = this.getProject(existing.projectId);
       if (!currentProject) throw new Error(`Project not found: ${existing.projectId}`);
       if (existing.appliedToProject) {
-        throw new Error(`Extraction job already merged: ${jobId}`);
+        throw codedError('ALREADY_MERGED', `Extraction job already merged: ${jobId}`);
       }
 
       const preview = previewCandidateMerge({
@@ -1880,7 +1898,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         domain: currentProject.domain,
       });
       if (preview.acceptedCount === 0) {
-        throw new Error(`No accepted candidates to merge for extraction job: ${jobId}`);
+        throw codedError(
+          'NOTHING_ACCEPTED',
+          `No accepted candidates to merge for extraction job: ${jobId}`,
+        );
       }
       if (preview.newErrors.length > 0) {
         return { job: existing, project: currentProject, blockedBy: preview.newErrors };

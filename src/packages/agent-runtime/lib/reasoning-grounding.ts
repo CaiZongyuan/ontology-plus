@@ -1,5 +1,6 @@
 import {
   buildDataGrounding,
+  findJoinPath,
   type DataGrounding,
   type GroundingJoin,
   type SqlGroundingReport,
@@ -14,6 +15,7 @@ import { type AgentLocale, pickLocaleText } from './locale.js';
 const PROMPT_MAX_TABLES = 40;
 const PROMPT_MAX_COLUMNS = 40;
 const PROMPT_MAX_SQL_CHARS = 700;
+const PROMPT_MAX_MULTI_HOP_PATHS = 12;
 
 /** The dictionary table is always queryable; reasoning joins labels through it. */
 const DICTIONARY_TABLE = {
@@ -93,6 +95,29 @@ export function renderDataGrounding(grounding: DataGrounding, locale: AgentLocal
   if (grounding.joins.length > 0) {
     lines.push(zh ? '可用连接（等值条件，可双向使用，可串联成多表路径）：' : 'Known joins (equality, usable in either direction, chainable into multi-table paths):');
     for (const join of grounding.joins) lines.push(`- ${formatJoin(join)}`);
+    if (mapped.length >= 2) {
+      const multiHopLines: string[] = [];
+      const boundedTables = mapped.slice(0, PROMPT_MAX_TABLES);
+      outer: for (let i = 0; i < boundedTables.length; i += 1) {
+        for (let j = i + 1; j < boundedTables.length; j += 1) {
+          const left = boundedTables[i]!;
+          const right = boundedTables[j]!;
+          const path = findJoinPath(grounding, left.table, right.table);
+          if (path && path.length >= 2) {
+            multiHopLines.push(`- ${left.table} <-> ${right.table}: ${path.map(formatJoin).join(' -> ')}`);
+            if (multiHopLines.length >= PROMPT_MAX_MULTI_HOP_PATHS) break outer;
+          }
+        }
+      }
+      if (multiHopLines.length > 0) {
+        lines.push(
+          zh
+            ? '多跳关联路径（非直接相邻表须经中间表串联）：'
+            : 'Multi-hop join paths (non-adjacent tables connect via intermediate tables):',
+        );
+        lines.push(...multiHopLines);
+      }
+    }
     lines.push(
       zh
         ? '两张表之间没有列出的连接可达时，表示没有已知连接：请说明无法关联，不要猜测条件。'
@@ -183,9 +208,50 @@ export function describeGroundingRefusal(
 }
 
 /** One warning per join condition the ontology does not back. */
-export function describeJoinWarnings(report: SqlGroundingReport, locale: AgentLocale): string[] {
+export function describeJoinWarnings(
+  report: SqlGroundingReport,
+  locale: AgentLocale,
+  grounding?: DataGrounding,
+): string[] {
   return report.unknownJoins.map((unknown) => {
-    const known = unknown.knownJoins.map(formatJoin).join(' AND ');
+    const match = /^([^.\s=]+)\.[^.\s=]+\s*=\s*([^.\s=]+)\.[^.\s=]+$/.exec(unknown.condition.trim());
+    const leftTable = match?.[1];
+    const rightTable = match?.[2];
+    const path =
+      unknown.knownJoins.length > 0
+        ? unknown.knownJoins
+        : grounding && leftTable && rightTable
+          ? (findJoinPath(grounding, leftTable, rightTable) ?? [])
+          : [];
+
+    if (path.length >= 2) {
+      const endpoints = new Set(
+        [leftTable, rightTable].filter((t): t is string => Boolean(t)).map((t) => t.toLowerCase()),
+      );
+      const intermediates: string[] = [];
+      for (const hop of path) {
+        for (const tbl of [hop.leftTable, hop.rightTable]) {
+          if (
+            !endpoints.has(tbl.toLowerCase()) &&
+            !intermediates.some((existing) => existing.toLowerCase() === tbl.toLowerCase())
+          ) {
+            intermediates.push(tbl);
+          }
+        }
+      }
+      const chain = path.map(formatJoin).join(' -> ');
+      return pickLocaleText(
+        locale,
+        intermediates.length > 0
+          ? `连接条件 ${unknown.condition} 不在本体的已知连接中，结果可能有误：这两张表之间没有直接连接，需经中间表 ${intermediates.join('、')} 多跳关联：${chain}。`
+          : `连接条件 ${unknown.condition} 不在本体的已知连接中，结果可能有误：这两张表之间没有直接连接，需按多跳路径关联：${chain}。`,
+        intermediates.length > 0
+          ? `Join condition ${unknown.condition} is not a join the ontology knows; the result may be wrong: there is no direct join between these tables — join via intermediate table(s) ${intermediates.join(', ')}: ${chain}.`
+          : `Join condition ${unknown.condition} is not a join the ontology knows; the result may be wrong: there is no direct join between these tables — join via multi-hop path: ${chain}.`,
+      );
+    }
+
+    const known = path.map(formatJoin).join(' AND ');
     return known
       ? pickLocaleText(
           locale,

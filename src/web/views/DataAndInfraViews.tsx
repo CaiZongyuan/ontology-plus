@@ -177,7 +177,7 @@ export function DataResourcesView({
       }>('/api/capability/extraction-jobs', {
         systemId: data.legacySystems[0]?.id ?? 'sys-erp-contract',
         projectId: data.activeProject.id,
-        title: '从数仓资源萃取数据本体 (M1+MM)',
+        title: t('从数仓资源萃取数据本体 (M1+MM)', 'Extract Data Ontology from Data Resources (M1+MM)'),
         sourceType: 'DDL_AND_OPENAPI',
         sourceSnippet:
           ddlFromTables ||
@@ -198,8 +198,15 @@ export function DataResourcesView({
         );
         return;
       }
-      showToast(`已从数据资源完成数据本体萃取 (M1+MM)：${json.job.summary}`);
+      showToast(
+        t(
+          `已从数据资源完成数据本体萃取 (M1+MM)：${json.job.summary}`,
+          `Extracted data ontology (M1+MM) from data resources: ${json.job.summary}`,
+        ),
+      );
       onNavigate?.('data-mappings');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
     } finally {
       setExtractingDataOntology(false);
     }

@@ -35,6 +35,7 @@ export type EvidenceOrigin = 'PARSED' | 'INFERRED' | (string & {});
 export interface ExtractionEvidence {
   origin: EvidenceOrigin;
   note: string;
+  noteEn?: string;
   lines?: SourceRange;
   excerpt?: string;
   /** The LLM cited a quote that is not in the source; nothing to check it against. */
@@ -83,7 +84,7 @@ export interface SemanticAlignmentReport {
   /** How much of the source structure the size cap kept out of the LLM call. */
   omitted?: { tables: number; columns: number };
   /** LLM proposals discarded by `sanitizeAlignment` / the validator, with the reason. */
-  dropped?: { item: string; reason: string }[];
+  dropped?: { item: string; reason: string; reasonZh?: string }[];
 }
 
 export interface CandidateTally {
@@ -387,6 +388,45 @@ function parseTables(source: string, lineStarts: number[]): ParsedSourceTable[] 
   return results;
 }
 
+function extractBalancedJsonObject(source: string, start: number): string {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < source.length; i += 1) {
+    const ch = source[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  return source.slice(start);
+}
+
+function findOperationLine(
+  sourceLines: string[],
+  routePath: string,
+  method: string,
+): number | undefined {
+  const pathIdx = sourceLines.findIndex((text) => text.includes(routePath));
+  if (pathIdx < 0) return undefined;
+  const methodRe = new RegExp(`^\\s*['"]?${method}['"]?\\s*:`, 'i');
+  const nextPathRe = /^\s*['"]?\/[a-zA-Z0-9_/{}-]+['"]?\s*:/;
+  for (let j = pathIdx + 1; j < sourceLines.length; j += 1) {
+    const text = sourceLines[j]!;
+    if (nextPathRe.test(text)) break;
+    if (methodRe.test(text)) return j + 1;
+  }
+  return pathIdx + 1;
+}
+
 function parseOperations(source: string, lineStarts: number[]): ParsedSourceOperation[] {
   const ops: ParsedSourceOperation[] = [];
   const seen = new Set<string>();
@@ -403,8 +443,7 @@ function parseOperations(source: string, lineStarts: number[]): ParsedSourceOper
     const key = `${upper} ${routePath}`;
     if (seen.has(key)) return;
     seen.add(key);
-    const foundLine =
-      line ?? (sourceLines.findIndex((text) => text.includes(routePath)) + 1 || undefined);
+    const foundLine = line ?? findOperationLine(sourceLines, routePath, method);
     ops.push({
       method: upper,
       routePath,
@@ -415,13 +454,19 @@ function parseOperations(source: string, lineStarts: number[]): ParsedSourceOper
   };
 
   // 1. Embedded OpenAPI YAML / JSON section.
-  if (/\bpaths\s*:/i.test(source)) {
+  if (/(?:["']|\b)paths["']?\s*:/i.test(source)) {
     const openapiStart = source.search(
-      /(?:openapi\s*:|swagger\s*:|\{\s*"openapi"|\{\s*"paths"|paths\s*:)/i,
+      /(?:openapi\s*:|swagger\s*:|\{\s*["'](?:openapi|swagger|paths)["']|["']?paths["']?\s*:)/i,
     );
     if (openapiStart >= 0) {
+      const candidateBlock =
+        source[openapiStart] === '{'
+          ? extractBalancedJsonObject(source, openapiStart)
+          : source.slice(openapiStart);
       try {
-        const parsed = yaml.load(source.slice(openapiStart)) as Record<string, unknown> | null;
+        const parsed = (
+          source[openapiStart] === '{' ? JSON.parse(candidateBlock) : yaml.load(candidateBlock)
+        ) as Record<string, unknown> | null;
         const pathsObj =
           parsed && typeof parsed === 'object'
             ? ((parsed.paths ?? parsed) as Record<string, unknown>)
@@ -442,24 +487,37 @@ function parseOperations(source: string, lineStarts: number[]): ParsedSourceOper
           }
         }
       } catch {
-        // Mixed DDL + YAML rarely parses as one document; the line scan below covers it.
+        // Mixed DDL + YAML or partial JSON rarely parses as one document; the line scan below covers it.
       }
     }
 
     let currentPath: string | undefined;
     sourceLines.forEach((line, i) => {
-      const pathMatch = line.match(/^\s*['"]?(\/[a-zA-Z0-9_/{}-]+)['"]?\s*:\s*$/);
+      const pathMatch = line.match(/^\s*['"]?(\/[a-zA-Z0-9_/{}-]+)['"]?\s*:\s*\{?\s*$/);
       if (pathMatch) {
         currentPath = pathMatch[1];
         return;
       }
       if (!currentPath) return;
-      const methodMatch = line.match(/^\s{2,8}['"]?(get|post|put|patch|delete)['"]?\s*:\s*(.*)$/i);
+      const methodMatch = line.match(/^(\s{2,16})['"]?(get|post|put|patch|delete)['"]?\s*:\s*(.*)$/i);
       if (methodMatch) {
-        pushOp(methodMatch[1]!, currentPath, undefined, undefined, i + 1);
+        const methodIndent = methodMatch[1]!.length;
+        let operationId: string | undefined;
+        let summary: string | undefined;
+        for (let j = i + 1; j < Math.min(sourceLines.length, i + 16); j += 1) {
+          const next = sourceLines[j]!;
+          if (!next.trim()) continue;
+          const nextIndent = next.match(/^\s*/)?.[0].length ?? 0;
+          if (nextIndent <= methodIndent) break;
+          const opIdMatch = next.match(/^\s*['"]?operationId['"]?\s*:\s*['"]?([^'",}\r\n]+)['"]?/);
+          if (opIdMatch && !operationId) operationId = opIdMatch[1]!.trim();
+          const sumMatch = next.match(/^\s*['"]?summary['"]?\s*:\s*['"]?([^'",}\r\n]+)['"]?/);
+          if (sumMatch && !summary) summary = sumMatch[1]!.trim();
+        }
+        pushOp(methodMatch[2]!, currentPath, operationId, summary, i + 1);
         return;
       }
-      if (/^\S/.test(line)) currentPath = undefined;
+      if (/^[^\s{}]/.test(line)) currentPath = undefined;
     });
   }
 
@@ -672,11 +730,13 @@ export function scanSourceStructure(input: {
     elementId: string,
     note: string,
     lines?: SourceRange,
+    noteEn?: string,
   ) => {
     const key = candidateKey(modelCode, collection, elementId);
     (evidenceByKey[key] ??= []).push({
       origin: 'PARSED',
       note,
+      ...(noteEn ? { noteEn } : {}),
       ...(lines ? { lines, excerpt: excerptOf(source, lines) } : {}),
     });
   };
@@ -868,6 +928,7 @@ export function scanSourceStructure(input: {
     const qryBhvId = `BHV-EXT-QRY-${upperTag}`;
     const qryReportId = `QRY-EXT-${upperTag}`;
     const templateNote = `按表 ${tbl.tableName} 生成的标准模板`;
+    const templateNoteEn = `Standard template generated from table ${tbl.tableName}`;
 
     if (!M2.behaviors.some((b) => b.id === cmdBhvId)) {
       M2.behaviors.push({
@@ -891,7 +952,7 @@ export function scanSourceStructure(input: {
         producedEvents: [],
         requiredPermissions: [],
       } as BehaviorItem);
-      addEvidence('M2', 'behaviors', cmdBhvId, templateNote, tbl.lines);
+      addEvidence('M2', 'behaviors', cmdBhvId, templateNote, tbl.lines, templateNoteEn);
     }
 
     if (!M2.behaviors.some((b) => b.id === qryBhvId)) {
@@ -912,7 +973,7 @@ export function scanSourceStructure(input: {
         requiredPermissions: [],
         queryReportRef: qryReportId,
       } as BehaviorItem);
-      addEvidence('M2', 'behaviors', qryBhvId, templateNote, tbl.lines);
+      addEvidence('M2', 'behaviors', qryBhvId, templateNote, tbl.lines, templateNoteEn);
     }
 
     if (!M7.query_reports.some((q) => q.id === qryReportId)) {
@@ -951,7 +1012,7 @@ export function scanSourceStructure(input: {
           resultMappings: resultCols.map((rc) => rc.name),
         },
       } as QueryReportItem);
-      addEvidence('M7', 'query_reports', qryReportId, templateNote, tbl.lines);
+      addEvidence('M7', 'query_reports', qryReportId, templateNote, tbl.lines, templateNoteEn);
     }
 
     createdBehaviorByAgg.set(aggName.toLowerCase(), { cmdId: cmdBhvId, qryId: qryBhvId });
@@ -1280,7 +1341,58 @@ export interface SanitizedAlignment {
   tableLabels: { table: string; alias?: string; description?: string }[];
   columnLabels: { table: string; column: string; label: string }[];
   inferredRefs: { table: string; column: string; targetTable: string }[];
-  dropped: { item: string; reason: string }[];
+  dropped: { item: string; reason: string; reasonZh?: string }[];
+}
+
+const DROPPED_REASON_ZH: Record<string, string> = {
+  'no "tables" array': '响应中未包含 "tables" 数组',
+  'duplicate table': '重复的表条目',
+  'table is not in the scanned source': '该表不在结构扫描结果中',
+  'duplicate column': '重复的列条目',
+  'column is not in the scanned table': '该列不在扫描出的表结构中',
+  'reference target is not one of the listed candidates': '引用目标不在允许的候选表列表中',
+  'source or target aggregate could not be resolved': '无法解析源聚合根或目标聚合根',
+  'would introduce a Consistency Error': '会引入一致性错误',
+};
+
+function makeDropped(item: string, reason: string): { item: string; reason: string; reasonZh: string } {
+  return { item, reason, reasonZh: DROPPED_REASON_ZH[reason] ?? reason };
+}
+
+export function formatDroppedReason(
+  entry: { reason: string; reasonZh?: string },
+  locale: 'zh-CN' | 'en-US',
+): string {
+  if (locale === 'en-US') return entry.reason;
+  return entry.reasonZh ?? DROPPED_REASON_ZH[entry.reason] ?? entry.reason;
+}
+
+export function formatEvidenceNote(
+  evidence: Pick<ExtractionEvidence, 'note' | 'noteEn'>,
+  locale: 'zh-CN' | 'en-US',
+): string {
+  if (locale === 'en-US') {
+    if (evidence.noteEn) return evidence.noteEn;
+    const tplMatch = evidence.note.match(/^按表 (.+) 生成的标准模板$/);
+    if (tplMatch) return `Standard template generated from table ${tplMatch[1]}`;
+    const alignMatch = evidence.note.match(/^语义对齐给出别名、说明与 (\d+) 个属性标签$/);
+    if (alignMatch) {
+      const n = Number(alignMatch[1]);
+      return `Semantic alignment provided alias, description, and ${n} attribute ${n === 1 ? 'label' : 'labels'}`;
+    }
+    const refMatch = evidence.note.match(/^未声明的引用：(.+)$/);
+    if (refMatch) return `Undeclared reference: ${refMatch[1]}`;
+    if (evidence.note === 'LLM 依据此段原文归纳') return 'Inferred by the LLM from this passage';
+    const missingQuote = evidence.note.match(/^LLM 给出的引用在源材料中核对不到：「(.+)」$/);
+    if (missingQuote) return `The quote the LLM cited is not in the source: "${missingQuote[1]}"`;
+    if (evidence.note === 'LLM 未给出原文引用') return 'The LLM cited no passage';
+    return evidence.note;
+  }
+  if (evidence.note === 'Inferred by the LLM from this passage') return 'LLM 依据此段原文归纳';
+  const enMissingQuote = evidence.note.match(/^The quote the LLM cited is not in the source: "(.+)"$/);
+  if (enMissingQuote) return `LLM 给出的引用在源材料中核对不到：「${enMissingQuote[1]}」`;
+  if (evidence.note === 'The LLM cited no passage') return 'LLM 未给出原文引用';
+  return evidence.note;
 }
 
 function cleanText(value: unknown, maxChars: number): string | undefined {
@@ -1303,7 +1415,7 @@ export function sanitizeAlignment(skeleton: AlignmentSkeleton, raw: unknown): Sa
   };
   const rawTables = (raw as { tables?: unknown } | null)?.tables;
   if (!Array.isArray(rawTables)) {
-    result.dropped.push({ item: '(response)', reason: 'no "tables" array' });
+    result.dropped.push(makeDropped('(response)', 'no "tables" array'));
     return result;
   }
 
@@ -1312,10 +1424,12 @@ export function sanitizeAlignment(skeleton: AlignmentSkeleton, raw: unknown): Sa
     const tableName = typeof entry?.table === 'string' ? entry.table : '';
     const skel = skeleton.tables.find((t) => t.table === tableName);
     if (!skel || seenTables.has(tableName)) {
-      result.dropped.push({
-        item: tableName || '(table)',
-        reason: skel ? 'duplicate table' : 'table is not in the scanned source',
-      });
+      result.dropped.push(
+        makeDropped(
+          tableName || '(table)',
+          skel ? 'duplicate table' : 'table is not in the scanned source',
+        ),
+      );
       continue;
     }
     seenTables.add(tableName);
@@ -1339,10 +1453,9 @@ export function sanitizeAlignment(skeleton: AlignmentSkeleton, raw: unknown): Sa
       const item = `${tableName}.${columnName || '(column)'}`;
       const skelCol = skel.columns.find((c) => c.column === columnName);
       if (!skelCol || seenColumns.has(columnName)) {
-        result.dropped.push({
-          item,
-          reason: skelCol ? 'duplicate column' : 'column is not in the scanned table',
-        });
+        result.dropped.push(
+          makeDropped(item, skelCol ? 'duplicate column' : 'column is not in the scanned table'),
+        );
         continue;
       }
       seenColumns.add(columnName);
@@ -1353,10 +1466,12 @@ export function sanitizeAlignment(skeleton: AlignmentSkeleton, raw: unknown): Sa
       const refTable = colEntry.refTable;
       if (refTable === null || refTable === undefined || refTable === '') continue;
       if (typeof refTable !== 'string' || !skelCol.refCandidates?.includes(refTable)) {
-        result.dropped.push({
-          item: `${item} → ${String(refTable)}`,
-          reason: 'reference target is not one of the listed candidates',
-        });
+        result.dropped.push(
+          makeDropped(
+            `${item} → ${String(refTable)}`,
+            'reference target is not one of the listed candidates',
+          ),
+        );
         continue;
       }
       result.inferredRefs.push({ table: tableName, column: columnName, targetTable: refTable });
@@ -1378,7 +1493,7 @@ export function applyAlignment(
   scan: StructuralScanResult,
   alignment: SanitizedAlignment,
   source: string,
-): { scan: StructuralScanResult; dropped: { item: string; reason: string }[] } {
+): { scan: StructuralScanResult; dropped: { item: string; reason: string; reasonZh?: string }[] } {
   const suite = cloneSuite(scan.suite);
   const evidenceByKey: Record<string, ExtractionEvidence[]> = Object.fromEntries(
     Object.entries(scan.evidenceByKey).map(([k, v]) => [k, [...v]]),
@@ -1419,6 +1534,7 @@ export function applyAlignment(
     (evidenceByKey[candidateKey('M1', 'aggregates', aggId)] ??= []).push({
       origin: 'INFERRED',
       note: `语义对齐给出别名、说明与 ${attrCount} 个属性标签`,
+      noteEn: `Semantic alignment provided alias, description, and ${attrCount} attribute ${attrCount === 1 ? 'label' : 'labels'}`,
     });
   }
 
@@ -1429,7 +1545,7 @@ export function applyAlignment(
     const sourceAgg = aggForTable(ref.table);
     const targetName = targetAggName(ref.targetTable);
     if (!table || !sourceAgg || !targetName || targetName === sourceAgg.name) {
-      dropped.push({ item, reason: 'source or target aggregate could not be resolved' });
+      dropped.push(makeDropped(item, 'source or target aggregate could not be resolved'));
       continue;
     }
     const assocId = `ASSOC-INF-${tableTag(ref.table)}-${toCamelCase(ref.column).toUpperCase()}`;
@@ -1449,7 +1565,7 @@ export function applyAlignment(
     const after = errorCount(suite);
     if (after > baselineErrors) {
       M1.aggregate_associations.pop();
-      dropped.push({ item, reason: 'would introduce a Consistency Error' });
+      dropped.push(makeDropped(item, 'would introduce a Consistency Error'));
       continue;
     }
     baselineErrors = after;
@@ -1467,6 +1583,7 @@ export function applyAlignment(
     (evidenceByKey[candidateKey('M1', 'aggregate_associations', assocId)] ??= []).push({
       origin: 'INFERRED',
       note: `未声明的引用：${item}`,
+      noteEn: `Undeclared reference: ${item}`,
       lines,
       excerpt: excerptOf(source, lines),
     });

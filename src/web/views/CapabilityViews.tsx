@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BookOpen,
@@ -468,6 +468,17 @@ export function CapabilityExtractionView() {
   const [busy, setBusy] = useState(false);
   const [applyingJobId, setApplyingJobId] = useState<string | null>(null);
   const [deleteTargetJob, setDeleteTargetJob] = useState<ExtractionJob | null>(null);
+  const [extractionError, setExtractionError] = useState<{
+    message: string;
+    diagnostic?: {
+      code?: string;
+      providerName?: string;
+      message?: string;
+      remediation?: string;
+    };
+  } | null>(null);
+  const latestReqSeqRef = useRef<Record<string, number>>({});
+  const inFlightDecisionRef = useRef<Record<string, Promise<unknown> | undefined>>({});
 
   useEffect(() => {
     if (data && !systemId && data.legacySystems[0]) {
@@ -489,6 +500,7 @@ export function CapabilityExtractionView() {
   const handleSelectPreset = (presetId: string) => {
     const found = EXTRACTION_PRESETS.find((p) => p.id === presetId);
     if (!found) return;
+    setExtractionError(null);
     setTitle(found.title);
     setSourceType(found.sourceType);
     setDdlSnippet(found.snippet);
@@ -501,6 +513,7 @@ export function CapabilityExtractionView() {
   const handleRunExtraction = async () => {
     if (busy) return;
     setBusy(true);
+    setExtractionError(null);
     try {
       const json = await apiPostJson<{
         job: ExtractionJob;
@@ -521,11 +534,16 @@ export function CapabilityExtractionView() {
           ? { activeProject: json.project }
           : {}),
       });
+      const blockedIds = Array.from(
+        new Set((json.blockedBy ?? []).map((b) => b.elementId).filter((id): id is string => Boolean(id))),
+      );
+      const blockedSuffixZh = blockedIds.length > 0 ? `（涉及：${blockedIds.slice(0, 6).join('、')}）` : '';
+      const blockedSuffixEn = blockedIds.length > 0 ? ` (${blockedIds.slice(0, 6).join(', ')})` : '';
       showToast(
         json.blockedBy?.length
           ? t(
-              `本体萃取已完成，但立即合并被一致性门禁阻止（${json.blockedBy.length} 个新增一致性错误），已转为逐项确认。`,
-              `Ontology Extraction finished, but merging immediately was blocked by ${json.blockedBy.length} new Consistency Errors; review the candidates instead.`,
+              `本体萃取已完成，但立即合并被一致性门禁阻止（${json.blockedBy.length} 个新增一致性错误）${blockedSuffixZh}，已转为逐项确认。`,
+              `Ontology Extraction finished, but merging immediately was blocked by ${json.blockedBy.length} new Consistency Errors${blockedSuffixEn}; review the candidates instead.`,
             )
           : json.job.appliedToProject
             ? t(
@@ -537,6 +555,21 @@ export function CapabilityExtractionView() {
                 `Ontology Extraction candidates are ready for confirmation: ${json.job.summary}`,
               ),
       );
+    } catch (err) {
+      const typedErr = err as Error & {
+        diagnostic?: {
+          code?: string;
+          providerName?: string;
+          message?: string;
+          remediation?: string;
+        };
+      };
+      const message = typedErr instanceof Error ? typedErr.message : String(typedErr);
+      setExtractionError({
+        message,
+        ...(typedErr?.diagnostic ? { diagnostic: typedErr.diagnostic } : {}),
+      });
+      showToast(message);
     } finally {
       setBusy(false);
     }
@@ -546,21 +579,56 @@ export function CapabilityExtractionView() {
     jobId: string,
     changes: Record<string, CandidateDecision | null>,
   ) => {
-    const json = await apiPutJson<{ extractionJobs: ExtractionJob[] }>(
-      `/api/capability/extraction-jobs/${jobId}/decisions`,
-      { decisions: changes },
+    const seq = (latestReqSeqRef.current[jobId] ?? 0) + 1;
+    latestReqSeqRef.current[jobId] = seq;
+
+    const latestJobs = useWorkbenchStore.getState().data?.extractionJobs ?? data.extractionJobs;
+    patchData({
+      extractionJobs: latestJobs.map((job) => {
+        if (job.id !== jobId) return job;
+        const nextDecisions = { ...job.decisions };
+        for (const [key, value] of Object.entries(changes)) {
+          if (value) nextDecisions[key] = value;
+          else delete nextDecisions[key];
+        }
+        return { ...job, decisions: nextDecisions };
+      }),
+    });
+
+    const prevInFlight = inFlightDecisionRef.current[jobId];
+    const putPromise = (prevInFlight ? prevInFlight.catch(() => undefined) : Promise.resolve()).then(
+      () =>
+        apiPutJson<{ extractionJobs: ExtractionJob[] }>(
+          `/api/capability/extraction-jobs/${jobId}/decisions`,
+          { decisions: changes },
+        ),
     );
-    patchData({ extractionJobs: json.extractionJobs });
+    inFlightDecisionRef.current[jobId] = putPromise;
+
+    try {
+      const json = await putPromise;
+      if (latestReqSeqRef.current[jobId] === seq) {
+        patchData({ extractionJobs: json.extractionJobs });
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (inFlightDecisionRef.current[jobId] === putPromise) {
+        delete inFlightDecisionRef.current[jobId];
+      }
+    }
   };
 
   const handleApplyCandidateJob = async (jobId: string) => {
     setApplyingJobId(jobId);
     try {
+      await inFlightDecisionRef.current[jobId]?.catch(() => undefined);
       const json = await apiPostJson<{
         job: ExtractionJob;
         project?: typeof data.activeProject;
         extractionJobs: ExtractionJob[];
       }>(`/api/capability/extraction-jobs/${jobId}/apply`, {});
+      latestReqSeqRef.current[jobId] = (latestReqSeqRef.current[jobId] ?? 0) + 1;
       patchData({
         extractionJobs: json.extractionJobs,
         ...(json.project && json.project.id === data.activeProject.id
@@ -574,13 +642,35 @@ export function CapabilityExtractionView() {
         ),
       );
     } catch (err) {
-      if ((err as { status?: number }).status !== 409) throw err;
-      showToast(
-        t(
-          '合并被一致性门禁阻止：按当前采纳项合并会引入新的一致性错误，请调整后重试。',
-          'Merge blocked by the consistency gate: this selection would introduce new Consistency Errors. Adjust it and retry.',
-        ),
-      );
+      const typedErr = err as Error & {
+        status?: number;
+        blockedBy?: { elementId?: string }[];
+        extractionJobs?: ExtractionJob[];
+        project?: typeof data.activeProject;
+      };
+      if (typedErr.extractionJobs || typedErr.project) {
+        patchData({
+          ...(Array.isArray(typedErr.extractionJobs) ? { extractionJobs: typedErr.extractionJobs } : {}),
+          ...(typedErr.project && typedErr.project.id === data.activeProject.id
+            ? { activeProject: typedErr.project }
+            : {}),
+        });
+      }
+      if (typedErr.status === 409) {
+        const blockedIds = Array.from(
+          new Set((typedErr.blockedBy ?? []).map((b) => b.elementId).filter((id): id is string => Boolean(id))),
+        );
+        const idsZh = blockedIds.length > 0 ? `（涉及元素：${blockedIds.slice(0, 6).join('、')}）` : '';
+        const idsEn = blockedIds.length > 0 ? ` (${blockedIds.slice(0, 6).join(', ')})` : '';
+        showToast(
+          t(
+            `合并被一致性门禁阻止：按当前采纳项合并会引入新的一致性错误${idsZh}，请调整后重试。`,
+            `Merge blocked by the consistency gate: this selection would introduce new Consistency Errors${idsEn}. Adjust it and retry.`,
+          ),
+        );
+        return;
+      }
+      showToast(typedErr instanceof Error ? typedErr.message : String(typedErr));
     } finally {
       setApplyingJobId(null);
     }
@@ -627,7 +717,35 @@ export function CapabilityExtractionView() {
           </Button>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 p-[8px_10px] mb-3 rounded-[6px] bg-inset border border-line"
+        {extractionError && (
+          <div
+            className="p-2.5 mb-3 rounded-[6px] border border-line bg-surface flex items-start justify-between gap-2 text-[12.5px]"
+            data-testid="extraction-error-banner"
+            role="alert"
+          >
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <div className="font-medium text-red">
+                {extractionError.diagnostic?.providerName
+                  ? `${extractionError.diagnostic.providerName} · `
+                  : ''}
+                {extractionError.diagnostic?.message || extractionError.message}
+              </div>
+              {extractionError.diagnostic?.remediation && (
+                <div className="text-muted-foreground">{extractionError.diagnostic.remediation}</div>
+              )}
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() => setExtractionError(null)}
+            >
+              {t('关闭', 'Dismiss')}
+            </Button>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2 mb-3 rounded-[6px] bg-inset border border-line"
         >
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[11.5px] font-semibold text-muted-foreground">
@@ -705,9 +823,15 @@ export function CapabilityExtractionView() {
                     )
                   }
                 >
-                  <option value="DDL_AND_OPENAPI">DDL_AND_OPENAPI (库表+接口规范)</option>
-                  <option value="SOURCE_CODE">SOURCE_CODE (领域服务代码)</option>
-                  <option value="LOG_AND_DOC">LOG_AND_DOC (审计日志+制度文档)</option>
+                  <option value="DDL_AND_OPENAPI">
+                    {t('DDL_AND_OPENAPI (库表+接口规范)', 'DDL_AND_OPENAPI (Schema + OpenAPI Spec)')}
+                  </option>
+                  <option value="SOURCE_CODE">
+                    {t('SOURCE_CODE (领域服务代码)', 'SOURCE_CODE (Domain Service Code)')}
+                  </option>
+                  <option value="LOG_AND_DOC">
+                    {t('LOG_AND_DOC (审计日志+制度文档)', 'LOG_AND_DOC (Audit Logs + Policy Docs)')}
+                  </option>
                 </select>
               </div>
             </div>
@@ -730,7 +854,7 @@ export function CapabilityExtractionView() {
                 value={ddlSnippet}
                 onChange={(e) => setDdlSnippet(e.target.value)}
               />
-              <div className="text-[12px] text-muted-foreground" data-testid="extraction-scan-preview">
+              <div className="text-[12.5px] text-muted-foreground" data-testid="extraction-scan-preview">
                 {scanPreview.tables.length === 0 && scanPreview.operations.length === 0
                   ? t(
                       '结构扫描预览：未识别到表或接口结构，该输入将完全依赖语义萃取（需要 LLM）。',
@@ -748,11 +872,15 @@ export function CapabilityExtractionView() {
                               .join('、')}）`
                           : ''
                       }。`,
-                      `Structural scan preview: ${scanPreview.tables.length} tables${
+                      `Structural scan preview: ${scanPreview.tables.length} ${
+                        scanPreview.tables.length === 1 ? 'table' : 'tables'
+                      }${
                         scanPreview.tables.length > 0
                           ? ` (${scanPreview.tables.map((tb) => tb.tableName).join(', ')})`
                           : ''
-                      }, ${scanPreview.operations.length} operations${
+                      }, ${scanPreview.operations.length} ${
+                        scanPreview.operations.length === 1 ? 'operation' : 'operations'
+                      }${
                         scanPreview.operations.length > 0
                           ? ` (${scanPreview.operations
                               .map((op) => `${op.method} ${op.routePath}`)

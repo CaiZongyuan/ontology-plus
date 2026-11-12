@@ -99,7 +99,14 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
         503,
       );
     }
+    const errCode = (err as { code?: string } | null)?.code;
     const msg = err instanceof Error ? err.message : String(err);
+    if (errCode === 'ALREADY_MERGED' || msg.includes('already merged')) {
+      return c.json({ error: msg, code: 'ALREADY_MERGED' }, 409);
+    }
+    if (errCode === 'NOTHING_ACCEPTED' || msg.includes('No accepted candidates')) {
+      return c.json({ error: msg, code: 'NOTHING_ACCEPTED' }, 400);
+    }
     if (
       msg.includes('Cannot delete') ||
       msg.includes('referenced by') ||
@@ -109,12 +116,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     }
     if (msg.includes('not found')) {
       return c.json({ error: msg }, 404);
-    }
-    if (msg.includes('already merged')) {
-      return c.json({ error: msg, code: 'ALREADY_MERGED' }, 409);
-    }
-    if (msg.includes('No accepted candidates')) {
-      return c.json({ error: msg, code: 'NOTHING_ACCEPTED' }, 400);
     }
     return c.json({ error: msg }, 500);
   });

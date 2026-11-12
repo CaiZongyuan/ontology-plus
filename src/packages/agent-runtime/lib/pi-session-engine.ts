@@ -1156,6 +1156,20 @@ function buildSystemPromptForSession(
   locale: AgentLocale = 'zh-CN',
 ): string {
   const project = resolveProjectDetail(store, session.projectId);
+  const writebacks =
+    session.agentKind === 'REASONING'
+      ? store
+          .listWritebackInterfaces()
+          .map((wb) => `${wb.id}(${wb.name} -> ${wb.boundBehaviorRef})`)
+          .join(', ')
+      : '';
+  const renderedGrounding =
+    session.agentKind === 'REASONING'
+      ? renderDataGrounding(
+          buildProjectDataGrounding(store, project, latestUserPrompt(session)),
+          locale,
+        )
+      : '';
 
   if (locale === 'en-US') {
     const baseHeaderEn = [
@@ -1176,17 +1190,10 @@ function buildSystemPromptForSession(
       .join('\n');
 
     if (session.agentKind === 'REASONING') {
-      const writebacks = store
-        .listWritebackInterfaces()
-        .map((wb) => `${wb.id}(${wb.name} -> ${wb.boundBehaviorRef})`)
-        .join(', ');
       return [
         baseHeaderEn,
         `Current reasoning mode: ${session.reasoningMode ?? 'ASK_DATA'} (ASK_DATA=data query, ASK_WHY=root-cause attribution, ASK_POLICY=policy writeback).`,
-        renderDataGrounding(
-          buildProjectDataGrounding(store, project, latestUserPrompt(session)),
-          locale,
-        ),
+        renderedGrounding,
         writebacks ? `Registered writeback interfaces: ${writebacks}.` : '',
         `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; every figure you state must come from a query result. In ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
       ]
@@ -1225,17 +1232,10 @@ function buildSystemPromptForSession(
     .join('\n');
 
   if (session.agentKind === 'REASONING') {
-    const writebacks = store
-      .listWritebackInterfaces()
-      .map((wb) => `${wb.id}(${wb.name} -> ${wb.boundBehaviorRef})`)
-      .join(', ');
     return [
       baseHeader,
       `当前分析推理模式：${session.reasoningMode ?? 'ASK_DATA'}（ASK_DATA=智能问数，ASK_WHY=智能问因，ASK_POLICY=智能问策）。`,
-      renderDataGrounding(
-        buildProjectDataGrounding(store, project, latestUserPrompt(session)),
-        locale,
-      ),
+      renderedGrounding,
       writebacks ? `当前已注册闭环回写接口：${writebacks}。` : '',
       `优先调用 run_readonly_sql 获取真实表数据后再输出结论，结论中的每个数字都必须来自查询结果；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
     ]
@@ -1818,7 +1818,7 @@ function executeUnifiedToolCall(
         isError: true,
       };
     }
-    const groundingWarnings = describeJoinWarnings(groundingReport, locale);
+    const groundingWarnings = describeJoinWarnings(groundingReport, locale, grounding);
 
     try {
       const queryResult = store.executeReadOnlyAnalyticsSql(sql);

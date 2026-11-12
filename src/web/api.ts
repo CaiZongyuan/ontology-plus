@@ -1667,10 +1667,18 @@ export async function apiPostJson<T = Record<string, unknown>>(
       body.error || (locale === 'en-US' ? 'Request failed' : '请求失败'),
     ) as Error & {
       status?: number;
+      code?: string;
       diagnostic?: unknown;
+      blockedBy?: unknown;
+      extractionJobs?: unknown;
+      project?: unknown;
     };
     err.status = res.status;
+    err.code = body.code;
     err.diagnostic = body.diagnostic;
+    err.blockedBy = body.blockedBy;
+    err.extractionJobs = body.extractionJobs;
+    err.project = body.project;
     throw err;
   }
   return body as T;

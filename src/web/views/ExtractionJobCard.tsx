@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Trash2, X } from 'lucide-react';
 import {
   classifyCandidates,
+  formatDroppedReason,
+  formatEvidenceNote,
   previewCandidateMerge,
   tallyCandidates,
   type CandidateDecision,
@@ -29,7 +31,7 @@ export function ExtractionJobCard(props: {
   onDelete: (job: ExtractionJob) => void;
 }) {
   const { job, project, merging, onSaveDecisions, onMerge, onDelete } = props;
-  const { t } = usePreferences();
+  const { locale, t } = usePreferences();
   const [expanded, setExpanded] = useState(false);
   const [decisions, setDecisions] = useState<Decisions>(job.decisions);
 
@@ -102,7 +104,7 @@ export function ExtractionJobCard(props: {
         <div>
           <strong>{job.title}</strong>
           <div className="text-[11.5px] text-muted-foreground font-mono">
-            {job.sourceType} · Project: {job.projectId}
+            {job.sourceType} · {t('工程', 'Project')}: {project?.name ?? job.projectId}
           </div>
         </div>
         <div className="flex gap-1 shrink-0 items-center">
@@ -154,7 +156,7 @@ export function ExtractionJobCard(props: {
       </div>
 
       {structureOnly && alignment.status === 'FAILED' && (
-        <div className="text-[12px] p-[6px_8px] rounded-[6px] border border-line bg-surface">
+        <div className="text-[12.5px] p-2 rounded-[6px] border border-line bg-surface">
           <div className="font-medium">{alignmentReason}</div>
           {alignment.diagnostic && (
             <div className="text-muted-foreground">
@@ -167,7 +169,7 @@ export function ExtractionJobCard(props: {
       )}
 
       {(alignment.dropped?.length || alignment.omitted) && (
-        <details className="text-[12px]">
+        <details className="text-[12.5px]">
           <summary className="cursor-pointer text-muted-foreground">
             {alignment.dropped?.length
               ? t(
@@ -176,7 +178,7 @@ export function ExtractionJobCard(props: {
                 )
               : t('语义对齐输入已截断', 'Semantic alignment input was capped')}
           </summary>
-          <ul className="mt-1 pl-4 list-disc font-mono text-[11.5px]">
+          <ul className="mt-1 pl-4 list-disc text-[11.5px]">
             {alignment.omitted && (
               <li>
                 {t(
@@ -187,7 +189,7 @@ export function ExtractionJobCard(props: {
             )}
             {(alignment.dropped ?? []).map((d, i) => (
               <li key={`${d.item}-${i}`}>
-                {d.item} — {d.reason}
+                <span className="font-mono">{d.item}</span> — {formatDroppedReason(d, locale)}
               </li>
             ))}
           </ul>
@@ -197,7 +199,7 @@ export function ExtractionJobCard(props: {
       <div className="flex justify-between items-center gap-2 flex-wrap">
         <div className="flex flex-wrap gap-1">
           {job.extractedModels.map((m) => (
-            <span key={m} className="badge badge-accent">
+            <span key={m} className="badge">
               {m}
             </span>
           ))}
@@ -219,7 +221,7 @@ export function ExtractionJobCard(props: {
       {expanded && (
         <div className="flex flex-col gap-2 pt-1 border-t border-line">
           {!merged && !project && (
-            <div className="text-[12px] text-muted-foreground">
+            <div className="text-[12.5px] text-muted-foreground">
               {t(
                 '切换到该任务的目标工程后，才能确认候选并合并。',
                 "Open this job's target project to confirm candidates and merge.",
@@ -230,7 +232,7 @@ export function ExtractionJobCard(props: {
           {groups.map(([modelCode, list]) => (
             <div key={modelCode} className="flex flex-col gap-1">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[12px] font-semibold font-mono">
+                <span className="text-[12.5px] font-semibold font-mono">
                   {modelCode} · {list.length}
                 </span>
                 {canReview && (
@@ -265,7 +267,7 @@ export function ExtractionJobCard(props: {
                 return (
                   <div
                     key={cand.key}
-                    className="p-[6px_8px] rounded-[6px] bg-surface border border-line flex flex-col gap-1"
+                    className="p-2 rounded-[6px] bg-surface border border-line flex flex-col gap-1"
                     data-testid={`extraction-candidate-${cand.key}`}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -273,7 +275,7 @@ export function ExtractionJobCard(props: {
                         <div className="flex flex-wrap items-center gap-1 text-[12.5px]">
                           {state && (
                             <span
-                              className={`badge ${state === 'MODIFIED' ? 'badge-warn' : state === 'ADDED' ? 'badge-accent' : ''}`}
+                              className={`badge ${state === 'MODIFIED' ? 'badge-warn' : state === 'ADDED' ? 'badge-ok' : ''}`}
                               title={
                                 state === 'MODIFIED'
                                   ? t(
@@ -292,7 +294,7 @@ export function ExtractionJobCard(props: {
                           )}
                           <span className="font-medium truncate">{cand.label}</span>
                         </div>
-                        <div className="text-[11px] text-muted-foreground font-mono truncate">
+                        <div className="text-[11.5px] text-muted-foreground font-mono truncate">
                           {cand.elementId}
                         </div>
                       </div>
@@ -345,7 +347,7 @@ export function ExtractionJobCard(props: {
                           <span className={`badge ${inferredOnly ? 'badge-warn' : ''}`}>
                             {inferredOnly ? t('推断', 'Inferred') : t('读出', 'Parsed')}
                           </span>{' '}
-                          {cand.evidence[0]!.note}
+                          {formatEvidenceNote(cand.evidence[0]!, locale)}
                           {cand.evidence.length > 1 ? ` +${cand.evidence.length - 1}` : ''}
                         </summary>
                         <div className="mt-1 flex flex-col gap-1">
@@ -365,10 +367,10 @@ export function ExtractionJobCard(props: {
                                     }${t(' 行', '')}`
                                   : ''}
                                 {ev.unverified ? ` · ${t('无可核对出处', 'no verifiable passage')}` : ''}
-                                {` · ${ev.note}`}
+                                {` · ${formatEvidenceNote(ev, locale)}`}
                               </div>
                               {ev.excerpt && (
-                                <pre className="m-0 p-[6px_8px] rounded-[6px] bg-inset border border-line font-mono text-[11px] whitespace-pre-wrap break-words">
+                                <pre className="m-0 p-2 rounded-[6px] bg-inset border border-line font-mono text-[11.5px] whitespace-pre-wrap break-words">
                                   {ev.excerpt}
                                 </pre>
                               )}
@@ -384,10 +386,10 @@ export function ExtractionJobCard(props: {
           ))}
 
           {canReview && preview && (
-            <div className="flex flex-col gap-1.5 pt-1 border-t border-line">
+            <div className="sticky bottom-0 z-10 bg-surface pt-2 pb-1 border-t border-line flex flex-col gap-1.5">
               {preview.newErrors.length > 0 ? (
                 <div
-                  className="text-[12px] p-[6px_8px] rounded-[6px] border border-line bg-surface"
+                  className="text-[12.5px] p-2 rounded-[6px] border border-line bg-surface"
                   data-testid={`extraction-merge-blocked-${job.id}`}
                 >
                   <div className="font-medium text-red">
@@ -409,7 +411,7 @@ export function ExtractionJobCard(props: {
                   </ul>
                 </div>
               ) : (
-                <div className="text-[12px] text-muted-foreground">
+                <div className="text-[12.5px] text-muted-foreground">
                   {preview.acceptedCount > 0
                     ? t(
                         `按当前选择合并不会引入新的一致性错误。`,

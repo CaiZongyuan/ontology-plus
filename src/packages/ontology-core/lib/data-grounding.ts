@@ -299,7 +299,12 @@ const SQL_KEYWORDS = new Set([
   'INTERSECT', 'EXCEPT', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'OUTER', 'CROSS', 'NATURAL',
   'ON', 'USING', 'AS', 'AND', 'OR', 'NOT', 'WITH', 'RECURSIVE', 'WINDOW', 'CASE', 'WHEN', 'THEN',
   'ELSE', 'END', 'IN', 'IS', 'NULL', 'LIKE', 'BETWEEN', 'EXISTS', 'DISTINCT', 'ALL', 'ASC',
-  'DESC', 'INDEXED', 'MATERIALIZED', 'VALUES',
+  'DESC', 'INDEXED', 'MATERIALIZED', 'VALUES', 'SET', 'RETURNING', 'INTO',
+]);
+
+const FROM_CLAUSE_EXIT_KEYWORDS = new Set([
+  'WHERE', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'OFFSET', 'UNION',
+  'INTERSECT', 'EXCEPT', 'WINDOW', 'VALUES', 'SET', 'RETURNING', 'INTO',
 ]);
 
 interface SqlToken {
@@ -340,54 +345,57 @@ const isWord = (token: SqlToken | undefined, upper: string): boolean =>
  */
 export function checkSqlGrounding(grounding: DataGrounding, sql: string): SqlGroundingReport {
   const tokens = tokenizeSql(sql);
-  const cteNames = new Set<string>();
   const referenced: string[] = [];
-  /** Qualifier (alias or table name) -> tables it stands for; '' marks a derived table. */
+  /** Qualifier (alias or table name) -> tables it stands for; '' marks a derived table or CTE. */
   const qualifiers = new Map<string, Set<string>>();
   const bind = (qualifier: string, table: string) => {
     const key = lower(qualifier);
     (qualifiers.get(key) ?? qualifiers.set(key, new Set()).get(key)!).add(lower(table));
   };
 
-  // CTE definitions: `name AS (`, `name (cols) AS (`, `name AS MATERIALIZED (`.
-  for (let i = 0; i < tokens.length; i += 1) {
-    if (!isIdentifier(tokens[i])) continue;
-    let j = i + 1;
-    if (isPunct(tokens[j], '(')) {
-      let depth = 1;
-      j += 1;
-      while (j < tokens.length && depth > 0) {
-        if (isPunct(tokens[j], '(')) depth += 1;
-        else if (isPunct(tokens[j], ')')) depth -= 1;
-        j += 1;
-      }
-    }
-    if (!isWord(tokens[j], 'AS')) continue;
-    j += 1;
-    if (isWord(tokens[j], 'NOT')) j += 1;
-    if (isWord(tokens[j], 'MATERIALIZED')) j += 1;
-    if (isPunct(tokens[j], '(')) cteNames.add(lower(tokens[i]!.text));
-  }
-
   let depth = 0;
   const expectTable = new Set<number>();
-  const listOpen = new Set<number>();
-  /** After a table factor at this depth: the table an alias would name ('' = derived). */
+  const inFromClause = new Set<number>();
+  const inWithHeader = new Set<number>();
+  const cteScopes = new Map<number, Set<string>>();
+  /** After a table factor at this depth: the table an alias would name ('' = derived / CTE). */
   const pendingAlias = new Map<number, string>();
+
+  const isCteInScope = (name: string, maxDepth: number): boolean => {
+    const key = lower(name);
+    for (let d = 0; d <= maxDepth; d += 1) {
+      if (cteScopes.get(d)?.has(key)) return true;
+    }
+    return false;
+  };
 
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!;
+
+    if (isPunct(token, ';')) {
+      depth = 0;
+      expectTable.clear();
+      inFromClause.clear();
+      inWithHeader.clear();
+      cteScopes.clear();
+      pendingAlias.clear();
+      continue;
+    }
 
     if (isPunct(token, '(')) {
       if (expectTable.has(depth)) {
         // Derived table or parenthesised join; its contents are scanned as we go.
         expectTable.delete(depth);
-        listOpen.add(depth);
         pendingAlias.set(depth, '');
         const outer = depth;
         depth += 1;
-        // A parenthesised join starts with a table, not SELECT.
-        if (!isWord(tokens[i + 1], 'SELECT') && !isWord(tokens[i + 1], 'WITH') && !isWord(tokens[i + 1], 'VALUES')) {
+        // A parenthesised join starts with a table, not SELECT / WITH / VALUES.
+        if (
+          !isWord(tokens[i + 1], 'SELECT') &&
+          !isWord(tokens[i + 1], 'WITH') &&
+          !isWord(tokens[i + 1], 'VALUES')
+        ) {
+          inFromClause.add(depth);
           expectTable.add(depth);
           pendingAlias.delete(outer);
         }
@@ -398,14 +406,51 @@ export function checkSqlGrounding(grounding: DataGrounding, sql: string): SqlGro
     }
     if (isPunct(token, ')')) {
       expectTable.delete(depth);
-      listOpen.delete(depth);
+      inFromClause.delete(depth);
+      inWithHeader.delete(depth);
+      cteScopes.delete(depth);
       pendingAlias.delete(depth);
       depth = Math.max(0, depth - 1);
       continue;
     }
+
+    if (isWord(token, 'WITH')) {
+      inWithHeader.add(depth);
+      continue;
+    }
+    if (inWithHeader.has(depth)) {
+      if (isWord(token, 'SELECT') || isWord(token, 'VALUES')) {
+        inWithHeader.delete(depth);
+      } else if (isIdentifier(token)) {
+        // CTE definition: `name AS (`, `name (cols) AS (`, `name AS [NOT] MATERIALIZED (`.
+        let j = i + 1;
+        if (isPunct(tokens[j], '(')) {
+          let colDepth = 1;
+          j += 1;
+          while (j < tokens.length && colDepth > 0) {
+            if (isPunct(tokens[j], '(')) colDepth += 1;
+            else if (isPunct(tokens[j], ')')) colDepth -= 1;
+            j += 1;
+          }
+        }
+        if (isWord(tokens[j], 'AS')) {
+          j += 1;
+          if (isWord(tokens[j], 'NOT')) j += 1;
+          if (isWord(tokens[j], 'MATERIALIZED')) j += 1;
+          if (isPunct(tokens[j], '(')) {
+            (cteScopes.get(depth) ?? cteScopes.set(depth, new Set()).get(depth)!).add(
+              lower(token.text),
+            );
+            i = j - 1;
+            continue;
+          }
+        }
+      }
+    }
+
     if (isPunct(token, ',')) {
       pendingAlias.delete(depth);
-      if (listOpen.has(depth)) expectTable.add(depth);
+      if (inFromClause.has(depth)) expectTable.add(depth);
       continue;
     }
 
@@ -414,20 +459,23 @@ export function checkSqlGrounding(grounding: DataGrounding, sql: string): SqlGro
       isWord(token, 'JOIN') || (isWord(token, 'FROM') && !isWord(tokens[i - 1], 'DISTINCT'));
     if (opensTableList) {
       pendingAlias.delete(depth);
-      listOpen.delete(depth);
+      inFromClause.add(depth);
       expectTable.add(depth);
       continue;
     }
 
     if (expectTable.has(depth) && isIdentifier(token)) {
-      // `schema.table` -> keep the last part.
+      // `schema.table` -> keep the last part, but never allow a schema-qualified name to match a CTE.
       let end = i;
       while (isPunct(tokens[end + 1], '.') && isIdentifier(tokens[end + 2])) end += 2;
+      const isSchemaQualified = end > i;
       const name = tokens[end]!.text;
       expectTable.delete(depth);
-      listOpen.add(depth);
       if (isPunct(tokens[end + 1], '(')) {
         // Table-valued function, e.g. json_each(...): not a table.
+        pendingAlias.set(depth, '');
+      } else if (!isSchemaQualified && isCteInScope(name, depth)) {
+        bind(name, '');
         pendingAlias.set(depth, '');
       } else {
         referenced.push(name);
@@ -450,12 +498,14 @@ export function checkSqlGrounding(grounding: DataGrounding, sql: string): SqlGro
 
     if (isKeyword(token)) {
       expectTable.delete(depth);
-      listOpen.delete(depth);
+      if (FROM_CLAUSE_EXIT_KEYWORDS.has(token.text.toUpperCase())) {
+        inFromClause.delete(depth);
+      }
     }
   }
 
   const known = new Map(grounding.tables.map((t) => [lower(t.table), t]));
-  const referencedTables = [...new Set(referenced.filter((name) => !cteNames.has(lower(name))))];
+  const referencedTables = [...new Set(referenced)];
   const unknownTables = referencedTables.filter((name) => !known.has(lower(name)));
 
   const knownJoinIds = new Set(grounding.joins.map(joinIdentity));
@@ -463,7 +513,7 @@ export function checkSqlGrounding(grounding: DataGrounding, sql: string): SqlGro
     const bound = qualifiers.get(lower(qualifier));
     if (!bound || bound.size !== 1) return undefined;
     const [table] = [...bound];
-    if (!table || cteNames.has(table)) return undefined;
+    if (!table) return undefined;
     const entry = known.get(table);
     return entry?.mapped ? entry : undefined;
   };
