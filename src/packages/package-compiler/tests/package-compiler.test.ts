@@ -18,7 +18,11 @@ describe('package-compiler deep module', () => {
     const foundationAsset = store.listFourLayerAssets('TECH_FOUNDATION')[0];
     const archAsset = store.listFourLayerAssets('TECH_ARCH')[0];
     const reqDoc = store.listRequirementDocs('proj-contract')[0];
-    const proto = store.listPrototypes('proj-contract')[0];
+    const confirmedProto = store.getConfirmedPrototypeRevision('proj-contract')!;
+    const proto = {
+      ...confirmedProto.prototype,
+      htmlContent: confirmedProto.htmlContent,
+    };
 
     const compiled = compileDevelopmentPackage({
       app,

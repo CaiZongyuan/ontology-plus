@@ -217,14 +217,116 @@ export interface RequirementDoc {
   updatedAt: string;
 }
 
-export interface PrototypeArtifact {
+export interface DesignBriefItem {
+  id: string;
+  category: string;
+  statement: string;
+}
+
+export interface DesignBriefBorrowedReference {
+  referenceId: string;
+  aspect: string;
+  title?: string;
+  sourceUrl?: string;
+}
+
+export interface DesignBrief {
+  items: DesignBriefItem[];
+  userFeelNote?: string;
+  primaryReferenceId?: string;
+  primaryReferenceTitle?: string;
+  primaryReferenceSourceUrl?: string;
+  borrowedReferences?: DesignBriefBorrowedReference[];
+  motionSchematicIds?: string[];
+  approvedAt?: string;
+  updatedAt: string;
+}
+
+export type PrototypeRevisionSource =
+  | 'GENERATED'
+  | 'REFINED'
+  | 'MANUAL_SAVE'
+  | 'UPLOADED'
+  | 'RESTORED'
+  | 'CLONED'
+  | 'MIGRATED';
+
+export interface PrototypeRevision {
+  id: string;
+  prototypeId: string;
+  projectId: string;
+  revisionNumber: number;
+  title: string;
+  starred?: boolean;
+  htmlContent: string;
+  extractedScreenCount: number;
+  source: PrototypeRevisionSource;
+  restoredFromRevisionId?: string;
+  agentRunId?: string;
+  createdAt: string;
+}
+
+export interface InteractivePrototype {
   id: string;
   projectId: string;
   name: string;
+  designBrief?: DesignBrief;
+  coDesignSessionId?: string;
+  revisions: PrototypeRevision[];
+  currentRevisionId: string;
+  createdAt: string;
+  updatedAt: string;
   version: string;
   htmlContent: string;
   extractedScreenCount: number;
-  updatedAt: string;
+  isConfirmed: boolean;
+  confirmedRevisionId?: string;
+  aheadOfConfirmedCount: number;
+}
+
+export type PrototypeArtifact = InteractivePrototype;
+
+export interface ConfirmedPrototypeRevisionRecord {
+  projectId: string;
+  prototypeId: string;
+  revisionId: string;
+  confirmedAt: string;
+}
+
+export interface ConfirmedPrototypeRevision {
+  projectId: string;
+  prototypeId: string;
+  revisionId: string;
+  confirmedAt: string;
+  prototype: InteractivePrototype;
+  revision: PrototypeRevision;
+  htmlContent: string;
+}
+
+export interface CreatePrototypeInput {
+  id?: string;
+  name: string;
+  version?: string;
+  title?: string;
+  instruction?: string;
+  starred?: boolean;
+  htmlContent: string;
+  source?: PrototypeRevisionSource;
+  designBrief?: DesignBrief;
+  coDesignSessionId?: string;
+  agentRunId?: string;
+}
+
+export interface AppendPrototypeRevisionInput {
+  name?: string;
+  version?: string;
+  title?: string;
+  instruction?: string;
+  starred?: boolean;
+  htmlContent: string;
+  source?: PrototypeRevisionSource;
+  restoredFromRevisionId?: string;
+  agentRunId?: string;
 }
 
 export interface FourLayerAsset {
@@ -666,12 +768,52 @@ export interface WorkspaceStore {
   saveRequirementDoc(doc: Omit<RequirementDoc, 'updatedAt'>): RequirementDoc;
   cloneRequirementDoc(docId: string): RequirementDoc;
   deleteRequirementDoc(docId: string): void;
-  listPrototypes(projectId: string): PrototypeArtifact[];
+  listPrototypes(projectId: string): InteractivePrototype[];
+  getPrototype(prototypeId: string): InteractivePrototype | undefined;
+  createPrototype(
+    projectId: string,
+    input: CreatePrototypeInput,
+  ): { prototype: InteractivePrototype; revision: PrototypeRevision; project: ProjectDetail };
+  appendPrototypeRevision(
+    prototypeId: string,
+    input: AppendPrototypeRevisionInput,
+  ): { prototype: InteractivePrototype; revision: PrototypeRevision; project: ProjectDetail };
+  restorePrototypeRevision(
+    prototypeId: string,
+    revisionId: string,
+    title?: string,
+  ): { prototype: InteractivePrototype; revision: PrototypeRevision };
+  updatePrototypeRevisionMeta(
+    prototypeId: string,
+    revisionId: string,
+    patch: { title?: string; starred?: boolean },
+  ): { prototype: InteractivePrototype; revision: PrototypeRevision };
+  updatePrototypeDesignBrief(prototypeId: string, designBrief: DesignBrief): InteractivePrototype;
+  confirmPrototypeRevision(
+    projectId: string,
+    revisionId: string,
+  ): {
+    confirmed: ConfirmedPrototypeRevision;
+    prototype: InteractivePrototype;
+    project: ProjectDetail;
+  };
+  getConfirmedPrototypeRevision(projectId: string): ConfirmedPrototypeRevision | undefined;
   savePrototypeAndSyncMu(
     projectId: string,
-    input: { id?: string; name: string; version?: string; htmlContent: string; syncMu?: boolean },
-  ): { prototype: PrototypeArtifact; project: ProjectDetail };
-  clonePrototype(protoId: string): PrototypeArtifact;
+    input: {
+      id?: string;
+      name: string;
+      version?: string;
+      title?: string;
+      instruction?: string;
+      htmlContent: string;
+      source?: PrototypeRevisionSource;
+      designBrief?: DesignBrief;
+      coDesignSessionId?: string;
+      syncMu?: boolean;
+    },
+  ): { prototype: InteractivePrototype; project: ProjectDetail };
+  clonePrototype(protoId: string, options?: { name?: string }): InteractivePrototype;
   deletePrototype(protoId: string): void;
   listFourLayerAssets(layer?: FourLayerAsset['layer']): FourLayerAsset[];
   saveFourLayerAsset(asset: Omit<FourLayerAsset, 'updatedAt'>): FourLayerAsset;

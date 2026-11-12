@@ -1,3 +1,4 @@
+import { inflateRawSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createWorkspaceStore } from '../packages/workspace-store/index.js';
 import { createApiApp } from './app.js';
@@ -746,5 +747,167 @@ describe('server API & Cloudflare Worker integration', () => {
     const injectedIdx = refinedJson.prototype.htmlContent.indexOf('[EL-BTN-APPROVE]');
     expect(approvalScreenIdx).toBeGreaterThan(0);
     expect(injectedIdx).toBeGreaterThan(approvalScreenIdx);
+  });
+
+  it('serves two-tier prototype revision REST APIs, enforces 409 deletion guard on Confirmed Revision, and compiles Dev Package from Confirmed Revision', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const app = createApiApp(store);
+    const projectId = 'proj-contract';
+
+    const beforeMu = JSON.stringify(store.getProject(projectId)!.suite.MU);
+
+    // 1. GET /api/projects/:id/prototypes returns seeded prototype + confirmedRevision
+    const listRes = await app.request(`/api/projects/${projectId}/prototypes`);
+    expect(listRes.status).toBe(200);
+    const listJson = (await listRes.json()) as {
+      prototypes: { id: string; isConfirmed: boolean; htmlContent: string }[];
+      confirmedRevision: { prototypeId: string; revisionId: string } | null;
+    };
+    expect(listJson.confirmedRevision?.prototypeId).toBe('proto-contract-v1');
+    expect(listJson.prototypes[0]!.isConfirmed).toBe(true);
+    const baseContractHtml = listJson.prototypes[0]!.htmlContent;
+
+    // 2. Deleting confirmed prototype returns HTTP 409 PROTOTYPE_HOLDS_CONFIRMED_REVISION
+    const blockedDel = await app.request(
+      `/api/prototypes/proto-contract-v1?projectId=${projectId}`,
+      {
+        method: 'DELETE',
+      },
+    );
+    expect(blockedDel.status).toBe(409);
+    const blockedJson = (await blockedDel.json()) as { error: string; code: string };
+    expect(blockedJson.code).toBe('PROTOTYPE_HOLDS_CONFIRMED_REVISION');
+    expect(blockedJson.error).toBeTruthy();
+
+    // 3. Create new prototype + append revision WITHOUT syncing suite.MU
+    const confirmedRev1Html = `${baseContractHtml}\n<!-- CONFIRMED_MARKER_REV1 --><section data-screen-id="SCR-DUAL-SIGN" data-screen-name="双栏会签工作台"><button data-element-id="EL-SIGN-NOW" data-element-type="BUTTON">立即会签</button></section>`;
+    const createRes = await app.request(`/api/projects/${projectId}/prototypes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: '新视觉方向：双栏会签工作台',
+        htmlContent: confirmedRev1Html,
+        title: '首版双栏会签布局',
+      }),
+    });
+    expect(createRes.status).toBe(200);
+    const createdJson = (await createRes.json()) as {
+      prototype: { id: string; currentRevisionId: string; isConfirmed: boolean };
+    };
+    expect(createdJson.prototype.isConfirmed).toBe(false);
+    expect(JSON.stringify(store.getProject(projectId)!.suite.MU)).toBe(beforeMu);
+
+    const newProtoId = createdJson.prototype.id;
+    const rev1Id = createdJson.prototype.currentRevisionId;
+
+    const appendRes = await app.request(`/api/prototypes/${newProtoId}/revisions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        htmlContent:
+          '<!-- UNCONFIRMED_EXPERIMENT_REV2 --><section data-screen-id="SCR-EXP-DRAFT" data-screen-name="未确认草稿屏"></section>',
+        instruction: '尝试激进单屏布局实验',
+      }),
+    });
+    expect(appendRes.status).toBe(200);
+    const appendedJson = (await appendRes.json()) as {
+      revision: { id: string; revisionNumber: number };
+    };
+    expect(appendedJson.revision.revisionNumber).toBe(2);
+    expect(JSON.stringify(store.getProject(projectId)!.suite.MU)).toBe(beforeMu);
+
+    // 4. Rename & star revision 1
+    const patchRes = await app.request(`/api/prototypes/${newProtoId}/revisions/${rev1Id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '已评审双栏定稿', starred: true }),
+    });
+    expect(patchRes.status).toBe(200);
+    const patchedJson = (await patchRes.json()) as {
+      revision: { title: string; starred?: boolean };
+    };
+    expect(patchedJson.revision.title).toBe('已评审双栏定稿');
+    expect(patchedJson.revision.starred).toBe(true);
+
+    // 5. Confirm revision 1 -> updates ONLY suite.MU and moves Confirmed Revision to rev1Id
+    const confirmRes = await app.request(`/api/projects/${projectId}/prototypes/confirm-revision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ revisionId: rev1Id }),
+    });
+    expect(confirmRes.status).toBe(200);
+    const confirmJson = (await confirmRes.json()) as {
+      confirmedRevision: { prototypeId: string; revisionId: string };
+      project: {
+        suite: { MU?: { screens: { screenId: string }[] } };
+        validation: { errorCount: number };
+      };
+    };
+    expect(confirmJson.confirmedRevision.prototypeId).toBe(newProtoId);
+    expect(confirmJson.confirmedRevision.revisionId).toBe(rev1Id);
+    expect(confirmJson.project.suite.MU?.screens.map((s) => s.screenId)).toContain('SCR-DUAL-SIGN');
+    expect(confirmJson.project.validation.errorCount).toBe(0);
+
+    // 6. Restore revision 1 -> appends revision 3 while keeping rev1Id as Confirmed Revision
+    const restoreRes = await app.request(
+      `/api/prototypes/${newProtoId}/revisions/${rev1Id}/restore`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      },
+    );
+    expect(restoreRes.status).toBe(200);
+    const restoreJson = (await restoreRes.json()) as {
+      revision: { revisionNumber: number; restoredFromRevisionId?: string };
+      confirmedRevision: { revisionId: string } | null;
+    };
+    expect(restoreJson.revision.revisionNumber).toBe(3);
+    expect(restoreJson.revision.restoredFromRevisionId).toBe(rev1Id);
+    expect(restoreJson.confirmedRevision?.revisionId).toBe(rev1Id);
+
+    // Append unconfirmed rev 4 with distinct marker to prove package.zip reads Confirmed Revision (rev1Id)!
+    await app.request(`/api/prototypes/${newProtoId}/revisions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        htmlContent:
+          '<!-- UNCONFIRMED_REV4 --><section data-screen-id="SCR-REV4" data-screen-name="未确认修订4"></section>',
+        title: '未确认修订4',
+      }),
+    });
+
+    const zipRes = await app.request('/api/applications/app-contract-clm/package.zip');
+    expect(zipRes.status).toBe(200);
+    const zipBytes = new Uint8Array(await zipRes.arrayBuffer());
+    const view = new DataView(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
+    let offset = 0;
+    let extractedProtoHtml = '';
+    while (offset + 30 <= zipBytes.byteLength && view.getUint32(offset, true) === 0x04034b50) {
+      const method = view.getUint16(offset + 8, true);
+      const compSize = view.getUint32(offset + 18, true);
+      const nameLen = view.getUint16(offset + 26, true);
+      const extraLen = view.getUint16(offset + 28, true);
+      const entryName = new TextDecoder().decode(
+        zipBytes.subarray(offset + 30, offset + 30 + nameLen),
+      );
+      const dataStart = offset + 30 + nameLen + extraLen;
+      const compSlice = zipBytes.subarray(dataStart, dataStart + compSize);
+      if (entryName === '参考资料/界面原型.html') {
+        const rawBytes = method === 8 ? inflateRawSync(compSlice) : compSlice;
+        extractedProtoHtml = new TextDecoder().decode(rawBytes);
+        break;
+      }
+      offset = dataStart + compSize;
+    }
+    expect(extractedProtoHtml).toContain('CONFIRMED_MARKER_REV1');
+    expect(extractedProtoHtml).not.toContain('UNCONFIRMED_REV4');
+    expect(extractedProtoHtml).not.toContain('UNCONFIRMED_EXPERIMENT_REV2');
+
+    // Now old seed prototype no longer holds Confirmed Revision and CAN be deleted!
+    const okDel = await app.request(`/api/prototypes/proto-contract-v1?projectId=${projectId}`, {
+      method: 'DELETE',
+    });
+    expect(okDel.status).toBe(200);
   });
 });

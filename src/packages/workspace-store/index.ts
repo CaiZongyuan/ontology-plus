@@ -4,6 +4,7 @@ export {
 } from './lib/store.js';
 
 export { doesProviderSupportVision } from './lib/types.js';
+export { PrototypeConfirmedDeleteError } from './lib/prototype-revisions.js';
 
 export type {
   ProjectSummary,
@@ -20,7 +21,17 @@ export type {
   RequirementMessage,
   RequirementSession,
   RequirementDoc,
+  DesignBriefItem,
+  DesignBriefBorrowedReference,
+  DesignBrief,
+  PrototypeRevisionSource,
+  PrototypeRevision,
+  InteractivePrototype,
   PrototypeArtifact,
+  ConfirmedPrototypeRevisionRecord,
+  ConfirmedPrototypeRevision,
+  CreatePrototypeInput,
+  AppendPrototypeRevisionInput,
   FourLayerAsset,
   AssembledApplication,
   GeneratedSkill,

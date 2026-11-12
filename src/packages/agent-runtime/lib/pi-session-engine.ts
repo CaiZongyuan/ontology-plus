@@ -1689,7 +1689,14 @@ function executeUnifiedToolCall(
       assets.find((a) => a.layer === 'TECH_ARCH') ??
       assets[0]!;
     const requirementDoc = store.listRequirementDocs(project.id)[0];
-    const prototype = store.listPrototypes(project.id)[0];
+    const confirmedProto = store.getConfirmedPrototypeRevision(project.id);
+    const prototype = confirmedProto
+      ? {
+          ...confirmedProto.prototype,
+          htmlContent: confirmedProto.htmlContent,
+          extractedScreenCount: confirmedProto.revision.extractedScreenCount,
+        }
+      : undefined;
     const pkg = compileDevelopmentPackage({
       app,
       project,
