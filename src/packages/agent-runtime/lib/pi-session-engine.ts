@@ -47,6 +47,7 @@ import {
   type AgentSessionKind,
   type AgentSessionMessage,
   type AgentToolCallTrace,
+  type DesignBrief,
   type InteractivePrototype,
   type LlmProviderConfig,
   type ProjectDetail,
@@ -172,7 +173,228 @@ function resolveTargetPrototypeForSession(
     }
   }
   const list = store.listPrototypes(session.projectId);
-  return list.find((p) => p.coDesignSessionId === session.id) ?? list[0];
+  return list.find((p) => p.coDesignSessionId === session.id);
+}
+
+function isBriefRestylePrompt(prompt: string): boolean {
+  return /\[PROTOTYPE_BRIEF_RESTYLE\]|按新简报重做风格|Restyle from updated brief/i.test(prompt);
+}
+
+function escapeMockHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildMockGeneratedPrototypeHtml(
+  project: ProjectDetail | undefined,
+  prompt: string,
+  locale: AgentLocale,
+): string {
+  const hexMatches = prompt.match(/#[0-9a-fA-F]{6}\b/g) ?? [];
+  const wantsDark = /深色|暗色|dark\s*mode|dark\s*cockpit|交易风|#0[0-9a-f]{5}|#1[0-9a-f]{5}/i.test(
+    prompt,
+  );
+  const bg = hexMatches[0] ?? (wantsDark ? '#0f172a' : '#f8f5ef');
+  const surface = wantsDark ? '#162033' : '#ffffff';
+  const ink = wantsDark ? '#f1f5f9' : '#1c1917';
+  const muted = wantsDark ? '#94a3b8' : '#64748b';
+  const border = wantsDark ? 'rgba(255,255,255,0.14)' : '#e2ddd3';
+  const accent = hexMatches[1] ?? (wantsDark ? '#38bdf8' : '#2563eb');
+  const firstAgg = project?.suite.M1?.aggregates?.[0];
+  const aggName = firstAgg?.name || 'BusinessOrder';
+  const aggLabel =
+    firstAgg?.alias ||
+    project?.name?.replace(/管理系统|平台|工作台|系统|工程/g, '').trim() ||
+    (locale === 'en-US' ? 'Business Record' : '核心业务单据');
+  const titleText =
+    project?.name || (locale === 'en-US' ? 'Interactive Prototype' : '业务交互原型');
+
+  return `<!doctype html>
+<html lang="${locale === 'en-US' ? 'en' : 'zh-CN'}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeMockHtml(titleText)}</title>
+  <style>
+    :root {
+      --bg: ${bg};
+      --surface: ${surface};
+      --ink: ${ink};
+      --muted: ${muted};
+      --line: ${border};
+      --accent: ${accent};
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: 1.45fr 0.95fr;
+      gap: 16px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #ffffff;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    input, select {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 7px 10px;
+    }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+    @media (max-width: 768px) {
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .workspace-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 390px) {
+      body { padding: 12px; }
+      .kpi-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header style="margin-bottom:16px;">
+    <h1 style="margin:0;font-size:20px;">${escapeMockHtml(titleText)}</h1>
+    <p style="margin:4px 0 0;font-size:12.5px;color:var(--muted);">${escapeMockHtml(aggLabel)} · 1440px / 768px / 390px</p>
+  </header>
+  <div class="kpi-grid">
+    <div class="card"><div style="font-size:12px;color:var(--muted);">本月累计单据</div><strong style="font-size:22px;font-variant-numeric:tabular-nums;">28</strong></div>
+    <div class="card"><div style="font-size:12px;color:var(--muted);">待审批金额</div><strong style="font-size:22px;color:var(--accent);font-variant-numeric:tabular-nums;">¥265,000</strong></div>
+    <div class="card"><div style="font-size:12px;color:var(--muted);">准时办结率</div><strong style="font-size:22px;font-variant-numeric:tabular-nums;">98.6%</strong></div>
+  </div>
+  <main class="workspace-grid">
+    <section
+      data-screen-id="SCR-MAIN-LIST"
+      data-screen-name="${escapeMockHtml(aggLabel)}台账"
+      data-screen-type="LIST"
+      class="card"
+    >
+      <div class="toolbar">
+        <input
+          type="search"
+          placeholder="搜索编号或名称…"
+          data-element-id="EL-SEARCH-KW"
+          data-element-type="INPUT"
+          data-element-label="关键词检索"
+          data-binding="${escapeMockHtml(aggName)}.title"
+        />
+        <button
+          type="button"
+          class="btn-primary"
+          data-element-id="EL-OPEN-CREATE"
+          data-element-type="BUTTON"
+          data-element-label="新建${escapeMockHtml(aggLabel)}"
+          data-event-id="UIE-OPEN-CREATE"
+        >
+          + 新建${escapeMockHtml(aggLabel)}
+        </button>
+      </div>
+      <table data-element-id="EL-MAIN-TABLE" data-element-type="TABLE" data-binding="${escapeMockHtml(aggName)}">
+        <thead>
+          <tr><th>编号</th><th>名称</th><th>金额</th><th>状态</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>DOC-2026-01</td><td>${escapeMockHtml(aggLabel)}重点批次 A</td><td>¥265,000</td><td>PENDING_APPROVAL</td></tr>
+          <tr><td>DOC-2026-02</td><td>${escapeMockHtml(aggLabel)}标准执行单</td><td>¥42,000</td><td>APPROVED</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section
+      data-screen-id="SCR-MAIN-FORM"
+      data-screen-name="新建${escapeMockHtml(aggLabel)}"
+      data-screen-type="FORM"
+      class="card"
+    >
+      <h2 style="margin-top:0;font-size:15px;">新建 / 审批提交</h2>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <input
+          type="text"
+          value="DOC-2026-03"
+          data-element-id="EL-FORM-CODE"
+          data-element-type="INPUT"
+          data-element-label="单据编码"
+          data-binding="${escapeMockHtml(aggName)}.code"
+        />
+        <input
+          type="number"
+          value="128000"
+          data-element-id="EL-FORM-AMOUNT"
+          data-element-type="NUMBER"
+          data-element-label="业务金额"
+          data-binding="${escapeMockHtml(aggName)}.amount"
+        />
+        <button
+          type="button"
+          class="btn-primary"
+          data-element-id="EL-SUBMIT-CREATE"
+          data-element-type="BUTTON"
+          data-element-label="提交保存"
+          data-event-id="UIE-SUBMIT-CREATE"
+        >
+          提交保存
+        </button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
+function applyMockBriefRestyleToHtml(existingHtml: string, prompt: string): string {
+  const hexMatches = prompt.match(/#[0-9a-fA-F]{6}\b/g) ?? [];
+  const wantsDark = /深色|暗色|dark\s*mode|dark\s*cockpit|交易风|#0[0-9a-f]{5}|#1[0-9a-f]{5}/i.test(
+    prompt,
+  );
+  const bg = hexMatches[0] ?? (wantsDark ? '#0b1120' : '#f8f5ef');
+  const accent = hexMatches[1] ?? (wantsDark ? '#38bdf8' : '#2563eb');
+  const ink = wantsDark ? '#f1f5f9' : '#1c1917';
+  const styleBlock = `<style data-brief-restyle="true">:root { --bg: ${bg}; --accent: ${accent}; --ink: ${ink}; } body { background: ${bg}; color: ${ink}; }</style>`;
+
+  const stripped = existingHtml.replace(
+    /<style\s+data-brief-restyle="true">[\s\S]*?<\/style>/gi,
+    '',
+  );
+  if (/<\/head>/i.test(stripped)) {
+    return stripped.replace(/<\/head>/i, `  ${styleBlock}\n</head>`);
+  }
+  return `${styleBlock}\n${stripped}`;
 }
 
 function stripSelectionBlockFromPrompt(prompt: string): string {
@@ -754,6 +976,39 @@ function buildFauxMockModels(
 
       if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
         const targetProto = resolveTargetPrototypeForSession(store, session);
+        if (!targetProto) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在根据已确认的设计简报、参考设计令牌与 7 组交互动效硬约束生成首版响应式原型（1440px / 768px / 390px），并挂载完整 MU 语义锚点。`,
+                  `Generating initial responsive prototype (1440px / 768px / 390px) from the confirmed Design Brief, design tokens, and 7 motion constraints with full MU semantic anchors.`,
+                ),
+              ),
+              fauxToolCall('rewrite_prototype_page', {
+                htmlContent: buildMockGeneratedPrototypeHtml(project, userPrompt, loc),
+                allowAnchorReset: true,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+        if (isBriefRestylePrompt(userPrompt)) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `收到「按新简报重做风格」指令，先调用 \`list_prototype_anchors\` 盘点现有屏幕与控件锚点，确保整页重做风格时 100% 保留既有语义锚点。`,
+                  `Received brief restyle instruction; calling \`list_prototype_anchors\` first so whole-page restyling preserves 100% of existing semantic anchors.`,
+                ),
+              ),
+              fauxToolCall('list_prototype_anchors', {}),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
         const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
         const anchorName = target.elementId || target.screenId || target.cssSelector || 'SCR-01';
         return fauxAssistantMessage(
@@ -1101,8 +1356,29 @@ function buildFauxMockModels(
           .map((c) => c.text)
           .join('\n') ?? '';
 
-      if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+      if (
+        session.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+        !(lastResult?.toolName === 'rewrite_prototype_page' && !lastResult.isError)
+      ) {
         const targetProto = resolveTargetPrototypeForSession(store, session);
+        if (targetProto && isBriefRestylePrompt(userPrompt)) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `已盘点现有语义锚点，现调用 \`rewrite_prototype_page\` 按更新后的设计简报整页重做视觉令牌与布局风格，同时完整保留所有既有屏幕与控件锚点。`,
+                  `Semantic anchors verified; calling \`rewrite_prototype_page\` to apply the updated Design Brief style tokens while preserving all existing screen and element anchors.`,
+                ),
+              ),
+              fauxToolCall('rewrite_prototype_page', {
+                htmlContent: applyMockBriefRestyleToHtml(targetProto.htmlContent, userPrompt),
+                allowAnchorReset: false,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
         const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
         const cleanInstruction = stripSelectionBlockFromPrompt(userPrompt);
         const safeLabel =
@@ -1626,14 +1902,26 @@ function buildSystemPromptForSession(
     }
     if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
       const proto = resolveTargetPrototypeForSession(store, session);
-      const overview = listPrototypeAnchors(proto?.htmlContent ?? '');
+      if (!proto) {
+        return [
+          baseHeaderEn,
+          `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
+          `Initial Prototype Generation Rules:`,
+          `1. Call \`rewrite_prototype_page\` with \`allowAnchorReset: true\` and a complete, self-contained HTML5 document.`,
+          `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, 7 interactive motion specifications, and SRS scope.`,
+          `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
+          `4. Ensure clean responsive layout across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
+          `5. If \`rewrite_prototype_page\` returns isError=true, fix the semantic anchors and retry in the same turn.`,
+        ].join('\n');
+      }
+      const overview = listPrototypeAnchors(proto.htmlContent);
       const screensDesc =
         overview.screens
           .map((s) => `${s.screenId}(${s.screenName}:${s.screenType}, elements=${s.elementCount})`)
           .join(', ') || 'none';
       return [
         baseHeaderEn,
-        `Target Interactive Prototype: ${proto ? `${proto.name} (ID: ${proto.id}, Version: ${proto.version})` : 'none'}.`,
+        `Target Interactive Prototype: ${proto.name} (ID: ${proto.id}, Version: ${proto.version}).`,
         `Screens in prototype: ${screensDesc}.`,
         `Prototype Co-Design Rules:`,
         `1. Always call \`read_prototype_anchor\` (or \`list_prototype_anchors\`) first to inspect ONLY the targeted element or screen without reading unrelated screens.`,
@@ -1687,14 +1975,26 @@ function buildSystemPromptForSession(
   }
   if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
     const proto = resolveTargetPrototypeForSession(store, session);
-    const overview = listPrototypeAnchors(proto?.htmlContent ?? '');
+    if (!proto) {
+      return [
+        baseHeader,
+        `当前共创目标交互原型：未绑定（按设计简报从零生成首版交互原型 Revision #1）。`,
+        `首版原型生成准则：`,
+        `1. 直接调用 \`rewrite_prototype_page\`（携带 \`allowAnchorReset: true\`）输出完整单文件可运行 HTML5 原型。`,
+        `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、7 组交互动效硬性约束与 SRS 业务要素。`,
+        `3. 每个业务屏幕必须声明合法 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`，所有 <button>/<input>/<select>/<textarea> 必须携带唯一合法 \`data-element-id\` 与 \`data-element-type\`（并合理挂载 \`data-binding\` 与 \`data-event-id\`），严禁使用 window.alert/confirm/prompt。`,
+        `4. 页面必须原生支持响应式布局，在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 视口下均排版整洁无溢出。`,
+        `5. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
+      ].join('\n');
+    }
+    const overview = listPrototypeAnchors(proto.htmlContent);
     const screensDesc =
       overview.screens
         .map((s) => `${s.screenId}(${s.screenName}:${s.screenType}, 控件数=${s.elementCount})`)
         .join(', ') || '无';
     return [
       baseHeader,
-      `当前共创目标交互原型：${proto ? `${proto.name}（ID: ${proto.id}，版本: ${proto.version}）` : '未绑定'}。`,
+      `当前共创目标交互原型：${proto.name}（ID: ${proto.id}，版本: ${proto.version}）。`,
       `当前原型包含屏幕锚点：${screensDesc}。`,
       `原型局部精修准则：`,
       `1. 先调用 \`read_prototype_anchor\`（或 \`list_prototype_anchors\`）精准读取目标控件或目标屏幕片段，严禁无故重写其他无关屏幕。`,
@@ -1710,8 +2010,9 @@ function buildSystemPromptForSession(
 // ─── Execute Single Tool Call (YOLO + Validator Gate + Scoped HITL) ──────────
 
 interface PrototypeTurnDraft {
-  prototypeId: string;
+  prototypeId?: string;
   prototypeName: string;
+  designBrief?: DesignBrief;
   baselineHtml: string;
   workingHtml: string;
   modifiedAnchors: PrototypeTargetAnchor[];
@@ -2589,7 +2890,7 @@ function executeUnifiedToolCall(
     // rewrite_prototype_page
     const htmlContent = String(args.htmlContent || '');
     const rewriteRes = rewritePrototypePage(activeHtml, htmlContent, {
-      allowAnchorReset: Boolean(args.allowAnchorReset),
+      allowAnchorReset: Boolean(args.allowAnchorReset) || activeHtml.trim().length === 0,
       locale,
     });
     if (rewriteRes.isError) {
@@ -2909,6 +3210,8 @@ export interface UnifiedAgentStreamInput {
     freeformText?: string;
   };
   images?: TransientTurnImageInput[];
+  designBrief?: DesignBrief;
+  prototypeName?: string;
   activeModelCode?: ModelCode;
   reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
   locale?: AgentLocale | string;
@@ -2947,6 +3250,7 @@ function toPersistedImageRef(
 async function resolveTransientImagesForVisionTurn(
   images: TransientTurnImageInput[],
   locale: AgentLocale,
+  isMock = false,
 ): Promise<{
   imageBlocks: ImageContent[];
   manifestLines: string[];
@@ -2978,9 +3282,11 @@ async function resolveTransientImagesForVisionTurn(
       }
     }
 
-    if (typeof img.remoteUrl === 'string' && /^https?:\/\//i.test(img.remoteUrl.trim())) {
+    const trimmedRemote = typeof img.remoteUrl === 'string' ? img.remoteUrl.trim() : '';
+    const isLocalHttp = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//i.test(trimmedRemote);
+    if (trimmedRemote && /^https?:\/\//i.test(trimmedRemote) && (!isMock || isLocalHttp)) {
       try {
-        const resp = await fetch(img.remoteUrl.trim(), {
+        const resp = await fetch(trimmedRemote, {
           signal: AbortSignal.timeout(6000),
         });
         if (!resp.ok) {
@@ -3213,15 +3519,32 @@ async function executeUnifiedTurnCore(
     sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
       ? resolveTargetPrototypeForSession(store, sessionState)
       : undefined;
-  const prototypeTurnDraft: PrototypeTurnDraft | undefined = initialTargetProto
-    ? {
-        prototypeId: initialTargetProto.id,
-        prototypeName: initialTargetProto.name,
-        baselineHtml: initialTargetProto.htmlContent,
-        workingHtml: initialTargetProto.htmlContent,
-        modifiedAnchors: [],
-      }
-    : undefined;
+  const fallbackProtoName =
+    input.prototypeName?.trim() ||
+    pickLocaleText(
+      effectiveLocale,
+      `${resolveProjectDetail(store, sessionState.projectId)?.name ?? '业务'}交互原型`,
+      `${resolveProjectDetail(store, sessionState.projectId)?.name ?? 'Interactive'} Prototype`,
+    );
+  const prototypeTurnDraft: PrototypeTurnDraft | undefined =
+    sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
+      ? initialTargetProto
+        ? {
+            prototypeId: initialTargetProto.id,
+            prototypeName: initialTargetProto.name,
+            ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+            baselineHtml: initialTargetProto.htmlContent,
+            workingHtml: initialTargetProto.htmlContent,
+            modifiedAnchors: [],
+          }
+        : {
+            prototypeName: fallbackProtoName,
+            ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+            baselineHtml: '',
+            workingHtml: '',
+            modifiedAnchors: [],
+          }
+      : undefined;
 
   try {
     built = buildPiModelsForStore(store, sessionState, {
@@ -3273,6 +3596,7 @@ async function executeUnifiedTurnCore(
           const resolvedVision = await resolveTransientImagesForVisionTurn(
             incomingImages,
             effectiveLocale,
+            built.isMock,
           );
           const extraSections: string[] = [];
           if (resolvedVision.manifestLines.length > 0) {
@@ -3596,33 +3920,94 @@ async function executeUnifiedTurnCore(
     }
 
     if (
+      !built.isMock &&
       prototypeTurnDraft &&
-      prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml &&
-      !controller.signal.aborted
+      !prototypeTurnDraft.prototypeId &&
+      !prototypeTurnDraft.workingHtml.trim() &&
+      !pendingAskUser
     ) {
+      throw new LlmGatewayError({
+        message: pickLocaleText(
+          effectiveLocale,
+          `模型网关「${built.providerLabel}」未生成有效的首版交互原型 HTML（禁止降级伪造模板）`,
+          `LLM gateway "${built.providerLabel}" did not produce valid initial prototype HTML (template fabrication is disabled)`,
+        ),
+        providerName: built.providerConfig?.name ?? built.providerLabel,
+        baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+        model: built.selectedModel.id,
+        locale: effectiveLocale,
+      });
+    }
+
+    if (prototypeTurnDraft && !controller.signal.aborted) {
       const cleanRevisionNote = stripSelectionBlockFromPrompt(synthesizedPrompt);
-      const appendedRevision = store.appendPrototypeRevision(prototypeTurnDraft.prototypeId, {
-        title: cleanRevisionNote.slice(0, 48),
-        instruction: cleanRevisionNote,
-        htmlContent: prototypeTurnDraft.workingHtml,
-        source: 'AGENT_RUN',
-        agentRunId: assistantMsgId,
-      });
-      const revisionArtifact: AgentDomainArtifact = {
-        kind: 'PROTOTYPE_REVISION',
-        prototypeId: appendedRevision.prototype.id,
-        revisionId: appendedRevision.revision.id,
-        revisionNumber: appendedRevision.revision.revisionNumber,
-        modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
-      };
-      allArtifacts.push(revisionArtifact);
-      emit({
-        id: nextEventId(),
-        event: 'artifact',
-        data: {
-          artifact: revisionArtifact,
-        },
-      });
+      if (
+        !prototypeTurnDraft.prototypeId &&
+        prototypeTurnDraft.workingHtml.trim().length > 0
+      ) {
+        const createdProto = store.createPrototype(sessionState.projectId, {
+          name: prototypeTurnDraft.prototypeName,
+          title: cleanRevisionNote.slice(0, 48),
+          instruction: cleanRevisionNote,
+          htmlContent: prototypeTurnDraft.workingHtml,
+          source: 'AGENT_RUN',
+          coDesignSessionId: sessionState.id,
+          ...(prototypeTurnDraft.designBrief
+            ? { designBrief: prototypeTurnDraft.designBrief }
+            : {}),
+          agentRunId: assistantMsgId,
+        });
+        sessionState = {
+          ...sessionState,
+          targetId: createdProto.prototype.id,
+        };
+        const revisionArtifact: AgentDomainArtifact = {
+          kind: 'PROTOTYPE_REVISION',
+          prototypeId: createdProto.prototype.id,
+          revisionId: createdProto.revision.id,
+          revisionNumber: createdProto.revision.revisionNumber,
+          modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
+        };
+        allArtifacts.push(revisionArtifact);
+        emit({
+          id: nextEventId(),
+          event: 'artifact',
+          data: {
+            artifact: revisionArtifact,
+          },
+        });
+      } else if (prototypeTurnDraft.prototypeId) {
+        if (prototypeTurnDraft.designBrief) {
+          store.updatePrototypeDesignBrief(
+            prototypeTurnDraft.prototypeId,
+            prototypeTurnDraft.designBrief,
+          );
+        }
+        if (prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml) {
+          const appendedRevision = store.appendPrototypeRevision(prototypeTurnDraft.prototypeId, {
+            title: cleanRevisionNote.slice(0, 48),
+            instruction: cleanRevisionNote,
+            htmlContent: prototypeTurnDraft.workingHtml,
+            source: 'AGENT_RUN',
+            agentRunId: assistantMsgId,
+          });
+          const revisionArtifact: AgentDomainArtifact = {
+            kind: 'PROTOTYPE_REVISION',
+            prototypeId: appendedRevision.prototype.id,
+            revisionId: appendedRevision.revision.id,
+            revisionNumber: appendedRevision.revision.revisionNumber,
+            modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
+          };
+          allArtifacts.push(revisionArtifact);
+          emit({
+            id: nextEventId(),
+            event: 'artifact',
+            data: {
+              artifact: revisionArtifact,
+            },
+          });
+        }
+      }
     }
 
     if (!accumulatedText.trim() && allToolTraces.length > 0) {

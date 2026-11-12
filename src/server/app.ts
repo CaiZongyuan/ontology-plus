@@ -398,6 +398,8 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
           freeformText?: string;
         };
         images?: TransientTurnImageInput[];
+        designBrief?: DesignBrief;
+        prototypeName?: string;
         activeModelCode?: ModelCode;
         reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
         mockMode?: boolean;
@@ -955,7 +957,13 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     }
   });
 
-  app.patch('/api/prototypes/:id/design-brief', async (c) => {
+  const handleSavePrototypeDesignBrief = async (c: {
+    req: {
+      param: (name: string) => string;
+      json: <T>() => Promise<T>;
+    };
+    json: (body: unknown, status?: 200 | 400 | 404) => Response;
+  }) => {
     const prototypeId = c.req.param('id');
     const existing = store.getPrototype(prototypeId);
     if (!existing) return c.json({ error: 'Prototype not found' }, 404);
@@ -966,7 +974,10 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       prototypes: store.listPrototypes(existing.projectId),
       confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
     });
-  });
+  };
+
+  app.patch('/api/prototypes/:id/design-brief', handleSavePrototypeDesignBrief);
+  app.put('/api/prototypes/:id/design-brief', handleSavePrototypeDesignBrief);
 
   app.post('/api/projects/:id/prototypes/confirm-revision', async (c) => {
     const projectId = c.req.param('id');
@@ -1075,6 +1086,30 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       ...(locale ? { locale } : {}),
     });
     return c.json(result);
+  });
+
+  app.post('/api/projects/:id/prototype-co-design-sessions', async (c) => {
+    const projectId = c.req.param('id');
+    const project = store.getProject(projectId);
+    if (!project) return c.json({ error: 'Project not found' }, 404);
+    const body = await c.req
+      .json<{ title?: string }>()
+      .catch(() => ({ title: undefined }));
+    const locale = getReqLocale(c);
+    const session = store.createAgentSession({
+      projectId,
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      title:
+        body.title?.trim() ||
+        (locale === 'en-US'
+          ? `Design Brief · ${project.name}`
+          : `设计简报首版原型 · ${project.name}`),
+    });
+    return c.json({
+      session,
+      agentSessions: store.listAgentSessions(),
+      prototypes: store.listPrototypes(projectId),
+    });
   });
 
   app.post('/api/projects/:id/prototypes/:prototypeId/co-design-session', (c) => {

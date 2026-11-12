@@ -72,6 +72,7 @@ import type {
   McpResourceDefinition,
   McpToolDefinition,
 } from '../packages/package-compiler/index.js';
+import { useAgentPanelStore } from './components/agent/agentPanelStore.js';
 
 export interface BootstrapPayload {
   projects: ProjectSummary[];
@@ -516,6 +517,8 @@ export interface QueuedSessionPromptItem {
   prompt: string;
   displayTitle?: string;
   images?: TransientTurnImageInput[];
+  designBrief?: DesignBrief;
+  prototypeName?: string;
   enqueuedAt: number;
 }
 
@@ -686,10 +689,30 @@ interface WorkbenchStoreState {
     prompt: string;
     displayTitle?: string;
     images?: TransientTurnImageInput[];
+    designBrief?: DesignBrief;
+    prototypeName?: string;
     activeModelCode?: ModelCode;
     reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
     mockMode?: boolean;
   }) => Promise<void>;
+  startPrototypeBriefGenerationRun: (input: {
+    projectId: string;
+    prototypeName?: string;
+    prompt: string;
+    designBrief: DesignBrief;
+    images?: TransientTurnImageInput[];
+    mockMode?: boolean;
+    awaitCompletion?: boolean;
+  }) => Promise<{ sessionId: string }>;
+  startPrototypeBriefRestyleRun: (input: {
+    projectId: string;
+    prototypeId: string;
+    prompt: string;
+    designBrief: DesignBrief;
+    images?: TransientTurnImageInput[];
+    mockMode?: boolean;
+    awaitCompletion?: boolean;
+  }) => Promise<{ sessionId: string }>;
   startPrototypeRefinementRun: (input: {
     projectId: string;
     prototypeId: string;
@@ -1599,6 +1622,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
         prompt,
         ...(input.displayTitle ? { displayTitle: input.displayTitle } : {}),
         ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+        ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+        ...(input.prototypeName ? { prototypeName: input.prototypeName } : {}),
         enqueuedAt: Date.now(),
       };
       set({
@@ -1638,6 +1663,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
         {
           prompt,
           ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+          ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+          ...(input.prototypeName ? { prototypeName: input.prototypeName } : {}),
           ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
           ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
           ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
@@ -1668,12 +1695,94 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
                 prompt: nextItem.prompt,
                 ...(nextItem.displayTitle ? { displayTitle: nextItem.displayTitle } : {}),
                 ...(nextItem.images ? { images: nextItem.images } : {}),
+                ...(nextItem.designBrief ? { designBrief: nextItem.designBrief } : {}),
+                ...(nextItem.prototypeName ? { prototypeName: nextItem.prototypeName } : {}),
               });
             }
           }
         }
       }
     }
+  },
+
+  startPrototypeBriefGenerationRun: async (input) => {
+    const locale = getCurrentClientLocale();
+    const title =
+      input.prototypeName?.trim() ||
+      (locale === 'en-US' ? 'Confirm Brief & Generate Prototype' : '确认设计简报并生成原型');
+    const created = await apiCreateUnboundPrototypeCoDesignSession(input.projectId, title);
+    const cur = get().data;
+    if (cur) {
+      const exists = (cur.agentSessions ?? []).some((s) => s.id === created.session.id);
+      set({
+        data: {
+          ...cur,
+          agentSessions: exists
+            ? (cur.agentSessions ?? []).map((s) =>
+                s.id === created.session.id ? created.session : s,
+              )
+            : [created.session, ...(cur.agentSessions ?? [])],
+        },
+      });
+    }
+    get().setActiveSessionId(created.session.id);
+    useAgentPanelStore.getState().revealPanel();
+
+    const runPromise = get().startSessionAgentRun({
+      sessionId: created.session.id,
+      prompt: input.prompt,
+      displayTitle:
+        locale === 'en-US' ? 'Confirm Brief & Generate Prototype (R1)' : '确认设计简报并生成首版原型 (R1)',
+      designBrief: input.designBrief,
+      ...(input.prototypeName ? { prototypeName: input.prototypeName } : {}),
+      ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+      ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
+    });
+
+    if (input.awaitCompletion) {
+      await runPromise;
+    }
+    return { sessionId: created.session.id };
+  },
+
+  startPrototypeBriefRestyleRun: async (input) => {
+    const locale = getCurrentClientLocale();
+    get().setActivePrototypeId(input.projectId, input.prototypeId);
+    const savedBrief = await apiUpdatePrototypeDesignBrief(input.prototypeId, input.designBrief);
+    const cur = get().data;
+    if (cur && cur.activeProject.id === input.projectId) {
+      set({
+        data: {
+          ...cur,
+          prototypes: savedBrief.prototypes,
+          ...(savedBrief.confirmedRevision !== undefined
+            ? { confirmedPrototypeRevision: savedBrief.confirmedRevision }
+            : {}),
+        },
+      });
+    }
+
+    const session = await get().ensurePrototypeCoDesignSession(
+      input.projectId,
+      input.prototypeId,
+    );
+    get().setActiveSessionId(session.id);
+    useAgentPanelStore.getState().revealPanel();
+
+    const runPromise = get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: input.prompt,
+      displayTitle:
+        locale === 'en-US' ? 'Restyle from updated brief' : '按新简报重做风格',
+      designBrief: input.designBrief,
+      ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+      ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
+    });
+
+    if (input.awaitCompletion) {
+      await runPromise;
+    }
+    return { sessionId: session.id };
   },
 
   startPrototypeRefinementRun: async (input) => {
@@ -2072,6 +2181,8 @@ export async function streamAgentSessionTurn(
       freeformText?: string;
     };
     images?: TransientTurnImageInput[];
+    designBrief?: DesignBrief;
+    prototypeName?: string;
     activeModelCode?: ModelCode;
     reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
     mockMode?: boolean;
@@ -2264,12 +2375,25 @@ function buildStoreSessionStreamCallbacks(
         ...cur,
         artifacts: [...(cur.artifacts ?? []), artifact],
       }));
+      if (artifact.kind === 'PROTOTYPE_REVISION') {
+        const curData = get().data;
+        if (curData?.activeProject.id) {
+          get().setActivePrototypeId(curData.activeProject.id, artifact.prototypeId);
+        }
+      }
     },
     onRunError: (payload) => {
       upsertCompletedSession(payload);
     },
     onMessageEnd: (payload) => {
       upsertCompletedSession(payload);
+      if (
+        payload.session?.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+        payload.session.targetId &&
+        get().data?.activeProject.id === payload.session.projectId
+      ) {
+        get().setActivePrototypeId(payload.session.projectId, payload.session.targetId);
+      }
     },
   };
 }
@@ -2656,6 +2780,20 @@ export async function apiGeneratePrototype(
   input: { docId?: string; prompt?: string },
 ): Promise<PrototypeGenerationResult> {
   return apiPostJson(`/api/projects/${projectId}/prototypes/generate`, input);
+}
+
+export async function apiCreateUnboundPrototypeCoDesignSession(
+  projectId: string,
+  title?: string,
+): Promise<{
+  session: AgentSession;
+  agentSessions: AgentSession[];
+  prototypes: InteractivePrototype[];
+}> {
+  return apiPostJson(
+    `/api/projects/${encodeURIComponent(projectId)}/prototype-co-design-sessions`,
+    title ? { title } : {},
+  );
 }
 
 export async function apiEnsurePrototypeCoDesignSession(
