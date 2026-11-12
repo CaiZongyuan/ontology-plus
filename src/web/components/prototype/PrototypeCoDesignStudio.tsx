@@ -24,9 +24,10 @@ import type {
 } from '../../../packages/workspace-store/index.js';
 import { Button } from '../beautifui/index.js';
 import {
-  DEFAULT_ALIGNMENT_STATE,
   MotionSchematicGallery,
-  describeAlignmentForAgent,
+  StyleTileMotionSampleStrip,
+  formatMotionSpecsForAgentPrompt,
+  inferDefaultAlignmentFromSrs,
   type RequirementAlignmentState,
 } from './MotionSchematicGallery.js';
 import {
@@ -59,6 +60,7 @@ export type InspoReferenceItem = VisualReferenceItem;
 export {
   CURATED_INSPO_CATALOG,
   LIKED_ASPECT_OPTIONS,
+  StyleTileMotionSampleStrip,
   VisualReferencePicker,
   inspoFullUrl,
   inspoHeroUrl,
@@ -146,9 +148,14 @@ export function buildAgentPrototypeContextPrompt(
     return `${idx + 1}. [${pref.item.title}] (${pref.item.mode} mode, canvas ${pref.item.surfaceHex}, palette ${pref.item.palette.join(', ')}, font ${pref.item.fonts[0]}, radius ${pref.item.radiusPx}px)${aspectLabels ? ` — ${aspectLabels}` : ''}${swatchNote}${userReason}`;
   });
 
-  const schematicLines = describeAlignmentForAgent(alignment, locale).map(
-    (line, i) => `${i + 1}. ${line}`,
-  );
+  const motionSpecsBlock = formatMotionSpecsForAgentPrompt(alignment, locale);
+  const customNoteLines = (alignment.customNotes ?? [])
+    .filter((n) => n.trim().length > 0)
+    .map((note) =>
+      locale === 'en-US'
+        ? `- Domain & Custom Alignment Note: ${note.trim()}`
+        : `- 用户补充业务与交互要求：${note.trim()}`,
+    );
 
   if (locale === 'en-US') {
     return [
@@ -157,8 +164,8 @@ export function buildAgentPrototypeContextPrompt(
       `Primary CTA/Accent Token Source: ${accentDonor.item.title} (accent ${accentDonor.likedSwatches[0] || accentDonor.item.palette[0]})`,
       ...refLines,
       '',
-      '=== INTERACTION & MOTION SCHEMATIC SPECIFICATIONS ===',
-      ...schematicLines,
+      motionSpecsBlock,
+      ...(customNoteLines.length > 0 ? ['', ...customNoteLines] : []),
     ].join('\n');
   }
 
@@ -168,8 +175,8 @@ export function buildAgentPrototypeContextPrompt(
     `- 主按钮与强调色来源：${accentDonor.item.title}（推荐主色 ${accentDonor.likedSwatches[0] || accentDonor.item.palette[0]}，圆角 ${refs[0]!.item.radiusPx}px）`,
     ...refLines,
     '',
-    '【二、用户通过动态示意图确认的交互结构与微动效规范】',
-    ...schematicLines,
+    motionSpecsBlock,
+    ...(customNoteLines.length > 0 ? ['', ...customNoteLines] : []),
   ].join('\n');
 }
 
@@ -1107,12 +1114,25 @@ export function PrototypeCoDesignStudio({
     [referenceSelection],
   );
 
-  const [alignment, setAlignment] =
-    useState<RequirementAlignmentState>(DEFAULT_ALIGNMENT_STATE);
+  const activeDoc = docs.find((d) => d.id === selectedDocId) ?? docs[0];
+  const [alignmentTouched, setAlignmentTouched] = useState(false);
+  const [alignment, setAlignmentState] = useState<RequirementAlignmentState>(() =>
+    inferDefaultAlignmentFromSrs(activeDoc?.content, project),
+  );
+  const setAlignment: React.Dispatch<React.SetStateAction<RequirementAlignmentState>> = (
+    updater,
+  ) => {
+    setAlignmentTouched(true);
+    setAlignmentState(updater);
+  };
+  useEffect(() => {
+    if (!alignmentTouched) {
+      setAlignmentState(inferDefaultAlignmentFromSrs(activeDoc?.content, project));
+    }
+  }, [activeDoc?.id, activeDoc?.content, project, alignmentTouched]);
   const [customNoteDraft, setCustomNoteDraft] = useState('');
   const [studioViewMode, setStudioViewMode] = useState<'PREVIEW' | 'SPLIT' | 'HTML'>('PREVIEW');
 
-  const activeDoc = docs.find((d) => d.id === selectedDocId) ?? docs[0];
   const currentSavedProto =
     prototypes.find((p) => p.id === selectedProtoId) ?? prototypes[0];
 
@@ -1299,6 +1319,14 @@ export function PrototypeCoDesignStudio({
               alignment={alignment}
               setAlignment={setAlignment}
               accentColor={primaryAccent}
+              palette={{
+                accentColor: primaryAccent,
+                surfaceColor: referenceSelection.primary.surfaceHex,
+                inkColor: referenceSelection.primary.mode === 'dark' ? '#f1f5f9' : '#1e1d1b',
+                radiusPx: referenceSelection.primary.radiusPx,
+              }}
+              {...(activeDoc ? { srsMarkdown: activeDoc.content } : {})}
+              project={project}
             />
 
             {/* Freeform Domain Alignment Note */}
@@ -1482,6 +1510,19 @@ export function PrototypeCoDesignStudio({
                   );
                 })}
               </div>
+
+              {/* Playable Selected Motion Schematics Sample Strip */}
+              <StyleTileMotionSampleStrip
+                selection={alignment}
+                palette={{
+                  accentColor: primaryAccent,
+                  surfaceColor: referenceSelection.primary.surfaceHex,
+                  inkColor: referenceSelection.primary.mode === 'dark' ? '#f1f5f9' : '#1e1d1b',
+                  radiusPx: referenceSelection.primary.radiusPx,
+                }}
+                {...(activeDoc ? { srsMarkdown: activeDoc.content } : {})}
+                project={project}
+              />
 
               {/* Transparent Prompt Disclosure */}
               <details className="rounded-control border border-line bg-inset/50 px-3 py-2 text-[12px]">
