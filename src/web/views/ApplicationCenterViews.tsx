@@ -51,7 +51,6 @@ import {
   apiGenerateTechArch,
   apiPostJson,
   apiPutJson,
-  apiRefinePrototype,
   apiRestoreProjectSnapshot,
   apiSynthesizeSrsDoc,
   apiUpdateProjectMeta,
@@ -59,6 +58,7 @@ import {
   triggerBrowserDownload,
   useWorkbenchStore,
 } from '../api.js';
+import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
 import {
   Button,
@@ -2154,7 +2154,9 @@ export function PrototypeStudioView({
     backgroundTasks,
     patchData,
     showToast,
+    setActivePrototypeId,
     startPrototypeGenTask,
+    startPrototypeRefinementRun,
     startOntologySynthTask,
   } = useWorkbenchStore();
 
@@ -2293,7 +2295,10 @@ export function PrototypeStudioView({
   useEffect(() => {
     setSavedHtmlContent(proto?.htmlContent ?? '');
     setVisualAnnotations([]);
-  }, [data?.activeProject.id, proto?.id, proto?.updatedAt, proto?.htmlContent]);
+    if (data?.activeProject.id && proto?.id) {
+      setActivePrototypeId(data.activeProject.id, proto.id);
+    }
+  }, [data?.activeProject.id, proto?.id, proto?.updatedAt, proto?.htmlContent, setActivePrototypeId]);
 
   if (!data) return null;
 
@@ -2589,34 +2594,18 @@ export function PrototypeStudioView({
 
       if (!targetProtoId) return;
 
-      const res = await apiRefinePrototype(
-        project.id,
-        targetProtoId,
-        instruction,
-        selections.length > 0 ? selections : undefined,
-      );
-      setSavedHtmlContent(res.prototype.htmlContent);
-      patchData({
-        activeProject: res.project,
-        prototypes: res.prototypes,
-      });
-      setSelectedProtoId(res.prototype.id);
+      setSelectedProtoId(targetProtoId);
       setPreviewSource('SAVED_PROTO');
       setRefineInstruction('');
       setVisualAnnotations([]);
       setInspectMode(false);
-      const syncedToMu = res.project.validation.presentModels.includes('MU');
-      showToast(
-        syncedToMu
-          ? t(
-              `AI 原型精修已完成，自动提取 ${res.prototype.extractedScreenCount} 个屏幕同步至 MU 模型`,
-              `AI refined prototype & synced ${res.prototype.extractedScreenCount} screens to MU model`,
-            )
-          : t(
-              `AI 原型精修已完成（共 ${res.prototype.extractedScreenCount} 个业务屏幕）`,
-              `AI prototype refinement complete (${res.prototype.extractedScreenCount} screens)`,
-            ),
-      );
+      useAgentPanelStore.getState().revealPanel();
+      await startPrototypeRefinementRun({
+        projectId: project.id,
+        prototypeId: targetProtoId,
+        instruction,
+        ...(selections.length > 0 ? { selections } : {}),
+      });
     } finally {
       setRefining(false);
     }

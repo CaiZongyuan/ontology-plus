@@ -47,8 +47,10 @@ import {
   type AgentSessionKind,
   type AgentSessionMessage,
   type AgentToolCallTrace,
+  type InteractivePrototype,
   type LlmProviderConfig,
   type ProjectDetail,
+  type PrototypeTargetAnchor,
   type WorkspaceStore,
 } from '../../workspace-store/index.js';
 import {
@@ -56,6 +58,14 @@ import {
   pickLocaleText,
   resolveEffectiveLocale,
 } from './locale.js';
+import {
+  PROTOTYPE_ANCHOR_OPENAI_TOOLS,
+  editPrototypeAnchor,
+  listPrototypeAnchors,
+  readPrototypeAnchor,
+  rewritePrototypePage,
+  type PrototypeAnchorEditOperation,
+} from './prototype-anchor-tools.js';
 import {
   buildProjectDataGrounding,
   describeGroundingRefusal,
@@ -149,6 +159,88 @@ function resolveProjectDetail(
   if (direct) return direct;
   const firstSummary = store.listProjects()[0];
   return firstSummary ? store.getProject(firstSummary.id) : undefined;
+}
+
+function resolveTargetPrototypeForSession(
+  store: WorkspaceStore,
+  session: AgentSession,
+): InteractivePrototype | undefined {
+  if (session.targetId) {
+    const direct = store.getPrototype(session.targetId);
+    if (direct && direct.projectId === session.projectId) {
+      return direct;
+    }
+  }
+  const list = store.listPrototypes(session.projectId);
+  return list.find((p) => p.coDesignSessionId === session.id) ?? list[0];
+}
+
+function stripSelectionBlockFromPrompt(prompt: string): string {
+  return (
+    prompt
+      .replace(
+        /^---\s*(?:Targeted Visual Selections & Annotations|用户在界面原型上框选\/点选的目标区域与批注)\s*---[\s\S]*?\n\n/m,
+        '',
+      )
+      .replace(/\[TEST_[A-Z0-9_]+\]/g, '')
+      .trim() || prompt.trim()
+  );
+}
+
+function parseMockPrototypeTargetFromPrompt(
+  prompt: string,
+  proto: InteractivePrototype | undefined,
+): { elementId?: string; screenId?: string; cssSelector?: string } {
+  const explicitEl =
+    /\belement=([A-Za-z0-9_-]+)/.exec(prompt)?.[1] ??
+    /\b(EL-[A-Za-z0-9_-]+)\b/.exec(prompt)?.[1];
+  const explicitScr =
+    /\bscreen=([A-Za-z0-9_-]+)/.exec(prompt)?.[1] ??
+    /\b(SCR-[A-Za-z0-9_-]+)\b/.exec(prompt)?.[1];
+  const explicitSelector = /\bselector="([^"]+)"/.exec(prompt)?.[1];
+
+  if (explicitEl || explicitScr || explicitSelector) {
+    return {
+      ...(explicitEl ? { elementId: explicitEl } : {}),
+      ...(explicitScr ? { screenId: explicitScr } : {}),
+      ...(explicitSelector ? { cssSelector: explicitSelector } : {}),
+    };
+  }
+
+  const overview = listPrototypeAnchors(proto?.htmlContent ?? '');
+  if (overview.elements[0]?.elementId) {
+    return {
+      elementId: overview.elements[0].elementId,
+      ...(overview.elements[0].screenId ? { screenId: overview.elements[0].screenId } : {}),
+    };
+  }
+  if (overview.screens[0]?.screenId) {
+    return { screenId: overview.screens[0].screenId };
+  }
+  return {};
+}
+
+function extractTargetAnchorFromArgs(
+  toolName: string,
+  args: Record<string, unknown>,
+): PrototypeTargetAnchor | undefined {
+  if (
+    toolName !== 'read_prototype_anchor' &&
+    toolName !== 'edit_prototype_anchor' &&
+    toolName !== 'rewrite_prototype_page'
+  ) {
+    return undefined;
+  }
+  const screenId = typeof args.screenId === 'string' && args.screenId.trim() ? args.screenId.trim() : undefined;
+  const elementId = typeof args.elementId === 'string' && args.elementId.trim() ? args.elementId.trim() : undefined;
+  const cssSelector =
+    typeof args.cssSelector === 'string' && args.cssSelector.trim() ? args.cssSelector.trim() : undefined;
+  if (!screenId && !elementId && !cssSelector) return undefined;
+  return {
+    ...(screenId ? { screenId } : {}),
+    ...(elementId ? { elementId } : {}),
+    ...(cssSelector ? { cssSelector } : {}),
+  };
 }
 
 // ─── Unified Agent Workbench Extra Tools (YOLO + Scoped HITL) ────────────────
@@ -291,7 +383,7 @@ agentWorkbenchRegistry.install(
     name: 'ontology-plus-unified-workbench',
     tools: [
       ...Object.values(ONTOLOGY_DURABLE_TOOLS),
-      ...UNIFIED_AGENT_EXTRA_TOOLS.map((spec) =>
+      ...[...UNIFIED_AGENT_EXTRA_TOOLS, ...PROTOTYPE_ANCHOR_OPENAI_TOOLS].map((spec) =>
         defineTool({
           name: spec.function.name,
           label: spec.function.name,
@@ -309,9 +401,9 @@ agentWorkbenchRegistry.install(
   }),
 );
 
-// ─── Active Session Abort Registry ───────────────────────────────────────────
+// ─── Active Session Runner & Abort Registry ─────────────────────────────────
 
-type SessionAbortKind = 'IDLE_TIMEOUT' | 'USER_ABORT' | 'STEER_SUPERSEDED' | 'CLIENT_DISCONNECT';
+type SessionAbortKind = 'IDLE_TIMEOUT' | 'USER_ABORT' | 'STEER_SUPERSEDED';
 
 interface SessionAbortReason {
   readonly kind: SessionAbortKind;
@@ -328,21 +420,153 @@ class SessionStreamAbortedError extends Error {
   }
 }
 
+interface ActiveBackgroundSessionRun {
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly controller: AbortController;
+  readonly bufferedEvents: UnifiedAgentSseEvent[];
+  readonly subscribers: Set<() => void>;
+  done: boolean;
+  completionPromise: Promise<void>;
+}
+
+interface QueuedSessionTurnEntry {
+  readonly queueId: string;
+  readonly input: Omit<UnifiedAgentStreamInput, 'signal'>;
+  cancelled: boolean;
+  resolveRun: (run: ActiveBackgroundSessionRun | null) => void;
+}
+
+interface SessionRunnerSlot {
+  activeRun: ActiveBackgroundSessionRun | null;
+  queue: QueuedSessionTurnEntry[];
+}
+
+const storeSessionRunnerMap = new WeakMap<WorkspaceStore, Map<string, SessionRunnerSlot>>();
 const activeSessionAbortControllers = new Map<string, AbortController>();
+const globalSlotsBySessionId = new Map<string, Set<SessionRunnerSlot>>();
+
+function getOrCreateSessionSlot(store: WorkspaceStore, sessionId: string): SessionRunnerSlot {
+  let bySession = storeSessionRunnerMap.get(store);
+  if (!bySession) {
+    bySession = new Map<string, SessionRunnerSlot>();
+    storeSessionRunnerMap.set(store, bySession);
+  }
+  let slot = bySession.get(sessionId);
+  if (!slot) {
+    slot = { activeRun: null, queue: [] };
+    bySession.set(sessionId, slot);
+    let setForId = globalSlotsBySessionId.get(sessionId);
+    if (!setForId) {
+      setForId = new Set();
+      globalSlotsBySessionId.set(sessionId, setForId);
+    }
+    setForId.add(slot);
+  }
+  return slot;
+}
+
+function getSessionSlot(store: WorkspaceStore, sessionId: string): SessionRunnerSlot | undefined {
+  return storeSessionRunnerMap.get(store)?.get(sessionId);
+}
+
+export interface LiveAgentSessionStatus {
+  active: boolean;
+  queuedCount: number;
+  runId?: string;
+  bufferedEventCount: number;
+}
+
+export function getLiveAgentSessionStatus(
+  store: WorkspaceStore,
+  sessionId: string,
+): LiveAgentSessionStatus {
+  const slot = getSessionSlot(store, sessionId);
+  const activeRun = slot?.activeRun && !slot.activeRun.done ? slot.activeRun : undefined;
+  return {
+    active: Boolean(activeRun),
+    queuedCount: slot ? slot.queue.filter((q) => !q.cancelled).length : 0,
+    ...(activeRun ? { runId: activeRun.runId } : {}),
+    bufferedEventCount: activeRun ? activeRun.bufferedEvents.length : 0,
+  };
+}
+
+function cancelSlotQueue(slot: SessionRunnerSlot): void {
+  if (slot.queue.length === 0) return;
+  const drained = slot.queue.splice(0, slot.queue.length);
+  for (const item of drained) {
+    item.cancelled = true;
+    item.resolveRun(null);
+  }
+}
 
 export function abortActiveAgentSession(
   sessionId: string,
   kind: 'USER_ABORT' | 'STEER_SUPERSEDED' = 'USER_ABORT',
+  store?: WorkspaceStore,
 ): boolean {
-  const controller = activeSessionAbortControllers.get(sessionId);
-  if (!controller) return false;
   const reason: SessionAbortReason =
     kind === 'STEER_SUPERSEDED'
       ? { kind: 'STEER_SUPERSEDED', message: '当前流式推演已被新指令接管' }
       : { kind: 'USER_ABORT', message: '已由用户手动停止生成' };
-  controller.abort(reason);
+
+  let aborted = false;
+  if (store) {
+    const slot = getSessionSlot(store, sessionId);
+    if (slot) {
+      if (kind === 'USER_ABORT') {
+        cancelSlotQueue(slot);
+      }
+      if (slot.activeRun && !slot.activeRun.done && !slot.activeRun.controller.signal.aborted) {
+        slot.activeRun.controller.abort(reason);
+        aborted = true;
+      }
+    }
+  } else {
+    const slots = globalSlotsBySessionId.get(sessionId);
+    if (slots) {
+      for (const slot of slots) {
+        if (kind === 'USER_ABORT') {
+          cancelSlotQueue(slot);
+        }
+        if (slot.activeRun && !slot.activeRun.done && !slot.activeRun.controller.signal.aborted) {
+          slot.activeRun.controller.abort(reason);
+          aborted = true;
+        }
+      }
+    }
+  }
+
+  const legacyCtrl = activeSessionAbortControllers.get(sessionId);
+  if (legacyCtrl && !legacyCtrl.signal.aborted) {
+    legacyCtrl.abort(reason);
+    aborted = true;
+  }
   activeSessionAbortControllers.delete(sessionId);
-  return true;
+  return aborted;
+}
+
+export async function abortActiveAgentSessionAsync(
+  store: WorkspaceStore,
+  sessionId: string,
+): Promise<{ aborted: boolean; session: AgentSession | undefined }> {
+  const slot = getSessionSlot(store, sessionId);
+  const runningPromise =
+    slot?.activeRun && !slot.activeRun.done ? slot.activeRun.completionPromise : undefined;
+  const aborted = abortActiveAgentSession(sessionId, 'USER_ABORT', store);
+  if (runningPromise) {
+    await Promise.race([runningPromise, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
+  }
+  const cur = store.getAgentSession(sessionId);
+  const session =
+    cur && cur.status === 'RUNNING'
+      ? store.saveAgentSession({
+          ...cur,
+          status: 'IDLE',
+          updatedAt: new Date().toISOString(),
+        })
+      : cur;
+  return { aborted, session };
 }
 
 // ─── SSE Event Protocol ──────────────────────────────────────────────────────
@@ -523,6 +747,31 @@ function buildFauxMockModels(
                     allowFreeform: true,
                   },
             ),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+
+      if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+        const targetProto = resolveTargetPrototypeForSession(store, session);
+        const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
+        const anchorName = target.elementId || target.screenId || target.cssSelector || 'SCR-01';
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                loc,
+                `正在定位目标锚点 \`${anchorName}\`，先调用 \`read_prototype_anchor\` 读取局部片段，避免改动其他未选中的业务屏幕。`,
+                `Locating target anchor \`${anchorName}\` via \`read_prototype_anchor\` to inspect only the targeted fragment without touching unrelated screens.`,
+              ),
+            ),
+            fauxToolCall('read_prototype_anchor', {
+              ...(target.elementId ? { elementId: target.elementId } : {}),
+              ...(target.screenId ? { screenId: target.screenId } : {}),
+              ...(!target.elementId && !target.screenId && target.cssSelector
+                ? { cssSelector: target.cssSelector }
+                : {}),
+            }),
           ],
           { stopReason: 'toolUse' },
         );
@@ -852,6 +1101,70 @@ function buildFauxMockModels(
           .map((c) => c.text)
           .join('\n') ?? '';
 
+      if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+        const targetProto = resolveTargetPrototypeForSession(store, session);
+        const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
+        const cleanInstruction = stripSelectionBlockFromPrompt(userPrompt);
+        const safeLabel =
+          cleanInstruction
+            .replace(/[<>&"'`\n]/g, ' ')
+            .trim()
+            .slice(0, 16) || pickLocaleText(loc, '辅助操作', 'Quick Action');
+        const uid = Date.now().toString(36).slice(-4).toUpperCase();
+
+        if (userPrompt.includes('[TEST_ANCHOR_SELF_REPAIR]')) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `尝试向目标屏幕追加控件并交由语义锚点一致性校验器检查。`,
+                  `Attempting anchored edit and verifying semantic anchor gate.`,
+                ),
+              ),
+              fauxToolCall('edit_prototype_anchor', {
+                ...(target.screenId ? { screenId: target.screenId } : {}),
+                ...(target.elementId && !target.screenId ? { elementId: target.elementId } : {}),
+                operation: target.screenId ? 'append_to_screen' : 'insert_after_element',
+                htmlFragment: `<button type="button" class="btn-secondary">${safeLabel}</button>`,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
+        const wantsInput = /输入|筛选|搜索|字段|文本框|filter|input|search|field/i.test(
+          cleanInstruction,
+        );
+        const fragment = wantsInput
+          ? `<input type="text" placeholder="${safeLabel}" data-element-id="EL-CO-INP-${uid}" data-element-type="INPUT" data-element-label="${safeLabel}" />`
+          : `<button type="button" class="btn-secondary" data-element-id="EL-CO-BTN-${uid}" data-element-type="BUTTON" data-element-label="${safeLabel}">${safeLabel}</button>`;
+
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                loc,
+                `已读取目标锚点上下文，现调用 \`edit_prototype_anchor\` 执行局部手术式修改，保持其余屏幕与兄弟节点逐字节不变。`,
+                `Target anchor context inspected; calling \`edit_prototype_anchor\` for surgical modification while preserving untouched screens byte-for-byte.`,
+              ),
+            ),
+            fauxToolCall('edit_prototype_anchor', {
+              ...(target.elementId
+                ? { elementId: target.elementId, operation: 'insert_after_element' }
+                : target.screenId
+                  ? { screenId: target.screenId, operation: 'append_to_screen' }
+                  : {
+                      cssSelector: target.cssSelector || 'section',
+                      operation: 'append_to_screen',
+                    }),
+              htmlFragment: fragment,
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+
       // Validator Self-Repair when Step 1 delete_element was rejected by 11-model consistency gate!
       if (
         lastResult?.isError &&
@@ -924,7 +1237,7 @@ function buildFauxMockModels(
         ),
       ]);
     },
-    // Step 3 (if Step 2 performed self-repair tool call): Final summary after repair!
+    // Step 3 (if Step 2 performed a tool call or triggered validator self-repair):
     (context) => {
       const lastUserMsg = [...context.messages]
         .reverse()
@@ -935,6 +1248,58 @@ function buildFauxMockModels(
       const toolResults = context.messages.filter(
         (m): m is ToolResultMessage => m.role === 'toolResult',
       );
+      const lastResult = toolResults[toolResults.length - 1];
+
+      if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+        if (lastResult?.isError && lastResult.toolName === 'edit_prototype_anchor') {
+          const targetProto = resolveTargetPrototypeForSession(store, session);
+          const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
+          const cleanInstruction = stripSelectionBlockFromPrompt(userPrompt);
+          const safeLabel =
+            cleanInstruction
+              .replace(/[<>&"'`\n]/g, ' ')
+              .trim()
+              .slice(0, 16) || pickLocaleText(loc, '加急操作', 'Quick Action');
+          const uid = Date.now().toString(36).slice(-4).toUpperCase();
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `检测到上一轮局部编辑因缺少必填语义锚点被拦截，立即补齐合法的 \`data-element-id\` 与 \`data-element-type\` 在同一轮完成自修复。`,
+                  `Previous anchored edit was rejected for missing semantic anchors; self-repairing in the same turn with valid \`data-element-id\` and \`data-element-type\`.`,
+                ),
+              ),
+              fauxToolCall('edit_prototype_anchor', {
+                ...(target.screenId ? { screenId: target.screenId } : {}),
+                ...(target.elementId && !target.screenId ? { elementId: target.elementId } : {}),
+                operation: target.screenId ? 'append_to_screen' : 'insert_after_element',
+                htmlFragment: `<button type="button" class="btn-secondary" data-element-id="EL-CO-REPAIR-${uid}" data-element-type="BUTTON" data-element-label="${safeLabel}">${safeLabel}</button>`,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
+        const targetProto = resolveTargetPrototypeForSession(store, session);
+        const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
+        const anchorLabel = target.elementId || target.screenId || 'target-anchor';
+        return fauxAssistantMessage([
+          fauxThinking(
+            pickLocaleText(
+              loc,
+              `锚点 \`${anchorLabel}\` 局部精修与语义锚点校验已通过，正在汇总本次原型修订。`,
+              `Anchored edit on \`${anchorLabel}\` passed semantic validation; summarizing prototype revision.`,
+            ),
+          ),
+          fauxText(
+            loc === 'en-US'
+              ? `Completed surgical refinement on anchor \`${anchorLabel}\` while keeping all other screens and sibling controls unchanged.`
+              : `已完成目标锚点 \`${anchorLabel}\` 的局部精修，其余业务屏幕与未触碰控件均保持逐字节不变。`,
+          ),
+        ]);
+      }
+
       const freshProject = resolveProjectDetail(store, session.projectId) ?? project;
       return fauxAssistantMessage([
         fauxThinking(
@@ -958,6 +1323,28 @@ function buildFauxMockModels(
                 `- 首轮提交因悬空事件引用被校验器拦截后，已在同一轮对话内自动改绑合法 \`ME\` 领域事件并成功落库（共执行 **${toolResults.length}** 步工具闭环）。`,
                 `- 当前工程一致性状态：**${freshProject?.validation.errorCount ?? 0} 个一致性错误**。`,
               ].join('\n'),
+        ),
+      ]);
+    },
+    // Step 4 (final summary after PROTOTYPE_CO_DESIGN self-repair in Step 3):
+    (context) => {
+      const lastUserMsg = [...context.messages]
+        .reverse()
+        .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
+      const userPrompt = extractUserMessageText(lastUserMsg);
+      const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
+      return fauxAssistantMessage([
+        fauxThinking(
+          pickLocaleText(
+            loc,
+            `语义锚点自修复已通过校验，生成修订总结。`,
+            `Semantic anchor self-repair succeeded; emitting revision summary.`,
+          ),
+        ),
+        fauxText(
+          loc === 'en-US'
+            ? `Self-repaired semantic anchor attributes and applied the localized prototype edit cleanly.`
+            : `已自动补齐控件语义锚点并完成局部精修。`,
         ),
       ]);
     },
@@ -1158,6 +1545,12 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
       ];
+    case 'PROTOTYPE_CO_DESIGN':
+      return [
+        ...PROTOTYPE_ANCHOR_OPENAI_TOOLS.map(toPiTool),
+        extraByName.get('inspect_ontology_model')!,
+        extraByName.get('ask_user')!,
+      ];
   }
 }
 
@@ -1231,6 +1624,25 @@ function buildSystemPromptForSession(
     if (session.agentKind === 'REQUIREMENT') {
       return `${baseHeaderEn}\nFollow Class-A/B progressive grilling: tag standard audit/engineering defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], call ask_user for unresolved Class-B decisions (or tag [Pending]), and call record_requirement_insights to persist candidate aggregates and rules.`;
     }
+    if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+      const proto = resolveTargetPrototypeForSession(store, session);
+      const overview = listPrototypeAnchors(proto?.htmlContent ?? '');
+      const screensDesc =
+        overview.screens
+          .map((s) => `${s.screenId}(${s.screenName}:${s.screenType}, elements=${s.elementCount})`)
+          .join(', ') || 'none';
+      return [
+        baseHeaderEn,
+        `Target Interactive Prototype: ${proto ? `${proto.name} (ID: ${proto.id}, Version: ${proto.version})` : 'none'}.`,
+        `Screens in prototype: ${screensDesc}.`,
+        `Prototype Co-Design Rules:`,
+        `1. Always call \`read_prototype_anchor\` (or \`list_prototype_anchors\`) first to inspect ONLY the targeted element or screen without reading unrelated screens.`,
+        `2. For localized refinements, ALWAYS call \`edit_prototype_anchor\` (\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`) so untouched screens and sibling elements stay byte-for-byte identical.`,
+        `3. Reserve \`rewrite_prototype_page\` strictly for whole-page visual restyling or brand-new prototype generation.`,
+        `4. Preserve existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors, add valid \`data-element-id\` + \`data-element-type\` on every new <button>/<input>/<select>/<textarea>, and NEVER use window.alert/confirm/prompt.`,
+        `5. If an edit tool returns isError=true, fix the semantic anchors and retry in the same turn.`,
+      ].join('\n');
+    }
     return `${baseHeaderEn}\nCurrent M1 aggregates: ${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || 'none'}; M3 rules count: ${project?.suite.M3?.rules.length ?? 0}.`;
   }
 
@@ -1273,10 +1685,52 @@ function buildSystemPromptForSession(
   if (session.agentKind === 'REQUIREMENT') {
     return `${baseHeader}\n遵循 A/B 分级追问策略：A 类常规默认项标注 [AI自动补全]，B 类核心业务边界标注 [已确认] 或调用 ask_user 让用户选择确认，并调用 record_requirement_insights 沉淀候选规则。`;
   }
+  if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+    const proto = resolveTargetPrototypeForSession(store, session);
+    const overview = listPrototypeAnchors(proto?.htmlContent ?? '');
+    const screensDesc =
+      overview.screens
+        .map((s) => `${s.screenId}(${s.screenName}:${s.screenType}, 控件数=${s.elementCount})`)
+        .join(', ') || '无';
+    return [
+      baseHeader,
+      `当前共创目标交互原型：${proto ? `${proto.name}（ID: ${proto.id}，版本: ${proto.version}）` : '未绑定'}。`,
+      `当前原型包含屏幕锚点：${screensDesc}。`,
+      `原型局部精修准则：`,
+      `1. 先调用 \`read_prototype_anchor\`（或 \`list_prototype_anchors\`）精准读取目标控件或目标屏幕片段，严禁无故重写其他无关屏幕。`,
+      `2. 局部改动一律调用 \`edit_prototype_anchor\`（\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`），确保未选中的屏幕与兄弟控件保持逐字节一致。`,
+      `3. \`rewrite_prototype_page\` 仅限明确要求“整页重做风格”或“从零生成整页原型”时调用。`,
+      `4. 严格保留既有 \`data-screen-id\`、\`data-element-id\`、\`data-binding\`、\`data-event-id\` 语义锚点；任何新增 <button>/<input>/<select>/<textarea> 必须携带合法唯一的 \`data-element-id\` 与 \`data-element-type\`；严禁使用 window.alert/confirm/prompt。`,
+      `5. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
+    ].join('\n');
+  }
   return `${baseHeader}\n当前 M1 聚合根：${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || '无'}；M3 规则数：${project?.suite.M3?.rules.length ?? 0}。`;
 }
 
 // ─── Execute Single Tool Call (YOLO + Validator Gate + Scoped HITL) ──────────
+
+interface PrototypeTurnDraft {
+  prototypeId: string;
+  prototypeName: string;
+  baselineHtml: string;
+  workingHtml: string;
+  modifiedAnchors: PrototypeTargetAnchor[];
+}
+
+function recordModifiedAnchor(
+  draft: PrototypeTurnDraft,
+  anchor: PrototypeTargetAnchor | undefined,
+): void {
+  if (!anchor) return;
+  const key = `${anchor.screenId ?? ''}::${anchor.elementId ?? ''}::${anchor.cssSelector ?? ''}`;
+  if (
+    !draft.modifiedAnchors.some(
+      (a) => `${a.screenId ?? ''}::${a.elementId ?? ''}::${a.cssSelector ?? ''}` === key,
+    )
+  ) {
+    draft.modifiedAnchors.push(anchor);
+  }
+}
 
 interface ExecutedToolStep {
   trace: AgentToolCallTrace;
@@ -1292,6 +1746,7 @@ function executeUnifiedToolCall(
   tc: ToolCall,
   hadPreviousValidatorError: boolean,
   locale: AgentLocale = 'zh-CN',
+  prototypeDraft?: PrototypeTurnDraft,
 ): ExecutedToolStep {
   const started = Date.now();
   const args = (tc.arguments ?? {}) as Record<string, unknown>;
@@ -1963,6 +2418,223 @@ function executeUnifiedToolCall(
     };
   }
 
+  // 9. Prototype Semantic-Anchor Tools (PROTOTYPE_CO_DESIGN)
+  if (
+    tc.name === 'list_prototype_anchors' ||
+    tc.name === 'read_prototype_anchor' ||
+    tc.name === 'edit_prototype_anchor' ||
+    tc.name === 'rewrite_prototype_page'
+  ) {
+    const activeHtml =
+      prototypeDraft?.workingHtml ?? resolveTargetPrototypeForSession(store, session)?.htmlContent;
+    if (activeHtml === undefined) {
+      const noProtoMsg = pickLocaleText(
+        locale,
+        '当前会话未找到可精修的交互原型',
+        'No target interactive prototype found for this session',
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: noProtoMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({ status: 'ERROR', diagnostic: noProtoMsg }),
+        isError: true,
+      };
+    }
+
+    if (tc.name === 'list_prototype_anchors') {
+      const overview = listPrototypeAnchors(activeHtml);
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: pickLocaleText(
+            locale,
+            `已枚举 ${overview.screens.length} 个屏幕锚点与 ${overview.elements.length} 个交互控件锚点`,
+            `Listed ${overview.screens.length} screen anchors and ${overview.elements.length} element anchors`,
+          ),
+          isError: false,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify(overview),
+        isError: false,
+      };
+    }
+
+    if (tc.name === 'read_prototype_anchor') {
+      const elementId = typeof args.elementId === 'string' ? args.elementId : undefined;
+      const screenId = typeof args.screenId === 'string' ? args.screenId : undefined;
+      const cssSelector = typeof args.cssSelector === 'string' ? args.cssSelector : undefined;
+      const readRes = readPrototypeAnchor(activeHtml, {
+        ...(elementId ? { elementId } : {}),
+        ...(screenId ? { screenId } : {}),
+        ...(cssSelector ? { cssSelector } : {}),
+        locale,
+      });
+      const anchorBadge =
+        readRes.targetAnchor?.elementId ||
+        readRes.targetAnchor?.screenId ||
+        readRes.targetAnchor?.cssSelector ||
+        'anchor';
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: readRes.isError
+            ? readRes.diagnostic || pickLocaleText(locale, '未找到锚点', 'Anchor not found')
+            : pickLocaleText(
+                locale,
+                `已读取锚点 ${anchorBadge} 局部片段（${readRes.fragment.length} 字符）`,
+                `Read localized HTML fragment for ${anchorBadge} (${readRes.fragment.length} chars)`,
+              ),
+          isError: readRes.isError,
+          ...(readRes.targetAnchor ? { targetAnchor: readRes.targetAnchor } : {}),
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify(
+          readRes.isError
+            ? {
+                status: 'ANCHOR_NOT_FOUND',
+                diagnostic: readRes.diagnostic,
+                targetAnchor: readRes.targetAnchor,
+              }
+            : {
+                status: 'OK',
+                targetAnchor: readRes.targetAnchor,
+                contextSummary: readRes.contextSummary,
+                fragment: readRes.fragment,
+              },
+        ),
+        isError: readRes.isError,
+      };
+    }
+
+    if (tc.name === 'edit_prototype_anchor') {
+      const elementId = typeof args.elementId === 'string' ? args.elementId : undefined;
+      const screenId = typeof args.screenId === 'string' ? args.screenId : undefined;
+      const cssSelector = typeof args.cssSelector === 'string' ? args.cssSelector : undefined;
+      const operation = String(args.operation || 'replace_element') as PrototypeAnchorEditOperation;
+      const htmlFragment = typeof args.htmlFragment === 'string' ? args.htmlFragment : undefined;
+      const attributes =
+        args.attributes && typeof args.attributes === 'object'
+          ? (args.attributes as Record<string, string | null>)
+          : undefined;
+      const allowRemoveAnchors = Array.isArray(args.allowRemoveAnchors)
+        ? args.allowRemoveAnchors.map(String)
+        : undefined;
+
+      const editRes = editPrototypeAnchor(activeHtml, {
+        ...(elementId ? { elementId } : {}),
+        ...(screenId ? { screenId } : {}),
+        ...(cssSelector ? { cssSelector } : {}),
+        operation,
+        ...(htmlFragment !== undefined ? { htmlFragment } : {}),
+        ...(attributes ? { attributes } : {}),
+        ...(allowRemoveAnchors ? { allowRemoveAnchors } : {}),
+        locale,
+      });
+
+      if (editRes.isError) {
+        return {
+          trace: {
+            id: tc.id,
+            toolName: tc.name,
+            arguments: args,
+            output: editRes.diagnostic || editRes.summary,
+            isError: true,
+            ...(editRes.targetAnchor ? { targetAnchor: editRes.targetAnchor } : {}),
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({
+            status: 'REJECTED_BY_ANCHOR_VALIDATOR',
+            diagnostic: editRes.diagnostic || editRes.summary,
+            targetAnchor: editRes.targetAnchor,
+          }),
+          isError: true,
+        };
+      }
+
+      if (prototypeDraft) {
+        prototypeDraft.workingHtml = editRes.nextHtml;
+        recordModifiedAnchor(prototypeDraft, editRes.targetAnchor);
+      }
+
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: editRes.summary,
+          isError: false,
+          ...(hadPreviousValidatorError ? { validatorRepair: true } : {}),
+          ...(editRes.targetAnchor ? { targetAnchor: editRes.targetAnchor } : {}),
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: 'APPLIED',
+          summary: editRes.summary,
+          targetAnchor: editRes.targetAnchor,
+        }),
+        isError: false,
+      };
+    }
+
+    // rewrite_prototype_page
+    const htmlContent = String(args.htmlContent || '');
+    const rewriteRes = rewritePrototypePage(activeHtml, htmlContent, {
+      allowAnchorReset: Boolean(args.allowAnchorReset),
+      locale,
+    });
+    if (rewriteRes.isError) {
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: rewriteRes.diagnostic || rewriteRes.summary,
+          isError: true,
+          ...(rewriteRes.targetAnchor ? { targetAnchor: rewriteRes.targetAnchor } : {}),
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: 'REJECTED_BY_ANCHOR_VALIDATOR',
+          diagnostic: rewriteRes.diagnostic || rewriteRes.summary,
+        }),
+        isError: true,
+      };
+    }
+
+    if (prototypeDraft) {
+      prototypeDraft.workingHtml = rewriteRes.nextHtml;
+      recordModifiedAnchor(prototypeDraft, rewriteRes.targetAnchor);
+    }
+
+    return {
+      trace: {
+        id: tc.id,
+        toolName: tc.name,
+        arguments: args,
+        output: rewriteRes.summary,
+        isError: false,
+        ...(hadPreviousValidatorError ? { validatorRepair: true } : {}),
+        ...(rewriteRes.targetAnchor ? { targetAnchor: rewriteRes.targetAnchor } : {}),
+        durationMs: Date.now() - started,
+      },
+      toolResultContent: JSON.stringify({
+        status: 'APPLIED',
+        summary: rewriteRes.summary,
+      }),
+      isError: false,
+    };
+  }
+
   return {
     trace: {
       id: tc.id,
@@ -2345,10 +3017,35 @@ async function resolveTransientImagesForVisionTurn(
   return { imageBlocks, manifestLines, fallbackNotes };
 }
 
-export async function* runUnifiedAgentSessionStream(
+function saveSessionCheckpointSafe(
   store: WorkspaceStore,
-  input: UnifiedAgentStreamInput,
-): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
+  session: AgentSession,
+  payload: Record<string, unknown>,
+): void {
+  void durableMemoryStorage;
+  if (typeof store.saveAgentCheckpoint !== 'function') return;
+  try {
+    store.saveAgentCheckpoint(
+      session.id,
+      `PI_UNIFIED_${session.agentKind}`,
+      JSON.stringify({
+        sessionId: session.id,
+        status: session.status,
+        ...payload,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+  } catch {
+    // Non-fatal in read-only edge contexts
+  }
+}
+
+async function executeUnifiedTurnCore(
+  store: WorkspaceStore,
+  input: Omit<UnifiedAgentStreamInput, 'signal'>,
+  emit: (ev: UnifiedAgentSseEvent) => void,
+  controller: AbortController,
+): Promise<void> {
   const existing = store.getAgentSession(input.sessionId);
   if (!existing) {
     throw new Error(`Agent session not found: ${input.sessionId}`);
@@ -2361,11 +3058,6 @@ export async function* runUnifiedAgentSessionStream(
     input.prompt || input.askUserAnswer?.freeformText || lastUserText,
   );
 
-  if (input.mode === 'STEER') {
-    abortActiveAgentSession(existing.id, 'STEER_SUPERSEDED');
-  }
-
-  const controller = new AbortController();
   const idleTimeoutMs = input.idleTimeoutMs ?? 90_000;
   const stepTimeoutMs = input.stepTimeoutMs ?? Math.max(300_000, idleTimeoutMs * 2);
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -2394,30 +3086,6 @@ export async function* runUnifiedAgentSessionStream(
   };
 
   resetIdleTimer();
-
-  const abortFromClient = () => {
-    if (!controller.signal.aborted) {
-      const reason: SessionAbortReason = {
-        kind: 'CLIENT_DISCONNECT',
-        message: pickLocaleText(
-          effectiveLocale,
-          '客户端流式连接已断开',
-          'Client SSE connection closed',
-        ),
-      };
-      controller.abort(reason);
-    }
-  };
-
-  if (input.signal) {
-    if (input.signal.aborted) {
-      abortFromClient();
-    } else {
-      input.signal.addEventListener('abort', abortFromClient, {
-        once: true,
-      });
-    }
-  }
   activeSessionAbortControllers.set(existing.id, controller);
 
   const defaultAbortedMsg = pickLocaleText(
@@ -2520,6 +3188,12 @@ export async function* runUnifiedAgentSessionStream(
     updatedAt: nowIso,
   });
 
+  saveSessionCheckpointSafe(store, sessionState, {
+    phase: 'TURN_STARTED',
+    messageCount: sessionState.messages.length,
+    toolCallsCount: 0,
+  });
+
   const turnStartMs = Date.now();
   const assistantMsgId = `amsg-${Date.now().toString(36)}-a`;
   let built: ReturnType<typeof buildPiModelsForStore> | undefined;
@@ -2534,6 +3208,20 @@ export async function* runUnifiedAgentSessionStream(
 
   let usedVisionFallback = false;
   let activeVisionFallbackNotice: string | undefined;
+
+  const initialTargetProto =
+    sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
+      ? resolveTargetPrototypeForSession(store, sessionState)
+      : undefined;
+  const prototypeTurnDraft: PrototypeTurnDraft | undefined = initialTargetProto
+    ? {
+        prototypeId: initialTargetProto.id,
+        prototypeName: initialTargetProto.name,
+        baselineHtml: initialTargetProto.htmlContent,
+        workingHtml: initialTargetProto.htmlContent,
+        modifiedAnchors: [],
+      }
+    : undefined;
 
   try {
     built = buildPiModelsForStore(store, sessionState, {
@@ -2553,7 +3241,7 @@ export async function* runUnifiedAgentSessionStream(
       }
     }
 
-    yield {
+    emit({
       id: nextEventId(),
       event: 'session_meta',
       data: {
@@ -2565,7 +3253,7 @@ export async function* runUnifiedAgentSessionStream(
         visionSupported: built.visionSupported,
         ...(activeVisionFallbackNotice ? { visionFallbackNotice: activeVisionFallbackNotice } : {}),
       },
-    };
+    });
 
     const piMessages: Message[] = buildInitialPiMessages(sessionState);
 
@@ -2674,18 +3362,18 @@ export async function* runUnifiedAgentSessionStream(
 
         if (ev.type === 'thinking_delta') {
           accumulatedThinking += ev.delta;
-          yield {
+          emit({
             id: nextEventId(),
             event: 'thinking_delta',
             data: { step: step + 1, delta: ev.delta },
-          };
+          });
         } else if (ev.type === 'text_delta') {
           accumulatedText += ev.delta;
-          yield {
+          emit({
             id: nextEventId(),
             event: 'delta',
             data: { step: step + 1, text: ev.delta },
-          };
+          });
         } else if (
           ev.type === 'toolcall_start' ||
           ev.type === 'toolcall_delta' ||
@@ -2703,16 +3391,19 @@ export async function* runUnifiedAgentSessionStream(
             !announcedToolCallIds.has(candidate.id)
           ) {
             announcedToolCallIds.add(candidate.id);
-            yield {
+            const candidateArgs = (candidate.arguments ?? {}) as Record<string, unknown>;
+            const candidateAnchor = extractTargetAnchorFromArgs(candidate.name, candidateArgs);
+            emit({
               id: nextEventId(),
               event: 'tool_call',
               data: {
                 id: candidate.id,
                 toolName: candidate.name,
-                arguments: (candidate.arguments ?? {}) as Record<string, unknown>,
+                arguments: candidateArgs,
+                ...(candidateAnchor ? { targetAnchor: candidateAnchor } : {}),
                 step: step + 1,
               },
-            };
+            });
           }
         } else if (ev.type === 'done') {
           finalMessage = ev.message;
@@ -2751,6 +3442,25 @@ export async function* runUnifiedAgentSessionStream(
         break;
       }
 
+      if (finalMessage.stopReason === 'error' || finalMessage.errorMessage) {
+        if (controller.signal.aborted) {
+          throw toAbortedError();
+        }
+        throw new LlmGatewayError({
+          message:
+            finalMessage.errorMessage ||
+            pickLocaleText(
+              effectiveLocale,
+              '上游模型网关返回错误响应',
+              'Upstream LLM gateway returned an error response',
+            ),
+          providerName: built.providerConfig?.name ?? built.providerLabel,
+          baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+          model: built.selectedModel.id,
+          locale: effectiveLocale,
+        });
+      }
+
       totalInputTokens += finalMessage.usage?.input ?? 0;
       totalOutputTokens += finalMessage.usage?.output ?? 0;
       piMessages.push(finalMessage);
@@ -2768,16 +3478,19 @@ export async function* runUnifiedAgentSessionStream(
           throw toAbortedError();
         }
         resetIdleTimer();
-        yield {
+        const tcArgs = (tc.arguments ?? {}) as Record<string, unknown>;
+        const tcAnchor = extractTargetAnchorFromArgs(tc.name, tcArgs);
+        emit({
           id: nextEventId(),
           event: 'tool_call',
           data: {
             id: tc.id,
             toolName: tc.name,
-            arguments: tc.arguments as Record<string, unknown>,
+            arguments: tcArgs,
+            ...(tcAnchor ? { targetAnchor: tcAnchor } : {}),
             step: step + 1,
           },
-        };
+        });
 
         const executed = executeUnifiedToolCall(
           store,
@@ -2785,41 +3498,42 @@ export async function* runUnifiedAgentSessionStream(
           tc,
           hadValidatorError,
           effectiveLocale,
+          prototypeTurnDraft,
         );
         if (executed.isError) {
           hadValidatorError = true;
         }
         allToolTraces.push(executed.trace);
 
-        yield {
+        emit({
           id: nextEventId(),
           event: 'tool_result',
           data: {
             trace: executed.trace,
             step: step + 1,
           },
-        };
+        });
 
         if (executed.artifact) {
           allArtifacts.push(executed.artifact);
-          yield {
+          emit({
             id: nextEventId(),
             event: 'artifact',
             data: {
               artifact: executed.artifact,
             },
-          };
+          });
         }
 
         if (executed.askUserPrompt) {
           pendingAskUser = executed.askUserPrompt;
-          yield {
+          emit({
             id: nextEventId(),
             event: 'ask_user',
             data: {
               askUser: executed.askUserPrompt,
             },
-          };
+          });
         }
 
         const toolResultMsg: ToolResultMessage<JsonObject> = {
@@ -2833,6 +3547,13 @@ export async function* runUnifiedAgentSessionStream(
         piMessages.push(toolResultMsg);
       }
 
+      saveSessionCheckpointSafe(store, sessionState, {
+        phase: 'STEP_PROGRESS',
+        step: step + 1,
+        toolCallsCount: allToolTraces.length,
+        accumulatedChars: accumulatedText.length,
+      });
+
       if (pendingAskUser) {
         if (!accumulatedText.trim()) {
           const defaultHeader = pickLocaleText(
@@ -2845,24 +3566,73 @@ export async function* runUnifiedAgentSessionStream(
             `请先在下方确认 **${pendingAskUser.header ?? defaultHeader}**，确认后我将立即继续执行。`,
             `Please confirm **${pendingAskUser.header ?? defaultHeader}** below so I can proceed immediately.`,
           );
-          yield {
+          emit({
             id: nextEventId(),
             event: 'delta',
             data: { step: step + 1, text: accumulatedText },
-          };
+          });
         }
         break;
       }
     }
 
+    if (
+      !built.isMock &&
+      !accumulatedText.trim() &&
+      allToolTraces.length === 0 &&
+      !pendingAskUser
+    ) {
+      throw new LlmGatewayError({
+        message: pickLocaleText(
+          effectiveLocale,
+          `模型网关「${built.providerLabel}」返回了空响应（未产生任何工具调用或内容）`,
+          `LLM gateway "${built.providerLabel}" returned an empty response (no tool calls or content generated)`,
+        ),
+        providerName: built.providerConfig?.name ?? built.providerLabel,
+        baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+        model: built.selectedModel.id,
+        locale: effectiveLocale,
+      });
+    }
+
+    if (
+      prototypeTurnDraft &&
+      prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml &&
+      !controller.signal.aborted
+    ) {
+      const cleanRevisionNote = stripSelectionBlockFromPrompt(synthesizedPrompt);
+      const appendedRevision = store.appendPrototypeRevision(prototypeTurnDraft.prototypeId, {
+        title: cleanRevisionNote.slice(0, 48),
+        instruction: cleanRevisionNote,
+        htmlContent: prototypeTurnDraft.workingHtml,
+        source: 'AGENT_RUN',
+        agentRunId: assistantMsgId,
+      });
+      const revisionArtifact: AgentDomainArtifact = {
+        kind: 'PROTOTYPE_REVISION',
+        prototypeId: appendedRevision.prototype.id,
+        revisionId: appendedRevision.revision.id,
+        revisionNumber: appendedRevision.revision.revisionNumber,
+        modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
+      };
+      allArtifacts.push(revisionArtifact);
+      emit({
+        id: nextEventId(),
+        event: 'artifact',
+        data: {
+          artifact: revisionArtifact,
+        },
+      });
+    }
+
     if (!accumulatedText.trim() && allToolTraces.length > 0) {
       const sep = effectiveLocale === 'en-US' ? ': ' : '：';
       accumulatedText = allToolTraces.map((t) => `- **${t.toolName}**${sep}${t.output}`).join('\n');
-      yield {
+      emit({
         id: nextEventId(),
         event: 'delta',
         data: { step: 1, text: accumulatedText },
-      };
+      });
     }
 
     const assistantRecord: AgentSessionMessage = {
@@ -2923,26 +3693,13 @@ export async function* runUnifiedAgentSessionStream(
 
     sessionState = store.saveAgentSession(completedSession);
 
-    void durableMemoryStorage;
-    if (typeof store.saveAgentCheckpoint === 'function') {
-      try {
-        store.saveAgentCheckpoint(
-          sessionState.id,
-          `PI_UNIFIED_${sessionState.agentKind}`,
-          JSON.stringify({
-            sessionId: sessionState.id,
-            status: sessionState.status,
-            messageCount: sessionState.messages.length,
-            toolCallsCount: allToolTraces.length,
-            updatedAt: sessionState.updatedAt,
-          }),
-        );
-      } catch {
-        // Non-fatal in read-only edge contexts
-      }
-    }
+    saveSessionCheckpointSafe(store, sessionState, {
+      phase: 'COMPLETED',
+      messageCount: sessionState.messages.length,
+      toolCallsCount: allToolTraces.length,
+    });
 
-    yield {
+    emit({
       id: nextEventId(),
       event: 'usage',
       data: {
@@ -2950,16 +3707,23 @@ export async function* runUnifiedAgentSessionStream(
         providerName: built.providerLabel,
         modelUsed: built.selectedModel.id,
       },
-    };
+    });
 
-    yield {
+    emit({
       id: nextEventId(),
       event: 'message_end',
       data: {
         session: sessionState,
         project: store.getProject(sessionState.projectId),
+        ...(sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
+          ? {
+              prototypes: store.listPrototypes(sessionState.projectId),
+              confirmedPrototypeRevision:
+                store.getConfirmedPrototypeRevision(sessionState.projectId) ?? null,
+            }
+          : {}),
       },
-    };
+    });
   } catch (err) {
     const currentActive = activeSessionAbortControllers.get(existing.id);
     const supersededByNewTurn = Boolean(currentActive && currentActive !== controller);
@@ -2970,50 +3734,58 @@ export async function* runUnifiedAgentSessionStream(
       return;
     }
 
-    const hasPartialProgress = Boolean(
-      accumulatedText.trim() ||
-        accumulatedThinking.trim() ||
-        allToolTraces.length > 0 ||
-        allArtifacts.length > 0 ||
-        pendingAskUser,
-    );
-
-    if (
-      err instanceof SessionStreamAbortedError &&
-      (err.kind === 'USER_ABORT' || err.kind === 'CLIENT_DISCONNECT')
-    ) {
-      const partialMessages = hasPartialProgress
-        ? [
-            ...sessionState.messages,
-            {
-              id: assistantMsgId,
-              role: 'assistant' as const,
-              content: accumulatedText,
-              ...(accumulatedThinking
-                ? {
-                    thinking: accumulatedThinking,
-                    thinkingDurationMs: Date.now() - turnStartMs,
-                  }
-                : {}),
-              ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
-              ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
-              ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
-              ...(built
-                ? {
-                    modelUsed: built.selectedModel.id,
-                    providerName: built.providerLabel,
-                  }
-                : {}),
-              timestamp: new Date().toISOString(),
-            },
-          ]
-        : sessionState.messages;
+    if (err instanceof SessionStreamAbortedError && err.kind === 'USER_ABORT') {
+      const cancelledAssistantMsg: AgentSessionMessage = {
+        id: assistantMsgId,
+        role: 'assistant',
+        content: accumulatedText,
+        cancelled: true,
+        ...(accumulatedThinking
+          ? {
+              thinking: accumulatedThinking,
+              thinkingDurationMs: Date.now() - turnStartMs,
+            }
+          : {}),
+        ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
+        ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
+        ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
+        ...(built
+          ? {
+              modelUsed: built.selectedModel.id,
+              providerName: built.providerLabel,
+            }
+          : {}),
+        timestamp: new Date().toISOString(),
+      };
 
       sessionState = store.saveAgentSession({
         ...sessionState,
         status: 'IDLE',
-        messages: partialMessages,
+        messages: [...sessionState.messages, cancelledAssistantMsg],
         updatedAt: new Date().toISOString(),
+      });
+
+      saveSessionCheckpointSafe(store, sessionState, {
+        phase: 'CANCELLED',
+        messageCount: sessionState.messages.length,
+        toolCallsCount: allToolTraces.length,
+      });
+
+      emit({
+        id: nextEventId(),
+        event: 'message_end',
+        data: {
+          session: sessionState,
+          cancelled: true,
+          project: store.getProject(sessionState.projectId),
+          ...(sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
+            ? {
+                prototypes: store.listPrototypes(sessionState.projectId),
+                confirmedPrototypeRevision:
+                  store.getConfirmedPrototypeRevision(sessionState.projectId) ?? null,
+              }
+            : {}),
+        },
       });
       return;
     }
@@ -3078,25 +3850,260 @@ export async function* runUnifiedAgentSessionStream(
       updatedAt: new Date().toISOString(),
     });
 
-    yield {
+    saveSessionCheckpointSafe(store, sessionState, {
+      phase: 'FAILED',
+      messageCount: sessionState.messages.length,
+      errorCode: diagnostic.code,
+    });
+
+    emit({
       id: nextEventId(),
       event: 'run_error',
       data: {
         diagnostic: errorAssistantMsg.errorDiagnostic,
         session: sessionState,
       },
-    };
+    });
   } finally {
     if (idleTimer !== undefined) {
       clearTimeout(idleTimer);
-    }
-    if (input.signal) {
-      input.signal.removeEventListener('abort', abortFromClient);
     }
     if (activeSessionAbortControllers.get(existing.id) === controller) {
       activeSessionAbortControllers.delete(existing.id);
     }
   }
+}
+
+function notifyRunSubscribers(run: ActiveBackgroundSessionRun): void {
+  for (const notify of Array.from(run.subscribers)) {
+    notify();
+  }
+}
+
+function launchActiveRunInSlot(
+  store: WorkspaceStore,
+  slot: SessionRunnerSlot,
+  sessionId: string,
+  turnInput: Omit<UnifiedAgentStreamInput, 'signal'>,
+): ActiveBackgroundSessionRun {
+  const controller = new AbortController();
+  const run: ActiveBackgroundSessionRun = {
+    runId: `srun-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    sessionId,
+    controller,
+    bufferedEvents: [],
+    subscribers: new Set(),
+    done: false,
+    completionPromise: Promise.resolve(),
+  };
+
+  slot.activeRun = run;
+
+  const emit = (ev: UnifiedAgentSseEvent) => {
+    run.bufferedEvents.push(ev);
+    notifyRunSubscribers(run);
+  };
+
+  run.completionPromise = executeUnifiedTurnCore(store, turnInput, emit, controller)
+    .catch((err) => {
+      emit({
+        id: `${sessionId}-evt-fatal-${Date.now().toString(36)}`,
+        event: 'run_error',
+        data: {
+          diagnostic: {
+            code: 'AGENT_RUNTIME_ERROR',
+            message: err instanceof Error ? err.message : String(err),
+          },
+          session: store.getAgentSession(sessionId),
+        },
+      });
+    })
+    .finally(() => {
+      run.done = true;
+      notifyRunSubscribers(run);
+      if (slot.activeRun === run) {
+        slot.activeRun = null;
+        pumpNextQueuedTurn(store, slot, sessionId);
+      }
+    });
+
+  return run;
+}
+
+function pumpNextQueuedTurn(
+  store: WorkspaceStore,
+  slot: SessionRunnerSlot,
+  sessionId: string,
+): void {
+  while (slot.queue.length > 0) {
+    const next = slot.queue.shift()!;
+    if (next.cancelled) {
+      next.resolveRun(null);
+      continue;
+    }
+    if (!store.getAgentSession(sessionId)) {
+      next.resolveRun(null);
+      continue;
+    }
+    const launched = launchActiveRunInSlot(store, slot, sessionId, next.input);
+    next.resolveRun(launched);
+    return;
+  }
+}
+
+async function* subscribeToBackgroundRun(
+  run: ActiveBackgroundSessionRun,
+  signal?: AbortSignal,
+  afterEventId?: string,
+): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
+  let cursor = 0;
+  if (afterEventId) {
+    const idx = run.bufferedEvents.findIndex((e) => e.id === afterEventId);
+    if (idx >= 0) {
+      cursor = idx + 1;
+    }
+  }
+
+  while (true) {
+    if (signal?.aborted) {
+      return;
+    }
+    while (cursor < run.bufferedEvents.length) {
+      if (signal?.aborted) {
+        return;
+      }
+      const ev = run.bufferedEvents[cursor++]!;
+      yield ev;
+    }
+    if (run.done) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      const onUpdate = () => {
+        cleanup();
+        resolve();
+      };
+      const onAbort = () => {
+        cleanup();
+        resolve();
+      };
+      const cleanup = () => {
+        run.subscribers.delete(onUpdate);
+        signal?.removeEventListener('abort', onAbort);
+      };
+      run.subscribers.add(onUpdate);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (cursor < run.bufferedEvents.length || run.done || signal?.aborted) {
+        cleanup();
+        resolve();
+      }
+    });
+  }
+}
+
+export async function* runUnifiedAgentSessionStream(
+  store: WorkspaceStore,
+  input: UnifiedAgentStreamInput,
+): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
+  const existing = store.getAgentSession(input.sessionId);
+  if (!existing) {
+    throw new Error(`Agent session not found: ${input.sessionId}`);
+  }
+
+  const { signal: clientSignal, ...turnInput } = input;
+  const slot = getOrCreateSessionSlot(store, input.sessionId);
+
+  if (input.mode === 'STEER' && slot.activeRun && !slot.activeRun.done) {
+    abortActiveAgentSession(input.sessionId, 'STEER_SUPERSEDED', store);
+    const steerRun = launchActiveRunInSlot(store, slot, input.sessionId, turnInput);
+    yield* subscribeToBackgroundRun(steerRun, clientSignal);
+    return;
+  }
+
+  if (slot.activeRun && !slot.activeRun.done) {
+    const queuedRunPromise = new Promise<ActiveBackgroundSessionRun | null>((resolve) => {
+      slot.queue.push({
+        queueId: `sq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        input: turnInput,
+        cancelled: false,
+        resolveRun: resolve,
+      });
+    });
+
+    if (clientSignal?.aborted) {
+      return;
+    }
+
+    const startedRun = await new Promise<ActiveBackgroundSessionRun | null>((resolve) => {
+      const onClientDisconnect = () => {
+        resolve(null);
+      };
+      clientSignal?.addEventListener('abort', onClientDisconnect, { once: true });
+      void queuedRunPromise.then((run) => {
+        clientSignal?.removeEventListener('abort', onClientDisconnect);
+        resolve(run);
+      });
+    });
+
+    if (!startedRun || clientSignal?.aborted) {
+      return;
+    }
+
+    yield* subscribeToBackgroundRun(startedRun, clientSignal);
+    return;
+  }
+
+  const run = launchActiveRunInSlot(store, slot, input.sessionId, turnInput);
+  yield* subscribeToBackgroundRun(run, clientSignal);
+}
+
+export async function* attachUnifiedAgentSessionLiveStream(
+  store: WorkspaceStore,
+  sessionId: string,
+  options?: {
+    afterEventId?: string;
+    signal?: AbortSignal;
+  },
+): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
+  const slot = getSessionSlot(store, sessionId);
+  if (slot?.activeRun && !slot.activeRun.done) {
+    yield* subscribeToBackgroundRun(slot.activeRun, options?.signal, options?.afterEventId);
+    return;
+  }
+
+  const existing = store.getAgentSession(sessionId);
+  if (!existing) {
+    throw new Error(`Agent session not found: ${sessionId}`);
+  }
+
+  const healedSession =
+    existing.status === 'RUNNING'
+      ? store.saveAgentSession({
+          ...existing,
+          status: 'IDLE',
+          updatedAt: new Date().toISOString(),
+        })
+      : existing;
+
+  if (options?.signal?.aborted) {
+    return;
+  }
+
+  yield {
+    id: `${sessionId}-evt-snapshot-${Date.now().toString(36)}`,
+    event: 'message_end',
+    data: {
+      session: healedSession,
+      project: store.getProject(healedSession.projectId),
+      ...(healedSession.agentKind === 'PROTOTYPE_CO_DESIGN'
+        ? {
+            prototypes: store.listPrototypes(healedSession.projectId),
+            confirmedPrototypeRevision:
+              store.getConfirmedPrototypeRevision(healedSession.projectId) ?? null,
+          }
+        : {}),
+    },
+  };
 }
 
 export async function collectUnifiedAgentTurn(

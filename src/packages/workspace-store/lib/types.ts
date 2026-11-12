@@ -44,10 +44,18 @@ export interface ProjectSnapshot {
 
 export type AgentSessionKind =
   | 'REQUIREMENT'
+  | 'PROTOTYPE_CO_DESIGN'
   | 'COPILOT'
   | 'CODING'
   | 'CAPABILITY'
   | 'REASONING';
+
+export interface PrototypeTargetAnchor {
+  screenId?: string;
+  elementId?: string;
+  cssSelector?: string;
+  label?: string;
+}
 
 export interface AgentToolCallTrace {
   id: string;
@@ -59,6 +67,7 @@ export interface AgentToolCallTrace {
   durationMs?: number;
   targetElementId?: string;
   targetModelCode?: ModelCode;
+  targetAnchor?: PrototypeTargetAnchor;
 }
 
 export interface AgentAskUserPrompt {
@@ -115,6 +124,13 @@ export type AgentDomainArtifact =
       appId: string;
       outputDir: string;
       files: string[];
+    }
+  | {
+      kind: 'PROTOTYPE_REVISION';
+      prototypeId: string;
+      revisionId: string;
+      revisionNumber: number;
+      modifiedAnchors: PrototypeTargetAnchor[];
     };
 
 export type AgentImageAttachmentRole =
@@ -149,6 +165,7 @@ export interface AgentSessionMessage {
   toolCalls?: AgentToolCallTrace[];
   askUser?: AgentAskUserPrompt;
   artifacts?: AgentDomainArtifact[];
+  cancelled?: boolean;
   errorDiagnostic?: {
     code: string;
     providerName?: string;
@@ -245,6 +262,7 @@ export interface DesignBrief {
 export type PrototypeRevisionSource =
   | 'GENERATED'
   | 'REFINED'
+  | 'AGENT_RUN'
   | 'MANUAL_SAVE'
   | 'UPLOADED'
   | 'RESTORED'
@@ -789,6 +807,7 @@ export interface WorkspaceStore {
     patch: { title?: string; starred?: boolean },
   ): { prototype: InteractivePrototype; revision: PrototypeRevision };
   updatePrototypeDesignBrief(prototypeId: string, designBrief: DesignBrief): InteractivePrototype;
+  linkPrototypeCoDesignSession(prototypeId: string, sessionId: string): InteractivePrototype;
   confirmPrototypeRevision(
     projectId: string,
     revisionId: string,

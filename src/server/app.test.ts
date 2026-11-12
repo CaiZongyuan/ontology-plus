@@ -696,8 +696,9 @@ describe('server API & Cloudflare Worker integration', () => {
     expect(protos[0]!.htmlContent).not.toContain("扣减addFlow");
   });
 
-  it('refines targeted screen/element via visual box-select annotations and preserves MU consistency', async () => {
+  it('replaces synchronous /refine with PROTOTYPE_CO_DESIGN session anchored edits + /live SSE attach', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
     const app = createApiApp(store);
 
     const bootRes = await app.request('/api/bootstrap');
@@ -707,46 +708,68 @@ describe('server API & Cloudflare Worker integration', () => {
     };
     const projectId = bootJson.activeProject.id;
     const protoId = bootJson.prototypes[0]!.id;
-    const baseVersion = bootJson.prototypes[0]!.version;
+    const beforeHtml = bootJson.prototypes[0]!.htmlContent;
 
-    // Submit visual selection targeting the 3rd screen (SCR-CONTRACT-APPROVAL / EL-BTN-APPROVE)
-    const refineRes = await app.request(`/api/projects/${projectId}/prototypes/${protoId}/refine`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        instruction: '',
-        selections: [
-          {
-            kind: 'ELEMENT',
-            cssSelector: 'button[data-element-id="EL-BTN-APPROVE"]',
-            tagName: 'button',
-            label: '审批通过并触发签章结算',
-            screenId: 'SCR-CONTRACT-APPROVAL',
-            elementId: 'EL-BTN-APPROVE',
-            eventId: 'UIE-APPROVE-CONTRACT',
-            htmlSnippet: '<button data-element-id="EL-BTN-APPROVE">审批通过并触发签章结算</button>',
-            note: '在此处增加法务退回重审按钮',
-          },
-        ],
-      }),
-    });
-    expect(refineRes.status).toBe(200);
-    const refinedJson = (await refineRes.json()) as {
-      prototype: { version: string; htmlContent: string; extractedScreenCount: number };
-      project: { validation: { errorCount: number } };
-    };
-
-    expect(refinedJson.prototype.version).toBe(`${baseVersion}-r1`);
-    expect(refinedJson.prototype.extractedScreenCount).toBe(3);
-    expect(refinedJson.project.validation.errorCount).toBe(0);
-
-    // Verify deterministic refinement landed inside the 3rd screen (SCR-CONTRACT-APPROVAL) rather than SCR-CONTRACT-LIST
-    const approvalScreenIdx = refinedJson.prototype.htmlContent.indexOf(
-      'data-screen-id="SCR-CONTRACT-APPROVAL"',
+    // 1. Legacy synchronous /refine endpoint is removed (404)
+    const legacyRefineRes = await app.request(
+      `/api/projects/${projectId}/prototypes/${protoId}/refine`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction: '增加按钮' }),
+      },
     );
-    const injectedIdx = refinedJson.prototype.htmlContent.indexOf('[EL-BTN-APPROVE]');
-    expect(approvalScreenIdx).toBeGreaterThan(0);
-    expect(injectedIdx).toBeGreaterThan(approvalScreenIdx);
+    expect(legacyRefineRes.status).toBe(404);
+
+    // 2. Ensure PROTOTYPE_CO_DESIGN session for prototype
+    const coDesignRes = await app.request(
+      `/api/projects/${projectId}/prototypes/${protoId}/co-design-session`,
+      { method: 'POST' },
+    );
+    expect(coDesignRes.status).toBe(200);
+    const coDesignJson = (await coDesignRes.json()) as {
+      session: { id: string; agentKind: string; targetId?: string };
+      prototype: { id: string; coDesignSessionId?: string };
+    };
+    expect(coDesignJson.session.agentKind).toBe('PROTOTYPE_CO_DESIGN');
+    expect(coDesignJson.session.targetId).toBe(protoId);
+    expect(coDesignJson.prototype.coDesignSessionId).toBe(coDesignJson.session.id);
+
+    // 3. Stream anchored refinement targeting SCR-CONTRACT-APPROVAL / EL-BTN-APPROVE
+    const streamRes = await app.request(
+      `/api/agent-sessions/${coDesignJson.session.id}/stream`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt:
+            '--- 用户在界面原型上框选/点选的目标区域与批注 ---\n#1 [ELEMENT] selector="button[data-element-id=\\"EL-BTN-APPROVE\\"]" (screen=SCR-CONTRACT-APPROVAL, element=EL-BTN-APPROVE)\n   Note: 在此处增加法务退回重审按钮\n\n在此处增加法务退回重审按钮',
+          mockMode: true,
+        }),
+      },
+    );
+    expect(streamRes.status).toBe(200);
+    const sseText = await streamRes.text();
+    expect(sseText).toContain('read_prototype_anchor');
+    expect(sseText).toContain('edit_prototype_anchor');
+    expect(sseText).toContain('PROTOTYPE_REVISION');
+
+    const updatedProto = store.getPrototype(protoId)!;
+    expect(updatedProto.revisions).toHaveLength(2);
+    expect(updatedProto.revisions[1]!.source).toBe('AGENT_RUN');
+
+    // Untouched prefix before SCR-CONTRACT-APPROVAL stayed byte-for-byte identical
+    const approvalStart = beforeHtml.indexOf('data-screen-id="SCR-CONTRACT-APPROVAL"');
+    expect(approvalStart).toBeGreaterThan(0);
+    expect(updatedProto.htmlContent.slice(0, approvalStart)).toBe(
+      beforeHtml.slice(0, approvalStart),
+    );
+
+    // 4. GET /api/agent-sessions/:id/live returns snapshot SSE frame cleanly
+    const liveRes = await app.request(`/api/agent-sessions/${coDesignJson.session.id}/live`);
+    expect(liveRes.status).toBe(200);
+    const liveText = await liveRes.text();
+    expect(liveText).toContain('event: message_end');
   });
 
   it('serves two-tier prototype revision REST APIs, enforces 409 deletion guard on Confirmed Revision, and compiles Dev Package from Confirmed Revision', async () => {

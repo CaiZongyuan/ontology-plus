@@ -96,6 +96,10 @@ const KIND_META: Record<
     badgeZh: '需求启发 Agent',
     badgeEn: 'Requirement Explorer',
   },
+  PROTOTYPE_CO_DESIGN: {
+    badgeZh: '原型共创 Agent',
+    badgeEn: 'Prototype Co-Design',
+  },
   COPILOT: {
     badgeZh: '本体建模 Copilot',
     badgeEn: 'Ontology Copilot',
@@ -134,6 +138,17 @@ function buildDynamicStarterPrompts(
         t(
           `帮我识别「${scopeZh}」中边界模糊的 B 类关键业务决策点并让我确认`,
           `Identify ambiguous Class-B business boundaries in "${scopeEn}" and ask me to confirm`,
+        ),
+      ];
+    case 'PROTOTYPE_CO_DESIGN':
+      return [
+        t(
+          `读取「${scopeZh}」主台账屏幕锚点，补充状态快捷筛选与批量操作按钮`,
+          `Inspect "${scopeEn}" ledger screen anchors and add status quick-filters and batch actions`,
+        ),
+        t(
+          `针对当前审批或编辑屏幕进行局部布局精修并保留既有语义锚点`,
+          `Refine the approval or form screen layout while preserving all semantic anchors`,
         ),
       ];
     case 'COPILOT':

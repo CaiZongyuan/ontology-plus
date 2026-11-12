@@ -1,9 +1,14 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BackgroundPipelineTask } from '../../api.js';
+import {
+  createWorkspaceStore,
+  type AgentSession,
+} from '../../../packages/workspace-store/index.js';
+import { createApiApp } from '../../../server/app.js';
+import { useWorkbenchStore, type BackgroundPipelineTask } from '../../api.js';
 import { PreferencesProvider } from '../../i18n.js';
-import { AgentPanel } from './AgentPanel.js';
+import { AgentPanel, shouldSubmitComposerKey } from './AgentPanel.js';
 import { AgentRunCard, type AgentRunCardProps } from './AgentRunCard.js';
 import {
   AGENT_PANEL_DEFAULT_WIDTH,
@@ -12,7 +17,14 @@ import {
   clampAgentPanelWidth,
   parseAgentPanelPrefs,
 } from './agentPanelStore.js';
-import { agentRunFromPipelineTask, formatRunElapsed, type AgentRunView } from './agentRun.js';
+import {
+  agentRunFromPipelineTask,
+  agentRunsFromSession,
+  formatRunElapsed,
+  type AgentRunView,
+  type SessionLiveDraft,
+} from './agentRun.js';
+import { ShellAgentPanel, agentPanelSurfaceFor } from './ShellAgentPanel.js';
 
 const STARTED_AT = Date.UTC(2026, 10, 12, 10, 0, 0);
 const noop = () => {};
@@ -68,6 +80,15 @@ function renderCard(props: Partial<AgentRunCardProps> & { run: AgentRunView }): 
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  const cleanPatch = {
+    data: null,
+    backgroundTasks: [],
+    liveSessionDrafts: {},
+    sessionQueues: {},
+    activePrototypeIdByProject: {},
+  };
+  useWorkbenchStore.setState(cleanPatch);
+  Object.assign(useWorkbenchStore.getInitialState(), cleanPatch);
 });
 
 describe('AgentRunCard', () => {
@@ -368,5 +389,350 @@ describe('Agent Panel preferences', () => {
       open: true,
       width: AGENT_PANEL_DEFAULT_WIDTH,
     });
+  });
+});
+
+describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
+  function makeSession(overrides: Partial<AgentSession> = {}): AgentSession {
+    return {
+      id: 'sess-proto-1',
+      projectId: 'proj-contract',
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      targetId: 'proto-1',
+      title: '原型共创',
+      status: 'IDLE',
+      pinned: false,
+      messages: [
+        {
+          id: 'u-1',
+          role: 'user',
+          content: '将新建按钮文案改为「立即创建合同」',
+          timestamp: '2026-11-12T10:00:00.000Z',
+        },
+        {
+          id: 'a-1',
+          role: 'assistant',
+          content: '已局部更新新建按钮文案并保留原有锚点。',
+          thinking: '先读取 EL-ACT-NEW，再局部替换按钮。',
+          modelUsed: 'auto/glm-5.3-flash',
+          toolCalls: [
+            {
+              id: 'tc-1',
+              toolName: 'read_prototype_anchor',
+              arguments: { elementId: 'EL-ACT-NEW' },
+              isError: false,
+              output: '<button data-element-id="EL-ACT-NEW">新建</button>',
+              targetAnchor: {
+                screenId: 'SCR-CONTRACT-LIST',
+                elementId: 'EL-ACT-NEW',
+                label: '新建合同按钮',
+              },
+            },
+            {
+              id: 'tc-2',
+              toolName: 'edit_prototype_anchor',
+              arguments: {
+                elementId: 'EL-ACT-NEW',
+                operation: 'replace_element',
+              },
+              isError: false,
+              output: 'Updated EL-ACT-NEW in SCR-CONTRACT-LIST',
+              targetAnchor: {
+                screenId: 'SCR-CONTRACT-LIST',
+                elementId: 'EL-ACT-NEW',
+                label: '新建合同按钮',
+              },
+            },
+          ],
+          artifacts: [
+            {
+              kind: 'PROTOTYPE_REVISION',
+              prototypeId: 'proto-1',
+              revisionId: 'rev-2',
+              revisionNumber: 2,
+              modifiedAnchors: [
+                {
+                  screenId: 'SCR-CONTRACT-LIST',
+                  elementId: 'EL-ACT-NEW',
+                  label: '新建合同按钮',
+                },
+              ],
+            },
+          ],
+          timestamp: '2026-11-12T10:00:05.000Z',
+        },
+      ],
+      createdAt: '2026-11-12T10:00:00.000Z',
+      updatedAt: '2026-11-12T10:00:05.000Z',
+      ...overrides,
+    };
+  }
+
+  it('adapts completed, failed, cancelled, and live streaming session turns with targetAnchor badges', () => {
+    const baseSession = makeSession({
+      messages: [
+        ...makeSession().messages,
+        {
+          id: 'u-2',
+          role: 'user',
+          content: '调整审批筛选栏',
+          timestamp: '2026-11-12T10:01:00.000Z',
+        },
+        {
+          id: 'a-2',
+          role: 'assistant',
+          content: '',
+          cancelled: true,
+          timestamp: '2026-11-12T10:01:03.000Z',
+        },
+        {
+          id: 'u-3',
+          role: 'user',
+          content: '重做合同状态列',
+          timestamp: '2026-11-12T10:02:00.000Z',
+        },
+        {
+          id: 'a-3',
+          role: 'assistant',
+          content: '',
+          errorDiagnostic: {
+            code: 'LLM_EMPTY_RESPONSE',
+            message: 'Model returned empty response without tool edits',
+            remediation: 'Check LLM Center gateway configuration.',
+          },
+          timestamp: '2026-11-12T10:02:04.000Z',
+        },
+        {
+          id: 'u-4',
+          role: 'user',
+          content: '给列表顶部补一个按部门筛选下拉框',
+          timestamp: '2026-11-12T10:03:00.000Z',
+        },
+      ],
+      status: 'RUNNING',
+    });
+
+    const liveDraft: SessionLiveDraft = {
+      runId: 'live-4',
+      sessionId: baseSession.id,
+      userPrompt: '给列表顶部补一个按部门筛选下拉框',
+      startedAt: Date.parse('2026-11-12T10:03:00.000Z'),
+      liveStatus: { zh: '正在修改锚点 SCR-CONTRACT-LIST…', en: 'Editing anchor SCR-CONTRACT-LIST…' },
+      thinking: '准备在 SCR-CONTRACT-LIST 内插入带锚点的 select。',
+      text: '',
+      steps: [
+        {
+          id: 'live-tc-1',
+          label: { zh: '局部修改锚点片段', en: 'Edit anchor fragment' },
+          status: 'RUNNING',
+          targetAnchor: { screenId: 'SCR-CONTRACT-LIST', elementId: 'EL-FILTER-DEPT' },
+        },
+      ],
+    };
+
+    const runs = agentRunsFromSession(baseSession, liveDraft);
+    expect(runs).toHaveLength(4);
+
+    // 1) Succeeded run with targetAnchor steps & PROTOTYPE_REVISION artifact
+    expect(runs[0]?.status).toBe('SUCCEEDED');
+    expect(runs[0]?.steps).toHaveLength(2);
+    expect(runs[0]?.steps[0]?.targetAnchor).toEqual({
+      screenId: 'SCR-CONTRACT-LIST',
+      elementId: 'EL-ACT-NEW',
+      label: '新建合同按钮',
+    });
+    expect(runs[0]?.prototypeRevision).toEqual({
+      prototypeId: 'proto-1',
+      revisionId: 'rev-2',
+      revisionNumber: 2,
+    });
+    expect(runs[0]?.result?.artifactLabel).toEqual({
+      zh: '查看修订 v2',
+      en: 'Open revision v2',
+    });
+
+    // 2) Cancelled run
+    expect(runs[1]?.status).toBe('CANCELLED');
+    expect(runs[1]?.retryPrompt).toBe('调整审批筛选栏');
+
+    // 3) Failed run with real errorDiagnostic (never fake success)
+    expect(runs[2]?.status).toBe('FAILED');
+    expect(runs[2]?.failure).toEqual({
+      code: 'LLM_EMPTY_RESPONSE',
+      message: 'Model returned empty response without tool edits',
+      remediation: 'Check LLM Center gateway configuration.',
+    });
+    expect(runs[2]?.result).toBeUndefined();
+
+    // 4) Live running turn merged with trailing unanswered user message (not duplicated)
+    expect(runs[3]?.status).toBe('RUNNING');
+    expect(runs[3]?.steps[0]?.targetAnchor?.elementId).toBe('EL-FILTER-DEPT');
+
+    // Render card with anchored steps and verify badge markup
+    const cardHtml = renderCard({ run: runs[0]! });
+    expect(cardHtml).toContain('data-testid="agent-run-step-anchor"');
+    expect(cardHtml).toContain('SCR-CONTRACT-LIST · EL-ACT-NEW');
+    expect(cardHtml).toContain('查看修订 v2');
+  });
+
+  it('renders interactive composer, header slot, queued prompts strip, and Enter key behavior in AgentPanel', () => {
+    expect(shouldSubmitComposerKey({ key: 'Enter', shiftKey: false, isComposing: false })).toBe(
+      true,
+    );
+    expect(shouldSubmitComposerKey({ key: 'Enter', shiftKey: true, isComposing: false })).toBe(
+      false,
+    );
+    expect(shouldSubmitComposerKey({ key: 'Enter', shiftKey: false, isComposing: true })).toBe(
+      false,
+    );
+
+    const html = renderToStaticMarkup(
+      <PreferencesProvider>
+        <AgentPanel
+          title={{ zh: '原型共创', en: 'Prototype Co-Design' }}
+          runs={[makeRun({ id: 'active-1', status: 'RUNNING' })]}
+          width={AGENT_PANEL_DEFAULT_WIDTH}
+          onClose={noop}
+          onResize={noop}
+          onSubmitPrompt={noop}
+          composerValue="把表格行距调紧凑一点"
+          composerHeaderSlot={<div data-testid="mock-selection-chip">EL-TBL-CONTRACTS</div>}
+          queuedPrompts={[
+            { id: 'q-1', label: '增加导出 CSV 按钮' },
+            { id: 'q-2', label: '高亮逾期状态标签' },
+          ]}
+          onRemoveQueuedPrompt={noop}
+        />
+      </PreferencesProvider>,
+    );
+
+    expect(html).toContain('data-testid="agent-panel-composer"');
+    expect(html).toContain('data-testid="agent-panel-composer-input"');
+    expect(html).toContain('data-testid="agent-panel-send-btn"');
+    expect(html).toContain('把表格行距调紧凑一点');
+    expect(html).toContain('data-testid="mock-selection-chip"');
+    expect(html).toContain('data-testid="agent-panel-queue"');
+    expect(html).toContain('排队中 (2)');
+    expect(html).toContain('增加导出 CSV 按钮');
+  });
+
+  it('streams PROTOTYPE_CO_DESIGN runs through useWorkbenchStore & ShellAgentPanel, queues concurrent prompts, and supports cancel & retry', async () => {
+    vi.stubEnv('ONTO_MOCK_LLM', '1');
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const app = createApiApp(store);
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlStr =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const fullUrl = urlStr.startsWith('http') ? urlStr : `http://localhost${urlStr}`;
+      return app.request(fullUrl, init);
+    });
+
+    const createdProto = store.createPrototype('proj-contract', {
+      name: '合同工作台原型.html',
+      htmlContent: [
+        '<main data-prototype-root="true">',
+        '  <section data-screen-id="SCR-CONTRACT-LIST" data-screen-name="合同台账" data-screen-type="LIST">',
+        '    <button data-element-id="EL-ACT-NEW" data-element-type="BUTTON" data-element-label="新建合同">新建合同</button>',
+        '  </section>',
+        '</main>',
+      ].join('\n'),
+    });
+
+    await useWorkbenchStore.getState().bootstrap('proj-contract');
+    useWorkbenchStore.getState().setActivePrototypeId('proj-contract', createdProto.prototype.id);
+
+    const { sessionId } = await useWorkbenchStore.getState().startPrototypeRefinementRun({
+      projectId: 'proj-contract',
+      prototypeId: createdProto.prototype.id,
+      instruction: '将新建按钮改为「立即新建合同」',
+      selections: [
+        {
+          kind: 'ELEMENT',
+          cssSelector: '[data-element-id="EL-ACT-NEW"]',
+          note: '按钮文案更明确',
+          screenId: 'SCR-CONTRACT-LIST',
+          elementId: 'EL-ACT-NEW',
+          label: '新建合同',
+        },
+      ],
+    });
+
+    // Wait for stream completion
+    await vi.waitFor(() => {
+      expect(useWorkbenchStore.getState().liveSessionDrafts[sessionId]).toBeUndefined();
+      const s = useWorkbenchStore
+        .getState()
+        .data?.agentSessions.find((item) => item.id === sessionId);
+      expect(s?.messages.filter((m) => m.role === 'assistant').length).toBe(1);
+    });
+
+    // Prototype revision v2 was created and synced into client store
+    const updatedProto = useWorkbenchStore
+      .getState()
+      .data?.prototypes.find((p) => p.id === createdProto.prototype.id);
+    expect(updatedProto?.revisions.length).toBe(2);
+
+    // ShellAgentPanel renders the completed PROTOTYPE_CO_DESIGN run card with targetAnchor badges & composer
+    const surface = agentPanelSurfaceFor('app-prototype')!;
+    Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+    const shellHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ShellAgentPanel surface={surface} overlay={false} onClose={noop} onNavigate={noop} />
+      </PreferencesProvider>,
+    );
+    expect(shellHtml).toContain('data-testid="agent-run-card"');
+    expect(shellHtml).toContain('data-run-status="SUCCEEDED"');
+    expect(shellHtml).toContain('data-testid="agent-run-step-anchor"');
+    expect(shellHtml).toContain('EL-ACT-NEW');
+    expect(shellHtml).toContain('查看修订 v2');
+    expect(shellHtml).toContain('data-testid="agent-panel-composer-input"');
+
+    // Queueing while a run is active: simulate an active live draft, enqueue a prompt, and verify queue state
+    useWorkbenchStore.setState((prev) => ({
+      liveSessionDrafts: {
+        ...prev.liveSessionDrafts,
+        [sessionId]: {
+          runId: 'sim-active',
+          sessionId,
+          userPrompt: '正在执行的精修任务',
+          startedAt: Date.now(),
+          liveStatus: { zh: '正在执行…', en: 'Running…' },
+          thinking: '',
+          text: '',
+          steps: [],
+        },
+      },
+    }));
+
+    await useWorkbenchStore.getState().startSessionAgentRun({
+      sessionId,
+      prompt: '排队中的第二条精修指令 [ anchor: EL-ACT-NEW ]',
+    });
+    expect(useWorkbenchStore.getState().sessionQueues[sessionId]).toHaveLength(1);
+
+    Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+    const queuedShellHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ShellAgentPanel surface={surface} overlay={false} onClose={noop} onNavigate={noop} />
+      </PreferencesProvider>,
+    );
+    expect(queuedShellHtml).toContain('data-testid="agent-panel-queue"');
+    expect(queuedShellHtml).toContain('排队中 (1)');
+
+    // Cancel clears the queue and live draft
+    await useWorkbenchStore.getState().cancelSessionAgentRun(sessionId);
+    expect(useWorkbenchStore.getState().sessionQueues[sessionId] ?? []).toHaveLength(0);
+    expect(useWorkbenchStore.getState().liveSessionDrafts[sessionId]).toBeUndefined();
+
+    // Retry re-dispatches the prompt and completes cleanly
+    await useWorkbenchStore.getState().retrySessionAgentRun(sessionId);
+    const retriedSess = useWorkbenchStore
+      .getState()
+      .data?.agentSessions.find((item) => item.id === sessionId);
+    expect(retriedSess?.messages.filter((m) => m.role === 'assistant').length).toBe(2);
   });
 });

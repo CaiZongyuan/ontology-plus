@@ -13,11 +13,11 @@ import {
   collectUnifiedAgentTurn,
   compactAgentSession,
   createSseEventStream,
+  ensurePrototypeCoDesignSession,
   generateMetricInsight,
   generatePrototypeFromDoc,
   generateTechArchitectureDoc,
   ontologyToolRegistry,
-  refinePrototypeWithAi,
   runAppCodingAgentTurn,
   runCapabilitySmartChatTurn,
   runDataOntologyReasoning,
@@ -169,17 +169,23 @@ describe('agent-runtime deep module', () => {
     expect(protoRes.project.validation.presentModels).toEqual([]);
     expect(protoRes.project.validation.errorCount).toBe(0);
 
-    const refined = await refinePrototypeWithAi(store, {
-      projectId: emptyProj.id,
-      prototypeId: protoRes.prototype.id,
-      instruction: '在台账页顶部补充紧急采购交期红线提示徽章',
+    const coDesignSession = ensurePrototypeCoDesignSession(
+      store,
+      emptyProj.id,
+      protoRes.prototype.id,
+    );
+    await collectUnifiedAgentTurn(store, {
+      sessionId: coDesignSession.id,
+      prompt: '在台账页顶部补充紧急采购交期红线提示徽章',
+      mockMode: true,
     });
-    expect(refined.project.validation.presentModels).toEqual([]);
-    expect(refined.project.validation.errorCount).toBe(0);
+    const afterRefineProj = store.getProject(emptyProj.id)!;
+    expect(afterRefineProj.validation.presentModels).toEqual([]);
+    expect(afterRefineProj.validation.errorCount).toBe(0);
 
     const synth = await synthesizeOntologyFromPrototype(store, {
       projectId: emptyProj.id,
-      prototypeId: refined.prototype.id,
+      prototypeId: protoRes.prototype.id,
     });
     expect(synth.synthesizedModels).toHaveLength(11);
     expect(synth.project.validation.presentModels).toHaveLength(11);
@@ -798,16 +804,18 @@ describe('agent-runtime deep module', () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     store.updateSystemSettings({ mockLlmMode: true });
 
-    // 1. On proj-contract (which has 11 models), refining a prototype MUST NOT mutate suite.MU
+    // 1. On proj-contract (which has 11 models), refining a prototype via PROTOTYPE_CO_DESIGN MUST NOT mutate suite.MU
     const beforeContractMu = JSON.stringify(store.getProject('proj-contract')!.suite.MU);
     const seedProto = store.listPrototypes('proj-contract')[0]!;
-    const refinedSeed = await refinePrototypeWithAi(store, {
-      projectId: 'proj-contract',
-      prototypeId: seedProto.id,
-      instruction: '增加实验性合同批量作废危险按钮',
+    const seedCoDesign = ensurePrototypeCoDesignSession(store, 'proj-contract', seedProto.id);
+    await collectUnifiedAgentTurn(store, {
+      sessionId: seedCoDesign.id,
+      prompt: '增加实验性合同批量作废危险按钮',
+      mockMode: true,
     });
-    expect(refinedSeed.prototype.revisions).toHaveLength(2);
-    expect(refinedSeed.prototype.aheadOfConfirmedCount).toBe(1);
+    const updatedSeedProto = store.getPrototype(seedProto.id)!;
+    expect(updatedSeedProto.revisions).toHaveLength(2);
+    expect(updatedSeedProto.aheadOfConfirmedCount).toBe(1);
     expect(JSON.stringify(store.getProject('proj-contract')!.suite.MU)).toBe(beforeContractMu);
 
     // 2. When prototypeId is omitted, synthesizeOntologyFromPrototype MUST read Confirmed Revision, NOT newest unconfirmed revision/prototype

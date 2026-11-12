@@ -30,6 +30,8 @@ import {
   LlmGatewayError,
   SSE_RESPONSE_HEADERS,
   abortActiveAgentSession,
+  abortActiveAgentSessionAsync,
+  attachUnifiedAgentSessionLiveStream,
   buildTurnSseEvents,
   cancelServerPipelineTask,
   compactAgentSessionWithLlm,
@@ -37,14 +39,15 @@ import {
   createSseEventStream,
   createUnifiedSseStream,
   dismissServerPipelineTask,
+  ensurePrototypeCoDesignSession,
   generateMetricInsight,
   generatePrototypeFromDoc,
   generateTechArchitectureDoc,
+  getLiveAgentSessionStatus,
   getServerPipelineTask,
   listServerPipelineTasks,
   markServerPipelineTaskRead,
   normalizeAgentLocale,
-  refinePrototypeWithAi,
   resumeServerPipelineTask,
   runAppCodingAgentTurn,
   runCapabilitySmartChatTurn,
@@ -60,7 +63,6 @@ import {
   testLlmGatewayConnection,
   type AgentLocale,
   type PipelineTaskKind,
-  type PrototypeRefinementSelection,
   type TransientTurnImageInput,
 } from '../packages/agent-runtime/index.js';
 import {
@@ -317,7 +319,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
 
   app.delete('/api/agent-sessions/:id', (c) => {
     const id = c.req.param('id');
-    abortActiveAgentSession(id);
+    abortActiveAgentSession(id, 'USER_ABORT', store);
     store.deleteAgentSession(id);
     return c.json({
       deletedId: id,
@@ -337,22 +339,38 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     });
   });
 
-  app.post('/api/agent-sessions/:id/abort', (c) => {
+  app.post('/api/agent-sessions/:id/abort', async (c) => {
     const id = c.req.param('id');
-    const aborted = abortActiveAgentSession(id);
-    const cur = store.getAgentSession(id);
-    const session =
-      cur && cur.status === 'RUNNING'
-        ? store.saveAgentSession({
-          ...cur,
-          status: 'IDLE',
-          updatedAt: new Date().toISOString(),
-        })
-        : cur;
+    const { aborted, session } = await abortActiveAgentSessionAsync(store, id);
     return c.json({
       aborted,
       session,
       agentSessions: store.listAgentSessions(),
+    });
+  });
+
+  app.get('/api/agent-sessions/:id/live', (c) => {
+    const id = c.req.param('id');
+    const existing = store.getAgentSession(id);
+    if (!existing) return c.json({ error: 'Agent session not found' }, 404);
+    const afterEventId =
+      c.req.query('afterEventId') || c.req.header('Last-Event-ID') || undefined;
+    const generator = attachUnifiedAgentSessionLiveStream(store, id, {
+      ...(afterEventId ? { afterEventId } : {}),
+      signal: c.req.raw.signal,
+    });
+    return new Response(createUnifiedSseStream(generator), {
+      headers: SSE_RESPONSE_HEADERS,
+    });
+  });
+
+  app.get('/api/agent-sessions/:id/status', (c) => {
+    const id = c.req.param('id');
+    const existing = store.getAgentSession(id);
+    if (!existing) return c.json({ error: 'Agent session not found' }, 404);
+    return c.json({
+      session: existing,
+      live: getLiveAgentSessionStatus(store, id),
     });
   });
 
@@ -1059,23 +1077,20 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     return c.json(result);
   });
 
-  app.post('/api/projects/:id/prototypes/:prototypeId/refine', async (c) => {
+  app.post('/api/projects/:id/prototypes/:prototypeId/co-design-session', (c) => {
     const projectId = c.req.param('id');
     const prototypeId = c.req.param('prototypeId');
-    const body = await c.req.json<{
-      instruction?: string;
-      selections?: PrototypeRefinementSelection[];
-      locale?: string;
-    }>();
-    const locale = getReqLocale(c, body);
-    const result = await refinePrototypeWithAi(store, {
-      projectId,
-      prototypeId,
-      instruction: body.instruction ?? '',
-      ...(body.selections && body.selections.length > 0 ? { selections: body.selections } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(result);
+    try {
+      const session = ensurePrototypeCoDesignSession(store, projectId, prototypeId);
+      return c.json({
+        session,
+        prototype: store.getPrototype(prototypeId) ?? null,
+        prototypes: store.listPrototypes(projectId),
+        agentSessions: store.listAgentSessions(),
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
+    }
   });
 
   app.post('/api/projects/:id/prototypes/synthesize-ontology', async (c) => {

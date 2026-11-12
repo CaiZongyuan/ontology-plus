@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { PanelRightClose } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Clock, PanelRightClose, Send, X } from 'lucide-react';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { Button } from '../beautifui/index.js';
@@ -10,10 +10,23 @@ import {
   AGENT_PANEL_MAX_WIDTH,
   AGENT_PANEL_MIN_WIDTH,
 } from './agentPanelStore.js';
-import type { AgentRunView, LocalizedText } from './agentRun.js';
+import type { AgentRunView, LocalizedText, PrototypeTargetAnchor } from './agentRun.js';
 
 const RESIZING_BODY_CLASS = 'agent-panel-resizing';
 const KEYBOARD_RESIZE_STEP = 16;
+
+export function shouldSubmitComposerKey(event: {
+  key: string;
+  shiftKey?: boolean;
+  isComposing?: boolean;
+}): boolean {
+  return event.key === 'Enter' && !event.shiftKey && !event.isComposing;
+}
+
+export interface AgentPanelQueuedPrompt {
+  id: string;
+  label: string;
+}
 
 export interface AgentPanelProps {
   /** Name of the Agent Session shown for the module in view. */
@@ -29,6 +42,18 @@ export interface AgentPanelProps {
   onRetryRun?: (runId: string) => void;
   onOpenRunArtifact?: (runId: string) => void;
   onOpenLlmCenter?: () => void;
+  onHoverAnchor?: (anchor: PrototypeTargetAnchor | null) => void;
+  /** Interactive composer submission handler. When supplied, renders the composer footer. */
+  onSubmitPrompt?: (prompt: string) => void | Promise<void>;
+  composerValue?: string;
+  onComposerValueChange?: (value: string) => void;
+  composerPlaceholder?: LocalizedText;
+  composerDisabled?: boolean;
+  /** Optional slot above the textarea for selection chips (#28) or image attachments (#31). */
+  composerHeaderSlot?: React.ReactNode;
+  /** Prompts queued behind the currently active run on this session. */
+  queuedPrompts?: AgentPanelQueuedPrompt[];
+  onRemoveQueuedPrompt?: (queueId: string) => void;
   /** Whether the active provider/model supports multimodal vision input (`false` shows explicit fallback banner). */
   visionSupported?: boolean;
   visionProviderLabel?: string;
@@ -51,6 +76,15 @@ export function AgentPanel({
   onRetryRun,
   onOpenRunArtifact,
   onOpenLlmCenter,
+  onHoverAnchor,
+  onSubmitPrompt,
+  composerValue,
+  onComposerValueChange,
+  composerPlaceholder,
+  composerDisabled = false,
+  composerHeaderSlot,
+  queuedPrompts,
+  onRemoveQueuedPrompt,
   visionSupported,
   visionProviderLabel,
   now,
@@ -58,8 +92,23 @@ export function AgentPanel({
   const { t } = usePreferences();
   const panelRef = useRef<HTMLElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [internalDraft, setInternalDraft] = useState('');
+  const draft = composerValue !== undefined ? composerValue : internalDraft;
+  const setDraft = (next: string) => {
+    if (composerValue === undefined) setInternalDraft(next);
+    onComposerValueChange?.(next);
+  };
   const runningCount = runs.filter((r) => r.status === 'RUNNING').length;
   const latestRunId = runs[runs.length - 1]?.id;
+  const canSend = !composerDisabled && draft.trim().length > 0;
+
+  const handleComposerSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const trimmed = draft.trim();
+    if (!onSubmitPrompt || composerDisabled || !trimmed) return;
+    setDraft('');
+    void onSubmitPrompt(trimmed);
+  };
 
   // Keep the newest run in view, the way a conversation follows its last message.
   useEffect(() => {
@@ -196,10 +245,101 @@ export function AgentPanel({
                 {...(onRetryRun ? { onRetry: () => onRetryRun(run.id) } : {})}
                 {...(onOpenRunArtifact ? { onOpenArtifact: () => onOpenRunArtifact(run.id) } : {})}
                 {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
+                {...(onHoverAnchor ? { onHoverAnchor } : {})}
               />
             ))
           )}
         </div>
+
+        {(onSubmitPrompt || (queuedPrompts && queuedPrompts.length > 0)) && (
+          <footer className="agent-panel-composer" data-testid="agent-panel-composer">
+            {queuedPrompts && queuedPrompts.length > 0 && (
+              <div className="agent-panel-queue" data-testid="agent-panel-queue">
+                <div className="agent-panel-queue-head">
+                  <Clock size={12} aria-hidden="true" />
+                  <span>
+                    {t(`排队中 (${queuedPrompts.length})`, `Queued (${queuedPrompts.length})`)}
+                  </span>
+                </div>
+                <ul className="agent-panel-queue-list">
+                  {queuedPrompts.map((item) => (
+                    <li key={item.id} className="agent-panel-queue-item">
+                      <span className="agent-panel-queue-label">{item.label}</span>
+                      {onRemoveQueuedPrompt && (
+                        <button
+                          type="button"
+                          className="agent-panel-queue-remove"
+                          data-testid="agent-panel-queue-remove-btn"
+                          aria-label={t('移出队列', 'Remove from queue')}
+                          onClick={() => onRemoveQueuedPrompt(item.id)}
+                        >
+                          <X size={11} aria-hidden="true" />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {composerHeaderSlot && (
+              <div className="agent-panel-composer-slot" data-testid="agent-panel-composer-slot">
+                {composerHeaderSlot}
+              </div>
+            )}
+
+            {onSubmitPrompt && (
+              <form className="agent-panel-composer-form" onSubmit={handleComposerSubmit}>
+                <textarea
+                  className="agent-panel-composer-input"
+                  data-testid="agent-panel-composer-input"
+                  rows={2}
+                  value={draft}
+                  disabled={composerDisabled}
+                  placeholder={
+                    composerPlaceholder
+                      ? t(composerPlaceholder.zh, composerPlaceholder.en)
+                      : t(
+                          '输入局部精修指令（Enter 发送，Shift+Enter 换行）…',
+                          'Describe a prototype refinement (Enter to send, Shift+Enter for newline)…',
+                        )
+                  }
+                  aria-label={t('智能体输入', 'Agent prompt')}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (
+                      shouldSubmitComposerKey({
+                        key: e.key,
+                        shiftKey: e.shiftKey,
+                        isComposing: e.nativeEvent.isComposing,
+                      })
+                    ) {
+                      e.preventDefault();
+                      handleComposerSubmit();
+                    }
+                  }}
+                />
+                <div className="agent-panel-composer-actions">
+                  <span className="agent-panel-composer-hint">
+                    {runningCount > 0
+                      ? t('当前有运行中的任务，发送后将自动排队执行', 'Active run in progress — new prompts queue automatically')
+                      : t('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter newline')}
+                  </span>
+                  <Button
+                    type="submit"
+                    variant="accent"
+                    size="xs"
+                    data-testid="agent-panel-send-btn"
+                    disabled={!canSend}
+                  >
+                    <Send size={11} aria-hidden="true" />
+                    {runningCount > 0 ? t('排队发送', 'Queue') : t('发送', 'Send')}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </footer>
+        )}
       </aside>
     </>
   );
