@@ -153,7 +153,7 @@ describe('VisualReferencePicker & Primary/Borrowed selection model', () => {
     expect(res.items[0]?.sourceUrl).toMatch(/^https:\/\//);
   });
 
-  it('integrates cleanly into PrototypeCoDesignStudio Stage 1 with Primary Reference ready and disclosures collapsed', () => {
+  it('integrates cleanly into PrototypeCoDesignStudio Briefing Stage with Primary Reference ready and disclosures collapsed', () => {
     stubLocale('zh-CN');
     const mockProject: ProjectDetail = {
       id: 'proj-test',
@@ -186,36 +186,14 @@ describe('VisualReferencePicker & Primary/Borrowed selection model', () => {
           selectedDocId=""
           onSelectDocId={noop}
           prototypes={[]}
-          selectedProtoId=""
-          onSelectProtoId={noop}
-          activeStep={1}
-          onStepChange={noop}
-          previewSource="REFERENCE_DRAFT"
-          onPreviewSourceChange={noop}
-          savedHtmlContent=""
-          onSavedHtmlContentChange={noop}
-          onDraftHtmlChange={noop}
-          onSaveDraftAsPrototype={async () => {}}
           onGenerateWithAi={async () => {}}
-          onCloneVersion={noop}
-          onDeleteProto={noop}
-          onDownloadHtml={noop}
-          inspectMode={false}
-          onInspectModeChange={noop}
-          visualAnnotations={[]}
-          onAddVisualAnnotation={noop}
-          onRemoveVisualAnnotation={noop}
-          onClearVisualAnnotations={noop}
-          refineInstruction=""
-          onRefineInstructionChange={noop}
-          onApplyRefine={async () => {}}
           isBusyProto={false}
         />
       </PreferencesProvider>,
     );
 
-    expect(html).toContain('data-testid="proto-step-1"');
-    expect(html).toContain('data-testid="proto-next-to-step-2"');
+    expect(html).toContain('data-testid="prototype-briefing-stage"');
+    expect(html).not.toContain('data-testid="proto-step-1"');
     expect(html).toContain('data-testid="visual-ref-continue-btn"');
     expect(html).toContain('data-testid="inspo-attribution"');
     expect(html).toContain('推荐由 Inspo 提供');

@@ -38,7 +38,6 @@ import type {
   GeneratedSkill,
   ProjectSnapshot,
   ProjectSummary,
-  PrototypeArtifact,
   RequirementDoc,
 } from '../../packages/workspace-store/index.js';
 import {
@@ -49,6 +48,7 @@ import {
   apiDeleteProjectSnapshot,
   apiDeleteResource,
   apiGenerateTechArch,
+  apiListPrototypes,
   apiPostJson,
   apiPutJson,
   apiRefinePrototype,
@@ -66,6 +66,11 @@ import {
   ConfirmDialog,
   RegistryTable,
 } from '../components/beautifui/index.js';
+import {
+  PrototypeCanvasStage,
+  runImportPrototypeHtml,
+  type PrototypeCanvasStageProps,
+} from '../components/prototype/PrototypeCanvasStage.js';
 import { PrototypeCoDesignStudio } from '../components/prototype/PrototypeCoDesignStudio.js';
 import {
   toRefinementSelections,
@@ -2141,13 +2146,32 @@ export function RequirementDocsView({
   );
 }
 
-// ─── 4. UI Prototype & MU Sync (界面原型: 3-Stage Reference + Schematic + Studio) ─
+// ─── 4. UI Prototype & MU Sync (界面原型: Briefing Stage <-> Canvas Stage) ─────
+export type PrototypeStudioStage = 'BRIEFING' | 'CANVAS';
+
+export function resolvePrototypeStudioStage(
+  prototypeCount: number,
+  stageOverride: PrototypeStudioStage | null,
+): PrototypeStudioStage {
+  if (prototypeCount === 0) return 'BRIEFING';
+  if (stageOverride === 'BRIEFING') return 'BRIEFING';
+  return 'CANVAS';
+}
+
+export interface PrototypeStudioViewProps {
+  onNavigate?: (view: NavViewId) => void;
+  defaultStageOverride?: PrototypeStudioStage | null;
+  renderRevisionHistory?: PrototypeCanvasStageProps['renderRevisionHistory'];
+  renderConfirmModal?: PrototypeCanvasStageProps['renderConfirmModal'];
+}
+
 export function PrototypeStudioView({
   onNavigate,
-}: {
-  onNavigate?: (view: NavViewId) => void;
-}) {
-  const { t } = usePreferences();
+  defaultStageOverride = null,
+  renderRevisionHistory,
+  renderConfirmModal,
+}: PrototypeStudioViewProps = {}) {
+  const { locale, t } = usePreferences();
   const {
     data,
     activeItemId,
@@ -2158,57 +2182,30 @@ export function PrototypeStudioView({
     startOntologySynthTask,
   } = useWorkbenchStore();
 
-  const [pageMode, setPageMode] = useState<'WORKSPACE' | 'REGISTRY'>('WORKSPACE');
-  const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
-  const [previewSource, setPreviewSource] = useState<'REFERENCE_DRAFT' | 'SAVED_PROTO'>(() =>
-    (data?.prototypes.length ?? 0) > 0 ? 'SAVED_PROTO' : 'REFERENCE_DRAFT',
+  const [stageOverride, setStageOverride] = useState<PrototypeStudioStage | null>(
+    defaultStageOverride,
   );
   const [selectedProtoId, setSelectedProtoId] = useState<string>('');
-  const [savedHtmlContent, setSavedHtmlContent] = useState<string>('');
-  const [draftHtml, setDraftHtml] = useState<string>('');
-  const [draftRefSummary, setDraftRefSummary] = useState<string>('Inspo');
   const [selectedDocId, setSelectedDocId] = useState<string>('');
-
-  const [refineInstruction, setRefineInstruction] = useState<string>('');
   const [refining, setRefining] = useState(false);
   const [inspectMode, setInspectMode] = useState(false);
   const [visualAnnotations, setVisualAnnotations] = useState<PrototypeVisualAnnotation[]>([]);
+  const [canvasFocusMode, setCanvasFocusMode] = useState(false);
   const [synthesisSummary, setSynthesisSummary] = useState<{
     modelCount: number;
     errorCount: number;
   } | null>(null);
-  const [deletingProto, setDeletingProto] = useState<PrototypeArtifact | null>(null);
-  const [newVersionModalOpen, setNewVersionModalOpen] = useState(false);
-  const [newVersionMode, setNewVersionMode] = useState<'CLONE' | 'AI_GENERATE'>('CLONE');
-  const [newVersionDocId, setNewVersionDocId] = useState<string>('');
-  const [newVersionPrompt, setNewVersionPrompt] = useState<string>('');
-  const [cloneVersionTag, setCloneVersionTag] = useState<string>('');
-  const [cloneVersionName, setCloneVersionName] = useState<string>('');
-  const [cloningVersion, setCloningVersion] = useState(false);
 
   const htmlUploadRef = useRef<HTMLInputElement | null>(null);
-  const modalSrsSelectId = useId();
-  const modalPromptId = useId();
-  const modalCloneVersionId = useId();
-  const modalCloneNameId = useId();
 
   const prototypes = data?.prototypes ?? [];
+  const confirmedRevision = data?.confirmedPrototypeRevision ?? null;
   const proto = prototypes.find((p) => p.id === selectedProtoId) ?? prototypes[0];
   const docs = data?.requirementDocs ?? [];
 
-  const nextVersionLabel = useMemo(() => {
-    let maxMinor = prototypes.length - 1;
-    for (const item of prototypes) {
-      const match = /^v?5\.(\d+)$/i.exec(item.version.trim());
-      if (match) {
-        const parsed = Number.parseInt(match[1]!, 10);
-        if (!Number.isNaN(parsed) && parsed > maxMinor) {
-          maxMinor = parsed;
-        }
-      }
-    }
-    return `v5.${Math.max(0, maxMinor + 1)}`;
-  }, [prototypes]);
+  useEffect(() => {
+    setStageOverride(defaultStageOverride);
+  }, [defaultStageOverride]);
 
   const activeProtoForEffect = data
     ? backgroundTasks.find(
@@ -2224,18 +2221,37 @@ export function PrototypeStudioView({
   // Reset transient studio state when switching projects
   useEffect(() => {
     setSynthesisSummary(null);
-    setRefineInstruction('');
     setInspectMode(false);
     setVisualAnnotations([]);
-    setNewVersionModalOpen(false);
-    setPreviewSource((data?.prototypes.length ?? 0) > 0 ? 'SAVED_PROTO' : 'REFERENCE_DRAFT');
+    setCanvasFocusMode(false);
+    setStageOverride(defaultStageOverride);
     lastHandledProtoResultRef.current =
       activeProtoForEffect?.status === 'COMPLETED'
         ? (activeProtoForEffect.resultItemId ?? null)
         : null;
   }, [data?.activeProject.id]);
 
-  // Automatically select newly completed streaming prototype versions
+  // Hydrate confirmedRevision from server if bootstrap did not populate it yet
+  useEffect(() => {
+    if (!data || data.prototypes.length === 0 || data.confirmedPrototypeRevision !== undefined) {
+      return;
+    }
+    let cancelled = false;
+    void apiListPrototypes(data.activeProject.id)
+      .then((res) => {
+        if (cancelled) return;
+        patchData({
+          prototypes: res.prototypes,
+          confirmedPrototypeRevision: res.confirmedRevision,
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [data?.activeProject.id, data?.prototypes.length, data?.confirmedPrototypeRevision]);
+
+  // Automatically select newly completed streaming prototype versions & enter Canvas Stage
   useEffect(() => {
     if (!data || !activeProtoForEffect) return;
     if (
@@ -2247,10 +2263,7 @@ export function PrototypeStudioView({
       if (created) {
         lastHandledProtoResultRef.current = created.id;
         setSelectedProtoId(created.id);
-        setPreviewSource('SAVED_PROTO');
-        setActiveStep(3);
-        setRefineInstruction('');
-        setPageMode('WORKSPACE');
+        setStageOverride('CANVAS');
       }
     }
   }, [activeProtoForEffect?.status, activeProtoForEffect?.resultItemId, data?.prototypes]);
@@ -2270,9 +2283,7 @@ export function PrototypeStudioView({
     const target = data.prototypes.find((p) => p.id === activeItemId);
     if (target && target.id !== selectedProtoId) {
       setSelectedProtoId(target.id);
-      setPreviewSource('SAVED_PROTO');
-      setActiveStep(3);
-      setPageMode('WORKSPACE');
+      setStageOverride('CANVAS');
     }
   }, [activeItemId, data?.prototypes]);
 
@@ -2281,8 +2292,6 @@ export function PrototypeStudioView({
     const list = data.prototypes;
     if (list.length === 0) {
       setSelectedProtoId('');
-      setSavedHtmlContent('');
-      setPreviewSource('REFERENCE_DRAFT');
       return;
     }
     if (!list.some((p) => p.id === selectedProtoId)) {
@@ -2291,9 +2300,8 @@ export function PrototypeStudioView({
   }, [data?.activeProject.id, data?.prototypes]);
 
   useEffect(() => {
-    setSavedHtmlContent(proto?.htmlContent ?? '');
     setVisualAnnotations([]);
-  }, [data?.activeProject.id, proto?.id, proto?.updatedAt, proto?.htmlContent]);
+  }, [data?.activeProject.id, proto?.id, proto?.updatedAt]);
 
   if (!data) return null;
 
@@ -2307,106 +2315,7 @@ export function PrototypeStudioView({
   const synthesizingOntology = activeOntoTask?.status === 'RUNNING';
   const isBusyProto = refining || activeProtoTask?.status === 'RUNNING';
 
-  const effectiveHtml =
-    previewSource === 'SAVED_PROTO' && proto
-      ? savedHtmlContent || proto.htmlContent
-      : draftHtml;
-  const hasHtml = effectiveHtml.trim().length > 0;
-
-  const isContractProject = /合同|contract|clm/i.test(`${project.name} ${project.domain}`);
-  const hasStaleContractTemplate =
-    !isContractProject &&
-    Boolean(
-      project.suite.M1?.aggregates.some(
-        (a) => a.name === 'Contract' && a.uiBindings?.includes('SCR-CONTRACT-LIST'),
-      ),
-    );
-  const authenticAggregates = hasStaleContractTemplate
-    ? []
-    : (project.suite.M1?.aggregates ?? []);
-  const domainSubject =
-    authenticAggregates[0]?.alias ||
-    project.name.replace(/管理系统|平台|工作台|系统|工程/g, '').trim() ||
-    project.domain;
-
-  const starterPresets = [
-    {
-      label: t('台账检索 + 新建表单 + 审批流三屏联动', 'Ledger + Creation Form + Approval 3-Screen Flow'),
-      prompt: t(
-        `围绕「${project.name}」构建三屏联动原型：1) ${domainSubject}台账多条件检索与状态筛选列表页；2) 新建/编辑${domainSubject}表单页（含必填与业务规则内联提示）；3) 待办审核与状态流转看板页。`,
-        `Create a 3-screen interactive prototype for "${project.name}": 1) ${domainSubject} filterable ledger table; 2) Create/Edit ${domainSubject} form with inline validation; 3) Approval & status workflow view.`,
-      ),
-    },
-    {
-      label: t('运营指标看板 + 多维筛选表格 + 详情检视', 'KPI Overview + Filtered Table + Detail View'),
-      prompt: t(
-        `为「${project.name}」设计运营总览与明细联动原型：顶部展示核心经营 KPI 指标卡片与预警统计，主区域提供多维筛选数据表，点击行可切换查看${domainSubject}结构化详情与处理记录。`,
-        `Design an operations dashboard prototype for "${project.name}": KPI summary cards at top, multi-filter data table in center, and interactive ${domainSubject} detail inspection view.`,
-      ),
-    },
-  ];
-
-  const persistPrototypeHtml = async (params: {
-    id?: string;
-    name: string;
-    version: string;
-    htmlContent: string;
-    syncMu: boolean;
-  }) => {
-    const res = await fetch(`/api/projects/${project.id}/prototypes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    const json = await res.json();
-    patchData({
-      activeProject: json.project,
-      prototypes: json.prototypes,
-    });
-    if (json.prototype?.id) {
-      setSelectedProtoId(json.prototype.id);
-      setPreviewSource('SAVED_PROTO');
-    }
-    return json;
-  };
-
-  const handleSaveAndExtractMu = async () => {
-    if (!hasHtml) return;
-    const isSavingExisting = previewSource === 'SAVED_PROTO' && Boolean(proto);
-    const json = await persistPrototypeHtml({
-      ...(isSavingExisting && proto ? { id: proto.id } : {}),
-      name:
-        isSavingExisting && proto
-          ? proto.name
-          : `${project.name} · 参考合成 (${draftRefSummary}).html`,
-      version: isSavingExisting && proto ? proto.version : nextVersionLabel,
-      htmlContent: effectiveHtml,
-      syncMu: true,
-    });
-    showToast(
-      t(
-        `已从 HTML 原型语义锚点提取 ${json.prototype.extractedScreenCount} 个屏幕并自动同步至 MU UI 模型`,
-        `Extracted ${json.prototype.extractedScreenCount} screen(s) from HTML semantic anchors and synced to MU`,
-      ),
-    );
-  };
-
-  const handleSaveDraftAsPrototype = async (html: string, refTitleSummary: string) => {
-    if (!html.trim()) return;
-    const json = await persistPrototypeHtml({
-      name: `${project.name} · 参考合成 (${refTitleSummary}).html`,
-      version: nextVersionLabel,
-      htmlContent: html,
-      syncMu: true,
-    });
-    setActiveStep(3);
-    showToast(
-      t(
-        `已将「${refTitleSummary}」参考原型保存为 ${json.prototype.version}，并同步 ${json.prototype.extractedScreenCount} 个屏幕至 MU 模型`,
-        `Saved "${refTitleSummary}" prototype as ${json.prototype.version} and synced ${json.prototype.extractedScreenCount} screen(s) to MU`,
-      ),
-    );
-  };
+  const currentStage = resolvePrototypeStudioStage(prototypes.length, stageOverride);
 
   const importHtmlFile = async (file: File) => {
     if (!/\.(html?|xhtml)$/i.test(file.name) && file.type && !file.type.includes('html')) {
@@ -2416,18 +2325,24 @@ export function PrototypeStudioView({
       return;
     }
     const uploadedHtml = await file.text();
-    const json = await persistPrototypeHtml({
-      name: file.name || '界面原型.html',
-      version: nextVersionLabel,
-      htmlContent: uploadedHtml,
-      syncMu: true,
+    const res = await runImportPrototypeHtml(
+      project.id,
+      file.name.replace(/\.(html?|xhtml)$/i, '') || '界面原型',
+      uploadedHtml,
+      locale,
+    );
+    if (!res) return;
+    patchData({
+      activeProject: res.project,
+      prototypes: res.prototypes,
+      confirmedPrototypeRevision: res.confirmedRevision,
     });
-    setActiveStep(3);
-    setPageMode('WORKSPACE');
+    setSelectedProtoId(res.prototype.id);
+    setStageOverride('CANVAS');
     showToast(
       t(
-        `已导入原型「${file.name}」，提取 ${json.prototype.extractedScreenCount} 个屏幕并同步至 MU 模型`,
-        `Imported "${file.name}" and synced ${json.prototype.extractedScreenCount} screen(s) to MU model`,
+        `已导入原型「${res.prototype.name}」（单条初始修订，未修改 MU 模型）`,
+        `Imported "${res.prototype.name}" (1 revision created; MU unchanged)`,
       ),
     );
   };
@@ -2439,102 +2354,13 @@ export function PrototypeStudioView({
     await importHtmlFile(file);
   };
 
-  const handleDownloadHtml = (html: string, preferredName?: string) => {
-    if (!html.trim()) return;
-    const baseName = preferredName ?? proto?.name ?? '界面原型.html';
-    const fileName = baseName.endsWith('.html') ? baseName : `${baseName}.html`;
-    triggerBrowserDownload(fileName, html, 'text/html;charset=utf-8');
-    showToast(t(`已下载原型文件 ${fileName}`, `Downloaded ${fileName}`));
-  };
-
   const handleGenerateNewPrototype = async (options?: { prompt?: string; docId?: string }) => {
     if (refining || activeProtoTask?.status === 'RUNNING') return;
     const promptText = options?.prompt?.trim();
     const targetDoc = options?.docId || selectedDocId || undefined;
-    setPageMode('WORKSPACE');
     void startPrototypeGenTask({
       ...(targetDoc ? { docId: targetDoc } : {}),
       ...(promptText ? { prompt: promptText } : {}),
-    });
-  };
-
-  const openNewVersionModal = (
-    preferredMode?: 'CLONE' | 'AI_GENERATE',
-    sourceProto?: PrototypeArtifact,
-  ) => {
-    if (activeProtoTask?.status === 'RUNNING') {
-      setPageMode('WORKSPACE');
-      showToast(
-        t(
-          '当前已有新原型版本正在后台流式生成，可在顶部进度面板展开查看或随时取消',
-          'A new prototype version is currently streaming above; expand or cancel it in the progress panel.',
-        ),
-      );
-      return;
-    }
-    const baseProto = sourceProto ?? proto;
-    if (sourceProto && sourceProto.id !== selectedProtoId) {
-      setSelectedProtoId(sourceProto.id);
-    }
-    const defaultMode = preferredMode ?? (baseProto ? 'CLONE' : 'AI_GENERATE');
-    setNewVersionMode(defaultMode);
-    setNewVersionDocId(selectedDocId || docs[0]?.id || '');
-    setNewVersionPrompt('');
-    setCloneVersionTag(nextVersionLabel);
-    const cleanBaseName = baseProto
-      ? baseProto.name.replace(/\s*\(副本\)\s*$/g, '').trim()
-      : t(
-          `${project.name} · 语义交互原型 (界面原型.html)`,
-          `${project.name} · Interactive Prototype (prototype.html)`,
-        );
-    setCloneVersionName(cleanBaseName);
-    setNewVersionModalOpen(true);
-  };
-
-  const handleCloneCurrentPrototype = async () => {
-    if (!proto || cloningVersion) return;
-    setCloningVersion(true);
-    try {
-      const sourceHtml =
-        proto.id === (prototypes.find((p) => p.id === selectedProtoId) ?? prototypes[0])?.id &&
-        savedHtmlContent.trim()
-          ? savedHtmlContent
-          : proto.htmlContent;
-      const versionTag = cloneVersionTag.trim() || nextVersionLabel;
-      const targetName =
-        cloneVersionName.trim() ||
-        proto.name.replace(/\s*\(副本\)\s*$/g, '').trim() ||
-        '界面原型.html';
-      const hasDomainOntology = (project.suite.M1?.aggregates.length ?? 0) > 0;
-      await persistPrototypeHtml({
-        name: targetName,
-        version: versionTag,
-        htmlContent: sourceHtml,
-        syncMu: hasDomainOntology,
-      });
-      setActiveStep(3);
-      setPageMode('WORKSPACE');
-      setNewVersionModalOpen(false);
-      showToast(
-        t(
-          `已基于 ${proto.version} 创建新版本「${versionTag}」，原版本完整保留`,
-          `Created new version "${versionTag}" from ${proto.version}; original version is preserved.`,
-        ),
-      );
-    } finally {
-      setCloningVersion(false);
-    }
-  };
-
-  const handleCreateVersionConfirm = async () => {
-    if (newVersionMode === 'CLONE' && proto) {
-      await handleCloneCurrentPrototype();
-      return;
-    }
-    setNewVersionModalOpen(false);
-    await handleGenerateNewPrototype({
-      docId: newVersionDocId || selectedDocId || undefined,
-      prompt: newVersionPrompt,
     });
   };
 
@@ -2546,95 +2372,41 @@ export function PrototypeStudioView({
     });
   };
 
-  const handleRemoveVisualAnnotation = (id: string) => {
-    setVisualAnnotations((prev) =>
-      prev
-        .filter((item) => item.id !== id)
-        .map((item, idx) => ({ ...item, index: idx + 1 })),
-    );
-  };
-
-  const handleRefinePrototype = async (
-    activeHtml: string,
-    immediateDraft?: {
-      target: PrototypeSelectionTarget;
-      note: string;
-    },
+  const handleImmediateSelectionRefine = async (
+    target: PrototypeSelectionTarget,
+    note: string,
   ) => {
-    const instruction = refineInstruction.trim();
-    const selections = toRefinementSelections(visualAnnotations, immediateDraft ?? null);
-    if (refining) return;
-    if (!instruction && selections.length === 0) return;
-
+    if (!proto || refining) return;
+    const selections = toRefinementSelections(visualAnnotations, { target, note });
+    if (selections.length === 0 && !note.trim()) return;
     setRefining(true);
     try {
-      const hasDomainOntology = (project.suite.M1?.aggregates.length ?? 0) > 0;
-      let targetProtoId = previewSource === 'SAVED_PROTO' ? proto?.id : undefined;
-
-      if (
-        !targetProtoId ||
-        (proto && activeHtml.trim() && activeHtml !== proto.htmlContent)
-      ) {
-        const saveJson = await persistPrototypeHtml({
-          ...(targetProtoId ? { id: targetProtoId } : {}),
-          name: targetProtoId && proto
-            ? proto.name
-            : `${project.name} · 参考合成 (${draftRefSummary}).html`,
-          version: targetProtoId && proto ? proto.version : nextVersionLabel,
-          htmlContent: activeHtml,
-          syncMu: hasDomainOntology,
-        });
-        targetProtoId = saveJson.prototype?.id ?? targetProtoId;
-      }
-
-      if (!targetProtoId) return;
-
       const res = await apiRefinePrototype(
         project.id,
-        targetProtoId,
-        instruction,
+        proto.id,
+        note.trim(),
         selections.length > 0 ? selections : undefined,
       );
-      setSavedHtmlContent(res.prototype.htmlContent);
       patchData({
         activeProject: res.project,
         prototypes: res.prototypes,
       });
       setSelectedProtoId(res.prototype.id);
-      setPreviewSource('SAVED_PROTO');
-      setRefineInstruction('');
       setVisualAnnotations([]);
       setInspectMode(false);
-      const syncedToMu = res.project.validation.presentModels.includes('MU');
       showToast(
-        syncedToMu
-          ? t(
-              `AI 原型精修已完成，自动提取 ${res.prototype.extractedScreenCount} 个屏幕同步至 MU 模型`,
-              `AI refined prototype & synced ${res.prototype.extractedScreenCount} screens to MU model`,
-            )
-          : t(
-              `AI 原型精修已完成（共 ${res.prototype.extractedScreenCount} 个业务屏幕）`,
-              `AI prototype refinement complete (${res.prototype.extractedScreenCount} screens)`,
-            ),
+        t(
+          `AI 原型精修已完成（共 ${res.prototype.extractedScreenCount} 个业务屏幕）`,
+          `AI prototype refinement complete (${res.prototype.extractedScreenCount} screens)`,
+        ),
       );
     } finally {
       setRefining(false);
     }
   };
 
-  const handleConfirmAndSynthesizeOntology = async () => {
-    if (synthesizingOntology || (!proto && !hasHtml)) return;
-    let targetPrototypeId = previewSource === 'SAVED_PROTO' ? proto?.id : undefined;
-    if (!targetPrototypeId && hasHtml) {
-      const saveJson = await persistPrototypeHtml({
-        name: `${project.name} · 参考合成 (${draftRefSummary}).html`,
-        version: nextVersionLabel,
-        htmlContent: effectiveHtml,
-        syncMu: true,
-      });
-      targetPrototypeId = saveJson.prototype?.id;
-    }
-
+  const handleSynthesizeOntology = async (targetPrototypeId: string) => {
+    if (synthesizingOntology) return;
     const res = await startOntologySynthTask(
       targetPrototypeId ? { prototypeId: targetPrototypeId } : undefined,
     );
@@ -2643,18 +2415,51 @@ export function PrototypeStudioView({
     }
   };
 
-  const handleDeleteProtoConfirm = async () => {
-    if (!deletingProto) return;
-    const res = await apiDeleteResource<{ prototypes: PrototypeArtifact[] }>(
-      `/api/prototypes/${deletingProto.id}?projectId=${project.id}`,
-    );
-    patchData({ prototypes: res.prototypes });
-    setDeletingProto(null);
-    showToast(t('已删除原型版本', 'Deleted prototype artifact'));
-  };
+  const statusBanners =
+    activeProtoTask || activeOntoTask || synthesisSummary ? (
+      <div className="flex flex-col gap-2">
+        {activeProtoTask && (
+          <PipelineInlinePanel
+            task={activeProtoTask}
+            onNavigateLlmCenter={onNavigate ? () => onNavigate('llm-center') : undefined}
+          />
+        )}
+
+        {activeOntoTask && (
+          <PipelineInlinePanel
+            task={activeOntoTask}
+            onNavigateTarget={onNavigate ? () => onNavigate('app-ontology') : undefined}
+            onNavigateLlmCenter={onNavigate ? () => onNavigate('llm-center') : undefined}
+          />
+        )}
+
+        {synthesisSummary && (
+          <div className="flex items-center justify-between gap-2.5 rounded-[6px] border border-line bg-green-tint p-[8px_12px]">
+            <div className="text-[12.5px]">
+              <strong>
+                {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
+              </strong>
+              {synthesisSummary.modelCount}/11 Models · {synthesisSummary.errorCount}{' '}
+              Consistency Errors
+            </div>
+            <Button
+              type="button"
+              variant="accent"
+              size="sm"
+              onClick={() => onNavigate?.('app-ontology')}
+            >
+              {t('前往 11 模型本体工作台查看 →', 'Open 11-Model Ontology Workbench →')}
+            </Button>
+          </div>
+        )}
+      </div>
+    ) : null;
 
   return (
-    <div className="flex flex-col gap-3">
+    <div
+      className="flex flex-col gap-3"
+      style={canvasFocusMode ? { animation: 'none', transform: 'none' } : undefined}
+    >
       <input
         ref={htmlUploadRef}
         type="file"
@@ -2663,195 +2468,45 @@ export function PrototypeStudioView({
         onChange={handleUploadHtml}
       />
 
-      <ViewModeHeader
-        mode={pageMode}
-        onChange={setPageMode}
-        workspaceLabel={t('界面参考共创与 MU 原型工作台', 'Prototype Co-Design Studio')}
-        registryLabel={t('原型版本管理列表', 'Prototype Registry')}
-        count={prototypes.length}
-        testIdPrefix="proto"
-        rightActions={
-          <>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => htmlUploadRef.current?.click()}
-            >
-              <Upload size={13} />
-              {t('上传 .html', 'Upload .html')}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              data-testid="sync-prototype-mu-btn"
-              disabled={!hasHtml || refining}
-              onClick={() => void handleSaveAndExtractMu()}
-            >
-              {t('保存原型并提取同步至 MU 模型', 'Save & Extract to MU Model')}
-            </Button>
-            <Button
-              type="button"
-              variant="accent"
-              size="sm"
-              data-testid="confirm-prototype-synthesize-btn"
-              disabled={synthesizingOntology || refining || (!proto && !hasHtml)}
-              onClick={() => void handleConfirmAndSynthesizeOntology()}
-            >
-              {synthesizingOntology && (
-                <Loader2 size={13.5} className="pipeline-spin" aria-hidden="true" />
-              )}
-              {synthesizingOntology
-                ? t('正在后台合成 11 模型…', 'Synthesizing 11 Models…')
-                : t('确认原型并一键合成 11 元模型本体', 'Confirm & Synthesize 11-Model')}
-            </Button>
-          </>
-        }
-      />
+      {currentStage === 'BRIEFING' && statusBanners}
 
-      {activeProtoTask && (
-        <PipelineInlinePanel
-          task={activeProtoTask}
-          onNavigateLlmCenter={onNavigate ? () => onNavigate('llm-center') : undefined}
-        />
-      )}
-
-      {activeOntoTask && (
-        <PipelineInlinePanel
-          task={activeOntoTask}
-          onNavigateTarget={onNavigate ? () => onNavigate('app-ontology') : undefined}
-          onNavigateLlmCenter={onNavigate ? () => onNavigate('llm-center') : undefined}
-        />
-      )}
-
-      {synthesisSummary && (
-        <div className="flex items-center justify-between gap-2.5 rounded-[6px] border border-line bg-green-tint p-[8px_12px]">
-          <div className="text-[12.5px]">
-            <strong>
-              {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
-            </strong>
-            {synthesisSummary.modelCount}/11 Models · {synthesisSummary.errorCount}{' '}
-            Consistency Errors
-          </div>
-          <Button
-            type="button"
-            variant="accent"
-            size="sm"
-            onClick={() => onNavigate?.('app-ontology')}
-          >
-            {t('前往 11 模型本体工作台查看 →', 'Open 11-Model Ontology Workbench →')}
-          </Button>
-        </div>
-      )}
-
-      {pageMode === 'REGISTRY' ? (
-        <RegistryTable<PrototypeArtifact>
-          testId="prototype-registry-table"
-          title={t('可交互界面原型版本注册表', 'Interactive HTML Prototype Registry')}
-          subtitle={t(
-            '管理不同迭代版本的语义锚点 HTML 原型、MU 提取屏幕数与生命周期',
-            'Manage semantic HTML prototype versions and MU screen extraction counts',
-          )}
-          rows={prototypes}
-          getRowKey={(p) => p.id}
-          activeRowKey={proto?.id}
-          searchPlaceholder={t('搜索原型名称或版本号…', 'Search prototype name or version…')}
-          emptyMessage={t(
-            '当前工程暂无原型版本，可在工作台挑选参考大图合成或上传 .html 文件',
-            'No prototype versions yet. Pick visual references in Prototype Studio or upload an .html file.',
-          )}
-          matchesSearch={(p, q) =>
-            p.name.toLowerCase().includes(q) || p.version.toLowerCase().includes(q)
-          }
-          primaryActionLabel={
-            activeProtoTask?.status === 'RUNNING'
-              ? t('正在流式生成新版本…', 'Streaming New Version…')
-              : t('新建原型版本…', 'New Prototype Version…')
-          }
-          onPrimaryAction={() => openNewVersionModal()}
-          onRowClick={(p) => {
-            setSelectedProtoId(p.id);
-            setPreviewSource('SAVED_PROTO');
-            setActiveStep(3);
-            setPageMode('WORKSPACE');
+      {currentStage === 'CANVAS' && proto ? (
+        <PrototypeCanvasStage
+          project={project}
+          prototypes={prototypes}
+          selectedPrototypeId={proto.id}
+          confirmedRevision={confirmedRevision}
+          onSelectPrototype={(id) => setSelectedProtoId(id)}
+          onPrototypesUpdated={(payload) => {
+            patchData({
+              prototypes: payload.prototypes,
+              ...(payload.confirmedRevision !== undefined
+                ? { confirmedPrototypeRevision: payload.confirmedRevision }
+                : {}),
+              ...(payload.project ? { activeProject: payload.project } : {}),
+            });
+            if (payload.selectedPrototypeId !== undefined) {
+              setSelectedProtoId(payload.selectedPrototypeId);
+            }
           }}
-          columns={[
-            {
-              key: 'name',
-              header: t('原型文件名称', 'Prototype Name'),
-              render: (p) => (
-                <div>
-                  <div className="font-semibold text-ink">{p.name}</div>
-                  <div className="font-mono text-[11.5px] text-ink-3">{p.id}</div>
-                </div>
-              ),
-            },
-            {
-              key: 'version',
-              header: t('版本', 'Version'),
-              width: '100px',
-              render: (p) => <span className="badge badge-accent">{p.version}</span>,
-            },
-            {
-              key: 'screens',
-              header: t('提取 MU 屏幕数', 'MU Screens'),
-              width: '140px',
-              render: (p) => (
-                <span className="badge badge-ok">{p.extractedScreenCount} Screens</span>
-              ),
-            },
-            {
-              key: 'updatedAt',
-              header: t('更新时间', 'Updated'),
-              width: '170px',
-              render: (p) => (
-                <span className="font-mono text-[11.5px] text-ink-3">
-                  {p.updatedAt.slice(0, 19).replace('T', ' ')}
-                </span>
-              ),
-            },
-            {
-              key: 'actions',
-              header: t('操作', 'Actions'),
-              align: 'right',
-              render: (p) => (
-                <div
-                  className="inline-flex items-center gap-1.5"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    onClick={() => {
-                      setSelectedProtoId(p.id);
-                      setPreviewSource('SAVED_PROTO');
-                      setActiveStep(3);
-                      setPageMode('WORKSPACE');
-                    }}
-                  >
-                    {t('打开沙箱', 'Studio')}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => openNewVersionModal('CLONE', p)}
-                  >
-                    <Copy size={12} />
-                    {t('复制版本', 'Clone')}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="text-red"
-                    onClick={() => setDeletingProto(p)}
-                  >
-                    <Trash2 size={12} />
-                  </Button>
-                </div>
-              ),
-            },
-          ]}
+          onBackToBrief={() => {
+            setCanvasFocusMode(false);
+            setStageOverride('BRIEFING');
+          }}
+          onNotify={showToast}
+          onSynthesizeOntology={(prototypeId) => void handleSynthesizeOntology(prototypeId)}
+          synthesizingOntology={synthesizingOntology}
+          inspectMode={inspectMode}
+          onInspectModeChange={setInspectMode}
+          annotations={visualAnnotations}
+          onAddAnnotation={handleAddVisualAnnotation}
+          onApplyImmediate={(target, note) => void handleImmediateSelectionRefine(target, note)}
+          busy={isBusyProto}
+          focusMode={canvasFocusMode}
+          onFocusModeChange={setCanvasFocusMode}
+          canvasBannerSlot={statusBanners ? <div className="p-2.5">{statusBanners}</div> : null}
+          {...(renderRevisionHistory ? { renderRevisionHistory } : {})}
+          {...(renderConfirmModal ? { renderConfirmModal } : {})}
         />
       ) : (
         <PrototypeCoDesignStudio
@@ -2860,247 +2515,16 @@ export function PrototypeStudioView({
           selectedDocId={selectedDocId}
           onSelectDocId={setSelectedDocId}
           prototypes={prototypes}
-          selectedProtoId={selectedProtoId}
-          onSelectProtoId={setSelectedProtoId}
-          activeStep={activeStep}
-          onStepChange={setActiveStep}
-          previewSource={previewSource}
-          onPreviewSourceChange={setPreviewSource}
-          savedHtmlContent={savedHtmlContent}
-          onSavedHtmlContentChange={setSavedHtmlContent}
-          onDraftHtmlChange={(html, summary) => {
-            setDraftHtml(html);
-            setDraftRefSummary(summary);
-          }}
-          onSaveDraftAsPrototype={handleSaveDraftAsPrototype}
           onGenerateWithAi={async (compiledPrompt, docId) => {
             await handleGenerateNewPrototype({ prompt: compiledPrompt, docId });
           }}
-          onCloneVersion={() => openNewVersionModal('CLONE')}
-          onDeleteProto={(p) => setDeletingProto(p)}
-          onDownloadHtml={handleDownloadHtml}
-          inspectMode={inspectMode}
-          onInspectModeChange={setInspectMode}
-          visualAnnotations={visualAnnotations}
-          onAddVisualAnnotation={handleAddVisualAnnotation}
-          onRemoveVisualAnnotation={handleRemoveVisualAnnotation}
-          onClearVisualAnnotations={() => setVisualAnnotations([])}
-          refineInstruction={refineInstruction}
-          onRefineInstructionChange={setRefineInstruction}
-          onApplyRefine={handleRefinePrototype}
+          {...(prototypes.length > 0
+            ? { onBackToCanvas: () => setStageOverride('CANVAS') }
+            : {})}
+          onImportHtmlClick={() => htmlUploadRef.current?.click()}
           isBusyProto={isBusyProto}
         />
       )}
-
-      <ConfirmDialog
-        open={newVersionModalOpen}
-        size="wide"
-        testId="new-proto-version-dialog"
-        title={t('新建界面原型版本', 'Create New Prototype Version')}
-        description={t(
-          '请选择新版本的创建方式：可在保留原版本不变的前提下秒级复制副本做局部精修，或配置规格书与设计方向启动 AI 流式重新生成。',
-          'Choose how to create the new version: instantly clone the current version for incremental edits, or configure SRS & layout instructions to start AI streaming generation.',
-        )}
-        busy={cloningVersion}
-        confirmLabel={
-          newVersionMode === 'CLONE' && proto
-            ? t(
-                `立即创建副本版本 (${cloneVersionTag.trim() || nextVersionLabel})`,
-                `Clone as ${cloneVersionTag.trim() || nextVersionLabel}`,
-              )
-            : t('开始 AI 流式生成新版本', 'Start AI Streaming Generation')
-        }
-        cancelLabel={t('取消', 'Cancel')}
-        footerExtra={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={cloningVersion}
-            onClick={() => {
-              setNewVersionModalOpen(false);
-              htmlUploadRef.current?.click();
-            }}
-          >
-            <Upload size={12.5} />
-            {t('上传本地 .html 作为新版本', 'Upload .html as New Version')}
-          </Button>
-        }
-        onClose={() => setNewVersionModalOpen(false)}
-        onConfirm={() => void handleCreateVersionConfirm()}
-      >
-        <div className="flex flex-col gap-3">
-          {proto && (
-            <div
-              role="radiogroup"
-              aria-label={t('新版本创建方式', 'Version creation mode')}
-              className="grid grid-cols-1 gap-2.5 sm:grid-cols-2"
-            >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={newVersionMode === 'CLONE'}
-                data-testid="proto-mode-clone"
-                onClick={() => setNewVersionMode('CLONE')}
-                className={cn(
-                  'flex flex-col items-start gap-1.5 rounded-[8px] border p-3 text-left transition-colors cursor-pointer',
-                  newVersionMode === 'CLONE'
-                    ? 'border-accent bg-accent-tint/55 text-ink'
-                    : 'border-line bg-inset/40 text-ink-2 hover:border-line-strong hover:bg-hover',
-                )}
-              >
-                <div className="flex w-full items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-ink">
-                    <Copy size={13.5} className="text-accent" />
-                    {t('复制当前版本微调', 'Clone Current Version')}
-                  </span>
-                  <span className="badge badge-ok">{t('秒级 · 推荐', 'Instant')}</span>
-                </div>
-                <span className="text-[11.5px] leading-[1.45] text-ink-3">
-                  {t(
-                    `将当前 ${proto.version} 复制为独立新版本，不调用大模型，适合用「AI 原型精修」或源码局部微调。`,
-                    `Copy ${proto.version} instantly without LLM calls—ideal for targeted edits or AI Assistant refinements.`,
-                  )}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                role="radio"
-                aria-checked={newVersionMode === 'AI_GENERATE'}
-                data-testid="proto-mode-ai"
-                onClick={() => setNewVersionMode('AI_GENERATE')}
-                className={cn(
-                  'flex flex-col items-start gap-1.5 rounded-[8px] border p-3 text-left transition-colors cursor-pointer',
-                  newVersionMode === 'AI_GENERATE'
-                    ? 'border-accent bg-accent-tint/55 text-ink'
-                    : 'border-line bg-inset/40 text-ink-2 hover:border-line-strong hover:bg-hover',
-                )}
-              >
-                <div className="flex w-full items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-ink">
-                    <Sparkles size={13.5} className="text-accent" />
-                    {t('AI 重新生成全新版本', 'AI Regenerate New Version')}
-                  </span>
-                  <span className="badge badge-accent">{t('流式生成', 'Streaming')}</span>
-                </div>
-                <span className="text-[11.5px] leading-[1.45] text-ink-3">
-                  {t(
-                    '按需求规格书与新的设计方向从头合成全新 HTML5 交互原型，展示实时流式进度且支持取消/续写。',
-                    'Synthesize a brand-new HTML5 prototype from SRS & custom instructions with live streaming & cancel.',
-                  )}
-                </span>
-              </button>
-            </div>
-          )}
-
-          {newVersionMode === 'CLONE' && proto ? (
-            <div className="flex flex-col gap-2.5 rounded-[8px] border border-line bg-inset/35 p-3">
-              <div className="text-[12px] text-ink-2">
-                {t('基准源版本：', 'Source version: ')}
-                <strong className="text-ink">
-                  {proto.name} ({proto.version} · {proto.extractedScreenCount} Screens)
-                </strong>
-              </div>
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[130px_1fr]">
-                <div className="form-field">
-                  <label htmlFor={modalCloneVersionId} className="form-label text-[12px]">
-                    {t('新版本号', 'New Version')}
-                  </label>
-                  <input
-                    id={modalCloneVersionId}
-                    className="input mono"
-                    value={cloneVersionTag}
-                    onChange={(e) => setCloneVersionTag(e.target.value)}
-                    placeholder={nextVersionLabel}
-                  />
-                </div>
-                <div className="form-field">
-                  <label htmlFor={modalCloneNameId} className="form-label text-[12px]">
-                    {t('版本显示名称', 'Version Title')}
-                  </label>
-                  <input
-                    id={modalCloneNameId}
-                    className="input"
-                    value={cloneVersionName}
-                    onChange={(e) => setCloneVersionName(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2.5 rounded-[8px] border border-line bg-inset/35 p-3">
-              {docs.length > 0 && (
-                <div className="form-field">
-                  <label htmlFor={modalSrsSelectId} className="form-label text-[12px]">
-                    {t('依据需求规格说明书', 'Source SRS Specification')}
-                  </label>
-                  <select
-                    id={modalSrsSelectId}
-                    className="select"
-                    value={newVersionDocId}
-                    onChange={(e) => setNewVersionDocId(e.target.value)}
-                  >
-                    {docs.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.title} ({d.version})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div className="form-field">
-                <label htmlFor={modalPromptId} className="form-label text-[12px]">
-                  {t(
-                    `新版本 (${nextVersionLabel}) 布局风格与交互诉求（可选，留空将按规格书自动规划）`,
-                    `Layout & interaction focus for ${nextVersionLabel} (optional)`,
-                  )}
-                </label>
-                <textarea
-                  id={modalPromptId}
-                  rows={3}
-                  className="textarea"
-                  data-testid="new-proto-version-prompt"
-                  placeholder={t(
-                    `例如：本版本改为运营大盘 + 门店库存预警 + 订单异常处理三屏联动布局…`,
-                    `e.g. Focus this version on KPI overview + inventory alert + order exception handling…`,
-                  )}
-                  value={newVersionPrompt}
-                  onChange={(e) => setNewVersionPrompt(e.target.value)}
-                />
-              </div>
-
-              <div className="flex flex-wrap gap-1.5">
-                {starterPresets.map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    onClick={() => setNewVersionPrompt(preset.prompt)}
-                    className="inline-flex items-center gap-1 rounded-[6px] border border-line bg-surface px-2 py-1 text-left text-[11px] text-ink-2 transition-colors hover:border-accent hover:text-accent cursor-pointer"
-                  >
-                    <Plus size={10.5} className="shrink-0 text-ink-3" />
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </ConfirmDialog>
-
-      <ConfirmDialog
-        open={Boolean(deletingProto)}
-        danger
-        title={t('删除界面原型版本', 'Delete Prototype Version')}
-        description={
-          deletingProto
-            ? t(`确认删除原型「${deletingProto.name}」吗？`, `Delete "${deletingProto.name}"?`)
-            : ''
-        }
-        onClose={() => setDeletingProto(null)}
-        onConfirm={() => void handleDeleteProtoConfirm()}
-      />
     </div>
   );
 }

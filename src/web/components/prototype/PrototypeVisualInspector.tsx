@@ -37,6 +37,72 @@ export interface PrototypeVisualAnnotation {
   note: string;
 }
 
+export type PrototypeViewportPreset = 'DESKTOP' | 'TABLET' | 'MOBILE';
+export type PrototypeZoomMode = 'FIT' | 'ACTUAL';
+
+export const PROTOTYPE_VIEWPORT_WIDTHS: Record<PrototypeViewportPreset, number> = {
+  DESKTOP: 1440,
+  TABLET: 768,
+  MOBILE: 390,
+};
+
+export function computeViewportFitScale(
+  containerWidth: number,
+  viewport: PrototypeViewportPreset,
+  zoomMode: PrototypeZoomMode,
+  paddingPx = 24,
+): { targetWidth: number; scale: number; scaledWidth: number } {
+  const targetWidth = PROTOTYPE_VIEWPORT_WIDTHS[viewport];
+  if (zoomMode === 'ACTUAL' || !Number.isFinite(containerWidth) || containerWidth <= 0) {
+    return { targetWidth, scale: 1, scaledWidth: targetWidth };
+  }
+  const availableWidth = Math.max(240, containerWidth - Math.max(0, paddingPx));
+  const rawScale = availableWidth / targetWidth;
+  const clamped = Math.max(0.25, Math.min(1, rawScale));
+  const scale = Math.round(clamped * 1000) / 1000;
+  const scaledWidth = Math.round(targetWidth * scale);
+  return { targetWidth, scale, scaledWidth };
+}
+
+export function mapIframeRectToStageRect(
+  rect: PrototypeSelectionRect,
+  scale: number,
+  offsetX = 0,
+): PrototypeSelectionRect {
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  return {
+    x: Math.round(offsetX + rect.x * safeScale),
+    y: Math.round(rect.y * safeScale),
+    width: Math.max(8, Math.round(rect.width * safeScale)),
+    height: Math.max(8, Math.round(rect.height * safeScale)),
+  };
+}
+
+export function openCleanPrototypeInNewTab(
+  rawHtml: string,
+): { blobUrl: string; cleanHtml: string } | null {
+  const cleanHtml = stripVisualInspectorFromHtml(rawHtml);
+  if (!cleanHtml.trim()) return null;
+  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    return null;
+  }
+  const blob = new Blob([cleanHtml], { type: 'text/html;charset=utf-8' });
+  const blobUrl = URL.createObjectURL(blob);
+  if (typeof window !== 'undefined' && typeof window.open === 'function') {
+    window.open(blobUrl, '_blank', 'noopener,noreferrer');
+  }
+  if (typeof URL.revokeObjectURL === 'function') {
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(blobUrl);
+      } catch {
+        // Ignore already revoked URLs
+      }
+    }, 60_000);
+  }
+  return { blobUrl, cleanHtml };
+}
+
 interface OriginInstanceLike {
   readonly opaque: boolean;
   isSameOrigin(other: OriginInstanceLike): boolean;
@@ -307,6 +373,7 @@ export function injectVisualInspectorIntoHtml(
   var startY = 0;
   var activeElements = [];
   var pins = [];
+  var highlightedSelector = '';
   var rafPending = false;
 
   function postToHost(type, extra) {
@@ -328,6 +395,7 @@ export function injectVisualInspectorIntoHtml(
     '.onto-vi-hover { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 1.5px dashed #4c50c4; background: rgba(76, 80, 196, 0.06); border-radius: 5px; box-sizing: border-box; display: none; transition: all 60ms cubic-bezier(0.22, 1, 0.36, 1); }',
     '.onto-vi-selected { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid #4c50c4; background: rgba(76, 80, 196, 0.10); box-shadow: 0 0 0 3px rgba(76, 80, 196, 0.16); border-radius: 6px; box-sizing: border-box; display: none; }',
     '.onto-vi-marquee { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 1.5px solid #4c50c4; background: rgba(76, 80, 196, 0.13); border-radius: 4px; box-sizing: border-box; display: none; }',
+    '.onto-vi-highlight { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid #4c50c4; background: rgba(76, 80, 196, 0.09); border-radius: 6px; box-sizing: border-box; display: none; pointer-events: none; }',
     '.onto-vi-tag { position: absolute; left: -1px; top: -22px; max-width: 320px; padding: 2px 6px; border-radius: 4px; background: #4c50c4; color: #ffffff; font-size: 10.5px; font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 6px rgba(26, 26, 24, 0.18); }',
     '.onto-vi-tag.is-inside { top: 4px; left: 4px; }',
     '.onto-vi-pin { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: #4c50c4; color: #ffffff; border: 2px solid #fdfdfb; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(26, 26, 24, 0.25); transform: translate(-35%, -35%); }',
@@ -354,12 +422,16 @@ export function injectVisualInspectorIntoHtml(
   var marqueeBox = document.createElement('div');
   marqueeBox.className = 'onto-vi-marquee';
 
+  var highlightBox = document.createElement('div');
+  highlightBox.className = 'onto-vi-highlight';
+
   var pinsLayer = document.createElement('div');
   pinsLayer.setAttribute('data-onto-inspector-ignore', '1');
 
   rootEl.appendChild(hoverBox);
   rootEl.appendChild(selectedBox);
   rootEl.appendChild(marqueeBox);
+  rootEl.appendChild(highlightBox);
   rootEl.appendChild(pinsLayer);
 
   function mountOverlay() {
@@ -615,6 +687,29 @@ export function injectVisualInspectorIntoHtml(
       badge.style.setProperty('--vi-y', Math.max(10, Math.round(tr.top)) + 'px');
       pinsLayer.appendChild(badge);
     }
+
+    if (highlightedSelector) {
+      var hlTarget = null;
+      try {
+        hlTarget =
+          document.querySelector('[data-element-id="' + escapeAttr(highlightedSelector) + '"]') ||
+          document.querySelector('[data-screen-id="' + escapeAttr(highlightedSelector) + '"]') ||
+          document.querySelector(highlightedSelector);
+      } catch (_hlErr) {}
+      if (hlTarget) {
+        var hlr = hlTarget.getBoundingClientRect();
+        if (hlr.width > 0 && hlr.height > 0) {
+          setBoxVars(highlightBox, null, hlr, '');
+          highlightBox.style.display = 'block';
+        } else {
+          highlightBox.style.display = 'none';
+        }
+      } else {
+        highlightBox.style.display = 'none';
+      }
+    } else {
+      highlightBox.style.display = 'none';
+    }
   }
 
   function scheduleSyncVisuals() {
@@ -768,12 +863,15 @@ export function injectVisualInspectorIntoHtml(
   document.addEventListener('submit', blockWhenInspecting, true);
 
   document.addEventListener('keydown', function (e) {
-    if (!isActive) return;
     if (e.key === 'Escape') {
-      e.preventDefault();
-      activeElements = [];
-      selectedBox.style.display = 'none';
-      postToHost('ESCAPE', {});
+      if (isActive) {
+        e.preventDefault();
+        activeElements = [];
+        selectedBox.style.display = 'none';
+        postToHost('ESCAPE', { inspecting: true });
+      } else {
+        postToHost('ESCAPE', { inspecting: false });
+      }
     }
   }, true);
 
@@ -787,6 +885,7 @@ export function injectVisualInspectorIntoHtml(
     if (msg.type === 'SYNC_STATE') {
       isActive = Boolean(msg.active);
       if (Array.isArray(msg.pins)) pins = msg.pins;
+      highlightedSelector = typeof msg.highlightedSelector === 'string' ? msg.highlightedSelector : '';
       if (msg.clearSelection) {
         activeElements = [];
         selectedBox.style.display = 'none';
@@ -815,29 +914,59 @@ export function injectVisualInspectorIntoHtml(
   return `${cleanHtml}\n${scriptTag}`;
 }
 
+const EMPTY_ANNOTATIONS: PrototypeVisualAnnotation[] = [];
+
+export interface PrototypeVisualPreviewStageProps {
+  htmlContent: string;
+  inspectMode: boolean;
+  onInspectModeChange: (next: boolean) => void;
+  annotations?: PrototypeVisualAnnotation[];
+  onAddAnnotation?: (target: PrototypeSelectionTarget, note: string) => void;
+  onApplyImmediate?: (target: PrototypeSelectionTarget, note: string) => void;
+  onSelectTarget?: (target: PrototypeSelectionTarget) => void;
+  onEscape?: () => void;
+  highlightedSelector?: string | null;
+  busy?: boolean;
+  allowInspectWhileBusy?: boolean;
+  showInlinePopover?: boolean;
+  viewport?: PrototypeViewportPreset;
+  zoomMode?: PrototypeZoomMode;
+  containerWidthOverride?: number;
+  onScaleChange?: (info: { targetWidth: number; scale: number; scaledWidth: number }) => void;
+  fillHeight?: boolean;
+}
+
 export function PrototypeVisualPreviewStage({
   htmlContent,
   inspectMode,
   onInspectModeChange,
-  annotations,
+  annotations = EMPTY_ANNOTATIONS,
   onAddAnnotation,
   onApplyImmediate,
-  busy,
-}: {
-  htmlContent: string;
-  inspectMode: boolean;
-  onInspectModeChange: (next: boolean) => void;
-  annotations: PrototypeVisualAnnotation[];
-  onAddAnnotation: (target: PrototypeSelectionTarget, note: string) => void;
-  onApplyImmediate: (target: PrototypeSelectionTarget, note: string) => void;
-  busy: boolean;
-}) {
+  onSelectTarget,
+  onEscape,
+  highlightedSelector = null,
+  busy = false,
+  allowInspectWhileBusy = false,
+  showInlinePopover,
+  viewport = 'DESKTOP',
+  zoomMode = 'FIT',
+  containerWidthOverride,
+  onScaleChange,
+  fillHeight = false,
+}: PrototypeVisualPreviewStageProps) {
   const { locale, t } = usePreferences();
   const popoverInputId = useId();
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const viewportHostRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const popoverInputRef = useRef<HTMLInputElement | null>(null);
   const lastCompositionEndRef = useRef<number | null>(null);
+
+  const shouldShowPopover =
+    showInlinePopover !== undefined
+      ? showInlinePopover
+      : Boolean(onAddAnnotation || onApplyImmediate);
 
   const channelToken = useMemo(() => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -851,14 +980,26 @@ export function PrototypeVisualPreviewStage({
   const [activeSelection, setActiveSelection] = useState<PrototypeSelectionTarget | null>(null);
   const [draftNote, setDraftNote] = useState('');
   const [stageSize, setStageSize] = useState<{ width: number; height: number }>({
-    width: 680,
-    height: 560,
+    width: containerWidthOverride ?? 1200,
+    height: 640,
   });
+
+  const effectiveContainerWidth = containerWidthOverride ?? stageSize.width;
+  const fitMetrics = useMemo(
+    () => computeViewportFitScale(effectiveContainerWidth, viewport, zoomMode),
+    [effectiveContainerWidth, viewport, zoomMode],
+  );
+
+  useEffect(() => {
+    onScaleChange?.(fitMetrics);
+  }, [fitMetrics.scale, fitMetrics.scaledWidth, fitMetrics.targetWidth, onScaleChange]);
+
+  const inspectorActive = inspectMode && (!busy || allowInspectWhileBusy);
 
   // Stable preview srcDoc: only recomputes when htmlContent or locale changes so toggling
   // inspectMode never reloads the iframe or resets multi-screen prototype state!
-  const initialInspectRef = useRef(inspectMode);
-  initialInspectRef.current = inspectMode;
+  const initialInspectRef = useRef(inspectorActive);
+  initialInspectRef.current = inspectorActive;
 
   const previewSrcDoc = useMemo(
     () =>
@@ -880,8 +1021,9 @@ export function PrototypeVisualPreviewStage({
           namespace: INSPECTOR_NAMESPACE,
           token: channelToken,
           type: 'SYNC_STATE',
-          active: inspectMode && !busy,
+          active: inspectorActive,
           clearSelection,
+          highlightedSelector: highlightedSelector ?? '',
           pins: annotations.map((a) => ({
             index: a.index,
             cssSelector: a.target.cssSelector,
@@ -891,7 +1033,7 @@ export function PrototypeVisualPreviewStage({
         '*',
       );
     },
-    [annotations, busy, channelToken, inspectMode],
+    [annotations, channelToken, highlightedSelector, inspectorActive],
   );
 
   useEffect(() => {
@@ -900,7 +1042,7 @@ export function PrototypeVisualPreviewStage({
       setActiveSelection(null);
       setDraftNote('');
     }
-  }, [inspectMode, busy, annotations, syncIframeInspectorState]);
+  }, [inspectMode, inspectorActive, annotations, highlightedSelector, syncIframeInspectorState]);
 
   useEffect(() => {
     setActiveSelection(null);
@@ -909,7 +1051,7 @@ export function PrototypeVisualPreviewStage({
   }, [htmlContent, originValidator]);
 
   useEffect(() => {
-    const el = stageRef.current;
+    const el = viewportHostRef.current ?? stageRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const measure = () => {
       const r = el.getBoundingClientRect();
@@ -936,17 +1078,20 @@ export function PrototypeVisualPreviewStage({
       if (data.type === 'SELECT') {
         const parsed = sanitizeInspectorSelectionPayload(data.selection);
         if (!parsed) return;
-        setActiveSelection(parsed);
-        setDraftNote('');
-        if (stageRef.current) {
-          const r = stageRef.current.getBoundingClientRect();
-          if (r.width > 0 && r.height > 0) {
-            setStageSize({ width: r.width, height: r.height });
+        onSelectTarget?.(parsed);
+        if (shouldShowPopover) {
+          setActiveSelection(parsed);
+          setDraftNote('');
+          if (viewportHostRef.current) {
+            const r = viewportHostRef.current.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) {
+              setStageSize({ width: r.width, height: r.height });
+            }
           }
+          requestAnimationFrame(() => {
+            popoverInputRef.current?.focus();
+          });
         }
-        requestAnimationFrame(() => {
-          popoverInputRef.current?.focus();
-        });
         return;
       }
       if (data.type === 'SELECTION_RECT') {
@@ -964,12 +1109,17 @@ export function PrototypeVisualPreviewStage({
         return;
       }
       if (data.type === 'ESCAPE') {
+        if (data.inspecting === false) {
+          onEscape?.();
+          return;
+        }
         if (activeSelection) {
           setActiveSelection(null);
           setDraftNote('');
           syncIframeInspectorState(true);
         } else {
           onInspectModeChange(false);
+          onEscape?.();
         }
       }
     };
@@ -979,8 +1129,11 @@ export function PrototypeVisualPreviewStage({
   }, [
     activeSelection,
     channelToken,
+    onEscape,
     onInspectModeChange,
+    onSelectTarget,
     originValidator,
+    shouldShowPopover,
     syncIframeInspectorState,
   ]);
 
@@ -992,7 +1145,7 @@ export function PrototypeVisualPreviewStage({
 
   const handlePinCurrent = () => {
     if (!activeSelection) return;
-    onAddAnnotation(activeSelection, draftNote.trim());
+    onAddAnnotation?.(activeSelection, draftNote.trim());
     setActiveSelection(null);
     setDraftNote('');
     syncIframeInspectorState(true);
@@ -1005,7 +1158,7 @@ export function PrototypeVisualPreviewStage({
     const note = draftNote.trim();
     setActiveSelection(null);
     setDraftNote('');
-    onApplyImmediate(target, note);
+    onApplyImmediate?.(target, note);
   };
 
   const quickPresets = useMemo(
@@ -1031,20 +1184,40 @@ export function PrototypeVisualPreviewStage({
   );
 
   const bannerHeight = inspectMode ? 36 : 0;
-  const popPos = activeSelection
-    ? computeFloatingPopoverPosition(activeSelection.rect, stageSize, bannerHeight)
+  const horizontalOffset = Math.max(
+    0,
+    Math.round((effectiveContainerWidth - fitMetrics.scaledWidth) / 2),
+  );
+  const mappedSelectionRect = activeSelection
+    ? mapIframeRectToStageRect(activeSelection.rect, fitMetrics.scale, horizontalOffset)
+    : null;
+  const popPos = mappedSelectionRect
+    ? computeFloatingPopoverPosition(
+        mappedSelectionRect,
+        { width: effectiveContainerWidth, height: stageSize.height },
+        bannerHeight,
+      )
     : { left: 16, top: 48 };
 
   const nextPinNumber = annotations.length + 1;
+  const visualHeight = fillHeight ? Math.max(480, stageSize.height - 16) : 560;
+  const unscaledIframeHeight = Math.max(480, Math.round(visualHeight / fitMetrics.scale));
 
   return (
     <div
       ref={stageRef}
       data-testid="prototype-visual-stage"
-      className={cn('proto-inspector-stage', inspectMode && 'is-inspecting')}
+      data-viewport={viewport}
+      data-zoom-mode={zoomMode}
+      data-scale={String(fitMetrics.scale)}
+      className={cn(
+        'proto-inspector-stage flex flex-col',
+        inspectMode && 'is-inspecting',
+        fillHeight && 'h-full min-h-0 flex-1',
+      )}
     >
       {inspectMode && (
-        <div className="proto-inspector-banner" data-testid="visual-select-banner">
+        <div className="proto-inspector-banner shrink-0" data-testid="visual-select-banner">
           <div className="flex flex-wrap items-center gap-2">
             <span className="proto-inspector-dot" aria-hidden="true" />
             <span className="font-medium text-ink">
@@ -1075,15 +1248,39 @@ export function PrototypeVisualPreviewStage({
         </div>
       )}
 
-      <iframe
-        ref={iframeRef}
-        title={t('交互式 HTML 原型沙箱预览', 'Interactive Prototype Sandbox')}
-        sandbox="allow-scripts"
-        srcDoc={previewSrcDoc}
-        className="block h-[560px] w-full border-0 bg-surface"
-      />
+      <div
+        ref={viewportHostRef}
+        className={cn(
+          'relative flex w-full justify-center bg-ground/60',
+          zoomMode === 'ACTUAL' ? 'overflow-auto p-3' : 'overflow-x-hidden overflow-y-auto p-2',
+          fillHeight && 'min-h-0 flex-1',
+        )}
+      >
+        <div
+          data-testid="prototype-viewport-frame"
+          className="relative shrink-0 overflow-hidden rounded-[6px] border border-line bg-surface shadow-xs"
+          style={{
+            width: `${fitMetrics.scaledWidth}px`,
+            height: `${visualHeight}px`,
+          }}
+        >
+          <iframe
+            ref={iframeRef}
+            title={t('交互式 HTML 原型沙箱预览', 'Interactive Prototype Sandbox')}
+            sandbox="allow-scripts"
+            srcDoc={previewSrcDoc}
+            className="block border-0 bg-surface"
+            style={{
+              width: `${fitMetrics.targetWidth}px`,
+              height: `${unscaledIframeHeight}px`,
+              transform: `scale(${fitMetrics.scale})`,
+              transformOrigin: 'top left',
+            }}
+          />
+        </div>
+      </div>
 
-      {inspectMode && activeSelection && (
+      {inspectMode && shouldShowPopover && activeSelection && (
         <form
           role="dialog"
           aria-label={t('选中区域 AI 精修批注', 'Selected UI target AI refinement')}

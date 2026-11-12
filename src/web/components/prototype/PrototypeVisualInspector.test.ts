@@ -1,15 +1,27 @@
-import { describe, expect, it } from 'vitest';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { extractMuFromPrototypeHtml } from '../../../packages/ontology-core/index.js';
+import { PreferencesProvider } from '../../i18n.js';
 import {
+  PROTOTYPE_VIEWPORT_WIDTHS,
+  PrototypeVisualPreviewStage,
   computeFloatingPopoverPosition,
+  computeViewportFitScale,
   createSandboxOriginValidator,
   injectVisualInspectorIntoHtml,
+  mapIframeRectToStageRect,
+  openCleanPrototypeInNewTab,
   sanitizeInspectorSelectionPayload,
   stripVisualInspectorFromHtml,
   toRefinementSelections,
   type PrototypeSelectionTarget,
   type PrototypeVisualAnnotation,
 } from './PrototypeVisualInspector.js';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const SAMPLE_PROTOTYPE_HTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -131,5 +143,133 @@ describe('PrototypeVisualInspector helpers', () => {
     const deduped = toRefinementSelections(annotations, { target: targetA, note: '重复项' });
     expect(deduped).toHaveLength(1);
     expect(deduped[0]?.note).toBe('改为危险红底并补充二次确认浮层');
+  });
+
+  it('computes responsive viewport widths and auto-fit scale across Desktop (1440), Tablet (768), and Mobile (390)', () => {
+    expect(PROTOTYPE_VIEWPORT_WIDTHS).toEqual({
+      DESKTOP: 1440,
+      TABLET: 768,
+      MOBILE: 390,
+    });
+
+    // Desktop 1440 inside a 960px container (minus 24px padding = 936px available -> 936 / 1440 = 0.65)
+    const desktopFit = computeViewportFitScale(960, 'DESKTOP', 'FIT');
+    expect(desktopFit.targetWidth).toBe(1440);
+    expect(desktopFit.scale).toBe(0.65);
+    expect(desktopFit.scaledWidth).toBe(936);
+
+    // Desktop 1440 in ACTUAL (100%) mode stays unscaled at 1
+    const desktopActual = computeViewportFitScale(960, 'DESKTOP', 'ACTUAL');
+    expect(desktopActual.targetWidth).toBe(1440);
+    expect(desktopActual.scale).toBe(1);
+    expect(desktopActual.scaledWidth).toBe(1440);
+
+    // Tablet 768 inside a 960px container does not upscale past 1
+    const tabletWide = computeViewportFitScale(960, 'TABLET', 'FIT');
+    expect(tabletWide.targetWidth).toBe(768);
+    expect(tabletWide.scale).toBe(1);
+    expect(tabletWide.scaledWidth).toBe(768);
+
+    // Tablet 768 inside a narrower 600px container scales down cleanly ((600 - 24) / 768 = 0.75)
+    const tabletNarrow = computeViewportFitScale(600, 'TABLET', 'FIT');
+    expect(tabletNarrow.targetWidth).toBe(768);
+    expect(tabletNarrow.scale).toBe(0.75);
+    expect(tabletNarrow.scaledWidth).toBe(576);
+
+    // Mobile 390 inside a 960px container stays crisp at 1 (390px)
+    const mobileWide = computeViewportFitScale(960, 'MOBILE', 'FIT');
+    expect(mobileWide.targetWidth).toBe(390);
+    expect(mobileWide.scale).toBe(1);
+    expect(mobileWide.scaledWidth).toBe(390);
+
+    // Maps iframe coordinates to host stage coordinates under auto-fit scale + centering offset
+    const mapped = mapIframeRectToStageRect(
+      { x: 100, y: 200, width: 300, height: 80 },
+      0.5,
+      40,
+    );
+    expect(mapped).toEqual({ x: 90, y: 100, width: 150, height: 40 });
+  });
+
+  it('opens clean prototype HTML in a new tab via Blob URL with inspector script stripped', () => {
+    const injected = injectVisualInspectorIntoHtml(SAMPLE_PROTOTYPE_HTML, {
+      token: 'tok-tab-test',
+      targetOrigin: 'http://localhost:5173',
+      initialActive: true,
+      locale: 'zh-CN',
+    });
+    expect(injected).toContain('data-onto-visual-inspector="1"');
+
+    const capturedBlobs: Blob[] = [];
+    const createObjectURL = vi.fn((blob: Blob) => {
+      capturedBlobs.push(blob);
+      return 'blob:http://localhost:5173/clean-proto-1';
+    });
+    const revokeObjectURL = vi.fn();
+    const openSpy = vi.fn();
+
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL,
+      revokeObjectURL,
+    });
+    vi.stubGlobal('window', {
+      open: openSpy,
+    });
+
+    const res = openCleanPrototypeInNewTab(injected);
+    expect(res).not.toBeNull();
+    expect(res?.blobUrl).toBe('blob:http://localhost:5173/clean-proto-1');
+    expect(res?.cleanHtml).not.toContain('data-onto-visual-inspector');
+    expect(res?.cleanHtml.trim()).toBe(SAMPLE_PROTOTYPE_HTML.trim());
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(capturedBlobs[0]?.type).toBe('text/html;charset=utf-8');
+    expect(openSpy).toHaveBeenCalledWith(
+      'blob:http://localhost:5173/clean-proto-1',
+      '_blank',
+      'noopener,noreferrer',
+    );
+  });
+
+  it('renders PrototypeVisualPreviewStage across Desktop, Tablet, and Mobile viewports with auto-fit scaling', () => {
+    const noop = () => {};
+    const desktopHtml = renderToStaticMarkup(
+      React.createElement(
+        PreferencesProvider,
+        null,
+        React.createElement(PrototypeVisualPreviewStage, {
+          htmlContent: SAMPLE_PROTOTYPE_HTML,
+          inspectMode: false,
+          onInspectModeChange: noop,
+          viewport: 'DESKTOP',
+          zoomMode: 'FIT',
+          containerWidthOverride: 960,
+          fillHeight: true,
+        }),
+      ),
+    );
+    expect(desktopHtml).toContain('data-viewport="DESKTOP"');
+    expect(desktopHtml).toContain('data-zoom-mode="FIT"');
+    expect(desktopHtml).toContain('data-scale="0.65"');
+    expect(desktopHtml).toContain('width:1440px');
+    expect(desktopHtml).toContain('scale(0.65)');
+
+    const mobileHtml = renderToStaticMarkup(
+      React.createElement(
+        PreferencesProvider,
+        null,
+        React.createElement(PrototypeVisualPreviewStage, {
+          htmlContent: SAMPLE_PROTOTYPE_HTML,
+          inspectMode: true,
+          onInspectModeChange: noop,
+          viewport: 'MOBILE',
+          zoomMode: 'FIT',
+          containerWidthOverride: 960,
+        }),
+      ),
+    );
+    expect(mobileHtml).toContain('data-viewport="MOBILE"');
+    expect(mobileHtml).toContain('width:390px');
+    expect(mobileHtml).toContain('data-testid="visual-select-banner"');
   });
 });
