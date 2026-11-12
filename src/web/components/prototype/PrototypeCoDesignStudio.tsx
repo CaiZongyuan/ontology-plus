@@ -1,22 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight,
-  CheckCircle2,
-  Code2,
-  Copy,
-  Crosshair,
-  Download,
+  ArrowLeft,
   ExternalLink,
-  Eye,
   Loader2,
-  Palette,
   Send,
   Sparkles,
-  Trash2,
+  Upload,
   Wand2,
   X,
 } from 'lucide-react';
-import { extractMuFromPrototypeHtml } from '../../../packages/ontology-core/index.js';
 import type {
   ProjectDetail,
   PrototypeArtifact,
@@ -29,10 +21,9 @@ import {
   describeAlignmentForAgent,
   type RequirementAlignmentState,
 } from './MotionSchematicGallery.js';
-import {
-  PrototypeVisualPreviewStage,
-  type PrototypeSelectionTarget,
-  type PrototypeVisualAnnotation,
+import type {
+  PrototypeSelectionTarget,
+  PrototypeVisualAnnotation,
 } from './PrototypeVisualInspector.js';
 import {
   CURATED_INSPO_CATALOG,
@@ -52,7 +43,6 @@ import {
   type VisualReferenceSelection,
 } from './VisualReferencePicker.js';
 import { usePreferences } from '../../i18n.js';
-import { cn } from '../../lib/utils.js';
 
 export type InspoReferenceItem = VisualReferenceItem;
 
@@ -1036,29 +1026,31 @@ export interface PrototypeCoDesignStudioProps {
   selectedDocId: string;
   onSelectDocId: (docId: string) => void;
   prototypes: PrototypeArtifact[];
-  selectedProtoId: string;
-  onSelectProtoId: (id: string) => void;
-  activeStep: 1 | 2 | 3;
-  onStepChange: (step: 1 | 2 | 3) => void;
-  previewSource: 'REFERENCE_DRAFT' | 'SAVED_PROTO';
-  onPreviewSourceChange: (src: 'REFERENCE_DRAFT' | 'SAVED_PROTO') => void;
-  savedHtmlContent: string;
-  onSavedHtmlContentChange: (html: string) => void;
-  onDraftHtmlChange: (html: string, refTitleSummary: string) => void;
-  onSaveDraftAsPrototype: (html: string, refTitleSummary: string) => Promise<void>;
+  selectedProtoId?: string;
+  onSelectProtoId?: (id: string) => void;
+  activeStep?: 1 | 2 | 3;
+  onStepChange?: (step: 1 | 2 | 3) => void;
+  previewSource?: 'REFERENCE_DRAFT' | 'SAVED_PROTO';
+  onPreviewSourceChange?: (src: 'REFERENCE_DRAFT' | 'SAVED_PROTO') => void;
+  savedHtmlContent?: string;
+  onSavedHtmlContentChange?: (html: string) => void;
+  onDraftHtmlChange?: (html: string, refTitleSummary: string) => void;
+  onSaveDraftAsPrototype?: (html: string, refTitleSummary: string) => Promise<void>;
   onGenerateWithAi: (compiledPrompt: string, docId?: string) => Promise<void>;
-  onCloneVersion: () => void;
-  onDeleteProto: (proto: PrototypeArtifact) => void;
-  onDownloadHtml: (html: string, name?: string) => void;
-  inspectMode: boolean;
-  onInspectModeChange: (next: boolean) => void;
-  visualAnnotations: PrototypeVisualAnnotation[];
-  onAddVisualAnnotation: (target: PrototypeSelectionTarget, note: string) => void;
-  onRemoveVisualAnnotation: (id: string) => void;
-  onClearVisualAnnotations: () => void;
-  refineInstruction: string;
-  onRefineInstructionChange: (val: string) => void;
-  onApplyRefine: (
+  onBackToCanvas?: () => void;
+  onImportHtmlClick?: () => void;
+  onCloneVersion?: () => void;
+  onDeleteProto?: (proto: PrototypeArtifact) => void;
+  onDownloadHtml?: (html: string, name?: string) => void;
+  inspectMode?: boolean;
+  onInspectModeChange?: (next: boolean) => void;
+  visualAnnotations?: PrototypeVisualAnnotation[];
+  onAddVisualAnnotation?: (target: PrototypeSelectionTarget, note: string) => void;
+  onRemoveVisualAnnotation?: (id: string) => void;
+  onClearVisualAnnotations?: () => void;
+  refineInstruction?: string;
+  onRefineInstructionChange?: (val: string) => void;
+  onApplyRefine?: (
     activeHtml: string,
     immediateDraft?: { target: PrototypeSelectionTarget; note: string },
   ) => Promise<void>;
@@ -1071,32 +1063,15 @@ export function PrototypeCoDesignStudio({
   selectedDocId,
   onSelectDocId,
   prototypes,
-  selectedProtoId,
-  onSelectProtoId,
-  activeStep,
-  onStepChange,
-  previewSource,
-  onPreviewSourceChange,
-  savedHtmlContent,
-  onSavedHtmlContentChange,
   onDraftHtmlChange,
-  onSaveDraftAsPrototype,
   onGenerateWithAi,
-  onCloneVersion,
-  onDeleteProto,
-  onDownloadHtml,
-  inspectMode,
-  onInspectModeChange,
-  visualAnnotations,
-  onAddVisualAnnotation,
-  onRemoveVisualAnnotation,
-  onClearVisualAnnotations,
-  refineInstruction,
-  onRefineInstructionChange,
-  onApplyRefine,
+  onBackToCanvas,
+  onImportHtmlClick,
   isBusyProto,
 }: PrototypeCoDesignStudioProps) {
   const { locale, t } = usePreferences();
+  const referencesAnchorRef = useRef<HTMLDivElement | null>(null);
+  const schematicsAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const [referenceSelection, setReferenceSelection] = useState<VisualReferenceSelection>(() =>
     createInitialVisualReferenceSelection(CURATED_INSPO_CATALOG[0]!),
@@ -1110,11 +1085,8 @@ export function PrototypeCoDesignStudio({
   const [alignment, setAlignment] =
     useState<RequirementAlignmentState>(DEFAULT_ALIGNMENT_STATE);
   const [customNoteDraft, setCustomNoteDraft] = useState('');
-  const [studioViewMode, setStudioViewMode] = useState<'PREVIEW' | 'SPLIT' | 'HTML'>('PREVIEW');
 
   const activeDoc = docs.find((d) => d.id === selectedDocId) ?? docs[0];
-  const currentSavedProto =
-    prototypes.find((p) => p.id === selectedProtoId) ?? prototypes[0];
 
   const draftHtml = useMemo(
     () => buildReferenceStyledPrototypeHtml(project, activeDoc, selectedPrefs, alignment),
@@ -1127,38 +1099,13 @@ export function PrototypeCoDesignStudio({
   );
 
   useEffect(() => {
-    onDraftHtmlChange(draftHtml, refTitleSummary);
+    onDraftHtmlChange?.(draftHtml, refTitleSummary);
   }, [draftHtml, refTitleSummary]);
 
   const compiledAgentPrompt = useMemo(
     () => buildAgentPrototypeContextPrompt(selectedPrefs, alignment, locale),
     [selectedPrefs, alignment, locale],
   );
-
-  const displayedHtml =
-    previewSource === 'SAVED_PROTO' && currentSavedProto
-      ? savedHtmlContent
-      : draftHtml;
-
-  const muCounts = useMemo(() => {
-    if (!displayedHtml.trim()) {
-      return { screens: 0, elements: 0, bindings: 0, events: 0 };
-    }
-    try {
-      const mu = extractMuFromPrototypeHtml(displayedHtml, project.domain);
-      let elements = 0;
-      let bindings = 0;
-      let events = 0;
-      for (const s of mu.screens) {
-        elements += s.elements.length;
-        bindings += s.elements.filter((e) => Boolean(e.dataBinding)).length;
-        events += s.events.length;
-      }
-      return { screens: mu.screens.length, elements, bindings, events };
-    } catch {
-      return { screens: 0, elements: 0, bindings: 0, events: 0 };
-    }
-  }, [displayedHtml, project.domain]);
 
   const primaryAccent = useMemo(() => {
     const donor =
@@ -1168,661 +1115,321 @@ export function PrototypeCoDesignStudio({
   }, [selectedPrefs]);
 
   return (
-    <div className="flex flex-col gap-3.5">
-      {/* ─── 3-Stage Stepper Header (Workflow A) ─── */}
-      <div className="card flex flex-wrap items-center justify-between gap-3 py-3">
-        <div className="flex flex-wrap items-center gap-2">
-          {[
-            {
-              n: 1 as const,
-              zh: '① 选择主参考与借鉴参考',
-              en: '1. Primary & Borrowed References',
-              sub: t(
+    <section
+      data-testid="prototype-briefing-stage"
+      aria-label={t('界面原型简报工作区', 'Prototype Design Brief Stage')}
+      className="flex flex-col gap-3.5"
+    >
+      {/* ─── Briefing Stage Header (Single-Page Briefing, no 1 -> 2 -> 3 wizard) ─── */}
+      <header
+        data-testid="prototype-briefing-header"
+        className="card flex flex-wrap items-center justify-between gap-3 py-3"
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="m-0 text-[15px] font-semibold text-ink">
+              {t('设计简报 · 视觉参考与交互对齐', 'Design Brief · References & Schematics')}
+            </h2>
+            <span className="badge font-mono text-[11px]">
+              {t(
                 `主参考 ${referenceSelection.primary.title}${referenceSelection.borrowed.length > 0 ? ` + ${referenceSelection.borrowed.length} 借鉴` : ''}`,
                 `Primary: ${referenceSelection.primary.title}${referenceSelection.borrowed.length > 0 ? ` +${referenceSelection.borrowed.length}` : ''}`,
-              ),
-            },
-            {
-              n: 2 as const,
-              zh: '② 动态示意图交互对齐',
-              en: '2. Visual Schematic Alignment',
-              sub: t(
-                `${1 + 1 + alignment.interactiveParts.length + alignment.feedbackMotions.length} 项图解`,
-                `${2 + alignment.interactiveParts.length + alignment.feedbackMotions.length} specs`,
-              ),
-            },
-            {
-              n: 3 as const,
-              zh: '③ 交互原型沙箱与精修',
-              en: '3. Interactive Prototype Studio',
-              sub:
-                prototypes.length > 0
-                  ? t(`已有 ${prototypes.length} 版 · MU 就绪`, `${prototypes.length} ver · MU`)
-                  : 'Live HTML5',
-            },
-          ].map((s, idx) => (
-            <React.Fragment key={s.n}>
-              {idx > 0 && <ArrowRight size={13} className="text-ink-3" />}
-              <button
-                type="button"
-                data-testid={`proto-step-${s.n}`}
-                onClick={() => onStepChange(s.n)}
-                className={cn(
-                  'inline-flex cursor-pointer items-center gap-2 rounded-control border px-3 py-1.5 text-left text-[12.5px] transition-colors',
-                  activeStep === s.n
-                    ? 'border-accent bg-accent-tint font-semibold text-ink'
-                    : 'border-line bg-surface text-ink-2 hover:border-accent/50',
-                )}
-              >
-                <span>{t(s.zh, s.en)}</span>
-                <span className="rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10.5px] text-ink-3">
-                  {s.sub}
-                </span>
-              </button>
-            </React.Fragment>
-          ))}
+              )}
+            </span>
+          </div>
+          <p className="m-0 mt-0.5 text-[12px] text-muted">
+            {t(
+              '挑选主参考与动态交互示意，确认方向后由 AI Agent 生成可交互原型并进入画布阶段。',
+              'Pick your primary reference and interactive schematics, then generate a runnable prototype in Canvas Stage.',
+            )}
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {activeStep === 1 && (
+          {prototypes.length > 0 && onBackToCanvas && (
             <Button
               type="button"
-              variant="accent"
+              variant="secondary"
               size="sm"
-              data-testid="proto-next-to-step-2"
-              onClick={() => onStepChange(2)}
+              data-testid="prototype-back-to-canvas-btn"
+              onClick={onBackToCanvas}
             >
-              {t('选好了，下一步看动态示意图对齐交互', 'Next: Visual Schematic Alignment')}
-              <ArrowRight size={13.5} />
+              <ArrowLeft size={13.5} aria-hidden="true" />
+              {t(
+                `返回画布 (${prototypes.length})`,
+                `Back to Canvas (${prototypes.length})`,
+              )}
             </Button>
           )}
-          {activeStep === 2 && (
-            <>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  onPreviewSourceChange('REFERENCE_DRAFT');
-                  onStepChange(3);
-                }}
-              >
-                <Eye size={13.5} />
-                {t('先看实时合成原型', 'Instant Live Preview')}
-              </Button>
-              <Button
-                type="button"
-                variant="accent"
-                size="sm"
-                disabled={isBusyProto}
-                onClick={() => {
-                  onStepChange(3);
-                  void onGenerateWithAi(compiledAgentPrompt, selectedDocId || undefined);
-                }}
-              >
-                <Sparkles size={13.5} />
-                {t('让 Agent 按全部上下文生成原型', 'Generate Prototype with Agent')}
-              </Button>
-            </>
+          {onImportHtmlClick && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              data-testid="briefing-import-html-btn"
+              onClick={onImportHtmlClick}
+            >
+              <Upload size={13.5} aria-hidden="true" />
+              {t('导入 HTML', 'Import HTML')}
+            </Button>
           )}
-          {activeStep === 3 && (
-            <span className="badge badge-ok font-mono">
-              MU: {muCounts.screens} Screens · {muCounts.elements} Elements · {muCounts.events} Events
-            </span>
-          )}
+          <Button
+            type="button"
+            variant="accent"
+            size="sm"
+            data-testid="briefing-generate-prototype-btn"
+            disabled={isBusyProto}
+            onClick={() => void onGenerateWithAi(compiledAgentPrompt, selectedDocId || undefined)}
+          >
+            {isBusyProto ? (
+              <Loader2 size={13.5} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Sparkles size={13.5} aria-hidden="true" />
+            )}
+            {t('让 Agent 生成原型', 'Generate Prototype with Agent')}
+          </Button>
         </div>
-      </div>
+      </header>
 
-      {/* ═══════════════════════════════════════════════════════════════════════
-          STAGE 1: PRIMARY REFERENCE + OPTIONAL BORROWED REFERENCES PICKER
-         ═══════════════════════════════════════════════════════════════════════ */}
-      {activeStep === 1 && (
+      {/* ─── Visual Reference Picker ─── */}
+      <div ref={referencesAnchorRef}>
         <VisualReferencePicker
           selection={referenceSelection}
           onSelectionChange={setReferenceSelection}
           projectId={project.id}
           {...(activeDoc ? { docId: activeDoc.id } : {})}
-          onContinue={() => onStepChange(2)}
-          continueLabelZh="选好了，下一步看动态示意图对齐交互 →"
-          continueLabelEn="Next: Visual Schematic Alignment →"
+          onContinue={() => {
+            schematicsAnchorRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+          }}
+          continueLabelZh="继续对齐下方动态交互示意 ↓"
+          continueLabelEn="Continue to Interactive Schematics ↓"
         />
-      )}
+      </div>
 
-      {/* ═══════════════════════════════════════════════════════════════════════
-          STAGE 2: MOTION-PROMPT SCHEMATICS + AGENT CONTEXT BLUEPRINT
-         ═══════════════════════════════════════════════════════════════════════ */}
-      {activeStep === 2 && (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.45fr_0.85fr]">
-          {/* Left: Visual Motion Schematics + Extra Business Note */}
-          <div className="card flex flex-col gap-4">
-            <MotionSchematicGallery
-              alignment={alignment}
-              setAlignment={setAlignment}
-              accentColor={primaryAccent}
-            />
+      {/* ─── Motion Schematics + Agent Context Blueprint ─── */}
+      <div
+        ref={schematicsAnchorRef}
+        className="grid grid-cols-1 gap-4 xl:grid-cols-[1.45fr_0.85fr]"
+      >
+        <div className="card flex flex-col gap-4">
+          <MotionSchematicGallery
+            alignment={alignment}
+            setAlignment={setAlignment}
+            accentColor={primaryAccent}
+          />
 
-            {/* Freeform Domain Alignment Note */}
-            <div className="rounded-card border border-line bg-inset/45 p-3.5">
-              <div className="mb-2 text-[13px] font-semibold text-ink">
-                5. {t('还有其他具体业务场景或页面细节想叮嘱 Agent 吗？（选填）', '5. Any extra business details for the Agent? (Optional)')}
-              </div>
-              <form
-                className="flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!customNoteDraft.trim()) return;
-                  setAlignment((prev) => ({
-                    ...prev,
-                    customNotes: [...prev.customNotes, customNoteDraft.trim()],
-                  }));
-                  setCustomNoteDraft('');
-                }}
-              >
-                <input
-                  className="input flex-1 bg-surface"
-                  placeholder={t(
-                    '例如：超过 10 万金额标红预警、列表增加「所属部门」筛选、字号稍微大一点方便财务人员核对…',
-                    'e.g., Highlight amounts over 100k in red, add a Department filter…',
-                  )}
-                  value={customNoteDraft}
-                  onChange={(e) => setCustomNoteDraft(e.target.value)}
-                />
-                <Button type="submit" variant="secondary" size="sm">
-                  <Send size={13} />
-                  {t('添加备注', 'Add Note')}
-                </Button>
-              </form>
-
-              {alignment.customNotes.length > 0 && (
-                <div className="mt-2.5 flex flex-wrap gap-1.5">
-                  {alignment.customNotes.map((n, idx) => (
-                    <span
-                      key={`${idx}-${n}`}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-0.5 text-[12px] text-ink"
-                    >
-                      <span>✓ {n}</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setAlignment((prev) => ({
-                            ...prev,
-                            customNotes: prev.customNotes.filter((_, i) => i !== idx),
-                          }))
-                        }
-                        className="cursor-pointer text-ink-3 hover:text-red"
-                      >
-                        <X size={11.5} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
+          <div className="rounded-card border border-line bg-inset/45 p-3.5">
+            <div className="mb-2 text-[13px] font-semibold text-ink">
+              {t(
+                '补充业务场景或页面细节（选填）',
+                'Extra business details for the Agent (Optional)',
               )}
             </div>
-          </div>
-
-          {/* Right: Complete Agent Context Summary + SRS Selector + Generation Actions */}
-          <div className="card flex flex-col justify-between gap-4 self-start">
-            <div className="flex flex-col gap-3.5">
-              <div className="border-b border-line pb-2.5">
-                <div className="text-[14.5px] font-semibold text-ink">
-                  {t('即将交给原型 Agent 的完整设计上下文', 'Context Blueprint for Prototype Agent')}
-                </div>
-                <p className="m-0 mt-0.5 text-[12px] text-ink-3">
-                  {t(
-                    '包含您刚挑选的主参考、可选借鉴参考、动态交互示意图以及工程需求文档。',
-                    'Combines your Primary Reference, Borrowed References, motion schematics, and SRS.',
-                  )}
-                </p>
-              </div>
-
-              {docs.length > 0 && (
-                <div className="flex flex-col gap-1">
-                  <label className="text-[12px] font-medium text-ink-2">
-                    {t('关联需求规格说明书 (SRS)：', 'Linked SRS Specification:')}
-                  </label>
-                  <select
-                    className="input text-[12.5px]"
-                    value={selectedDocId}
-                    onChange={(e) => onSelectDocId(e.target.value)}
-                  >
-                    {docs.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.title} ({d.status})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {/* Selected Primary & Borrowed References Summary */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between text-[12px] font-semibold text-ink-2">
-                  <span>{t('已选主参考与借鉴参考', 'Primary & Borrowed References')}</span>
-                  <button
-                    type="button"
-                    onClick={() => onStepChange(1)}
-                    className="cursor-pointer text-accent hover:underline"
-                  >
-                    {t('返回调整参考图', 'Edit References')}
-                  </button>
-                </div>
-
-                {/* Primary Reference Card */}
-                <div className="flex items-center gap-2.5 rounded-card border border-accent/40 bg-accent-tint/25 p-2.5">
-                  <div className="h-14 w-24 shrink-0 overflow-hidden rounded border border-line bg-surface">
-                    <VisualReferenceImage
-                      item={referenceSelection.primary}
-                      variant="hero"
-                      className="h-full w-full"
-                    />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="inline-flex items-center gap-1.5 truncate font-semibold text-[13px] text-ink">
-                        <span className="badge badge-accent">{t('主参考', 'Primary')}</span>
-                        <span>{referenceSelection.primary.title}</span>
-                      </span>
-                      <a
-                        href={referenceSelection.primary.sourceUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-0.5 font-mono text-[10.5px] text-ink-3 hover:text-accent"
-                      >
-                        <span>{referenceSelection.primary.sourceDomain}</span>
-                        <ExternalLink size={10} />
-                      </a>
-                    </div>
-                    <div className="text-[11.5px] text-ink-3">
-                      {t(
-                        referenceSelection.primary.plainLabelZh,
-                        referenceSelection.primary.plainLabelEn,
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Borrowed Reference Cards (0..2) */}
-                {referenceSelection.borrowed.map((borrowed) => {
-                  const aspectMeta = LIKED_ASPECT_OPTIONS.find((o) => o.key === borrowed.aspect);
-                  return (
-                    <div
-                      key={borrowed.item.slug}
-                      className="flex items-center gap-2.5 rounded-card border border-line bg-inset/40 p-2.5"
-                    >
-                      <div className="h-12 w-20 shrink-0 overflow-hidden rounded border border-line bg-surface">
-                        <VisualReferenceImage
-                          item={borrowed.item}
-                          variant="hero"
-                          className="h-full w-full"
-                        />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="truncate font-semibold text-[12.5px] text-ink">
-                            {borrowed.item.title}
-                          </span>
-                          <a
-                            href={borrowed.item.sourceUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-0.5 font-mono text-[10.5px] text-ink-3 hover:text-accent"
-                          >
-                            <span>{borrowed.item.sourceDomain}</span>
-                            <ExternalLink size={10} />
-                          </a>
-                        </div>
-                        <div className="text-[11.5px] text-accent">
-                          {t(
-                            `借鉴参考 · ${aspectMeta?.labelZh ?? borrowed.aspect}`,
-                            `Borrowed · ${aspectMeta?.labelEn ?? borrowed.aspect}`,
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Transparent Prompt Disclosure */}
-              <details className="rounded-control border border-line bg-inset/50 px-3 py-2 text-[12px]">
-                <summary className="cursor-pointer font-medium text-ink-2">
-                  {t('展开查看将发送给 Agent 的完整提示词指令', 'View compiled Agent context prompt')}
-                </summary>
-                <pre className="mt-2 max-h-[200px] overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2">
-                  {compiledAgentPrompt}
-                </pre>
-              </details>
-            </div>
-
-            <div className="flex flex-col gap-2 border-t border-line pt-3">
-              <Button
-                type="button"
-                variant="accent"
-                size="md"
-                disabled={isBusyProto}
-                onClick={() => {
-                  onStepChange(3);
-                  void onGenerateWithAi(compiledAgentPrompt, selectedDocId || undefined);
-                }}
-              >
-                <Wand2 size={14} />
-                {t(
-                  '✨ 让 AI Agent 按全部上下文流式生成业务原型 →',
-                  '✨ Generate Custom Prototype with AI Agent →',
-                )}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  onPreviewSourceChange('REFERENCE_DRAFT');
-                  onStepChange(3);
-                }}
-              >
-                <Eye size={13.5} />
-                {t(
-                  '⚡ 先打开毫秒级实时合成预览体验效果 →',
-                  '⚡ Open Instant Reference-Styled Preview →',
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════════════
-          STAGE 3: INTERACTIVE PROTOTYPE SANDBOX, VISUAL REFINE & MU STUDIO
-         ═══════════════════════════════════════════════════════════════════════ */}
-      {activeStep === 3 && (
-        <div className="card flex flex-col gap-3">
-          {/* Top Studio Toolbar: Version / Draft Switcher + View Mode + Visual Inspector */}
-          <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-line pb-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" variant="secondary" size="xs" onClick={() => onStepChange(1)}>
-                ← {t('换参考大图/改原因', 'References')}
-              </Button>
-              <Button type="button" variant="secondary" size="xs" onClick={() => onStepChange(2)}>
-                ← {t('调整动态示意图', 'Schematics')}
-              </Button>
-
-              {/* Source Switcher: Live Reference Draft vs Saved Prototype Versions */}
-              <div className="inline-flex flex-wrap items-center gap-1 rounded-control border border-line bg-inset p-0.5">
-                <button
-                  type="button"
-                  onClick={() => onPreviewSourceChange('REFERENCE_DRAFT')}
-                  className={cn(
-                    'inline-flex cursor-pointer items-center gap-1 rounded-[5px] px-2.5 py-1 text-[11.5px] font-medium',
-                    previewSource === 'REFERENCE_DRAFT' || !currentSavedProto
-                      ? 'bg-surface text-ink shadow-hairline'
-                      : 'text-ink-3 hover:text-ink',
-                  )}
-                >
-                  <Palette size={11.5} className="text-accent" />
-                  {t(`参考合成预览 (${refTitleSummary})`, `Reference Draft (${refTitleSummary})`)}
-                </button>
-
-                {prototypes.map((p) => {
-                  const isCurrent =
-                    previewSource === 'SAVED_PROTO' && currentSavedProto?.id === p.id;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => {
-                        onSelectProtoId(p.id);
-                        onPreviewSourceChange('SAVED_PROTO');
-                      }}
-                      className={cn(
-                        'inline-flex cursor-pointer items-center gap-1 rounded-[5px] px-2.5 py-1 text-[11.5px] font-medium',
-                        isCurrent
-                          ? 'bg-surface text-ink shadow-hairline'
-                          : 'text-ink-3 hover:text-ink',
-                      )}
-                    >
-                      <CheckCircle2 size={11.5} className="text-emerald-600" />
-                      <span>
-                        {p.version} · {p.name.slice(0, 18)}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              {previewSource === 'REFERENCE_DRAFT' && (
-                <Button
-                  type="button"
-                  variant="accent"
-                  size="xs"
-                  disabled={isBusyProto}
-                  onClick={() => void onSaveDraftAsPrototype(draftHtml, refTitleSummary)}
-                >
-                  <CheckCircle2 size={12} />
-                  {t('将此参考原型落库并同步 MU', 'Save Draft to Project MU')}
-                </Button>
-              )}
-
-              <Button
-                type="button"
-                variant="secondary"
-                size="xs"
-                data-testid="open-new-proto-modal-btn"
-                disabled={isBusyProto}
-                onClick={() => void onGenerateWithAi(compiledAgentPrompt, selectedDocId || undefined)}
-              >
-                <Sparkles size={12} />
-                {t('AI 重新生成新版本', 'AI Regenerate')}
-              </Button>
-
-              {currentSavedProto && (
-                <>
-                  <Button type="button" variant="ghost" size="xs" onClick={onCloneVersion}>
-                    <Copy size={12} />
-                    {t('复制版本', 'Clone')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    className="text-red"
-                    onClick={() => onDeleteProto(currentSavedProto)}
-                  >
-                    <Trash2 size={12} />
-                  </Button>
-                </>
-              )}
-
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() =>
-                  onDownloadHtml(
-                    displayedHtml,
-                    currentSavedProto?.name ?? `${project.name}-${refTitleSummary}.html`,
-                  )
-                }
-              >
-                <Download size={12} />
-                {t('下载 .html', 'Download')}
-              </Button>
-
-              <Button
-                type="button"
-                variant="toggle"
-                size="xs"
-                data-testid="toggle-visual-select-btn"
-                aria-pressed={inspectMode}
-                disabled={isBusyProto}
-                onClick={() => {
-                  if (studioViewMode === 'HTML') setStudioViewMode('PREVIEW');
-                  onInspectModeChange(!inspectMode);
-                }}
-              >
-                <Crosshair size={12} />
-                {t('框选局部精修', 'Visual Select')}
-                {visualAnnotations.length > 0 && (
-                  <span className="rounded-full bg-accent px-1.5 font-mono text-[10px] text-accent-ink">
-                    {visualAnnotations.length}
-                  </span>
-                )}
-              </Button>
-
-              <div className="inline-flex items-center rounded-control border border-line bg-inset p-0.5">
-                {(
-                  [
-                    { k: 'PREVIEW', zh: '交互预览', en: 'Preview' },
-                    { k: 'SPLIT', zh: '分屏源码', en: 'Split' },
-                    { k: 'HTML', zh: 'HTML 源码', en: 'HTML' },
-                  ] as const
-                ).map((m) => (
-                  <button
-                    key={m.k}
-                    type="button"
-                    onClick={() => {
-                      if (m.k === 'HTML') onInspectModeChange(false);
-                      setStudioViewMode(m.k);
-                    }}
-                    className={cn(
-                      'cursor-pointer rounded-[5px] px-2 py-0.5 text-[11.5px] font-medium',
-                      studioViewMode === m.k
-                        ? 'bg-surface text-ink shadow-hairline'
-                        : 'text-ink-3 hover:text-ink',
-                    )}
-                  >
-                    {m.k === 'HTML' && <Code2 size={11} className="mr-1 inline" />}
-                    {t(m.zh, m.en)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Targeted Visual Refinement Instruction Bar */}
-          <form
-            className="flex flex-col gap-2 rounded-control border border-line bg-inset/45 p-2.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void onApplyRefine(displayedHtml);
-            }}
-          >
-            {visualAnnotations.length > 0 && (
-              <div
-                data-testid="visual-annotations-strip"
-                className="flex flex-wrap items-center gap-1.5"
-              >
-                {visualAnnotations.map((ann) => (
-                  <span key={ann.id} className="proto-pin-chip">
-                    <span className="proto-pin-num">#{ann.index}</span>
-                    <span className="truncate max-w-[240px]">
-                      {ann.target.label}
-                      {ann.note ? `：${ann.note}` : ''}
-                    </span>
-                    <button
-                      type="button"
-                      className="proto-pin-remove"
-                      onClick={() => onRemoveVisualAnnotation(ann.id)}
-                    >
-                      <X size={11} />
-                    </button>
-                  </span>
-                ))}
-                <button
-                  type="button"
-                  onClick={onClearVisualAnnotations}
-                  className="cursor-pointer text-[11.5px] text-ink-3 hover:text-ink"
-                >
-                  {t('清空框选批注', 'Clear pins')}
-                </button>
-              </div>
-            )}
-
-            <div className="flex gap-2">
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!customNoteDraft.trim()) return;
+                setAlignment((prev) => ({
+                  ...prev,
+                  customNotes: [...prev.customNotes, customNoteDraft.trim()],
+                }));
+                setCustomNoteDraft('');
+              }}
+            >
               <input
                 className="input flex-1 bg-surface"
-                data-testid="refine-prototype-input"
                 placeholder={t(
-                  '输入自然语言指令让 AI 局部精修当前原型（也可点上方「框选局部精修」直接圈选页面元素修改）…',
-                  'Type refinement instructions or use "Visual Select" to click/box-select elements…',
+                  '例如：超过 10 万金额标红预警、列表增加「所属部门」筛选…',
+                  'e.g., Highlight amounts over 100k in red, add a Department filter…',
                 )}
-                value={refineInstruction}
-                onChange={(e) => onRefineInstructionChange(e.target.value)}
+                value={customNoteDraft}
+                onChange={(e) => setCustomNoteDraft(e.target.value)}
               />
-              <Button
-                type="submit"
-                variant="accent"
-                size="sm"
-                data-testid="refine-prototype-btn"
-                disabled={
-                  isBusyProto ||
-                  (!refineInstruction.trim() && visualAnnotations.length === 0)
-                }
-              >
-                {isBusyProto ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <Wand2 size={13} />
-                )}
-                {t('AI 精修原型', 'AI Refine')}
+              <Button type="submit" variant="secondary" size="sm">
+                <Send size={13} />
+                {t('添加备注', 'Add Note')}
               </Button>
-            </div>
-          </form>
+            </form>
 
-          {/* Main Stage: Preview / Split / HTML Editor */}
-          <div
-            className={cn(
-              'grid gap-3',
-              studioViewMode === 'SPLIT'
-                ? 'grid-cols-1 lg:grid-cols-[1.2fr_0.8fr]'
-                : 'grid-cols-1',
-            )}
-          >
-            {studioViewMode !== 'HTML' && (
-              <div className="overflow-hidden rounded-control border border-line">
-                <PrototypeVisualPreviewStage
-                  htmlContent={displayedHtml}
-                  inspectMode={inspectMode}
-                  onInspectModeChange={onInspectModeChange}
-                  annotations={visualAnnotations}
-                  onAddAnnotation={onAddVisualAnnotation}
-                  onApplyImmediate={(target, note) =>
-                    void onApplyRefine(displayedHtml, { target, note })
-                  }
-                  busy={isBusyProto}
-                />
-              </div>
-            )}
-
-            {studioViewMode !== 'PREVIEW' && (
-              <div className="flex flex-col overflow-hidden rounded-control border border-line bg-inset">
-                <div className="flex items-center justify-between border-b border-line bg-surface px-3 py-1.5 text-[11.5px] text-ink-3">
-                  <span>
-                    {previewSource === 'SAVED_PROTO' && currentSavedProto
-                      ? `${currentSavedProto.name} (${currentSavedProto.version})`
-                      : t('当前参考合成 HTML5 源码（点击落库后可自由编辑）', 'Reference Draft HTML5 Source')}
+            {alignment.customNotes.length > 0 && (
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {alignment.customNotes.map((n, idx) => (
+                  <span
+                    key={`${idx}-${n}`}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-0.5 text-[12px] text-ink"
+                  >
+                    <span>✓ {n}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAlignment((prev) => ({
+                          ...prev,
+                          customNotes: prev.customNotes.filter((_, i) => i !== idx),
+                        }))
+                      }
+                      className="cursor-pointer text-ink-3 hover:text-red"
+                    >
+                      <X size={11.5} />
+                    </button>
                   </span>
-                  <span className="font-mono">
-                    {muCounts.bindings} data-binding
-                  </span>
-                </div>
-                <textarea
-                  className="min-h-[540px] w-full flex-1 resize-y border-0 bg-inset p-3 font-mono text-[12px] leading-relaxed text-ink focus:outline-none"
-                  value={displayedHtml}
-                  onChange={(e) => {
-                    const nextVal = e.target.value;
-                    onSavedHtmlContentChange(nextVal);
-                    if (previewSource === 'REFERENCE_DRAFT' && currentSavedProto) {
-                      onPreviewSourceChange('SAVED_PROTO');
-                    }
-                  }}
-                />
+                ))}
               </div>
             )}
           </div>
         </div>
-      )}
-    </div>
+
+        <div className="card flex flex-col justify-between gap-4 self-start">
+          <div className="flex flex-col gap-3.5">
+            <div className="border-b border-line pb-2.5">
+              <div className="text-[14.5px] font-semibold text-ink">
+                {t('设计简报上下文汇总', 'Design Brief Context Summary')}
+              </div>
+              <p className="m-0 mt-0.5 text-[12px] text-ink-3">
+                {t(
+                  '包含您挑选的主参考、可选借鉴参考、动态交互示意图以及工程需求文档。',
+                  'Combines your Primary Reference, Borrowed References, motion schematics, and SRS.',
+                )}
+              </p>
+            </div>
+
+            {docs.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <label className="text-[12px] font-medium text-ink-2">
+                  {t('关联需求规格说明书 (SRS)：', 'Linked SRS Specification:')}
+                </label>
+                <select
+                  className="input text-[12.5px]"
+                  value={selectedDocId}
+                  onChange={(e) => onSelectDocId(e.target.value)}
+                >
+                  {docs.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.title} ({d.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between text-[12px] font-semibold text-ink-2">
+                <span>{t('已选主参考与借鉴参考', 'Primary & Borrowed References')}</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    referencesAnchorRef.current?.scrollIntoView?.({
+                      behavior: 'smooth',
+                      block: 'start',
+                    })
+                  }
+                  className="cursor-pointer text-accent hover:underline"
+                >
+                  {t('调整参考图 ↑', 'Edit References ↑')}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2.5 rounded-card border border-accent/40 bg-accent-tint/25 p-2.5">
+                <div className="h-14 w-24 shrink-0 overflow-hidden rounded border border-line bg-surface">
+                  <VisualReferenceImage
+                    item={referenceSelection.primary}
+                    variant="hero"
+                    className="h-full w-full"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="inline-flex items-center gap-1.5 truncate font-semibold text-[13px] text-ink">
+                      <span className="badge badge-accent">{t('主参考', 'Primary')}</span>
+                      <span>{referenceSelection.primary.title}</span>
+                    </span>
+                    <a
+                      href={referenceSelection.primary.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-0.5 font-mono text-[10.5px] text-ink-3 hover:text-accent"
+                    >
+                      <span>{referenceSelection.primary.sourceDomain}</span>
+                      <ExternalLink size={10} />
+                    </a>
+                  </div>
+                  <div className="text-[11.5px] text-ink-3">
+                    {t(
+                      referenceSelection.primary.plainLabelZh,
+                      referenceSelection.primary.plainLabelEn,
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {referenceSelection.borrowed.map((borrowed) => {
+                const aspectMeta = LIKED_ASPECT_OPTIONS.find((o) => o.key === borrowed.aspect);
+                return (
+                  <div
+                    key={borrowed.item.slug}
+                    className="flex items-center gap-2.5 rounded-card border border-line bg-inset/40 p-2.5"
+                  >
+                    <div className="h-12 w-20 shrink-0 overflow-hidden rounded border border-line bg-surface">
+                      <VisualReferenceImage
+                        item={borrowed.item}
+                        variant="hero"
+                        className="h-full w-full"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="truncate font-semibold text-[12.5px] text-ink">
+                          {borrowed.item.title}
+                        </span>
+                        <a
+                          href={borrowed.item.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-0.5 font-mono text-[10.5px] text-ink-3 hover:text-accent"
+                        >
+                          <span>{borrowed.item.sourceDomain}</span>
+                          <ExternalLink size={10} />
+                        </a>
+                      </div>
+                      <div className="text-[11.5px] text-accent">
+                        {t(
+                          `借鉴参考 · ${aspectMeta?.labelZh ?? borrowed.aspect}`,
+                          `Borrowed · ${aspectMeta?.labelEn ?? borrowed.aspect}`,
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <details className="rounded-control border border-line bg-inset/50 px-3 py-2 text-[12px]">
+              <summary className="cursor-pointer font-medium text-ink-2">
+                {t('展开查看将发送给 Agent 的完整提示词指令', 'View compiled Agent context prompt')}
+              </summary>
+              <pre className="mt-2 max-h-[200px] overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-ink-2">
+                {compiledAgentPrompt}
+              </pre>
+            </details>
+          </div>
+
+          <div className="flex flex-col gap-2 border-t border-line pt-3">
+            <Button
+              type="button"
+              variant="accent"
+              size="md"
+              disabled={isBusyProto}
+              onClick={() => void onGenerateWithAi(compiledAgentPrompt, selectedDocId || undefined)}
+            >
+              <Wand2 size={14} />
+              {t(
+                '✨ 让 AI Agent 按全部上下文生成业务原型 →',
+                '✨ Generate Custom Prototype with AI Agent →',
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
