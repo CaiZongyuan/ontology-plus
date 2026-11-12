@@ -31,22 +31,20 @@ import {
   SSE_RESPONSE_HEADERS,
   abortActiveAgentSession,
   abortActiveAgentSessionAsync,
+  assistProjectDesignBrief,
   attachUnifiedAgentSessionLiveStream,
-  buildTurnSseEvents,
   compactAgentSessionWithLlm,
-  createSseEventStream,
   createUnifiedSseStream,
   ensurePrototypeCoDesignSession,
   getLiveAgentSessionStatus,
   normalizeAgentLocale,
-  runAppCodingAgentTurn,
-  runCapabilitySmartChatTurn,
   runDataOntologyReasoning,
-  runRequirementGrillingTurn,
   runSmartOntologyExtractionJob,
   runUnifiedAgentSessionStream,
   testLlmGatewayConnection,
   type AgentLocale,
+  type AssistProjectDesignBriefInput,
+  type DesignBriefAssistMode,
   type TransientTurnImageInput,
 } from '../packages/agent-runtime/index.js';
 import {
@@ -93,6 +91,9 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     }
     const errCode = (err as { code?: string } | null)?.code;
     const msg = err instanceof Error ? err.message : String(err);
+    if (errCode === 'UNSUPPORTED_INSPO_ACTION') {
+      return c.json({ ok: false, error: msg, code: 'UNSUPPORTED_INSPO_ACTION' }, 400);
+    }
     if (errCode === 'ALREADY_MERGED' || msg.includes('already merged')) {
       return c.json({ error: msg, code: 'ALREADY_MERGED' }, 409);
     }
@@ -564,21 +565,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     });
   });
 
-  app.post('/api/requirements/:sessionId/grill', async (c) => {
-    const sessionId = c.req.param('sessionId');
-    const body = await c.req.json<{ userMessage: string; locale?: string }>();
-    const locale = getReqLocale(c, body);
-    const result = await runRequirementGrillingTurn(store, {
-      sessionId,
-      userMessage: body.userMessage,
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      ...result,
-      requirementSessions: store.listRequirementSessions(result.session.projectId),
-    });
-  });
-
   app.post('/api/requirements/docs', async (c) => {
     const body = await c.req.json<{
       id: string;
@@ -745,25 +731,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     }
   });
 
-  app.post('/api/prototypes/:id/revisions/:revisionId/confirm', (c) => {
-    const prototypeId = c.req.param('id');
-    const revisionId = c.req.param('revisionId');
-    const existing = store.getPrototype(prototypeId);
-    if (!existing) return c.json({ error: 'Prototype not found' }, 404);
-    try {
-      const res = store.confirmPrototypeRevision(existing.projectId, revisionId);
-      return c.json({
-        confirmed: res.confirmed,
-        confirmedRevision: res.confirmed,
-        prototype: res.prototype,
-        project: res.project,
-        prototypes: store.listPrototypes(existing.projectId),
-      });
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
-    }
-  });
-
   app.post('/api/prototypes/:id/clone', async (c) => {
     const id = c.req.param('id');
     const body = await c.req
@@ -859,13 +826,63 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     }
   });
 
-  app.post('/api/prototype-inspo', async (c) => {
+  app.post('/api/projects/:id/design-brief-assist', async (c) => {
+    const projectId = c.req.param('id');
+    const project = store.getProject(projectId);
+    if (!project) return c.json({ error: 'Project not found' }, 404);
+    const body = await c.req
+      .json<Omit<AssistProjectDesignBriefInput, 'projectId' | 'mode'> & { mode?: string }>()
+      .catch((): { mode?: string } => ({}));
+    const mode: DesignBriefAssistMode =
+      body.mode === 'rewrite' || body.mode === 'decide' || body.mode === 'synthesize'
+        ? body.mode
+        : 'synthesize';
+    if (
+      body.mode !== undefined &&
+      body.mode !== 'synthesize' &&
+      body.mode !== 'rewrite' &&
+      body.mode !== 'decide'
+    ) {
+      return c.json({ ok: false, error: `Unsupported brief assist mode: ${body.mode}` }, 400);
+    }
+    const locale = getReqLocale(c, body as { locale?: string });
+    const res = await assistProjectDesignBrief(store, {
+      ...(body as Omit<AssistProjectDesignBriefInput, 'projectId' | 'mode'>),
+      projectId,
+      mode,
+      ...(locale ? { locale } : {}),
+    });
+    return c.json({
+      ok: true,
+      brief: res.brief,
+      source: res.source,
+      ...(res.visionFallbackUsed ? { visionFallbackUsed: true } : {}),
+    });
+  });
+
+  const handleInspoRoute = async (c: {
+    req: { json: <T>() => Promise<T> };
+    json: (body: unknown, status?: 200 | 400) => Response;
+  }) => {
     const body = await c.req
       .json<InspoProxyRequestBody>()
       .catch((): InspoProxyRequestBody => ({ action: 'search' }));
+    if (body.action === 'similar') {
+      return c.json(
+        {
+          ok: false,
+          error: 'Unsupported Inspo action: similar',
+          code: 'UNSUPPORTED_INSPO_ACTION',
+        },
+        400,
+      );
+    }
     const payload = await handleInspoProxyRequest(store, body);
     return c.json(payload);
-  });
+  };
+
+  app.post('/api/prototype-inspo', handleInspoRoute);
+  app.post('/api/inspo', handleInspoRoute);
 
   app.post('/api/assets', async (c) => {
     const body = await c.req.json<{
@@ -1022,21 +1039,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     }
   });
 
-  app.post('/api/applications/:appId/coding-agent', async (c) => {
-    const appId = c.req.param('appId');
-    const body = await c.req.json<{ instruction: string; locale?: string }>();
-    const locale = getReqLocale(c, body);
-    const res = await runAppCodingAgentTurn(store, {
-      appId,
-      instruction: body.instruction,
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      ...res,
-      assembledApplications: store.listAssembledApplications(),
-    });
-  });
-
   app.post('/api/applications/:appId/publish', async (c) => {
     const appId = c.req.param('appId');
     const appItem = store.listAssembledApplications().find((a) => a.id === appId);
@@ -1167,22 +1169,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     const id = c.req.param('id');
     store.deleteCapabilityChatSession(id);
     return c.json({ deletedId: id, capabilityChatSessions: store.listCapabilityChatSessions() });
-  });
-
-  app.post('/api/capability/agents/:agentId/chat', async (c) => {
-    const agentId = c.req.param('agentId');
-    const body = await c.req.json<{ sessionId?: string; userMessage: string; locale?: string }>();
-    const locale = getReqLocale(c, body);
-    const res = await runCapabilitySmartChatTurn(store, {
-      agentId,
-      ...(body.sessionId ? { sessionId: body.sessionId } : {}),
-      userMessage: body.userMessage,
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      ...res,
-      capabilityChatSessions: store.listCapabilityChatSessions(),
-    });
   });
 
   app.post('/api/capability/flows', async (c) => {

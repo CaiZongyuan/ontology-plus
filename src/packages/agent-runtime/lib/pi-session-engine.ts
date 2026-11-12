@@ -97,72 +97,8 @@ import {
 
 // ─── Gateway Error & Explicit Mock Boundary (ADR-0007) ───────────────────────
 
-export class LlmGatewayError extends Error {
-  readonly code = 'LLM_GATEWAY_ERROR' as const;
-  readonly providerName: string;
-  readonly baseUrl: string;
-  readonly model: string;
-  readonly remediation: string;
-  readonly statusCode?: number;
-
-  constructor(input: {
-    message: string;
-    providerName: string;
-    baseUrl: string;
-    model: string;
-    remediation?: string;
-    statusCode?: number;
-    locale?: AgentLocale;
-  }) {
-    super(input.message);
-    this.name = 'LlmGatewayError';
-    this.providerName = input.providerName;
-    this.baseUrl = input.baseUrl;
-    this.model = input.model;
-    const loc = input.locale ?? 'zh-CN';
-    this.remediation =
-      input.remediation ??
-      pickLocaleText(
-        loc,
-        '请前往「基础设施 → LLM 中心」检查网关地址、API Key 与在线状态，或在「系统设置」中显式开启「离线演示 Mock 模式」。',
-        'Check the gateway URL, API key, and online status in Platform Governance → LLM Center, or enable Offline Demo Mock Mode in System Settings.',
-      );
-    if (input.statusCode !== undefined) {
-      this.statusCode = input.statusCode;
-    }
-  }
-
-  toDiagnostic(locale?: AgentLocale) {
-    const defaultZh =
-      '请前往「基础设施 → LLM 中心」检查网关地址、API Key 与在线状态，或在「系统设置」中显式开启「离线演示 Mock 模式」。';
-    const remediation =
-      locale === 'en-US' && this.remediation === defaultZh
-        ? 'Check the gateway URL, API key, and online status in Platform Governance → LLM Center, or enable Offline Demo Mock Mode in System Settings.'
-        : this.remediation;
-    return {
-      code: this.code,
-      providerName: this.providerName,
-      baseUrl: this.baseUrl,
-      model: this.model,
-      message: this.message,
-      remediation,
-      ...(this.statusCode !== undefined ? { statusCode: this.statusCode } : {}),
-    };
-  }
-}
-
-export function isMockLlmActive(store: WorkspaceStore, explicitMock?: boolean): boolean {
-  if (explicitMock !== undefined) return explicitMock;
-  if (process.env.ONTOLOGY_LIVE_LLM === '1') return false;
-  if (process.env.ONTOLOGY_MOCK_LLM === '1' || process.env.VITEST === 'true') {
-    return true;
-  }
-  try {
-    return Boolean(store.getSystemSettings().mockLlmMode);
-  } catch {
-    return false;
-  }
-}
+import { LlmGatewayError, isMockLlmActive } from './gateway-boundary.js';
+export { LlmGatewayError, isMockLlmActive };
 
 function resolveProjectDetail(
   store: WorkspaceStore,
@@ -1159,6 +1095,30 @@ function buildFauxMockModels(
       }
 
       if (session.agentKind === 'CAPABILITY') {
+        if (parsedAction?.kind === 'RUN_ONTOLOGY_EXTRACTION') {
+          const snippetFromParams =
+            typeof parsedAction.params.sourceSnippet === 'string' &&
+            parsedAction.params.sourceSnippet.trim()
+              ? parsedAction.params.sourceSnippet.trim()
+              : parsedAction.cleanPrompt;
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在对源系统 DDL / OpenAPI / 文档执行两轮本体萃取扫描（结构扫描 + 语义对齐），并生成待审阅候选集。`,
+                  `Executing Ontology Extraction structural scan on source DDL / OpenAPI / document artifacts to produce reviewable candidates.`,
+                ),
+              ),
+              fauxToolCall('run_ontology_extraction', {
+                ...parsedAction.params,
+                sourceSnippet: snippetFromParams,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
         const caps = project ? inspectOntologyMcpCapabilities(project) : null;
         const matchedTool =
           caps?.tools.find((t) =>
@@ -2000,6 +1960,7 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
     case 'CAPABILITY':
       return [
         extraByName.get('invoke_mcp_tool')!,
+        extraByName.get('run_ontology_extraction')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
       ];
@@ -2083,7 +2044,7 @@ function buildSystemPromptForSession(
     if (session.agentKind === 'CAPABILITY') {
       const caps = project ? inspectOntologyMcpCapabilities(project) : null;
       const toolNames = caps?.tools.map((t) => `${t.name}(${t.sourceModel})`).join(', ') ?? 'none';
-      return `${baseHeaderEn}\nCompiled Ontology MCP tools: ${toolNames}. Prefer calling invoke_mcp_tool to execute domain queries or behaviors.`;
+      return `${baseHeaderEn}\nCompiled Ontology MCP tools: ${toolNames}. Prefer calling invoke_mcp_tool to execute domain queries or behaviors; when asked to perform Ontology Extraction ([ACTION:RUN_ONTOLOGY_EXTRACTION ...] or DDL/OpenAPI/source extraction), MUST call run_ontology_extraction.`;
     }
     if (session.agentKind === 'CODING') {
       return `${baseHeaderEn}\nTarget assembled application ID: ${session.targetId ?? 'app-01'}. Call compile_dev_package to compile progressive-disclosure engineering artifacts, call save_tech_architecture_spec when asked to generate or persist a 4-layer technical architecture specification ([ACTION:GENERATE_TECH_ARCH ...]), or refine ontology elements.`;
@@ -2156,7 +2117,7 @@ function buildSystemPromptForSession(
   if (session.agentKind === 'CAPABILITY') {
     const caps = project ? inspectOntologyMcpCapabilities(project) : null;
     const toolNames = caps?.tools.map((t) => `${t.name}(${t.sourceModel})`).join(', ') ?? '无';
-    return `${baseHeader}\n当前工程可用 Ontology MCP 工具：${toolNames}。优先调用 invoke_mcp_tool 执行业务动作或查询。`;
+    return `${baseHeader}\n当前工程可用 Ontology MCP 工具：${toolNames}。优先调用 invoke_mcp_tool 执行业务动作或查询；当收到本体萃取请求（如 [ACTION:RUN_ONTOLOGY_EXTRACTION ...] 或 DDL/OpenAPI/文档本体萃取）时，必须调用 run_ontology_extraction 工具。`;
   }
   if (session.agentKind === 'CODING') {
     return `${baseHeader}\n目标装配应用 ID：${session.targetId ?? 'app-01'}。可调用 compile_dev_package 编译渐进式披露开发包，收到生成四层技术架构规范请求（如 [ACTION:GENERATE_TECH_ARCH ...]）时必须调用 save_tech_architecture_spec 落库资产，或微调本体元素。`;
@@ -2232,14 +2193,15 @@ interface ExecutedToolStep {
   askUserPrompt?: AgentAskUserPrompt;
 }
 
-function executeUnifiedToolCall(
+async function executeUnifiedToolCall(
   store: WorkspaceStore,
   session: AgentSession,
   tc: ToolCall,
   hadPreviousValidatorError: boolean,
   locale: AgentLocale = 'zh-CN',
   prototypeDraft?: PrototypeTurnDraft,
-): ExecutedToolStep {
+  options?: { isMock?: boolean; actionParams?: Record<string, unknown> },
+): Promise<ExecutedToolStep> {
   const started = Date.now();
   const args = (tc.arguments ?? {}) as Record<string, unknown>;
   const ontologyToolSet = new Set<string>(ONTOLOGY_TOOL_NAMES);
@@ -2911,13 +2873,17 @@ function executeUnifiedToolCall(
   }
 
   // 8b. Domain Synthesis & Analytics Agent Run Tools (Tickets #33 & #34)
-  const domainToolResult = executeDomainRunToolCall(
+  const domainToolResult = await executeDomainRunToolCall(
     store,
     session,
     tc.id,
     tc.name,
     args,
     locale,
+    {
+      ...(options?.isMock !== undefined ? { isMock: options.isMock } : {}),
+      ...(options?.actionParams ? { actionParams: options.actionParams } : {}),
+    },
   );
   if (domainToolResult) {
     return domainToolResult;
@@ -4027,13 +3993,17 @@ async function executeUnifiedTurnCore(
           },
         });
 
-        const executed = executeUnifiedToolCall(
+        const executed = await executeUnifiedToolCall(
           store,
           sessionState,
           tc,
           hadValidatorError,
           effectiveLocale,
           prototypeTurnDraft,
+          {
+            isMock: built.isMock,
+            ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
+          },
         );
         if (executed.isError) {
           hadValidatorError = true;
@@ -4137,7 +4107,7 @@ async function executeUnifiedTurnCore(
         !allArtifacts.some((a) => a.kind === 'REQUIREMENT_DOC') &&
         accumulatedText.trim().length >= 80
       ) {
-        const autoSrs = executeDomainRunToolCall(
+        const autoSrs = await executeDomainRunToolCall(
           store,
           sessionState,
           `tc-auto-srs-${Date.now().toString(36)}`,
@@ -4148,6 +4118,7 @@ async function executeUnifiedTurnCore(
             content: accumulatedText,
           },
           effectiveLocale,
+          { isMock: false, actionParams: structuredTurnAction.params },
         );
         if (autoSrs) {
           allToolTraces.push(autoSrs.trace);
@@ -4172,7 +4143,7 @@ async function executeUnifiedTurnCore(
       ) {
         const parsedBp = extractJsonObjectFromText<LlmSynthesizedDomainBlueprint>(accumulatedText);
         if (parsedBp && typeof parsedBp === 'object') {
-          const autoOnto = executeDomainRunToolCall(
+          const autoOnto = await executeDomainRunToolCall(
             store,
             sessionState,
             `tc-auto-onto-${Date.now().toString(36)}`,
@@ -4182,6 +4153,7 @@ async function executeUnifiedTurnCore(
               ...(parsedBp as Record<string, unknown>),
             },
             effectiveLocale,
+            { isMock: false, actionParams: structuredTurnAction.params },
           );
           if (autoOnto) {
             allToolTraces.push(autoOnto.trace);
@@ -4205,7 +4177,7 @@ async function executeUnifiedTurnCore(
         !allArtifacts.some((a) => a.kind === 'TECH_ARCH_ASSET') &&
         accumulatedText.trim().length >= 60
       ) {
-        const autoArch = executeDomainRunToolCall(
+        const autoArch = await executeDomainRunToolCall(
           store,
           sessionState,
           `tc-auto-arch-${Date.now().toString(36)}`,
@@ -4215,6 +4187,7 @@ async function executeUnifiedTurnCore(
             content: accumulatedText,
           },
           effectiveLocale,
+          { isMock: false, actionParams: structuredTurnAction.params },
         );
         if (autoArch) {
           allToolTraces.push(autoArch.trace);
@@ -4243,14 +4216,17 @@ async function executeUnifiedTurnCore(
         GENERATE_TECH_ARCH: 'TECH_ARCH_ASSET',
         METRIC_INSIGHT: 'METRIC_INSIGHT',
         SCENARIO_ATTRIBUTION: 'ANALYTICS_REPORT',
+        RUN_ONTOLOGY_EXTRACTION: 'EXTRACTION_JOB',
       };
       const expectedKind = expectedArtifactKindByAction[structuredTurnAction.kind];
       if (!allArtifacts.some((a) => a.kind === expectedKind)) {
+        const lastFailedTrace = [...allToolTraces].reverse().find((t) => t.isError);
+        const detailSuffix = lastFailedTrace?.output ? ` — ${lastFailedTrace.output}` : '';
         throw new LlmGatewayError({
           message: pickLocaleText(
             effectiveLocale,
-            `模型网关「${built.providerLabel}」未能完成结构化产物提交（期望产物：${expectedKind}）`,
-            `LLM gateway "${built.providerLabel}" failed to produce required structured artifact (${expectedKind})`,
+            `模型网关「${built.providerLabel}」未能完成结构化产物提交（期望产物：${expectedKind}）${detailSuffix}`,
+            `LLM gateway "${built.providerLabel}" failed to produce required structured artifact (${expectedKind})${detailSuffix}`,
           ),
           providerName: built.providerConfig?.name ?? built.providerLabel,
           baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
@@ -4850,12 +4826,143 @@ function buildSessionMessageEndPayload(
     base.fourLayerAssets = store.listFourLayerAssets();
     base.assembledApplications = store.listAssembledApplications();
   }
+  if (session.agentKind === 'CAPABILITY') {
+    base.extractionJobs = store.listExtractionJobs();
+  }
   if (session.agentKind === 'REASONING') {
     base.metrics = store.listMetrics();
     base.analyticsReports = store.listAnalyticsReports();
     base.reasoningSessions = store.listReasoningSessions();
   }
   return base;
+}
+
+function markOrphanedRunningSessionInterrupted(
+  store: WorkspaceStore,
+  session: AgentSession,
+): {
+  session: AgentSession;
+  diagnostic: NonNullable<AgentSessionMessage['errorDiagnostic']>;
+} {
+  const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+  const locale = resolveEffectiveLocale(store, undefined, lastUserMsg?.content ?? session.title);
+  const diagnostic: NonNullable<AgentSessionMessage['errorDiagnostic']> = {
+    code: 'AGENT_RUN_INTERRUPTED',
+    message: pickLocaleText(
+      locale,
+      '服务端已重启或后台运行意外中断，本轮智能体执行未完成。',
+      'Server restarted or the background agent run was interrupted before completion.',
+    ),
+    remediation: pickLocaleText(
+      locale,
+      '请点击「重试 / 继续」从最近的持久化检查点恢复执行。',
+      'Click Retry / Continue to resume execution from the latest durable checkpoint.',
+    ),
+  };
+
+  const lastMsg = session.messages[session.messages.length - 1];
+  const alreadyMarked =
+    lastMsg?.role === 'assistant' && lastMsg.errorDiagnostic?.code === 'AGENT_RUN_INTERRUPTED';
+
+  const nowIso = new Date().toISOString();
+  const nextMessages = alreadyMarked
+    ? session.messages
+    : [
+        ...session.messages,
+        {
+          id: `amsg-${Date.now().toString(36)}-interrupted`,
+          role: 'assistant' as const,
+          content: '',
+          errorDiagnostic: diagnostic,
+          timestamp: nowIso,
+        },
+      ];
+
+  const updatedSession = store.saveAgentSession({
+    ...session,
+    status: 'ERROR',
+    messages: nextMessages,
+    updatedAt: nowIso,
+  });
+
+  saveSessionCheckpointSafe(store, updatedSession, {
+    phase: 'INTERRUPTED',
+    messageCount: updatedSession.messages.length,
+    errorCode: diagnostic.code,
+  });
+
+  return { session: updatedSession, diagnostic };
+}
+
+export async function autoResumeInterruptedAgentSessions(
+  store: WorkspaceStore,
+): Promise<number> {
+  const runningSessions = store
+    .listAgentSessions()
+    .filter((session) => session.status === 'RUNNING');
+
+  let processedCount = 0;
+  for (const session of runningSessions) {
+    const slot = getSessionSlot(store, session.id);
+    if (slot?.activeRun && !slot.activeRun.done) {
+      continue;
+    }
+
+    const cp =
+      typeof store.loadAgentCheckpoint === 'function'
+        ? store.loadAgentCheckpoint(session.id)
+        : undefined;
+
+    let phase: string | undefined;
+    if (cp?.stateJson) {
+      try {
+        const parsed = JSON.parse(cp.stateJson) as { phase?: unknown };
+        if (typeof parsed.phase === 'string') {
+          phase = parsed.phase;
+        }
+      } catch {
+        phase = undefined;
+      }
+    }
+
+    const resumableCheckpoint =
+      Boolean(cp) &&
+      Boolean(phase) &&
+      phase !== 'COMPLETED' &&
+      phase !== 'AWAITING_USER' &&
+      phase !== 'CANCELLED' &&
+      phase !== 'FAILED' &&
+      phase !== 'INTERRUPTED';
+
+    const hasLastUserMsg = session.messages.some(
+      (msg) => msg.role === 'user' && Boolean(msg.content.trim()),
+    );
+    const hasRunnableBackend =
+      isMockLlmActive(store) ||
+      store.listLlmProviders().some((p) => p.enabled && Boolean(p.baseUrl?.trim()));
+
+    if (resumableCheckpoint && hasLastUserMsg && hasRunnableBackend) {
+      try {
+        await collectUnifiedAgentTurn(store, {
+          sessionId: session.id,
+          mode: 'CONTINUE',
+        });
+        const refreshed = store.getAgentSession(session.id);
+        if (!refreshed || refreshed.status === 'RUNNING') {
+          markOrphanedRunningSessionInterrupted(store, refreshed ?? session);
+        }
+      } catch {
+        const current = store.getAgentSession(session.id) ?? session;
+        markOrphanedRunningSessionInterrupted(store, current);
+      }
+    } else {
+      markOrphanedRunningSessionInterrupted(store, session);
+    }
+
+    processedCount += 1;
+  }
+
+  return processedCount;
 }
 
 export async function* attachUnifiedAgentSessionLiveStream(
@@ -4877,14 +4984,22 @@ export async function* attachUnifiedAgentSessionLiveStream(
     throw new Error(`Agent session not found: ${sessionId}`);
   }
 
-  const healedSession =
-    existing.status === 'RUNNING'
-      ? store.saveAgentSession({
-          ...existing,
-          status: 'IDLE',
-          updatedAt: new Date().toISOString(),
-        })
-      : existing;
+  if (existing.status === 'RUNNING') {
+    const { session: interruptedSession, diagnostic } =
+      markOrphanedRunningSessionInterrupted(store, existing);
+    if (options?.signal?.aborted) {
+      return;
+    }
+    yield {
+      id: `${sessionId}-evt-interrupted-${Date.now().toString(36)}`,
+      event: 'run_error',
+      data: {
+        ...buildSessionMessageEndPayload(store, interruptedSession),
+        diagnostic,
+      },
+    };
+    return;
+  }
 
   if (options?.signal?.aborted) {
     return;
@@ -4893,7 +5008,7 @@ export async function* attachUnifiedAgentSessionLiveStream(
   yield {
     id: `${sessionId}-evt-snapshot-${Date.now().toString(36)}`,
     event: 'message_end',
-    data: buildSessionMessageEndPayload(store, healedSession),
+    data: buildSessionMessageEndPayload(store, existing),
   };
 }
 

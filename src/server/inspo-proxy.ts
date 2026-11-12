@@ -1,329 +1,58 @@
 import {
+  DEFAULT_INSPO_FILTERS,
+  VALID_INSPO_INDUSTRIES,
+  VALID_INSPO_MACROSTRUCTURES,
+  VALID_INSPO_STYLES,
+  VALID_INSPO_VIBES,
+  buildSanitizedRecommendBrief,
+  desensitizeRecommendBriefWithAgent,
+  type InspoIndustry,
+  type InspoMacrostructure,
+  type InspoStyle,
+  type InspoVibe,
+  type SanitizedIndustryCategory,
+  type SanitizedMoodKeyword,
+  type SanitizedRecommendBrief,
+  type SanitizedRecommendInput,
+} from '../packages/agent-runtime/index.js';
+import {
   CURATED_INSPO_CATALOG,
   normalizeVisualReferenceItem,
-  type InspoCacheAction,
   type InspoRecommendPick,
   type RawVisualReferenceInput,
   type VisualReferenceItem,
   type WorkspaceStore,
 } from '../packages/workspace-store/index.js';
 
+export {
+  DEFAULT_INSPO_FILTERS,
+  VALID_INSPO_INDUSTRIES,
+  VALID_INSPO_MACROSTRUCTURES,
+  VALID_INSPO_STYLES,
+  VALID_INSPO_VIBES,
+  buildSanitizedRecommendBrief,
+  desensitizeRecommendBriefWithAgent,
+  type InspoIndustry,
+  type InspoMacrostructure,
+  type InspoStyle,
+  type InspoVibe,
+  type SanitizedIndustryCategory,
+  type SanitizedMoodKeyword,
+  type SanitizedRecommendBrief,
+  type SanitizedRecommendInput,
+};
+
 export const INSPO_MCP_ENDPOINT = 'https://inspomcp.dev/api/mcp';
 export const INSPO_MCP_TIMEOUT_MS = 6000;
 
-export const VALID_INSPO_STYLES = [
-  'minimalism',
-  'editorial',
-  'brutalism',
-  'glassmorphism',
-  'swiss',
-  'maximalism',
-  'playful',
-  'dark-mode',
-  'monochrome',
-  'vintage',
-  'futurist',
-] as const;
-export type InspoStyle = (typeof VALID_INSPO_STYLES)[number];
-
-export const VALID_INSPO_INDUSTRIES = [
-  'agency',
-  'ai',
-  'architecture',
-  'automotive',
-  'consumer-tech',
-  'creator',
-  'crypto',
-  'culture',
-  'developer-tools',
-  'ecommerce',
-  'education',
-  'fashion',
-  'fintech',
-  'food-beverage',
-  'furniture',
-  'gaming',
-  'health',
-  'media',
-  'music',
-  'non-profit',
-  'portfolio',
-  'saas',
-  'travel',
-  'type-foundry',
-] as const;
-export type InspoIndustry = (typeof VALID_INSPO_INDUSTRIES)[number];
-
-export const VALID_INSPO_MACROSTRUCTURES = [
-  'bento-grid',
-  'long-document',
-  'marquee-hero',
-  'stat-led',
-  'conversational-faq',
-  'manifesto',
-  'photographic',
-  'specimen',
-  'catalogue',
-  'letter',
-  'index-first',
-  'narrative-workflow',
-  'split-studio',
-  'feature-stack',
-  'type-specimen',
-  'portfolio-grid',
-  'map-diagram',
-  'ecosystem-index',
-  'component-playground',
-] as const;
-export type InspoMacrostructure = (typeof VALID_INSPO_MACROSTRUCTURES)[number];
-
-export const VALID_INSPO_VIBES = [
-  'calm',
-  'loud',
-  'playful',
-  'serious',
-  'luxe',
-  'raw',
-  'soft',
-  'technical',
-  'warm',
-  'cold',
-] as const;
-export type InspoVibe = (typeof VALID_INSPO_VIBES)[number];
-
-export type SanitizedIndustryCategory =
-  | InspoIndustry
-  | 'logistics';
-
-const ALLOWED_MOOD_KEYWORDS = [
-  'calm',
-  'serious',
-  'technical',
-  'warm',
-  'clean',
-  'high-density',
-  'tabular',
-  'minimal',
-  'modular',
-  'editorial',
-] as const;
-export type SanitizedMoodKeyword = (typeof ALLOWED_MOOD_KEYWORDS)[number];
-
-export const DEFAULT_INSPO_FILTERS = {
-  modes: ['light', 'dark'],
-  styles: [...VALID_INSPO_STYLES],
-  industries: [...VALID_INSPO_INDUSTRIES],
-  macrostructures: [...VALID_INSPO_MACROSTRUCTURES],
-  vibes: [...VALID_INSPO_VIBES],
-};
-
-export interface SanitizedRecommendInput {
-  srsText?: string;
-  domain?: string;
-  projectName?: string;
-  projectCode?: string;
-  brief?: string;
-  industry?: string;
-  vibe?: string;
-  style?: string;
-  mode?: string;
-  moodKeywords?: string[];
-}
-
-export interface SanitizedRecommendBrief {
-  brief: string;
-  industry: SanitizedIndustryCategory;
-  mcpIndustry: InspoIndustry;
-  vibe: InspoVibe;
-  style?: InspoStyle;
-  mode: 'light' | 'dark';
-  keywords: SanitizedMoodKeyword[];
-}
+export type SupportedInspoAction = 'search' | 'recommend' | 'design_system' | 'filters';
 
 function isAllowedEnum<T extends string>(list: readonly T[], val: unknown): val is T {
   return typeof val === 'string' && (list as readonly string[]).includes(val.trim().toLowerCase());
 }
 
-/**
- * Privacy-safe desensitizer for Inspo `recommend(brief)`.
- *
- * Inspects optional SRS/domain hints ONLY via local pattern matching and emits
- * exclusively compile-time allowlisted English descriptors (industry category,
- * generic mood keywords, and light/dark mode). Raw SRS text, project names,
- * project codes, customer/company names, and business numbers can NEVER appear
- * in the returned object.
- */
-export function buildSanitizedRecommendBrief(
-  input: SanitizedRecommendInput = {},
-): SanitizedRecommendBrief {
-  const signalText = [input.domain ?? '', input.srsText ?? '', input.brief ?? ''].join('\n');
-  const normalizedIndustryInput = (input.industry ?? '').trim().toLowerCase();
-
-  let industry: SanitizedIndustryCategory = 'saas';
-  let mcpIndustry: InspoIndustry = 'saas';
-
-  if (normalizedIndustryInput === 'logistics') {
-    industry = 'logistics';
-    mcpIndustry = 'saas';
-  } else if (isAllowedEnum(VALID_INSPO_INDUSTRIES, normalizedIndustryInput)) {
-    industry = normalizedIndustryInput;
-    mcpIndustry = normalizedIndustryInput;
-  } else if (
-    /金融|银行|财务|结算|清结算|账务|费控|合同|信贷|风控|税|发票|资金|对账|fintech|bank|billing|ledger|payment|finance|settlement|contract|treasury/i.test(
-      signalText,
-    )
-  ) {
-    industry = 'fintech';
-    mcpIndustry = 'fintech';
-  } else if (
-    /电商|零售|商城|商品|订单|购物车|门店|库存|ecommerce|retail|shop|catalog|merchandise/i.test(
-      signalText,
-    )
-  ) {
-    industry = 'ecommerce';
-    mcpIndustry = 'ecommerce';
-  } else if (
-    /研发|开发|运维|监控|网关|集群|传输|接口|代码|数据中台|mft|devops|developer|api|infra|cloud|telemetry|observability/i.test(
-      signalText,
-    )
-  ) {
-    industry = 'developer-tools';
-    mcpIndustry = 'developer-tools';
-  } else if (/医疗|医院|健康|临床|患者|药|health|medical|clinic|patient|pharma/i.test(signalText)) {
-    industry = 'health';
-    mcpIndustry = 'health';
-  } else if (/教育|培训|课程|学校|考试|教务|education|course|learning|campus/i.test(signalText)) {
-    industry = 'education';
-    mcpIndustry = 'education';
-  } else if (
-    /物流|仓储|供应链|调度|运输|货运|港口|logistics|supply\s*chain|warehouse|fleet|shipping/i.test(
-      signalText,
-    )
-  ) {
-    industry = 'logistics';
-    mcpIndustry = 'saas';
-  } else if (/智能体|大模型|知识库|推理|ai|agent|llm|copilot/i.test(signalText)) {
-    industry = 'ai';
-    mcpIndustry = 'ai';
-  }
-
-  const normalizedMode = (input.mode ?? '').trim().toLowerCase();
-  const mode: 'light' | 'dark' =
-    normalizedMode === 'dark' || normalizedMode === 'light'
-      ? normalizedMode
-      : /深色|暗色|暗黑|夜航|监控大屏|指挥舱|驾驶舱|dark\s*mode|dark\s*cockpit/i.test(signalText)
-        ? 'dark'
-        : 'light';
-
-  const keywordSet = new Set<SanitizedMoodKeyword>();
-  let defaultVibe: InspoVibe = 'calm';
-
-  switch (industry) {
-    case 'fintech':
-      defaultVibe = 'serious';
-      keywordSet.add('serious');
-      keywordSet.add('clean');
-      keywordSet.add('high-density');
-      keywordSet.add('tabular');
-      break;
-    case 'developer-tools':
-      defaultVibe = 'technical';
-      keywordSet.add('technical');
-      keywordSet.add('clean');
-      keywordSet.add('high-density');
-      keywordSet.add('tabular');
-      break;
-    case 'logistics':
-      defaultVibe = 'technical';
-      keywordSet.add('technical');
-      keywordSet.add('high-density');
-      keywordSet.add('tabular');
-      keywordSet.add('clean');
-      break;
-    case 'health':
-      defaultVibe = 'calm';
-      keywordSet.add('calm');
-      keywordSet.add('clean');
-      keywordSet.add('warm');
-      break;
-    case 'education':
-      defaultVibe = 'warm';
-      keywordSet.add('warm');
-      keywordSet.add('calm');
-      keywordSet.add('clean');
-      break;
-    case 'ecommerce':
-      defaultVibe = 'calm';
-      keywordSet.add('clean');
-      keywordSet.add('modular');
-      break;
-    case 'ai':
-      defaultVibe = 'technical';
-      keywordSet.add('clean');
-      keywordSet.add('technical');
-      keywordSet.add('calm');
-      break;
-    default:
-      defaultVibe = 'calm';
-      keywordSet.add('clean');
-      keywordSet.add('calm');
-      keywordSet.add('modular');
-      break;
-  }
-
-  let inferredStyle: InspoStyle | undefined;
-  if (/台账|表格|明细|报表|对账|审批|高密度|ledger|table|audit|report/i.test(signalText)) {
-    keywordSet.add('tabular');
-    keywordSet.add('high-density');
-  }
-  if (/文档|条款|知识|阅读|审阅|暖纸|杂志|editorial|document|paper/i.test(signalText)) {
-    keywordSet.add('warm');
-    keywordSet.add('editorial');
-    inferredStyle = 'editorial';
-  }
-  if (/极简|清爽|简洁|留白|minimal/i.test(signalText)) {
-    keywordSet.add('clean');
-    keywordSet.add('minimal');
-    inferredStyle ??= 'minimalism';
-  }
-  if (/看板|卡片|工作台|bento|dashboard/i.test(signalText)) {
-    keywordSet.add('modular');
-  }
-
-  if (Array.isArray(input.moodKeywords)) {
-    for (const kw of input.moodKeywords) {
-      if (isAllowedEnum(ALLOWED_MOOD_KEYWORDS, kw)) {
-        keywordSet.add(kw.trim().toLowerCase() as SanitizedMoodKeyword);
-      }
-    }
-  }
-
-  const normalizedVibe = (input.vibe ?? '').trim().toLowerCase();
-  const vibe: InspoVibe = isAllowedEnum(VALID_INSPO_VIBES, normalizedVibe)
-    ? normalizedVibe
-    : defaultVibe;
-
-  const normalizedStyle = (input.style ?? '').trim().toLowerCase();
-  const style: InspoStyle | undefined = isAllowedEnum(VALID_INSPO_STYLES, normalizedStyle)
-    ? normalizedStyle
-    : inferredStyle;
-
-  const keywords = [...keywordSet];
-  const brief = `${industry} ${mode} product interface, ${keywords.join(', ')} visual language`;
-
-  return {
-    brief,
-    industry,
-    mcpIndustry,
-    vibe,
-    ...(style ? { style } : {}),
-    mode,
-    keywords,
-  };
-}
-
 export interface InspoProxyRequestBody {
-  action?: InspoCacheAction;
+  action?: SupportedInspoAction | string;
   query?: string;
   slug?: string;
   projectId?: string;
@@ -382,7 +111,10 @@ function enrichSearchQuery(rawQuery: string): string {
   return enriched || 'clean modern SaaS product interface';
 }
 
-function dedupeAndNormalizeScreens(rows: RawVisualReferenceInput[], limit = 8): VisualReferenceItem[] {
+function dedupeAndNormalizeScreens(
+  rows: RawVisualReferenceInput[],
+  limit = 8,
+): VisualReferenceItem[] {
   const seenRoots = new Set<string>();
   const normalized: VisualReferenceItem[] = [];
   for (const row of rows) {
@@ -448,11 +180,20 @@ export async function handleInspoProxyRequest(
   rawBody: InspoProxyRequestBody = {},
   fetchFn: typeof fetch = globalThis.fetch,
 ): Promise<InspoProxyResponse> {
-  const action: InspoCacheAction =
+  if (rawBody.action === 'similar') {
+    const err = new Error('Unsupported Inspo action: similar') as Error & {
+      code?: string;
+      status?: number;
+    };
+    err.code = 'UNSUPPORTED_INSPO_ACTION';
+    err.status = 400;
+    throw err;
+  }
+
+  const action: SupportedInspoAction =
     rawBody.action === 'recommend' ||
     rawBody.action === 'design_system' ||
-    rawBody.action === 'filters' ||
-    rawBody.action === 'similar'
+    rawBody.action === 'filters'
       ? rawBody.action
       : 'search';
 
@@ -545,10 +286,14 @@ export async function handleInspoProxyRequest(
   if (action === 'recommend') {
     let serverDomain = rawBody.domain;
     let serverSrsText = rawBody.srsText;
+    let serverProjectName = rawBody.projectName;
+    let serverProjectCode = rawBody.projectCode;
     if (rawBody.projectId) {
       const proj = store.getProject(rawBody.projectId);
-      if (proj && !serverDomain) {
-        serverDomain = proj.domain;
+      if (proj) {
+        if (!serverDomain) serverDomain = proj.domain;
+        if (!serverProjectName) serverProjectName = proj.name;
+        if (!serverProjectCode) serverProjectCode = proj.code;
       }
       if (!serverSrsText) {
         const docs = store.listRequirementDocs(rawBody.projectId);
@@ -561,18 +306,22 @@ export async function handleInspoProxyRequest(
       }
     }
 
-    const sanitized = buildSanitizedRecommendBrief({
+    const recommendInput: SanitizedRecommendInput & { projectId?: string } = {
+      ...(rawBody.projectId ? { projectId: rawBody.projectId } : {}),
       ...(serverDomain ? { domain: serverDomain } : {}),
       ...(serverSrsText ? { srsText: serverSrsText } : {}),
+      ...(serverProjectName ? { projectName: serverProjectName } : {}),
+      ...(serverProjectCode ? { projectCode: serverProjectCode } : {}),
       ...(rawBody.brief ? { brief: rawBody.brief } : {}),
       ...(rawBody.industry ? { industry: rawBody.industry } : {}),
       ...(rawBody.vibe ? { vibe: rawBody.vibe } : {}),
       ...(rawBody.style ? { style: rawBody.style } : {}),
       ...(rawBody.mode ? { mode: rawBody.mode } : {}),
       ...(rawBody.moodKeywords ? { moodKeywords: rawBody.moodKeywords } : {}),
-    });
+    };
 
-    const cacheKey = `inspo:recommend:${sanitized.industry}:${sanitized.mode}:${sanitized.vibe}:${sanitized.style ?? ''}:${sanitized.keywords.join(',')}`;
+    const baseline = buildSanitizedRecommendBrief(recommendInput);
+    const cacheKey = `inspo:recommend:${baseline.industry}:${baseline.mode}:${baseline.vibe}:${baseline.style ?? ''}:${baseline.keywords.join(',')}`;
     const cached = store.getInspoCache(cacheKey);
     if (cached?.items && cached.items.length > 0) {
       return {
@@ -582,13 +331,15 @@ export async function handleInspoProxyRequest(
         items: cached.items,
         ...(cached.pick ? { pick: cached.pick } : {}),
         sanitizedBrief: {
-          industry: sanitized.industry,
-          vibe: sanitized.vibe,
-          mode: sanitized.mode,
-          keywords: sanitized.keywords,
+          industry: baseline.industry,
+          vibe: baseline.vibe,
+          mode: baseline.mode,
+          keywords: baseline.keywords,
         },
       };
     }
+
+    const sanitized = await desensitizeRecommendBriefWithAgent(store, recommendInput);
 
     const toolArgs: Record<string, unknown> = {
       brief: sanitized.brief,
@@ -651,53 +402,6 @@ export async function handleInspoProxyRequest(
           mode: sanitized.mode,
           keywords: sanitized.keywords,
         },
-        warning: err instanceof Error ? err.message : String(err),
-      };
-    }
-  }
-
-  if (action === 'similar') {
-    const slug = String(rawBody.slug || CURATED_INSPO_CATALOG[0]!.slug).trim();
-    const cacheKey = `inspo:similar:${slug}`;
-    const cached = store.getInspoCache(cacheKey);
-    if (cached?.items && cached.items.length > 0) {
-      return {
-        ok: true,
-        source: 'cache',
-        attributedTo: 'Inspo',
-        items: cached.items,
-      };
-    }
-
-    try {
-      const rawText = await callInspoMcpTool(fetchFn, 'find_similar', { slug, limit: 6 });
-      const parsed = JSON.parse(rawText) as {
-        neighbours?: RawVisualReferenceInput[];
-        results?: RawVisualReferenceInput[];
-      };
-      const items = dedupeAndNormalizeScreens(parsed.neighbours ?? parsed.results ?? [], 8);
-      if (items.length === 0) {
-        throw new Error('No similar references returned');
-      }
-      const saved = store.saveInspoCache({
-        cacheKey,
-        action: 'similar',
-        slug,
-        items,
-      });
-      return {
-        ok: true,
-        source: 'live',
-        attributedTo: 'Inspo',
-        items: saved.items ?? items,
-      };
-    } catch (err) {
-      return {
-        ok: true,
-        fallback: true,
-        source: 'curated',
-        attributedTo: 'Inspo',
-        items: selectCuratedFallbackItems({ query: slug }),
         warning: err instanceof Error ? err.message : String(err),
       };
     }

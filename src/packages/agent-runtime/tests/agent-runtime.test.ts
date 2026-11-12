@@ -9,12 +9,15 @@ import {
   OPENAI_ONTOLOGY_TOOLS,
   abortActiveAgentSession,
   applyOntologyToolCall,
+  attachUnifiedAgentSessionLiveStream,
+  autoResumeInterruptedAgentSessions,
   buildPiModelsForStore,
   buildTurnSseEvents,
   collectUnifiedAgentTurn,
   compactAgentSession,
   createSseEventStream,
   ensurePrototypeCoDesignSession,
+  executeDomainRunToolCall,
   ontologyToolRegistry,
   runAppCodingAgentTurn,
   runCapabilitySmartChatTurn,
@@ -142,7 +145,8 @@ describe('agent-runtime deep module', () => {
 
   it('synthesizes canonical 9-Part SRS (需求规格说明书.md) via REQUIREMENT Agent Run including mandatory sub-items 9.1 through 9.7', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
-    expect(DOMAIN_RUN_TOOL_NAMES).toHaveLength(5);
+    expect(DOMAIN_RUN_TOOL_NAMES).toHaveLength(6);
+    expect(DOMAIN_RUN_TOOL_NAMES).toContain('run_ontology_extraction');
     const reqAgentSess = store.createAgentSession({
       projectId: 'proj-contract',
       agentKind: 'REQUIREMENT',
@@ -228,6 +232,24 @@ describe('agent-runtime deep module', () => {
       agentKind: 'COPILOT',
       title: 'SRM 本体合成会话',
     });
+
+    // ADR 0010: Before confirming a Prototype Revision, synthesizing ontology must be rejected honestly even when prototypeId is passed
+    const unconfirmedTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: copilotSess.id,
+      prompt: `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {"prototypeId":"${generatedProto.id}"}]\n从原型合成 11 模型`,
+      mockMode: true,
+    });
+    const unconfirmedTrace = unconfirmedTurn.session.messages
+      .at(-1)
+      ?.toolCalls?.find((t) => t.toolName === 'synthesize_ontology_suite');
+    expect(unconfirmedTrace?.isError).toBe(true);
+    expect(unconfirmedTrace?.output).toContain('已确认界面原型修订');
+    expect(store.getProject(emptyProj.id)!.validation.presentModels).toEqual([]);
+
+    // Confirm latest revision on generatedProto, then synthesize 11-model suite
+    const latestGeneratedProto = store.getPrototype(generatedProto.id)!;
+    store.confirmPrototypeRevision(emptyProj.id, latestGeneratedProto.currentRevisionId);
+
     const synthTurn = await collectUnifiedAgentTurn(store, {
       sessionId: copilotSess.id,
       prompt: `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {"prototypeId":"${generatedProto.id}"}]\n从原型合成 11 模型`,
@@ -260,6 +282,7 @@ describe('agent-runtime deep module', () => {
       htmlContent:
         '<section data-screen-id="SCR-COFFEE-POS" data-screen-name="门店点单台"><input data-element-id="EL-DRINK" data-binding="CoffeeOrder.drinkCode" /><button data-element-id="EL-SUBMIT" data-event-id="EVT-ORDER-PAID">下单出杯</button></section>',
     }).prototype;
+    store.confirmPrototypeRevision(accidentalDemoProj.id, coffeeProto.currentRevisionId);
     const coffeeCopilotSess = store.createAgentSession({
       projectId: accidentalDemoProj.id,
       agentKind: 'COPILOT',
@@ -1021,5 +1044,228 @@ describe('agent-runtime deep module', () => {
     expect(aggNames).not.toContain('UnconfirmedDirectionB');
     expect(synthProj.suite.MU?.screens.map((s) => s.screenId)).toContain('SCR-INSP-TASK');
     expect(synthProj.suite.MU?.screens.map((s) => s.screenId)).not.toContain('SCR-NEWER-DRAFT');
+
+    // 3. Passing an explicit unconfirmed prototypeId (protoB) is strictly rejected under ADR 0010!
+    const protoB = store.listPrototypes(proj.id).find((p) => p.name.includes('方向 B'))!;
+    const rejectUnconfirmedB = await executeDomainRunToolCall(
+      store,
+      copilotSess,
+      'tc-unconfirmed-b',
+      'synthesize_ontology_suite',
+      { prototypeId: protoB.id },
+      'en-US',
+      { isMock: true },
+    );
+    expect(rejectUnconfirmedB).not.toBeNull();
+    expect(rejectUnconfirmedB!.isError).toBe(true);
+    expect(rejectUnconfirmedB!.toolResultContent).toContain('Confirmed Prototype Revision');
   }, 30000);
+
+  it('enforces ADR 0007 / ADR 0009 zero silent template fallback in live mode for SRS and Ontology synthesis', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const proj = store.createProject({
+      name: '智能仓储调度系统',
+      code: 'WMS-LIVE',
+      domain: '智慧物流仓储',
+      template: 'EMPTY',
+    });
+
+    // 1. Live mode save_synthesized_srs_doc rejects incomplete Markdown without splicing deterministic template
+    const reqSess = store.createAgentSession({
+      projectId: proj.id,
+      agentKind: 'REQUIREMENT',
+      title: 'WMS Live SRS Session',
+    });
+    const incompleteMarkdown = [
+      '# 智能仓储调度系统 — 软件需求规格说明书',
+      '## 1. 文档概述与项目背景',
+      '仅写了第一章，其余章节均缺失。',
+    ].join('\n\n');
+
+    const srsResult = await executeDomainRunToolCall(
+      store,
+      reqSess,
+      'tc-live-srs',
+      'save_synthesized_srs_doc',
+      { title: 'WMS SRS v1.0', content: incompleteMarkdown },
+      'zh-CN',
+      { isMock: false },
+    );
+    expect(srsResult).not.toBeNull();
+    expect(srsResult!.isError).toBe(true);
+    expect(srsResult!.toolResultContent).toContain('## 2.');
+    expect(srsResult!.toolResultContent).toContain('### 9.7');
+    expect(store.listRequirementDocs(proj.id)).toHaveLength(0);
+
+    // 2. Live mode synthesize_ontology_suite rejects missing blueprint models even after prototype confirmation
+    const createdProto = store.createPrototype(proj.id, {
+      name: 'WMS 入库工作台原型',
+      htmlContent:
+        '<section data-screen-id="SCR-WMS-INBOUND" data-screen-name="入库作业台账"><input data-element-id="EL-ASN" data-binding="InboundOrder.asnCode" /><button data-element-id="EL-CONFIRM-IN" data-event-id="EVT-INBOUND-RECEIVED">确认收货</button></section>',
+      source: 'GENERATED',
+    });
+    store.confirmPrototypeRevision(proj.id, createdProto.revision.id);
+
+    const copilotSess = store.createAgentSession({
+      projectId: proj.id,
+      agentKind: 'COPILOT',
+      title: 'WMS Live Ontology Synthesis',
+    });
+
+    const missingBlueprintRes = await executeDomainRunToolCall(
+      store,
+      copilotSess,
+      'tc-live-suite',
+      'synthesize_ontology_suite',
+      { summaryNote: 'Only summary note provided without structured models' },
+      'en-US',
+      { isMock: false },
+    );
+    expect(missingBlueprintRes).not.toBeNull();
+    expect(missingBlueprintRes!.isError).toBe(true);
+    expect(missingBlueprintRes!.toolResultContent).toContain('aggregates');
+    expect(missingBlueprintRes!.toolResultContent).toContain('behaviors');
+    expect(missingBlueprintRes!.toolResultContent).toContain('interfaces');
+    // Suite M1..M7 must NOT have been fabricated via template fallback
+    expect(store.getProject(proj.id)!.suite.M1).toBeUndefined();
+  });
+
+  it('executes RUN_ONTOLOGY_EXTRACTION in CAPABILITY sessions and emits EXTRACTION_JOB artifact + extractionJobs in message_end', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const capSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'CAPABILITY',
+      title: '逆向本体提取会话',
+    });
+
+    const ddlSnippet = `
+      CREATE TABLE vendor_settlement_orders (
+        id VARCHAR(64) PRIMARY KEY,
+        settlement_no VARCHAR(64) NOT NULL,
+        total_amount DECIMAL(18,2) NOT NULL,
+        status VARCHAR(32) NOT NULL
+      );
+    `;
+
+    const turn = await collectUnifiedAgentTurn(store, {
+      sessionId: capSess.id,
+      prompt: `[ACTION:RUN_ONTOLOGY_EXTRACTION ${JSON.stringify({
+        systemId: 'sys-erp-sap',
+        title: '供应商结算单 DDL 逆向提取',
+        sourceType: 'DDL_ONLY',
+        sourceSnippet: ddlSnippet,
+      })}]\n请对供应商结算表执行智能本体逆向提取`,
+      mockMode: true,
+    });
+
+    const artifactEvt = turn.events.find(
+      (ev) =>
+        ev.event === 'artifact' &&
+        (ev.data.artifact as { kind?: string } | undefined)?.kind === 'EXTRACTION_JOB',
+    );
+    expect(artifactEvt).toBeDefined();
+
+    const lastMsg = turn.session.messages.at(-1)!;
+    const extractionArt = lastMsg.artifacts?.find((a) => a.kind === 'EXTRACTION_JOB');
+    expect(extractionArt).toBeDefined();
+    if (extractionArt?.kind === 'EXTRACTION_JOB') {
+      expect(extractionArt.candidateCount).toBeGreaterThan(0);
+      expect(store.listExtractionJobs().some((j) => j.id === extractionArt.jobId)).toBe(true);
+    }
+
+    const msgEndEvt = turn.events.find((ev) => ev.event === 'message_end');
+    expect(msgEndEvt).toBeDefined();
+    const endJobs = msgEndEvt!.data.extractionJobs as Array<{ id: string }> | undefined;
+    expect(Array.isArray(endJobs)).toBe(true);
+    expect(endJobs!.length).toBeGreaterThan(0);
+  });
+
+  it('recovers orphaned RUNNING sessions into ERROR with AGENT_RUN_INTERRUPTED on live attach and auto-resumes resumable checkpoints on startup', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+
+    // Case A: Orphaned RUNNING session without checkpoint -> live stream emits run_error AGENT_RUN_INTERRUPTED and sets status ERROR (never silent IDLE)
+    const orphanLiveSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'COPILOT',
+      title: 'Orphaned Live Stream Session',
+    });
+    store.saveAgentSession({
+      ...orphanLiveSess,
+      status: 'RUNNING',
+      messages: [
+        {
+          id: 'u-orphan-1',
+          role: 'user',
+          content: 'Please review M3 validation rules.',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const liveEvents = [];
+    for await (const ev of attachUnifiedAgentSessionLiveStream(store, orphanLiveSess.id)) {
+      liveEvents.push(ev);
+    }
+    expect(liveEvents).toHaveLength(1);
+    expect(liveEvents[0]!.event).toBe('run_error');
+    const liveDiag = liveEvents[0]!.data.diagnostic as { code: string; message: string };
+    expect(liveDiag.code).toBe('AGENT_RUN_INTERRUPTED');
+    const afterLiveAttach = store.getAgentSession(orphanLiveSess.id)!;
+    expect(afterLiveAttach.status).toBe('ERROR');
+    expect(afterLiveAttach.messages.at(-1)?.errorDiagnostic?.code).toBe('AGENT_RUN_INTERRUPTED');
+
+    // Case B: Orphaned RUNNING session with non-resumable checkpoint -> autoResumeInterruptedAgentSessions marks ERROR
+    const nonResumableSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'REQUIREMENT',
+      title: '重启中断不可恢复会话',
+    });
+    store.saveAgentSession({
+      ...nonResumableSess,
+      status: 'RUNNING',
+      messages: [],
+    });
+
+    // Case C: Orphaned RUNNING session WITH resumable TURN_STARTED checkpoint + user prompt -> autoResumeInterruptedAgentSessions resumes and completes!
+    const resumableSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'COPILOT',
+      title: '重启后可自动恢复会话',
+    });
+    store.saveAgentSession({
+      ...resumableSess,
+      status: 'RUNNING',
+      messages: [
+        {
+          id: 'u-resume-1',
+          role: 'user',
+          content: '请新增一条大额采购合同财务副总必审规则',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+    store.saveAgentCheckpoint(
+      resumableSess.id,
+      'PI_UNIFIED_COPILOT',
+      JSON.stringify({
+        sessionId: resumableSess.id,
+        status: 'RUNNING',
+        phase: 'TURN_STARTED',
+        messageCount: 1,
+      }),
+    );
+
+    const processed = await autoResumeInterruptedAgentSessions(store);
+    expect(processed).toBe(2);
+
+    const afterNonResumable = store.getAgentSession(nonResumableSess.id)!;
+    expect(afterNonResumable.status).toBe('ERROR');
+    expect(afterNonResumable.messages.at(-1)?.errorDiagnostic?.code).toBe('AGENT_RUN_INTERRUPTED');
+
+    const afterResumed = store.getAgentSession(resumableSess.id)!;
+    expect(afterResumed.status).toBe('IDLE');
+    expect(afterResumed.messages.at(-1)?.role).toBe('assistant');
+    expect(afterResumed.messages.at(-1)?.errorDiagnostic).toBeUndefined();
+  });
 });
