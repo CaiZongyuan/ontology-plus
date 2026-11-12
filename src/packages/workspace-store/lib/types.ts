@@ -173,6 +173,12 @@ export type AgentDomainArtifact =
       title: string;
       recommendedWritebackId?: string;
       causalBreakdown?: { factor: string; weight: string; evidence: string }[];
+    }
+  | {
+      kind: 'EXTRACTION_JOB';
+      jobId: string;
+      systemName: string;
+      candidateCount: number;
     };
 
 export type AgentImageAttachmentRole =
@@ -296,6 +302,7 @@ export interface DesignBrief {
   primaryReferenceTitle?: string;
   primaryReferenceSourceUrl?: string;
   borrowedReferences?: DesignBriefBorrowedReference[];
+  userImageRefs?: AgentImageAttachmentRef[];
   motionSchematicIds?: string[];
   approvedAt?: string;
   updatedAt: string;
