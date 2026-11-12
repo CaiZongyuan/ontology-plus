@@ -735,4 +735,122 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
       .data?.agentSessions.find((item) => item.id === sessionId);
     expect(retriedSess?.messages.filter((m) => m.role === 'assistant').length).toBe(2);
   });
+
+  it('executes SRS synthesis, 11-model ontology synthesis, copilot, tech arch, metric insight, and scenario attribution as ShellAgentPanel runs', async () => {
+    vi.stubEnv('ONTO_MOCK_LLM', '1');
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const app = createApiApp(store);
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlStr =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const fullUrl = urlStr.startsWith('http') ? urlStr : `http://localhost${urlStr}`;
+      return app.request(fullUrl, init);
+    });
+
+    await useWorkbenchStore.getState().bootstrap('proj-contract');
+
+    // Verify all 6 surfaces are registered in AGENT_PANEL_SURFACES
+    expect(agentPanelSurfaceFor('app-req-explore')?.sessionKind).toBe('REQUIREMENT');
+    expect(agentPanelSurfaceFor('app-req-docs')?.sessionKind).toBe('REQUIREMENT');
+    expect(agentPanelSurfaceFor('app-ontology')?.sessionKind).toBe('COPILOT');
+    expect(agentPanelSurfaceFor('app-four-layer-assets')?.sessionKind).toBe('CODING');
+    expect(agentPanelSurfaceFor('app-assembly-dev')?.sessionKind).toBe('CODING');
+    expect(agentPanelSurfaceFor('data-metrics-reports')?.sessionKind).toBe('REASONING');
+
+    // 1. SRS Synthesis Run in REQUIREMENT session
+    const docsBefore = useWorkbenchStore.getState().data?.requirementDocs.length ?? 0;
+    await useWorkbenchStore.getState().startSrsSynthesisRun({
+      requirementSessionId: 'req-sess-contract-01',
+    });
+    expect(useWorkbenchStore.getState().data?.requirementDocs.length).toBeGreaterThanOrEqual(
+      docsBefore,
+    );
+
+    Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+    const reqPanelHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ShellAgentPanel
+          surface={agentPanelSurfaceFor('app-req-explore')!}
+          overlay={false}
+          onClose={noop}
+          onNavigate={noop}
+        />
+      </PreferencesProvider>,
+    );
+    expect(reqPanelHtml).toContain('合成 9 章节需求规格书');
+    expect(reqPanelHtml).toContain('打开需求规格书');
+    expect(reqPanelHtml).toContain('data-run-status="SUCCEEDED"');
+
+    // 2. 11-Model Ontology Synthesis + Copilot Rule Run in COPILOT session
+    await useWorkbenchStore.getState().startOntologySynthesisRun();
+    await useWorkbenchStore
+      .getState()
+      .startOntologyCopilotRun('请新增一条合同履约里程碑逾期冻结规则', { activeModel: 'M3' });
+
+    Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+    const copilotPanelHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ShellAgentPanel
+          surface={agentPanelSurfaceFor('app-ontology')!}
+          overlay={false}
+          onClose={noop}
+          onNavigate={noop}
+        />
+      </PreferencesProvider>,
+    );
+    expect(copilotPanelHtml).toContain('合成 11 元模型本体');
+    expect(copilotPanelHtml).toContain('查看 11 元模型 (11/11)');
+    expect(copilotPanelHtml).toContain('查看 M3 模型变更');
+
+    // 3. Tech Arch Generation Run in CODING session
+    const assetsBefore = useWorkbenchStore.getState().data?.fourLayerAssets.length ?? 0;
+    await useWorkbenchStore.getState().startTechArchGenerationRun({
+      name: '合同中心云原生技术架构规范',
+      stackTags: ['TypeScript', 'Hono', 'D1'],
+    });
+    expect(useWorkbenchStore.getState().data?.fourLayerAssets.length).toBe(assetsBefore + 1);
+
+    Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+    const codingPanelHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ShellAgentPanel
+          surface={agentPanelSurfaceFor('app-four-layer-assets')!}
+          overlay={false}
+          onClose={noop}
+          onNavigate={noop}
+        />
+      </PreferencesProvider>,
+    );
+    expect(codingPanelHtml).toContain('生成技术架构：合同中心云原生技术架构规范');
+    expect(codingPanelHtml).toContain('查看技术架构');
+
+    // 4. Metric Insight + Scenario Attribution Runs in REASONING session
+    const reportsBefore = useWorkbenchStore.getState().data?.analyticsReports.length ?? 0;
+    await useWorkbenchStore.getState().startMetricInsightRun('MET-02');
+    await useWorkbenchStore
+      .getState()
+      .startScenarioAttributionRun('ascn-01', { saveAsReport: true });
+    expect(useWorkbenchStore.getState().data?.analyticsReports.length).toBe(reportsBefore + 1);
+
+    Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+    const reasoningPanelHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ShellAgentPanel
+          surface={agentPanelSurfaceFor('data-metrics-reports')!}
+          overlay={false}
+          onClose={noop}
+          onNavigate={noop}
+        />
+      </PreferencesProvider>,
+    );
+    expect(reasoningPanelHtml).toContain('AI 指标洞察：');
+    expect(reasoningPanelHtml).toContain('查看指标洞察');
+    expect(reasoningPanelHtml).toContain('AI 场景归因：');
+    expect(reasoningPanelHtml).toContain('打开归因分析报告');
+  });
 });

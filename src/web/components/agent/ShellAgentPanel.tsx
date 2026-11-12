@@ -34,11 +34,41 @@ export interface AgentPanelSurface {
  * the rollout order is in ADR 0009's spec (Interactive Prototype first).
  */
 const AGENT_PANEL_SURFACES: Partial<Record<NavViewId, AgentPanelSurface>> = {
+  'app-req-explore': {
+    title: { zh: '需求探索与 SRS 合成', en: 'Requirement & SRS Agent' },
+    sessionKind: 'REQUIREMENT',
+    taskKinds: [],
+  },
+  'app-req-docs': {
+    title: { zh: '需求规格合成助手', en: 'SRS Synthesis Agent' },
+    sessionKind: 'REQUIREMENT',
+    taskKinds: [],
+  },
   'app-prototype': {
     title: { zh: '原型共创', en: 'Prototype Co-Design' },
     sessionKind: 'PROTOTYPE_CO_DESIGN',
     taskKinds: ['PROTOTYPE_GEN'],
     usesVision: true,
+  },
+  'app-ontology': {
+    title: { zh: '本体建模与 11 模型合成', en: 'Ontology Copilot & Synthesis' },
+    sessionKind: 'COPILOT',
+    taskKinds: [],
+  },
+  'app-four-layer-assets': {
+    title: { zh: '技术架构规范生成助手', en: 'Tech Architecture Agent' },
+    sessionKind: 'CODING',
+    taskKinds: [],
+  },
+  'app-assembly-dev': {
+    title: { zh: '应用装配与开发包编译', en: 'Assembly & Coding Agent' },
+    sessionKind: 'CODING',
+    taskKinds: [],
+  },
+  'data-metrics-reports': {
+    title: { zh: '指标洞察与场景归因', en: 'Metric Insight & Attribution' },
+    sessionKind: 'REASONING',
+    taskKinds: [],
   },
 };
 
@@ -158,11 +188,15 @@ export function ShellAgentPanel({
     activeItemId,
     activeSessionId,
     activePrototypeIdByProject,
+    selectedModel,
     liveSessionDrafts,
     sessionQueues,
     backgroundTasks,
     setActiveNav,
+    setSelectedModel,
+    setSelectedElementId,
     setActivePrototypeId,
+    ensureProjectAgentSession,
     startPrototypeGenTask,
     startSessionAgentRun,
     startPrototypeRefinementRun,
@@ -227,12 +261,14 @@ export function ShellAgentPanel({
       }
       return;
     }
-    if (activeSession) {
-      await startSessionAgentRun({
-        sessionId: activeSession.id,
-        prompt,
-      });
-    }
+    if (!surface.sessionKind) return;
+    const targetSession =
+      activeSession ?? (await ensureProjectAgentSession(activeProjectId, surface.sessionKind));
+    await startSessionAgentRun({
+      sessionId: targetSession.id,
+      prompt,
+      ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
+    });
   };
 
   const handleCancelRun = (runId: string) => {
@@ -262,6 +298,46 @@ export function ShellAgentPanel({
       setActivePrototypeId(activeProjectId, target.prototypeRevision.prototypeId);
       setActiveNav('app-prototype', { itemId: target.prototypeRevision.prototypeId });
       return;
+    }
+    const art = target?.artifact;
+    if (art) {
+      switch (art.kind) {
+        case 'PROTOTYPE_REVISION':
+          if (activeProjectId) {
+            setActivePrototypeId(activeProjectId, art.prototypeId);
+          }
+          setActiveNav('app-prototype', { itemId: art.prototypeId });
+          return;
+        case 'REQUIREMENT_DOC':
+          setActiveNav('app-req-docs', { itemId: art.docId });
+          return;
+        case 'ONTOLOGY_SUITE':
+          setActiveNav('app-ontology');
+          return;
+        case 'ONTOLOGY_DIFF':
+          if (art.modelCode) {
+            setSelectedModel(art.modelCode);
+          }
+          if (art.changes[0]?.id) {
+            setSelectedElementId(art.changes[0].id);
+          }
+          setActiveNav('app-ontology');
+          return;
+        case 'TECH_ARCH_ASSET':
+          setActiveNav('app-four-layer-assets', { itemId: art.assetId });
+          return;
+        case 'CODING_PACKAGE':
+          setActiveNav('app-assembly-dev', { itemId: art.appId });
+          return;
+        case 'METRIC_INSIGHT':
+          setActiveNav('data-metrics-reports', { itemId: art.metricId });
+          return;
+        case 'ANALYTICS_REPORT':
+          setActiveNav('data-metrics-reports', { itemId: art.reportId });
+          return;
+        default:
+          break;
+      }
     }
     void openBackgroundTaskResult(runId);
   };

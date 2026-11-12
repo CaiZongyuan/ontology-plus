@@ -11,10 +11,6 @@ import {
   Send,
   Trash2,
 } from 'lucide-react';
-import type {
-  MetricInsightResult,
-  ScenarioAttributionResult,
-} from '../../packages/agent-runtime/index.js';
 import {
   doesProviderSupportVision,
   type AnalyticsQueryResult,
@@ -30,15 +26,14 @@ import {
 import {
   apiDeleteResource,
   apiExecuteAnalyticsSql,
-  apiGenerateMetricInsight,
   apiPostJson,
   apiPutJson,
-  apiRunScenarioAttribution,
   apiTestLlmProvider,
   triggerBrowserDownload,
   useWorkbenchStore,
 } from '../api.js';
 import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
+import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import {
   Button,
   ConfirmDialog,
@@ -890,13 +885,16 @@ export function DataMappingsView() {
 
 export function DataMetricsReportsView() {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
+  const {
+    data,
+    activeItemId,
+    patchData,
+    showToast,
+    startMetricInsightRun,
+    startScenarioAttributionRun,
+  } = useWorkbenchStore();
   const [viewMode, setViewMode] = useState<'DASHBOARD' | 'REPORTS_EDITOR'>('DASHBOARD');
-  const [insightsByMetric, setInsightsByMetric] = useState<Record<string, MetricInsightResult>>({});
   const [loadingMetricId, setLoadingMetricId] = useState<string | null>(null);
-  const [attributionsByScenario, setAttributionsByScenario] = useState<
-    Record<string, ScenarioAttributionResult>
-  >({});
   const [loadingScenarioId, setLoadingScenarioId] = useState<string | null>(null);
 
   // Report Tiptap Editor state
@@ -926,6 +924,71 @@ export function DataMetricsReportsView() {
     }
   }, [data, selectedReportId]);
 
+  useEffect(() => {
+    if (!data || !activeItemId) return;
+    const targetReport = data.analyticsReports.find((r) => r.id === activeItemId);
+    if (targetReport) {
+      setSelectedReportId(targetReport.id);
+      setReportDraft(targetReport.markdownContent);
+      setViewMode('REPORTS_EDITOR');
+    } else if (data.metrics.some((m) => m.id === activeItemId)) {
+      setViewMode('DASHBOARD');
+    }
+  }, [activeItemId, data?.analyticsReports, data?.metrics]);
+
+  const insightsByMetric = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        anomalyDrivers: string[];
+        suggestedAction: string;
+        writebackInterfaceId: string;
+      }
+    > = {};
+    if (!data) return map;
+    for (const sess of data.agentSessions ?? []) {
+      if (sess.projectId !== data.activeProject.id || sess.agentKind !== 'REASONING') continue;
+      for (const msg of sess.messages) {
+        for (const art of msg.artifacts ?? []) {
+          if (art.kind === 'METRIC_INSIGHT') {
+            map[art.metricId] = {
+              anomalyDrivers: art.anomalyDrivers,
+              suggestedAction: art.suggestedAction,
+              writebackInterfaceId: art.writebackInterfaceId,
+            };
+          }
+        }
+      }
+    }
+    return map;
+  }, [data?.agentSessions, data?.activeProject.id]);
+
+  const attributionsByScenario = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        causalBreakdown: { factor: string; weight: string; evidence: string }[];
+        savedReport?: AnalyticsReport;
+      }
+    > = {};
+    if (!data) return map;
+    for (const sess of data.agentSessions ?? []) {
+      if (sess.projectId !== data.activeProject.id || sess.agentKind !== 'REASONING') continue;
+      for (const msg of sess.messages) {
+        for (const art of msg.artifacts ?? []) {
+          if (art.kind === 'ANALYTICS_REPORT' && art.scenarioId) {
+            const savedReport = data.analyticsReports.find((r) => r.id === art.reportId);
+            map[art.scenarioId] = {
+              causalBreakdown: art.causalBreakdown ?? [],
+              ...(savedReport ? { savedReport } : {}),
+            };
+          }
+        }
+      }
+    }
+    return map;
+  }, [data?.agentSessions, data?.activeProject.id, data?.analyticsReports]);
+
   const activeReport = useMemo(() => {
     if (!data) return undefined;
     return (
@@ -940,34 +1003,27 @@ export function DataMetricsReportsView() {
   if (!data) return null;
 
   const handleMetricInsight = async (metricId: string) => {
+    if (loadingMetricId) return;
     setLoadingMetricId(metricId);
     try {
-      const res = await apiGenerateMetricInsight(metricId);
-      setInsightsByMetric((prev) => ({ ...prev, [metricId]: res }));
-      showToast(
-        t(`已生成指标 ${res.metric.name} 的 AI 异动洞察`, `Generated AI insight for ${res.metric.code}`),
-      );
+      useAgentPanelStore.getState().revealPanel();
+      await startMetricInsightRun(metricId);
     } finally {
       setLoadingMetricId(null);
     }
   };
 
   const handleScenarioAttribution = async (scenarioId: string) => {
+    if (loadingScenarioId) return;
     setLoadingScenarioId(scenarioId);
     try {
-      const res = await apiRunScenarioAttribution(scenarioId, { saveAsReport: true });
-      setAttributionsByScenario((prev) => ({ ...prev, [scenarioId]: res }));
-      patchData({ analyticsReports: res.analyticsReports });
-      if (res.savedReport) {
-        setSelectedReportId(res.savedReport.id);
-        setReportDraft(res.savedReport.markdownContent);
+      useAgentPanelStore.getState().revealPanel();
+      await startScenarioAttributionRun(scenarioId, { saveAsReport: true });
+      const latestReports = useWorkbenchStore.getState().data?.analyticsReports ?? [];
+      if (latestReports[0] && latestReports[0].id !== selectedReportId) {
+        setSelectedReportId(latestReports[0].id);
+        setReportDraft(latestReports[0].markdownContent);
       }
-      showToast(
-        t(
-          `已完成场景 AI 归因分析并归档新报告「${res.savedReport?.title ?? res.scenario.name}」`,
-          `Completed scenario attribution and saved report`,
-        ),
-      );
     } finally {
       setLoadingScenarioId(null);
     }

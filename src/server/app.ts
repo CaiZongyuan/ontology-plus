@@ -40,9 +40,7 @@ import {
   createUnifiedSseStream,
   dismissServerPipelineTask,
   ensurePrototypeCoDesignSession,
-  generateMetricInsight,
   generatePrototypeFromDoc,
-  generateTechArchitectureDoc,
   getLiveAgentSessionStatus,
   getServerPipelineTask,
   listServerPipelineTasks,
@@ -52,14 +50,10 @@ import {
   runAppCodingAgentTurn,
   runCapabilitySmartChatTurn,
   runDataOntologyReasoning,
-  runOntologyCopilotTurn,
   runRequirementGrillingTurn,
-  runScenarioAttributionTurn,
   runSmartOntologyExtractionJob,
   runUnifiedAgentSessionStream,
   startServerPipelineTask,
-  synthesizeOntologyFromPrototype,
-  synthesizeRequirementDocFromSession,
   testLlmGatewayConnection,
   type AgentLocale,
   type PipelineTaskKind,
@@ -196,6 +190,14 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       version?: string;
       locale?: string;
     }>();
+    if (body.kind !== 'PROTOTYPE_GEN') {
+      return c.json(
+        {
+          error: `Unsupported pipeline task kind "${String(body.kind)}". Use unified Agent Session runs instead.`,
+        },
+        400,
+      );
+    }
     const locale = getReqLocale(c, body);
     const { task, reusedRunning } = startServerPipelineTask(store, {
       kind: body.kind,
@@ -578,42 +580,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     return c.json(result);
   });
 
-  app.post('/api/projects/:id/copilot', async (c) => {
-    const projectId = c.req.param('id');
-    const body = await c.req.json<{ prompt: string; activeModel?: ModelCode; locale?: string }>();
-    const locale = getReqLocale(c, body);
-    const result = await runOntologyCopilotTurn(store, {
-      projectId,
-      prompt: body.prompt,
-      ...(body.activeModel ? { activeModel: body.activeModel } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(result);
-  });
-
-  app.post('/api/projects/:id/copilot/stream', async (c) => {
-    const projectId = c.req.param('id');
-    const body = await c.req.json<{ prompt: string; activeModel?: ModelCode; locale?: string }>();
-    const locale = getReqLocale(c, body);
-    const result = await runOntologyCopilotTurn(store, {
-      projectId,
-      prompt: body.prompt,
-      ...(body.activeModel ? { activeModel: body.activeModel } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    const events = buildTurnSseEvents({
-      sessionId: `copilot-${projectId}-${Date.now()}`,
-      reply: result.reply,
-      toolCalls: result.toolCalls,
-      renderPayload: {
-        project: result.project,
-        modelUsed: result.modelUsed,
-        latencyMs: result.latencyMs,
-      },
-    });
-    return new Response(createSseEventStream(events), { headers: SSE_RESPONSE_HEADERS });
-  });
-
   app.post('/api/projects/:id/generate-skill', (c) => {
     const project = store.getProject(c.req.param('id'));
     if (!project) return c.json({ error: 'Project not found' }, 404);
@@ -707,127 +673,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     return c.json({
       ...result,
       requirementSessions: store.listRequirementSessions(result.session.projectId),
-    });
-  });
-
-  app.post('/api/requirements/:sessionId/synthesize-doc', async (c) => {
-    const sessionId = c.req.param('sessionId');
-    const body = await c.req
-      .json<{ projectId?: string; title?: string; version?: string; locale?: string }>()
-      .catch(() => ({
-        projectId: undefined,
-        title: undefined,
-        version: undefined,
-        locale: undefined,
-      }));
-    const locale = getReqLocale(c, body);
-    const result = await synthesizeRequirementDocFromSession(store, {
-      sessionId,
-      ...(body.projectId ? { projectId: body.projectId } : {}),
-      ...(body.title ? { title: body.title } : {}),
-      ...(body.version ? { version: body.version } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      ...result,
-      requirementSessions: store.listRequirementSessions(result.session.projectId),
-      agentSessions: store.listAgentSessions(),
-    });
-  });
-
-  app.post('/api/requirements/:sessionId/synthesize-doc/stream', async (c) => {
-    const sessionId = c.req.param('sessionId');
-    const body = await c.req
-      .json<{ projectId?: string; title?: string; version?: string; locale?: string }>()
-      .catch(() => ({
-        projectId: undefined,
-        title: undefined,
-        version: undefined,
-        locale: undefined,
-      }));
-    const locale = getReqLocale(c, body);
-    const encoder = new TextEncoder();
-    const reqSignal = c.req.raw.signal;
-
-    const stream = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        let closed = false;
-        const heartbeatTimer = setInterval(() => {
-          if (closed || reqSignal.aborted) return;
-          try {
-            controller.enqueue(encoder.encode(': keepalive\n\n'));
-          } catch {
-            closed = true;
-          }
-        }, 12_000);
-
-        const sendEvent = (eventName: string, payload: unknown) => {
-          if (closed || reqSignal.aborted) return;
-          try {
-            controller.enqueue(
-              encoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`),
-            );
-          } catch {
-            closed = true;
-          }
-        };
-
-        try {
-          const result = await synthesizeRequirementDocFromSession(store, {
-            sessionId,
-            ...(body.projectId ? { projectId: body.projectId } : {}),
-            ...(body.title ? { title: body.title } : {}),
-            ...(body.version ? { version: body.version } : {}),
-            ...(locale ? { locale } : {}),
-            signal: reqSignal,
-            onProgress: (ev) => sendEvent('progress', ev),
-          });
-          if (!reqSignal.aborted) {
-            sendEvent('complete', {
-              ...result,
-              requirementSessions: store.listRequirementSessions(result.session.projectId),
-              agentSessions: store.listAgentSessions(),
-            });
-          }
-        } catch (err) {
-          if (!reqSignal.aborted && !(err instanceof DOMException && err.name === 'AbortError')) {
-            if (err instanceof LlmGatewayError) {
-              const diag = err.toDiagnostic(locale);
-              sendEvent('run_error', {
-                error: diag.message,
-                diagnostic: diag,
-              });
-            } else {
-              const msg = err instanceof Error ? err.message : String(err);
-              sendEvent('run_error', {
-                error: msg,
-                diagnostic: {
-                  code: 'SYNTHESIS_ERROR',
-                  message: msg,
-                  remediation:
-                    locale === 'en-US'
-                      ? 'Retry SRS synthesis or check LLM gateway settings in LLM Center.'
-                      : '请点击「重试合成」，或前往 LLM 中心检查大模型网关配置。',
-                },
-              });
-            }
-          }
-        } finally {
-          clearInterval(heartbeatTimer);
-          if (!closed) {
-            closed = true;
-            try {
-              controller.close();
-            } catch {
-              // Ignore already-closed stream
-            }
-          }
-        }
-      },
-    });
-
-    return new Response(stream, {
-      headers: SSE_RESPONSE_HEADERS,
     });
   });
 
@@ -1093,21 +938,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     }
   });
 
-  app.post('/api/projects/:id/prototypes/synthesize-ontology', async (c) => {
-    const projectId = c.req.param('id');
-    const body = await c.req
-      .json<{ prototypeId?: string; docId?: string; locale?: string }>()
-      .catch(() => ({ prototypeId: undefined, docId: undefined, locale: undefined }));
-    const locale = getReqLocale(c, body);
-    const result = await synthesizeOntologyFromPrototype(store, {
-      projectId,
-      ...(body.prototypeId ? { prototypeId: body.prototypeId } : {}),
-      ...(body.docId ? { docId: body.docId } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(result);
-  });
-
   app.post('/api/prototype-inspo', async (c) => {
     const body = await c.req
       .json<InspoProxyRequestBody>()
@@ -1135,21 +965,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     const force = c.req.query('force') === '1' || c.req.query('force') === 'true';
     store.deleteFourLayerAsset(id, force);
     return c.json({ deletedId: id, fourLayerAssets: store.listFourLayerAssets() });
-  });
-
-  app.post('/api/assets/generate-tech-arch', async (c) => {
-    const body = await c.req.json<{
-      name: string;
-      stackTags?: string[];
-      prompt?: string;
-      locale?: string;
-    }>();
-    const locale = getReqLocale(c, body);
-    const result = await generateTechArchitectureDoc(store, {
-      ...body,
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(result);
   });
 
   app.post('/api/applications', async (c) => {
@@ -1560,16 +1375,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     return c.json({ deletedId: id, metrics: store.listMetrics() });
   });
 
-  app.post('/api/analytics/metrics/:metricId/insight', async (c) => {
-    const metricId = c.req.param('metricId');
-    const locale = getReqLocale(c);
-    const res = await generateMetricInsight(store, {
-      metricId,
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(res);
-  });
-
   app.post('/api/analytics/scenarios', async (c) => {
     const body = await c.req.json<AnalyticsScenario>();
     const scenario = store.saveAnalyticsScenario(body);
@@ -1580,24 +1385,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     const id = c.req.param('id');
     store.deleteAnalyticsScenario(id);
     return c.json({ deletedId: id, analyticsScenarios: store.listAnalyticsScenarios() });
-  });
-
-  app.post('/api/analytics/scenarios/:scenarioId/attribute', async (c) => {
-    const scenarioId = c.req.param('scenarioId');
-    const body = await c.req
-      .json<{ question?: string; saveAsReport?: boolean; locale?: string }>()
-      .catch(() => ({ question: undefined, saveAsReport: undefined, locale: undefined }));
-    const locale = getReqLocale(c, body);
-    const res = await runScenarioAttributionTurn(store, {
-      scenarioId,
-      ...(body.question ? { question: body.question } : {}),
-      ...(body.saveAsReport !== undefined ? { saveAsReport: body.saveAsReport } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      ...res,
-      analyticsReports: store.listAnalyticsReports(),
-    });
   });
 
   app.post('/api/analytics/reports', async (c) => {

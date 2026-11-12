@@ -59,6 +59,18 @@ import {
   resolveEffectiveLocale,
 } from './locale.js';
 import {
+  DOMAIN_RUN_OPENAI_TOOLS,
+  buildDeterministicSrsMarkdown,
+  buildMockMetricInsightToolArgs,
+  buildMockScenarioAttributionToolArgs,
+  buildMockTechArchMarkdown,
+  executeDomainRunToolCall,
+  extractJsonObjectFromText,
+  findRequirementSessionOptional,
+  parseStructuredActionFromPrompt,
+  type LlmSynthesizedDomainBlueprint,
+} from './domain-run-tools.js';
+import {
   PROTOTYPE_ANCHOR_OPENAI_TOOLS,
   editPrototypeAnchor,
   listPrototypeAnchors,
@@ -375,6 +387,7 @@ export const UNIFIED_AGENT_EXTRA_TOOLS: OpenAiFunctionTool[] = [
       },
     },
   },
+  ...DOMAIN_RUN_OPENAI_TOOLS,
 ];
 
 export const agentWorkbenchRegistry = createRegistry();
@@ -689,8 +702,9 @@ function buildFauxMockModels(
         .reverse()
         .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
       const userPrompt = extractUserMessageText(lastUserMsg);
+      const parsedAction = resolveEffectiveStructuredAction(session.messages, userPrompt);
       const lower = userPrompt.toLowerCase();
-      const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
+      const loc = resolveEffectiveLocale(store, explicitLocale, parsedAction?.cleanPrompt || userPrompt);
 
       // Explicit Scoped HITL ask_user trigger when ambiguous choice is requested
       const hasResolvedChoice =
@@ -698,6 +712,7 @@ function buildFauxMockModels(
         userPrompt.includes('[User Confirmed Choice]') ||
         userPrompt.includes('已选择：');
       if (
+        !parsedAction &&
         !hasResolvedChoice &&
         (userPrompt.includes('待确认选项') ||
           userPrompt.includes('让我选择') ||
@@ -796,6 +811,58 @@ function buildFauxMockModels(
             : 'SELECT risk_level, status, COUNT(id) AS contract_count, SUM(total_amount) AS total_amount FROM t_contract GROUP BY risk_level, status ORDER BY total_amount DESC'
           : `SELECT * FROM ${primaryTable} LIMIT 20`;
 
+        if (parsedAction?.kind === 'METRIC_INSIGHT') {
+          const metricArgs = buildMockMetricInsightToolArgs(
+            store,
+            typeof parsedAction.params.metricId === 'string'
+              ? parsedAction.params.metricId
+              : undefined,
+            loc,
+          );
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在实查 SQLite 业务表并结合数据本体指标口径生成异动洞察与策略建议。`,
+                  `Querying live SQLite tables and evaluating metric formula & M3 thresholds to synthesize anomaly insight.`,
+                ),
+              ),
+              fauxToolCall('run_readonly_sql', { sql }),
+              fauxToolCall('save_metric_insight', metricArgs as never),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
+        if (parsedAction?.kind === 'SCENARIO_ATTRIBUTION') {
+          const attrArgs = buildMockScenarioAttributionToolArgs(
+            store,
+            typeof parsedAction.params.scenarioId === 'string'
+              ? parsedAction.params.scenarioId
+              : undefined,
+            typeof parsedAction.params.question === 'string'
+              ? parsedAction.params.question
+              : parsedAction.cleanPrompt || undefined,
+            parsedAction.params.saveAsReport !== false,
+            loc,
+          );
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在沿 M1 -> MM -> SQLite 实查多因子交叉统计，拆解归因权重并持久化专题分析报告。`,
+                  `Executing multi-factor SQLite cross-tabulation along M1 -> MM to compute causal weights and archive attribution report.`,
+                ),
+              ),
+              fauxToolCall('run_readonly_sql', { sql }),
+              fauxToolCall('save_scenario_attribution_report', attrArgs as never),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
         const blocks = [
           fauxThinking(
             pickLocaleText(
@@ -865,6 +932,58 @@ function buildFauxMockModels(
       }
 
       if (session.agentKind === 'CODING') {
+        if (
+          parsedAction?.kind === 'GENERATE_TECH_ARCH' ||
+          /生成技术架构|技术架构规范|generate\s+tech(?:nical)?\s+arch/i.test(userPrompt)
+        ) {
+          const name =
+            (typeof parsedAction?.params.name === 'string' && parsedAction.params.name.trim()) ||
+            pickLocaleText(
+              loc,
+              `${project?.name ?? '当前工程'} 四层技术架构规范`,
+              `${project?.name ?? 'Project'} 4-Layer Tech Architecture Spec`,
+            );
+          const rawTags = parsedAction?.params.stackTags;
+          const stackTags = Array.isArray(rawTags)
+            ? rawTags.filter((t): t is string => typeof t === 'string' && Boolean(t.trim()))
+            : ['TypeScript', 'Hono', 'Drizzle SQLite', '11-Model DDD'];
+          const version =
+            typeof parsedAction?.params.version === 'string' && parsedAction.params.version.trim()
+              ? parsedAction.params.version.trim()
+              : 'v5.0';
+          const applicationId =
+            typeof parsedAction?.params.applicationId === 'string' &&
+            parsedAction.params.applicationId.trim()
+              ? parsedAction.params.applicationId.trim()
+              : undefined;
+          const extraPrompt =
+            (typeof parsedAction?.params.extraPrompt === 'string' &&
+              parsedAction.params.extraPrompt.trim()) ||
+            (typeof parsedAction?.params.prompt === 'string' &&
+              parsedAction.params.prompt.trim()) ||
+            parsedAction?.cleanPrompt ||
+            undefined;
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在根据技术栈标签与 11 元模型契约生成四层技术架构规范文档并写入资产中心。`,
+                  `Synthesizing 4-layer technical architecture specification from stack tags and 11-model contracts.`,
+                ),
+              ),
+              fauxToolCall('save_tech_architecture_spec', {
+                name,
+                version,
+                stackTags,
+                specMarkdown: buildMockTechArchMarkdown(name, stackTags, extraPrompt, loc),
+                ...(applicationId ? { applicationId } : {}),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
         const appId = session.targetId || store.listAssembledApplications()[0]?.id || 'app-01';
         return fauxAssistantMessage(
           [
@@ -882,6 +1001,44 @@ function buildFauxMockModels(
       }
 
       if (session.agentKind === 'REQUIREMENT') {
+        if (
+          parsedAction?.kind === 'SYNTHESIZE_SRS' ||
+          /合成\s*SRS|合成需求规格|生成\s*SRS|synthesize\s+(?:9[- ]chapter\s+)?srs/i.test(userPrompt)
+        ) {
+          const reqSessionId =
+            typeof parsedAction?.params.requirementSessionId === 'string'
+              ? parsedAction.params.requirementSessionId
+              : session.targetId;
+          const reqSession =
+            findRequirementSessionOptional(store, reqSessionId) ??
+            store.listRequirementSessions(session.projectId)[0];
+          const srsContent = project
+            ? buildDeterministicSrsMarkdown(store, project, reqSession, session, loc)
+            : '# 需求规格说明书\n\n## 1. 引言与业务目标 (Introduction & Business Goals)\n';
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在汇总需求探索会话上下文、已沉淀候选规则与领域边界，合成标准 9 章节《需求规格说明书.md》并落库。`,
+                  `Synthesizing canonical 9-chapter Software Requirements Specification from requirement session context and candidate domain rules.`,
+                ),
+              ),
+              fauxToolCall('save_synthesized_srs_doc', {
+                ...(typeof parsedAction?.params.docId === 'string' && parsedAction.params.docId
+                  ? { docId: parsedAction.params.docId }
+                  : {}),
+                ...(typeof parsedAction?.params.title === 'string' && parsedAction.params.title
+                  ? { title: parsedAction.params.title }
+                  : {}),
+                status: 'CONFIRMED',
+                content: srsContent,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
         const ruleCode = `RULE-REQ-${Date.now().toString(36).slice(-3).toUpperCase()}`;
         return fauxAssistantMessage(
           [
@@ -921,7 +1078,36 @@ function buildFauxMockModels(
         );
       }
 
-      // COPILOT default: inspect or mutate Ontology Suite
+      // COPILOT default: inspect, synthesize 11-model suite, or mutate Ontology Suite
+      if (
+        parsedAction?.kind === 'SYNTHESIZE_ONTOLOGY_SUITE' ||
+        /合成\s*11\s*(?:元)?模型|一键推导\s*11\s*模型|synthesize\s+(?:11[- ]model\s+)?ontology/i.test(
+          userPrompt,
+        )
+      ) {
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                loc,
+                `正在从已确认交互原型确定性提取 MU 界面模型，联动补齐 M1~M7 / ME / MM / MI 共 11 个元模型并执行两级一致性门禁校验。`,
+                `Extracting MU UI model from confirmed prototype HTML, aligning all 11 ontology models (M1–M7, ME, MU, MM, MI), and validating through the two-tier consistency gate.`,
+              ),
+            ),
+            fauxToolCall('synthesize_ontology_suite', {
+              ...(typeof parsedAction?.params.prototypeId === 'string' &&
+              parsedAction.params.prototypeId
+                ? { prototypeId: parsedAction.params.prototypeId }
+                : {}),
+              ...(typeof parsedAction?.params.docId === 'string' && parsedAction.params.docId
+                ? { docId: parsedAction.params.docId }
+                : {}),
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+
       const firstAgg = project?.suite.M1?.aggregates[0];
       if (
         (userPrompt.includes('删除') || lower.includes('delete')) &&
@@ -1516,18 +1702,21 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
     case 'REQUIREMENT':
       return [
         extraByName.get('record_requirement_insights')!,
+        extraByName.get('save_synthesized_srs_doc')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
       ];
     case 'COPILOT':
       return [
         ...ontologyTools,
+        extraByName.get('synthesize_ontology_suite')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
       ];
     case 'CODING':
       return [
         extraByName.get('compile_dev_package')!,
+        extraByName.get('save_tech_architecture_spec')!,
         extraByName.get('inspect_ontology_model')!,
         ...ontologyTools,
         extraByName.get('ask_user')!,
@@ -1542,6 +1731,8 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
       return [
         extraByName.get('run_readonly_sql')!,
         extraByName.get('propose_policy_writeback')!,
+        extraByName.get('save_metric_insight')!,
+        extraByName.get('save_scenario_attribution_report')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
       ];
@@ -1608,7 +1799,7 @@ function buildSystemPromptForSession(
         `Current reasoning mode: ${session.reasoningMode ?? 'ASK_DATA'} (ASK_DATA=data query, ASK_WHY=root-cause attribution, ASK_POLICY=policy writeback).`,
         renderedGrounding,
         writebacks ? `Registered writeback interfaces: ${writebacks}.` : '',
-        `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; every figure you state must come from a query result. In ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
+        `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; every figure you state must come from a query result. When requested via [ACTION:METRIC_INSIGHT ...], MUST call save_metric_insight with live SQLite evidence. When requested via [ACTION:SCENARIO_ATTRIBUTION ...], MUST call save_scenario_attribution_report with causalBreakdown weights grounded in SQLite results. In ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
       ]
         .filter(Boolean)
         .join('\n');
@@ -1619,10 +1810,10 @@ function buildSystemPromptForSession(
       return `${baseHeaderEn}\nCompiled Ontology MCP tools: ${toolNames}. Prefer calling invoke_mcp_tool to execute domain queries or behaviors.`;
     }
     if (session.agentKind === 'CODING') {
-      return `${baseHeaderEn}\nTarget assembled application ID: ${session.targetId ?? 'app-01'}. Call compile_dev_package to compile progressive-disclosure engineering artifacts or refine ontology elements.`;
+      return `${baseHeaderEn}\nTarget assembled application ID: ${session.targetId ?? 'app-01'}. Call compile_dev_package to compile progressive-disclosure engineering artifacts, call save_tech_architecture_spec when asked to generate or persist a 4-layer technical architecture specification ([ACTION:GENERATE_TECH_ARCH ...]), or refine ontology elements.`;
     }
     if (session.agentKind === 'REQUIREMENT') {
-      return `${baseHeaderEn}\nFollow Class-A/B progressive grilling: tag standard audit/engineering defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], call ask_user for unresolved Class-B decisions (or tag [Pending]), and call record_requirement_insights to persist candidate aggregates and rules.`;
+      return `${baseHeaderEn}\nFollow Class-A/B progressive grilling: tag standard audit/engineering defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], call ask_user for unresolved Class-B decisions (or tag [Pending]), call record_requirement_insights to persist candidate aggregates and rules, and when asked to synthesize the SRS ([ACTION:SYNTHESIZE_SRS ...] or user request), MUST call save_synthesized_srs_doc with the complete 9-chapter Markdown specification (## 1. through ## 9., including ### 9.1 through ### 9.7).`;
     }
     if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
       const proto = resolveTargetPrototypeForSession(store, session);
@@ -1643,7 +1834,7 @@ function buildSystemPromptForSession(
         `5. If an edit tool returns isError=true, fix the semantic anchors and retry in the same turn.`,
       ].join('\n');
     }
-    return `${baseHeaderEn}\nCurrent M1 aggregates: ${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || 'none'}; M3 rules count: ${project?.suite.M3?.rules.length ?? 0}.`;
+    return `${baseHeaderEn}\nCurrent M1 aggregates: ${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || 'none'}; M3 rules count: ${project?.suite.M3?.rules.length ?? 0}. When asked to synthesize the 11-model Ontology Suite from the prototype ([ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...] or user request), MUST call synthesize_ontology_suite.`;
   }
 
   const baseHeader = [
@@ -1669,7 +1860,7 @@ function buildSystemPromptForSession(
       `当前分析推理模式：${session.reasoningMode ?? 'ASK_DATA'}（ASK_DATA=智能问数，ASK_WHY=智能问因，ASK_POLICY=智能问策）。`,
       renderedGrounding,
       writebacks ? `当前已注册闭环回写接口：${writebacks}。` : '',
-      `优先调用 run_readonly_sql 获取真实表数据后再输出结论，结论中的每个数字都必须来自查询结果；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
+      `优先调用 run_readonly_sql 获取真实表数据后再输出结论，结论中的每个数字都必须来自查询结果；收到 [ACTION:METRIC_INSIGHT ...] 时必须结合实查结果调用 save_metric_insight 输出指标异动洞察；收到 [ACTION:SCENARIO_ATTRIBUTION ...] 时必须结合实查结果调用 save_scenario_attribution_report 归档场景归因报告；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -1680,10 +1871,10 @@ function buildSystemPromptForSession(
     return `${baseHeader}\n当前工程可用 Ontology MCP 工具：${toolNames}。优先调用 invoke_mcp_tool 执行业务动作或查询。`;
   }
   if (session.agentKind === 'CODING') {
-    return `${baseHeader}\n目标装配应用 ID：${session.targetId ?? 'app-01'}。可调用 compile_dev_package 编译渐进式披露开发包或微调本体元素。`;
+    return `${baseHeader}\n目标装配应用 ID：${session.targetId ?? 'app-01'}。可调用 compile_dev_package 编译渐进式披露开发包，收到生成四层技术架构规范请求（如 [ACTION:GENERATE_TECH_ARCH ...]）时必须调用 save_tech_architecture_spec 落库资产，或微调本体元素。`;
   }
   if (session.agentKind === 'REQUIREMENT') {
-    return `${baseHeader}\n遵循 A/B 分级追问策略：A 类常规默认项标注 [AI自动补全]，B 类核心业务边界标注 [已确认] 或调用 ask_user 让用户选择确认，并调用 record_requirement_insights 沉淀候选规则。`;
+    return `${baseHeader}\n遵循 A/B 分级追问策略：A 类常规默认项标注 [AI自动补全]，B 类核心业务边界标注 [已确认] 或调用 ask_user 让用户选择确认，调用 record_requirement_insights 沉淀候选规则；当用户请求合成 SRS（如 [ACTION:SYNTHESIZE_SRS ...]）时，必须调用 save_synthesized_srs_doc 工具提交完整 9 章节《需求规格说明书.md》（含 ## 1. ~ ## 9. 及 ### 9.1 ~ ### 9.7）。`;
   }
   if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
     const proto = resolveTargetPrototypeForSession(store, session);
@@ -1704,7 +1895,7 @@ function buildSystemPromptForSession(
       `5. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
     ].join('\n');
   }
-  return `${baseHeader}\n当前 M1 聚合根：${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || '无'}；M3 规则数：${project?.suite.M3?.rules.length ?? 0}。`;
+  return `${baseHeader}\n当前 M1 聚合根：${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || '无'}；M3 规则数：${project?.suite.M3?.rules.length ?? 0}。当收到从确认原型合成 11 模型请求（如 [ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...]）时，必须调用 synthesize_ontology_suite 工具并交由两级一致性校验门禁落库。`;
 }
 
 // ─── Execute Single Tool Call (YOLO + Validator Gate + Scoped HITL) ──────────
@@ -2416,6 +2607,19 @@ function executeUnifiedToolCall(
         ],
       },
     };
+  }
+
+  // 8b. Domain Synthesis & Analytics Agent Run Tools (Tickets #33 & #34)
+  const domainToolResult = executeDomainRunToolCall(
+    store,
+    session,
+    tc.id,
+    tc.name,
+    args,
+    locale,
+  );
+  if (domainToolResult) {
+    return domainToolResult;
   }
 
   // 9. Prototype Semantic-Anchor Tools (PROTOTYPE_CO_DESIGN)
@@ -3170,13 +3374,20 @@ async function executeUnifiedTurnCore(
     });
   }
 
+  const structuredTurnAction = resolveEffectiveStructuredAction(
+    existing.messages,
+    synthesizedPrompt,
+  );
+  const cleanTitleSource =
+    structuredTurnAction?.cleanPrompt || synthesizedPrompt;
+
   const nextTitle =
     existing.messages.length === 0 &&
-    synthesizedPrompt &&
+    cleanTitleSource &&
     (existing.title.startsWith('新会话') ||
       existing.title.startsWith('新建') ||
       existing.title.startsWith('New '))
-      ? synthesizedPrompt.replace(/\s+/g, ' ').slice(0, 26)
+      ? cleanTitleSource.replace(/\s+/g, ' ').slice(0, 26)
       : existing.title;
 
   let sessionState: AgentSession = store.saveAgentSession({
@@ -3595,6 +3806,136 @@ async function executeUnifiedTurnCore(
       });
     }
 
+    // Live LLM recovery & honest failure check for structured domain actions (ADR 0007 / ADR 0009)
+    if (!built.isMock && structuredTurnAction && !pendingAskUser && !controller.signal.aborted) {
+      if (
+        structuredTurnAction.kind === 'SYNTHESIZE_SRS' &&
+        !allArtifacts.some((a) => a.kind === 'REQUIREMENT_DOC') &&
+        accumulatedText.trim().length >= 80
+      ) {
+        const autoSrs = executeDomainRunToolCall(
+          store,
+          sessionState,
+          `tc-auto-srs-${Date.now().toString(36)}`,
+          'save_synthesized_srs_doc',
+          {
+            ...structuredTurnAction.params,
+            status: 'CONFIRMED',
+            content: accumulatedText,
+          },
+          effectiveLocale,
+        );
+        if (autoSrs) {
+          allToolTraces.push(autoSrs.trace);
+          emit({
+            id: nextEventId(),
+            event: 'tool_result',
+            data: { trace: autoSrs.trace, step: 1 },
+          });
+          if (autoSrs.artifact) {
+            allArtifacts.push(autoSrs.artifact);
+            emit({
+              id: nextEventId(),
+              event: 'artifact',
+              data: { artifact: autoSrs.artifact },
+            });
+          }
+        }
+      } else if (
+        structuredTurnAction.kind === 'SYNTHESIZE_ONTOLOGY_SUITE' &&
+        !allArtifacts.some((a) => a.kind === 'ONTOLOGY_SUITE') &&
+        accumulatedText.trim().length > 0
+      ) {
+        const parsedBp = extractJsonObjectFromText<LlmSynthesizedDomainBlueprint>(accumulatedText);
+        if (parsedBp && typeof parsedBp === 'object') {
+          const autoOnto = executeDomainRunToolCall(
+            store,
+            sessionState,
+            `tc-auto-onto-${Date.now().toString(36)}`,
+            'synthesize_ontology_suite',
+            {
+              ...structuredTurnAction.params,
+              ...(parsedBp as Record<string, unknown>),
+            },
+            effectiveLocale,
+          );
+          if (autoOnto) {
+            allToolTraces.push(autoOnto.trace);
+            emit({
+              id: nextEventId(),
+              event: 'tool_result',
+              data: { trace: autoOnto.trace, step: 1 },
+            });
+            if (autoOnto.artifact) {
+              allArtifacts.push(autoOnto.artifact);
+              emit({
+                id: nextEventId(),
+                event: 'artifact',
+                data: { artifact: autoOnto.artifact },
+              });
+            }
+          }
+        }
+      } else if (
+        structuredTurnAction.kind === 'GENERATE_TECH_ARCH' &&
+        !allArtifacts.some((a) => a.kind === 'TECH_ARCH_ASSET') &&
+        accumulatedText.trim().length >= 60
+      ) {
+        const autoArch = executeDomainRunToolCall(
+          store,
+          sessionState,
+          `tc-auto-arch-${Date.now().toString(36)}`,
+          'save_tech_architecture_spec',
+          {
+            ...structuredTurnAction.params,
+            content: accumulatedText,
+          },
+          effectiveLocale,
+        );
+        if (autoArch) {
+          allToolTraces.push(autoArch.trace);
+          emit({
+            id: nextEventId(),
+            event: 'tool_result',
+            data: { trace: autoArch.trace, step: 1 },
+          });
+          if (autoArch.artifact) {
+            allArtifacts.push(autoArch.artifact);
+            emit({
+              id: nextEventId(),
+              event: 'artifact',
+              data: { artifact: autoArch.artifact },
+            });
+          }
+        }
+      }
+
+      const expectedArtifactKindByAction: Record<
+        typeof structuredTurnAction.kind,
+        AgentDomainArtifact['kind']
+      > = {
+        SYNTHESIZE_SRS: 'REQUIREMENT_DOC',
+        SYNTHESIZE_ONTOLOGY_SUITE: 'ONTOLOGY_SUITE',
+        GENERATE_TECH_ARCH: 'TECH_ARCH_ASSET',
+        METRIC_INSIGHT: 'METRIC_INSIGHT',
+        SCENARIO_ATTRIBUTION: 'ANALYTICS_REPORT',
+      };
+      const expectedKind = expectedArtifactKindByAction[structuredTurnAction.kind];
+      if (!allArtifacts.some((a) => a.kind === expectedKind)) {
+        throw new LlmGatewayError({
+          message: pickLocaleText(
+            effectiveLocale,
+            `模型网关「${built.providerLabel}」未能完成结构化产物提交（期望产物：${expectedKind}）`,
+            `LLM gateway "${built.providerLabel}" failed to produce required structured artifact (${expectedKind})`,
+          ),
+          providerName: built.providerConfig?.name ?? built.providerLabel,
+          baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+          model: built.selectedModel.id,
+          locale: effectiveLocale,
+        });
+      }
+    }
+
     if (
       prototypeTurnDraft &&
       prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml &&
@@ -3712,17 +4053,7 @@ async function executeUnifiedTurnCore(
     emit({
       id: nextEventId(),
       event: 'message_end',
-      data: {
-        session: sessionState,
-        project: store.getProject(sessionState.projectId),
-        ...(sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
-          ? {
-              prototypes: store.listPrototypes(sessionState.projectId),
-              confirmedPrototypeRevision:
-                store.getConfirmedPrototypeRevision(sessionState.projectId) ?? null,
-            }
-          : {}),
-      },
+      data: buildSessionMessageEndPayload(store, sessionState),
     });
   } catch (err) {
     const currentActive = activeSessionAbortControllers.get(existing.id);
@@ -3774,18 +4105,7 @@ async function executeUnifiedTurnCore(
       emit({
         id: nextEventId(),
         event: 'message_end',
-        data: {
-          session: sessionState,
-          cancelled: true,
-          project: store.getProject(sessionState.projectId),
-          ...(sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
-            ? {
-                prototypes: store.listPrototypes(sessionState.projectId),
-                confirmedPrototypeRevision:
-                  store.getConfirmedPrototypeRevision(sessionState.projectId) ?? null,
-              }
-            : {}),
-        },
+        data: buildSessionMessageEndPayload(store, sessionState, { cancelled: true }),
       });
       return;
     }
@@ -3826,6 +4146,41 @@ async function executeUnifiedTurnCore(
             ),
           };
 
+    if (
+      structuredTurnAction?.kind === 'SYNTHESIZE_SRS' &&
+      !allArtifacts.some((a) => a.kind === 'REQUIREMENT_DOC') &&
+      accumulatedText.trim().length >= 120 &&
+      /^#{1,3}\s+/m.test(accumulatedText)
+    ) {
+      const proj = store.getProject(sessionState.projectId);
+      const draftDocId =
+        typeof structuredTurnAction.params.docId === 'string' &&
+        structuredTurnAction.params.docId.trim()
+          ? structuredTurnAction.params.docId.trim()
+          : `doc-draft-${sessionState.id}`;
+      const draftTitle =
+        typeof structuredTurnAction.params.title === 'string' &&
+        structuredTurnAction.params.title.trim()
+          ? structuredTurnAction.params.title.trim()
+          : pickLocaleText(
+              effectiveLocale,
+              `${proj?.name ?? sessionState.projectId} — 软件需求规格说明书 (草稿)`,
+              `${proj?.name ?? sessionState.projectId} — Software Requirements Specification (Draft)`,
+            );
+      store.saveRequirementDoc({
+        id: draftDocId,
+        projectId: sessionState.projectId,
+        title: draftTitle,
+        version:
+          typeof structuredTurnAction.params.version === 'string' &&
+          structuredTurnAction.params.version.trim()
+            ? structuredTurnAction.params.version.trim()
+            : 'v1.0-draft',
+        content: accumulatedText.trim(),
+        status: 'DRAFT',
+      });
+    }
+
     const errorAssistantMsg: AgentSessionMessage = {
       id: `amsg-${Date.now().toString(36)}-err`,
       role: 'assistant',
@@ -3845,7 +4200,7 @@ async function executeUnifiedTurnCore(
 
     sessionState = store.saveAgentSession({
       ...sessionState,
-      status: isGatewayErr ? 'ERROR' : 'IDLE',
+      status: 'ERROR',
       messages: [...sessionState.messages, errorAssistantMsg],
       updatedAt: new Date().toISOString(),
     });
@@ -3862,6 +4217,9 @@ async function executeUnifiedTurnCore(
       data: {
         diagnostic: errorAssistantMsg.errorDiagnostic,
         session: sessionState,
+        ...(sessionState.agentKind === 'REQUIREMENT'
+          ? { requirementDocs: store.listRequirementDocs(sessionState.projectId) }
+          : {}),
       },
     });
   } finally {
@@ -4057,6 +4415,64 @@ export async function* runUnifiedAgentSessionStream(
   yield* subscribeToBackgroundRun(run, clientSignal);
 }
 
+function resolveEffectiveStructuredAction(
+  messages: AgentSessionMessage[],
+  currentPrompt: string,
+): ReturnType<typeof parseStructuredActionFromPrompt> {
+  const direct = parseStructuredActionFromPrompt(currentPrompt);
+  if (direct) return direct;
+  const trimmed = currentPrompt.trim();
+  const isResumePrompt =
+    !trimmed || /^(?:继续|重试|恢复|continue\b|resume\b|retry\b)/i.test(trimmed);
+  if (!isResumePrompt) return null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i]!;
+    if (msg.role === 'assistant') {
+      if (msg.cancelled || msg.errorDiagnostic) {
+        continue;
+      }
+      return null;
+    }
+    if (msg.role === 'user') {
+      const prior = parseStructuredActionFromPrompt(msg.content);
+      if (prior) return prior;
+    }
+  }
+  return null;
+}
+
+function buildSessionMessageEndPayload(
+  store: WorkspaceStore,
+  session: AgentSession,
+  extra?: { cancelled?: boolean },
+): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    session,
+    ...(extra?.cancelled ? { cancelled: true } : {}),
+    project: store.getProject(session.projectId),
+  };
+
+  if (session.agentKind === 'PROTOTYPE_CO_DESIGN' || session.agentKind === 'COPILOT') {
+    base.prototypes = store.listPrototypes(session.projectId);
+    base.confirmedPrototypeRevision =
+      store.getConfirmedPrototypeRevision(session.projectId) ?? null;
+  }
+  if (session.agentKind === 'REQUIREMENT') {
+    base.requirementDocs = store.listRequirementDocs(session.projectId);
+    base.requirementSessions = store.listRequirementSessions(session.projectId);
+  }
+  if (session.agentKind === 'CODING') {
+    base.fourLayerAssets = store.listFourLayerAssets();
+    base.assembledApplications = store.listAssembledApplications();
+  }
+  if (session.agentKind === 'REASONING') {
+    base.metrics = store.listMetrics();
+    base.analyticsReports = store.listAnalyticsReports();
+    base.reasoningSessions = store.listReasoningSessions();
+  }
+  return base;
+}
+
 export async function* attachUnifiedAgentSessionLiveStream(
   store: WorkspaceStore,
   sessionId: string,
@@ -4092,17 +4508,7 @@ export async function* attachUnifiedAgentSessionLiveStream(
   yield {
     id: `${sessionId}-evt-snapshot-${Date.now().toString(36)}`,
     event: 'message_end',
-    data: {
-      session: healedSession,
-      project: store.getProject(healedSession.projectId),
-      ...(healedSession.agentKind === 'PROTOTYPE_CO_DESIGN'
-        ? {
-            prototypes: store.listPrototypes(healedSession.projectId),
-            confirmedPrototypeRevision:
-              store.getConfirmedPrototypeRevision(healedSession.projectId) ?? null,
-          }
-        : {}),
-    },
+    data: buildSessionMessageEndPayload(store, healedSession),
   };
 }
 

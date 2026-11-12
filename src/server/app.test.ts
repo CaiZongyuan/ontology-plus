@@ -223,23 +223,9 @@ describe('server API & Cloudflare Worker integration', () => {
     vi.unstubAllGlobals();
   });
 
-  it('survives client SSE disconnect during durable SRS_SYNTHESIS task and streams reasoning + full content', async () => {
-    process.env.ONTOLOGY_LIVE_LLM = '1';
+  it('survives client SSE disconnect during REQUIREMENT SRS synthesis Agent Run and reattaches via /live', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
-    store.updateSystemSettings({ mockLlmMode: false });
-    for (const existing of store.listLlmProviders()) {
-      store.saveLlmProvider({ ...existing, enabled: false });
-    }
-    store.saveLlmProvider({
-      id: 'prov-test-sse',
-      name: 'Test Streaming Gateway',
-      providerType: 'OPENAI_COMPATIBLE',
-      baseUrl: 'http://127.0.0.1:19999/v1',
-      apiKey: 'sk-test-123',
-      defaultModel: 'glm-5.3-flash',
-      availableModels: ['glm-5.3-flash'],
-      enabled: true,
-    });
+    store.updateSystemSettings({ mockLlmMode: true });
     const app = createApiApp(store);
 
     const coffeeProject = store.createProject({
@@ -254,234 +240,186 @@ describe('server API & Cloudflare Worker integration', () => {
       initialPrompt: '支持堂食扫码点单、杯型冰度客制化、BOM配方自动扣减咖啡豆与鲜奶库存',
     });
 
-    const encoder = new TextEncoder();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        const sseChunks = [
-          `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: '先梳理咖啡店订单、配方BOM与原料批次三大核心聚合根…' } }] })}\n\n`,
-          `data: ${JSON.stringify({ choices: [{ delta: { content: '# 咖啡店管理系统 — 需求规格说明书\n\n## 1. 项目背景、业务目标与范围边界\n打通堂食扫码点单与配方自动扣库闭环。\n\n' } }] })}\n\n`,
-          `data: ${JSON.stringify({ choices: [{ delta: { content: '## 2. 业务参与方、角色与数据权限矩阵\n- 咖啡师与店长分级授权。\n\n## 3. 核心业务对象、状态生命周期与数据字典\n- `CoffeeOrder`（点单聚合）与 `RecipeBom`（配方清单）。\n\n' } }] })}\n\n`,
-          'data: [DONE]\n\n',
-        ];
-        const stream = new ReadableStream<Uint8Array>({
-          async start(ctrl) {
-            for (const ch of sseChunks) {
-              await new Promise((r) => setTimeout(r, 25));
-              ctrl.enqueue(encoder.encode(ch));
-            }
-            ctrl.close();
-          },
-        });
-        return new Response(stream, {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      }),
-    );
-
-    const startRes = await app.request('/api/pipeline-tasks', {
+    const createSessRes = await app.request('/api/agent-sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        kind: 'SRS_SYNTHESIS',
         projectId: coffeeProject.id,
-        sessionId: reqSession.id,
+        agentKind: 'REQUIREMENT',
+        targetId: reqSession.id,
+        title: '咖啡店 SRS 合成会话',
       }),
     });
-    expect(startRes.status).toBe(200);
-    const { task: startedTask } = (await startRes.json()) as { task: { id: string } };
-    expect(startedTask.id).toBeTruthy();
+    expect(createSessRes.status).toBe(200);
+    const { session: createdSess } = (await createSessRes.json()) as {
+      session: { id: string };
+    };
 
-    // Connect an SSE observer, read initial snapshot, then immediately abort client HTTP connection!
+    // Start SRS synthesis stream, read initial event, then immediately abort client SSE connection!
     const clientAbort = new AbortController();
-    const sseRes = await app.request(`/api/pipeline-tasks/${startedTask.id}/stream`, {
+    const sseRes = await app.request(`/api/agent-sessions/${createdSess.id}/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: `[ACTION:SYNTHESIZE_SRS {"requirementSessionId":"${reqSession.id}"}]\n合成 9 章节需求规格书`,
+        mockMode: true,
+      }),
       signal: clientAbort.signal,
     });
     expect(sseRes.status).toBe(200);
     const reader = sseRes.body!.getReader();
     const firstRead = await reader.read();
     const firstText = new TextDecoder().decode(firstRead.value);
-    expect(firstText).toContain('event: snapshot');
+    expect(firstText).toContain('event: session_meta');
     clientAbort.abort();
 
-    // Wait for detached server task to finish despite client disconnect
-    for (let i = 0; i < 30; i += 1) {
-      const checkRes = await app.request(`/api/pipeline-tasks/${startedTask.id}`);
-      const { task } = (await checkRes.json()) as { task: { status: string } };
-      if (task.status === 'COMPLETED') break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    // Reattach via GET /api/agent-sessions/:id/live (simulating page refresh) and consume until completion
+    const liveRes = await app.request(`/api/agent-sessions/${createdSess.id}/live`);
+    expect(liveRes.status).toBe(200);
+    const liveText = await liveRes.text();
+    expect(liveText).toContain('event: message_end');
 
     const docs = store.listRequirementDocs(coffeeProject.id);
     expect(docs.length).toBe(1);
     expect(docs[0]!.status).toBe('CONFIRMED');
-    expect(docs[0]!.content).toContain('CoffeeOrder');
-    expect(docs[0]!.content).toContain('## 9. ');
+    expect(docs[0]!.content).toContain('## 1.');
+    expect(docs[0]!.content).toContain('## 9.');
+    expect(docs[0]!.content).toContain('### 9.7');
 
-    // Reopening via /api/bootstrap hydrates completed task with full thinkingText, streamedText & stageLogs
+    // Reopening via /api/bootstrap hydrates completed REQUIREMENT session with REQUIREMENT_DOC artifact
     const bootRes = await app.request(`/api/bootstrap?projectId=${coffeeProject.id}`);
     const bootJson = (await bootRes.json()) as {
       requirementDocs: { id: string; status: string }[];
-      pipelineTasks: {
+      agentSessions: {
         id: string;
         status: string;
-        thinkingText?: string;
-        streamedText?: string;
-        stageLogs: unknown[];
+        messages: { artifacts?: { kind: string; docId?: string }[] }[];
       }[];
     };
     expect(bootJson.requirementDocs.length).toBe(1);
-    const completedTask = bootJson.pipelineTasks.find((t) => t.id === startedTask.id)!;
-    expect(completedTask.status).toBe('COMPLETED');
-    expect(completedTask.thinkingText).toContain('配方BOM');
-    expect(completedTask.streamedText).toContain('CoffeeOrder');
-    expect(completedTask.stageLogs.length).toBeGreaterThanOrEqual(2);
-    for (const log of completedTask.stageLogs as { messageZh: string }[]) {
-      expect(log.messageZh).not.toContain('已思考');
-    }
+    const hydratedSession = bootJson.agentSessions.find((s) => s.id === createdSess.id)!;
+    expect(hydratedSession.status).toBe('IDLE');
+    expect(
+      hydratedSession.messages
+        .flatMap((m) => m.artifacts ?? [])
+        .some((a) => a.kind === 'REQUIREMENT_DOC' && a.docId === docs[0]!.id),
+    ).toBe(true);
   });
 
-  it('sends reasoning_effort=low and recovers automatically if upstream model exhausts tokens inside reasoning_content', async () => {
-    process.env.ONTOLOGY_LIVE_LLM = '1';
+  it('executes all 6 migrated actions as session Agent Runs, supports abort/continue, and retires legacy one-shot routes', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
-    store.updateSystemSettings({ mockLlmMode: false });
-    for (const existing of store.listLlmProviders()) {
-      store.saveLlmProvider({ ...existing, enabled: false });
-    }
-    store.saveLlmProvider({
-      id: 'prov-test-reasoning-exhaust',
-      name: 'Test Reasoning Gateway',
-      providerType: 'OPENAI_COMPATIBLE',
-      baseUrl: 'http://127.0.0.1:19998/v1',
-      apiKey: 'sk-test-exhaust',
-      defaultModel: 'auto/glm-5.3-flash',
-      availableModels: ['auto/glm-5.3-flash'],
-      enabled: true,
-    });
+    store.updateSystemSettings({ mockLlmMode: true });
     const app = createApiApp(store);
 
-    const proj = store.createProject({
-      name: '精品茶饮系统',
-      code: 'TEA_SHOP',
-      domain: '现制茶饮与原料效期管理',
-      template: 'EMPTY',
-    });
-    const sess = store.createRequirementSession({
-      projectId: proj.id,
-      title: '茶饮需求探索',
-      initialPrompt: '支持茶底效期预警、配方BOM自动扣减与门店订货',
-    });
-
-    const encoder = new TextEncoder();
-    const fullSrsMarkdown = [
-      '# 精品茶饮系统 — 软件需求规格说明书 (SRS)',
-      '',
-      '## 1. 项目背景、业务目标与范围边界',
-      '围绕现制茶饮门店构建茶底效期监控、配方BOM原料自动扣减与门店补货全闭环。',
-      '',
-      '## 2. 业务参与方与角色矩阵',
-      '- 调饮师、值班店长、仓配专员。',
-      '',
-      '## 3. 核心业务流程与关键场景',
-      '顾客点单 -> 制作茶饮并按配方扣减茶底与鲜奶 -> 茶底超时自动触发报损提醒。',
-      '',
-      '## 4. 领域概念与数据实体（对齐 M1）',
-      '- `TeaOrder`（茶饮订单）、`TeaBaseBatch`（茶底批次）、`RecipeItem`（配方明细）。',
-      '',
-      '## 5. 业务动作、状态流转与前置/后置契约（对齐 M2 / M3）',
-      '- `brewTeaBase`、`completeTeaOrder`、`discardExpiredTeaBase`。',
-      '',
-      '## 6. 业务规则、计算口径与异常处理（对齐 M4）',
-      '- 绿茶茶底出汤超过 4 小时禁止出杯，自动锁定批次状态。',
-      '',
-      '## 7. 界面屏幕规划与关键交互要求（对齐 MU）',
-      '- 点单收银台、茶底效期看板、原料库存台账。',
-      '',
-      '## 8. 外部集成、权限审计与非功能性需求（对齐 M7）',
-      '- 小程序订单回调幂等校验，效期报损留存操作人审计日志。',
-      '',
-      '## 9. 验收标准清单（可测试准则）',
-      '- Given 茶底已超 4 小时效期，When 调饮师扫码出杯，Then 系统拦截并提示效期锁定。',
-    ].join('\n');
-
-    const capturedBodies: Record<string, unknown>[] = [];
-    let callIndex = 0;
-
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: unknown, init?: RequestInit) => {
-        callIndex += 1;
-        if (typeof init?.body === 'string') {
-          capturedBodies.push(JSON.parse(init.body) as Record<string, unknown>);
-        }
-        const currentCall = callIndex;
-        const stream = new ReadableStream<Uint8Array>({
-          start(ctrl) {
-            if (currentCall === 1) {
-              // Simulate reasoning token exhaustion: only reasoning_content, zero content!
-              ctrl.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: '梳理茶底效期规则、配方扣减与 9 章节结构…' } }] })}\n\n`,
-                ),
-              );
-              ctrl.enqueue(encoder.encode('data: [DONE]\n\n'));
-              ctrl.close();
-              return;
-            }
-            // Continuation retry streams the actual Markdown body
-            ctrl.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ choices: [{ delta: { content: fullSrsMarkdown } }] })}\n\n`,
-              ),
-            );
-            ctrl.enqueue(encoder.encode('data: [DONE]\n\n'));
-            ctrl.close();
-          },
-        });
-        return new Response(stream, {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      }),
-    );
-
-    const startRes = await app.request('/api/pipeline-tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        kind: 'SRS_SYNTHESIS',
-        projectId: proj.id,
-        sessionId: sess.id,
-      }),
-    });
-    const { task: started } = (await startRes.json()) as { task: { id: string } };
-
-    for (let i = 0; i < 40; i += 1) {
-      const checkRes = await app.request(`/api/pipeline-tasks/${started.id}`);
-      const { task } = (await checkRes.json()) as { task: { status: string } };
-      if (task.status !== 'RUNNING') break;
-      await new Promise((r) => setTimeout(r, 20));
+    // 1. Retired pipeline-task kinds return 400; PROTOTYPE_GEN remains accepted
+    for (const retiredKind of ['SRS_SYNTHESIS', 'ONTOLOGY_SYNTH']) {
+      const badTaskRes = await app.request('/api/pipeline-tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: retiredKind, projectId: 'proj-contract' }),
+      });
+      expect(badTaskRes.status).toBe(400);
     }
 
-    expect(capturedBodies.length).toBe(2);
-    expect(capturedBodies[0]?.reasoning_effort).toBe('low');
-    expect(capturedBodies[0]?.max_tokens).toBe(32768);
+    // 2. All 8 retired synchronous/streaming one-shot HTTP routes return 404
+    const retiredRoutes = [
+      '/api/projects/proj-contract/copilot',
+      '/api/projects/proj-contract/copilot/stream',
+      '/api/requirements/req-sess-contract-01/synthesize-doc',
+      '/api/requirements/req-sess-contract-01/synthesize-doc/stream',
+      '/api/projects/proj-contract/prototypes/synthesize-ontology',
+      '/api/assets/generate-tech-arch',
+      '/api/analytics/metrics/MET-02/insight',
+      '/api/analytics/scenarios/ascn-01/attribute',
+    ];
+    for (const route of retiredRoutes) {
+      const res = await app.request(route, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(404);
+    }
 
-    const finalRes = await app.request(`/api/pipeline-tasks/${started.id}`);
-    const { task: finalTask } = (await finalRes.json()) as {
-      task: { status: string; messageZh: string; stageLogs: { messageZh: string }[] };
+    // Helper to create session and run stream
+    const runSessionAction = async (
+      projectId: string,
+      agentKind: 'REQUIREMENT' | 'COPILOT' | 'CODING' | 'REASONING',
+      prompt: string,
+    ) => {
+      const sessRes = await app.request('/api/agent-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, agentKind, title: `${agentKind} Test` }),
+      });
+      const { session } = (await sessRes.json()) as { session: { id: string } };
+      const streamRes = await app.request(`/api/agent-sessions/${session.id}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, mockMode: true }),
+      });
+      expect(streamRes.status).toBe(200);
+      const sseText = await streamRes.text();
+      expect(sseText).toContain('event: artifact');
+      expect(sseText).toContain('event: message_end');
+      return session.id;
     };
-    expect(finalTask.status).toBe('COMPLETED');
-    expect(finalTask.messageZh).not.toContain('已思考');
 
-    const docs = store.listRequirementDocs(proj.id);
-    expect(docs.length).toBe(1);
-    expect(docs[0]!.status).toBe('CONFIRMED');
-    expect(docs[0]!.content).toContain('TeaBaseBatch');
+    // 3. 11-Model Ontology Synthesis + Copilot rule mutation on a fresh EMPTY project with prototype
+    const srmProj = store.createProject({
+      name: '仓储波次拣货系统',
+      code: 'WMS_WAVE',
+      domain: '智能仓储作业',
+      template: 'EMPTY',
+    });
+    const wmsProto = store.createPrototype(srmProj.id, {
+      name: '波次拣货看板',
+      htmlContent:
+        '<section data-screen-id="SCR-WAVE-BOARD" data-screen-name="波次调度台"><input data-element-id="EL-WAVE-NO" data-binding="PickingWave.waveNo" /><button data-element-id="EL-DISPATCH" data-event-id="EVT-WAVE-DISPATCHED">下发波次</button></section>',
+      source: 'GENERATED',
+    });
+    store.confirmPrototypeRevision(srmProj.id, wmsProto.revision.id);
+
+    await runSessionAction(
+      srmProj.id,
+      'COPILOT',
+      `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {"prototypeId":"${wmsProto.prototype.id}"}]\n合成 11 模型`,
+    );
+    expect(store.getProject(srmProj.id)!.validation.presentModels).toHaveLength(11);
+    expect(store.getProject(srmProj.id)!.validation.errorCount).toBe(0);
+
+    await runSessionAction(
+      'proj-contract',
+      'COPILOT',
+      '请新增一条跨境大额合同双签审批规则',
+    );
+    expect(store.getProject('proj-contract')!.validation.errorCount).toBe(0);
+
+    // 4. Tech Arch Generation in CODING session
+    const assetsBefore = store.listFourLayerAssets().length;
+    await runSessionAction(
+      'proj-contract',
+      'CODING',
+      '[ACTION:GENERATE_TECH_ARCH {"name":"WMS 云原生四层技术架构","stackTags":["TypeScript","Hono","D1"]}]\n生成技术架构规范',
+    );
+    expect(store.listFourLayerAssets().length).toBe(assetsBefore + 1);
+
+    // 5. Metric Insight & Scenario Attribution in REASONING session
+    await runSessionAction(
+      'proj-contract',
+      'REASONING',
+      '[ACTION:METRIC_INSIGHT {"metricId":"MET-02"}]\n生成指标波动洞察',
+    );
+    const reportsBefore = store.listAnalyticsReports().length;
+    await runSessionAction(
+      'proj-contract',
+      'REASONING',
+      '[ACTION:SCENARIO_ATTRIBUTION {"scenarioId":"ascn-01","saveAsReport":true}]\n执行场景归因并归档报告',
+    );
+    expect(store.listAnalyticsReports().length).toBe(reportsBefore + 1);
   });
 
-  it('preserves incremental DRAFT requirement doc when upstream LLM stream drops mid-generation', async () => {
+  it('preserves incremental DRAFT requirement doc when upstream LLM stream drops mid-SRS-run and never fabricates template results on gateway failure', async () => {
     process.env.ONTOLOGY_LIVE_LLM = '1';
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     store.updateSystemSettings({ mockLlmMode: false });
@@ -506,10 +444,16 @@ describe('server API & Cloudflare Worker integration', () => {
       domain: '现烤门店运营',
       template: 'EMPTY',
     });
-    const sess = store.createRequirementSession({
+    const reqSess = store.createRequirementSession({
       projectId: proj.id,
       title: '烘焙需求探索',
       initialPrompt: '支持现烤出炉批次排程与临期报损管理',
+    });
+    const agentSess = store.createAgentSession({
+      projectId: proj.id,
+      agentKind: 'REQUIREMENT',
+      targetId: reqSess.id,
+      title: '烘焙 SRS 合成会话',
     });
 
     const encoder = new TextEncoder();
@@ -526,7 +470,7 @@ describe('server API & Cloudflare Worker integration', () => {
               emittedFirst = true;
               ctrl.enqueue(
                 encoder.encode(
-                  `data: ${JSON.stringify({ choices: [{ delta: { content: partialMarkdown } }] })}\n\n`,
+                  `data: ${JSON.stringify({ id: 'chatcmpl-drop-1', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { role: 'assistant', content: partialMarkdown }, finish_reason: null }] })}\n\n`,
                 ),
               );
               return;
@@ -541,28 +485,45 @@ describe('server API & Cloudflare Worker integration', () => {
       }),
     );
 
-    const startRes = await app.request('/api/pipeline-tasks', {
+    const streamRes = await app.request(`/api/agent-sessions/${agentSess.id}/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        kind: 'SRS_SYNTHESIS',
-        projectId: proj.id,
-        sessionId: sess.id,
+        prompt: `[ACTION:SYNTHESIZE_SRS {"requirementSessionId":"${reqSess.id}"}]\n合成 9 章节需求规格书`,
+        mockMode: false,
       }),
     });
-    const { task: started } = (await startRes.json()) as { task: { id: string } };
-
-    for (let i = 0; i < 30; i += 1) {
-      const checkRes = await app.request(`/api/pipeline-tasks/${started.id}`);
-      const { task } = (await checkRes.json()) as { task: { status: string } };
-      if (task.status !== 'RUNNING') break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
+    const rawSse = await streamRes.text();
+    expect(rawSse).toContain('event: run_error');
 
     const savedDocs = store.listRequirementDocs(proj.id);
     expect(savedDocs.length).toBe(1);
     expect(savedDocs[0]!.status).toBe('DRAFT');
     expect(savedDocs[0]!.content).toContain('现烤烘焙门店');
+
+    // Now simulate HTTP 502 Bad Gateway on a CODING Tech Arch run: must emit run_error and create ZERO assets
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Bad Gateway', { status: 502 })),
+    );
+    const codingSess = store.createAgentSession({
+      projectId: proj.id,
+      agentKind: 'CODING',
+      title: '烘焙架构生成',
+    });
+    const assetsBefore = store.listFourLayerAssets().length;
+    const archStreamRes = await app.request(`/api/agent-sessions/${codingSess.id}/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: '[ACTION:GENERATE_TECH_ARCH {"name":"烘焙云原生架构"}]\n生成架构',
+        mockMode: false,
+      }),
+    });
+    const archSse = await archStreamRes.text();
+    expect(archSse).toContain('event: run_error');
+    expect(store.listFourLayerAssets().length).toBe(assetsBefore);
+    expect(store.getAgentSession(codingSess.id)?.status).toBe('ERROR');
   });
 
   it('resumes an interrupted PROTOTYPE_GEN task from its persisted SQLite checkpoint instead of starting from 0', async () => {

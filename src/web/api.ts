@@ -52,19 +52,12 @@ import type {
   AppCodingAgentResult,
   CapabilitySmartChatResult,
   LlmPingResult,
-  MetricInsightResult,
-  OntologyCopilotResult,
-  OntologySynthesisFromPrototypeResult,
   PipelineStageLogEntry,
   PipelineTaskProgressFrame,
   PipelineTaskSnapshot,
   PrototypeGenerationResult,
   PrototypeRefinementSelection,
-  RequirementDocSynthesisResult,
-  ScenarioAttributionResult,
-  SrsSynthesisProgressEvent,
   SrsSynthesisProgressPhase,
-  TechArchitectureGenerationResult,
   TransientTurnImageInput,
 } from '../packages/agent-runtime/index.js';
 import type {
@@ -463,8 +456,7 @@ function mapServerSnapshotToBackgroundTask(
             code: snap.errorMessage || 'PIPELINE_ERROR',
             message: snap.messageZh,
             remediation:
-              streamedText.trim().length >= 200 &&
-              (snap.kind === 'SRS_SYNTHESIS' || snap.kind === 'PROTOTYPE_GEN')
+              streamedText.trim().length >= 200 && snap.kind === 'PROTOTYPE_GEN'
                 ? getCurrentClientLocale() === 'en-US'
                   ? `Saved ${streamedText.length.toLocaleString()} chars in checkpoint — click "Resume from Checkpoint" to continue without starting over.`
                   : `已持久化保存前序 ${streamedText.length.toLocaleString()} 字内容，点击「断点续写」即可直接接着往下生成，无需从头重来。`
@@ -541,6 +533,40 @@ export function formatToolStepLabel(toolName: string): { zh: string; en: string 
       return { zh: '检视业务本体模型', en: 'Inspect ontology model' };
     case 'ask_user':
       return { zh: '请求确认业务决策', en: 'Ask user decision' };
+    case 'save_synthesized_srs_doc':
+      return { zh: '写入九章节 SRS 需求规格书', en: 'Save 9-chapter SRS document' };
+    case 'synthesize_ontology_suite':
+      return { zh: '校验并持久化 11 模型本体套件', en: 'Validate & save 11-model ontology suite' };
+    case 'save_tech_architecture_spec':
+      return { zh: '持久化技术架构规格资产', en: 'Save technical architecture spec' };
+    case 'save_metric_insight':
+      return { zh: '生成并保存指标波动解读', en: 'Generate & save metric insight' };
+    case 'save_scenario_attribution_report':
+      return { zh: '生成并保存多维场景归因报告', en: 'Generate & save scenario attribution report' };
+    case 'record_requirement_insights':
+      return { zh: '沉淀结构化需求追问洞察', en: 'Record requirement insights' };
+    case 'compile_dev_package':
+      return { zh: '编译本体驱动研发指导包', en: 'Compile development package' };
+    case 'run_readonly_sql':
+      return { zh: '执行只读 SQL 数据探查', en: 'Execute read-only SQL query' };
+    case 'propose_policy_writeback':
+      return { zh: '拟定策略回写动作草案', en: 'Propose policy writeback action' };
+    case 'invoke_mcp_tool':
+      return { zh: '调用本体 MCP 工具', en: 'Invoke ontology MCP tool' };
+    case 'upsert_term':
+    case 'upsert_aggregate':
+    case 'upsert_process':
+    case 'upsert_command':
+    case 'upsert_rule':
+    case 'upsert_agent':
+    case 'upsert_event':
+    case 'upsert_external_mapping':
+    case 'upsert_ui_screen':
+    case 'upsert_metadata_entry':
+    case 'upsert_ai_binding':
+      return { zh: `更新本体元素 (${toolName.replace('upsert_', '')})`, en: `Upsert ontology element (${toolName.replace('upsert_', '')})` };
+    case 'delete_element':
+      return { zh: '移除本体元素并校验一致性', en: 'Delete ontology element & validate' };
     default:
       return { zh: `执行工具 ${toolName}`, en: `Run ${toolName}` };
   }
@@ -663,12 +689,7 @@ interface WorkbenchStoreState {
     taskId: string,
     opts?: { autoNavigateOnComplete?: boolean; originNav?: string },
   ) => Promise<BackgroundPipelineTask | null>;
-  startSrsSynthesisTask: (opts?: { sessionId?: string }) => Promise<void>;
   startPrototypeGenTask: (opts?: { docId?: string; prompt?: string }) => Promise<void>;
-  startOntologySynthTask: (opts?: {
-    prototypeId?: string;
-    docId?: string;
-  }) => Promise<{ modelCount: number; errorCount: number } | null>;
   cancelBackgroundTask: (taskId: string) => void;
   dismissBackgroundTask: (taskId: string) => void;
   openBackgroundTaskResult: (
@@ -676,6 +697,16 @@ interface WorkbenchStoreState {
     opts?: { expandStream?: boolean; keepCard?: boolean },
   ) => Promise<void>;
   retryBackgroundTask: (taskId: string, opts?: { fromScratch?: boolean }) => Promise<void>;
+  ensureProjectAgentSession: (
+    projectId: string,
+    agentKind: AgentSessionKind,
+    opts?: {
+      targetId?: string;
+      preferredSessionId?: string;
+      title?: string;
+      reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+    },
+  ) => Promise<AgentSession>;
   ensurePrototypeCoDesignSession: (
     projectId: string,
     prototypeId: string,
@@ -690,6 +721,42 @@ interface WorkbenchStoreState {
     reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
     mockMode?: boolean;
   }) => Promise<void>;
+  startSrsSynthesisRun: (opts?: {
+    requirementSessionId?: string;
+    agentSessionId?: string;
+    title?: string;
+    docId?: string;
+    version?: string;
+    mockMode?: boolean;
+  }) => Promise<{ sessionId: string } | null>;
+  startOntologySynthesisRun: (opts?: {
+    prototypeId?: string;
+    docId?: string;
+    mockMode?: boolean;
+  }) => Promise<{ sessionId: string } | null>;
+  startOntologyCopilotRun: (
+    prompt: string,
+    opts?: {
+      activeModel?: ModelCode;
+      sessionId?: string;
+      mockMode?: boolean;
+    },
+  ) => Promise<{ sessionId: string } | null>;
+  startTechArchGenerationRun: (input: {
+    name: string;
+    stackTags?: string[];
+    prompt?: string;
+    applicationId?: string;
+    mockMode?: boolean;
+  }) => Promise<{ sessionId: string } | null>;
+  startMetricInsightRun: (
+    metricId: string,
+    opts?: { mockMode?: boolean },
+  ) => Promise<{ sessionId: string } | null>;
+  startScenarioAttributionRun: (
+    scenarioId: string,
+    opts?: { question?: string; saveAsReport?: boolean; mockMode?: boolean },
+  ) => Promise<{ sessionId: string } | null>;
   startPrototypeRefinementRun: (input: {
     projectId: string;
     prototypeId: string;
@@ -1209,93 +1276,6 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     return get().backgroundTasks.find((tk) => tk.id === taskId) ?? null;
   },
 
-  startSrsSynthesisTask: async (opts) => {
-    const curData = get().data;
-    if (!curData) return;
-    const projectId = curData.activeProject.id;
-    const projectName = curData.activeProject.name;
-    const existingRunning = get().backgroundTasks.find(
-      (tk) =>
-        tk.projectId === projectId &&
-        tk.kind === 'SRS_SYNTHESIS' &&
-        tk.status === 'RUNNING',
-    );
-    if (existingRunning) {
-      void get().attachPipelineTaskStream(existingRunning.id, { autoNavigateOnComplete: true });
-      return;
-    }
-
-    const locale = getCurrentClientLocale();
-    const originNav = get().activeNav;
-
-    let targetSessionId = opts?.sessionId;
-    if (!targetSessionId) {
-      const reqAgentSessions = (curData.agentSessions ?? [])
-        .filter(
-          (s) =>
-            s.projectId === projectId &&
-            s.agentKind === 'REQUIREMENT' &&
-            s.messages.length > 0,
-        )
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-      const preferredAgent =
-        reqAgentSessions.find((s) => s.id === get().activeSessionId) ?? reqAgentSessions[0];
-      targetSessionId = preferredAgent?.id ?? curData.requirementSessions[0]?.id;
-    }
-
-    if (!targetSessionId) {
-      const created = await apiPostJson<{
-        session: RequirementSession;
-        requirementSessions: RequirementSession[];
-      }>('/api/requirements/sessions', {
-        projectId,
-        title:
-          locale === 'en-US'
-            ? `${projectName} Requirement Session`
-            : `${projectName} 需求探索会话`,
-      });
-      if (get().data?.activeProject.id === projectId) {
-        get().patchData({ requirementSessions: created.requirementSessions });
-      }
-      targetSessionId = created.session.id;
-    }
-
-    const started = await apiPostJson<{
-      task: PipelineTaskSnapshot;
-      reusedRunning: boolean;
-      pipelineTasks: PipelineTaskSnapshot[];
-    }>('/api/pipeline-tasks', {
-      kind: 'SRS_SYNTHESIS',
-      projectId,
-      sessionId: targetSessionId,
-      locale,
-    });
-
-    const mapped = mapServerSnapshotToBackgroundTask(started.task, {
-      originNav,
-    } as BackgroundPipelineTask);
-
-    set({
-      backgroundTasks: [
-        mapped,
-        ...get().backgroundTasks.filter(
-          (tk) => tk.id !== mapped.id && !(tk.projectId === projectId && tk.kind === 'SRS_SYNTHESIS'),
-        ),
-      ],
-    });
-
-    get().announcePolite(
-      locale === 'en-US'
-        ? `Started durable 9-chapter SRS synthesis for ${projectName}. Refreshing or switching tabs will not interrupt generation.`
-        : `已在服务端启动「${projectName}」9 章节规格书持久化合成，刷新页面或切换模块均不会丢失。`,
-    );
-
-    await get().attachPipelineTaskStream(mapped.id, {
-      autoNavigateOnComplete: true,
-      originNav,
-    });
-  },
-
   startPrototypeGenTask: async (opts) => {
     const curData = get().data;
     if (!curData) return;
@@ -1342,64 +1322,6 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       autoNavigateOnComplete: true,
       originNav,
     });
-  },
-
-  startOntologySynthTask: async (opts) => {
-    const curData = get().data;
-    if (!curData) return null;
-    const projectId = curData.activeProject.id;
-    const existingRunning = get().backgroundTasks.find(
-      (tk) =>
-        tk.projectId === projectId &&
-        tk.kind === 'ONTOLOGY_SYNTH' &&
-        tk.status === 'RUNNING',
-    );
-    if (existingRunning) {
-      await get().attachPipelineTaskStream(existingRunning.id, { autoNavigateOnComplete: false });
-      return null;
-    }
-
-    const locale = getCurrentClientLocale();
-    const originNav = get().activeNav;
-    const started = await apiPostJson<{
-      task: PipelineTaskSnapshot;
-      reusedRunning: boolean;
-      pipelineTasks: PipelineTaskSnapshot[];
-    }>('/api/pipeline-tasks', {
-      kind: 'ONTOLOGY_SYNTH',
-      projectId,
-      ...(opts?.prototypeId ? { prototypeId: opts.prototypeId } : {}),
-      ...(opts?.docId ? { docId: opts.docId } : {}),
-      locale,
-    });
-
-    const mapped = mapServerSnapshotToBackgroundTask(started.task, {
-      originNav,
-    } as BackgroundPipelineTask);
-
-    set({
-      backgroundTasks: [
-        mapped,
-        ...get().backgroundTasks.filter(
-          (tk) => tk.id !== mapped.id && !(tk.projectId === projectId && tk.kind === 'ONTOLOGY_SYNTH'),
-        ),
-      ],
-    });
-
-    const finalTask = await get().attachPipelineTaskStream(mapped.id, {
-      autoNavigateOnComplete: false,
-      originNav,
-    });
-
-    if (finalTask?.status === 'COMPLETED') {
-      const updatedProject = get().data?.activeProject;
-      const presentCount = updatedProject
-        ? Object.values(updatedProject.suite).filter(Boolean).length
-        : 11;
-      const errorCount = updatedProject?.validation.errorCount ?? 0;
-      return { modelCount: presentCount, errorCount };
-    }
-    return null;
   },
 
   cancelBackgroundTask: (taskId) => {
@@ -1470,7 +1392,7 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     const canResumeCheckpoint =
       !opts?.fromScratch &&
       task.streamedChars >= 200 &&
-      (task.kind === 'SRS_SYNTHESIS' || task.kind === 'PROTOTYPE_GEN');
+      task.kind === 'PROTOTYPE_GEN';
 
     if (canResumeCheckpoint) {
       const locale = getCurrentClientLocale();
@@ -1496,20 +1418,58 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       return;
     }
 
-    if (task.kind === 'SRS_SYNTHESIS') {
-      await get().startSrsSynthesisTask(
-        task.retrySessionId ? { sessionId: task.retrySessionId } : undefined,
-      );
-    } else if (task.kind === 'PROTOTYPE_GEN') {
+    if (task.kind === 'PROTOTYPE_GEN') {
       await get().startPrototypeGenTask(
         task.retryDocId ? { docId: task.retryDocId } : undefined,
       );
-    } else if (task.kind === 'ONTOLOGY_SYNTH') {
-      await get().startOntologySynthTask({
-        ...(task.retryPrototypeId ? { prototypeId: task.retryPrototypeId } : {}),
-        ...(task.retryDocId ? { docId: task.retryDocId } : {}),
+    }
+  },
+
+  ensureProjectAgentSession: async (projectId, agentKind, opts) => {
+    const cur = get().data;
+    const candidates = (cur?.agentSessions ?? [])
+      .filter(
+        (s) =>
+          s.projectId === projectId &&
+          s.agentKind === agentKind &&
+          (!opts?.targetId || s.targetId === opts.targetId),
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const preferredId = opts?.preferredSessionId ?? get().activeSessionId ?? undefined;
+    const existing =
+      (preferredId ? candidates.find((s) => s.id === preferredId) : undefined) ?? candidates[0];
+    if (existing) {
+      return existing;
+    }
+
+    const locale = getCurrentClientLocale();
+    const defaultTitleByKind: Record<AgentSessionKind, { zh: string; en: string }> = {
+      REQUIREMENT: { zh: '需求探索与 SRS 合成会话', en: 'Requirement & SRS Session' },
+      COPILOT: { zh: '本体智能助手会话', en: 'Ontology Copilot Session' },
+      PROTOTYPE_CO_DESIGN: { zh: '原型协同精修会话', en: 'Prototype Co-Design Session' },
+      CODING: { zh: '应用装配与技术架构会话', en: 'Assembly & Tech Arch Session' },
+      CAPABILITY: { zh: '能力智能体会话', en: 'Capability Agent Session' },
+      REASONING: { zh: '数据归因与指标洞察会话', en: 'Data Reasoning & Insight Session' },
+    };
+    const fallbackTitle = defaultTitleByKind[agentKind];
+    const created = await apiCreateAgentSession({
+      projectId,
+      agentKind,
+      ...(opts?.targetId ? { targetId: opts.targetId } : {}),
+      title: opts?.title ?? (locale === 'en-US' ? fallbackTitle.en : fallbackTitle.zh),
+      ...(opts?.reasoningMode ? { reasoningMode: opts.reasoningMode } : {}),
+    });
+    const latest = get().data;
+    if (latest) {
+      const otherSessions = (latest.agentSessions ?? []).filter((s) => s.projectId !== projectId);
+      set({
+        data: {
+          ...latest,
+          agentSessions: [...created.agentSessions, ...otherSessions],
+        },
       });
     }
+    return created.session;
   },
 
   ensurePrototypeCoDesignSession: async (projectId, prototypeId) => {
@@ -1674,6 +1634,215 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
         }
       }
     }
+  },
+
+  startSrsSynthesisRun: async (opts) => {
+    const curData = get().data;
+    if (!curData) return null;
+    const projectId = curData.activeProject.id;
+    const locale = getCurrentClientLocale();
+    const session = await get().ensureProjectAgentSession(projectId, 'REQUIREMENT', {
+      ...(opts?.agentSessionId ? { preferredSessionId: opts.agentSessionId } : {}),
+      title:
+        locale === 'en-US'
+          ? `${curData.activeProject.name} Requirement Session`
+          : `${curData.activeProject.name} 需求探索会话`,
+    });
+    get().setActiveSessionId(session.id);
+
+    const payload: Record<string, unknown> = {
+      ...(opts?.requirementSessionId ? { requirementSessionId: opts.requirementSessionId } : {}),
+      ...(opts?.docId ? { docId: opts.docId } : {}),
+      ...(opts?.title ? { title: opts.title } : {}),
+      ...(opts?.version ? { version: opts.version } : {}),
+    };
+    const header = `[ACTION:SYNTHESIZE_SRS ${JSON.stringify(payload)}]`;
+    const instruction =
+      locale === 'en-US'
+        ? 'Synthesize a complete 9-chapter Software Requirements Specification (SRS) from the requirement exploration history and save it via save_synthesized_srs_doc.'
+        : '请基于当前需求探索会话与项目上下文，合成完整的九章节《软件需求规格说明书 (SRS)》，并通过 save_synthesized_srs_doc 工具持久化保存。';
+    const displayTitle =
+      locale === 'en-US' ? 'Synthesize 9-Chapter SRS' : '合成九章节 SRS 规格书';
+
+    await get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: `${header}\n${instruction}`,
+      displayTitle,
+      ...(opts?.mockMode !== undefined ? { mockMode: opts.mockMode } : {}),
+    });
+
+    return { sessionId: session.id };
+  },
+
+  startOntologySynthesisRun: async (opts) => {
+    const curData = get().data;
+    if (!curData) return null;
+    const projectId = curData.activeProject.id;
+    const locale = getCurrentClientLocale();
+    const session = await get().ensureProjectAgentSession(projectId, 'COPILOT', {
+      title:
+        locale === 'en-US'
+          ? `${curData.activeProject.name} Ontology Copilot`
+          : `${curData.activeProject.name} 本体智能助手`,
+    });
+    get().setActiveSessionId(session.id);
+
+    const payload: Record<string, unknown> = {
+      ...(opts?.prototypeId ? { prototypeId: opts.prototypeId } : {}),
+      ...(opts?.docId ? { docId: opts.docId } : {}),
+    };
+    const header = `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE ${JSON.stringify(payload)}]`;
+    const instruction =
+      locale === 'en-US'
+        ? 'Synthesize and validate the 11-model Ontology Suite from the confirmed UI prototype and SRS context via synthesize_ontology_suite.'
+        : '请从已确认的界面原型锚点与需求规格上下文推导并校验完整的 11 模型本体套件，通过 synthesize_ontology_suite 工具保存。';
+    const displayTitle =
+      locale === 'en-US'
+        ? 'Synthesize 11-Model Ontology Suite'
+        : '从已确认原型合成 11 模型本体';
+
+    await get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: `${header}\n${instruction}`,
+      displayTitle,
+      activeModelCode: get().selectedModel,
+      ...(opts?.mockMode !== undefined ? { mockMode: opts.mockMode } : {}),
+    });
+
+    return { sessionId: session.id };
+  },
+
+  startOntologyCopilotRun: async (prompt, opts) => {
+    const curData = get().data;
+    if (!curData || !prompt.trim()) return null;
+    const projectId = curData.activeProject.id;
+    const session = await get().ensureProjectAgentSession(projectId, 'COPILOT', {
+      ...(opts?.sessionId ? { preferredSessionId: opts.sessionId } : {}),
+    });
+    get().setActiveSessionId(session.id);
+
+    await get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: prompt.trim(),
+      activeModelCode: opts?.activeModel ?? get().selectedModel,
+      ...(opts?.mockMode !== undefined ? { mockMode: opts.mockMode } : {}),
+    });
+
+    return { sessionId: session.id };
+  },
+
+  startTechArchGenerationRun: async (input) => {
+    const curData = get().data;
+    if (!curData) return null;
+    const projectId = curData.activeProject.id;
+    const locale = getCurrentClientLocale();
+    const targetAppId = input.applicationId ?? curData.assembledApplications[0]?.id;
+    const session = await get().ensureProjectAgentSession(projectId, 'CODING', {
+      ...(targetAppId ? { targetId: targetAppId } : {}),
+    });
+    get().setActiveSessionId(session.id);
+
+    const payload: Record<string, unknown> = {
+      name: input.name.trim(),
+      ...(input.stackTags && input.stackTags.length > 0 ? { stackTags: input.stackTags } : {}),
+      ...(input.prompt?.trim() ? { prompt: input.prompt.trim() } : {}),
+      ...(targetAppId ? { applicationId: targetAppId } : {}),
+    };
+    const header = `[ACTION:GENERATE_TECH_ARCH ${JSON.stringify(payload)}]`;
+    const instruction =
+      locale === 'en-US'
+        ? `Generate a production technical architecture specification "${input.name}"${input.prompt?.trim() ? ` (${input.prompt.trim()})` : ''} and save it via save_tech_architecture_spec.`
+        : `请基于当前项目本体与工程栈生成技术架构规范「${input.name}」${input.prompt?.trim() ? `（补充要求：${input.prompt.trim()}）` : ''}，并通过 save_tech_architecture_spec 工具保存为四层资产。`;
+    const displayTitle =
+      locale === 'en-US'
+        ? `Generate Tech Arch: ${input.name}`
+        : `生成技术架构：${input.name}`;
+
+    await get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: `${header}\n${instruction}`,
+      displayTitle,
+      ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
+    });
+
+    return { sessionId: session.id };
+  },
+
+  startMetricInsightRun: async (metricId, opts) => {
+    const curData = get().data;
+    if (!curData) return null;
+    const projectId = curData.activeProject.id;
+    const locale = getCurrentClientLocale();
+    const metric = curData.metrics.find((m) => m.id === metricId);
+    const session = await get().ensureProjectAgentSession(projectId, 'REASONING', {
+      reasoningMode: 'ASK_WHY',
+    });
+    get().setActiveSessionId(session.id);
+
+    const payload: Record<string, unknown> = {
+      metricId,
+      ...(metric?.code ? { metricCode: metric.code } : {}),
+      ...(metric?.name ? { metricName: metric.name } : {}),
+    };
+    const header = `[ACTION:METRIC_INSIGHT ${JSON.stringify(payload)}]`;
+    const metricLabel = metric?.name || metricId;
+    const instruction =
+      locale === 'en-US'
+        ? `Query real business data and generate a root-cause fluctuation insight for metric "${metricLabel}" (${metricId}), then persist it via save_metric_insight.`
+        : `请结合本体语义与业务数据库，对指标「${metricLabel}」(${metricId}) 执行波动归因解读，并通过 save_metric_insight 工具保存结论。`;
+    const displayTitle =
+      locale === 'en-US'
+        ? `Metric Insight: ${metricLabel}`
+        : `指标波动解读：${metricLabel}`;
+
+    await get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: `${header}\n${instruction}`,
+      displayTitle,
+      reasoningMode: 'ASK_WHY',
+      ...(opts?.mockMode !== undefined ? { mockMode: opts.mockMode } : {}),
+    });
+
+    return { sessionId: session.id };
+  },
+
+  startScenarioAttributionRun: async (scenarioId, opts) => {
+    const curData = get().data;
+    if (!curData) return null;
+    const projectId = curData.activeProject.id;
+    const locale = getCurrentClientLocale();
+    const scenario = curData.analyticsScenarios.find((s) => s.id === scenarioId);
+    const session = await get().ensureProjectAgentSession(projectId, 'REASONING', {
+      reasoningMode: 'ASK_WHY',
+    });
+    get().setActiveSessionId(session.id);
+
+    const payload: Record<string, unknown> = {
+      scenarioId,
+      ...(scenario?.name ? { scenarioName: scenario.name } : {}),
+      ...(opts?.question?.trim() ? { question: opts.question.trim() } : {}),
+      saveAsReport: opts?.saveAsReport ?? true,
+    };
+    const header = `[ACTION:SCENARIO_ATTRIBUTION ${JSON.stringify(payload)}]`;
+    const scenarioLabel = scenario?.name || scenarioId;
+    const instruction =
+      locale === 'en-US'
+        ? `Execute multi-dimensional root-cause attribution for scenario "${scenarioLabel}" (${scenarioId})${opts?.question?.trim() ? ` focusing on: ${opts.question.trim()}` : ''}, and persist the report via save_scenario_attribution_report.`
+        : `请对分析场景「${scenarioLabel}」(${scenarioId}) 执行多维根因归因推演${opts?.question?.trim() ? `（重点追问：${opts.question.trim()}）` : ''}，并通过 save_scenario_attribution_report 工具持久化归因报告。`;
+    const displayTitle =
+      locale === 'en-US'
+        ? `Scenario Attribution: ${scenarioLabel}`
+        : `多维归因推演：${scenarioLabel}`;
+
+    await get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: `${header}\n${instruction}`,
+      displayTitle,
+      reasoningMode: 'ASK_WHY',
+      ...(opts?.mockMode !== undefined ? { mockMode: opts.mockMode } : {}),
+    });
+
+    return { sessionId: session.id };
   },
 
   startPrototypeRefinementRun: async (input) => {
@@ -1972,8 +2141,15 @@ export interface StreamAgentSessionCallbacks {
   onMessageEnd?: (payload: {
     session: AgentSession;
     project?: ProjectDetail;
+    requirementDocs?: RequirementDoc[];
+    requirementSessions?: RequirementSession[];
     prototypes?: InteractivePrototype[];
     confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
+    fourLayerAssets?: FourLayerAsset[];
+    assembledApplications?: AssembledApplication[];
+    metrics?: MetricDefinition[];
+    analyticsReports?: AnalyticsReport[];
+    reasoningSessions?: ReasoningSession[];
     cancelled?: boolean;
   }) => void;
 }
@@ -2144,8 +2320,15 @@ function buildStoreSessionStreamCallbacks(
   const upsertCompletedSession = (payload: {
     session?: AgentSession;
     project?: ProjectDetail;
+    requirementDocs?: RequirementDoc[];
+    requirementSessions?: RequirementSession[];
     prototypes?: InteractivePrototype[];
     confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
+    fourLayerAssets?: FourLayerAsset[];
+    assembledApplications?: AssembledApplication[];
+    metrics?: MetricDefinition[];
+    analyticsReports?: AnalyticsReport[];
+    reasoningSessions?: ReasoningSession[];
   }) => {
     const cur = get().data;
     if (!cur || !payload.session) return;
@@ -2160,9 +2343,24 @@ function buildStoreSessionStreamCallbacks(
         ...cur,
         agentSessions: nextSessions,
         ...(isSameProject && payload.project ? { activeProject: payload.project } : {}),
+        ...(isSameProject && payload.requirementDocs
+          ? { requirementDocs: payload.requirementDocs }
+          : {}),
+        ...(isSameProject && payload.requirementSessions
+          ? { requirementSessions: payload.requirementSessions }
+          : {}),
         ...(isSameProject && payload.prototypes ? { prototypes: payload.prototypes } : {}),
         ...(isSameProject && payload.confirmedPrototypeRevision !== undefined
           ? { confirmedPrototypeRevision: payload.confirmedPrototypeRevision }
+          : {}),
+        ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
+        ...(isSameProject && payload.assembledApplications
+          ? { assembledApplications: payload.assembledApplications }
+          : {}),
+        ...(payload.metrics ? { metrics: payload.metrics } : {}),
+        ...(payload.analyticsReports ? { analyticsReports: payload.analyticsReports } : {}),
+        ...(isSameProject && payload.reasoningSessions
+          ? { reasoningSessions: payload.reasoningSessions }
           : {}),
       },
     });
@@ -2371,137 +2569,6 @@ export async function apiRenameSymbol(
   return res.json();
 }
 
-export async function apiRunCopilot(
-  projectId: string,
-  prompt: string,
-  activeModel: ModelCode,
-): Promise<OntologyCopilotResult> {
-  return apiPostJson<OntologyCopilotResult>(`/api/projects/${projectId}/copilot`, {
-    prompt,
-    activeModel,
-  });
-}
-
-export async function apiSynthesizeSrsDoc(
-  sessionId: string,
-  options?: { projectId?: string; title?: string; version?: string },
-): Promise<
-  RequirementDocSynthesisResult & {
-    requirementSessions: RequirementSession[];
-    agentSessions?: AgentSession[];
-  }
-> {
-  return apiPostJson(`/api/requirements/${encodeURIComponent(sessionId)}/synthesize-doc`, {
-    ...(options?.projectId ? { projectId: options.projectId } : {}),
-    ...(options?.title ? { title: options.title } : {}),
-    ...(options?.version ? { version: options.version } : {}),
-  });
-}
-
-export async function streamSynthesizeSrsDoc(
-  sessionId: string,
-  options: { projectId?: string; title?: string; version?: string; locale?: string },
-  callbacks: {
-    onProgress?: (ev: SrsSynthesisProgressEvent) => void;
-    onComplete?: (
-      res: RequirementDocSynthesisResult & {
-        requirementSessions: RequirementSession[];
-        agentSessions?: AgentSession[];
-      },
-    ) => void;
-    onError?: (diag: { code?: string; message: string; remediation?: string }) => void;
-  },
-  signal?: AbortSignal,
-): Promise<void> {
-  const locale = options.locale || getCurrentClientLocale();
-  const res = await fetch(
-    `/api/requirements/${encodeURIComponent(sessionId)}/synthesize-doc/stream`,
-    {
-      method: 'POST',
-      headers: buildJsonHeaders(),
-      body: JSON.stringify({ ...options, locale }),
-      ...(signal ? { signal } : {}),
-    },
-  );
-
-  if (!res.ok || !res.body) {
-    const errJson = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-    callbacks.onError?.(
-      errJson.diagnostic ?? {
-        code: 'HTTP_ERROR',
-        message:
-          errJson.error ||
-          (locale === 'en-US' ? `Request failed (${res.status})` : `请求失败 (${res.status})`),
-        remediation:
-          locale === 'en-US'
-            ? 'Check backend server or LLM Center gateway configuration.'
-            : '请检查后端服务状态或 LLM 中心网关配置。',
-      },
-    );
-    return;
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  const processBlock = (rawBlock: string) => {
-    const lines = rawBlock.split(/\r?\n/);
-    let eventName = '';
-    const dataLines: string[] = [];
-    for (const line of lines) {
-      if (line.startsWith('event:')) {
-        eventName = line.slice(6).trim();
-      } else if (line.startsWith('data:')) {
-        dataLines.push(line.slice(5).trim());
-      }
-    }
-    if (!eventName || dataLines.length === 0) return;
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
-    } catch {
-      return;
-    }
-
-    if (eventName === 'progress') {
-      callbacks.onProgress?.(parsed as unknown as SrsSynthesisProgressEvent);
-    } else if (eventName === 'complete') {
-      callbacks.onComplete?.(parsed as never);
-    } else if (eventName === 'run_error') {
-      const diag = (parsed.diagnostic as {
-        code?: string;
-        message?: string;
-        remediation?: string;
-      }) ?? {
-        code: 'SYNTHESIS_ERROR',
-        message: String(parsed.error || (locale === 'en-US' ? 'Synthesis failed' : '规格书合成失败')),
-      };
-      callbacks.onError?.({
-        code: diag.code,
-        message: diag.message || String(parsed.error || ''),
-        remediation: diag.remediation,
-      });
-    }
-  };
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let sepIdx = buffer.indexOf('\n\n');
-    while (sepIdx !== -1) {
-      const block = buffer.slice(0, sepIdx);
-      buffer = buffer.slice(sepIdx + 2);
-      processBlock(block);
-      sepIdx = buffer.indexOf('\n\n');
-    }
-  }
-  if (buffer.trim()) {
-    processBlock(buffer);
-  }
-}
-
 export type {
   AppendPrototypeRevisionInput,
   ConfirmedPrototypeRevision,
@@ -2673,21 +2740,6 @@ export async function apiEnsurePrototypeCoDesignSession(
   );
 }
 
-export async function apiSynthesizeOntologyFromPrototype(
-  projectId: string,
-  input: { prototypeId?: string; docId?: string },
-): Promise<OntologySynthesisFromPrototypeResult> {
-  return apiPostJson(`/api/projects/${projectId}/prototypes/synthesize-ontology`, input);
-}
-
-export async function apiGenerateTechArch(input: {
-  name: string;
-  stackTags?: string[];
-  prompt?: string;
-}): Promise<TechArchitectureGenerationResult> {
-  return apiPostJson('/api/assets/generate-tech-arch', input);
-}
-
 export async function apiRunAppCodingAgent(
   appId: string,
   instruction: string,
@@ -2744,17 +2796,6 @@ export async function apiExecuteAnalyticsSql(
   params?: Record<string, unknown>,
 ): Promise<AnalyticsQueryResult> {
   return apiPostJson('/api/analytics/sql', { sql, params });
-}
-
-export async function apiGenerateMetricInsight(metricId: string): Promise<MetricInsightResult> {
-  return apiPostJson(`/api/analytics/metrics/${metricId}/insight`, {});
-}
-
-export async function apiRunScenarioAttribution(
-  scenarioId: string,
-  input: { question?: string; saveAsReport?: boolean },
-): Promise<ScenarioAttributionResult & { analyticsReports: AnalyticsReport[] }> {
-  return apiPostJson(`/api/analytics/scenarios/${scenarioId}/attribute`, input);
 }
 
 export async function apiTestLlmProvider(

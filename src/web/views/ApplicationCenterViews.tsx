@@ -47,12 +47,10 @@ import {
   apiDeleteProject,
   apiDeleteProjectSnapshot,
   apiDeleteResource,
-  apiGenerateTechArch,
   apiListPrototypes,
   apiPostJson,
   apiPutJson,
   apiRestoreProjectSnapshot,
-  apiSynthesizeSrsDoc,
   apiUpdateProjectMeta,
   getProjectLifecycleState,
   triggerBrowserDownload,
@@ -1067,8 +1065,8 @@ export function RequirementExploreView({
   const {
     data,
     activeSessionId,
-    backgroundTasks,
-    startSrsSynthesisTask,
+    liveSessionDrafts,
+    startSrsSynthesisRun,
   } = useWorkbenchStore();
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
@@ -1230,18 +1228,20 @@ export function RequirementExploreView({
     session || preferredAgentSession || totalSignalCount > 0,
   );
 
-  const activeSrsTask = backgroundTasks.find(
-    (tk) =>
-      tk.projectId === data.activeProject.id && tk.kind === 'SRS_SYNTHESIS',
+  const synthesizingSrs = (data.agentSessions ?? []).some(
+    (s) =>
+      s.projectId === data.activeProject.id &&
+      s.agentKind === 'REQUIREMENT' &&
+      (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
   );
-  const synthesizingSrs = activeSrsTask?.status === 'RUNNING';
 
   const handleSynthesizeSrs = () => {
     if (!canSynthesize || synthesizingSrs) return;
-    const targetSessionId = preferredAgentSession?.id || session?.id;
-    void startSrsSynthesisTask(
-      targetSessionId ? { sessionId: targetSessionId } : undefined,
-    );
+    useAgentPanelStore.getState().revealPanel();
+    void startSrsSynthesisRun({
+      ...(session?.id ? { requirementSessionId: session.id } : {}),
+      ...(preferredAgentSession?.id ? { agentSessionId: preferredAgentSession.id } : {}),
+    });
   };
 
   const renderDecisionItem = (dec: string, idx: number) => {
@@ -1396,7 +1396,7 @@ export function RequirementExploreView({
             >
               {synthesizingSrs && <Loader2 size={13.5} className="pipeline-spin" aria-hidden="true" />}
               {synthesizingSrs
-                ? t('正在后台合成 9 章节规格书…', 'Synthesizing 9-Chapter SRS…')
+                ? t('正在合成 9 章节规格书…', 'Synthesizing 9-Chapter SRS…')
                 : t(
                     '一键合成 9 章节《软件需求规格说明书》',
                     'Synthesize 9-Chapter SRS Document',
@@ -1405,16 +1405,6 @@ export function RequirementExploreView({
           </div>
         </div>
       </div>
-
-      {/* Compact SRS Progress Strip on Origin Page (Full Stream & Stage Details live on 需求文档) */}
-      {activeSrsTask && (
-        <PipelineInlinePanel
-          variant="compact"
-          task={activeSrsTask}
-          onNavigateTarget={() => onNavigate('app-req-docs')}
-          onNavigateLlmCenter={() => onNavigate('llm-center')}
-        />
-      )}
 
       {/* Viewport-Locked Split Workbench: Center Agent + Bounded Right Convergence Inspector */}
       <div
@@ -1783,10 +1773,6 @@ export function RequirementDocsView({
 
   if (!data) return null;
 
-  const activeSrsTask = backgroundTasks.find(
-    (tk) =>
-      tk.projectId === data.activeProject.id && tk.kind === 'SRS_SYNTHESIS',
-  );
   const activeProtoTask = backgroundTasks.find(
     (tk) =>
       tk.projectId === data.activeProject.id && tk.kind === 'PROTOTYPE_GEN',
@@ -1953,15 +1939,6 @@ export function RequirementDocsView({
           </>
         }
       />
-
-      {/* Comprehensive SRS Synthesis Status & On-Demand Live Stream Drawer */}
-      {activeSrsTask && (
-        <PipelineInlinePanel
-          variant="full"
-          task={activeSrsTask}
-          onNavigateLlmCenter={onNavigate ? () => onNavigate('llm-center') : undefined}
-        />
-      )}
 
       {/* Compact Prototype Generation Progress Strip (Full Stream lives on 界面原型) */}
       {activeProtoTask && (
@@ -2176,12 +2153,13 @@ export function PrototypeStudioView({
     data,
     activeItemId,
     backgroundTasks,
+    liveSessionDrafts,
     patchData,
     showToast,
     setActivePrototypeId,
     startPrototypeGenTask,
     startPrototypeRefinementRun,
-    startOntologySynthTask,
+    startOntologySynthesisRun,
   } = useWorkbenchStore();
 
   const [stageOverride, setStageOverride] = useState<PrototypeStudioStage | null>(
@@ -2311,13 +2289,15 @@ export function PrototypeStudioView({
   if (!data) return null;
 
   const project = data.activeProject;
-  const activeOntoTask = backgroundTasks.find(
-    (tk) => tk.projectId === project.id && tk.kind === 'ONTOLOGY_SYNTH',
-  );
   const activeProtoTask = backgroundTasks.find(
     (tk) => tk.projectId === project.id && tk.kind === 'PROTOTYPE_GEN',
   );
-  const synthesizingOntology = activeOntoTask?.status === 'RUNNING';
+  const synthesizingOntology = (data.agentSessions ?? []).some(
+    (s) =>
+      s.projectId === project.id &&
+      s.agentKind === 'COPILOT' &&
+      (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
+  );
   const isBusyProto = refining || activeProtoTask?.status === 'RUNNING';
 
   const currentStage = resolvePrototypeStudioStage(prototypes.length, stageOverride);
@@ -2402,28 +2382,28 @@ export function PrototypeStudioView({
 
   const handleSynthesizeOntology = async (targetPrototypeId: string) => {
     if (synthesizingOntology) return;
-    const res = await startOntologySynthTask(
+    useAgentPanelStore.getState().revealPanel();
+    onNavigate?.('app-ontology');
+    const res = await startOntologySynthesisRun(
       targetPrototypeId ? { prototypeId: targetPrototypeId } : undefined,
     );
     if (res) {
-      setSynthesisSummary(res);
+      const updatedProject = useWorkbenchStore.getState().data?.activeProject;
+      if (updatedProject) {
+        setSynthesisSummary({
+          modelCount: Object.values(updatedProject.suite).filter(Boolean).length,
+          errorCount: updatedProject.validation.errorCount,
+        });
+      }
     }
   };
 
   const statusBanners =
-    activeProtoTask || activeOntoTask || synthesisSummary ? (
+    activeProtoTask || synthesisSummary ? (
       <div className="flex flex-col gap-2">
         {activeProtoTask && (
           <PipelineInlinePanel
             task={activeProtoTask}
-            onNavigateLlmCenter={onNavigate ? () => onNavigate('llm-center') : undefined}
-          />
-        )}
-
-        {activeOntoTask && (
-          <PipelineInlinePanel
-            task={activeOntoTask}
-            onNavigateTarget={onNavigate ? () => onNavigate('app-ontology') : undefined}
             onNavigateLlmCenter={onNavigate ? () => onNavigate('llm-center') : undefined}
           />
         )}
@@ -2919,7 +2899,14 @@ export function ModelFilesView({
 // ─── 6. Four-Layer Architecture Assets (四层架构资产: CRUD + Tiptap Markdown) ─
 export function FourLayerAssetsView() {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
+  const {
+    data,
+    activeItemId,
+    liveSessionDrafts,
+    patchData,
+    showToast,
+    startTechArchGenerationRun,
+  } = useWorkbenchStore();
   const [filterLayer, setFilterLayer] = useState<'ALL' | 'UI_UE' | 'TECH_FOUNDATION' | 'TECH_ARCH'>(
     'ALL',
   );
@@ -2941,9 +2928,24 @@ export function FourLayerAssetsView() {
     'TypeScript, Hono, React 19, Drizzle SQLite/D1',
   );
   const [archPrompt, setArchPrompt] = useState('');
-  const [generatingArch, setGeneratingArch] = useState(false);
+  const [startingArch, setStartingArch] = useState(false);
+
+  useEffect(() => {
+    if (!data || !activeItemId) return;
+    const matched = data.fourLayerAssets.find((a) => a.id === activeItemId);
+    if (matched) {
+      setFilterLayer(matched.layer);
+    }
+  }, [activeItemId, data?.fourLayerAssets]);
 
   if (!data) return null;
+  const codingRunning = (data.agentSessions ?? []).some(
+    (s) =>
+      s.projectId === data.activeProject.id &&
+      s.agentKind === 'CODING' &&
+      (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
+  );
+  const generatingArch = startingArch || codingRunning;
   const list =
     filterLayer === 'ALL'
       ? data.fourLayerAssets
@@ -3037,27 +3039,22 @@ export function FourLayerAssetsView() {
 
   const handleGenerateTechArch = async () => {
     if (generatingArch) return;
-    setGeneratingArch(true);
+    setStartingArch(true);
     try {
       const stackTags = archStackTags
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean);
-      const res = await apiGenerateTechArch({
-        name: archName.trim() || `${data.activeProject.name} 技术架构设计文档`,
-        stackTags,
-        prompt: archPrompt.trim() || undefined,
-      });
-      patchData({ fourLayerAssets: res.fourLayerAssets });
+      const targetName = archName.trim() || `${data.activeProject.name} 技术架构设计文档`;
       setFilterLayer('TECH_ARCH');
-      showToast(
-        t(
-          `AI 已根据技术栈生成《${res.asset.name}》并入库 TECH_ARCH 资产层`,
-          `Generated TECH_ARCH asset "${res.asset.name}"`,
-        ),
-      );
+      useAgentPanelStore.getState().revealPanel();
+      await startTechArchGenerationRun({
+        name: targetName,
+        stackTags,
+        ...(archPrompt.trim() ? { prompt: archPrompt.trim() } : {}),
+      });
     } finally {
-      setGeneratingArch(false);
+      setStartingArch(false);
     }
   };
 
