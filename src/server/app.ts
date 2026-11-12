@@ -67,6 +67,7 @@ import {
   inspectOntologyMcpCapabilities,
   type JsonRpcRequest,
 } from '../packages/package-compiler/index.js';
+import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 
 export function createApiApp(customStore?: WorkspaceStore): Hono {
   const store = customStore ?? createWorkspaceStore();
@@ -917,119 +918,12 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     return c.json(result);
   });
 
-  // PROTOTYPE (throwaway): Read-only proxy + in-memory cache for Nutlope/inspo MCP gallery
-  const inspoProxyCache = new Map<string, unknown>();
   app.post('/api/prototype-inspo', async (c) => {
-    type InspoProxyBody = {
-      action: 'search' | 'similar' | 'design_system';
-      query?: string;
-      slug?: string;
-      mode?: 'light' | 'dark';
-      style?: string;
-      industry?: string;
-      macrostructure?: string;
-      vibe?: string;
-    };
-    const body: InspoProxyBody = await c.req
-      .json<InspoProxyBody>()
-      .catch((): InspoProxyBody => ({ action: 'search' }));
-
-    const cacheKey = JSON.stringify(body);
-    if (inspoProxyCache.has(cacheKey)) {
-      return c.json(inspoProxyCache.get(cacheKey));
-    }
-
-    const zhHintMap: [RegExp, string][] = [
-      [/清爽|简洁|极简|白底/, 'clean minimalist light workspace'],
-      [/暖|纸|知识|文档|杂志/, 'warm paper editorial calm'],
-      [/深色|暗黑|监控|大屏|科技/, 'dark developer analytics console'],
-      [/金融|银行|台账|财务|合同|严谨/, 'enterprise fintech banking ledger serious'],
-      [/卡片|模块|看板/, 'modular bento grid dashboard'],
-      [/电商|零售|商品/, 'ecommerce catalogue clean'],
-      [/医疗|健康/, 'health clean calm'],
-    ];
-    let enrichedQuery = (body.query || '').trim();
-    for (const [pattern, enWords] of zhHintMap) {
-      if (pattern.test(enrichedQuery)) {
-        enrichedQuery = `${enrichedQuery} ${enWords}`.trim();
-      }
-    }
-
-    let toolName = 'search_screens';
-    let toolArgs: Record<string, unknown> = {
-      query: enrichedQuery || 'clean modern SaaS product interface',
-      limit: 14,
-      detail: 'concise',
-      ...(body.mode ? { mode: body.mode } : {}),
-      ...(body.style ? { style: body.style } : {}),
-      ...(body.industry ? { industry: body.industry } : {}),
-      ...(body.macrostructure ? { macrostructure: body.macrostructure } : {}),
-      ...(body.vibe ? { vibe: body.vibe } : {}),
-    };
-
-    if (body.action === 'similar' && body.slug) {
-      toolName = 'find_similar';
-      toolArgs = { slug: body.slug, limit: 6 };
-    } else if (body.action === 'design_system' && body.slug) {
-      toolName = 'get_design_system';
-      toolArgs = { slug: body.slug, live: false };
-    }
-
-    try {
-      const upstream = await fetch('https://inspomcp.dev/api/mcp', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, text/event-stream',
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/call',
-          params: { name: toolName, arguments: toolArgs },
-        }),
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!upstream.ok) {
-        return c.json({ ok: false, error: `Upstream HTTP ${upstream.status}` }, 502);
-      }
-      const rpc = (await upstream.json()) as {
-        result?: { content?: { type: string; text?: string }[] };
-      };
-      const rawText = rpc.result?.content?.[0]?.text ?? '';
-      if (body.action === 'design_system') {
-        const payload = { ok: true, markdown: rawText };
-        inspoProxyCache.set(cacheKey, payload);
-        return c.json(payload);
-      }
-      const parsed = JSON.parse(rawText) as {
-        results?: Record<string, unknown>[];
-        neighbours?: Record<string, unknown>[];
-      };
-      const list = (parsed.results ?? parsed.neighbours ?? []) as {
-        slug: string;
-        title?: string;
-        northstar?: string;
-        palette?: string[];
-        fonts?: string[];
-        mode?: string;
-        macro?: string;
-        tags?: string;
-      }[];
-      const seenRoots = new Set<string>();
-      const deduped = list.filter((item) => {
-        if (!item?.slug) return false;
-        const root = item.slug.split('--')[0]!;
-        if (seenRoots.has(root)) return false;
-        seenRoots.add(root);
-        return true;
-      });
-      const payload = { ok: true, items: deduped.slice(0, 8) };
-      inspoProxyCache.set(cacheKey, payload);
-      return c.json(payload);
-    } catch (err) {
-      return c.json({ ok: false, error: (err as Error).message }, 200);
-    }
+    const body = await c.req
+      .json<InspoProxyRequestBody>()
+      .catch((): InspoProxyRequestBody => ({ action: 'search' }));
+    const payload = await handleInspoProxyRequest(store, body);
+    return c.json(payload);
   });
 
   app.post('/api/assets', async (c) => {

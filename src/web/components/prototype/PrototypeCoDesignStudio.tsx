@@ -1,25 +1,16 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
-  Check,
   CheckCircle2,
   Code2,
-  Columns2,
   Copy,
   Crosshair,
   Download,
+  ExternalLink,
   Eye,
-  FileText,
-  Layers,
   Loader2,
-  Maximize2,
-  MessageSquarePlus,
-  Monitor,
   Palette,
-  RectangleHorizontal,
-  Search,
   Send,
-  Smartphone,
   Sparkles,
   Trash2,
   Wand2,
@@ -43,348 +34,42 @@ import {
   type PrototypeSelectionTarget,
   type PrototypeVisualAnnotation,
 } from './PrototypeVisualInspector.js';
+import {
+  CURATED_INSPO_CATALOG,
+  LIKED_ASPECT_OPTIONS,
+  VisualReferenceImage,
+  VisualReferencePicker,
+  createInitialVisualReferenceSelection,
+  inspoFullUrl,
+  inspoHeroUrl,
+  inspoMobileUrl,
+  inspoThumbUrl,
+  visualSelectionToLegacyPreferences,
+  type BorrowedReferenceSelection,
+  type LikedAspectKey,
+  type SelectedInspoPreference,
+  type VisualReferenceItem,
+  type VisualReferenceSelection,
+} from './VisualReferencePicker.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 
-const INSPO_CDN_BASE = 'https://0nme3pk5am3urwa9.public.blob.vercel-storage.com/captures';
+export type InspoReferenceItem = VisualReferenceItem;
 
-export interface InspoReferenceItem {
-  slug: string;
-  title: string;
-  vibeGroup: 'clean-saas' | 'warm-paper' | 'dark-tech' | 'fintech' | 'bento';
-  plainLabelZh: string;
-  plainLabelEn: string;
-  plainDescZh: string;
-  plainDescEn: string;
-  northstar: string;
-  palette: string[];
-  surfaceHex: string;
-  fonts: string[];
-  mode: 'light' | 'dark';
-  macro: string;
-  radiusPx: number;
-}
-
-export type LikedAspectKey =
-  | 'bgColor'
-  | 'accentColor'
-  | 'spacing'
-  | 'cardBorder'
-  | 'typography'
-  | 'dataClarity';
-
-export interface SelectedInspoPreference {
-  item: InspoReferenceItem;
-  likedAspects: LikedAspectKey[];
-  likedSwatches: string[];
-  reasonNote: string;
-}
-
-export const LIKED_ASPECT_OPTIONS: {
-  key: LikedAspectKey;
-  labelZh: string;
-  labelEn: string;
-  agentHintZh: string;
-  agentHintEn: string;
-}[] = [
-  {
-    key: 'bgColor',
-    labelZh: '背景底色',
-    labelEn: 'Background Color',
-    agentHintZh: '重点借鉴此参考图的页面大背景与卡片底色层次',
-    agentHintEn: 'Adopt the page canvas and surface background colors from this reference',
-  },
-  {
-    key: 'accentColor',
-    labelZh: '按钮与强调色',
-    labelEn: 'Button & Accent Color',
-    agentHintZh: '重点借鉴此参考图的主操作按钮色与状态高亮色',
-    agentHintEn: 'Adopt the primary CTA button and highlight accent colors from this reference',
-  },
-  {
-    key: 'spacing',
-    labelZh: '留白与呼吸感',
-    labelEn: 'Spacing & Airiness',
-    agentHintZh: '重点借鉴此参考图的宽松留白比例与模块间距节奏',
-    agentHintEn: 'Adopt the generous whitespace and section padding rhythm from this reference',
-  },
-  {
-    key: 'cardBorder',
-    labelZh: '卡片圆角与分割线',
-    labelEn: 'Card Radius & Borders',
-    agentHintZh: '重点借鉴此参考图的卡片圆角弧度与细腻边框质感',
-    agentHintEn: 'Adopt the border-radius and crisp hairline border treatment from this reference',
-  },
-  {
-    key: 'typography',
-    labelZh: '字体与标题排版',
-    labelEn: 'Typography & Hierarchy',
-    agentHintZh: '重点借鉴此参考图的标题字重对比与阅读排版气质',
-    agentHintEn: 'Adopt the heading font hierarchy and typographic contrast from this reference',
-  },
-  {
-    key: 'dataClarity',
-    labelZh: '表格/数据清晰度',
-    labelEn: 'Table & Data Clarity',
-    agentHintZh: '重点借鉴此参考图的数据对齐方式与状态标签样式',
-    agentHintEn: 'Adopt the clean tabular alignment and status pill styling from this reference',
-  },
-];
-
-export function inspoHeroUrl(slug: string): string {
-  return `${INSPO_CDN_BASE}/${slug}/hero.1440.webp`;
-}
-export function inspoFullUrl(slug: string): string {
-  return `${INSPO_CDN_BASE}/${slug}/full.1440.webp`;
-}
-export function inspoMobileUrl(slug: string): string {
-  return `${INSPO_CDN_BASE}/${slug}/mobile.384.webp`;
-}
-
-export const CURATED_INSPO_CATALOG: InspoReferenceItem[] = [
-  {
-    slug: 'amie-so',
-    title: 'Amie',
-    vibeGroup: 'clean-saas',
-    plainLabelZh: '清爽白底 · 现代高效协同台',
-    plainLabelEn: 'Crisp White · Modern Productivity',
-    plainDescZh: '干净明亮的纯白底色搭配天蓝主按钮与暖黄标记，适合高频日常办公与台账管理',
-    plainDescEn: 'Clean white canvas with sky-blue primary CTAs and warm highlight accents',
-    northstar: 'Crisp sans-serif clarity, spacious and focused digital canvas.',
-    palette: ['#14a4fc', '#d6950e', '#84d1fb', '#946c5c', '#cccee1'],
-    surfaceHex: '#f7f9fc',
-    fonts: ['Inter var', 'Inter'],
-    mode: 'light',
-    macro: 'feature-stack',
-    radiusPx: 10,
-  },
-  {
-    slug: 'cleanshot-com',
-    title: 'CleanShot',
-    vibeGroup: 'clean-saas',
-    plainLabelZh: '极简留白 · 科技蓝工具感',
-    plainLabelEn: 'Airy Minimal · Crisp Blue Utility',
-    plainDescZh: '宽敞通透的浅灰白背景配高识别度科技蓝胶囊按钮，层级分明、零视觉杂乱',
-    plainDescEn: 'Geometric sans-serif, pill lozenges, and generous breathing room',
-    northstar: 'Crisp, cool tech - clean sans-serif, expansive white space.',
-    palette: ['#0f71fa', '#1f7559', '#cddffb', '#4bad9e', '#e2e8f0'],
-    surfaceHex: '#f5f8fc',
-    fonts: ['Inter', 'system-ui'],
-    mode: 'light',
-    macro: 'split-studio',
-    radiusPx: 12,
-  },
-  {
-    slug: 'capacities-io',
-    title: 'Capacities',
-    vibeGroup: 'clean-saas',
-    plainLabelZh: '柔和薄荷 · 平静知识工作台',
-    plainLabelEn: 'Calm Mint · Knowledge Studio',
-    plainDescZh: '护眼微暖浅绿灰底色与低饱和薄荷绿点缀，长时间录入与审阅不易视觉疲劳',
-    plainDescEn: 'Soft mint accents and calm structured cards for long review sessions',
-    northstar: 'Calm structured studio with gentle emerald-mint accents.',
-    palette: ['#22624d', '#6cccac', '#f9d274', '#a18085', '#e5ece9'],
-    surfaceHex: '#f3f7f5',
-    fonts: ['Inter', 'ui-sans-serif'],
-    mode: 'light',
-    macro: 'split-studio',
-    radiusPx: 10,
-  },
-  {
-    slug: 'increase-com',
-    title: 'Increase',
-    vibeGroup: 'fintech',
-    plainLabelZh: '严谨账务 · 银行级高密度台账',
-    plainLabelEn: 'Enterprise Ledger · Banking Precision',
-    plainDescZh: '克制的冷白底色配深海蓝与精细表格分割线，极适合合同、财务、清结算等严肃业务',
-    plainDescEn: 'High-trust banking precision with crisp borders and tabular alignment',
-    northstar: 'Enterprise-grade banking clarity and structured tabular hierarchy.',
-    palette: ['#04b2f2', '#1d445a', '#34bcfc', '#646c7a', '#dbe4ec'],
-    surfaceHex: '#f4f7fa',
-    fonts: ['IBM Plex Sans', 'Inter'],
-    mode: 'light',
-    macro: 'index-first',
-    radiusPx: 6,
-  },
-  {
-    slug: 'polar-sh',
-    title: 'Polar',
-    vibeGroup: 'fintech',
-    plainLabelZh: '冷峻蓝灰 · 现代计费与结算风',
-    plainLabelEn: 'Cool Slate · Modern Billing Ops',
-    plainDescZh: '微冷冰蓝灰底色配深靛蓝墨色，兼顾现代科技感与企业级数据可信度',
-    plainDescEn: 'Subtle ice-slate surfaces with calm indigo-slate accents',
-    northstar: 'Billing platform clarity with refined slate-indigo contrast.',
-    palette: ['#5170ad', '#151d2d', '#747484', '#9ab0d8', '#eef3f8'],
-    surfaceHex: '#eef3f8',
-    fonts: ['Inter', 'system-ui'],
-    mode: 'light',
-    macro: 'stat-led',
-    radiusPx: 8,
-  },
-  {
-    slug: 'brex-com',
-    title: 'Brex',
-    vibeGroup: 'fintech',
-    plainLabelZh: '活力橙点缀 · 企业审批与费控风',
-    plainLabelEn: 'Executive Warmth · Spend & Approval',
-    plainDescZh: '温润中性暖灰底色搭配醒目的橙色待办/审批主按钮，关键行动点一目了然',
-    plainDescEn: 'Clean neutral enterprise tables anchored by decisive warm-orange CTAs',
-    northstar: 'Decisive corporate finance workflow with high-visibility action cues.',
-    palette: ['#fc5c04', '#663c2c', '#f89a64', '#7c7c84', '#ecebe8'],
-    surfaceHex: '#f5f4f1',
-    fonts: ['Inter', 'sans-serif'],
-    mode: 'light',
-    macro: 'feature-stack',
-    radiusPx: 8,
-  },
-  {
-    slug: 'effectivealtruism-org',
-    title: 'Effective Altruism',
-    vibeGroup: 'warm-paper',
-    plainLabelZh: '温润暖纸 · 书卷感文档审批台',
-    plainLabelEn: 'Warm Paper · Editorial Document Desk',
-    plainDescZh: '柔和米白纸张背景（#fcf8f4）配衬线标题与深青蓝墨色，适合重阅读、重条款审阅场景',
-    plainDescEn: 'Warm cream paper surface (#fcf8f4) with editorial serif headings',
-    northstar: 'Warm paper ground paired with deep Prussian blue and serif authority.',
-    palette: ['#315e7b', '#13384d', '#ac9466', '#fcf8f4', '#e4ddd2'],
-    surfaceHex: '#fcf8f4',
-    fonts: ['Georgia', 'Noto Serif SC', 'Inter'],
-    mode: 'light',
-    macro: 'long-document',
-    radiusPx: 6,
-  },
-  {
-    slug: 'wallpaper-com',
-    title: 'Wallpaper*',
-    vibeGroup: 'warm-paper',
-    plainLabelZh: '琥珀金棕 · 典雅杂志级排版',
-    plainLabelEn: 'Editorial Amber · Magazine Grid',
-    plainDescZh: '亚麻暖米色背景配利落线条网格与琥珀金强调色，让枯燥表单呈现出版物般质感',
-    plainDescEn: 'Crisp hairline rules, serif headlines, and warm amber highlights',
-    northstar: 'Editorial grid discipline with warm ochre-amber accents.',
-    palette: ['#d29a1e', '#765a18', '#f7c97a', '#ae8860', '#efeae1'],
-    surfaceHex: '#f6f2ea',
-    fonts: ['Palatino', 'Noto Serif SC', 'sans-serif'],
-    mode: 'light',
-    macro: 'editorial',
-    radiusPx: 4,
-  },
-  {
-    slug: 'tinybird-co',
-    title: 'Tinybird',
-    vibeGroup: 'dark-tech',
-    plainLabelZh: '深邃黑绿 · 实时监控与风控大屏',
-    plainLabelEn: 'Dark Emerald · Live Ops Cockpit',
-    plainDescZh: '低眩光深灰黑背景配高对比荧光绿状态指示，适合高频数据监控、调度与预警大屏',
-    plainDescEn: 'Low-glare dark console with high-contrast emerald status telemetry',
-    northstar: 'Focused dark data cockpit with crisp emerald signal highlights.',
-    palette: ['#24f494', '#1a6240', '#80f8c1', '#848484', '#141817'],
-    surfaceHex: '#101514',
-    fonts: ['IBM Plex Sans', 'Roboto'],
-    mode: 'dark',
-    macro: 'stat-led',
-    radiusPx: 8,
-  },
-  {
-    slug: 'digitalocean-com',
-    title: 'DigitalOcean',
-    vibeGroup: 'dark-tech',
-    plainLabelZh: '深海夜航 · 沉稳运维与资源中台',
-    plainLabelEn: 'Deep Navy · Cloud Ops Console',
-    plainDescZh: '柔和深海藏蓝背景卡片配青蓝操作按钮，比纯黑更柔和耐看、层次清晰',
-    plainDescEn: 'Layered deep-navy cards with calm cyan-blue operational controls',
-    northstar: 'Deep ocean slate console with approachable cyan accents.',
-    palette: ['#31bacd', '#144c54', '#b4d4dc', '#648c90', '#0f172a'],
-    surfaceHex: '#0c1425',
-    fonts: ['Plus Jakarta Sans', 'Inter'],
-    mode: 'dark',
-    macro: 'split-studio',
-    radiusPx: 10,
-  },
-  {
-    slug: 'algolia-com',
-    title: 'Algolia',
-    vibeGroup: 'dark-tech',
-    plainLabelZh: '靛蓝夜幕 · 高速检索与智能工作台',
-    plainLabelEn: 'Indigo Night · Search & AI Console',
-    plainDescZh: '深靛蓝夜幕背景搭配明亮宝蓝主按钮，科技感与专业度兼具',
-    plainDescEn: 'Deep indigo architecture with electric royal-blue primary actions',
-    northstar: 'Deep indigo expanse, clean sans-serif precision, focused digital architecture.',
-    palette: ['#205df9', '#8eabfb', '#a9bbd6', '#99694d', '#090d24'],
-    surfaceHex: '#090d24',
-    fonts: ['Inter', 'system-ui'],
-    mode: 'dark',
-    macro: 'feature-stack',
-    radiusPx: 10,
-  },
-  {
-    slug: 'daybridge-com',
-    title: 'Daybridge',
-    vibeGroup: 'bento',
-    plainLabelZh: '模块化便当盒 · 多维看板分区风',
-    plainLabelEn: 'Bento Cards · Modular Dashboard',
-    plainDescZh: '柔和浅云灰背景配圆润分块卡片（Bento Grid），把指标、待办和明细分区收纳',
-    plainDescEn: 'Modular bento-box cards organizing KPIs, queues, and tables cleanly',
-    northstar: 'Friendly modular bento layout with sky-blue clarity.',
-    palette: ['#3494f4', '#06427d', '#a9daf5', '#9d6c68', '#f1f5f9'],
-    surfaceHex: '#f1f5f9',
-    fonts: ['Inter', 'system-ui'],
-    mode: 'light',
-    macro: 'bento-grid',
-    radiusPx: 14,
-  },
-];
-
-const VIBE_FILTERS: {
-  key: 'ALL' | InspoReferenceItem['vibeGroup'];
-  labelZh: string;
-  labelEn: string;
-  emoji: string;
-}[] = [
-  { key: 'ALL', labelZh: '全部大图精选', labelEn: 'All Showcases', emoji: '✨' },
-  { key: 'clean-saas', labelZh: '清爽白底办公', labelEn: 'Clean Light SaaS', emoji: '☀️' },
-  { key: 'fintech', labelZh: '严谨台账/金融', labelEn: 'Crisp Ledger', emoji: '📊' },
-  { key: 'warm-paper', labelZh: '温润纸感文档', labelEn: 'Warm Paper', emoji: '📜' },
-  { key: 'dark-tech', labelZh: '深色监控驾驶舱', labelEn: 'Dark Cockpit', emoji: '🌙' },
-  { key: 'bento', labelZh: '模块卡片看板', labelEn: 'Bento Cards', emoji: '🍱' },
-];
-
-function normalizeLiveInspoItem(raw: {
-  slug: string;
-  title?: string;
-  northstar?: string;
-  palette?: string[];
-  fonts?: string[];
-  mode?: string;
-  macro?: string;
-}): InspoReferenceItem {
-  const existing = CURATED_INSPO_CATALOG.find((c) => c.slug === raw.slug);
-  if (existing) return existing;
-  const isDark = raw.mode === 'dark';
-  const palette =
-    raw.palette && raw.palette.length > 0
-      ? raw.palette
-      : isDark
-        ? ['#38bdf8', '#818cf8', '#94a3b8', '#1e293b', '#0f172a']
-        : ['#2563eb', '#0f172a', '#64748b', '#cbd5e1', '#f8fafc'];
-  return {
-    slug: raw.slug,
-    title: raw.title || raw.slug,
-    vibeGroup: isDark ? 'dark-tech' : 'clean-saas',
-    plainLabelZh: isDark ? '实时检索深色参考' : '实时检索浅色参考',
-    plainLabelEn: isDark ? 'Live Dark Reference' : 'Live Light Reference',
-    plainDescZh: raw.northstar || '来自真实线上产品的完整界面截图与自动提取色板',
-    plainDescEn: raw.northstar || 'Live production screenshot and extracted palette',
-    northstar: raw.northstar || 'Real-world production web reference',
-    palette,
-    surfaceHex: isDark ? '#0f172a' : '#f8fafc',
-    fonts: raw.fonts && raw.fonts.length > 0 ? raw.fonts : ['Inter', 'system-ui'],
-    mode: isDark ? 'dark' : 'light',
-    macro: raw.macro || 'split-studio',
-    radiusPx: 10,
-  };
-}
+export {
+  CURATED_INSPO_CATALOG,
+  LIKED_ASPECT_OPTIONS,
+  VisualReferencePicker,
+  inspoFullUrl,
+  inspoHeroUrl,
+  inspoMobileUrl,
+  inspoThumbUrl,
+  type BorrowedReferenceSelection,
+  type LikedAspectKey,
+  type SelectedInspoPreference,
+  type VisualReferenceItem,
+  type VisualReferenceSelection,
+};
 
 function pickReadableButtonInk(hex: string): string {
   const clean = hex.replace('#', '');
@@ -1345,464 +1030,6 @@ export function buildReferenceStyledPrototypeHtml(
 </html>`;
 }
 
-// ─── High-Res Screenshot Component with Offline Wireframe Fallback ───────────
-function InspoShowcaseImage({
-  item,
-  variant = 'hero',
-  className,
-}: {
-  item: InspoReferenceItem;
-  variant?: 'hero' | 'full' | 'mobile';
-  className?: string;
-}) {
-  const [failed, setFailed] = useState(false);
-  const src =
-    variant === 'full'
-      ? inspoFullUrl(item.slug)
-      : variant === 'mobile'
-        ? inspoMobileUrl(item.slug)
-        : inspoHeroUrl(item.slug);
-
-  if (failed) {
-    const bg = item.surfaceHex || (item.mode === 'dark' ? '#0f172a' : '#f8fafc');
-    const fg = item.mode === 'dark' ? '#e2e8f0' : '#1e293b';
-    const acc = item.palette[0] || '#4c50c4';
-    return (
-      <div
-        className={cn('flex flex-col justify-between p-6', className)}
-        style={{ background: bg, color: fg }}
-      >
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[13px] font-semibold opacity-80">{item.title}</span>
-          <span className="h-3 w-12 rounded-full" style={{ background: acc }} />
-        </div>
-        <div className="my-6 space-y-2.5">
-          <div className="h-4 w-2/3 rounded opacity-80" style={{ background: fg }} />
-          <div className="h-3 w-1/2 rounded opacity-35" style={{ background: fg }} />
-        </div>
-        <div className="grid grid-cols-3 gap-2.5">
-          {item.palette.slice(0, 3).map((sw, idx) => (
-            <div
-              key={`${sw}-${idx}`}
-              className="h-14 rounded-md border border-white/15"
-              style={{ background: sw }}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={src}
-      alt={`${item.title} large desktop interface reference`}
-      loading="lazy"
-      onError={() => setFailed(true)}
-      className={cn('block w-full object-cover object-top', className)}
-    />
-  );
-}
-
-// ─── Reusable Per-Reference "Why I Like It" Reason Editor ───────────────────
-function ReferenceLikedReasonsEditor({
-  pref,
-  onToggleAspect,
-  onToggleSwatch,
-  onChangeReasonNote,
-  compact = false,
-}: {
-  pref: SelectedInspoPreference;
-  onToggleAspect: (slug: string, aspect: LikedAspectKey) => void;
-  onToggleSwatch: (slug: string, hex: string) => void;
-  onChangeReasonNote: (slug: string, note: string) => void;
-  compact?: boolean;
-}) {
-  const { t } = usePreferences();
-  const noteId = useId();
-  const item = pref.item;
-
-  const candidateSwatches = useMemo(() => {
-    const uniq = new Map<string, string>();
-    uniq.set(item.surfaceHex.toLowerCase(), item.surfaceHex);
-    for (const hex of item.palette) {
-      if (!uniq.has(hex.toLowerCase())) {
-        uniq.set(hex.toLowerCase(), hex);
-      }
-    }
-    return [...uniq.values()].slice(0, 6);
-  }, [item.surfaceHex, item.palette]);
-
-  return (
-    <div
-      className={cn(
-        'flex flex-col gap-2.5 rounded-control border border-accent/35 bg-accent-tint/35 p-3',
-        compact && 'p-2.5',
-      )}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-1.5">
-        <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink">
-          <MessageSquarePlus size={13} className="text-accent" />
-          {t(
-            `告诉 Agent 您喜欢「${item.title}」的哪些地方（可多选 + 写备注）：`,
-            `What do you like about "${item.title}"? (Multi-select + note for Agent):`,
-          )}
-        </span>
-      </div>
-
-      {/* Aspect Quick Pills */}
-      <div className="flex flex-wrap gap-1.5">
-        {LIKED_ASPECT_OPTIONS.map((opt) => {
-          const active = pref.likedAspects.includes(opt.key);
-          const dotColor =
-            opt.key === 'bgColor'
-              ? item.surfaceHex
-              : opt.key === 'accentColor'
-                ? item.palette[0]
-                : undefined;
-          return (
-            <button
-              key={opt.key}
-              type="button"
-              aria-pressed={active}
-              onClick={() => onToggleAspect(item.slug, opt.key)}
-              className={cn(
-                'inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
-                active
-                  ? 'border-accent bg-accent text-white shadow-2xs'
-                  : 'border-line bg-surface text-ink-2 hover:border-accent/60 hover:text-ink',
-              )}
-            >
-              {dotColor && (
-                <span
-                  className="inline-block h-3 w-3 rounded-full border border-black/25"
-                  style={{ background: dotColor }}
-                />
-              )}
-              {active && <Check size={11} strokeWidth={2.5} />}
-              <span>{t(opt.labelZh, opt.labelEn)}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Specific Color Swatch Pinning */}
-      <div className="flex flex-wrap items-center gap-1.5 text-[11.5px]">
-        <span className="text-ink-3">{t('点选指定喜欢的颜色：', 'Pin favorite colors:')}</span>
-        {candidateSwatches.map((hex, i) => {
-          const pinned = pref.likedSwatches.some((s) => s.toLowerCase() === hex.toLowerCase());
-          const isBg = i === 0;
-          return (
-            <button
-              key={hex}
-              type="button"
-              aria-pressed={pinned}
-              onClick={() => onToggleSwatch(item.slug, hex)}
-              title={hex}
-              className={cn(
-                'inline-flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[11px] transition-all',
-                pinned
-                  ? 'border-accent bg-surface font-semibold text-ink ring-2 ring-accent/35'
-                  : 'border-line bg-surface/80 text-ink-3 hover:border-accent/60 hover:text-ink',
-              )}
-            >
-              <span
-                className="inline-block h-3 w-3 rounded-full border border-black/20"
-                style={{ background: hex }}
-              />
-              <span>{isBg ? `${hex} (${t('底色', 'BG')})` : hex}</span>
-              {pinned && <Check size={10.5} className="text-accent" />}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Freeform Liked Reason Input */}
-      <div className="flex flex-col gap-1">
-        <label htmlFor={noteId} className="visually-hidden">
-          {t('补充喜欢的原因', 'Why you like this reference')}
-        </label>
-        <input
-          id={noteId}
-          type="text"
-          className="input bg-surface text-[12.5px]"
-          placeholder={t(
-            '补充具体喜欢的原因（例如：喜欢它柔和的米白背景颜色，但按钮想更大一点；喜欢顶部的清爽留白…）',
-            'Add specific reason (e.g., love the soft warm background color and clean header spacing…)',
-          )}
-          value={pref.reasonNote}
-          onChange={(e) => onChangeReasonNote(item.slug, e.target.value)}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ─── Native <dialog closedby="any"> Full-Viewport Lightbox Modal ─────────────
-function InspoPreviewDialog({
-  item,
-  selectedPref,
-  onToggleSelect,
-  onToggleAspect,
-  onToggleSwatch,
-  onChangeReasonNote,
-  onFindSimilar,
-  onClose,
-}: {
-  item: InspoReferenceItem | null;
-  selectedPref: SelectedInspoPreference | undefined;
-  onToggleSelect: (item: InspoReferenceItem) => void;
-  onToggleAspect: (slug: string, aspect: LikedAspectKey) => void;
-  onToggleSwatch: (slug: string, hex: string) => void;
-  onChangeReasonNote: (slug: string, note: string) => void;
-  onFindSimilar: (item: InspoReferenceItem) => void;
-  onClose: () => void;
-}) {
-  const { t } = usePreferences();
-  const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const headingId = useId();
-  const [tab, setTab] = useState<'HERO' | 'FULL' | 'MOBILE' | 'DESIGN_MD'>('HERO');
-  const [designMd, setDesignMd] = useState<string>('');
-  const [loadingMd, setLoadingMd] = useState(false);
-
-  useEffect(() => {
-    setTab('HERO');
-    setDesignMd('');
-  }, [item?.slug]);
-
-  useEffect(() => {
-    const dlg = dialogRef.current;
-    if (!dlg) return;
-    if (item) {
-      if (!dlg.open) {
-        dlg.showModal();
-      }
-    } else if (dlg.open) {
-      dlg.close();
-    }
-  }, [item]);
-
-  // Fallback light-dismiss for browsers where HTMLDialogElement.prototype.closedBy is absent (e.g., Safari)
-  useEffect(() => {
-    const dlg = dialogRef.current;
-    if (!dlg || typeof HTMLDialogElement === 'undefined') return;
-    if ('closedBy' in HTMLDialogElement.prototype) return;
-
-    const isOutside = (e: PointerEvent) => {
-      const r = dlg.getBoundingClientRect();
-      return (
-        e.clientX < r.left ||
-        e.clientX > r.right ||
-        e.clientY < r.top ||
-        e.clientY > r.bottom
-      );
-    };
-    let pressedOutside = false;
-    const onDown = (e: PointerEvent) => {
-      pressedOutside = e.target === dlg && isOutside(e);
-    };
-    const onUp = (e: PointerEvent) => {
-      if (pressedOutside && e.target === dlg && isOutside(e)) {
-        dlg.close();
-      }
-      pressedOutside = false;
-    };
-    dlg.addEventListener('pointerdown', onDown);
-    dlg.addEventListener('pointerup', onUp);
-    return () => {
-      dlg.removeEventListener('pointerdown', onDown);
-      dlg.removeEventListener('pointerup', onUp);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!item || tab !== 'DESIGN_MD' || designMd) return;
-    let cancelled = false;
-    setLoadingMd(true);
-    fetch('/api/prototype-inspo', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'design_system', slug: item.slug }),
-    })
-      .then((r) => r.json())
-      .then((j: { ok?: boolean; markdown?: string }) => {
-        if (cancelled) return;
-        setDesignMd(
-          j.markdown ||
-            `# ${item.title} — Extracted Design System\n\n- **Mode**: ${item.mode}\n- **Surface**: ${item.surfaceHex}\n- **Macrostructure**: ${item.macro}\n- **Fonts**: ${item.fonts.join(', ')}\n- **Palette**: ${item.palette.join(', ')}\n- **Northstar**: ${item.northstar}`,
-        );
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setDesignMd(
-            `# ${item.title} — Design DNA\n\n- Mode: ${item.mode}\n- Surface: ${item.surfaceHex}\n- Palette: ${item.palette.join(', ')}\n- Fonts: ${item.fonts.join(', ')}`,
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingMd(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [item, tab, designMd]);
-
-  const isSelected = Boolean(selectedPref);
-
-  return (
-    <dialog
-      ref={dialogRef}
-      aria-labelledby={headingId}
-      className="inspo-lightbox-dialog"
-      onClose={(e) => {
-        e.currentTarget.returnValue = '';
-        onClose();
-      }}
-      {...({ closedby: 'any' } as Record<string, string>)}
-    >
-      {item && (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-3.5">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h2 id={headingId} className="m-0 font-serif text-[18px] font-semibold text-ink">
-                {item.title}
-              </h2>
-              <span className="badge badge-accent">{t(item.plainLabelZh, item.plainLabelEn)}</span>
-              <div className="flex items-center gap-1">
-                {[item.surfaceHex, ...item.palette.slice(0, 5)].map((hex, i) => (
-                  <span
-                    key={`${hex}-${i}`}
-                    title={hex}
-                    className="h-4 w-4 rounded-full border border-black/20"
-                    style={{ background: hex }}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  onFindSimilar(item);
-                  dialogRef.current?.close();
-                }}
-              >
-                <Sparkles size={13} />
-                {t('找相似风格大图', 'More Like This')}
-              </Button>
-              <Button
-                type="button"
-                variant={isSelected ? 'secondary' : 'accent'}
-                size="sm"
-                onClick={() => onToggleSelect(item)}
-              >
-                <Check size={13} />
-                {isSelected
-                  ? t('已选入参考篮（点击取消）', 'Selected')
-                  : t('选为我的 UI 参考并写原因', 'Pick & Add Reason')}
-              </Button>
-              <button
-                type="button"
-                onClick={() => dialogRef.current?.close()}
-                aria-label={t('关闭大图预览', 'Close preview')}
-                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-control text-ink-3 hover:bg-inset hover:text-ink"
-              >
-                <X size={16} />
-              </button>
-            </div>
-          </div>
-
-          {selectedPref && (
-            <div className="border-b border-line bg-surface px-5 py-2.5">
-              <ReferenceLikedReasonsEditor
-                pref={selectedPref}
-                onToggleAspect={onToggleAspect}
-                onToggleSwatch={onToggleSwatch}
-                onChangeReasonNote={onChangeReasonNote}
-                compact
-              />
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-inset/50 px-5 py-2 text-[12px]">
-            <Button
-              type="button"
-              variant="toggle"
-              size="xs"
-              aria-pressed={tab === 'HERO'}
-              onClick={() => setTab('HERO')}
-            >
-              <Monitor size={12} />
-              {t('1440p 桌面首屏高清大图', '1440p Desktop Hero')}
-            </Button>
-            <Button
-              type="button"
-              variant="toggle"
-              size="xs"
-              aria-pressed={tab === 'FULL'}
-              onClick={() => setTab('FULL')}
-            >
-              <Layers size={12} />
-              {t('整页长滚动完整实拍', 'Full-Page Capture')}
-            </Button>
-            <Button
-              type="button"
-              variant="toggle"
-              size="xs"
-              aria-pressed={tab === 'MOBILE'}
-              onClick={() => setTab('MOBILE')}
-            >
-              <Smartphone size={12} />
-              {t('手机端实拍', 'Mobile View')}
-            </Button>
-            <Button
-              type="button"
-              variant="toggle"
-              size="xs"
-              aria-pressed={tab === 'DESIGN_MD'}
-              onClick={() => setTab('DESIGN_MD')}
-            >
-              <FileText size={12} />
-              {t('自动提取的设计令牌 (DESIGN.md)', 'Extracted DESIGN.md')}
-            </Button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto bg-inset p-5">
-            {tab === 'DESIGN_MD' ? (
-              loadingMd ? (
-                <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-ink-3">
-                  <Loader2 size={16} className="animate-spin" />
-                  {t('正在拉取站点 DESIGN.md 令牌…', 'Fetching DESIGN.md tokens…')}
-                </div>
-              ) : (
-                <pre className="overflow-x-auto rounded-card border border-line bg-surface p-4 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink">
-                  {designMd}
-                </pre>
-              )
-            ) : tab === 'MOBILE' ? (
-              <div className="mx-auto max-w-[390px] overflow-hidden rounded-[22px] border-4 border-ink/20 bg-surface shadow-lg">
-                <InspoShowcaseImage item={item} variant="mobile" className="h-auto" />
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-card border border-line bg-surface shadow-sm">
-                <InspoShowcaseImage
-                  item={item}
-                  variant={tab === 'FULL' ? 'full' : 'hero'}
-                  className="h-auto"
-                />
-              </div>
-            )}
-          </div>
-        </>
-      )}
-    </dialog>
-  );
-}
-
 export interface PrototypeCoDesignStudioProps {
   project: ProjectDetail;
   docs: RequirementDoc[];
@@ -1871,22 +1098,14 @@ export function PrototypeCoDesignStudio({
 }: PrototypeCoDesignStudioProps) {
   const { locale, t } = usePreferences();
 
-  const [catalog, setCatalog] = useState<InspoReferenceItem[]>(CURATED_INSPO_CATALOG);
-  const [searching, setSearching] = useState(false);
-  const [vibe, setVibe] = useState<'ALL' | InspoReferenceItem['vibeGroup']>('ALL');
-  const [searchInput, setSearchInput] = useState('');
-  const [galleryColumns, setGalleryColumns] = useState<'2-UP' | '1-UP'>('2-UP');
-  const [captureVariant, setCaptureVariant] = useState<'hero' | 'full'>('hero');
-  const [inspectingItem, setInspectingItem] = useState<InspoReferenceItem | null>(null);
+  const [referenceSelection, setReferenceSelection] = useState<VisualReferenceSelection>(() =>
+    createInitialVisualReferenceSelection(CURATED_INSPO_CATALOG[0]!),
+  );
 
-  const [selectedPrefs, setSelectedPrefs] = useState<SelectedInspoPreference[]>(() => [
-    {
-      item: CURATED_INSPO_CATALOG[0]!,
-      likedAspects: ['bgColor', 'accentColor', 'spacing'],
-      likedSwatches: [],
-      reasonNote: '',
-    },
-  ]);
+  const selectedPrefs = useMemo(
+    () => visualSelectionToLegacyPreferences(referenceSelection),
+    [referenceSelection],
+  );
 
   const [alignment, setAlignment] =
     useState<RequirementAlignmentState>(DEFAULT_ALIGNMENT_STATE);
@@ -1903,7 +1122,7 @@ export function PrototypeCoDesignStudio({
   );
 
   const refTitleSummary = useMemo(
-    () => selectedPrefs.map((p) => p.item.title).join(' + ') || 'Inspo',
+    () => selectedPrefs.map((p) => p.item.title).join(' + ') || 'Reference',
     [selectedPrefs],
   );
 
@@ -1941,140 +1160,12 @@ export function PrototypeCoDesignStudio({
     }
   }, [displayedHtml, project.domain]);
 
-  const visibleItems = useMemo(
-    () => (vibe === 'ALL' ? catalog : catalog.filter((i) => i.vibeGroup === vibe)),
-    [catalog, vibe],
-  );
-
   const primaryAccent = useMemo(() => {
     const donor =
       selectedPrefs.find((p) => p.likedAspects.includes('accentColor')) ??
       selectedPrefs[0];
     return donor?.likedSwatches[0] || donor?.item.palette[0] || '#2563eb';
   }, [selectedPrefs]);
-
-  const mergeLiveItems = (incoming: InspoReferenceItem[]) => {
-    if (incoming.length === 0) return;
-    setCatalog((prev) => {
-      const bySlug = new Map<string, InspoReferenceItem>();
-      for (const item of incoming) bySlug.set(item.slug, item);
-      for (const item of prev) {
-        if (!bySlug.has(item.slug)) bySlug.set(item.slug, item);
-      }
-      return [...bySlug.values()];
-    });
-  };
-
-  const handleLiveSearch = async (query: string) => {
-    setSearching(true);
-    try {
-      const res = await fetch('/api/prototype-inspo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'search', query }),
-      });
-      const json = (await res.json()) as {
-        ok?: boolean;
-        items?: Parameters<typeof normalizeLiveInspoItem>[0][];
-      };
-      if (json.ok && json.items && json.items.length > 0) {
-        mergeLiveItems(json.items.map(normalizeLiveInspoItem));
-        setVibe('ALL');
-      }
-    } catch {
-      // Offline fallback to curated catalog
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const handleFindSimilar = async (target: InspoReferenceItem) => {
-    setSearching(true);
-    try {
-      const res = await fetch('/api/prototype-inspo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'similar', slug: target.slug }),
-      });
-      const json = (await res.json()) as {
-        ok?: boolean;
-        items?: Parameters<typeof normalizeLiveInspoItem>[0][];
-      };
-      if (json.ok && json.items && json.items.length > 0) {
-        mergeLiveItems(json.items.map(normalizeLiveInspoItem));
-        setVibe('ALL');
-      }
-    } catch {
-      // Offline fallback
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const handleToggleRef = (item: InspoReferenceItem) => {
-    setSelectedPrefs((prev) => {
-      const exists = prev.some((p) => p.item.slug === item.slug);
-      if (exists) {
-        return prev.length > 1 ? prev.filter((p) => p.item.slug !== item.slug) : prev;
-      }
-      const nextPref: SelectedInspoPreference = {
-        item,
-        likedAspects: prev.length === 0 ? ['bgColor', 'accentColor'] : ['bgColor'],
-        likedSwatches: [],
-        reasonNote: '',
-      };
-      return [...prev, nextPref].slice(-3);
-    });
-  };
-
-  const handleToggleAspect = (slug: string, aspect: LikedAspectKey) => {
-    setSelectedPrefs((prev) =>
-      prev.map((p) => {
-        if (p.item.slug !== slug) return p;
-        const has = p.likedAspects.includes(aspect);
-        return {
-          ...p,
-          likedAspects: has
-            ? p.likedAspects.filter((k) => k !== aspect)
-            : [...p.likedAspects, aspect],
-        };
-      }),
-    );
-  };
-
-  const handleToggleSwatch = (slug: string, hex: string) => {
-    setSelectedPrefs((prev) =>
-      prev.map((p) => {
-        if (p.item.slug !== slug) return p;
-        const has = p.likedSwatches.some((s) => s.toLowerCase() === hex.toLowerCase());
-        return {
-          ...p,
-          likedSwatches: has
-            ? p.likedSwatches.filter((s) => s.toLowerCase() !== hex.toLowerCase())
-            : [...p.likedSwatches, hex],
-        };
-      }),
-    );
-  };
-
-  const handleChangeReasonNote = (slug: string, note: string) => {
-    setSelectedPrefs((prev) =>
-      prev.map((p) => (p.item.slug === slug ? { ...p, reasonNote: note } : p)),
-    );
-  };
-
-  const totalReasonSignals = useMemo(
-    () =>
-      selectedPrefs.reduce(
-        (acc, p) =>
-          acc +
-          p.likedAspects.length +
-          p.likedSwatches.length +
-          (p.reasonNote.trim() ? 1 : 0),
-        0,
-      ),
-    [selectedPrefs],
-  );
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -2084,11 +1175,11 @@ export function PrototypeCoDesignStudio({
           {[
             {
               n: 1 as const,
-              zh: '① 挑选参考大图与喜欢原因',
-              en: '1. Pick Large References & Liked Reasons',
+              zh: '① 选择主参考与借鉴参考',
+              en: '1. Primary & Borrowed References',
               sub: t(
-                `已选 ${selectedPrefs.length} 张 · ${totalReasonSignals} 项偏好`,
-                `${selectedPrefs.length} refs · ${totalReasonSignals} cues`,
+                `主参考 ${referenceSelection.primary.title}${referenceSelection.borrowed.length > 0 ? ` + ${referenceSelection.borrowed.length} 借鉴` : ''}`,
+                `Primary: ${referenceSelection.primary.title}${referenceSelection.borrowed.length > 0 ? ` +${referenceSelection.borrowed.length}` : ''}`,
               ),
             },
             {
@@ -2183,275 +1274,18 @@ export function PrototypeCoDesignStudio({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          STAGE 1: LARGE SHOWCASE GALLERY + PER-REFERENCE LIKED REASONS
+          STAGE 1: PRIMARY REFERENCE + OPTIONAL BORROWED REFERENCES PICKER
          ═══════════════════════════════════════════════════════════════════════ */}
       {activeStep === 1 && (
-        <div className="card flex flex-col gap-4">
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3.5">
-            <div className="max-w-[720px]">
-              <h3 className="m-0 font-serif text-[18px] font-semibold text-ink">
-                {t(
-                  '第一步：从高清大图里挑 1～3 张喜欢的界面，并勾一下「喜欢它哪里」',
-                  'Step 1: Pick 1–3 Full-Size Reference Captures & Note What You Like',
-                )}
-              </h3>
-              <p className="m-0 mt-1 text-[13px] leading-relaxed text-ink-2">
-                {t(
-                  '全部采用 1440p 桌面高清实拍大图展示。选中任意参考图后，可以直接在图下方勾选或填写喜欢的原因（比如「喜欢它的暖米白背景颜色」「喜欢它的按钮配色」），后续 Agent 会把这些偏好精准融合进您的业务原型。',
-                  'Shown as crisp 1440p desktop captures. After picking any card, tag or write why you like it (e.g., background color, button accent, airy spacing) so the Agent knows exactly what to borrow.',
-                )}
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <form
-                className="flex items-center gap-1.5"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void handleLiveSearch(searchInput);
-                }}
-              >
-                <input
-                  className="input w-[220px]"
-                  placeholder={t('搜风格：如 深色大屏 / 温暖纸感…', 'Search live gallery…')}
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                />
-                <Button type="submit" variant="secondary" size="sm" disabled={searching}>
-                  {searching ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
-                  {t('搜库', 'Search')}
-                </Button>
-              </form>
-            </div>
-          </div>
-
-          {/* Filter Pills + Large Layout Controls */}
-          <div className="flex flex-wrap items-center justify-between gap-2.5">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {VIBE_FILTERS.map((vf) => (
-                <button
-                  key={vf.key}
-                  type="button"
-                  onClick={() => setVibe(vf.key)}
-                  className={cn(
-                    'inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium transition-colors',
-                    vibe === vf.key
-                      ? 'border-accent bg-accent text-white'
-                      : 'border-line bg-inset/60 text-ink-2 hover:border-accent/60 hover:text-ink',
-                  )}
-                >
-                  <span>{vf.emoji}</span>
-                  <span>{t(vf.labelZh, vf.labelEn)}</span>
-                </button>
-              ))}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              <div className="inline-flex items-center rounded-control border border-line bg-inset p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setGalleryColumns('2-UP')}
-                  className={cn(
-                    'inline-flex cursor-pointer items-center gap-1 rounded-[5px] px-2.5 py-1 text-[11.5px] font-medium',
-                    galleryColumns === '2-UP'
-                      ? 'bg-surface text-ink shadow-hairline'
-                      : 'text-ink-3 hover:text-ink',
-                  )}
-                >
-                  <Columns2 size={12} />
-                  {t('大图双列', 'Large 2-Up')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGalleryColumns('1-UP')}
-                  className={cn(
-                    'inline-flex cursor-pointer items-center gap-1 rounded-[5px] px-2.5 py-1 text-[11.5px] font-medium',
-                    galleryColumns === '1-UP'
-                      ? 'bg-surface text-ink shadow-hairline'
-                      : 'text-ink-3 hover:text-ink',
-                  )}
-                >
-                  <RectangleHorizontal size={12} />
-                  {t('超宽巨幕单列', 'Cinema 1-Up')}
-                </button>
-              </div>
-
-              <Button
-                type="button"
-                variant="toggle"
-                size="xs"
-                aria-pressed={captureVariant === 'full'}
-                onClick={() => setCaptureVariant((v) => (v === 'hero' ? 'full' : 'hero'))}
-              >
-                <Layers size={12} />
-                {captureVariant === 'full'
-                  ? t('当前：整页长图局部', 'Showing: Full Page')
-                  : t('切换整页长图预览', 'Preview Full Page')}
-              </Button>
-            </div>
-          </div>
-
-          {/* Large 16:10 Browser-Framed Showcase Grid */}
-          <div
-            className={cn(
-              'grid gap-5',
-              galleryColumns === '1-UP'
-                ? 'grid-cols-1'
-                : 'grid-cols-1 lg:grid-cols-2',
-            )}
-          >
-            {visibleItems.map((item) => {
-              const pref = selectedPrefs.find((p) => p.item.slug === item.slug);
-              const selected = Boolean(pref);
-
-              return (
-                <article
-                  key={item.slug}
-                  className={cn(
-                    'group flex flex-col overflow-hidden rounded-window border bg-surface transition-all',
-                    selected
-                      ? 'border-accent ring-2 ring-accent/30 shadow-sm'
-                      : 'border-line hover:border-accent/55 hover:shadow-xs',
-                  )}
-                >
-                  {/* Browser Chrome Header Bar */}
-                  <div className="flex items-center justify-between gap-2 border-b border-line bg-inset/70 px-3.5 py-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="flex items-center gap-1" aria-hidden="true">
-                        <span className="h-2.5 w-2.5 rounded-full bg-ink/18" />
-                        <span className="h-2.5 w-2.5 rounded-full bg-ink/18" />
-                        <span className="h-2.5 w-2.5 rounded-full bg-ink/18" />
-                      </span>
-                      <span className="truncate font-semibold text-[13.5px] text-ink">
-                        {item.title}
-                      </span>
-                      <span className="badge badge-accent">
-                        {t(item.plainLabelZh, item.plainLabelEn)}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="rounded-full border border-line bg-surface px-2 py-0.5 text-[11px] text-ink-2">
-                        {item.mode === 'dark'
-                          ? t('🌙 深色底', 'Dark')
-                          : t('☀️ 浅色底', 'Light')}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setInspectingItem(item)}
-                        className="inline-flex cursor-pointer items-center gap-1 rounded-control border border-line bg-surface px-2.5 py-1 text-[11.5px] font-medium text-ink-2 hover:border-accent hover:text-accent"
-                      >
-                        <Maximize2 size={11.5} />
-                        {t('全屏看原图', 'Full Lightbox')}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Large Crisp 1440p Screenshot Viewport */}
-                  <div
-                    onClick={() => handleToggleRef(item)}
-                    className={cn(
-                      'relative w-full cursor-pointer overflow-hidden bg-inset',
-                      galleryColumns === '1-UP' ? 'aspect-[16/9]' : 'aspect-[16/10]',
-                    )}
-                  >
-                    <InspoShowcaseImage
-                      item={item}
-                      variant={captureVariant}
-                      className="h-full w-full transition-transform duration-300 group-hover:scale-[1.015]"
-                    />
-                    {selected && (
-                      <div className="absolute right-3 bottom-3 inline-flex items-center gap-1.5 rounded-full bg-accent px-3 py-1 text-[12px] font-semibold text-white shadow-md">
-                        <Check size={13} strokeWidth={2.5} />
-                        {t('已选入参考篮', 'Selected')}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Card Footer + Inline "Why I Like It" Reason Composer when Selected */}
-                  <div className="flex flex-col gap-3 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2.5">
-                      <p className="m-0 flex-1 min-w-[200px] text-[12.5px] leading-relaxed text-ink-2">
-                        {t(item.plainDescZh, item.plainDescEn)}
-                      </p>
-
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1" title={t('提取色板（首枚为背景底色）', 'Extracted surface & palette')}>
-                          {[item.surfaceHex, ...item.palette.slice(0, 4)].map((hex, idx) => (
-                            <span
-                              key={`${hex}-${idx}`}
-                              title={idx === 0 ? `${hex} (背景底色)` : hex}
-                              className="h-4 w-4 rounded-full border border-black/20"
-                              style={{ background: hex }}
-                            />
-                          ))}
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => void handleFindSimilar(item)}
-                          className="cursor-pointer rounded-control px-2 py-1 text-[11.5px] text-ink-2 hover:bg-inset hover:text-accent"
-                        >
-                          {t('找相似', 'Similar')}
-                        </button>
-
-                        <Button
-                          type="button"
-                          variant={selected ? 'secondary' : 'accent'}
-                          size="sm"
-                          onClick={() => handleToggleRef(item)}
-                        >
-                          {selected ? (
-                            <>
-                              <Check size={13} />
-                              {t('已选中', 'Picked')}
-                            </>
-                          ) : (
-                            t('选这张参考', 'Pick This')
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-
-                    {pref && (
-                      <ReferenceLikedReasonsEditor
-                        pref={pref}
-                        onToggleAspect={handleToggleAspect}
-                        onToggleSwatch={handleToggleSwatch}
-                        onChangeReasonNote={handleChangeReasonNote}
-                      />
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-
-          {/* Bottom Step Advancement Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-accent/35 bg-accent-tint/30 px-4 py-3">
-            <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
-              <Palette size={15} className="text-accent" />
-              <span>
-                {t('当前已选参考：', 'Selected references: ')}
-                <strong>{refTitleSummary}</strong>
-              </span>
-              <span className="text-ink-3">
-                {t(
-                  `（已记录 ${totalReasonSignals} 项颜色/背景/质感偏好，将在下一步与动态示意图一起交给 Agent）`,
-                  `(${totalReasonSignals} style/color reasons recorded for the Agent)`,
-                )}
-              </span>
-            </div>
-            <Button
-              type="button"
-              variant="accent"
-              size="md"
-              onClick={() => onStepChange(2)}
-            >
-              {t('进入下一阶段：看动态示意图对齐交互 →', 'Next Stage: Visual Schematic Alignment →')}
-            </Button>
-          </div>
-        </div>
+        <VisualReferencePicker
+          selection={referenceSelection}
+          onSelectionChange={setReferenceSelection}
+          projectId={project.id}
+          {...(activeDoc ? { docId: activeDoc.id } : {})}
+          onContinue={() => onStepChange(2)}
+          continueLabelZh="选好了，下一步看动态示意图对齐交互 →"
+          continueLabelEn="Next: Visual Schematic Alignment →"
+        />
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════
@@ -2535,8 +1369,8 @@ export function PrototypeCoDesignStudio({
                 </div>
                 <p className="m-0 mt-0.5 text-[12px] text-ink-3">
                   {t(
-                    '包含您刚挑选的参考大图、喜欢原因（背景色/强调色等）、动态交互示意图以及工程需求文档。',
-                    'Combines your chosen visual references, liked reasons, animated interaction specs, and SRS.',
+                    '包含您刚挑选的主参考、可选借鉴参考、动态交互示意图以及工程需求文档。',
+                    'Combines your Primary Reference, Borrowed References, motion schematics, and SRS.',
                   )}
                 </p>
               </div>
@@ -2560,55 +1394,93 @@ export function PrototypeCoDesignStudio({
                 </div>
               )}
 
-              {/* Selected References + Editable Liked Reasons */}
+              {/* Selected Primary & Borrowed References Summary */}
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between text-[12px] font-semibold text-ink-2">
-                  <span>{t('已选视觉参考与喜欢原因', 'Visual References & Liked Reasons')}</span>
+                  <span>{t('已选主参考与借鉴参考', 'Primary & Borrowed References')}</span>
                   <button
                     type="button"
                     onClick={() => onStepChange(1)}
                     className="cursor-pointer text-accent hover:underline"
                   >
-                    {t('返回增减参考图', 'Edit Picks')}
+                    {t('返回调整参考图', 'Edit References')}
                   </button>
                 </div>
 
-                {selectedPrefs.map((pref) => (
-                  <div
-                    key={pref.item.slug}
-                    className="flex flex-col gap-2 rounded-card border border-line bg-inset/40 p-2.5"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        onClick={() => setInspectingItem(pref.item)}
-                        className="h-14 w-24 shrink-0 cursor-pointer overflow-hidden rounded border border-line bg-surface"
+                {/* Primary Reference Card */}
+                <div className="flex items-center gap-2.5 rounded-card border border-accent/40 bg-accent-tint/25 p-2.5">
+                  <div className="h-14 w-24 shrink-0 overflow-hidden rounded border border-line bg-surface">
+                    <VisualReferenceImage
+                      item={referenceSelection.primary}
+                      variant="hero"
+                      className="h-full w-full"
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="inline-flex items-center gap-1.5 truncate font-semibold text-[13px] text-ink">
+                        <span className="badge badge-accent">{t('主参考', 'Primary')}</span>
+                        <span>{referenceSelection.primary.title}</span>
+                      </span>
+                      <a
+                        href={referenceSelection.primary.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-0.5 font-mono text-[10.5px] text-ink-3 hover:text-accent"
                       >
-                        <InspoShowcaseImage item={pref.item} variant="hero" className="h-full w-full" />
+                        <span>{referenceSelection.primary.sourceDomain}</span>
+                        <ExternalLink size={10} />
+                      </a>
+                    </div>
+                    <div className="text-[11.5px] text-ink-3">
+                      {t(
+                        referenceSelection.primary.plainLabelZh,
+                        referenceSelection.primary.plainLabelEn,
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Borrowed Reference Cards (0..2) */}
+                {referenceSelection.borrowed.map((borrowed) => {
+                  const aspectMeta = LIKED_ASPECT_OPTIONS.find((o) => o.key === borrowed.aspect);
+                  return (
+                    <div
+                      key={borrowed.item.slug}
+                      className="flex items-center gap-2.5 rounded-card border border-line bg-inset/40 p-2.5"
+                    >
+                      <div className="h-12 w-20 shrink-0 overflow-hidden rounded border border-line bg-surface">
+                        <VisualReferenceImage
+                          item={borrowed.item}
+                          variant="hero"
+                          className="h-full w-full"
+                        />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-1">
-                          <span className="truncate font-semibold text-[13px] text-ink">
-                            {pref.item.title}
+                          <span className="truncate font-semibold text-[12.5px] text-ink">
+                            {borrowed.item.title}
                           </span>
-                          <span className="font-mono text-[10.5px] text-ink-3">
-                            {pref.item.surfaceHex}
-                          </span>
+                          <a
+                            href={borrowed.item.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-0.5 font-mono text-[10.5px] text-ink-3 hover:text-accent"
+                          >
+                            <span>{borrowed.item.sourceDomain}</span>
+                            <ExternalLink size={10} />
+                          </a>
                         </div>
-                        <div className="text-[11.5px] text-ink-3">
-                          {t(pref.item.plainLabelZh, pref.item.plainLabelEn)}
+                        <div className="text-[11.5px] text-accent">
+                          {t(
+                            `借鉴参考 · ${aspectMeta?.labelZh ?? borrowed.aspect}`,
+                            `Borrowed · ${aspectMeta?.labelEn ?? borrowed.aspect}`,
+                          )}
                         </div>
                       </div>
                     </div>
-
-                    <ReferenceLikedReasonsEditor
-                      pref={pref}
-                      onToggleAspect={handleToggleAspect}
-                      onToggleSwatch={handleToggleSwatch}
-                      onChangeReasonNote={handleChangeReasonNote}
-                      compact
-                    />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Transparent Prompt Disclosure */}
@@ -2951,22 +1823,6 @@ export function PrototypeCoDesignStudio({
           </div>
         </div>
       )}
-
-      {/* Full-Viewport Native <dialog> Lightbox */}
-      <InspoPreviewDialog
-        item={inspectingItem}
-        selectedPref={
-          inspectingItem
-            ? selectedPrefs.find((p) => p.item.slug === inspectingItem.slug)
-            : undefined
-        }
-        onToggleSelect={handleToggleRef}
-        onToggleAspect={handleToggleAspect}
-        onToggleSwatch={handleToggleSwatch}
-        onChangeReasonNote={handleChangeReasonNote}
-        onFindSimilar={(item) => void handleFindSimilar(item)}
-        onClose={() => setInspectingItem(null)}
-      />
     </div>
   );
 }

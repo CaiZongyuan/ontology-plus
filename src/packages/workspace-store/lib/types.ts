@@ -9,6 +9,7 @@ import type {
   ValidationDiagnostic,
   ValidationReport,
 } from '../../ontology-core/index.js';
+import type { InspoCacheEntry, InspoCacheEntryInput } from './inspo-cache.js';
 
 export interface ProjectSummary {
   id: string;
@@ -729,4 +730,8 @@ export interface WorkspaceStore {
   deleteLlmProvider(providerId: string): void;
   getSystemSettings(): SystemSettingsState;
   updateSystemSettings(patch: Partial<SystemSettingsState>): SystemSettingsState;
+
+  // Durable Inspo Reference Catalog Cache (metadata + remote URLs only)
+  getInspoCache(cacheKey: string): InspoCacheEntry | undefined;
+  saveInspoCache(entry: InspoCacheEntryInput): InspoCacheEntry;
 }

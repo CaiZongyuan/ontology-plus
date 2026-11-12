@@ -44,3 +44,22 @@ export type {
   SystemSettingsState,
   WorkspaceStore,
 } from './lib/types.js';
+
+export {
+  CURATED_INSPO_CATALOG,
+  INSPO_CDN_BASE,
+  deriveSourceSiteFromSlug,
+  inspoFullUrl,
+  inspoHeroUrl,
+  inspoMobileUrl,
+  inspoThumbUrl,
+  normalizeVisualReferenceItem,
+  sanitizeInspoCacheEntry,
+  type InspoCacheAction,
+  type InspoCacheEntry,
+  type InspoCacheEntryInput,
+  type InspoRecommendPick,
+  type RawVisualReferenceInput,
+  type VisualReferenceItem,
+  type VisualReferenceVibeGroup,
+} from './lib/inspo-cache.js';

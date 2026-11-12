@@ -24,6 +24,7 @@ import {
   type OntologySuite,
 } from '../../ontology-core/index.js';
 import { BOOTSTRAP_SQLITE_DDL } from './schema.js';
+import { sanitizeInspoCacheEntry, type InspoCacheEntry } from './inspo-cache.js';
 import {
   SEED_AGENT_SESSIONS,
   SEED_ANALYTICS_REPORTS,
@@ -2355,6 +2356,17 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const current = this.getSystemSettings();
       const updated: SystemSettingsState = { ...current, ...patch };
       return putItem('system_settings', 'global', updated);
+    },
+
+    getInspoCache(cacheKey) {
+      const normalizedKey = String(cacheKey).trim();
+      if (!normalizedKey) return undefined;
+      return getItem<InspoCacheEntry>('inspo_cache', normalizedKey);
+    },
+
+    saveInspoCache(entry) {
+      const sanitized = sanitizeInspoCacheEntry(entry);
+      return putItem('inspo_cache', sanitized.cacheKey, sanitized);
     },
   };
 }
