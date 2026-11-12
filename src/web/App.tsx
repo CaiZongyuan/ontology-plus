@@ -24,6 +24,7 @@ import {
   PackageCheck,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightOpen,
   Rocket,
   Search,
   Send,
@@ -78,6 +79,12 @@ import { KnowledgeGraphCanvas } from './views/KnowledgeGraphCanvas.js';
 import { OntologyWorkbenchView } from './views/OntologyWorkbenchView.js';
 import { Button } from './components/beautifui/index.js';
 import { GlobalPipelineTaskTray } from './components/pipeline/PipelineTaskCard.js';
+import {
+  ShellAgentPanel,
+  agentPanelSurfaceFor,
+  useAgentPanelOverlayMode,
+} from './components/agent/ShellAgentPanel.js';
+import { useAgentPanelStore } from './components/agent/agentPanelStore.js';
 
 const NAV_ICONS: Record<NavViewId, React.ReactNode> = {
   overview: <FolderKanban size={16} />,
@@ -323,6 +330,28 @@ function ShellInner() {
   );
   const [paletteOpen, setPaletteOpen] = useState(false);
 
+  // Agent Panel (ADR 0009): a shell column on wide viewports, an overlay on narrow ones.
+  const agentSurface = agentPanelSurfaceFor(activeView);
+  const agentPanelOverlay = useAgentPanelOverlayMode();
+  const agentPanelOpen = useAgentPanelStore((s) => s.open);
+  const agentPanelOverlayOpen = useAgentPanelStore((s) => s.overlayOpen);
+  const agentPanelWidth = useAgentPanelStore((s) => s.width);
+  const agentPanelVisible =
+    Boolean(agentSurface) && (agentPanelOverlay ? agentPanelOverlayOpen : agentPanelOpen);
+  const setAgentPanelVisible = (visible: boolean) => {
+    const panel = useAgentPanelStore.getState();
+    if (agentPanelOverlay) panel.setOverlayOpen(visible);
+    else panel.setOpen(visible);
+  };
+  const agentPanelRunningCount = agentSurface
+    ? backgroundTasks.filter(
+        (tk) =>
+          tk.status === 'RUNNING' &&
+          tk.projectId === data?.activeProject.id &&
+          agentSurface.taskKinds.includes(tk.kind),
+      ).length
+    : 0;
+
   const toggleCollapsed = () => {
     setCollapsedState((prev) => {
       writeStoredJson('onto_sidebar_collapsed', !prev);
@@ -371,6 +400,19 @@ function ShellInner() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  useEffect(() => {
+    if (!agentSurface) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        setAgentPanelVisible(!agentPanelVisible);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentSurface, agentPanelVisible, agentPanelOverlay]);
 
   const activeNavSpec = NAV_ITEMS.find((i) => i.id === activeView);
   const activeGroupSpec = NAV_GROUPS.find((g) => g.id === activeNavSpec?.group);
@@ -434,7 +476,12 @@ function ShellInner() {
   const collapseLabel = collapsed ? t('展开侧边栏', 'Expand sidebar') : t('折叠侧边栏', 'Collapse sidebar');
 
   return (
-    <div className={`platform-shell ${collapsed ? 'sidebar-collapsed' : ''}`}>
+    <div
+      className={`platform-shell ${collapsed ? 'sidebar-collapsed' : ''} ${
+        agentPanelVisible && !agentPanelOverlay ? 'has-agent-panel' : ''
+      }`}
+      style={{ '--agent-panel-w': `${agentPanelWidth}px` } as React.CSSProperties}
+    >
       {/* ─── Left Sidebar ─── */}
       <aside className="platform-sidebar" aria-label={t('主导航', 'Main navigation')}>
         <div className="sidebar-brand">
@@ -694,6 +741,29 @@ function ShellInner() {
                 </span>
               </>
             )}
+            {agentSurface && !agentPanelVisible && (
+              <button
+                type="button"
+                className="status-pill agent-panel-toggle"
+                data-testid="agent-panel-toggle"
+                aria-controls="agent-panel"
+                aria-expanded={false}
+                title={t('展开智能体面板 (Ctrl/⌘ + J)', 'Open Agent Panel (Ctrl/⌘ + J)')}
+                onClick={() => setAgentPanelVisible(true)}
+              >
+                {agentPanelRunningCount > 0 ? (
+                  <Loader2 size={13} className="pipeline-spin" aria-hidden="true" />
+                ) : (
+                  <PanelRightOpen size={13} aria-hidden="true" />
+                )}
+                <span>{t('智能体', 'Agent')}</span>
+                {agentPanelRunningCount > 0 && (
+                  <span className="agent-panel-toggle-count">
+                    {t(`${agentPanelRunningCount} 个运行中`, `${agentPanelRunningCount} running`)}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </header>
 
@@ -851,6 +921,15 @@ function ShellInner() {
           )}
         </div>
       </main>
+
+      {agentSurface && agentPanelVisible && (
+        <ShellAgentPanel
+          surface={agentSurface}
+          overlay={agentPanelOverlay}
+          onClose={() => setAgentPanelVisible(false)}
+          onNavigate={setActiveView}
+        />
+      )}
 
       <div className="visually-hidden" aria-live="polite" aria-atomic="true">
         {liveAnnouncement}
