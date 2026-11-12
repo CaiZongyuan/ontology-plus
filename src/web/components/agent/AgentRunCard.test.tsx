@@ -7,13 +7,15 @@ import {
 } from '../../../packages/workspace-store/index.js';
 import { createApiApp } from '../../../server/app.js';
 import { useWorkbenchStore } from '../../api.js';
-import { PreferencesProvider } from '../../i18n.js';
+import { NAV_ITEMS, PreferencesProvider } from '../../i18n.js';
+import { resetLocalImageStoreForTests } from '../../lib/localImageStore.js';
 import { AgentPanel, shouldSubmitComposerKey } from './AgentPanel.js';
 import { AgentRunCard, type AgentRunCardProps } from './AgentRunCard.js';
 import {
   AGENT_PANEL_DEFAULT_WIDTH,
   AGENT_PANEL_MAX_WIDTH,
   AGENT_PANEL_MIN_WIDTH,
+  AGENT_PANEL_WIDE_CSS_WIDTH,
   clampAgentPanelWidth,
   parseAgentPanelPrefs,
   useAgentPanelStore,
@@ -314,16 +316,15 @@ describe('Agent Panel preferences & Wide Mode (#35)', () => {
     const wideHtml = renderToStaticMarkup(
       <PreferencesProvider>
         <AgentPanel
-          title={{ zh: '需求探索', en: 'Requirement Discovery' }}
+          title={{ zh: '原型共创', en: 'Prototype Co-Design' }}
           runs={[]}
           width={AGENT_PANEL_DEFAULT_WIDTH}
           wideMode
           onToggleWideMode={noop}
-          onCreateSession={noop}
           isForkSession
           sessions={[
-            { id: 's-1', title: '需求会话 #1' },
-            { id: 's-2', title: '需求会话 #2 [分支]', isFork: true },
+            { id: 's-1', title: '原型共创 #1' },
+            { id: 's-2', title: '原型共创 #2 [分支]', isFork: true },
           ]}
           activeSessionId="s-2"
           onSelectSession={noop}
@@ -332,9 +333,10 @@ describe('Agent Panel preferences & Wide Mode (#35)', () => {
         />
       </PreferencesProvider>,
     );
+    expect(AGENT_PANEL_WIDE_CSS_WIDTH).toBe('min(48vw, 680px)');
     expect(wideHtml).toContain('data-wide-mode="true"');
     expect(wideHtml).toContain('data-testid="agent-panel-wide-toggle"');
-    expect(wideHtml).toContain('data-testid="agent-new-session-btn"');
+    expect(wideHtml).not.toContain('agent-new-session-btn');
     expect(wideHtml).toContain('data-testid="agent-panel-fork-badge"');
     expect(wideHtml).toContain('data-testid="agent-panel-session-select"');
   });
@@ -802,7 +804,8 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(reasoningPanelHtml).toContain('打开归因分析报告');
   });
 
-  it('covers all 10 agent-backed surfaces, askUser ApprovalCard, REASONING policy write-back, session fork, and resolveActiveWorkspaceRuns (#35)', async () => {
+  it('covers all 24 NavViewId surfaces, askUser ApprovalCard, REASONING policy write-back, session cardinality, missing local image placeholder, and EXTRACTION_JOB chip (#35)', async () => {
+    await resetLocalImageStoreForTests();
     vi.stubEnv('ONTO_MOCK_LLM', '1');
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     store.updateSystemSettings({ mockLlmMode: true });
@@ -820,13 +823,28 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
 
     await useWorkbenchStore.getState().bootstrap('proj-contract');
 
-    // Verify all 10 surfaces & conversationPrimary flags
+    // Verify ALL 24 NavViewIds resolve to a valid AgentPanelSurface
+    expect(NAV_ITEMS).toHaveLength(24);
+    for (const navItem of NAV_ITEMS) {
+      const surface = agentPanelSurfaceFor(navItem.id);
+      expect(surface, `Expected AgentPanelSurface for ${navItem.id}`).not.toBeNull();
+      expect(surface?.sessionKind).toBeTruthy();
+      expect(surface?.title.zh.length).toBeGreaterThan(0);
+      expect(surface?.title.en.length).toBeGreaterThan(0);
+    }
+
+    expect(agentPanelSurfaceFor('overview')?.sessionKind).toBe('COPILOT');
     expect(agentPanelSurfaceFor('app-req-explore')?.conversationPrimary).toBe(true);
+    expect(agentPanelSurfaceFor('app-publish')?.sessionKind).toBe('CODING');
     expect(agentPanelSurfaceFor('cap-agents')?.sessionKind).toBe('CAPABILITY');
     expect(agentPanelSurfaceFor('cap-agents')?.conversationPrimary).toBe(true);
-    expect(agentPanelSurfaceFor('cap-extraction')?.sessionKind).toBe('COPILOT');
+    expect(agentPanelSurfaceFor('cap-extraction')?.sessionKind).toBe('CAPABILITY');
+    expect(agentPanelSurfaceFor('cap-systems')?.sessionKind).toBe('CAPABILITY');
     expect(agentPanelSurfaceFor('data-reasoning')?.sessionKind).toBe('REASONING');
     expect(agentPanelSurfaceFor('data-reasoning')?.conversationPrimary).toBe(true);
+    expect(agentPanelSurfaceFor('data-writeback')?.sessionKind).toBe('REASONING');
+    expect(agentPanelSurfaceFor('llm-center')?.sessionKind).toBe('COPILOT');
+    expect(agentPanelSurfaceFor('system-settings')?.sessionKind).toBe('COPILOT');
 
     // Render data-reasoning ShellAgentPanel and verify 3-stage mode selector pills
     Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
@@ -843,8 +861,70 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_DATA"');
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_WHY"');
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_POLICY"');
+    expect(dataReasoningHtml).not.toContain('agent-new-session-btn');
 
-    // Render AgentRunCard with askUser prompt & REASONING_POLICY write-back button + fork button
+    // AgentRunView preserves user message images & renders "图片已不在本机" when missing from localImageStore, plus EXTRACTION_JOB chip
+    const extractionSession: AgentSession = {
+      id: 'sess-cap-ext-1',
+      projectId: 'proj-contract',
+      agentKind: 'CAPABILITY',
+      title: '能力与存量萃取助手',
+      status: 'IDLE',
+      messages: [
+        {
+          id: 'u-ext-1',
+          role: 'user',
+          content: '[ACTION:RUN_ONTOLOGY_EXTRACTION {"systemId":"sys-erp","title":"采购表本体萃取"}]',
+          images: [
+            {
+              id: 'missing-device-img-01',
+              name: 'legacy-schema-sketch.png',
+              mimeType: 'image/png',
+              source: 'local',
+              role: 'user_upload',
+            },
+          ],
+          timestamp: '2026-11-12T11:00:00.000Z',
+        },
+        {
+          id: 'a-ext-1',
+          role: 'assistant',
+          content: '已完成两轮存量系统本体萃取，生成 6 项候选定义。',
+          artifacts: [
+            {
+              kind: 'EXTRACTION_JOB',
+              jobId: 'ext-job-99',
+              systemName: '存量ERP系统',
+              candidateCount: 6,
+            },
+          ],
+          timestamp: '2026-11-12T11:00:04.000Z',
+        },
+      ],
+      createdAt: '2026-11-12T11:00:00.000Z',
+      updatedAt: '2026-11-12T11:00:04.000Z',
+    };
+    const extRuns = agentRunsFromSession(extractionSession);
+    expect(extRuns).toHaveLength(1);
+    expect(extRuns[0]?.images).toEqual([
+      {
+        id: 'missing-device-img-01',
+        name: 'legacy-schema-sketch.png',
+        mimeType: 'image/png',
+        source: 'local',
+        role: 'user_upload',
+      },
+    ]);
+    const extCardHtml = renderCard({ run: extRuns[0]! });
+    expect(extCardHtml).toContain('data-testid="agent-run-images"');
+    expect(extCardHtml).toContain('图片已不在本机');
+    expect(extCardHtml).toContain('legacy-schema-sketch.png');
+    expect(extCardHtml).toContain('data-testid="agent-run-extraction-chip"');
+    expect(extCardHtml).toContain('存量ERP系统');
+    expect(extCardHtml).toContain('6');
+    expect(extCardHtml).toContain('前往候选审查');
+
+    // Render AgentRunCard with askUser prompt & REASONING_POLICY write-back button (no generic fork button)
     const interactiveCardHtml = renderCard({
       run: makeRun({
         status: 'SUCCEEDED',
@@ -874,11 +954,10 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
           ],
         },
       }),
-      onFork: noop,
       onAnswerAskUser: noop,
       onTriggerWriteback: noop,
     });
-    expect(interactiveCardHtml).toContain('data-testid="agent-fork-msg-btn"');
+    expect(interactiveCardHtml).not.toContain('agent-fork-msg-btn');
     expect(interactiveCardHtml).toContain('data-testid="agent-hitl-card"');
     expect(interactiveCardHtml).toContain('强制法务总监会签');
     expect(interactiveCardHtml).toContain('data-testid="trigger-policy-writeback-btn"');

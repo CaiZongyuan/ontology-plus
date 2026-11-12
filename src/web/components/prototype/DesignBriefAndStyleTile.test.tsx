@@ -31,6 +31,7 @@ import {
   gatherBriefingTurnImages,
   hydrateBriefingStateFromDesignBrief,
   removeDesignBriefItem,
+  requestDesignBriefAssist,
   rewriteDesignBriefWithInstruction,
   synthesizeDesignBriefItems,
   updateDesignBriefItem,
@@ -360,7 +361,8 @@ describe('Ticket 09 (Issue #31): Briefing Stage — Design Brief & Style Tile', 
     });
     expect(turnImages).toHaveLength(3);
     expect(turnImages[0]?.role).toBe('primary_ref');
-    expect(turnImages[0]?.remoteUrl).toContain(primary.slug);
+    expect(turnImages[0]?.remoteUrl).toBe(primary.fullPageUrl);
+    expect(turnImages[0]?.remoteUrl).toContain('full.');
     expect(turnImages[1]?.role).toBe('borrowed_ref');
     expect(turnImages[1]?.remoteUrl).toContain(borrowed.slug);
     expect(turnImages[2]?.role).toBe('user_upload');
@@ -537,6 +539,140 @@ describe('Ticket 09 (Issue #31): Briefing Stage — Design Brief & Style Tile', 
     expect(studioHtml).toContain('已保存的银行级审批感受备注');
     expect(studioHtml).toContain('data-testid="confirm-brief-restyle-btn"');
     expect(studioHtml).toContain('按新简报重做风格');
+  });
+
+  it('persists userImageRefs on DesignBrief, renders "图片已不在本机" in Briefing Stage when IndexedDB is cleared, and connects to POST /api/projects/:id/design-brief-assist with graceful 404 fallback', async () => {
+    stubLocale('zh-CN');
+    const project = makeMockProject();
+    const doc = makeMockSrsDoc();
+
+    const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const { ref: uploadedRef } = await storeUploadedOrPastedImage(
+      new Blob([pngBytes], { type: 'image/png' }),
+      {
+        id: 'brief-local-img-1',
+        name: 'treasury-reference.png',
+        role: 'user_upload',
+      },
+    );
+
+    const briefWithImages = buildDesignBriefFromState({
+      project,
+      doc,
+      referenceSelection: createInitialVisualReferenceSelection(CURATED_INSPO_CATALOG[0]!),
+      alignment: DEFAULT_ALIGNMENT_STATE,
+      userImageRefs: [uploadedRef],
+      locale: 'zh-CN',
+    });
+    expect(briefWithImages.userImageRefs).toEqual([uploadedRef]);
+
+    // Test agent-backed design-brief-assist endpoint with vision image base64 payload
+    let capturedBody: Record<string, unknown> | undefined;
+    const assistFetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          source: 'agent',
+          brief: {
+            positioning: '面向资金结算高密度审阅的暖纸台账工作台',
+            colorMood: '暖白纸感画布搭配深靛蓝主操作色',
+            typography: 'IBM Plex Sans 与等宽数字对齐',
+            layoutDensity: '高密度紧凑台账，三端自适应',
+            keyScreenStructure: '覆盖采购合同列表、付款批次详情抽屉与审批流',
+            componentTone: '6px 利落圆角，零原生阻塞弹窗',
+            constraints: '全部交互控件保留 MU 语义锚点',
+            openNotes: '已结合本机上传截图强化金额列视觉权重',
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as unknown as typeof fetch;
+
+    const assisted = await requestDesignBriefAssist({
+      projectId: project.id,
+      mode: 'rewrite',
+      instruction: '强化金额列对比度',
+      project,
+      doc,
+      currentBrief: briefWithImages,
+      referenceSelection: createInitialVisualReferenceSelection(CURATED_INSPO_CATALOG[0]!),
+      visionImages: [uploadedRef],
+      fetchFn: assistFetch,
+    });
+    expect(assisted?.source).toBe('agent');
+    expect(assisted?.items.some((i) => i.statement.includes('面向资金结算高密度审阅'))).toBe(true);
+    expect((capturedBody?.images as Array<{ imageId: string }> | undefined)?.[0]?.imageId).toBe(
+      'brief-local-img-1',
+    );
+
+    // Graceful fallback to null on 404 or missing projectId
+    const notFoundFetch = vi.fn(
+      async () => new Response('Not Found', { status: 404 }),
+    ) as unknown as typeof fetch;
+    expect(
+      await requestDesignBriefAssist({
+        projectId: project.id,
+        mode: 'synthesize',
+        fetchFn: notFoundFetch,
+      }),
+    ).toBeNull();
+    expect(
+      await requestDesignBriefAssist({
+        mode: 'synthesize',
+        fetchFn: assistFetch,
+      }),
+    ).toBeNull();
+
+    // Clear localImageStore (simulating another device or cleared IndexedDB) -> Briefing Stage renders "图片已不在本机"
+    await resetLocalImageStoreForTests();
+    const protoWithMissingLocalImg: InteractivePrototype = {
+      id: 'proto-missing-img',
+      projectId: project.id,
+      name: '跨设备打开原型',
+      version: 'v1.0',
+      htmlContent:
+        '<!doctype html><html><body><section data-screen-id="SCR-1" data-screen-name="台账" data-screen-type="LIST"></section></body></html>',
+      extractedScreenCount: 1,
+      createdAt: '2026-11-12T08:00:00.000Z',
+      updatedAt: '2026-11-12T08:00:00.000Z',
+      currentRevisionId: 'rev-1',
+      isConfirmed: false,
+      aheadOfConfirmedCount: 0,
+      designBrief: briefWithImages,
+      revisions: [
+        {
+          id: 'rev-1',
+          prototypeId: 'proto-missing-img',
+          projectId: project.id,
+          revisionNumber: 1,
+          title: 'R1',
+          htmlContent:
+            '<!doctype html><html><body><section data-screen-id="SCR-1" data-screen-name="台账" data-screen-type="LIST"></section></body></html>',
+          extractedScreenCount: 1,
+          source: 'AGENT_RUN',
+          createdAt: '2026-11-12T08:00:00.000Z',
+        },
+      ],
+    };
+
+    const clearedHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <PrototypeCoDesignStudio
+          project={project}
+          docs={[doc]}
+          selectedDocId={doc.id}
+          onSelectDocId={noop}
+          prototypes={[protoWithMissingLocalImg]}
+          activePrototype={protoWithMissingLocalImg}
+          onGenerateWithAi={async () => {}}
+          isBusyProto={false}
+        />
+      </PreferencesProvider>,
+    );
+    expect(clearedHtml).toContain('data-testid="design-brief-image-refs"');
+    expect(clearedHtml).toContain('图片已不在本机');
+    expect(clearedHtml).toContain('treasury-reference.png');
   });
 
   it('executes end-to-end startPrototypeBriefGenerationRun (creating Revision #1 without legacy PROTOTYPE_GEN task) and startPrototypeBriefRestyleRun (creating Revision #2) via Hono API & ShellAgentPanel', async () => {

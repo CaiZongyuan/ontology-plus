@@ -18,6 +18,7 @@ import type {
   PrototypeArtifact,
   RequirementDoc,
 } from '../../../packages/workspace-store/index.js';
+import { apiUpdatePrototypeDesignBrief, useWorkbenchStore } from '../../api.js';
 import { usePreferences } from '../../i18n.js';
 import { VisionAttachmentControls } from '../agent/VisionAttachmentControls.js';
 import { Button } from '../beautifui/index.js';
@@ -33,6 +34,7 @@ import {
   gatherBriefingTurnImages,
   hydrateBriefingStateFromDesignBrief,
   removeDesignBriefItem,
+  requestDesignBriefAssist,
   rewriteDesignBriefWithInstruction,
   updateDesignBriefItem,
 } from './DesignBriefAndStyleTile.js';
@@ -161,6 +163,7 @@ export function PrototypeCoDesignStudio({
   isBusyProto,
 }: PrototypeCoDesignStudioProps) {
   const { locale, t } = usePreferences();
+  const patchData = useWorkbenchStore((s) => s.patchData);
   const referencesAnchorRef = useRef<HTMLDivElement | null>(null);
   const feelAnchorRef = useRef<HTMLElement | null>(null);
   const schematicsAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -179,6 +182,7 @@ export function PrototypeCoDesignStudio({
         referenceSelection: hydrated.referenceSelection,
         alignment: hydrated.alignment,
         userFeelNote: hydrated.userFeelNote,
+        userImageRefs: hydrated.userImageRefs,
         manualBriefItems:
           activePrototype.designBrief.items.length > 0
             ? activePrototype.designBrief.items
@@ -190,6 +194,7 @@ export function PrototypeCoDesignStudio({
       referenceSelection: createInitialVisualReferenceSelection(CURATED_INSPO_CATALOG[0]!),
       alignment: baseAlignment,
       userFeelNote: '',
+      userImageRefs: [] as AgentImageAttachmentRef[],
       manualBriefItems: null as DesignBriefItem[] | null,
       alignmentTouched: false,
     };
@@ -205,12 +210,15 @@ export function PrototypeCoDesignStudio({
     initialHydration.alignment,
   );
   const [userFeelNote, setUserFeelNote] = useState<string>(initialHydration.userFeelNote);
-  const [localAttachments, setLocalAttachments] = useState<AgentImageAttachmentRef[]>([]);
+  const [localAttachments, setLocalAttachments] = useState<AgentImageAttachmentRef[]>(
+    initialHydration.userImageRefs,
+  );
   const [manualBriefItems, setManualBriefItems] = useState<DesignBriefItem[] | null>(
     initialHydration.manualBriefItems,
   );
   const [customNoteDraft, setCustomNoteDraft] = useState('');
   const [decidingForMe, setDecidingForMe] = useState(false);
+  const [assistingBrief, setAssistingBrief] = useState(false);
   const [submittingBrief, setSubmittingBrief] = useState(false);
 
   const setAlignment: React.Dispatch<React.SetStateAction<RequirementAlignmentState>> = (
@@ -242,6 +250,7 @@ export function PrototypeCoDesignStudio({
     setAlignmentState(hydrated.alignment);
     setAlignmentTouched(true);
     setUserFeelNote(hydrated.userFeelNote);
+    setLocalAttachments(hydrated.userImageRefs);
     setManualBriefItems(
       activePrototype!.designBrief!.items.length > 0
         ? activePrototype!.designBrief!.items
@@ -254,6 +263,59 @@ export function PrototypeCoDesignStudio({
       setAlignmentState(inferDefaultAlignmentFromSrs(activeDoc?.content, project));
     }
   }, [activeDoc?.id, activeDoc?.content, project, alignmentTouched, activePrototype?.designBrief]);
+
+  // Initial agent-backed briefing synthesis when projectId is provided and no saved brief exists yet
+  const initialAssistProjectRef = useRef<string>('');
+  useEffect(() => {
+    if (activePrototype?.designBrief || !project.id) return;
+    if (initialAssistProjectRef.current === project.id) return;
+    initialAssistProjectRef.current = project.id;
+    let cancelled = false;
+    void requestDesignBriefAssist({
+      projectId: project.id,
+      mode: 'synthesize',
+      project,
+      ...(activeDoc ? { doc: activeDoc } : {}),
+      referenceSelection,
+      visionImages: localAttachments,
+    }).then((assisted) => {
+      if (cancelled || !assisted) return;
+      setManualBriefItems((prev) => prev ?? assisted.items);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id, activePrototype?.id]);
+
+  const handleAttachmentsChange = (next: AgentImageAttachmentRef[]) => {
+    setLocalAttachments(next);
+    if (!activePrototype?.id) return;
+    const nextBrief = buildDesignBriefFromState({
+      project,
+      ...(activeDoc ? { doc: activeDoc } : {}),
+      referenceSelection,
+      alignment,
+      userFeelNote,
+      localAttachmentCount: next.length,
+      userImageRefs: next,
+      ...(manualBriefItems ? { existingItems: manualBriefItems } : {}),
+      locale,
+    });
+    hydratedProtoKeyRef.current = `${activePrototype.id}:${nextBrief.updatedAt}`;
+    void apiUpdatePrototypeDesignBrief(activePrototype.id, nextBrief)
+      .then((res) => {
+        if (res?.prototypes) {
+          patchData({
+            prototypes: res.prototypes,
+            confirmedPrototypeRevision: res.confirmedRevision,
+          });
+        }
+      })
+      .catch(() => {
+        // Offline / isolated unit test environments keep in-memory state intact
+      });
+  };
 
   const handleFeelNoteChange = (nextNote: string) => {
     setUserFeelNote(nextNote);
@@ -291,6 +353,7 @@ export function PrototypeCoDesignStudio({
         alignment,
         userFeelNote,
         localAttachmentCount: localAttachments.length,
+        userImageRefs: localAttachments,
         ...(manualBriefItems ? { existingItems: manualBriefItems } : {}),
         locale,
       }),
@@ -300,11 +363,34 @@ export function PrototypeCoDesignStudio({
       referenceSelection,
       alignment,
       userFeelNote,
-      localAttachments.length,
+      localAttachments,
       manualBriefItems,
       locale,
     ],
   );
+
+  const handleRefreshBrief = async () => {
+    if (assistingBrief || isBusyProto || submittingBrief) return;
+    if (!project.id) {
+      setManualBriefItems(null);
+      return;
+    }
+    setAssistingBrief(true);
+    try {
+      const assisted = await requestDesignBriefAssist({
+        projectId: project.id,
+        mode: 'synthesize',
+        project,
+        ...(activeDoc ? { doc: activeDoc } : {}),
+        currentBrief: activeBrief,
+        referenceSelection,
+        visionImages: localAttachments,
+      });
+      setManualBriefItems(assisted ? assisted.items : null);
+    } finally {
+      setAssistingBrief(false);
+    }
+  };
 
   const handleDecideForMe = async () => {
     if (decidingForMe || isBusyProto || submittingBrief) return;
@@ -314,23 +400,36 @@ export function PrototypeCoDesignStudio({
         project,
         ...(activeDoc ? { doc: activeDoc } : {}),
         catalog: CURATED_INSPO_CATALOG,
+        userFeelNote,
+        localAttachmentCount: localAttachments.length,
         locale,
       });
       setReferenceSelection(decided.referenceSelection);
       setAlignmentState(decided.alignment);
       setAlignmentTouched(true);
-      setManualBriefItems(null);
+      const assisted = await requestDesignBriefAssist({
+        projectId: project.id,
+        mode: 'decide',
+        project,
+        ...(activeDoc ? { doc: activeDoc } : {}),
+        currentBrief: decided.brief,
+        referenceSelection: decided.referenceSelection,
+        visionImages: localAttachments,
+      });
+      setManualBriefItems(assisted ? assisted.items : null);
     } finally {
       setDecidingForMe(false);
     }
   };
 
-  const handleOneSentenceRewrite = (instruction: string) => {
+  const handleOneSentenceRewrite = async (instruction: string) => {
     const res = rewriteDesignBriefWithInstruction({
       brief: activeBrief,
       instruction,
       referenceSelection,
       alignment,
+      project,
+      ...(activeDoc ? { doc: activeDoc } : {}),
       catalog: CURATED_INSPO_CATALOG,
       locale,
     });
@@ -341,6 +440,26 @@ export function PrototypeCoDesignStudio({
       setUserFeelNote(res.brief.userFeelNote);
     }
     setManualBriefItems(res.brief.items);
+
+    if (!project.id) return;
+    setAssistingBrief(true);
+    try {
+      const assisted = await requestDesignBriefAssist({
+        projectId: project.id,
+        mode: 'rewrite',
+        instruction,
+        project,
+        ...(activeDoc ? { doc: activeDoc } : {}),
+        currentBrief: res.brief,
+        referenceSelection: res.nextReferenceSelection,
+        visionImages: localAttachments,
+      });
+      if (assisted) {
+        setManualBriefItems(assisted.items);
+      }
+    } finally {
+      setAssistingBrief(false);
+    }
   };
 
   const handleConfirmGenerate = async () => {
@@ -570,7 +689,7 @@ export function PrototypeCoDesignStudio({
 
             <VisionAttachmentControls
               attachments={localAttachments}
-              onAttachmentsChange={setLocalAttachments}
+              onAttachmentsChange={handleAttachmentsChange}
               visionSupported={visionSupported}
               {...(visionProviderLabel ? { providerLabel: visionProviderLabel } : {})}
               {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
@@ -700,12 +819,16 @@ export function PrototypeCoDesignStudio({
             onRemoveItem={(itemId) =>
               setManualBriefItems(removeDesignBriefItem(activeBrief, itemId).items)
             }
-            {...(manualBriefItems ? { onResetAutoBrief: () => setManualBriefItems(null) } : {})}
+            onRemoveImageRef={(imageId) =>
+              handleAttachmentsChange(localAttachments.filter((a) => a.id !== imageId))
+            }
+            onResetAutoBrief={handleRefreshBrief}
             onOneSentenceRewrite={handleOneSentenceRewrite}
             onDecideForMe={handleDecideForMe}
             onConfirmGenerate={handleConfirmGenerate}
             {...(activePrototype ? { onConfirmRestyle: handleConfirmRestyle } : {})}
             decidingForMe={decidingForMe}
+            assistingBrief={assistingBrief}
             isBusy={effectiveBusy}
             visionSupported={visionSupported}
             {...(visionProviderLabel ? { visionProviderLabel } : {})}

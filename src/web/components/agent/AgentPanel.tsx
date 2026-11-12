@@ -5,7 +5,6 @@ import {
   Maximize2,
   Minimize2,
   PanelRightClose,
-  Plus,
   Send,
   X,
 } from 'lucide-react';
@@ -58,7 +57,6 @@ export interface AgentPanelProps {
   onResize: (width: number, opts: { commit: boolean }) => void;
   onCancelRun?: (runId: string) => void;
   onRetryRun?: (runId: string) => void;
-  onForkRun?: (runId: string) => void;
   onOpenRunArtifact?: (runId: string) => void;
   onOpenLlmCenter?: () => void;
   onHoverAnchor?: (anchor: PrototypeTargetAnchor | null) => void;
@@ -69,12 +67,11 @@ export interface AgentPanelProps {
     freeformText?: string,
   ) => void;
   onTriggerWriteback?: (writebackInterfaceId: string, actionTitle: string) => void;
-  /** Optional multi-session switcher & New Session action. */
+  /** Optional prototype session switcher (shown only when multiple InteractivePrototypes exist). */
   sessions?: AgentPanelSessionOption[];
   activeSessionId?: string;
   isForkSession?: boolean;
   onSelectSession?: (sessionId: string) => void;
-  onCreateSession?: () => void;
   /** Optional module-specific header context slot (e.g. Reasoning Mode pills, Capability Agent selector). */
   headerContextSlot?: React.ReactNode;
   /** Interactive composer submission handler. When supplied, renders the composer footer. */
@@ -110,7 +107,6 @@ export function AgentPanel({
   onResize,
   onCancelRun,
   onRetryRun,
-  onForkRun,
   onOpenRunArtifact,
   onOpenLlmCenter,
   onHoverAnchor,
@@ -120,7 +116,6 @@ export function AgentPanel({
   activeSessionId,
   isForkSession = false,
   onSelectSession,
-  onCreateSession,
   headerContextSlot,
   onSubmitPrompt,
   composerValue,
@@ -261,18 +256,6 @@ export function AgentPanel({
               {t(`${runningCount} 个运行中`, `${runningCount} running`)}
             </span>
           )}
-          {onCreateSession && (
-            <Button
-              variant="ghost"
-              size="xs"
-              data-testid="agent-new-session-btn"
-              aria-label={t('新建会话', 'New Session')}
-              title={t('新建会话', 'New Session')}
-              onClick={onCreateSession}
-            >
-              <Plus size={13} aria-hidden="true" />
-            </Button>
-          )}
           {!overlay && onToggleWideMode && (
             <Button
               variant="ghost"
@@ -356,7 +339,6 @@ export function AgentPanel({
                 {...(now !== undefined ? { now } : {})}
                 {...(onCancelRun ? { onCancel: () => onCancelRun(run.id) } : {})}
                 {...(onRetryRun ? { onRetry: () => onRetryRun(run.id) } : {})}
-                {...(onForkRun ? { onFork: () => onForkRun(run.id) } : {})}
                 {...(onOpenRunArtifact ? { onOpenArtifact: () => onOpenRunArtifact(run.id) } : {})}
                 {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
                 {...(onHoverAnchor ? { onHoverAnchor } : {})}

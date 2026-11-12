@@ -457,7 +457,7 @@ POST /api/v1/mft/verify-audit -> verifyTransferSecurityAudit`,
 
 export function CapabilityExtractionView() {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
+  const { data, patchData, showToast, startOntologyExtractionRun } = useWorkbenchStore();
   const [systemId, setSystemId] = useState<string>('');
   const [targetProjectId, setTargetProjectId] = useState<string>('');
   const [sourceType, setSourceType] = useState<'DDL_AND_OPENAPI' | 'SOURCE_CODE' | 'LOG_AND_DOC'>(
@@ -516,46 +516,58 @@ export function CapabilityExtractionView() {
     setBusy(true);
     setExtractionError(null);
     try {
-      const json = await apiPostJson<{
-        job: ExtractionJob;
-        project?: typeof data.activeProject;
-        blockedBy?: { elementId?: string }[];
-        extractionJobs: ExtractionJob[];
-      }>('/api/capability/extraction-jobs', {
+      const normalizedSourceType: 'DDL_ONLY' | 'OPENAPI_ONLY' | 'DDL_AND_OPENAPI' =
+        sourceType === 'DDL_AND_OPENAPI'
+          ? 'DDL_AND_OPENAPI'
+          : scanPreview.tables.length > 0 && scanPreview.operations.length === 0
+            ? 'DDL_ONLY'
+            : scanPreview.operations.length > 0 && scanPreview.tables.length === 0
+              ? 'OPENAPI_ONLY'
+              : 'DDL_AND_OPENAPI';
+
+      const prevJobIds = new Set(data.extractionJobs.map((j) => j.id));
+      const runRes = await startOntologyExtractionRun({
         systemId: effectiveSystemId,
         projectId: effectiveProjectId,
         title,
-        sourceType,
+        sourceType: normalizedSourceType,
         sourceSnippet: ddlSnippet,
         applyImmediately,
       });
-      patchData({
-        extractionJobs: json.extractionJobs,
-        ...(json.project && json.project.id === data.activeProject.id
-          ? { activeProject: json.project }
-          : {}),
-      });
-      const blockedIds = Array.from(
-        new Set((json.blockedBy ?? []).map((b) => b.elementId).filter((id): id is string => Boolean(id))),
-      );
-      const blockedSuffixZh = blockedIds.length > 0 ? `（涉及：${blockedIds.slice(0, 6).join('、')}）` : '';
-      const blockedSuffixEn = blockedIds.length > 0 ? ` (${blockedIds.slice(0, 6).join(', ')})` : '';
-      showToast(
-        json.blockedBy?.length
-          ? t(
-              `本体萃取已完成，但立即合并被一致性门禁阻止（${json.blockedBy.length} 个新增一致性错误）${blockedSuffixZh}，已转为逐项确认。`,
-              `Ontology Extraction finished, but merging immediately was blocked by ${json.blockedBy.length} new Consistency Errors${blockedSuffixEn}; review the candidates instead.`,
-            )
-          : json.job.appliedToProject
+
+      const latestData = useWorkbenchStore.getState().data;
+      const runSession = runRes
+        ? latestData?.agentSessions.find((s) => s.id === runRes.sessionId)
+        : undefined;
+      const lastAssistant = [...(runSession?.messages ?? [])]
+        .reverse()
+        .find((m) => m.role === 'assistant');
+
+      if (lastAssistant?.errorDiagnostic) {
+        setExtractionError({
+          message: lastAssistant.errorDiagnostic.message,
+          diagnostic: lastAssistant.errorDiagnostic,
+        });
+        showToast(lastAssistant.errorDiagnostic.message);
+        return;
+      }
+
+      const newestJob =
+        (latestData?.extractionJobs ?? []).find((j) => !prevJobIds.has(j.id)) ??
+        latestData?.extractionJobs[0];
+      if (newestJob) {
+        showToast(
+          newestJob.appliedToProject
             ? t(
-                `本体萃取任务已完成并合并至工程：${json.job.summary}`,
-                `Ontology Extraction finished and merged into the project: ${json.job.summary}`,
+                `本体萃取任务已完成并合并至工程：${newestJob.summary}`,
+                `Ontology Extraction finished and merged into the project: ${newestJob.summary}`,
               )
             : t(
-                `本体萃取候选已生成，请逐项确认后合并：${json.job.summary}`,
-                `Ontology Extraction candidates are ready for confirmation: ${json.job.summary}`,
+                `本体萃取候选已生成，请逐项确认后合并：${newestJob.summary}`,
+                `Ontology Extraction candidates are ready for confirmation: ${newestJob.summary}`,
               ),
-      );
+        );
+      }
     } catch (err) {
       const typedErr = err as Error & {
         diagnostic?: {
@@ -1846,7 +1858,7 @@ export function CapabilityAgentsView() {
 
             <div className="rounded-[6px] border border-line bg-surface-2 p-3">
               <div className="text-[11px] font-semibold text-ink-3 mb-1">
-                {t('智能体系统提示词契约 (System Prompt)', 'System Prompt Contract')}
+                {t('智能体系统提示词契约', 'System Prompt Contract')}
               </div>
               <div className="text-[12.5px] leading-relaxed text-ink whitespace-pre-wrap">
                 {activeAgent.systemPrompt}

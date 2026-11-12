@@ -73,7 +73,7 @@ export function DataResourcesView({
   onNavigate?: (view: NavViewId) => void;
 } = {}) {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
+  const { data, patchData, showToast, startOntologyExtractionRun } = useWorkbenchStore();
   const [sqlText, setSqlText] = useState(SQL_SANDBOX_PRESETS[0]!.sql);
   const [sqlResult, setSqlResult] = useState<AnalyticsQueryResult | null>(null);
   const [sqlError, setSqlError] = useState<string | null>(null);
@@ -164,42 +164,36 @@ export function DataResourcesView({
         )
         .join('\n\n');
 
-      const json = await apiPostJson<{
-        job: { summary: string };
-        project?: typeof data.activeProject;
-        blockedBy?: unknown[];
-        extractionJobs: typeof data.extractionJobs;
-      }>('/api/capability/extraction-jobs', {
+      const prevJobIds = new Set(data.extractionJobs.map((j) => j.id));
+      onNavigate?.('cap-extraction');
+      await startOntologyExtractionRun({
         systemId: data.legacySystems[0]?.id ?? 'sys-erp-contract',
         projectId: data.activeProject.id,
         title: t('从数仓资源萃取数据本体 (M1+MM)', 'Extract Data Ontology from Data Resources (M1+MM)'),
-        sourceType: 'DDL_AND_OPENAPI',
+        sourceType: 'DDL_ONLY',
         sourceSnippet:
           ddlFromTables ||
           'CREATE TABLE t_contract (id VARCHAR(36) PRIMARY KEY, total_amount DECIMAL(18,2));',
         applyImmediately: true,
       });
-      if (json.project) {
-        patchData({ activeProject: json.project, extractionJobs: json.extractionJobs });
-      } else {
-        patchData({ extractionJobs: json.extractionJobs });
-      }
-      if (json.blockedBy?.length) {
+
+      const latestData = useWorkbenchStore.getState().data;
+      const newestJob =
+        (latestData?.extractionJobs ?? []).find((j) => !prevJobIds.has(j.id)) ??
+        latestData?.extractionJobs[0];
+      if (newestJob) {
         showToast(
-          t(
-            `数据本体萃取已完成，但合并被一致性门禁阻止（${json.blockedBy.length} 个新增一致性错误）。请到「能力中心 → 本体萃取」逐项确认。`,
-            `Data ontology extraction finished, but the merge was blocked by ${json.blockedBy.length} new Consistency Errors. Confirm the candidates under Capability Center → Ontology Extraction.`,
-          ),
+          newestJob.appliedToProject
+            ? t(
+                `已从数据资源完成数据本体萃取 (M1+MM)：${newestJob.summary}`,
+                `Extracted data ontology (M1+MM) from data resources: ${newestJob.summary}`,
+              )
+            : t(
+                `数据本体萃取候选已生成，请在「本体萃取」中确认后合并：${newestJob.summary}`,
+                `Data ontology extraction candidates are ready for review: ${newestJob.summary}`,
+              ),
         );
-        return;
       }
-      showToast(
-        t(
-          `已从数据资源完成数据本体萃取 (M1+MM)：${json.job.summary}`,
-          `Extracted data ontology (M1+MM) from data resources: ${json.job.summary}`,
-        ),
-      );
-      onNavigate?.('data-mappings');
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1729,7 +1723,7 @@ export function DataReasoningView() {
           {[
             {
               mode: 'ASK_DATA' as const,
-              titleZh: '阶段 1 · 智能问数 (ASK_DATA)',
+              titleZh: '阶段 1 · 智能问数',
               titleEn: 'Stage 1 · Ask Data',
               descZh: '基于 MM 物理表映射与只读 SQL 沙箱探查真实指标切片',
               descEn: 'Query real slices via MM physical table mappings & read-only SQL',
@@ -1740,7 +1734,7 @@ export function DataReasoningView() {
             },
             {
               mode: 'ASK_WHY' as const,
-              titleZh: '阶段 2 · 智能问因 (ASK_WHY)',
+              titleZh: '阶段 2 · 智能问因',
               titleEn: 'Stage 2 · Ask Why',
               descZh: '穿透 M1 对象关联链与 M3 规则阈值定位异动根因',
               descEn: 'Trace M1 object links & M3 rule thresholds to isolate root causes',
@@ -1751,7 +1745,7 @@ export function DataReasoningView() {
             },
             {
               mode: 'ASK_POLICY' as const,
-              titleZh: '阶段 3 · 智能问策 (ASK_POLICY)',
+              titleZh: '阶段 3 · 智能问策',
               titleEn: 'Stage 3 · Ask Policy',
               descZh: '输出量化策略建议并绑定 MI / Writeback 回写接口闭环执行',
               descEn: 'Propose quantified policy actions bound to governed MI write-backs',
@@ -2360,7 +2354,7 @@ export function LlmCenterView() {
             />
             <span className="flex flex-col gap-0.5">
               <strong className="text-[13px] text-ink">
-                {t('支持看图 (Vision Input)', 'Vision Input')}
+                {t('支持看图', 'Vision Input')}
               </strong>
               <span className="text-[12px] text-muted-foreground">
                 {t(

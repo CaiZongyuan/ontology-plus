@@ -265,7 +265,7 @@ export function visualSelectionToLegacyPreferences(
 }
 
 export interface FetchVisualReferenceParams {
-  action: 'recommend' | 'search' | 'similar';
+  action: 'recommend' | 'search';
   projectId?: string;
   docId?: string;
   query?: string;
@@ -471,7 +471,6 @@ function VisualReferenceLightboxDialog({
   onSelectPrimary,
   onAddOrUpdateBorrowed,
   onRemoveBorrowed,
-  onFindSimilar,
   onClose,
 }: {
   item: VisualReferenceItem | null;
@@ -481,7 +480,6 @@ function VisualReferenceLightboxDialog({
   onSelectPrimary: (item: VisualReferenceItem) => void;
   onAddOrUpdateBorrowed: (item: VisualReferenceItem, aspect?: LikedAspectKey) => void;
   onRemoveBorrowed: (slug: string) => void;
-  onFindSimilar: (item: VisualReferenceItem) => void;
   onClose: () => void;
 }) {
   const { t } = usePreferences();
@@ -569,19 +567,6 @@ function VisualReferenceLightboxDialog({
             </div>
 
             <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  onFindSimilar(item);
-                  dialogRef.current?.close();
-                }}
-              >
-                <Sparkles size={13} />
-                {t('找相似参考', 'Similar References')}
-              </Button>
-
               {!isPrimary && (
                 <Button
                   type="button"
@@ -668,7 +653,7 @@ function VisualReferenceLightboxDialog({
               onClick={() => setTab('DESIGN_MD')}
             >
               <FileText size={12} />
-              {t('设计令牌 (DESIGN.md)', 'Extracted DESIGN.md')}
+              {t('提取设计令牌', 'Extracted DESIGN.md')}
             </Button>
           </div>
 
@@ -796,21 +781,6 @@ export function VisualReferencePicker({
     }
   };
 
-  const handleFindSimilar = async (target: VisualReferenceItem) => {
-    setLoadingAction('search');
-    try {
-      const result = await fetchVisualReferenceCatalog({
-        action: 'similar',
-        slug: target.slug,
-      });
-      mergeIncomingItems(result.items);
-      setCatalogSourceNote(result.source);
-      setVibe('ALL');
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
   const visibleItems = useMemo(() => {
     return catalog.filter((item) => {
       if (vibe !== 'ALL' && item.vibeGroup !== vibe) return false;
@@ -891,7 +861,7 @@ export function VisualReferencePicker({
             <span className="rounded-full border border-line bg-inset px-2.5 py-0.5 font-mono text-[11px] text-ink-3">
               {catalogSourceNote === 'cache'
                 ? t('已命中本地缓存', 'Cached')
-                : t('Inspo 实时推荐', 'Live Inspo')}
+                : t('实时推荐', 'Live References')}
             </span>
           )}
         </div>
@@ -954,22 +924,19 @@ export function VisualReferencePicker({
       </div>
 
       {/* Quick Vibe Tabs */}
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1 rounded-control border border-line bg-inset/50 p-1">
         {VIBE_FILTERS.map((vf) => (
-          <button
+          <Button
             key={vf.key}
             type="button"
+            variant="toggle"
+            size="xs"
+            aria-pressed={vibe === vf.key}
             onClick={() => setVibe(vf.key)}
-            className={cn(
-              'inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium transition-colors',
-              vibe === vf.key
-                ? 'border-accent bg-accent text-white'
-                : 'border-line bg-inset/60 text-ink-2 hover:border-accent/60 hover:text-ink',
-            )}
           >
             <span>{vf.emoji}</span>
             <span>{t(vf.labelZh, vf.labelEn)}</span>
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -1088,11 +1055,14 @@ export function VisualReferencePicker({
                       {LIKED_ASPECT_OPTIONS.map((opt) => {
                         const checked = borrowed.aspect === opt.key;
                         return (
-                          <button
+                          <Button
                             key={opt.key}
                             type="button"
+                            variant="toggle"
+                            size="xs"
                             role="radio"
                             aria-checked={checked}
+                            aria-pressed={checked}
                             data-testid={`borrowed-aspect-${borrowed.item.slug}-${opt.key}`}
                             onClick={() =>
                               onSelectionChange(
@@ -1103,16 +1073,10 @@ export function VisualReferencePicker({
                                 ),
                               )
                             }
-                            className={cn(
-                              'inline-flex cursor-pointer items-center gap-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
-                              checked
-                                ? 'border-accent bg-accent text-white'
-                                : 'border-line bg-inset/60 text-ink-2 hover:border-accent/60 hover:text-ink',
-                            )}
                           >
                             {checked && <Check size={11} strokeWidth={2.5} />}
                             <span>{t(opt.labelZh, opt.labelEn)}</span>
-                          </button>
+                          </Button>
                         );
                       })}
                     </div>
@@ -1132,9 +1096,12 @@ export function VisualReferencePicker({
                 );
                 const disabled = alreadyBorrowed || !canAddMoreBorrowed;
                 return (
-                  <button
+                  <Button
                     key={cand.slug}
                     type="button"
+                    variant="toggle"
+                    size="xs"
+                    aria-pressed={alreadyBorrowed}
                     data-testid={`add-borrowed-ref-${cand.slug}`}
                     disabled={disabled}
                     onClick={() =>
@@ -1142,18 +1109,10 @@ export function VisualReferencePicker({
                         upsertBorrowedReference(selection, cand, 'accentColor'),
                       )
                     }
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors',
-                      alreadyBorrowed
-                        ? 'border-accent/40 bg-accent-tint text-ink font-medium cursor-default'
-                        : disabled
-                          ? 'border-line bg-inset/40 text-ink-3 opacity-50 cursor-not-allowed'
-                          : 'border-line bg-surface text-ink-2 cursor-pointer hover:border-accent hover:text-ink',
-                    )}
                   >
                     {alreadyBorrowed ? <Check size={10.5} /> : <Plus size={10.5} />}
                     <span>{cand.title}</span>
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -1169,7 +1128,7 @@ export function VisualReferencePicker({
         <summary className="flex cursor-pointer items-center justify-between gap-2 font-medium text-ink select-none">
           <span className="inline-flex items-center gap-1.5">
             <SlidersHorizontal size={13} className="text-ink-2" />
-            {t('高级筛选与实时图库检索', 'Advanced Filters & Live Gallery Search')}
+            {t('浏览全部视觉参考', 'Browse All Visual References')}
           </span>
           <span className="font-mono text-[11px] text-ink-3">
             {t('按关键词 / 行业 / 明暗筛选', 'Keyword · Industry · Light/Dark')}
@@ -1186,7 +1145,7 @@ export function VisualReferencePicker({
           >
             <input
               className="input w-[220px] bg-surface"
-              placeholder={t('搜风格：如 深色大屏 / 温暖纸感…', 'Search Inspo gallery…')}
+              placeholder={t('搜风格：如 深色大屏 / 温暖纸感…', 'Browse visual references…')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -1209,8 +1168,8 @@ export function VisualReferencePicker({
               onChange={(e) => setFilterMode(e.target.value as '' | 'light' | 'dark')}
             >
               <option value="">{t('全部明暗', 'All Modes')}</option>
-              <option value="light">{t('浅色底 (Light)', 'Light Mode')}</option>
-              <option value="dark">{t('深色底 (Dark)', 'Dark Mode')}</option>
+              <option value="light">{t('浅色底', 'Light Mode')}</option>
+              <option value="dark">{t('深色底', 'Dark Mode')}</option>
             </select>
             <Button
               type="submit"
@@ -1228,33 +1187,27 @@ export function VisualReferencePicker({
           </form>
 
           <div className="flex flex-wrap items-center gap-1.5">
-            <div className="inline-flex items-center rounded-control border border-line bg-surface p-0.5">
-              <button
+            <div className="inline-flex items-center gap-0.5 rounded-control border border-line bg-inset/50 p-0.5">
+              <Button
                 type="button"
+                variant="toggle"
+                size="xs"
+                aria-pressed={galleryColumns === '2-UP'}
                 onClick={() => setGalleryColumns('2-UP')}
-                className={cn(
-                  'inline-flex cursor-pointer items-center gap-1 rounded-[5px] px-2.5 py-1 text-[11.5px] font-medium',
-                  galleryColumns === '2-UP'
-                    ? 'bg-inset text-ink shadow-hairline'
-                    : 'text-ink-3 hover:text-ink',
-                )}
               >
                 <Columns2 size={12} />
                 {t('大图双列', 'Large 2-Up')}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="toggle"
+                size="xs"
+                aria-pressed={galleryColumns === '1-UP'}
                 onClick={() => setGalleryColumns('1-UP')}
-                className={cn(
-                  'inline-flex cursor-pointer items-center gap-1 rounded-[5px] px-2.5 py-1 text-[11.5px] font-medium',
-                  galleryColumns === '1-UP'
-                    ? 'bg-inset text-ink shadow-hairline'
-                    : 'text-ink-3 hover:text-ink',
-                )}
               >
                 <RectangleHorizontal size={12} />
                 {t('超宽单列', 'Cinema 1-Up')}
-              </button>
+              </Button>
             </div>
 
             <Button
@@ -1292,7 +1245,7 @@ export function VisualReferencePicker({
               key={item.slug}
               data-testid={`visual-ref-card-${item.slug}`}
               className={cn(
-                'group flex flex-col overflow-hidden rounded-window border bg-surface transition-all',
+                'group flex flex-col overflow-hidden rounded-window border bg-surface transition-opacity duration-200',
                 isPrimary
                   ? 'border-accent ring-2 ring-accent/30 shadow-sm'
                   : borrowedEntry
@@ -1432,7 +1385,6 @@ export function VisualReferencePicker({
         onRemoveBorrowed={(slug) =>
           onSelectionChange(removeBorrowedReference(selection, slug))
         }
-        onFindSimilar={(item) => void handleFindSimilar(item)}
         onClose={() => setInspectingItem(null)}
       />
     </div>

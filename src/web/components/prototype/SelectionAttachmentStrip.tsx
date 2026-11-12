@@ -215,42 +215,34 @@ export function PrototypePostRunBanner({
         <div
           role="group"
           aria-label={t('切换改前与改后预览', 'Toggle Before and After preview')}
-          className="inline-flex items-center rounded-[6px] border border-line bg-surface p-0.5"
+          className="inline-flex items-center gap-0.5 rounded-[6px] border border-line bg-inset/50 p-0.5"
         >
-          <button
+          <Button
             type="button"
+            variant="toggle"
+            size="xs"
             data-testid="prototype-before-toggle-btn"
             aria-pressed={mode === 'BEFORE'}
             onClick={() => onModeChange('BEFORE')}
-            className={cn(
-              'rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium transition-colors',
-              mode === 'BEFORE'
-                ? 'bg-accent text-white'
-                : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
-            )}
           >
             {t('改前', 'Before')}{' '}
             <span className="font-mono text-[10.5px] opacity-85">
               R{review.previousRevision.revisionNumber}
             </span>
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="toggle"
+            size="xs"
             data-testid="prototype-after-toggle-btn"
             aria-pressed={mode === 'AFTER'}
             onClick={() => onModeChange('AFTER')}
-            className={cn(
-              'rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium transition-colors',
-              mode === 'AFTER'
-                ? 'bg-accent text-white'
-                : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
-            )}
           >
             {t('改后', 'After')}{' '}
             <span className="font-mono text-[10.5px] opacity-85">
               R{review.revision.revisionNumber}
             </span>
-          </button>
+          </Button>
         </div>
 
         <Button

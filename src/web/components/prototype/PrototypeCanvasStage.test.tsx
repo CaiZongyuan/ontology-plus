@@ -11,7 +11,7 @@ import { createApiApp } from '../../../server/app.js';
 import { PreferencesProvider } from '../../i18n.js';
 import { useWorkbenchStore, type BootstrapPayload } from '../../api.js';
 import { PrototypeStudioView } from '../../views/ApplicationCenterViews.js';
-import { useAgentPanelStore } from '../agent/agentPanelStore.js';
+import { AGENT_PANEL_WIDE_CSS_WIDTH, useAgentPanelStore } from '../agent/agentPanelStore.js';
 import {
   PrototypeCanvasStage,
   computeFocusModeRightOffset,
@@ -166,8 +166,9 @@ afterEach(() => {
     open: true,
     overlayOpen: false,
     width: 384,
+    wideMode: false,
   });
-  useAgentPanelStore.setState({ open: true, overlayOpen: false, width: 384 });
+  useAgentPanelStore.setState({ open: true, overlayOpen: false, width: 384, wideMode: false });
 });
 
 describe('PrototypeCanvasStage toolbar, revision status & preview controls (#27)', () => {
@@ -437,8 +438,12 @@ describe('PrototypeCanvasStage toolbar, revision status & preview controls (#27)
     const { prototypes, confirmedRevision } = makeMockPrototypes();
 
     expect(computeFocusModeRightOffset(true, true, false, 420)).toBe('420px');
-    expect(computeFocusModeRightOffset(true, false, false, 420)).toBe('0px');
-    expect(computeFocusModeRightOffset(true, true, true, 420)).toBe('0px');
+    expect(computeFocusModeRightOffset(true, true, false, 420, true)).toBe(
+      AGENT_PANEL_WIDE_CSS_WIDTH,
+    );
+    expect(AGENT_PANEL_WIDE_CSS_WIDTH).toBe('min(48vw, 680px)');
+    expect(computeFocusModeRightOffset(true, false, false, 420, true)).toBe('0px');
+    expect(computeFocusModeRightOffset(true, true, true, 420, true)).toBe('0px');
 
     const focusHtml = renderToStaticMarkup(
       <PreferencesProvider>
@@ -458,6 +463,35 @@ describe('PrototypeCanvasStage toolbar, revision status & preview controls (#27)
 
     expect(focusHtml).toContain('data-focus-mode="true"');
     expect(focusHtml).toContain('right:420px');
+
+    // When Wide Mode is enabled on Agent Panel, Focus Mode reserves min(48vw, 680px) so it never overlaps
+    Object.assign(useAgentPanelStore.getInitialState(), {
+      open: true,
+      overlayOpen: false,
+      width: 420,
+      wideMode: true,
+    });
+    useAgentPanelStore.setState({ open: true, overlayOpen: false, width: 420, wideMode: true });
+    const wideFocusHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <PrototypeCanvasStage
+          project={project}
+          prototypes={prototypes}
+          selectedPrototypeId="proto-a"
+          confirmedRevision={null}
+          onSelectPrototype={noop}
+          onPrototypesUpdated={noop}
+          onBackToBrief={noop}
+          onSynthesizeOntology={noop}
+          defaultSwitcherOpen
+          focusMode
+        />
+      </PreferencesProvider>,
+    );
+    expect(wideFocusHtml).toContain('right:min(48vw, 680px)');
+    // Unconfirmed prototype disables "推导 11 元模型业务本体" with clear guidance
+    expect(wideFocusHtml).toMatch(/data-testid="prototype-synthesize-ontology-btn"[^>]*disabled/);
+    expect(wideFocusHtml).toContain('确认为当前原型');
     expect(focusHtml).toContain('退出专注 (Esc)');
     // Box-select and Agent Panel toggle remain accessible inside Focus Mode
     expect(focusHtml).toContain('data-testid="prototype-inspect-toggle-btn"');

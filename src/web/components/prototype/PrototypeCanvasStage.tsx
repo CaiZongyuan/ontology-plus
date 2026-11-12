@@ -39,7 +39,7 @@ import {
   PrototypeRevisionHistoryDrawer,
 } from './PrototypeRevisionHistory.js';
 import { useAgentPanelOverlayMode } from '../agent/ShellAgentPanel.js';
-import { useAgentPanelStore } from '../agent/agentPanelStore.js';
+import { AGENT_PANEL_WIDE_CSS_WIDTH, useAgentPanelStore } from '../agent/agentPanelStore.js';
 import { Button } from '../beautifui/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
@@ -286,9 +286,11 @@ export function computeFocusModeRightOffset(
   agentPanelOpen: boolean,
   agentPanelOverlay: boolean,
   agentPanelWidth: number,
+  agentPanelWideMode = false,
 ): string {
   if (!focusMode) return '0px';
-  return agentPanelOpen && !agentPanelOverlay ? `${agentPanelWidth}px` : '0px';
+  if (!agentPanelOpen || agentPanelOverlay) return '0px';
+  return agentPanelWideMode ? AGENT_PANEL_WIDE_CSS_WIDTH : `${agentPanelWidth}px`;
 }
 
 export function toggleShellAgentPanelFromCanvas(agentPanelOverlay: boolean): void {
@@ -395,6 +397,7 @@ export function PrototypeCanvasStage({
   const agentPanelOpen = useAgentPanelStore((s) => s.open);
   const agentPanelOverlayOpen = useAgentPanelStore((s) => s.overlayOpen);
   const agentPanelWidth = useAgentPanelStore((s) => s.width);
+  const agentPanelWideMode = useAgentPanelStore((s) => s.wideMode);
   const hoveredAnchor = useAgentPanelStore((s) => s.hoveredAnchor);
   const effectiveHighlightedSelector =
     highlightedSelector ?? resolveHighlightSelectorFromAnchor(hoveredAnchor);
@@ -741,6 +744,7 @@ export function PrototypeCanvasStage({
     agentPanelOpen,
     agentPanelOverlay,
     agentPanelWidth,
+    agentPanelWideMode,
   );
   const zoomPercent = Math.round(measuredScale * 100);
 
@@ -1023,19 +1027,43 @@ export function PrototypeCanvasStage({
                       type="button"
                       role="menuitem"
                       data-testid="prototype-synthesize-ontology-btn"
-                      disabled={synthesizingOntology}
+                      disabled={synthesizingOntology || !confirmedRevision}
+                      title={
+                        !confirmedRevision
+                          ? t(
+                              '请先点击「确认为当前原型」确认版本后再推导业务本体',
+                              'Click "Confirm Current Prototype" first before synthesizing ontology',
+                            )
+                          : undefined
+                      }
                       onClick={() => {
+                        if (!confirmedRevision) {
+                          onNotify?.(
+                            t(
+                              '请先点击「确认为当前原型」后再推导 11 元模型业务本体',
+                              'Click "Confirm Current Prototype" first before synthesizing the 11-model ontology',
+                            ),
+                          );
+                          return;
+                        }
                         setSwitcherOpen(false);
                         setSwitcherSubPanel('NONE');
-                        onSynthesizeOntology(activePrototype.id);
+                        onSynthesizeOntology(
+                          confirmedRevision.prototype.id || confirmedRevision.prototypeId,
+                        );
                       }}
-                      className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink disabled:opacity-50"
+                      className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Sparkles size={13} className="text-accent" aria-hidden="true" />
                       <span>
                         {synthesizingOntology
                           ? t('正在后台合成 11 模型…', 'Synthesizing 11 Models…')
-                          : t('推导 11 元模型业务本体', 'Synthesize 11-Model Ontology')}
+                          : !confirmedRevision
+                            ? t(
+                                '推导 11 元模型业务本体（请先确认为当前原型）',
+                                'Synthesize 11-Model Ontology (Confirm prototype first)',
+                              )
+                            : t('推导 11 元模型业务本体', 'Synthesize 11-Model Ontology')}
                       </span>
                     </button>
                   )}

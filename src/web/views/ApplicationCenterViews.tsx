@@ -293,10 +293,12 @@ export function OverviewSessionsView({
       step: '3',
       labelZh: '3.界面原型(MU)',
       labelEn: '3. Prototype (MU)',
-      meta: lifecycle.hasPrototype
-        ? `${data.prototypes[0]?.extractedScreenCount ?? 0} ${t('屏幕', 'Screens')}`
-        : t('待生成', 'Pending'),
-      ready: lifecycle.hasPrototype,
+      meta: data.confirmedPrototypeRevision
+        ? `${data.confirmedPrototypeRevision.revision.extractedScreenCount} ${t('屏幕', 'Screens')}`
+        : data.prototypes.length > 0
+          ? t('草稿待确认', 'Draft Unconfirmed')
+          : t('待生成', 'Pending'),
+      ready: Boolean(data.confirmedPrototypeRevision),
       isNext: lifecycle.nextStep.step === 3,
       targetView: 'app-prototype',
     },
@@ -2519,13 +2521,23 @@ export function PrototypeStudioView({
     }
   };
 
-  const handleSynthesizeOntology = async (targetPrototypeId: string) => {
+  const handleSynthesizeOntology = async (_targetPrototypeId?: string) => {
     if (synthesizingOntology) return;
+    const confirmedProtoId =
+      data.confirmedPrototypeRevision?.prototype.id ??
+      data.confirmedPrototypeRevision?.prototypeId;
+    if (!confirmedProtoId) {
+      showToast(
+        t(
+          '请先在原型画布点击「确认为当前原型」确认某一修订版本，再推导 11 元模型业务本体',
+          'Click "Confirm Current Prototype" first before synthesizing the 11-model ontology',
+        ),
+      );
+      return;
+    }
     useAgentPanelStore.getState().revealPanel();
     onNavigate?.('app-ontology');
-    const res = await startOntologySynthesisRun(
-      targetPrototypeId ? { prototypeId: targetPrototypeId } : undefined,
-    );
+    const res = await startOntologySynthesisRun({ prototypeId: confirmedProtoId });
     if (res) {
       const updatedProject = useWorkbenchStore.getState().data?.activeProject;
       if (updatedProject) {

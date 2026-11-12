@@ -5,7 +5,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleSlash,
-  GitFork,
+  Database,
   Loader2,
   RotateCcw,
   Send,
@@ -14,6 +14,7 @@ import {
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { ApprovalCard, Button } from '../beautifui/index.js';
+import { LocalImageThumbnail } from './VisionAttachmentControls.js';
 import {
   formatAnchorBadgeLabel,
   formatRunElapsed,
@@ -28,7 +29,6 @@ export interface AgentRunCardProps {
   run: AgentRunView;
   onCancel?: () => void;
   onRetry?: () => void;
-  onFork?: () => void;
   onOpenArtifact?: () => void;
   onOpenLlmCenter?: () => void;
   onHoverAnchor?: (anchor: PrototypeTargetAnchor | null) => void;
@@ -74,7 +74,6 @@ export function AgentRunCard({
   run,
   onCancel,
   onRetry,
-  onFork,
   onOpenArtifact,
   onOpenLlmCenter,
   onHoverAnchor,
@@ -123,18 +122,6 @@ export function AgentRunCard({
             {elapsed}
           </time>
         </span>
-        {!running && onFork && (
-          <Button
-            variant="ghost"
-            size="xs"
-            data-testid="agent-fork-msg-btn"
-            aria-label={t('从此处分叉会话', 'Fork session from here')}
-            title={t('从此处分叉会话', 'Fork session from here')}
-            onClick={onFork}
-          >
-            <GitFork size={11} aria-hidden="true" />
-          </Button>
-        )}
         {running && onCancel && (
           <Button
             variant="ghost"
@@ -147,6 +134,18 @@ export function AgentRunCard({
           </Button>
         )}
       </header>
+
+      {run.images && run.images.length > 0 && (
+        <div
+          className="vision-attachment-strip agent-run-images"
+          data-testid="agent-run-images"
+          aria-label={t('参考图附件', 'Attached reference images')}
+        >
+          {run.images.map((img) => (
+            <LocalImageThumbnail key={img.id} attachment={img} compact />
+          ))}
+        </div>
+      )}
 
       {running && (
         <p className="agent-run-live" data-testid="agent-run-live" aria-live="polite">
@@ -271,17 +270,49 @@ export function AgentRunCard({
                 ))}
               </div>
             )}
-          {run.result.artifactLabel && onOpenArtifact && (
-            <Button
-              variant="secondary"
-              size="xs"
-              data-testid="agent-run-open-artifact-btn"
-              onClick={onOpenArtifact}
+          {run.artifact?.kind === 'EXTRACTION_JOB' && (
+            <div
+              className="agent-run-policy-item"
+              data-testid="agent-run-extraction-chip"
             >
-              {t(run.result.artifactLabel.zh, run.result.artifactLabel.en)}
-              <ArrowRight size={11} aria-hidden="true" />
-            </Button>
+              <div className="agent-run-policy-info">
+                <strong>
+                  <Database size={12} aria-hidden="true" style={{ display: 'inline', marginRight: 5, verticalAlign: '-1px' }} />
+                  {run.artifact.systemName}
+                </strong>
+                <span>
+                  {t(
+                    `已萃取 ${run.artifact.candidateCount} 项本体候选`,
+                    `${run.artifact.candidateCount} ontology candidates extracted`,
+                  )}
+                </span>
+              </div>
+              {onOpenArtifact && (
+                <Button
+                  variant="accent"
+                  size="xs"
+                  data-testid="agent-run-open-artifact-btn"
+                  onClick={onOpenArtifact}
+                >
+                  {t('前往候选审查', 'Review Candidates')}
+                  <ArrowRight size={11} aria-hidden="true" />
+                </Button>
+              )}
+            </div>
           )}
+          {run.artifact?.kind !== 'EXTRACTION_JOB' &&
+            run.result.artifactLabel &&
+            onOpenArtifact && (
+              <Button
+                variant="secondary"
+                size="xs"
+                data-testid="agent-run-open-artifact-btn"
+                onClick={onOpenArtifact}
+              >
+                {t(run.result.artifactLabel.zh, run.result.artifactLabel.en)}
+                <ArrowRight size={11} aria-hidden="true" />
+              </Button>
+            )}
         </footer>
       )}
 

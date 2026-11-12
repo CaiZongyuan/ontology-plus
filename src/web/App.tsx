@@ -360,7 +360,6 @@ function ShellInner() {
     const nextSurface = agentPanelSurfaceFor(activeView);
     const panel = useAgentPanelStore.getState();
     if (nextSurface?.conversationPrimary) {
-      panel.revealPanel();
       panel.setWideMode(true, { commit: false });
     } else if (prevSurface?.conversationPrimary && !nextSurface?.conversationPrimary) {
       let persistedWide = false;
