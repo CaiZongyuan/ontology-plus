@@ -127,3 +127,16 @@ export {
   type GroundingJoin,
   type SqlGroundingReport,
 } from './lib/data-grounding.js';
+
+export {
+  computeMuDiff,
+  formatCallChainSummary,
+  previewRevisionConfirmationMuDiff,
+  type MuDiffStatus,
+  type MuDiffSummary,
+  type MuElementDiff,
+  type MuEventDiff,
+  type MuFieldChange,
+  type MuModelDiff,
+  type MuScreenDiff,
+} from './lib/mu-diff.js';

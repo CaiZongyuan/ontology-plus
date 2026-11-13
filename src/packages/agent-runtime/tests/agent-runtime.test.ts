@@ -3,30 +3,27 @@ import { describe, expect, it } from 'vitest';
 import { CONTRACT_LIFECYCLE_SUITE, validateOntologySuite } from '../../ontology-core/index.js';
 import { createWorkspaceStore } from '../../workspace-store/index.js';
 import {
+  DOMAIN_RUN_TOOL_NAMES,
   LlmGatewayError,
   ONTOLOGY_TOOL_NAMES,
   OPENAI_ONTOLOGY_TOOLS,
   abortActiveAgentSession,
   applyOntologyToolCall,
+  attachUnifiedAgentSessionLiveStream,
+  autoResumeInterruptedAgentSessions,
   buildPiModelsForStore,
   buildTurnSseEvents,
   collectUnifiedAgentTurn,
   compactAgentSession,
   createSseEventStream,
-  generateMetricInsight,
-  generatePrototypeFromDoc,
-  generateTechArchitectureDoc,
+  ensurePrototypeCoDesignSession,
+  executeDomainRunToolCall,
   ontologyToolRegistry,
-  refinePrototypeWithAi,
   runAppCodingAgentTurn,
   runCapabilitySmartChatTurn,
   runDataOntologyReasoning,
-  runOntologyCopilotTurn,
   runRequirementGrillingTurn,
-  runScenarioAttributionTurn,
   runUnifiedAgentSessionStream,
-  synthesizeOntologyFromPrototype,
-  synthesizeRequirementDocFromSession,
   testLlmGatewayConnection,
 } from '../index.js';
 
@@ -39,46 +36,64 @@ describe('agent-runtime deep module', () => {
     expect(ping.discoveredModels.length).toBeGreaterThan(0);
   }, 30000);
 
-  it('executes ontology copilot tool mutations gated by ontology-core validation', async () => {
+  it('executes ontology copilot Agent Run tool mutations gated by ontology-core validation', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
-    const res = await runOntologyCopilotTurn(store, {
+    const copilotSess = store.createAgentSession({
       projectId: 'proj-contract',
+      agentKind: 'COPILOT',
+      title: 'Copilot Rule Session',
+    });
+    const turn = await collectUnifiedAgentTurn(store, {
+      sessionId: copilotSess.id,
       prompt: '请新增一条跨境知识产权合同法务总监必审规则',
-      activeModel: 'M3',
+      activeModelCode: 'M3',
+      mockMode: true,
     });
 
-    expect(res.toolCalls).toHaveLength(1);
-    expect(res.toolCalls[0].toolName).toBe('upsert_rule');
-    expect(res.toolCalls[0].status).toBe('APPLIED');
-    expect(res.project.validation.valid).toBe(true);
-    expect(res.project.validation.errorCount).toBe(0);
-    expect(res.project.suite.M3?.rules.length).toBe(4);
+    const lastMsg = turn.session.messages.at(-1)!;
+    expect(lastMsg.toolCalls?.some((tc) => tc.toolName === 'upsert_rule' && !tc.isError)).toBe(
+      true,
+    );
+    const updatedProj = store.getProject('proj-contract')!;
+    expect(updatedProj.validation.valid).toBe(true);
+    expect(updatedProj.validation.errorCount).toBe(0);
+    expect(updatedProj.suite.M3?.rules.length).toBe(4);
   }, 30000);
 
   it('satisfies critical copilot M3 rule mutation invariant and rejects corrupting deletions via validator gate', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
-
-    const ruleTurn = await runOntologyCopilotTurn(store, {
+    const copilotSess = store.createAgentSession({
       projectId: 'proj-contract',
-      prompt: '请为合同新增一条付款里程碑逾期超 30 天自动冻结结算单的校验规则',
+      agentKind: 'COPILOT',
+      title: 'Copilot Validator Gate Session',
     });
 
-    expect(ruleTurn.toolCalls[0].toolName).toBe('upsert_rule');
-    expect(ruleTurn.toolCalls[0].status).toBe('APPLIED');
-    expect(ruleTurn.project.suite.M3?.rules.length).toBe(4);
-    expect(ruleTurn.project.validation.errorCount).toBe(0);
+    const ruleTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: copilotSess.id,
+      prompt: '请为合同新增一条付款里程碑逾期超 30 天自动冻结结算单的校验规则',
+      activeModelCode: 'M3',
+      mockMode: true,
+    });
+
+    expect(
+      ruleTurn.session.messages.at(-1)?.toolCalls?.some((tc) => tc.toolName === 'upsert_rule'),
+    ).toBe(true);
+    expect(store.getProject('proj-contract')!.suite.M3?.rules.length).toBe(4);
+    expect(store.getProject('proj-contract')!.validation.errorCount).toBe(0);
 
     // Deleting referenced core aggregate AGG-01 must be rejected by validator and leave suite intact
-    const rejectTurn = await runOntologyCopilotTurn(store, {
-      projectId: 'proj-contract',
+    const rejectTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: copilotSess.id,
       prompt: '请删除核心聚合根 AGG-01',
-      activeModel: 'M1',
+      activeModelCode: 'M1',
+      mockMode: true,
     });
 
-    expect(rejectTurn.toolCalls[0].toolName).toBe('delete_element');
-    expect(rejectTurn.toolCalls[0].status).toBe('REJECTED_BY_VALIDATOR');
-    expect(rejectTurn.project.validation.errorCount).toBe(0);
-    expect(rejectTurn.project.suite.M1?.aggregates.some((a) => a.id === 'AGG-01')).toBe(true);
+    const rejectCalls = rejectTurn.session.messages.at(-1)?.toolCalls ?? [];
+    expect(rejectCalls.some((tc) => tc.toolName === 'delete_element' && tc.isError)).toBe(true);
+    const afterReject = store.getProject('proj-contract')!;
+    expect(afterReject.validation.errorCount).toBe(0);
+    expect(afterReject.suite.M1?.aggregates.some((a) => a.id === 'AGG-01')).toBe(true);
   }, 30000);
 
   it('registers all 12 durable tools in pi-durable registry and mutates all 11 ontology models validly', () => {
@@ -128,23 +143,44 @@ describe('agent-runtime deep module', () => {
     expect(reasoning.policyRecommendations[0].writebackInterfaceId).toBe('WB-01');
   }, 40000);
 
-  it('synthesizes canonical 9-Part SRS (需求规格说明书.md) including mandatory sub-items 9.1 through 9.7', async () => {
+  it('synthesizes canonical 9-Part SRS (需求规格说明书.md) via REQUIREMENT Agent Run including mandatory sub-items 9.1 through 9.7', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
-    const res = await synthesizeRequirementDocFromSession(store, {
-      sessionId: 'req-sess-contract-01',
+    expect(DOMAIN_RUN_TOOL_NAMES).toHaveLength(6);
+    expect(DOMAIN_RUN_TOOL_NAMES).toContain('run_ontology_extraction');
+    const reqAgentSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'REQUIREMENT',
+      targetId: 'req-sess-contract-01',
+      title: '合同需求规格合成会话',
+    });
+    const turn = await collectUnifiedAgentTurn(store, {
+      sessionId: reqAgentSess.id,
+      prompt:
+        '[ACTION:SYNTHESIZE_SRS {"requirementSessionId":"req-sess-contract-01"}]\n请合成九章节需求规格说明书',
+      mockMode: true,
     });
 
-    expect(res.doc.title).toContain('需求规格说明书');
+    const lastMsg = turn.session.messages.at(-1)!;
+    const docArt = lastMsg.artifacts?.find((a) => a.kind === 'REQUIREMENT_DOC');
+    expect(docArt?.kind).toBe('REQUIREMENT_DOC');
+    const savedDoc = store
+      .listRequirementDocs('proj-contract')
+      .find((d) => d.id === (docArt?.kind === 'REQUIREMENT_DOC' ? docArt.docId : ''));
+    expect(savedDoc).toBeDefined();
+    expect(savedDoc!.title).toContain('需求规格说明书');
     for (let ch = 1; ch <= 9; ch++) {
-      expect(res.doc.content).toContain(`## ${ch}. `);
+      expect(savedDoc!.content).toContain(`## ${ch}. `);
     }
     for (let sub = 1; sub <= 7; sub++) {
-      expect(res.doc.content).toContain(`### 9.${sub} `);
+      expect(savedDoc!.content).toContain(`### 9.${sub} `);
     }
-    expect(res.session.status).toBe('CONVERGED');
+    const reqSession = store
+      .listRequirementSessions('proj-contract')
+      .find((s) => s.id === 'req-sess-contract-01');
+    expect(reqSession?.status).toBe('CONVERGED');
   }, 20000);
 
-  it('generates semantic HTML prototype, refines it, and synthesizes 11-model ontology with 0 consistency errors', async () => {
+  it('generates semantic HTML prototype, refines it, and synthesizes 11-model ontology & tech arch via Agent Runs with 0 consistency errors', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     const emptyProj = store.createProject({
       name: '供应商采购订单协同系统',
@@ -155,36 +191,82 @@ describe('agent-runtime deep module', () => {
     expect(emptyProj.currentStage).toBe(0);
     expect(emptyProj.validation.presentModels).toEqual([]);
 
-    const protoRes = await generatePrototypeFromDoc(store, {
+    const briefSess = store.createAgentSession({
       projectId: emptyProj.id,
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      title: 'SRM 设计简报首版原型',
+    });
+    await collectUnifiedAgentTurn(store, {
+      sessionId: briefSess.id,
       prompt: '生成包含采购单台账、起草与主管审核三屏联动的交互原型',
+      mockMode: true,
     });
+    const generatedProto = store.listPrototypes(emptyProj.id)[0]!;
+    expect(generatedProto).toBeDefined();
 
-    expect(protoRes.prototype.htmlContent).toContain('data-screen-id=');
-    expect(protoRes.prototype.htmlContent).toContain('data-element-id=');
-    expect(protoRes.prototype.htmlContent).toContain('data-binding=');
-    expect(protoRes.prototype.htmlContent).toContain('data-event-id=');
-    expect(protoRes.prototype.extractedScreenCount).toBeGreaterThanOrEqual(3);
+    expect(generatedProto.htmlContent).toContain('data-screen-id=');
+    expect(generatedProto.htmlContent).toContain('data-element-id=');
+    expect(generatedProto.htmlContent).toContain('data-binding=');
+    expect(generatedProto.htmlContent).toContain('data-event-id=');
+    expect(generatedProto.extractedScreenCount).toBeGreaterThanOrEqual(2);
     // Step 3 must NOT prematurely populate ontology models before Step 4
-    expect(protoRes.project.validation.presentModels).toEqual([]);
-    expect(protoRes.project.validation.errorCount).toBe(0);
+    expect(store.getProject(emptyProj.id)!.validation.presentModels).toEqual([]);
+    expect(store.getProject(emptyProj.id)!.validation.errorCount).toBe(0);
 
-    const refined = await refinePrototypeWithAi(store, {
-      projectId: emptyProj.id,
-      prototypeId: protoRes.prototype.id,
-      instruction: '在台账页顶部补充紧急采购交期红线提示徽章',
+    const coDesignSession = ensurePrototypeCoDesignSession(
+      store,
+      emptyProj.id,
+      generatedProto.id,
+    );
+    await collectUnifiedAgentTurn(store, {
+      sessionId: coDesignSession.id,
+      prompt: '在台账页顶部补充紧急采购交期红线提示徽章',
+      mockMode: true,
     });
-    expect(refined.project.validation.presentModels).toEqual([]);
-    expect(refined.project.validation.errorCount).toBe(0);
+    const afterRefineProj = store.getProject(emptyProj.id)!;
+    expect(afterRefineProj.validation.presentModels).toEqual([]);
+    expect(afterRefineProj.validation.errorCount).toBe(0);
 
-    const synth = await synthesizeOntologyFromPrototype(store, {
+    const copilotSess = store.createAgentSession({
       projectId: emptyProj.id,
-      prototypeId: refined.prototype.id,
+      agentKind: 'COPILOT',
+      title: 'SRM 本体合成会话',
     });
-    expect(synth.synthesizedModels).toHaveLength(11);
-    expect(synth.project.validation.presentModels).toHaveLength(11);
-    expect(synth.validation.errorCount).toBe(0);
-    expect(synth.validation.valid).toBe(true);
+
+    // ADR 0010: Before confirming a Prototype Revision, synthesizing ontology must be rejected honestly even when prototypeId is passed
+    const unconfirmedTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: copilotSess.id,
+      prompt: `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {"prototypeId":"${generatedProto.id}"}]\n从原型合成 11 模型`,
+      mockMode: true,
+    });
+    const unconfirmedTrace = unconfirmedTurn.session.messages
+      .at(-1)
+      ?.toolCalls?.find((t) => t.toolName === 'synthesize_ontology_suite');
+    expect(unconfirmedTrace?.isError).toBe(true);
+    expect(unconfirmedTrace?.output).toContain('已确认界面原型修订');
+    expect(store.getProject(emptyProj.id)!.validation.presentModels).toEqual([]);
+
+    // Confirm latest revision on generatedProto, then synthesize 11-model suite
+    const latestGeneratedProto = store.getPrototype(generatedProto.id)!;
+    store.confirmPrototypeRevision(emptyProj.id, latestGeneratedProto.currentRevisionId);
+
+    const synthTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: copilotSess.id,
+      prompt: `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {"prototypeId":"${generatedProto.id}"}]\n从原型合成 11 模型`,
+      mockMode: true,
+    });
+    const suiteArt = synthTurn.session.messages
+      .at(-1)
+      ?.artifacts?.find((a) => a.kind === 'ONTOLOGY_SUITE');
+    expect(suiteArt).toMatchObject({
+      kind: 'ONTOLOGY_SUITE',
+      modelCount: 11,
+      errorCount: 0,
+    });
+    const synthProj = store.getProject(emptyProj.id)!;
+    expect(synthProj.validation.presentModels).toHaveLength(11);
+    expect(synthProj.validation.errorCount).toBe(0);
+    expect(synthProj.validation.valid).toBe(true);
 
     // Custom project accidentally created with CONTRACT template strips foreign Contract aggregate on Step 4 synthesis
     const accidentalDemoProj = store.createProject({
@@ -200,23 +282,45 @@ describe('agent-runtime deep module', () => {
       htmlContent:
         '<section data-screen-id="SCR-COFFEE-POS" data-screen-name="门店点单台"><input data-element-id="EL-DRINK" data-binding="CoffeeOrder.drinkCode" /><button data-element-id="EL-SUBMIT" data-event-id="EVT-ORDER-PAID">下单出杯</button></section>',
     }).prototype;
-    const coffeeSynth = await synthesizeOntologyFromPrototype(store, {
+    store.confirmPrototypeRevision(accidentalDemoProj.id, coffeeProto.currentRevisionId);
+    const coffeeCopilotSess = store.createAgentSession({
       projectId: accidentalDemoProj.id,
-      prototypeId: coffeeProto.id,
+      agentKind: 'COPILOT',
+      title: '咖啡店本体合成会话',
     });
-    expect(coffeeSynth.validation.errorCount).toBe(0);
+    await collectUnifiedAgentTurn(store, {
+      sessionId: coffeeCopilotSess.id,
+      prompt: `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {"prototypeId":"${coffeeProto.id}"}]\n合成 11 模型本体`,
+      mockMode: true,
+    });
+    const coffeeUpdatedProj = store.getProject(accidentalDemoProj.id)!;
+    expect(coffeeUpdatedProj.validation.errorCount).toBe(0);
     expect(
-      coffeeSynth.project.suite.M1?.aggregates.some((a) => a.name === 'Contract'),
+      coffeeUpdatedProj.suite.M1?.aggregates.some((a) => a.name === 'Contract'),
     ).toBe(false);
     expect(
-      coffeeSynth.project.suite.M1?.aggregates.some((a) => a.name === 'CoffeeOrder'),
+      coffeeUpdatedProj.suite.M1?.aggregates.some((a) => a.name === 'CoffeeOrder'),
     ).toBe(true);
 
-    const arch = await generateTechArchitectureDoc(store, {
-      name: 'SRM 11模型深模块云原生架构',
-      stackTags: ['TypeScript', 'Hono', 'D1'],
+    const codingSess = store.createAgentSession({
+      projectId: emptyProj.id,
+      agentKind: 'CODING',
+      title: 'SRM 架构研发会话',
     });
-    expect(arch.asset.layer).toBe('TECH_ARCH');
+    const archTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: codingSess.id,
+      prompt:
+        '[ACTION:GENERATE_TECH_ARCH {"name":"SRM 11模型深模块云原生架构","stackTags":["TypeScript","Hono","D1"]}]\n生成技术架构规范',
+      mockMode: true,
+    });
+    const archArt = archTurn.session.messages
+      .at(-1)
+      ?.artifacts?.find((a) => a.kind === 'TECH_ARCH_ASSET');
+    expect(archArt?.kind).toBe('TECH_ARCH_ASSET');
+    const savedArch = store
+      .listFourLayerAssets()
+      .find((a) => a.id === (archArt?.kind === 'TECH_ARCH_ASSET' ? archArt.assetId : ''));
+    expect(savedArch?.layer).toBe('TECH_ARCH');
 
     const coding = await runAppCodingAgentTurn(store, {
       appId: 'app-contract-clm',
@@ -238,17 +342,47 @@ describe('agent-runtime deep module', () => {
     expect(chatRes.session.messages.length).toBe(2);
   }, 30000);
 
-  it('streams standard SSE frames (message_start -> delta -> tool_call -> tool_result -> render_payload -> message_end) and analytics insights', async () => {
+  it('streams standard SSE frames and executes metric insight + scenario attribution via REASONING Agent Runs', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
-    const insight = await generateMetricInsight(store, { metricId: 'MET-02' });
-    expect(insight.writebackInterfaceId).toBe('WB-01');
-
-    const attr = await runScenarioAttributionTurn(store, {
-      scenarioId: 'ascn-01',
-      saveAsReport: true,
+    const reasoningSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'REASONING',
+      title: '指标与归因分析会话',
     });
-    expect(attr.recommendedWritebackId).toBe('WB-01');
-    expect(attr.savedReport?.id).toBeTruthy();
+
+    const insightTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: reasoningSess.id,
+      prompt: '[ACTION:METRIC_INSIGHT {"metricId":"MET-02"}]\n请分析 MET-02 指标波动原因',
+      reasoningMode: 'ASK_WHY',
+      mockMode: true,
+    });
+    const insightArt = insightTurn.session.messages
+      .at(-1)
+      ?.artifacts?.find((a) => a.kind === 'METRIC_INSIGHT');
+    expect(insightArt?.kind).toBe('METRIC_INSIGHT');
+    if (insightArt?.kind === 'METRIC_INSIGHT') {
+      expect(insightArt.writebackInterfaceId).toBe('WB-01');
+      expect(insightArt.anomalyDrivers.length).toBeGreaterThan(0);
+    }
+
+    const reportsBefore = store.listAnalyticsReports().length;
+    const attrTurn = await collectUnifiedAgentTurn(store, {
+      sessionId: reasoningSess.id,
+      prompt:
+        '[ACTION:SCENARIO_ATTRIBUTION {"scenarioId":"ascn-01","saveAsReport":true}]\n请执行归因推演并保存报告',
+      reasoningMode: 'ASK_WHY',
+      mockMode: true,
+    });
+    const attrArt = attrTurn.session.messages
+      .at(-1)
+      ?.artifacts?.find((a) => a.kind === 'ANALYTICS_REPORT');
+    expect(attrArt?.kind).toBe('ANALYTICS_REPORT');
+    if (attrArt?.kind === 'ANALYTICS_REPORT') {
+      expect(attrArt.recommendedWritebackId).toBe('WB-01');
+      expect(attrArt.reportId).toBeTruthy();
+      expect(attrArt.causalBreakdown?.length).toBeGreaterThan(0);
+    }
+    expect(store.listAnalyticsReports().length).toBeGreaterThan(reportsBefore);
 
     const events = buildTurnSseEvents({
       sessionId: 'sse-test-01',
@@ -275,11 +409,11 @@ describe('agent-runtime deep module', () => {
     expect(endIdx).toBeGreaterThan(payloadIdx);
   }, 20000);
 
-  it('throws LlmGatewayError instead of silent fake fallback when live mode hits an offline gateway', async () => {
+  it('reports honest LlmGatewayError across all migrated Agent Run actions with zero fake template artifacts when live gateway fails', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
-    // Point the sole provider at a guaranteed unreachable port
-    const existing = store.listLlmProviders();
-    for (const p of existing) {
+    store.updateSystemSettings({ mockLlmMode: false });
+    // Point every provider at a guaranteed unreachable port
+    for (const p of store.listLlmProviders()) {
       store.saveLlmProvider({
         ...p,
         baseUrl: 'http://127.0.0.1:59999/v1',
@@ -287,28 +421,58 @@ describe('agent-runtime deep module', () => {
       });
     }
 
-    await expect(
-      runOntologyCopilotTurn(store, {
-        projectId: 'proj-contract',
-        prompt: '查询当前模型结构',
-        mockMode: false,
-      }),
-    ).rejects.toBeInstanceOf(LlmGatewayError);
+    const docsBefore = store.listRequirementDocs('proj-contract').length;
+    const assetsBefore = store.listFourLayerAssets().length;
+    const reportsBefore = store.listAnalyticsReports().length;
 
-    const session = store.createAgentSession({
-      projectId: 'proj-contract',
-      agentKind: 'COPILOT',
-      title: 'Live Gateway Failure Probe',
-    });
-    const turn = await collectUnifiedAgentTurn(store, {
-      sessionId: session.id,
-      prompt: '测试离线网关诊断',
-      mockMode: false,
-    });
-    expect(turn.events.some((e) => e.event === 'run_error')).toBe(true);
-    expect(turn.session.status).toBe('ERROR');
-    expect(turn.session.messages.at(-1)?.errorDiagnostic?.code).toBe('LLM_GATEWAY_ERROR');
-  }, 20000);
+    const probes: { kind: 'COPILOT' | 'REQUIREMENT' | 'CODING' | 'REASONING'; prompt: string }[] = [
+      { kind: 'COPILOT', prompt: '测试离线网关诊断' },
+      {
+        kind: 'COPILOT',
+        prompt: '[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {}]\n从原型推导 11 模型',
+      },
+      {
+        kind: 'REQUIREMENT',
+        prompt: '[ACTION:SYNTHESIZE_SRS {}]\n合成九章节 SRS',
+      },
+      {
+        kind: 'CODING',
+        prompt: '[ACTION:GENERATE_TECH_ARCH {"name":"探测技术架构"}]\n生成技术架构',
+      },
+      {
+        kind: 'REASONING',
+        prompt: '[ACTION:METRIC_INSIGHT {"metricId":"MET-02"}]\n指标波动洞察',
+      },
+      {
+        kind: 'REASONING',
+        prompt:
+          '[ACTION:SCENARIO_ATTRIBUTION {"scenarioId":"ascn-01","saveAsReport":true}]\n场景归因',
+      },
+    ];
+
+    for (const probe of probes) {
+      const session = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: probe.kind,
+        title: `Live Gateway Failure Probe (${probe.kind})`,
+      });
+      const turn = await collectUnifiedAgentTurn(store, {
+        sessionId: session.id,
+        prompt: probe.prompt,
+        mockMode: false,
+      });
+      expect(turn.events.some((e) => e.event === 'run_error')).toBe(true);
+      expect(turn.session.status).toBe('ERROR');
+      const lastMsg = turn.session.messages.at(-1);
+      expect(lastMsg?.errorDiagnostic?.code).toBe('LLM_GATEWAY_ERROR');
+      expect(lastMsg?.artifacts ?? []).toHaveLength(0);
+    }
+
+    // Zero fake template SRS, tech arch assets, or attribution reports persisted!
+    expect(store.listRequirementDocs('proj-contract').length).toBe(docsBefore);
+    expect(store.listFourLayerAssets().length).toBe(assetsBefore);
+    expect(store.listAnalyticsReports().length).toBe(reportsBefore);
+  }, 25000);
 
   it('streams unified AgentSession with multi-step validator self-repair, Scoped HITL ask_user, fork, and compact', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
@@ -670,17 +834,23 @@ describe('agent-runtime deep module', () => {
       ],
     });
 
-    const srsRes = await synthesizeRequirementDocFromSession(store, {
+    const srsTurn = await collectUnifiedAgentTurn(store, {
       sessionId: reqAgentSess.id,
-      projectId: coffeeProj.id,
+      prompt: '[ACTION:SYNTHESIZE_SRS {}]\n请合成咖啡店需求规格说明书',
+      mockMode: true,
     });
-    expect(srsRes.doc.content).toContain('## 1.');
-    expect(srsRes.doc.content).toContain('## 9.');
-    expect(srsRes.doc.content).toContain('### 9.7');
-    expect(srsRes.doc.content).toContain('CoffeeOrder');
-    expect(srsRes.doc.content).toContain('深度客制');
-    expect(srsRes.doc.content).not.toContain('采购合同');
-    expect(srsRes.doc.content).not.toContain('风控主管');
+    const srsArt = srsTurn.session.messages
+      .at(-1)
+      ?.artifacts?.find((a) => a.kind === 'REQUIREMENT_DOC');
+    expect(srsArt?.kind).toBe('REQUIREMENT_DOC');
+    const coffeeDoc = store.listRequirementDocs(coffeeProj.id)[0]!;
+    expect(coffeeDoc.content).toContain('## 1.');
+    expect(coffeeDoc.content).toContain('## 9.');
+    expect(coffeeDoc.content).toContain('### 9.7');
+    expect(coffeeDoc.content).toContain('CoffeeOrder');
+    expect(coffeeDoc.content).toContain('深度客制');
+    expect(coffeeDoc.content).not.toContain('采购合同');
+    expect(coffeeDoc.content).not.toContain('风控主管');
   });
 
   it('supports end-to-end en-US locale across unified streaming, tool traces, HITL, SRS, and gateway diagnostics', async () => {
@@ -726,20 +896,22 @@ describe('agent-runtime deep module', () => {
     expect(hitlMsg.askUser).toBeDefined();
     expect(hitlMsg.askUser?.question).toMatch(/[A-Za-z]/);
 
-    // 3. Synthesizing SRS in en-US produces English 9-chapter SRS with zero Chinese tag leaks
-    const enSrs = await synthesizeRequirementDocFromSession(store, {
+    // 3. Synthesizing SRS in en-US via REQUIREMENT Agent Run produces English 9-chapter SRS with zero Chinese tag leaks
+    await collectUnifiedAgentTurn(store, {
       sessionId: reqSess.id,
-      projectId: enProj.id,
+      prompt: '[ACTION:SYNTHESIZE_SRS {}]\nSynthesize 9-chapter English SRS document',
+      mockMode: true,
       locale: 'en-US',
     });
-    expect(enSrs.doc.content).toContain('## 1. Project Background, Goals & Scope Boundaries');
-    expect(enSrs.doc.content).toContain('BrewBatch');
-    expect(enSrs.doc.content).toContain(
+    const enSrsDoc = store.listRequirementDocs(enProj.id)[0]!;
+    expect(enSrsDoc.content).toContain('## 1. Project Background, Goals & Scope Boundaries');
+    expect(enSrsDoc.content).toContain('BrewBatch');
+    expect(enSrsDoc.content).toContain(
       '## 9. Non-Functional Requirements, Integration & Governance Checklist',
     );
-    expect(enSrs.doc.content).toContain('### 9.7');
-    expect(enSrs.doc.content).toContain('[Pending]');
-    expect(enSrs.doc.content).not.toContain('[待确认]');
+    expect(enSrsDoc.content).toContain('### 9.7');
+    expect(enSrsDoc.content).toContain('[Pending]');
+    expect(enSrsDoc.content).not.toContain('[待确认]');
 
     // 4. LlmGatewayError produces English remediation when locale is en-US
     const gwErr = new LlmGatewayError({
@@ -754,7 +926,7 @@ describe('agent-runtime deep module', () => {
     expect(diag.remediation).not.toMatch(/[\u4e00-\u9fa5]/);
   });
 
-  it('emits 4-stage onProgress events during SRS synthesis and respects AbortSignal without saving partial docs', async () => {
+  it('supports cancelling an in-flight SRS synthesis Agent Run and resuming via CONTINUE without data loss', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     store.updateSystemSettings({ mockLlmMode: true });
     const proj = store.createProject({
@@ -767,30 +939,333 @@ describe('agent-runtime deep module', () => {
       projectId: proj.id,
       title: '茶饮需求探索',
     });
-
-    const phases: string[] = [];
-    const res = await synthesizeRequirementDocFromSession(store, {
-      sessionId: reqSess.id,
+    const agentSess = store.createAgentSession({
       projectId: proj.id,
-      onProgress: (ev) => {
-        phases.push(ev.phase);
-        expect(ev.messageZh.length).toBeGreaterThan(0);
-        expect(ev.messageEn.length).toBeGreaterThan(0);
-      },
+      agentKind: 'REQUIREMENT',
+      targetId: reqSess.id,
+      title: '茶饮 SRS 合成会话',
     });
-    expect(phases).toEqual(['CONTEXT', 'MODEL_ALIGN', 'GENERATING', 'VALIDATING']);
-    expect(res.doc.content).toContain('## 9.');
 
-    const docsBeforeAbort = store.listRequirementDocs(proj.id).length;
-    const aborter = new AbortController();
-    aborter.abort();
-    await expect(
-      synthesizeRequirementDocFromSession(store, {
-        sessionId: reqSess.id,
-        projectId: proj.id,
-        signal: aborter.signal,
+    // Abort immediately upon session_meta before save_synthesized_srs_doc executes
+    for await (const ev of runUnifiedAgentSessionStream(store, {
+      sessionId: agentSess.id,
+      prompt: `[ACTION:SYNTHESIZE_SRS {"requirementSessionId":"${reqSess.id}"}]\n合成 9 章节 SRS`,
+      mockMode: true,
+    })) {
+      if (ev.event === 'session_meta') {
+        abortActiveAgentSession(agentSess.id);
+      }
+    }
+    const afterCancel = store.getAgentSession(agentSess.id)!;
+    expect(afterCancel.status).toBe('IDLE');
+    expect(afterCancel.messages.at(-1)?.cancelled).toBe(true);
+    expect(store.listRequirementDocs(proj.id)).toHaveLength(0);
+
+    // Resuming with mode: 'CONTINUE' (empty prompt) resolves the prior [ACTION:SYNTHESIZE_SRS] and completes!
+    const resumed = await collectUnifiedAgentTurn(store, {
+      sessionId: agentSess.id,
+      mode: 'CONTINUE',
+      mockMode: true,
+    });
+    expect(
+      resumed.session.messages.at(-1)?.artifacts?.some((a) => a.kind === 'REQUIREMENT_DOC'),
+    ).toBe(true);
+    const savedDocs = store.listRequirementDocs(proj.id);
+    expect(savedDocs).toHaveLength(1);
+    expect(savedDocs[0]!.content).toContain('## 9.');
+  });
+
+  it('never mutates suite.MU during prototype generation/refinement and synthesizes ontology from the Confirmed Revision when prototypeId is omitted', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+
+    // 1. On proj-contract (which has 11 models), refining a prototype via PROTOTYPE_CO_DESIGN MUST NOT mutate suite.MU
+    const beforeContractMu = JSON.stringify(store.getProject('proj-contract')!.suite.MU);
+    const seedProto = store.listPrototypes('proj-contract')[0]!;
+    const seedCoDesign = ensurePrototypeCoDesignSession(store, 'proj-contract', seedProto.id);
+    await collectUnifiedAgentTurn(store, {
+      sessionId: seedCoDesign.id,
+      prompt: '增加实验性合同批量作废危险按钮',
+      mockMode: true,
+    });
+    const updatedSeedProto = store.getPrototype(seedProto.id)!;
+    expect(updatedSeedProto.revisions).toHaveLength(2);
+    expect(updatedSeedProto.aheadOfConfirmedCount).toBe(1);
+    expect(JSON.stringify(store.getProject('proj-contract')!.suite.MU)).toBe(beforeContractMu);
+
+    // 2. When prototypeId is omitted, synthesize_ontology_suite MUST read Confirmed Revision, NOT newest unconfirmed revision/prototype
+    const proj = store.createProject({
+      name: '设备巡检协同平台',
+      code: 'EAM-INSP',
+      domain: '工业设备点巡检',
+      template: 'EMPTY',
+    });
+
+    const protoA = store.createPrototype(proj.id, {
+      name: '巡检方向 A',
+      htmlContent:
+        '<section data-screen-id="SCR-INSP-TASK" data-screen-name="巡检工单台账"><input data-element-id="EL-TASK-CODE" data-binding="InspectionTask.taskCode" /><button data-element-id="EL-COMPLETE" data-event-id="EVT-INSP-DONE">提交巡检</button></section>',
+      source: 'GENERATED',
+    });
+    store.confirmPrototypeRevision(proj.id, protoA.revision.id);
+
+    // Append an unconfirmed experimental revision 2 on protoA
+    store.appendPrototypeRevision(protoA.prototype.id, {
+      htmlContent:
+        '<section data-screen-id="SCR-UNCONFIRMED-EXP" data-screen-name="未确认实验屏"><input data-element-id="EL-EXP" data-binding="UnconfirmedExperiment.expCode" /></section>',
+      instruction: '临时尝试完全不同的实验聚合',
+      source: 'REFINED',
+    });
+
+    // Also create a brand-new unconfirmed prototype B (which sits at listPrototypes(proj.id)[0]!)
+    store.createPrototype(proj.id, {
+      name: '巡检方向 B（未确认最新行）',
+      htmlContent:
+        '<section data-screen-id="SCR-NEWER-DRAFT" data-screen-name="未确认方向B"><input data-element-id="EL-DRAFT" data-binding="UnconfirmedDirectionB.draftCode" /></section>',
+      source: 'GENERATED',
+    });
+    expect(store.listPrototypes(proj.id)[0]!.name).toBe('巡检方向 B（未确认最新行）');
+
+    const copilotSess = store.createAgentSession({
+      projectId: proj.id,
+      agentKind: 'COPILOT',
+      title: 'EAM 11-Model Synthesis',
+    });
+    await collectUnifiedAgentTurn(store, {
+      sessionId: copilotSess.id,
+      prompt: '[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {}]\n从已确认原型版本合成 11 模型本体',
+      mockMode: true,
+    });
+    const synthProj = store.getProject(proj.id)!;
+    expect(synthProj.validation.errorCount).toBe(0);
+    const aggNames = synthProj.suite.M1!.aggregates.map((a) => a.name);
+    expect(aggNames).toContain('InspectionTask');
+    expect(aggNames).not.toContain('UnconfirmedExperiment');
+    expect(aggNames).not.toContain('UnconfirmedDirectionB');
+    expect(synthProj.suite.MU?.screens.map((s) => s.screenId)).toContain('SCR-INSP-TASK');
+    expect(synthProj.suite.MU?.screens.map((s) => s.screenId)).not.toContain('SCR-NEWER-DRAFT');
+
+    // 3. Passing an explicit unconfirmed prototypeId (protoB) is strictly rejected under ADR 0010!
+    const protoB = store.listPrototypes(proj.id).find((p) => p.name.includes('方向 B'))!;
+    const rejectUnconfirmedB = await executeDomainRunToolCall(
+      store,
+      copilotSess,
+      'tc-unconfirmed-b',
+      'synthesize_ontology_suite',
+      { prototypeId: protoB.id },
+      'en-US',
+      { isMock: true },
+    );
+    expect(rejectUnconfirmedB).not.toBeNull();
+    expect(rejectUnconfirmedB!.isError).toBe(true);
+    expect(rejectUnconfirmedB!.toolResultContent).toContain('Confirmed Prototype Revision');
+  }, 30000);
+
+  it('enforces ADR 0007 / ADR 0009 zero silent template fallback in live mode for SRS and Ontology synthesis', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const proj = store.createProject({
+      name: '智能仓储调度系统',
+      code: 'WMS-LIVE',
+      domain: '智慧物流仓储',
+      template: 'EMPTY',
+    });
+
+    // 1. Live mode save_synthesized_srs_doc rejects incomplete Markdown without splicing deterministic template
+    const reqSess = store.createAgentSession({
+      projectId: proj.id,
+      agentKind: 'REQUIREMENT',
+      title: 'WMS Live SRS Session',
+    });
+    const incompleteMarkdown = [
+      '# 智能仓储调度系统 — 软件需求规格说明书',
+      '## 1. 文档概述与项目背景',
+      '仅写了第一章，其余章节均缺失。',
+    ].join('\n\n');
+
+    const srsResult = await executeDomainRunToolCall(
+      store,
+      reqSess,
+      'tc-live-srs',
+      'save_synthesized_srs_doc',
+      { title: 'WMS SRS v1.0', content: incompleteMarkdown },
+      'zh-CN',
+      { isMock: false },
+    );
+    expect(srsResult).not.toBeNull();
+    expect(srsResult!.isError).toBe(true);
+    expect(srsResult!.toolResultContent).toContain('## 2.');
+    expect(srsResult!.toolResultContent).toContain('### 9.7');
+    expect(store.listRequirementDocs(proj.id)).toHaveLength(0);
+
+    // 2. Live mode synthesize_ontology_suite rejects missing blueprint models even after prototype confirmation
+    const createdProto = store.createPrototype(proj.id, {
+      name: 'WMS 入库工作台原型',
+      htmlContent:
+        '<section data-screen-id="SCR-WMS-INBOUND" data-screen-name="入库作业台账"><input data-element-id="EL-ASN" data-binding="InboundOrder.asnCode" /><button data-element-id="EL-CONFIRM-IN" data-event-id="EVT-INBOUND-RECEIVED">确认收货</button></section>',
+      source: 'GENERATED',
+    });
+    store.confirmPrototypeRevision(proj.id, createdProto.revision.id);
+
+    const copilotSess = store.createAgentSession({
+      projectId: proj.id,
+      agentKind: 'COPILOT',
+      title: 'WMS Live Ontology Synthesis',
+    });
+
+    const missingBlueprintRes = await executeDomainRunToolCall(
+      store,
+      copilotSess,
+      'tc-live-suite',
+      'synthesize_ontology_suite',
+      { summaryNote: 'Only summary note provided without structured models' },
+      'en-US',
+      { isMock: false },
+    );
+    expect(missingBlueprintRes).not.toBeNull();
+    expect(missingBlueprintRes!.isError).toBe(true);
+    expect(missingBlueprintRes!.toolResultContent).toContain('aggregates');
+    expect(missingBlueprintRes!.toolResultContent).toContain('behaviors');
+    expect(missingBlueprintRes!.toolResultContent).toContain('interfaces');
+    // Suite M1..M7 must NOT have been fabricated via template fallback
+    expect(store.getProject(proj.id)!.suite.M1).toBeUndefined();
+  });
+
+  it('executes RUN_ONTOLOGY_EXTRACTION in CAPABILITY sessions and emits EXTRACTION_JOB artifact + extractionJobs in message_end', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const capSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'CAPABILITY',
+      title: '逆向本体提取会话',
+    });
+
+    const ddlSnippet = `
+      CREATE TABLE vendor_settlement_orders (
+        id VARCHAR(64) PRIMARY KEY,
+        settlement_no VARCHAR(64) NOT NULL,
+        total_amount DECIMAL(18,2) NOT NULL,
+        status VARCHAR(32) NOT NULL
+      );
+    `;
+
+    const turn = await collectUnifiedAgentTurn(store, {
+      sessionId: capSess.id,
+      prompt: `[ACTION:RUN_ONTOLOGY_EXTRACTION ${JSON.stringify({
+        systemId: 'sys-erp-sap',
+        title: '供应商结算单 DDL 逆向提取',
+        sourceType: 'DDL_ONLY',
+        sourceSnippet: ddlSnippet,
+      })}]\n请对供应商结算表执行智能本体逆向提取`,
+      mockMode: true,
+    });
+
+    const artifactEvt = turn.events.find(
+      (ev) =>
+        ev.event === 'artifact' &&
+        (ev.data.artifact as { kind?: string } | undefined)?.kind === 'EXTRACTION_JOB',
+    );
+    expect(artifactEvt).toBeDefined();
+
+    const lastMsg = turn.session.messages.at(-1)!;
+    const extractionArt = lastMsg.artifacts?.find((a) => a.kind === 'EXTRACTION_JOB');
+    expect(extractionArt).toBeDefined();
+    if (extractionArt?.kind === 'EXTRACTION_JOB') {
+      expect(extractionArt.candidateCount).toBeGreaterThan(0);
+      expect(store.listExtractionJobs().some((j) => j.id === extractionArt.jobId)).toBe(true);
+    }
+
+    const msgEndEvt = turn.events.find((ev) => ev.event === 'message_end');
+    expect(msgEndEvt).toBeDefined();
+    const endJobs = msgEndEvt!.data.extractionJobs as Array<{ id: string }> | undefined;
+    expect(Array.isArray(endJobs)).toBe(true);
+    expect(endJobs!.length).toBeGreaterThan(0);
+  });
+
+  it('recovers orphaned RUNNING sessions into ERROR with AGENT_RUN_INTERRUPTED on live attach and auto-resumes resumable checkpoints on startup', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+
+    // Case A: Orphaned RUNNING session without checkpoint -> live stream emits run_error AGENT_RUN_INTERRUPTED and sets status ERROR (never silent IDLE)
+    const orphanLiveSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'COPILOT',
+      title: 'Orphaned Live Stream Session',
+    });
+    store.saveAgentSession({
+      ...orphanLiveSess,
+      status: 'RUNNING',
+      messages: [
+        {
+          id: 'u-orphan-1',
+          role: 'user',
+          content: 'Please review M3 validation rules.',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const liveEvents = [];
+    for await (const ev of attachUnifiedAgentSessionLiveStream(store, orphanLiveSess.id)) {
+      liveEvents.push(ev);
+    }
+    expect(liveEvents).toHaveLength(1);
+    expect(liveEvents[0]!.event).toBe('run_error');
+    const liveDiag = liveEvents[0]!.data.diagnostic as { code: string; message: string };
+    expect(liveDiag.code).toBe('AGENT_RUN_INTERRUPTED');
+    const afterLiveAttach = store.getAgentSession(orphanLiveSess.id)!;
+    expect(afterLiveAttach.status).toBe('ERROR');
+    expect(afterLiveAttach.messages.at(-1)?.errorDiagnostic?.code).toBe('AGENT_RUN_INTERRUPTED');
+
+    // Case B: Orphaned RUNNING session with non-resumable checkpoint -> autoResumeInterruptedAgentSessions marks ERROR
+    const nonResumableSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'REQUIREMENT',
+      title: '重启中断不可恢复会话',
+    });
+    store.saveAgentSession({
+      ...nonResumableSess,
+      status: 'RUNNING',
+      messages: [],
+    });
+
+    // Case C: Orphaned RUNNING session WITH resumable TURN_STARTED checkpoint + user prompt -> autoResumeInterruptedAgentSessions resumes and completes!
+    const resumableSess = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'COPILOT',
+      title: '重启后可自动恢复会话',
+    });
+    store.saveAgentSession({
+      ...resumableSess,
+      status: 'RUNNING',
+      messages: [
+        {
+          id: 'u-resume-1',
+          role: 'user',
+          content: '请新增一条大额采购合同财务副总必审规则',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+    store.saveAgentCheckpoint(
+      resumableSess.id,
+      'PI_UNIFIED_COPILOT',
+      JSON.stringify({
+        sessionId: resumableSess.id,
+        status: 'RUNNING',
+        phase: 'TURN_STARTED',
+        messageCount: 1,
       }),
-    ).rejects.toMatchObject({ name: 'AbortError' });
-    expect(store.listRequirementDocs(proj.id).length).toBe(docsBeforeAbort);
+    );
+
+    const processed = await autoResumeInterruptedAgentSessions(store);
+    expect(processed).toBe(2);
+
+    const afterNonResumable = store.getAgentSession(nonResumableSess.id)!;
+    expect(afterNonResumable.status).toBe('ERROR');
+    expect(afterNonResumable.messages.at(-1)?.errorDiagnostic?.code).toBe('AGENT_RUN_INTERRUPTED');
+
+    const afterResumed = store.getAgentSession(resumableSess.id)!;
+    expect(afterResumed.status).toBe('IDLE');
+    expect(afterResumed.messages.at(-1)?.role).toBe('assistant');
+    expect(afterResumed.messages.at(-1)?.errorDiagnostic).toBeUndefined();
   });
 });

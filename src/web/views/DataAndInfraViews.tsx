@@ -11,33 +11,28 @@ import {
   Send,
   Trash2,
 } from 'lucide-react';
-import type {
-  MetricInsightResult,
-  ScenarioAttributionResult,
-} from '../../packages/agent-runtime/index.js';
-import type {
-  AnalyticsQueryResult,
-  AnalyticsReport,
-  AnalyticsScenario,
-  DataDocument,
-  DataMappingRule,
-  DatabaseResource,
-  LlmProviderConfig,
-  MetricDefinition,
-  WritebackInterface,
+import {
+  doesProviderSupportVision,
+  type AnalyticsQueryResult,
+  type AnalyticsReport,
+  type AnalyticsScenario,
+  type DataDocument,
+  type DataMappingRule,
+  type DatabaseResource,
+  type LlmProviderConfig,
+  type MetricDefinition,
+  type WritebackInterface,
 } from '../../packages/workspace-store/index.js';
 import {
   apiDeleteResource,
   apiExecuteAnalyticsSql,
-  apiGenerateMetricInsight,
   apiPostJson,
   apiPutJson,
-  apiRunScenarioAttribution,
   apiTestLlmProvider,
   triggerBrowserDownload,
   useWorkbenchStore,
 } from '../api.js';
-import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
+import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import {
   Button,
   ConfirmDialog,
@@ -78,7 +73,7 @@ export function DataResourcesView({
   onNavigate?: (view: NavViewId) => void;
 } = {}) {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
+  const { data, patchData, showToast, startOntologyExtractionRun } = useWorkbenchStore();
   const [sqlText, setSqlText] = useState(SQL_SANDBOX_PRESETS[0]!.sql);
   const [sqlResult, setSqlResult] = useState<AnalyticsQueryResult | null>(null);
   const [sqlError, setSqlError] = useState<string | null>(null);
@@ -169,42 +164,36 @@ export function DataResourcesView({
         )
         .join('\n\n');
 
-      const json = await apiPostJson<{
-        job: { summary: string };
-        project?: typeof data.activeProject;
-        blockedBy?: unknown[];
-        extractionJobs: typeof data.extractionJobs;
-      }>('/api/capability/extraction-jobs', {
+      const prevJobIds = new Set(data.extractionJobs.map((j) => j.id));
+      onNavigate?.('cap-extraction');
+      await startOntologyExtractionRun({
         systemId: data.legacySystems[0]?.id ?? 'sys-erp-contract',
         projectId: data.activeProject.id,
         title: t('从数仓资源萃取数据本体 (M1+MM)', 'Extract Data Ontology from Data Resources (M1+MM)'),
-        sourceType: 'DDL_AND_OPENAPI',
+        sourceType: 'DDL_ONLY',
         sourceSnippet:
           ddlFromTables ||
           'CREATE TABLE t_contract (id VARCHAR(36) PRIMARY KEY, total_amount DECIMAL(18,2));',
         applyImmediately: true,
       });
-      if (json.project) {
-        patchData({ activeProject: json.project, extractionJobs: json.extractionJobs });
-      } else {
-        patchData({ extractionJobs: json.extractionJobs });
-      }
-      if (json.blockedBy?.length) {
+
+      const latestData = useWorkbenchStore.getState().data;
+      const newestJob =
+        (latestData?.extractionJobs ?? []).find((j) => !prevJobIds.has(j.id)) ??
+        latestData?.extractionJobs[0];
+      if (newestJob) {
         showToast(
-          t(
-            `数据本体萃取已完成，但合并被一致性门禁阻止（${json.blockedBy.length} 个新增一致性错误）。请到「能力中心 → 本体萃取」逐项确认。`,
-            `Data ontology extraction finished, but the merge was blocked by ${json.blockedBy.length} new Consistency Errors. Confirm the candidates under Capability Center → Ontology Extraction.`,
-          ),
+          newestJob.appliedToProject
+            ? t(
+                `已从数据资源完成数据本体萃取 (M1+MM)：${newestJob.summary}`,
+                `Extracted data ontology (M1+MM) from data resources: ${newestJob.summary}`,
+              )
+            : t(
+                `数据本体萃取候选已生成，请在「本体萃取」中确认后合并：${newestJob.summary}`,
+                `Data ontology extraction candidates are ready for review: ${newestJob.summary}`,
+              ),
         );
-        return;
       }
-      showToast(
-        t(
-          `已从数据资源完成数据本体萃取 (M1+MM)：${json.job.summary}`,
-          `Extracted data ontology (M1+MM) from data resources: ${json.job.summary}`,
-        ),
-      );
-      onNavigate?.('data-mappings');
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err));
     } finally {
@@ -889,13 +878,16 @@ export function DataMappingsView() {
 
 export function DataMetricsReportsView() {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
+  const {
+    data,
+    activeItemId,
+    patchData,
+    showToast,
+    startMetricInsightRun,
+    startScenarioAttributionRun,
+  } = useWorkbenchStore();
   const [viewMode, setViewMode] = useState<'DASHBOARD' | 'REPORTS_EDITOR'>('DASHBOARD');
-  const [insightsByMetric, setInsightsByMetric] = useState<Record<string, MetricInsightResult>>({});
   const [loadingMetricId, setLoadingMetricId] = useState<string | null>(null);
-  const [attributionsByScenario, setAttributionsByScenario] = useState<
-    Record<string, ScenarioAttributionResult>
-  >({});
   const [loadingScenarioId, setLoadingScenarioId] = useState<string | null>(null);
 
   // Report Tiptap Editor state
@@ -925,6 +917,71 @@ export function DataMetricsReportsView() {
     }
   }, [data, selectedReportId]);
 
+  useEffect(() => {
+    if (!data || !activeItemId) return;
+    const targetReport = data.analyticsReports.find((r) => r.id === activeItemId);
+    if (targetReport) {
+      setSelectedReportId(targetReport.id);
+      setReportDraft(targetReport.markdownContent);
+      setViewMode('REPORTS_EDITOR');
+    } else if (data.metrics.some((m) => m.id === activeItemId)) {
+      setViewMode('DASHBOARD');
+    }
+  }, [activeItemId, data?.analyticsReports, data?.metrics]);
+
+  const insightsByMetric = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        anomalyDrivers: string[];
+        suggestedAction: string;
+        writebackInterfaceId: string;
+      }
+    > = {};
+    if (!data) return map;
+    for (const sess of data.agentSessions ?? []) {
+      if (sess.projectId !== data.activeProject.id || sess.agentKind !== 'REASONING') continue;
+      for (const msg of sess.messages) {
+        for (const art of msg.artifacts ?? []) {
+          if (art.kind === 'METRIC_INSIGHT') {
+            map[art.metricId] = {
+              anomalyDrivers: art.anomalyDrivers,
+              suggestedAction: art.suggestedAction,
+              writebackInterfaceId: art.writebackInterfaceId,
+            };
+          }
+        }
+      }
+    }
+    return map;
+  }, [data?.agentSessions, data?.activeProject.id]);
+
+  const attributionsByScenario = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        causalBreakdown: { factor: string; weight: string; evidence: string }[];
+        savedReport?: AnalyticsReport;
+      }
+    > = {};
+    if (!data) return map;
+    for (const sess of data.agentSessions ?? []) {
+      if (sess.projectId !== data.activeProject.id || sess.agentKind !== 'REASONING') continue;
+      for (const msg of sess.messages) {
+        for (const art of msg.artifacts ?? []) {
+          if (art.kind === 'ANALYTICS_REPORT' && art.scenarioId) {
+            const savedReport = data.analyticsReports.find((r) => r.id === art.reportId);
+            map[art.scenarioId] = {
+              causalBreakdown: art.causalBreakdown ?? [],
+              ...(savedReport ? { savedReport } : {}),
+            };
+          }
+        }
+      }
+    }
+    return map;
+  }, [data?.agentSessions, data?.activeProject.id, data?.analyticsReports]);
+
   const activeReport = useMemo(() => {
     if (!data) return undefined;
     return (
@@ -939,34 +996,27 @@ export function DataMetricsReportsView() {
   if (!data) return null;
 
   const handleMetricInsight = async (metricId: string) => {
+    if (loadingMetricId) return;
     setLoadingMetricId(metricId);
     try {
-      const res = await apiGenerateMetricInsight(metricId);
-      setInsightsByMetric((prev) => ({ ...prev, [metricId]: res }));
-      showToast(
-        t(`已生成指标 ${res.metric.name} 的 AI 异动洞察`, `Generated AI insight for ${res.metric.code}`),
-      );
+      useAgentPanelStore.getState().revealPanel();
+      await startMetricInsightRun(metricId);
     } finally {
       setLoadingMetricId(null);
     }
   };
 
   const handleScenarioAttribution = async (scenarioId: string) => {
+    if (loadingScenarioId) return;
     setLoadingScenarioId(scenarioId);
     try {
-      const res = await apiRunScenarioAttribution(scenarioId, { saveAsReport: true });
-      setAttributionsByScenario((prev) => ({ ...prev, [scenarioId]: res }));
-      patchData({ analyticsReports: res.analyticsReports });
-      if (res.savedReport) {
-        setSelectedReportId(res.savedReport.id);
-        setReportDraft(res.savedReport.markdownContent);
+      useAgentPanelStore.getState().revealPanel();
+      await startScenarioAttributionRun(scenarioId, { saveAsReport: true });
+      const latestReports = useWorkbenchStore.getState().data?.analyticsReports ?? [];
+      if (latestReports[0] && latestReports[0].id !== selectedReportId) {
+        setSelectedReportId(latestReports[0].id);
+        setReportDraft(latestReports[0].markdownContent);
       }
-      showToast(
-        t(
-          `已完成场景 AI 归因分析并归档新报告「${res.savedReport?.title ?? res.scenario.name}」`,
-          `Completed scenario attribution and saved report`,
-        ),
-      );
     } finally {
       setLoadingScenarioId(null);
     }
@@ -1586,18 +1636,26 @@ export function DataMetricsReportsView() {
 
 export function DataReasoningView() {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
+  const { data, patchData, showToast, ensureProjectAgentSession, setActiveSessionId, startSessionAgentRun } =
+    useWorkbenchStore();
 
   if (!data) return null;
 
   const seededSession = data.reasoningSessions[0];
+  const latestReasoningRunSession = data.agentSessions.find(
+    (s) => s.projectId === data.activeProject.id && s.agentKind === 'REASONING',
+  );
+  const latestPolicyArtifact = [...(latestReasoningRunSession?.messages ?? [])]
+    .reverse()
+    .flatMap((m) => m.artifacts ?? [])
+    .find((a) => a.kind === 'REASONING_POLICY');
 
   const handleTriggerWriteback = async (interfaceId: string, actionTitle?: string) => {
     const json = await apiPostJson<{ writebackInterfaces: WritebackInterface[] }>(
       `/api/analytics/writebacks/${interfaceId}/execute`,
       {
         payloadOverride: {
-          triggeredBy: 'REASONING_AGENT_WORKBENCH',
+          triggeredBy: 'REASONING_AGENT_PANEL',
           ...(actionTitle ? { actionTitle } : {}),
         },
       },
@@ -1606,27 +1664,149 @@ export function DataReasoningView() {
     showToast(`已通过回写接口 ${interfaceId} 将决策指令回写至业务系统`);
   };
 
+  const handleQuickReasoningPrompt = async (
+    mode: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY',
+    prompt: string,
+  ) => {
+    useAgentPanelStore.getState().revealPanel();
+    const sess = await ensureProjectAgentSession(data.activeProject.id, 'REASONING', {
+      reasoningMode: mode,
+    });
+    setActiveSessionId(sess.id);
+    await startSessionAgentRun({
+      sessionId: sess.id,
+      prompt,
+      reasoningMode: mode,
+    });
+  };
+
+  const policyRecommendations =
+    latestPolicyArtifact?.kind === 'REASONING_POLICY' &&
+    latestPolicyArtifact.policyRecommendations.length > 0
+      ? latestPolicyArtifact.policyRecommendations
+      : (seededSession?.policyRecommendations ?? []);
+
   return (
     <div className="flex flex-col gap-3.5">
-      <AgentSessionWorkbench
-        agentKind="REASONING"
-        defaultReasoningMode="ASK_POLICY"
-        defaultPromptWhenEmpty="为什么本季度高风险合同逾期未结算率上升到了 14.8%？应该采取什么策略并回写业务系统？"
-        title={t(
-          '数据本体三阶流式推理引擎 (智能问数 ASK_DATA → 智能问因 ASK_WHY → 智能问策 ASK_POLICY)',
-          'Data Ontology 3-Stage Streaming Reasoning Engine',
-        )}
-        subtitle={t(
-          '自动穿透 M1 对象关联链、MM 物理表实时只读 SQL 查询与 M3 规则阈值，支持多会话分叉与闭环策略写回',
-          'Live SQL + M1/MM/M3 causal reasoning with multi-session history and closed-loop write-back',
-        )}
-        inputTestId="reasoning-question-input"
-        sendBtnTestId="run-reasoning-btn"
-        onTriggerWriteback={(wbId, recTitle) => void handleTriggerWriteback(wbId, recTitle)}
-      />
+      <div className="card flex flex-col gap-3" data-testid="data-reasoning-overview-card">
+        <div className="card-header" style={{ marginBottom: 0 }}>
+          <div>
+            <h3 className="card-title">
+              {t(
+                '数据本体三阶流式推理（1. 问数 ASK_DATA → 2. 问因 ASK_WHY → 3. 问策 ASK_POLICY）',
+                '3-Stage Data Ontology Reasoning (Ask Data → Ask Why → Ask Policy)',
+              )}
+            </h3>
+            <div className="text-[12.5px] text-muted-foreground">
+              {t(
+                '推理对话与实时 SQL / 归因步骤统一在右侧智能体面板（支持宽屏模式与会话分叉）中执行；下方展示最新沉淀的三段式结论与受治理回写动作。',
+                'Reasoning runs and live SQL/causal steps execute in the unified Agent Panel on the right; latest 3-stage conclusions and governed write-backs appear below.',
+              )}
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="accent"
+            size="sm"
+            data-testid="open-reasoning-agent-panel-btn"
+            onClick={() => {
+              const panel = useAgentPanelStore.getState();
+              panel.revealPanel();
+              panel.setWideMode(true, { commit: false });
+            }}
+          >
+            {t('展开推理面板', 'Open Reasoning Panel')}
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2.5">
+          {[
+            {
+              mode: 'ASK_DATA' as const,
+              titleZh: '阶段 1 · 智能问数',
+              titleEn: 'Stage 1 · Ask Data',
+              descZh: '基于 MM 物理表映射与只读 SQL 沙箱探查真实指标切片',
+              descEn: 'Query real slices via MM physical table mappings & read-only SQL',
+              samplePrompt: t(
+                '统计本季度各区域高风险合同逾期未结算金额与占比',
+                'Summarize Q3 high-risk contract overdue settlement amounts by region',
+              ),
+            },
+            {
+              mode: 'ASK_WHY' as const,
+              titleZh: '阶段 2 · 智能问因',
+              titleEn: 'Stage 2 · Ask Why',
+              descZh: '穿透 M1 对象关联链与 M3 规则阈值定位异动根因',
+              descEn: 'Trace M1 object links & M3 rule thresholds to isolate root causes',
+              samplePrompt: t(
+                '为什么本季度高风险合同逾期未结算率上升到了 14.8%？',
+                'Why did the high-risk contract overdue settlement rate rise to 14.8%?',
+              ),
+            },
+            {
+              mode: 'ASK_POLICY' as const,
+              titleZh: '阶段 3 · 智能问策',
+              titleEn: 'Stage 3 · Ask Policy',
+              descZh: '输出量化策略建议并绑定 MI / Writeback 回写接口闭环执行',
+              descEn: 'Propose quantified policy actions bound to governed MI write-backs',
+              samplePrompt: t(
+                '为什么本季度高风险合同逾期未结算率上升到了 14.8%？应该采取什么策略并回写业务系统？',
+                'Why did overdue rate hit 14.8% and what policy actions should we write back?',
+              ),
+            },
+          ].map((stage) => (
+            <div
+              key={stage.mode}
+              className="p-3 bg-inset rounded-[6px] border border-line flex flex-col justify-between gap-2"
+            >
+              <div>
+                <div className="flex items-center justify-between gap-1.5">
+                  <strong className="text-[13px]">{t(stage.titleZh, stage.titleEn)}</strong>
+                  <span className="badge">{stage.mode}</span>
+                </div>
+                <p className="text-[12px] text-muted-foreground mt-1 mb-0">
+                  {t(stage.descZh, stage.descEn)}
+                </p>
+              </div>
+              <div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  data-testid={`quick-reasoning-${stage.mode}-btn`}
+                  onClick={() => void handleQuickReasoningPrompt(stage.mode, stage.samplePrompt)}
+                >
+                  <Play size={11} />
+                  {t('在智能体面板运行示例', 'Run in Agent Panel')}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {(latestPolicyArtifact?.kind === 'REASONING_POLICY'
+          ? latestPolicyArtifact.dataSummary
+          : seededSession?.dataSummary
+        )?.length ? (
+          <div className="grid grid-cols-3 gap-2.5">
+            {(latestPolicyArtifact?.kind === 'REASONING_POLICY'
+              ? latestPolicyArtifact.dataSummary
+              : seededSession!.dataSummary
+            ).map((kpi, idx) => (
+              <div key={idx} className="p-2.5 rounded-[6px] border border-line bg-surface">
+                <div className="text-[11.5px] text-muted-foreground">{kpi.label}</div>
+                <div className="flex items-baseline justify-between gap-2 mt-0.5">
+                  <strong className="text-[15px] font-mono">{kpi.value}</strong>
+                  {kpi.delta && <span className="badge badge-warn">{kpi.delta}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
 
       {/* Governed Policy Write-Back Quick Cards */}
-      {seededSession && seededSession.policyRecommendations.length > 0 && (
+      {policyRecommendations.length > 0 && (
         <div className="card">
           <div className="card-header" style={{ marginBottom: 8 }}>
             <div>
@@ -1640,11 +1820,15 @@ export function DataReasoningView() {
                 )}
               </div>
             </div>
-            <span className="badge badge-accent">{seededSession.mode}</span>
+            <span className="badge badge-accent">
+              {latestPolicyArtifact?.kind === 'REASONING_POLICY'
+                ? latestPolicyArtifact.mode
+                : (seededSession?.mode ?? 'ASK_POLICY')}
+            </span>
           </div>
 
           <div className="grid grid-cols-2 gap-2.5">
-            {seededSession.policyRecommendations.map((rec, i) => (
+            {policyRecommendations.map((rec, i) => (
               <div
                 key={i} className="p-3 bg-inset rounded-[6px] border border-line flex flex-col justify-between gap-2"
               >
@@ -1901,6 +2085,7 @@ export function LlmCenterView() {
   const [defaultModel, setDefaultModel] = useState('auto/glm-5.3-flash');
   const [modelsCsv, setModelsCsv] = useState('auto/glm-5.3-flash, auto/glm-5.2');
   const [enabled, setEnabled] = useState(true);
+  const [supportsVision, setSupportsVision] = useState(true);
 
   if (!data) return null;
 
@@ -1928,6 +2113,7 @@ export function LlmCenterView() {
     setDefaultModel('auto/glm-5.3-flash');
     setModelsCsv('auto/glm-5.3-flash, gemini-2.5-flash');
     setEnabled(true);
+    setSupportsVision(true);
     setModalOpen(true);
   };
 
@@ -1940,6 +2126,7 @@ export function LlmCenterView() {
     setDefaultModel(p.defaultModel);
     setModelsCsv(p.availableModels.join(', '));
     setEnabled(p.enabled);
+    setSupportsVision(doesProviderSupportVision(p));
     setModalOpen(true);
   };
 
@@ -1957,6 +2144,7 @@ export function LlmCenterView() {
         .map((m) => m.trim())
         .filter(Boolean),
       enabled,
+      supportsVision,
     };
     const json = await apiPostJson<{ llmProviders: LlmProviderConfig[] }>(
       '/api/llm/providers',
@@ -2015,14 +2203,23 @@ export function LlmCenterView() {
         </Button>
       </div>
 
-      {data.llmProviders.map((p, idx) => (
+      {data.llmProviders.map((p, idx) => {
+        const visionOk = doesProviderSupportVision(p);
+        return (
         <div key={p.id} className="card">
           <div className="card-header">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="card-title">{p.name}</h3>
                 <span className={`badge ${p.enabled ? 'badge-ok' : 'badge-warn'}`}>
                   {p.enabled ? 'ENABLED' : 'DISABLED'}
+                </span>
+                <span
+                  className={`badge ${visionOk ? 'badge-accent' : 'badge-warn'}`}
+                  data-testid={idx === 0 ? 'llm-provider-vision-badge' : `llm-provider-vision-badge-${idx}`}
+                  data-vision-supported={visionOk ? 'true' : 'false'}
+                >
+                  {visionOk ? t('支持看图', 'Vision Input') : t('仅文本', 'Text Only')}
                 </span>
               </div>
               <div className="font-mono text-[12.5px] text-muted-foreground">
@@ -2080,7 +2277,8 @@ export function LlmCenterView() {
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
 
       <ConfirmDialog
         open={modalOpen}
@@ -2144,6 +2342,28 @@ export function LlmCenterView() {
               onChange={(e) => setModelsCsv(e.target.value)}
             />
           </div>
+        </div>
+        <div className="mt-2 rounded-control border border-line bg-inset px-3 py-2.5">
+          <label className="inline-flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              data-testid="llm-provider-supports-vision-checkbox"
+              checked={supportsVision}
+              onChange={(e) => setSupportsVision(e.target.checked)}
+            />
+            <span className="flex flex-col gap-0.5">
+              <strong className="text-[13px] text-ink">
+                {t('支持看图', 'Vision Input')}
+              </strong>
+              <span className="text-[12px] text-muted-foreground">
+                {t(
+                  '开启后，智能体运行会将主参考、借鉴参考、上传图片与框选截图直接发送给模型；关闭后改用文字设计说明。',
+                  'When enabled, Agent Runs send Visual References, uploaded images, and selection crops directly to the model; when off, text design notes are used instead.',
+                )}
+              </span>
+            </span>
+          </label>
         </div>
       </ConfirmDialog>
 

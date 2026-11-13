@@ -10,10 +10,12 @@ import {
   type Api,
   type AssistantMessage,
   type Context,
+  type ImageContent,
   type JsonObject,
   type Message,
   type Model,
   type MutableModels,
+  type TextContent,
   type Tool,
   type ToolCall,
   type ToolResultMessage,
@@ -35,22 +37,48 @@ import {
   handleOntologyMcpRequest,
   inspectOntologyMcpCapabilities,
 } from '../../package-compiler/index.js';
-import type {
-  AgentAskUserPrompt,
-  AgentDomainArtifact,
-  AgentSession,
-  AgentSessionKind,
-  AgentSessionMessage,
-  AgentToolCallTrace,
-  LlmProviderConfig,
-  ProjectDetail,
-  WorkspaceStore,
+import {
+  doesProviderSupportVision,
+  type AgentAskUserPrompt,
+  type AgentDomainArtifact,
+  type AgentImageAttachmentRef,
+  type AgentImageAttachmentRole,
+  type AgentSession,
+  type AgentSessionKind,
+  type AgentSessionMessage,
+  type AgentToolCallTrace,
+  type DesignBrief,
+  type InteractivePrototype,
+  type LlmProviderConfig,
+  type ProjectDetail,
+  type PrototypeTargetAnchor,
+  type WorkspaceStore,
 } from '../../workspace-store/index.js';
 import {
   type AgentLocale,
   pickLocaleText,
   resolveEffectiveLocale,
 } from './locale.js';
+import {
+  DOMAIN_RUN_OPENAI_TOOLS,
+  buildDeterministicSrsMarkdown,
+  buildMockMetricInsightToolArgs,
+  buildMockScenarioAttributionToolArgs,
+  buildMockTechArchMarkdown,
+  executeDomainRunToolCall,
+  extractJsonObjectFromText,
+  findRequirementSessionOptional,
+  parseStructuredActionFromPrompt,
+  type LlmSynthesizedDomainBlueprint,
+} from './domain-run-tools.js';
+import {
+  PROTOTYPE_ANCHOR_OPENAI_TOOLS,
+  editPrototypeAnchor,
+  listPrototypeAnchors,
+  readPrototypeAnchor,
+  rewritePrototypePage,
+  type PrototypeAnchorEditOperation,
+} from './prototype-anchor-tools.js';
 import {
   buildProjectDataGrounding,
   describeGroundingRefusal,
@@ -69,72 +97,8 @@ import {
 
 // ─── Gateway Error & Explicit Mock Boundary (ADR-0007) ───────────────────────
 
-export class LlmGatewayError extends Error {
-  readonly code = 'LLM_GATEWAY_ERROR' as const;
-  readonly providerName: string;
-  readonly baseUrl: string;
-  readonly model: string;
-  readonly remediation: string;
-  readonly statusCode?: number;
-
-  constructor(input: {
-    message: string;
-    providerName: string;
-    baseUrl: string;
-    model: string;
-    remediation?: string;
-    statusCode?: number;
-    locale?: AgentLocale;
-  }) {
-    super(input.message);
-    this.name = 'LlmGatewayError';
-    this.providerName = input.providerName;
-    this.baseUrl = input.baseUrl;
-    this.model = input.model;
-    const loc = input.locale ?? 'zh-CN';
-    this.remediation =
-      input.remediation ??
-      pickLocaleText(
-        loc,
-        '请前往「基础设施 → LLM 中心」检查网关地址、API Key 与在线状态，或在「系统设置」中显式开启「离线演示 Mock 模式」。',
-        'Check the gateway URL, API key, and online status in Platform Governance → LLM Center, or enable Offline Demo Mock Mode in System Settings.',
-      );
-    if (input.statusCode !== undefined) {
-      this.statusCode = input.statusCode;
-    }
-  }
-
-  toDiagnostic(locale?: AgentLocale) {
-    const defaultZh =
-      '请前往「基础设施 → LLM 中心」检查网关地址、API Key 与在线状态，或在「系统设置」中显式开启「离线演示 Mock 模式」。';
-    const remediation =
-      locale === 'en-US' && this.remediation === defaultZh
-        ? 'Check the gateway URL, API key, and online status in Platform Governance → LLM Center, or enable Offline Demo Mock Mode in System Settings.'
-        : this.remediation;
-    return {
-      code: this.code,
-      providerName: this.providerName,
-      baseUrl: this.baseUrl,
-      model: this.model,
-      message: this.message,
-      remediation,
-      ...(this.statusCode !== undefined ? { statusCode: this.statusCode } : {}),
-    };
-  }
-}
-
-export function isMockLlmActive(store: WorkspaceStore, explicitMock?: boolean): boolean {
-  if (explicitMock !== undefined) return explicitMock;
-  if (process.env.ONTOLOGY_LIVE_LLM === '1') return false;
-  if (process.env.ONTOLOGY_MOCK_LLM === '1' || process.env.VITEST === 'true') {
-    return true;
-  }
-  try {
-    return Boolean(store.getSystemSettings().mockLlmMode);
-  } catch {
-    return false;
-  }
-}
+import { LlmGatewayError, isMockLlmActive } from './gateway-boundary.js';
+export { LlmGatewayError, isMockLlmActive };
 
 function resolveProjectDetail(
   store: WorkspaceStore,
@@ -144,6 +108,309 @@ function resolveProjectDetail(
   if (direct) return direct;
   const firstSummary = store.listProjects()[0];
   return firstSummary ? store.getProject(firstSummary.id) : undefined;
+}
+
+function resolveTargetPrototypeForSession(
+  store: WorkspaceStore,
+  session: AgentSession,
+): InteractivePrototype | undefined {
+  if (session.targetId) {
+    const direct = store.getPrototype(session.targetId);
+    if (direct && direct.projectId === session.projectId) {
+      return direct;
+    }
+  }
+  const list = store.listPrototypes(session.projectId);
+  return list.find((p) => p.coDesignSessionId === session.id);
+}
+
+function isBriefRestylePrompt(prompt: string): boolean {
+  return /\[PROTOTYPE_BRIEF_RESTYLE\]|按新简报重做风格|Restyle from updated brief/i.test(prompt);
+}
+
+function escapeMockHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildMockGeneratedPrototypeHtml(
+  project: ProjectDetail | undefined,
+  prompt: string,
+  locale: AgentLocale,
+): string {
+  const hexMatches = prompt.match(/#[0-9a-fA-F]{6}\b/g) ?? [];
+  const wantsDark = /深色|暗色|dark\s*mode|dark\s*cockpit|交易风|#0[0-9a-f]{5}|#1[0-9a-f]{5}/i.test(
+    prompt,
+  );
+  const bg = hexMatches[0] ?? (wantsDark ? '#0f172a' : '#f8f5ef');
+  const surface = wantsDark ? '#162033' : '#ffffff';
+  const ink = wantsDark ? '#f1f5f9' : '#1c1917';
+  const muted = wantsDark ? '#94a3b8' : '#64748b';
+  const border = wantsDark ? 'rgba(255,255,255,0.14)' : '#e2ddd3';
+  const accent = hexMatches[1] ?? (wantsDark ? '#38bdf8' : '#2563eb');
+  const firstAgg = project?.suite.M1?.aggregates?.[0];
+  const aggName = firstAgg?.name || 'BusinessOrder';
+  const aggLabel =
+    firstAgg?.alias ||
+    project?.name?.replace(/管理系统|平台|工作台|系统|工程/g, '').trim() ||
+    (locale === 'en-US' ? 'Business Record' : '核心业务单据');
+  const titleText =
+    project?.name || (locale === 'en-US' ? 'Interactive Prototype' : '业务交互原型');
+
+  return `<!doctype html>
+<html lang="${locale === 'en-US' ? 'en' : 'zh-CN'}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeMockHtml(titleText)}</title>
+  <style>
+    :root {
+      --bg: ${bg};
+      --surface: ${surface};
+      --ink: ${ink};
+      --muted: ${muted};
+      --line: ${border};
+      --accent: ${accent};
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: 1.45fr 0.95fr;
+      gap: 16px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #ffffff;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    input, select {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 7px 10px;
+    }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+    @media (max-width: 768px) {
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .workspace-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 390px) {
+      body { padding: 12px; }
+      .kpi-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header style="margin-bottom:16px;">
+    <h1 style="margin:0;font-size:20px;">${escapeMockHtml(titleText)}</h1>
+    <p style="margin:4px 0 0;font-size:12.5px;color:var(--muted);">${escapeMockHtml(aggLabel)} · 1440px / 768px / 390px</p>
+  </header>
+  <div class="kpi-grid">
+    <div class="card"><div style="font-size:12px;color:var(--muted);">本月累计单据</div><strong style="font-size:22px;font-variant-numeric:tabular-nums;">28</strong></div>
+    <div class="card"><div style="font-size:12px;color:var(--muted);">待审批金额</div><strong style="font-size:22px;color:var(--accent);font-variant-numeric:tabular-nums;">¥265,000</strong></div>
+    <div class="card"><div style="font-size:12px;color:var(--muted);">准时办结率</div><strong style="font-size:22px;font-variant-numeric:tabular-nums;">98.6%</strong></div>
+  </div>
+  <main class="workspace-grid">
+    <section
+      data-screen-id="SCR-MAIN-LIST"
+      data-screen-name="${escapeMockHtml(aggLabel)}台账"
+      data-screen-type="LIST"
+      class="card"
+    >
+      <div class="toolbar">
+        <input
+          type="search"
+          placeholder="搜索编号或名称…"
+          data-element-id="EL-SEARCH-KW"
+          data-element-type="INPUT"
+          data-element-label="关键词检索"
+          data-binding="${escapeMockHtml(aggName)}.title"
+        />
+        <button
+          type="button"
+          class="btn-primary"
+          data-element-id="EL-OPEN-CREATE"
+          data-element-type="BUTTON"
+          data-element-label="新建${escapeMockHtml(aggLabel)}"
+          data-event-id="UIE-OPEN-CREATE"
+        >
+          + 新建${escapeMockHtml(aggLabel)}
+        </button>
+      </div>
+      <table data-element-id="EL-MAIN-TABLE" data-element-type="TABLE" data-binding="${escapeMockHtml(aggName)}">
+        <thead>
+          <tr><th>编号</th><th>名称</th><th>金额</th><th>状态</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>DOC-2026-01</td><td>${escapeMockHtml(aggLabel)}重点批次 A</td><td>¥265,000</td><td>PENDING_APPROVAL</td></tr>
+          <tr><td>DOC-2026-02</td><td>${escapeMockHtml(aggLabel)}标准执行单</td><td>¥42,000</td><td>APPROVED</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section
+      data-screen-id="SCR-MAIN-FORM"
+      data-screen-name="新建${escapeMockHtml(aggLabel)}"
+      data-screen-type="FORM"
+      class="card"
+    >
+      <h2 style="margin-top:0;font-size:15px;">新建 / 审批提交</h2>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <input
+          type="text"
+          value="DOC-2026-03"
+          data-element-id="EL-FORM-CODE"
+          data-element-type="INPUT"
+          data-element-label="单据编码"
+          data-binding="${escapeMockHtml(aggName)}.code"
+        />
+        <input
+          type="number"
+          value="128000"
+          data-element-id="EL-FORM-AMOUNT"
+          data-element-type="NUMBER"
+          data-element-label="业务金额"
+          data-binding="${escapeMockHtml(aggName)}.amount"
+        />
+        <button
+          type="button"
+          class="btn-primary"
+          data-element-id="EL-SUBMIT-CREATE"
+          data-element-type="BUTTON"
+          data-element-label="提交保存"
+          data-event-id="UIE-SUBMIT-CREATE"
+        >
+          提交保存
+        </button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
+function applyMockBriefRestyleToHtml(existingHtml: string, prompt: string): string {
+  const hexMatches = prompt.match(/#[0-9a-fA-F]{6}\b/g) ?? [];
+  const wantsDark = /深色|暗色|dark\s*mode|dark\s*cockpit|交易风|#0[0-9a-f]{5}|#1[0-9a-f]{5}/i.test(
+    prompt,
+  );
+  const bg = hexMatches[0] ?? (wantsDark ? '#0b1120' : '#f8f5ef');
+  const accent = hexMatches[1] ?? (wantsDark ? '#38bdf8' : '#2563eb');
+  const ink = wantsDark ? '#f1f5f9' : '#1c1917';
+  const styleBlock = `<style data-brief-restyle="true">:root { --bg: ${bg}; --accent: ${accent}; --ink: ${ink}; } body { background: ${bg}; color: ${ink}; }</style>`;
+
+  const stripped = existingHtml.replace(
+    /<style\s+data-brief-restyle="true">[\s\S]*?<\/style>/gi,
+    '',
+  );
+  if (/<\/head>/i.test(stripped)) {
+    return stripped.replace(/<\/head>/i, `  ${styleBlock}\n</head>`);
+  }
+  return `${styleBlock}\n${stripped}`;
+}
+
+function stripSelectionBlockFromPrompt(prompt: string): string {
+  return (
+    prompt
+      .replace(
+        /^---\s*(?:Targeted Visual Selections & Annotations|用户在界面原型上框选\/点选的目标区域与批注)\s*---[\s\S]*?\n\n/m,
+        '',
+      )
+      .replace(/\[TEST_[A-Z0-9_]+\]/g, '')
+      .trim() || prompt.trim()
+  );
+}
+
+function parseMockPrototypeTargetFromPrompt(
+  prompt: string,
+  proto: InteractivePrototype | undefined,
+): { elementId?: string; screenId?: string; cssSelector?: string } {
+  const explicitEl =
+    /\belement=([A-Za-z0-9_-]+)/.exec(prompt)?.[1] ??
+    /\b(EL-[A-Za-z0-9_-]+)\b/.exec(prompt)?.[1];
+  const explicitScr =
+    /\bscreen=([A-Za-z0-9_-]+)/.exec(prompt)?.[1] ??
+    /\b(SCR-[A-Za-z0-9_-]+)\b/.exec(prompt)?.[1];
+  const explicitSelector = /\bselector="([^"]+)"/.exec(prompt)?.[1];
+
+  if (explicitEl || explicitScr || explicitSelector) {
+    return {
+      ...(explicitEl ? { elementId: explicitEl } : {}),
+      ...(explicitScr ? { screenId: explicitScr } : {}),
+      ...(explicitSelector ? { cssSelector: explicitSelector } : {}),
+    };
+  }
+
+  const overview = listPrototypeAnchors(proto?.htmlContent ?? '');
+  if (overview.elements[0]?.elementId) {
+    return {
+      elementId: overview.elements[0].elementId,
+      ...(overview.elements[0].screenId ? { screenId: overview.elements[0].screenId } : {}),
+    };
+  }
+  if (overview.screens[0]?.screenId) {
+    return { screenId: overview.screens[0].screenId };
+  }
+  return {};
+}
+
+function extractTargetAnchorFromArgs(
+  toolName: string,
+  args: Record<string, unknown>,
+): PrototypeTargetAnchor | undefined {
+  if (
+    toolName !== 'read_prototype_anchor' &&
+    toolName !== 'edit_prototype_anchor' &&
+    toolName !== 'rewrite_prototype_page'
+  ) {
+    return undefined;
+  }
+  const screenId = typeof args.screenId === 'string' && args.screenId.trim() ? args.screenId.trim() : undefined;
+  const elementId = typeof args.elementId === 'string' && args.elementId.trim() ? args.elementId.trim() : undefined;
+  const cssSelector =
+    typeof args.cssSelector === 'string' && args.cssSelector.trim() ? args.cssSelector.trim() : undefined;
+  if (!screenId && !elementId && !cssSelector) return undefined;
+  return {
+    ...(screenId ? { screenId } : {}),
+    ...(elementId ? { elementId } : {}),
+    ...(cssSelector ? { cssSelector } : {}),
+  };
 }
 
 // ─── Unified Agent Workbench Extra Tools (YOLO + Scoped HITL) ────────────────
@@ -278,6 +545,7 @@ export const UNIFIED_AGENT_EXTRA_TOOLS: OpenAiFunctionTool[] = [
       },
     },
   },
+  ...DOMAIN_RUN_OPENAI_TOOLS,
 ];
 
 export const agentWorkbenchRegistry = createRegistry();
@@ -286,7 +554,7 @@ agentWorkbenchRegistry.install(
     name: 'ontology-plus-unified-workbench',
     tools: [
       ...Object.values(ONTOLOGY_DURABLE_TOOLS),
-      ...UNIFIED_AGENT_EXTRA_TOOLS.map((spec) =>
+      ...[...UNIFIED_AGENT_EXTRA_TOOLS, ...PROTOTYPE_ANCHOR_OPENAI_TOOLS].map((spec) =>
         defineTool({
           name: spec.function.name,
           label: spec.function.name,
@@ -304,9 +572,9 @@ agentWorkbenchRegistry.install(
   }),
 );
 
-// ─── Active Session Abort Registry ───────────────────────────────────────────
+// ─── Active Session Runner & Abort Registry ─────────────────────────────────
 
-type SessionAbortKind = 'IDLE_TIMEOUT' | 'USER_ABORT' | 'STEER_SUPERSEDED' | 'CLIENT_DISCONNECT';
+type SessionAbortKind = 'IDLE_TIMEOUT' | 'USER_ABORT' | 'STEER_SUPERSEDED';
 
 interface SessionAbortReason {
   readonly kind: SessionAbortKind;
@@ -323,21 +591,153 @@ class SessionStreamAbortedError extends Error {
   }
 }
 
+interface ActiveBackgroundSessionRun {
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly controller: AbortController;
+  readonly bufferedEvents: UnifiedAgentSseEvent[];
+  readonly subscribers: Set<() => void>;
+  done: boolean;
+  completionPromise: Promise<void>;
+}
+
+interface QueuedSessionTurnEntry {
+  readonly queueId: string;
+  readonly input: Omit<UnifiedAgentStreamInput, 'signal'>;
+  cancelled: boolean;
+  resolveRun: (run: ActiveBackgroundSessionRun | null) => void;
+}
+
+interface SessionRunnerSlot {
+  activeRun: ActiveBackgroundSessionRun | null;
+  queue: QueuedSessionTurnEntry[];
+}
+
+const storeSessionRunnerMap = new WeakMap<WorkspaceStore, Map<string, SessionRunnerSlot>>();
 const activeSessionAbortControllers = new Map<string, AbortController>();
+const globalSlotsBySessionId = new Map<string, Set<SessionRunnerSlot>>();
+
+function getOrCreateSessionSlot(store: WorkspaceStore, sessionId: string): SessionRunnerSlot {
+  let bySession = storeSessionRunnerMap.get(store);
+  if (!bySession) {
+    bySession = new Map<string, SessionRunnerSlot>();
+    storeSessionRunnerMap.set(store, bySession);
+  }
+  let slot = bySession.get(sessionId);
+  if (!slot) {
+    slot = { activeRun: null, queue: [] };
+    bySession.set(sessionId, slot);
+    let setForId = globalSlotsBySessionId.get(sessionId);
+    if (!setForId) {
+      setForId = new Set();
+      globalSlotsBySessionId.set(sessionId, setForId);
+    }
+    setForId.add(slot);
+  }
+  return slot;
+}
+
+function getSessionSlot(store: WorkspaceStore, sessionId: string): SessionRunnerSlot | undefined {
+  return storeSessionRunnerMap.get(store)?.get(sessionId);
+}
+
+export interface LiveAgentSessionStatus {
+  active: boolean;
+  queuedCount: number;
+  runId?: string;
+  bufferedEventCount: number;
+}
+
+export function getLiveAgentSessionStatus(
+  store: WorkspaceStore,
+  sessionId: string,
+): LiveAgentSessionStatus {
+  const slot = getSessionSlot(store, sessionId);
+  const activeRun = slot?.activeRun && !slot.activeRun.done ? slot.activeRun : undefined;
+  return {
+    active: Boolean(activeRun),
+    queuedCount: slot ? slot.queue.filter((q) => !q.cancelled).length : 0,
+    ...(activeRun ? { runId: activeRun.runId } : {}),
+    bufferedEventCount: activeRun ? activeRun.bufferedEvents.length : 0,
+  };
+}
+
+function cancelSlotQueue(slot: SessionRunnerSlot): void {
+  if (slot.queue.length === 0) return;
+  const drained = slot.queue.splice(0, slot.queue.length);
+  for (const item of drained) {
+    item.cancelled = true;
+    item.resolveRun(null);
+  }
+}
 
 export function abortActiveAgentSession(
   sessionId: string,
   kind: 'USER_ABORT' | 'STEER_SUPERSEDED' = 'USER_ABORT',
+  store?: WorkspaceStore,
 ): boolean {
-  const controller = activeSessionAbortControllers.get(sessionId);
-  if (!controller) return false;
   const reason: SessionAbortReason =
     kind === 'STEER_SUPERSEDED'
       ? { kind: 'STEER_SUPERSEDED', message: '当前流式推演已被新指令接管' }
       : { kind: 'USER_ABORT', message: '已由用户手动停止生成' };
-  controller.abort(reason);
+
+  let aborted = false;
+  if (store) {
+    const slot = getSessionSlot(store, sessionId);
+    if (slot) {
+      if (kind === 'USER_ABORT') {
+        cancelSlotQueue(slot);
+      }
+      if (slot.activeRun && !slot.activeRun.done && !slot.activeRun.controller.signal.aborted) {
+        slot.activeRun.controller.abort(reason);
+        aborted = true;
+      }
+    }
+  } else {
+    const slots = globalSlotsBySessionId.get(sessionId);
+    if (slots) {
+      for (const slot of slots) {
+        if (kind === 'USER_ABORT') {
+          cancelSlotQueue(slot);
+        }
+        if (slot.activeRun && !slot.activeRun.done && !slot.activeRun.controller.signal.aborted) {
+          slot.activeRun.controller.abort(reason);
+          aborted = true;
+        }
+      }
+    }
+  }
+
+  const legacyCtrl = activeSessionAbortControllers.get(sessionId);
+  if (legacyCtrl && !legacyCtrl.signal.aborted) {
+    legacyCtrl.abort(reason);
+    aborted = true;
+  }
   activeSessionAbortControllers.delete(sessionId);
-  return true;
+  return aborted;
+}
+
+export async function abortActiveAgentSessionAsync(
+  store: WorkspaceStore,
+  sessionId: string,
+): Promise<{ aborted: boolean; session: AgentSession | undefined }> {
+  const slot = getSessionSlot(store, sessionId);
+  const runningPromise =
+    slot?.activeRun && !slot.activeRun.done ? slot.activeRun.completionPromise : undefined;
+  const aborted = abortActiveAgentSession(sessionId, 'USER_ABORT', store);
+  if (runningPromise) {
+    await Promise.race([runningPromise, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
+  }
+  const cur = store.getAgentSession(sessionId);
+  const session =
+    cur && cur.status === 'RUNNING'
+      ? store.saveAgentSession({
+          ...cur,
+          status: 'IDLE',
+          updatedAt: new Date().toISOString(),
+        })
+      : cur;
+  return { aborted, session };
 }
 
 // ─── SSE Event Protocol ──────────────────────────────────────────────────────
@@ -409,14 +809,33 @@ function getLazyApiForType(providerType: LlmProviderConfig['providerType']) {
   return lazyOpenAiCompletions;
 }
 
+function extractUserMessageText(msg: Extract<Message, { role: 'user' }> | undefined): string {
+  if (!msg) return '';
+  if (typeof msg.content === 'string') return msg.content;
+  return msg.content
+    .filter((b): b is TextContent => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n');
+}
+
 function buildFauxMockModels(
   store: WorkspaceStore,
   session: AgentSession,
   activeModelCode?: ModelCode,
   explicitLocale?: AgentLocale,
-): { models: MutableModels; selectedModel: Model<Api>; providerLabel: string } {
+): {
+  models: MutableModels;
+  selectedModel: Model<Api>;
+  providerLabel: string;
+  visionSupported: boolean;
+} {
   const project = resolveProjectDetail(store, session.projectId);
   const modelId = session.modelOverride || 'faux/ontology-pi-durable-v1';
+  const allProviders = store.listLlmProviders();
+  const selectedProvider = session.providerId
+    ? allProviders.find((p) => p.id === session.providerId)
+    : allProviders.find((p) => p.enabled) ?? allProviders[0];
+  const visionSupported = selectedProvider?.supportsVision === false ? false : true;
 
   const faux = fauxProvider({
     provider: 'faux-mock',
@@ -424,6 +843,7 @@ function buildFauxMockModels(
       {
         id: modelId,
         name: 'Ontology Pi Durable Mock Engine',
+        input: visionSupported ? ['text', 'image'] : ['text'],
         reasoning: true,
         contextWindow: 128000,
         maxTokens: 4096,
@@ -439,15 +859,10 @@ function buildFauxMockModels(
       const lastUserMsg = [...context.messages]
         .reverse()
         .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
-      const userPrompt =
-        typeof lastUserMsg?.content === 'string'
-          ? lastUserMsg.content
-          : (lastUserMsg?.content ?? [])
-              .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-              .map((b) => b.text)
-              .join('\n');
+      const userPrompt = extractUserMessageText(lastUserMsg);
+      const parsedAction = resolveEffectiveStructuredAction(session.messages, userPrompt);
       const lower = userPrompt.toLowerCase();
-      const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
+      const loc = resolveEffectiveLocale(store, explicitLocale, parsedAction?.cleanPrompt || userPrompt);
 
       // Explicit Scoped HITL ask_user trigger when ambiguous choice is requested
       const hasResolvedChoice =
@@ -455,6 +870,7 @@ function buildFauxMockModels(
         userPrompt.includes('[User Confirmed Choice]') ||
         userPrompt.includes('已选择：');
       if (
+        !parsedAction &&
         !hasResolvedChoice &&
         (userPrompt.includes('待确认选项') ||
           userPrompt.includes('让我选择') ||
@@ -509,6 +925,64 @@ function buildFauxMockModels(
         );
       }
 
+      if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+        const targetProto = resolveTargetPrototypeForSession(store, session);
+        if (!targetProto) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在根据已确认的设计简报、参考设计令牌与 7 组交互动效硬约束生成首版响应式原型（1440px / 768px / 390px），并挂载完整 MU 语义锚点。`,
+                  `Generating initial responsive prototype (1440px / 768px / 390px) from the confirmed Design Brief, design tokens, and 7 motion constraints with full MU semantic anchors.`,
+                ),
+              ),
+              fauxToolCall('rewrite_prototype_page', {
+                htmlContent: buildMockGeneratedPrototypeHtml(project, userPrompt, loc),
+                allowAnchorReset: true,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+        if (isBriefRestylePrompt(userPrompt)) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `收到「按新简报重做风格」指令，先调用 \`list_prototype_anchors\` 盘点现有屏幕与控件锚点，确保整页重做风格时 100% 保留既有语义锚点。`,
+                  `Received brief restyle instruction; calling \`list_prototype_anchors\` first so whole-page restyling preserves 100% of existing semantic anchors.`,
+                ),
+              ),
+              fauxToolCall('list_prototype_anchors', {}),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+        const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
+        const anchorName = target.elementId || target.screenId || target.cssSelector || 'SCR-01';
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                loc,
+                `正在定位目标锚点 \`${anchorName}\`，先调用 \`read_prototype_anchor\` 读取局部片段，避免改动其他未选中的业务屏幕。`,
+                `Locating target anchor \`${anchorName}\` via \`read_prototype_anchor\` to inspect only the targeted fragment without touching unrelated screens.`,
+              ),
+            ),
+            fauxToolCall('read_prototype_anchor', {
+              ...(target.elementId ? { elementId: target.elementId } : {}),
+              ...(target.screenId ? { screenId: target.screenId } : {}),
+              ...(!target.elementId && !target.screenId && target.cssSelector
+                ? { cssSelector: target.cssSelector }
+                : {}),
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+
       if (session.agentKind === 'REASONING') {
         const mappedTables = (project?.suite.MM?.mappings ?? []).flatMap((m) =>
           m.tableMappings.map((tm) => tm.tableName),
@@ -527,6 +1001,58 @@ function buildFauxMockModels(
             ? 'SELECT cp.company_name, cp.credit_rating, COUNT(c.id) AS contract_cnt, SUM(c.total_amount) AS total_amount FROM t_contract c JOIN t_counterparty cp ON c.counterparty_id = cp.id GROUP BY cp.id, cp.company_name, cp.credit_rating ORDER BY total_amount DESC'
             : 'SELECT risk_level, status, COUNT(id) AS contract_count, SUM(total_amount) AS total_amount FROM t_contract GROUP BY risk_level, status ORDER BY total_amount DESC'
           : `SELECT * FROM ${primaryTable} LIMIT 20`;
+
+        if (parsedAction?.kind === 'METRIC_INSIGHT') {
+          const metricArgs = buildMockMetricInsightToolArgs(
+            store,
+            typeof parsedAction.params.metricId === 'string'
+              ? parsedAction.params.metricId
+              : undefined,
+            loc,
+          );
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在实查 SQLite 业务表并结合数据本体指标口径生成异动洞察与策略建议。`,
+                  `Querying live SQLite tables and evaluating metric formula & M3 thresholds to synthesize anomaly insight.`,
+                ),
+              ),
+              fauxToolCall('run_readonly_sql', { sql }),
+              fauxToolCall('save_metric_insight', metricArgs as never),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
+        if (parsedAction?.kind === 'SCENARIO_ATTRIBUTION') {
+          const attrArgs = buildMockScenarioAttributionToolArgs(
+            store,
+            typeof parsedAction.params.scenarioId === 'string'
+              ? parsedAction.params.scenarioId
+              : undefined,
+            typeof parsedAction.params.question === 'string'
+              ? parsedAction.params.question
+              : parsedAction.cleanPrompt || undefined,
+            parsedAction.params.saveAsReport !== false,
+            loc,
+          );
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在沿 M1 -> MM -> SQLite 实查多因子交叉统计，拆解归因权重并持久化专题分析报告。`,
+                  `Executing multi-factor SQLite cross-tabulation along M1 -> MM to compute causal weights and archive attribution report.`,
+                ),
+              ),
+              fauxToolCall('run_readonly_sql', { sql }),
+              fauxToolCall('save_scenario_attribution_report', attrArgs as never),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
 
         const blocks = [
           fauxThinking(
@@ -569,6 +1095,30 @@ function buildFauxMockModels(
       }
 
       if (session.agentKind === 'CAPABILITY') {
+        if (parsedAction?.kind === 'RUN_ONTOLOGY_EXTRACTION') {
+          const snippetFromParams =
+            typeof parsedAction.params.sourceSnippet === 'string' &&
+            parsedAction.params.sourceSnippet.trim()
+              ? parsedAction.params.sourceSnippet.trim()
+              : parsedAction.cleanPrompt;
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在对源系统 DDL / OpenAPI / 文档执行两轮本体萃取扫描（结构扫描 + 语义对齐），并生成待审阅候选集。`,
+                  `Executing Ontology Extraction structural scan on source DDL / OpenAPI / document artifacts to produce reviewable candidates.`,
+                ),
+              ),
+              fauxToolCall('run_ontology_extraction', {
+                ...parsedAction.params,
+                sourceSnippet: snippetFromParams,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
         const caps = project ? inspectOntologyMcpCapabilities(project) : null;
         const matchedTool =
           caps?.tools.find((t) =>
@@ -597,6 +1147,58 @@ function buildFauxMockModels(
       }
 
       if (session.agentKind === 'CODING') {
+        if (
+          parsedAction?.kind === 'GENERATE_TECH_ARCH' ||
+          /生成技术架构|技术架构规范|generate\s+tech(?:nical)?\s+arch/i.test(userPrompt)
+        ) {
+          const name =
+            (typeof parsedAction?.params.name === 'string' && parsedAction.params.name.trim()) ||
+            pickLocaleText(
+              loc,
+              `${project?.name ?? '当前工程'} 四层技术架构规范`,
+              `${project?.name ?? 'Project'} 4-Layer Tech Architecture Spec`,
+            );
+          const rawTags = parsedAction?.params.stackTags;
+          const stackTags = Array.isArray(rawTags)
+            ? rawTags.filter((t): t is string => typeof t === 'string' && Boolean(t.trim()))
+            : ['TypeScript', 'Hono', 'Drizzle SQLite', '11-Model DDD'];
+          const version =
+            typeof parsedAction?.params.version === 'string' && parsedAction.params.version.trim()
+              ? parsedAction.params.version.trim()
+              : 'v5.0';
+          const applicationId =
+            typeof parsedAction?.params.applicationId === 'string' &&
+            parsedAction.params.applicationId.trim()
+              ? parsedAction.params.applicationId.trim()
+              : undefined;
+          const extraPrompt =
+            (typeof parsedAction?.params.extraPrompt === 'string' &&
+              parsedAction.params.extraPrompt.trim()) ||
+            (typeof parsedAction?.params.prompt === 'string' &&
+              parsedAction.params.prompt.trim()) ||
+            parsedAction?.cleanPrompt ||
+            undefined;
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在根据技术栈标签与 11 元模型契约生成四层技术架构规范文档并写入资产中心。`,
+                  `Synthesizing 4-layer technical architecture specification from stack tags and 11-model contracts.`,
+                ),
+              ),
+              fauxToolCall('save_tech_architecture_spec', {
+                name,
+                version,
+                stackTags,
+                specMarkdown: buildMockTechArchMarkdown(name, stackTags, extraPrompt, loc),
+                ...(applicationId ? { applicationId } : {}),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
         const appId = session.targetId || store.listAssembledApplications()[0]?.id || 'app-01';
         return fauxAssistantMessage(
           [
@@ -614,6 +1216,44 @@ function buildFauxMockModels(
       }
 
       if (session.agentKind === 'REQUIREMENT') {
+        if (
+          parsedAction?.kind === 'SYNTHESIZE_SRS' ||
+          /合成\s*SRS|合成需求规格|生成\s*SRS|synthesize\s+(?:9[- ]chapter\s+)?srs/i.test(userPrompt)
+        ) {
+          const reqSessionId =
+            typeof parsedAction?.params.requirementSessionId === 'string'
+              ? parsedAction.params.requirementSessionId
+              : session.targetId;
+          const reqSession =
+            findRequirementSessionOptional(store, reqSessionId) ??
+            store.listRequirementSessions(session.projectId)[0];
+          const srsContent = project
+            ? buildDeterministicSrsMarkdown(store, project, reqSession, session, loc)
+            : '# 需求规格说明书\n\n## 1. 引言与业务目标 (Introduction & Business Goals)\n';
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在汇总需求探索会话上下文、已沉淀候选规则与领域边界，合成标准 9 章节《需求规格说明书.md》并落库。`,
+                  `Synthesizing canonical 9-chapter Software Requirements Specification from requirement session context and candidate domain rules.`,
+                ),
+              ),
+              fauxToolCall('save_synthesized_srs_doc', {
+                ...(typeof parsedAction?.params.docId === 'string' && parsedAction.params.docId
+                  ? { docId: parsedAction.params.docId }
+                  : {}),
+                ...(typeof parsedAction?.params.title === 'string' && parsedAction.params.title
+                  ? { title: parsedAction.params.title }
+                  : {}),
+                status: 'CONFIRMED',
+                content: srsContent,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
         const ruleCode = `RULE-REQ-${Date.now().toString(36).slice(-3).toUpperCase()}`;
         return fauxAssistantMessage(
           [
@@ -653,7 +1293,36 @@ function buildFauxMockModels(
         );
       }
 
-      // COPILOT default: inspect or mutate Ontology Suite
+      // COPILOT default: inspect, synthesize 11-model suite, or mutate Ontology Suite
+      if (
+        parsedAction?.kind === 'SYNTHESIZE_ONTOLOGY_SUITE' ||
+        /合成\s*11\s*(?:元)?模型|一键推导\s*11\s*模型|synthesize\s+(?:11[- ]model\s+)?ontology/i.test(
+          userPrompt,
+        )
+      ) {
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                loc,
+                `正在从已确认交互原型确定性提取 MU 界面模型，联动补齐 M1~M7 / ME / MM / MI 共 11 个元模型并执行两级一致性门禁校验。`,
+                `Extracting MU UI model from confirmed prototype HTML, aligning all 11 ontology models (M1–M7, ME, MU, MM, MI), and validating through the two-tier consistency gate.`,
+              ),
+            ),
+            fauxToolCall('synthesize_ontology_suite', {
+              ...(typeof parsedAction?.params.prototypeId === 'string' &&
+              parsedAction.params.prototypeId
+                ? { prototypeId: parsedAction.params.prototypeId }
+                : {}),
+              ...(typeof parsedAction?.params.docId === 'string' && parsedAction.params.docId
+                ? { docId: parsedAction.params.docId }
+                : {}),
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+
       const firstAgg = project?.suite.M1?.aggregates[0];
       if (
         (userPrompt.includes('删除') || lower.includes('delete')) &&
@@ -820,8 +1489,7 @@ function buildFauxMockModels(
       const lastUserMsg = [...context.messages]
         .reverse()
         .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
-      const userPrompt =
-        typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const userPrompt = extractUserMessageText(lastUserMsg);
       const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
 
       const toolResults = context.messages.filter(
@@ -833,6 +1501,91 @@ function buildFauxMockModels(
           .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
           .map((c) => c.text)
           .join('\n') ?? '';
+
+      if (
+        session.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+        !(lastResult?.toolName === 'rewrite_prototype_page' && !lastResult.isError)
+      ) {
+        const targetProto = resolveTargetPrototypeForSession(store, session);
+        if (targetProto && isBriefRestylePrompt(userPrompt)) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `已盘点现有语义锚点，现调用 \`rewrite_prototype_page\` 按更新后的设计简报整页重做视觉令牌与布局风格，同时完整保留所有既有屏幕与控件锚点。`,
+                  `Semantic anchors verified; calling \`rewrite_prototype_page\` to apply the updated Design Brief style tokens while preserving all existing screen and element anchors.`,
+                ),
+              ),
+              fauxToolCall('rewrite_prototype_page', {
+                htmlContent: applyMockBriefRestyleToHtml(targetProto.htmlContent, userPrompt),
+                allowAnchorReset: false,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+        const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
+        const cleanInstruction = stripSelectionBlockFromPrompt(userPrompt);
+        const safeLabel =
+          cleanInstruction
+            .replace(/[<>&"'`\n]/g, ' ')
+            .trim()
+            .slice(0, 16) || pickLocaleText(loc, '辅助操作', 'Quick Action');
+        const uid = Date.now().toString(36).slice(-4).toUpperCase();
+
+        if (userPrompt.includes('[TEST_ANCHOR_SELF_REPAIR]')) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `尝试向目标屏幕追加控件并交由语义锚点一致性校验器检查。`,
+                  `Attempting anchored edit and verifying semantic anchor gate.`,
+                ),
+              ),
+              fauxToolCall('edit_prototype_anchor', {
+                ...(target.screenId ? { screenId: target.screenId } : {}),
+                ...(target.elementId && !target.screenId ? { elementId: target.elementId } : {}),
+                operation: target.screenId ? 'append_to_screen' : 'insert_after_element',
+                htmlFragment: `<button type="button" class="btn-secondary">${safeLabel}</button>`,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
+        const wantsInput = /输入|筛选|搜索|字段|文本框|filter|input|search|field/i.test(
+          cleanInstruction,
+        );
+        const fragment = wantsInput
+          ? `<input type="text" placeholder="${safeLabel}" data-element-id="EL-CO-INP-${uid}" data-element-type="INPUT" data-element-label="${safeLabel}" />`
+          : `<button type="button" class="btn-secondary" data-element-id="EL-CO-BTN-${uid}" data-element-type="BUTTON" data-element-label="${safeLabel}">${safeLabel}</button>`;
+
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                loc,
+                `已读取目标锚点上下文，现调用 \`edit_prototype_anchor\` 执行局部手术式修改，保持其余屏幕与兄弟节点逐字节不变。`,
+                `Target anchor context inspected; calling \`edit_prototype_anchor\` for surgical modification while preserving untouched screens byte-for-byte.`,
+              ),
+            ),
+            fauxToolCall('edit_prototype_anchor', {
+              ...(target.elementId
+                ? { elementId: target.elementId, operation: 'insert_after_element' }
+                : target.screenId
+                  ? { screenId: target.screenId, operation: 'append_to_screen' }
+                  : {
+                      cssSelector: target.cssSelector || 'section',
+                      operation: 'append_to_screen',
+                    }),
+              htmlFragment: fragment,
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
 
       // Validator Self-Repair when Step 1 delete_element was rejected by 11-model consistency gate!
       if (
@@ -906,18 +1659,69 @@ function buildFauxMockModels(
         ),
       ]);
     },
-    // Step 3 (if Step 2 performed self-repair tool call): Final summary after repair!
+    // Step 3 (if Step 2 performed a tool call or triggered validator self-repair):
     (context) => {
       const lastUserMsg = [...context.messages]
         .reverse()
         .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
-      const userPrompt =
-        typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const userPrompt = extractUserMessageText(lastUserMsg);
       const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
 
       const toolResults = context.messages.filter(
         (m): m is ToolResultMessage => m.role === 'toolResult',
       );
+      const lastResult = toolResults[toolResults.length - 1];
+
+      if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+        if (lastResult?.isError && lastResult.toolName === 'edit_prototype_anchor') {
+          const targetProto = resolveTargetPrototypeForSession(store, session);
+          const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
+          const cleanInstruction = stripSelectionBlockFromPrompt(userPrompt);
+          const safeLabel =
+            cleanInstruction
+              .replace(/[<>&"'`\n]/g, ' ')
+              .trim()
+              .slice(0, 16) || pickLocaleText(loc, '加急操作', 'Quick Action');
+          const uid = Date.now().toString(36).slice(-4).toUpperCase();
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `检测到上一轮局部编辑因缺少必填语义锚点被拦截，立即补齐合法的 \`data-element-id\` 与 \`data-element-type\` 在同一轮完成自修复。`,
+                  `Previous anchored edit was rejected for missing semantic anchors; self-repairing in the same turn with valid \`data-element-id\` and \`data-element-type\`.`,
+                ),
+              ),
+              fauxToolCall('edit_prototype_anchor', {
+                ...(target.screenId ? { screenId: target.screenId } : {}),
+                ...(target.elementId && !target.screenId ? { elementId: target.elementId } : {}),
+                operation: target.screenId ? 'append_to_screen' : 'insert_after_element',
+                htmlFragment: `<button type="button" class="btn-secondary" data-element-id="EL-CO-REPAIR-${uid}" data-element-type="BUTTON" data-element-label="${safeLabel}">${safeLabel}</button>`,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
+        const targetProto = resolveTargetPrototypeForSession(store, session);
+        const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
+        const anchorLabel = target.elementId || target.screenId || 'target-anchor';
+        return fauxAssistantMessage([
+          fauxThinking(
+            pickLocaleText(
+              loc,
+              `锚点 \`${anchorLabel}\` 局部精修与语义锚点校验已通过，正在汇总本次原型修订。`,
+              `Anchored edit on \`${anchorLabel}\` passed semantic validation; summarizing prototype revision.`,
+            ),
+          ),
+          fauxText(
+            loc === 'en-US'
+              ? `Completed surgical refinement on anchor \`${anchorLabel}\` while keeping all other screens and sibling controls unchanged.`
+              : `已完成目标锚点 \`${anchorLabel}\` 的局部精修，其余业务屏幕与未触碰控件均保持逐字节不变。`,
+          ),
+        ]);
+      }
+
       const freshProject = resolveProjectDetail(store, session.projectId) ?? project;
       return fauxAssistantMessage([
         fauxThinking(
@@ -944,6 +1748,28 @@ function buildFauxMockModels(
         ),
       ]);
     },
+    // Step 4 (final summary after PROTOTYPE_CO_DESIGN self-repair in Step 3):
+    (context) => {
+      const lastUserMsg = [...context.messages]
+        .reverse()
+        .find((m): m is Extract<Message, { role: 'user' }> => m.role === 'user');
+      const userPrompt = extractUserMessageText(lastUserMsg);
+      const loc = resolveEffectiveLocale(store, explicitLocale, userPrompt);
+      return fauxAssistantMessage([
+        fauxThinking(
+          pickLocaleText(
+            loc,
+            `语义锚点自修复已通过校验，生成修订总结。`,
+            `Semantic anchor self-repair succeeded; emitting revision summary.`,
+          ),
+        ),
+        fauxText(
+          loc === 'en-US'
+            ? `Self-repaired semantic anchor attributes and applied the localized prototype edit cleanly.`
+            : `已自动补齐控件语义锚点并完成局部精修。`,
+        ),
+      ]);
+    },
   ]);
 
   const models = createModels();
@@ -953,6 +1779,7 @@ function buildFauxMockModels(
     models,
     selectedModel,
     providerLabel: 'Pi Durable Mock Engine (fauxProvider)',
+    visionSupported,
   };
 }
 
@@ -970,6 +1797,7 @@ export function buildPiModelsForStore(
   providerConfig?: LlmProviderConfig;
   providerLabel: string;
   isMock: boolean;
+  visionSupported: boolean;
 } {
   const loc = resolveEffectiveLocale(store, options?.locale);
   const isMock = isMockLlmActive(store, options?.mockMode);
@@ -1023,7 +1851,7 @@ export function buildPiModelsForStore(
       api,
       provider: cfg.id,
       baseUrl: cleanBaseUrl,
-      input: ['text'],
+      input: doesProviderSupportVision(cfg, id) ? ['text', 'image'] : ['text'],
       cost: ZERO_MODEL_COST,
       reasoning: true,
       contextWindow: 128000,
@@ -1088,6 +1916,7 @@ export function buildPiModelsForStore(
     providerConfig: preferredProvider,
     providerLabel: preferredProvider.name,
     isMock: false,
+    visionSupported: selectedModel.input.includes('image'),
   };
 }
 
@@ -1109,18 +1938,21 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
     case 'REQUIREMENT':
       return [
         extraByName.get('record_requirement_insights')!,
+        extraByName.get('save_synthesized_srs_doc')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
       ];
     case 'COPILOT':
       return [
         ...ontologyTools,
+        extraByName.get('synthesize_ontology_suite')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
       ];
     case 'CODING':
       return [
         extraByName.get('compile_dev_package')!,
+        extraByName.get('save_tech_architecture_spec')!,
         extraByName.get('inspect_ontology_model')!,
         ...ontologyTools,
         extraByName.get('ask_user')!,
@@ -1128,6 +1960,7 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
     case 'CAPABILITY':
       return [
         extraByName.get('invoke_mcp_tool')!,
+        extraByName.get('run_ontology_extraction')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
       ];
@@ -1135,6 +1968,14 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
       return [
         extraByName.get('run_readonly_sql')!,
         extraByName.get('propose_policy_writeback')!,
+        extraByName.get('save_metric_insight')!,
+        extraByName.get('save_scenario_attribution_report')!,
+        extraByName.get('inspect_ontology_model')!,
+        extraByName.get('ask_user')!,
+      ];
+    case 'PROTOTYPE_CO_DESIGN':
+      return [
+        ...PROTOTYPE_ANCHOR_OPENAI_TOOLS.map(toPiTool),
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
       ];
@@ -1195,7 +2036,7 @@ function buildSystemPromptForSession(
         `Current reasoning mode: ${session.reasoningMode ?? 'ASK_DATA'} (ASK_DATA=data query, ASK_WHY=root-cause attribution, ASK_POLICY=policy writeback).`,
         renderedGrounding,
         writebacks ? `Registered writeback interfaces: ${writebacks}.` : '',
-        `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; every figure you state must come from a query result. In ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
+        `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; every figure you state must come from a query result. When requested via [ACTION:METRIC_INSIGHT ...], MUST call save_metric_insight with live SQLite evidence. When requested via [ACTION:SCENARIO_ATTRIBUTION ...], MUST call save_scenario_attribution_report with causalBreakdown weights grounded in SQLite results. In ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
       ]
         .filter(Boolean)
         .join('\n');
@@ -1203,15 +2044,46 @@ function buildSystemPromptForSession(
     if (session.agentKind === 'CAPABILITY') {
       const caps = project ? inspectOntologyMcpCapabilities(project) : null;
       const toolNames = caps?.tools.map((t) => `${t.name}(${t.sourceModel})`).join(', ') ?? 'none';
-      return `${baseHeaderEn}\nCompiled Ontology MCP tools: ${toolNames}. Prefer calling invoke_mcp_tool to execute domain queries or behaviors.`;
+      return `${baseHeaderEn}\nCompiled Ontology MCP tools: ${toolNames}. Prefer calling invoke_mcp_tool to execute domain queries or behaviors; when asked to perform Ontology Extraction ([ACTION:RUN_ONTOLOGY_EXTRACTION ...] or DDL/OpenAPI/source extraction), MUST call run_ontology_extraction.`;
     }
     if (session.agentKind === 'CODING') {
-      return `${baseHeaderEn}\nTarget assembled application ID: ${session.targetId ?? 'app-01'}. Call compile_dev_package to compile progressive-disclosure engineering artifacts or refine ontology elements.`;
+      return `${baseHeaderEn}\nTarget assembled application ID: ${session.targetId ?? 'app-01'}. Call compile_dev_package to compile progressive-disclosure engineering artifacts, call save_tech_architecture_spec when asked to generate or persist a 4-layer technical architecture specification ([ACTION:GENERATE_TECH_ARCH ...]), or refine ontology elements.`;
     }
     if (session.agentKind === 'REQUIREMENT') {
-      return `${baseHeaderEn}\nFollow Class-A/B progressive grilling: tag standard audit/engineering defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], call ask_user for unresolved Class-B decisions (or tag [Pending]), and call record_requirement_insights to persist candidate aggregates and rules.`;
+      return `${baseHeaderEn}\nFollow Class-A/B progressive grilling: tag standard audit/engineering defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], call ask_user for unresolved Class-B decisions (or tag [Pending]), call record_requirement_insights to persist candidate aggregates and rules, and when asked to synthesize the SRS ([ACTION:SYNTHESIZE_SRS ...] or user request), MUST call save_synthesized_srs_doc with the complete 9-chapter Markdown specification (## 1. through ## 9., including ### 9.1 through ### 9.7).`;
     }
-    return `${baseHeaderEn}\nCurrent M1 aggregates: ${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || 'none'}; M3 rules count: ${project?.suite.M3?.rules.length ?? 0}.`;
+    if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+      const proto = resolveTargetPrototypeForSession(store, session);
+      if (!proto) {
+        return [
+          baseHeaderEn,
+          `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
+          `Initial Prototype Generation Rules:`,
+          `1. Call \`rewrite_prototype_page\` with \`allowAnchorReset: true\` and a complete, self-contained HTML5 document.`,
+          `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, 7 interactive motion specifications, and SRS scope.`,
+          `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
+          `4. Ensure clean responsive layout across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
+          `5. If \`rewrite_prototype_page\` returns isError=true, fix the semantic anchors and retry in the same turn.`,
+        ].join('\n');
+      }
+      const overview = listPrototypeAnchors(proto.htmlContent);
+      const screensDesc =
+        overview.screens
+          .map((s) => `${s.screenId}(${s.screenName}:${s.screenType}, elements=${s.elementCount})`)
+          .join(', ') || 'none';
+      return [
+        baseHeaderEn,
+        `Target Interactive Prototype: ${proto.name} (ID: ${proto.id}, Version: ${proto.version}).`,
+        `Screens in prototype: ${screensDesc}.`,
+        `Prototype Co-Design Rules:`,
+        `1. Always call \`read_prototype_anchor\` (or \`list_prototype_anchors\`) first to inspect ONLY the targeted element or screen without reading unrelated screens.`,
+        `2. For localized refinements, ALWAYS call \`edit_prototype_anchor\` (\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`) so untouched screens and sibling elements stay byte-for-byte identical.`,
+        `3. Reserve \`rewrite_prototype_page\` strictly for whole-page visual restyling or brand-new prototype generation.`,
+        `4. Preserve existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors, add valid \`data-element-id\` + \`data-element-type\` on every new <button>/<input>/<select>/<textarea>, and NEVER use window.alert/confirm/prompt.`,
+        `5. If an edit tool returns isError=true, fix the semantic anchors and retry in the same turn.`,
+      ].join('\n');
+    }
+    return `${baseHeaderEn}\nCurrent M1 aggregates: ${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || 'none'}; M3 rules count: ${project?.suite.M3?.rules.length ?? 0}. When asked to synthesize the 11-model Ontology Suite from the prototype ([ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...] or user request), MUST call synthesize_ontology_suite.`;
   }
 
   const baseHeader = [
@@ -1237,7 +2109,7 @@ function buildSystemPromptForSession(
       `当前分析推理模式：${session.reasoningMode ?? 'ASK_DATA'}（ASK_DATA=智能问数，ASK_WHY=智能问因，ASK_POLICY=智能问策）。`,
       renderedGrounding,
       writebacks ? `当前已注册闭环回写接口：${writebacks}。` : '',
-      `优先调用 run_readonly_sql 获取真实表数据后再输出结论，结论中的每个数字都必须来自查询结果；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
+      `优先调用 run_readonly_sql 获取真实表数据后再输出结论，结论中的每个数字都必须来自查询结果；收到 [ACTION:METRIC_INSIGHT ...] 时必须结合实查结果调用 save_metric_insight 输出指标异动洞察；收到 [ACTION:SCENARIO_ATTRIBUTION ...] 时必须结合实查结果调用 save_scenario_attribution_report 归档场景归因报告；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -1245,18 +2117,73 @@ function buildSystemPromptForSession(
   if (session.agentKind === 'CAPABILITY') {
     const caps = project ? inspectOntologyMcpCapabilities(project) : null;
     const toolNames = caps?.tools.map((t) => `${t.name}(${t.sourceModel})`).join(', ') ?? '无';
-    return `${baseHeader}\n当前工程可用 Ontology MCP 工具：${toolNames}。优先调用 invoke_mcp_tool 执行业务动作或查询。`;
+    return `${baseHeader}\n当前工程可用 Ontology MCP 工具：${toolNames}。优先调用 invoke_mcp_tool 执行业务动作或查询；当收到本体萃取请求（如 [ACTION:RUN_ONTOLOGY_EXTRACTION ...] 或 DDL/OpenAPI/文档本体萃取）时，必须调用 run_ontology_extraction 工具。`;
   }
   if (session.agentKind === 'CODING') {
-    return `${baseHeader}\n目标装配应用 ID：${session.targetId ?? 'app-01'}。可调用 compile_dev_package 编译渐进式披露开发包或微调本体元素。`;
+    return `${baseHeader}\n目标装配应用 ID：${session.targetId ?? 'app-01'}。可调用 compile_dev_package 编译渐进式披露开发包，收到生成四层技术架构规范请求（如 [ACTION:GENERATE_TECH_ARCH ...]）时必须调用 save_tech_architecture_spec 落库资产，或微调本体元素。`;
   }
   if (session.agentKind === 'REQUIREMENT') {
-    return `${baseHeader}\n遵循 A/B 分级追问策略：A 类常规默认项标注 [AI自动补全]，B 类核心业务边界标注 [已确认] 或调用 ask_user 让用户选择确认，并调用 record_requirement_insights 沉淀候选规则。`;
+    return `${baseHeader}\n遵循 A/B 分级追问策略：A 类常规默认项标注 [AI自动补全]，B 类核心业务边界标注 [已确认] 或调用 ask_user 让用户选择确认，调用 record_requirement_insights 沉淀候选规则；当用户请求合成 SRS（如 [ACTION:SYNTHESIZE_SRS ...]）时，必须调用 save_synthesized_srs_doc 工具提交完整 9 章节《需求规格说明书.md》（含 ## 1. ~ ## 9. 及 ### 9.1 ~ ### 9.7）。`;
   }
-  return `${baseHeader}\n当前 M1 聚合根：${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || '无'}；M3 规则数：${project?.suite.M3?.rules.length ?? 0}。`;
+  if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+    const proto = resolveTargetPrototypeForSession(store, session);
+    if (!proto) {
+      return [
+        baseHeader,
+        `当前共创目标交互原型：未绑定（按设计简报从零生成首版交互原型 Revision #1）。`,
+        `首版原型生成准则：`,
+        `1. 直接调用 \`rewrite_prototype_page\`（携带 \`allowAnchorReset: true\`）输出完整单文件可运行 HTML5 原型。`,
+        `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、7 组交互动效硬性约束与 SRS 业务要素。`,
+        `3. 每个业务屏幕必须声明合法 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`，所有 <button>/<input>/<select>/<textarea> 必须携带唯一合法 \`data-element-id\` 与 \`data-element-type\`（并合理挂载 \`data-binding\` 与 \`data-event-id\`），严禁使用 window.alert/confirm/prompt。`,
+        `4. 页面必须原生支持响应式布局，在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 视口下均排版整洁无溢出。`,
+        `5. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
+      ].join('\n');
+    }
+    const overview = listPrototypeAnchors(proto.htmlContent);
+    const screensDesc =
+      overview.screens
+        .map((s) => `${s.screenId}(${s.screenName}:${s.screenType}, 控件数=${s.elementCount})`)
+        .join(', ') || '无';
+    return [
+      baseHeader,
+      `当前共创目标交互原型：${proto.name}（ID: ${proto.id}，版本: ${proto.version}）。`,
+      `当前原型包含屏幕锚点：${screensDesc}。`,
+      `原型局部精修准则：`,
+      `1. 先调用 \`read_prototype_anchor\`（或 \`list_prototype_anchors\`）精准读取目标控件或目标屏幕片段，严禁无故重写其他无关屏幕。`,
+      `2. 局部改动一律调用 \`edit_prototype_anchor\`（\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`），确保未选中的屏幕与兄弟控件保持逐字节一致。`,
+      `3. \`rewrite_prototype_page\` 仅限明确要求“整页重做风格”或“从零生成整页原型”时调用。`,
+      `4. 严格保留既有 \`data-screen-id\`、\`data-element-id\`、\`data-binding\`、\`data-event-id\` 语义锚点；任何新增 <button>/<input>/<select>/<textarea> 必须携带合法唯一的 \`data-element-id\` 与 \`data-element-type\`；严禁使用 window.alert/confirm/prompt。`,
+      `5. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
+    ].join('\n');
+  }
+  return `${baseHeader}\n当前 M1 聚合根：${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || '无'}；M3 规则数：${project?.suite.M3?.rules.length ?? 0}。当收到从确认原型合成 11 模型请求（如 [ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...]）时，必须调用 synthesize_ontology_suite 工具并交由两级一致性校验门禁落库。`;
 }
 
 // ─── Execute Single Tool Call (YOLO + Validator Gate + Scoped HITL) ──────────
+
+interface PrototypeTurnDraft {
+  prototypeId?: string;
+  prototypeName: string;
+  designBrief?: DesignBrief;
+  baselineHtml: string;
+  workingHtml: string;
+  modifiedAnchors: PrototypeTargetAnchor[];
+}
+
+function recordModifiedAnchor(
+  draft: PrototypeTurnDraft,
+  anchor: PrototypeTargetAnchor | undefined,
+): void {
+  if (!anchor) return;
+  const key = `${anchor.screenId ?? ''}::${anchor.elementId ?? ''}::${anchor.cssSelector ?? ''}`;
+  if (
+    !draft.modifiedAnchors.some(
+      (a) => `${a.screenId ?? ''}::${a.elementId ?? ''}::${a.cssSelector ?? ''}` === key,
+    )
+  ) {
+    draft.modifiedAnchors.push(anchor);
+  }
+}
 
 interface ExecutedToolStep {
   trace: AgentToolCallTrace;
@@ -1266,13 +2193,15 @@ interface ExecutedToolStep {
   askUserPrompt?: AgentAskUserPrompt;
 }
 
-function executeUnifiedToolCall(
+async function executeUnifiedToolCall(
   store: WorkspaceStore,
   session: AgentSession,
   tc: ToolCall,
   hadPreviousValidatorError: boolean,
   locale: AgentLocale = 'zh-CN',
-): ExecutedToolStep {
+  prototypeDraft?: PrototypeTurnDraft,
+  options?: { isMock?: boolean; actionParams?: Record<string, unknown> },
+): Promise<ExecutedToolStep> {
   const started = Date.now();
   const args = (tc.arguments ?? {}) as Record<string, unknown>;
   const ontologyToolSet = new Set<string>(ONTOLOGY_TOOL_NAMES);
@@ -1669,7 +2598,14 @@ function executeUnifiedToolCall(
       assets.find((a) => a.layer === 'TECH_ARCH') ??
       assets[0]!;
     const requirementDoc = store.listRequirementDocs(project.id)[0];
-    const prototype = store.listPrototypes(project.id)[0];
+    const confirmedProto = store.getConfirmedPrototypeRevision(project.id);
+    const prototype = confirmedProto
+      ? {
+          ...confirmedProto.prototype,
+          htmlContent: confirmedProto.htmlContent,
+          extractedScreenCount: confirmedProto.revision.extractedScreenCount,
+        }
+      : undefined;
     const pkg = compileDevelopmentPackage({
       app,
       project,
@@ -1936,6 +2872,240 @@ function executeUnifiedToolCall(
     };
   }
 
+  // 8b. Domain Synthesis & Analytics Agent Run Tools (Tickets #33 & #34)
+  const domainToolResult = await executeDomainRunToolCall(
+    store,
+    session,
+    tc.id,
+    tc.name,
+    args,
+    locale,
+    {
+      ...(options?.isMock !== undefined ? { isMock: options.isMock } : {}),
+      ...(options?.actionParams ? { actionParams: options.actionParams } : {}),
+    },
+  );
+  if (domainToolResult) {
+    return domainToolResult;
+  }
+
+  // 9. Prototype Semantic-Anchor Tools (PROTOTYPE_CO_DESIGN)
+  if (
+    tc.name === 'list_prototype_anchors' ||
+    tc.name === 'read_prototype_anchor' ||
+    tc.name === 'edit_prototype_anchor' ||
+    tc.name === 'rewrite_prototype_page'
+  ) {
+    const activeHtml =
+      prototypeDraft?.workingHtml ?? resolveTargetPrototypeForSession(store, session)?.htmlContent;
+    if (activeHtml === undefined) {
+      const noProtoMsg = pickLocaleText(
+        locale,
+        '当前会话未找到可精修的交互原型',
+        'No target interactive prototype found for this session',
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: noProtoMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({ status: 'ERROR', diagnostic: noProtoMsg }),
+        isError: true,
+      };
+    }
+
+    if (tc.name === 'list_prototype_anchors') {
+      const overview = listPrototypeAnchors(activeHtml);
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: pickLocaleText(
+            locale,
+            `已枚举 ${overview.screens.length} 个屏幕锚点与 ${overview.elements.length} 个交互控件锚点`,
+            `Listed ${overview.screens.length} screen anchors and ${overview.elements.length} element anchors`,
+          ),
+          isError: false,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify(overview),
+        isError: false,
+      };
+    }
+
+    if (tc.name === 'read_prototype_anchor') {
+      const elementId = typeof args.elementId === 'string' ? args.elementId : undefined;
+      const screenId = typeof args.screenId === 'string' ? args.screenId : undefined;
+      const cssSelector = typeof args.cssSelector === 'string' ? args.cssSelector : undefined;
+      const readRes = readPrototypeAnchor(activeHtml, {
+        ...(elementId ? { elementId } : {}),
+        ...(screenId ? { screenId } : {}),
+        ...(cssSelector ? { cssSelector } : {}),
+        locale,
+      });
+      const anchorBadge =
+        readRes.targetAnchor?.elementId ||
+        readRes.targetAnchor?.screenId ||
+        readRes.targetAnchor?.cssSelector ||
+        'anchor';
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: readRes.isError
+            ? readRes.diagnostic || pickLocaleText(locale, '未找到锚点', 'Anchor not found')
+            : pickLocaleText(
+                locale,
+                `已读取锚点 ${anchorBadge} 局部片段（${readRes.fragment.length} 字符）`,
+                `Read localized HTML fragment for ${anchorBadge} (${readRes.fragment.length} chars)`,
+              ),
+          isError: readRes.isError,
+          ...(readRes.targetAnchor ? { targetAnchor: readRes.targetAnchor } : {}),
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify(
+          readRes.isError
+            ? {
+                status: 'ANCHOR_NOT_FOUND',
+                diagnostic: readRes.diagnostic,
+                targetAnchor: readRes.targetAnchor,
+              }
+            : {
+                status: 'OK',
+                targetAnchor: readRes.targetAnchor,
+                contextSummary: readRes.contextSummary,
+                fragment: readRes.fragment,
+              },
+        ),
+        isError: readRes.isError,
+      };
+    }
+
+    if (tc.name === 'edit_prototype_anchor') {
+      const elementId = typeof args.elementId === 'string' ? args.elementId : undefined;
+      const screenId = typeof args.screenId === 'string' ? args.screenId : undefined;
+      const cssSelector = typeof args.cssSelector === 'string' ? args.cssSelector : undefined;
+      const operation = String(args.operation || 'replace_element') as PrototypeAnchorEditOperation;
+      const htmlFragment = typeof args.htmlFragment === 'string' ? args.htmlFragment : undefined;
+      const attributes =
+        args.attributes && typeof args.attributes === 'object'
+          ? (args.attributes as Record<string, string | null>)
+          : undefined;
+      const allowRemoveAnchors = Array.isArray(args.allowRemoveAnchors)
+        ? args.allowRemoveAnchors.map(String)
+        : undefined;
+
+      const editRes = editPrototypeAnchor(activeHtml, {
+        ...(elementId ? { elementId } : {}),
+        ...(screenId ? { screenId } : {}),
+        ...(cssSelector ? { cssSelector } : {}),
+        operation,
+        ...(htmlFragment !== undefined ? { htmlFragment } : {}),
+        ...(attributes ? { attributes } : {}),
+        ...(allowRemoveAnchors ? { allowRemoveAnchors } : {}),
+        locale,
+      });
+
+      if (editRes.isError) {
+        return {
+          trace: {
+            id: tc.id,
+            toolName: tc.name,
+            arguments: args,
+            output: editRes.diagnostic || editRes.summary,
+            isError: true,
+            ...(editRes.targetAnchor ? { targetAnchor: editRes.targetAnchor } : {}),
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({
+            status: 'REJECTED_BY_ANCHOR_VALIDATOR',
+            diagnostic: editRes.diagnostic || editRes.summary,
+            targetAnchor: editRes.targetAnchor,
+          }),
+          isError: true,
+        };
+      }
+
+      if (prototypeDraft) {
+        prototypeDraft.workingHtml = editRes.nextHtml;
+        recordModifiedAnchor(prototypeDraft, editRes.targetAnchor);
+      }
+
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: editRes.summary,
+          isError: false,
+          ...(hadPreviousValidatorError ? { validatorRepair: true } : {}),
+          ...(editRes.targetAnchor ? { targetAnchor: editRes.targetAnchor } : {}),
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: 'APPLIED',
+          summary: editRes.summary,
+          targetAnchor: editRes.targetAnchor,
+        }),
+        isError: false,
+      };
+    }
+
+    // rewrite_prototype_page
+    const htmlContent = String(args.htmlContent || '');
+    const rewriteRes = rewritePrototypePage(activeHtml, htmlContent, {
+      allowAnchorReset: Boolean(args.allowAnchorReset) || activeHtml.trim().length === 0,
+      locale,
+    });
+    if (rewriteRes.isError) {
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: rewriteRes.diagnostic || rewriteRes.summary,
+          isError: true,
+          ...(rewriteRes.targetAnchor ? { targetAnchor: rewriteRes.targetAnchor } : {}),
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: 'REJECTED_BY_ANCHOR_VALIDATOR',
+          diagnostic: rewriteRes.diagnostic || rewriteRes.summary,
+        }),
+        isError: true,
+      };
+    }
+
+    if (prototypeDraft) {
+      prototypeDraft.workingHtml = rewriteRes.nextHtml;
+      recordModifiedAnchor(prototypeDraft, rewriteRes.targetAnchor);
+    }
+
+    return {
+      trace: {
+        id: tc.id,
+        toolName: tc.name,
+        arguments: args,
+        output: rewriteRes.summary,
+        isError: false,
+        ...(hadPreviousValidatorError ? { validatorRepair: true } : {}),
+        ...(rewriteRes.targetAnchor ? { targetAnchor: rewriteRes.targetAnchor } : {}),
+        durationMs: Date.now() - started,
+      },
+      toolResultContent: JSON.stringify({
+        status: 'APPLIED',
+        summary: rewriteRes.summary,
+      }),
+      isError: false,
+    };
+  }
+
   return {
     trace: {
       id: tc.id,
@@ -2188,6 +3358,18 @@ export async function compactAgentSessionWithLlm(
 
 // ─── Unified Multi-Step Streaming Session Runner ─────────────────────────────
 
+export interface TransientTurnImageInput {
+  id: string;
+  name: string;
+  mimeType: string;
+  dataBase64?: string;
+  remoteUrl?: string;
+  width?: number;
+  height?: number;
+  role?: AgentImageAttachmentRole;
+  textFallbackNote?: string;
+}
+
 export interface UnifiedAgentStreamInput {
   sessionId: string;
   prompt?: string;
@@ -2197,6 +3379,9 @@ export interface UnifiedAgentStreamInput {
     selectedAnswers: string[];
     freeformText?: string;
   };
+  images?: TransientTurnImageInput[];
+  designBrief?: DesignBrief;
+  prototypeName?: string;
   activeModelCode?: ModelCode;
   reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
   locale?: AgentLocale | string;
@@ -2206,10 +3391,137 @@ export interface UnifiedAgentStreamInput {
   stepTimeoutMs?: number;
 }
 
-export async function* runUnifiedAgentSessionStream(
+function toPersistedImageRef(
+  img: TransientTurnImageInput,
+  index: number,
+): AgentImageAttachmentRef {
+  const hasSafeRemoteUrl =
+    typeof img.remoteUrl === 'string' &&
+    (/^https?:\/\//i.test(img.remoteUrl) ||
+      (img.remoteUrl.startsWith('/') && !img.remoteUrl.startsWith('//'))) &&
+    !/^(?:data|blob):/i.test(img.remoteUrl);
+  const isRemote = hasSafeRemoteUrl && !img.dataBase64;
+  return {
+    id: img.id?.trim() || `img-${Date.now().toString(36)}-${index + 1}`,
+    name: img.name?.trim() || `image-${index + 1}`,
+    mimeType: img.mimeType?.trim() || 'image/webp',
+    source: isRemote ? 'remote' : 'local',
+    ...(isRemote && img.remoteUrl ? { remoteUrl: img.remoteUrl.trim() } : {}),
+    ...(typeof img.width === 'number' && Number.isFinite(img.width) && img.width > 0
+      ? { width: Math.round(img.width) }
+      : {}),
+    ...(typeof img.height === 'number' && Number.isFinite(img.height) && img.height > 0
+      ? { height: Math.round(img.height) }
+      : {}),
+    ...(img.role ? { role: img.role } : {}),
+  };
+}
+
+async function resolveTransientImagesForVisionTurn(
+  images: TransientTurnImageInput[],
+  locale: AgentLocale,
+  isMock = false,
+): Promise<{
+  imageBlocks: ImageContent[];
+  manifestLines: string[];
+  fallbackNotes: string[];
+}> {
+  const imageBlocks: ImageContent[] = [];
+  const manifestLines: string[] = [];
+  const fallbackNotes: string[] = [];
+
+  for (let i = 0; i < images.length; i += 1) {
+    const img = images[i]!;
+    const roleLabel = img.role ? ` (${img.role})` : '';
+    const trimmedBase64 = typeof img.dataBase64 === 'string' ? img.dataBase64.trim() : '';
+
+    if (trimmedBase64.length > 0) {
+      const dataUriMatch = /^data:([^;]+);base64,([\s\S]+)$/i.exec(trimmedBase64);
+      const rawBase64 = (dataUriMatch ? dataUriMatch[2]! : trimmedBase64).replace(/\s+/g, '');
+      const resolvedMime = (dataUriMatch ? dataUriMatch[1]! : img.mimeType) || 'image/webp';
+      if (rawBase64.length > 0) {
+        imageBlocks.push({
+          type: 'image',
+          data: rawBase64,
+          mimeType: resolvedMime,
+        });
+        manifestLines.push(
+          `- [Image #${imageBlocks.length}] ${img.name}${roleLabel}${img.textFallbackNote ? ` — ${img.textFallbackNote}` : ''}`,
+        );
+        continue;
+      }
+    }
+
+    const trimmedRemote = typeof img.remoteUrl === 'string' ? img.remoteUrl.trim() : '';
+    const isLocalHttp = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//i.test(trimmedRemote);
+    if (trimmedRemote && /^https?:\/\//i.test(trimmedRemote) && (!isMock || isLocalHttp)) {
+      try {
+        const resp = await fetch(trimmedRemote, {
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        const headerMime = resp.headers.get('content-type')?.split(';')[0]?.trim();
+        const buf = Buffer.from(await resp.arrayBuffer());
+        if (buf.byteLength > 0) {
+          imageBlocks.push({
+            type: 'image',
+            data: buf.toString('base64'),
+            mimeType: headerMime || img.mimeType || 'image/webp',
+          });
+          manifestLines.push(
+            `- [Image #${imageBlocks.length}] ${img.name}${roleLabel}${img.textFallbackNote ? ` — ${img.textFallbackNote}` : ''}`,
+          );
+          continue;
+        }
+      } catch {
+        // Fall through to text fallback note when remote screenshot cannot be fetched
+      }
+    }
+
+    fallbackNotes.push(
+      img.textFallbackNote?.trim() ||
+        pickLocaleText(
+          locale,
+          `[参考图「${img.name}」未加载图像字节，仅使用文字说明]`,
+          `[Reference image "${img.name}" bytes unavailable; using text description only]`,
+        ),
+    );
+  }
+
+  return { imageBlocks, manifestLines, fallbackNotes };
+}
+
+function saveSessionCheckpointSafe(
   store: WorkspaceStore,
-  input: UnifiedAgentStreamInput,
-): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
+  session: AgentSession,
+  payload: Record<string, unknown>,
+): void {
+  void durableMemoryStorage;
+  if (typeof store.saveAgentCheckpoint !== 'function') return;
+  try {
+    store.saveAgentCheckpoint(
+      session.id,
+      `PI_UNIFIED_${session.agentKind}`,
+      JSON.stringify({
+        sessionId: session.id,
+        status: session.status,
+        ...payload,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+  } catch {
+    // Non-fatal in read-only edge contexts
+  }
+}
+
+async function executeUnifiedTurnCore(
+  store: WorkspaceStore,
+  input: Omit<UnifiedAgentStreamInput, 'signal'>,
+  emit: (ev: UnifiedAgentSseEvent) => void,
+  controller: AbortController,
+): Promise<void> {
   const existing = store.getAgentSession(input.sessionId);
   if (!existing) {
     throw new Error(`Agent session not found: ${input.sessionId}`);
@@ -2222,11 +3534,6 @@ export async function* runUnifiedAgentSessionStream(
     input.prompt || input.askUserAnswer?.freeformText || lastUserText,
   );
 
-  if (input.mode === 'STEER') {
-    abortActiveAgentSession(existing.id, 'STEER_SUPERSEDED');
-  }
-
-  const controller = new AbortController();
   const idleTimeoutMs = input.idleTimeoutMs ?? 90_000;
   const stepTimeoutMs = input.stepTimeoutMs ?? Math.max(300_000, idleTimeoutMs * 2);
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -2255,30 +3562,6 @@ export async function* runUnifiedAgentSessionStream(
   };
 
   resetIdleTimer();
-
-  const abortFromClient = () => {
-    if (!controller.signal.aborted) {
-      const reason: SessionAbortReason = {
-        kind: 'CLIENT_DISCONNECT',
-        message: pickLocaleText(
-          effectiveLocale,
-          '客户端流式连接已断开',
-          'Client SSE connection closed',
-        ),
-      };
-      controller.abort(reason);
-    }
-  };
-
-  if (input.signal) {
-    if (input.signal.aborted) {
-      abortFromClient();
-    } else {
-      input.signal.addEventListener('abort', abortFromClient, {
-        once: true,
-      });
-    }
-  }
   activeSessionAbortControllers.set(existing.id, controller);
 
   const defaultAbortedMsg = pickLocaleText(
@@ -2338,22 +3621,45 @@ export async function* runUnifiedAgentSessionStream(
     }
   }
 
+  const incomingImages = Array.isArray(input.images) ? input.images : [];
+  const turnAttachmentRefs: AgentImageAttachmentRef[] = incomingImages.map((img, idx) =>
+    toPersistedImageRef(img, idx),
+  );
+
+  if (!synthesizedPrompt && turnAttachmentRefs.length > 0) {
+    synthesizedPrompt = pickLocaleText(
+      effectiveLocale,
+      `请结合附带的 ${turnAttachmentRefs.length} 张参考图进行分析与设计调整。`,
+      `Please inspect the ${turnAttachmentRefs.length} attached reference image(s) and apply appropriate design updates.`,
+    );
+  }
+
+  let currentTurnUserMsgId: string | undefined;
   if (synthesizedPrompt) {
+    currentTurnUserMsgId = `amsg-${Date.now().toString(36)}-u`;
     workingMessages.push({
-      id: `amsg-${Date.now().toString(36)}-u`,
+      id: currentTurnUserMsgId,
       role: 'user',
       content: synthesizedPrompt,
+      ...(turnAttachmentRefs.length > 0 ? { images: turnAttachmentRefs } : {}),
       timestamp: nowIso,
     });
   }
 
+  const structuredTurnAction = resolveEffectiveStructuredAction(
+    existing.messages,
+    synthesizedPrompt,
+  );
+  const cleanTitleSource =
+    structuredTurnAction?.cleanPrompt || synthesizedPrompt;
+
   const nextTitle =
     existing.messages.length === 0 &&
-    synthesizedPrompt &&
+    cleanTitleSource &&
     (existing.title.startsWith('新会话') ||
       existing.title.startsWith('新建') ||
       existing.title.startsWith('New '))
-      ? synthesizedPrompt.replace(/\s+/g, ' ').slice(0, 26)
+      ? cleanTitleSource.replace(/\s+/g, ' ').slice(0, 26)
       : existing.title;
 
   let sessionState: AgentSession = store.saveAgentSession({
@@ -2363,6 +3669,12 @@ export async function* runUnifiedAgentSessionStream(
     status: 'RUNNING',
     messages: workingMessages,
     updatedAt: nowIso,
+  });
+
+  saveSessionCheckpointSafe(store, sessionState, {
+    phase: 'TURN_STARTED',
+    messageCount: sessionState.messages.length,
+    toolCallsCount: 0,
   });
 
   const turnStartMs = Date.now();
@@ -2377,6 +3689,40 @@ export async function* runUnifiedAgentSessionStream(
   let totalOutputTokens = 0;
   let hadValidatorError = false;
 
+  let usedVisionFallback = false;
+  let activeVisionFallbackNotice: string | undefined;
+
+  const initialTargetProto =
+    sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
+      ? resolveTargetPrototypeForSession(store, sessionState)
+      : undefined;
+  const fallbackProtoName =
+    input.prototypeName?.trim() ||
+    pickLocaleText(
+      effectiveLocale,
+      `${resolveProjectDetail(store, sessionState.projectId)?.name ?? '业务'}交互原型`,
+      `${resolveProjectDetail(store, sessionState.projectId)?.name ?? 'Interactive'} Prototype`,
+    );
+  const prototypeTurnDraft: PrototypeTurnDraft | undefined =
+    sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
+      ? initialTargetProto
+        ? {
+            prototypeId: initialTargetProto.id,
+            prototypeName: initialTargetProto.name,
+            ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+            baselineHtml: initialTargetProto.htmlContent,
+            workingHtml: initialTargetProto.htmlContent,
+            modifiedAnchors: [],
+          }
+        : {
+            prototypeName: fallbackProtoName,
+            ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+            baselineHtml: '',
+            workingHtml: '',
+            modifiedAnchors: [],
+          }
+      : undefined;
+
   try {
     built = buildPiModelsForStore(store, sessionState, {
       ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
@@ -2384,7 +3730,18 @@ export async function* runUnifiedAgentSessionStream(
       locale: effectiveLocale,
     });
 
-    yield {
+    if (!built.visionSupported) {
+      activeVisionFallbackNotice = pickLocaleText(
+        effectiveLocale,
+        '当前模型看不了图，将只使用文字设计说明',
+        'Current model cannot view images; only text design notes will be used',
+      );
+      if (incomingImages.length > 0) {
+        usedVisionFallback = true;
+      }
+    }
+
+    emit({
       id: nextEventId(),
       event: 'session_meta',
       data: {
@@ -2393,10 +3750,81 @@ export async function* runUnifiedAgentSessionStream(
         provider: built.providerLabel,
         model: built.selectedModel.id,
         isMock: built.isMock,
+        visionSupported: built.visionSupported,
+        ...(activeVisionFallbackNotice ? { visionFallbackNotice: activeVisionFallbackNotice } : {}),
       },
-    };
+    });
 
     const piMessages: Message[] = buildInitialPiMessages(sessionState);
+
+    if (incomingImages.length > 0) {
+      const lastPiUserIdx = (() => {
+        for (let i = piMessages.length - 1; i >= 0; i -= 1) {
+          if (piMessages[i]?.role === 'user') return i;
+        }
+        return -1;
+      })();
+
+      if (lastPiUserIdx >= 0) {
+        const targetUserMsg = piMessages[lastPiUserIdx] as Extract<Message, { role: 'user' }>;
+        const basePromptText = extractUserMessageText(targetUserMsg);
+
+        if (built.visionSupported) {
+          const resolvedVision = await resolveTransientImagesForVisionTurn(
+            incomingImages,
+            effectiveLocale,
+            built.isMock,
+          );
+          const extraSections: string[] = [];
+          if (resolvedVision.manifestLines.length > 0) {
+            extraSections.push(
+              pickLocaleText(
+                effectiveLocale,
+                `[视觉参考清单]\n${resolvedVision.manifestLines.join('\n')}`,
+                `[Visual Reference Manifest]\n${resolvedVision.manifestLines.join('\n')}`,
+              ),
+            );
+          }
+          if (resolvedVision.fallbackNotes.length > 0) {
+            extraSections.push(resolvedVision.fallbackNotes.join('\n'));
+          }
+          const combinedText = [basePromptText, ...extraSections].filter(Boolean).join('\n\n');
+          if (resolvedVision.imageBlocks.length > 0) {
+            piMessages[lastPiUserIdx] = {
+              ...targetUserMsg,
+              content: [{ type: 'text', text: combinedText }, ...resolvedVision.imageBlocks],
+            };
+          } else if (combinedText !== basePromptText) {
+            piMessages[lastPiUserIdx] = {
+              ...targetUserMsg,
+              content: combinedText,
+            };
+          }
+        } else {
+          const fallbackLines = incomingImages.map((img, idx) => {
+            const roleTag = img.role ? ` (${img.role})` : '';
+            const detail =
+              img.textFallbackNote?.trim() ||
+              pickLocaleText(
+                effectiveLocale,
+                `图片「${img.name}」仅使用文字说明`,
+                `Image "${img.name}" represented by text notes only`,
+              );
+            return `- [${idx + 1}] ${img.name}${roleTag}: ${detail}`;
+          });
+          const fallbackBlock = pickLocaleText(
+            effectiveLocale,
+            `[文字设计说明（当前模型不支持看图）]\n${fallbackLines.join('\n')}`,
+            `[Text Design Notes (current model does not support vision input)]\n${fallbackLines.join('\n')}`,
+          );
+          piMessages[lastPiUserIdx] = {
+            ...targetUserMsg,
+            content: [basePromptText, fallbackBlock].filter(Boolean).join('\n\n'),
+          };
+        }
+      }
+    }
+
     const tools = getToolsForAgentKind(sessionState.agentKind);
 
     const MAX_TOOL_ROUNDS = 24;
@@ -2435,18 +3863,18 @@ export async function* runUnifiedAgentSessionStream(
 
         if (ev.type === 'thinking_delta') {
           accumulatedThinking += ev.delta;
-          yield {
+          emit({
             id: nextEventId(),
             event: 'thinking_delta',
             data: { step: step + 1, delta: ev.delta },
-          };
+          });
         } else if (ev.type === 'text_delta') {
           accumulatedText += ev.delta;
-          yield {
+          emit({
             id: nextEventId(),
             event: 'delta',
             data: { step: step + 1, text: ev.delta },
-          };
+          });
         } else if (
           ev.type === 'toolcall_start' ||
           ev.type === 'toolcall_delta' ||
@@ -2464,16 +3892,19 @@ export async function* runUnifiedAgentSessionStream(
             !announcedToolCallIds.has(candidate.id)
           ) {
             announcedToolCallIds.add(candidate.id);
-            yield {
+            const candidateArgs = (candidate.arguments ?? {}) as Record<string, unknown>;
+            const candidateAnchor = extractTargetAnchorFromArgs(candidate.name, candidateArgs);
+            emit({
               id: nextEventId(),
               event: 'tool_call',
               data: {
                 id: candidate.id,
                 toolName: candidate.name,
-                arguments: (candidate.arguments ?? {}) as Record<string, unknown>,
+                arguments: candidateArgs,
+                ...(candidateAnchor ? { targetAnchor: candidateAnchor } : {}),
                 step: step + 1,
               },
-            };
+            });
           }
         } else if (ev.type === 'done') {
           finalMessage = ev.message;
@@ -2512,6 +3943,25 @@ export async function* runUnifiedAgentSessionStream(
         break;
       }
 
+      if (finalMessage.stopReason === 'error' || finalMessage.errorMessage) {
+        if (controller.signal.aborted) {
+          throw toAbortedError();
+        }
+        throw new LlmGatewayError({
+          message:
+            finalMessage.errorMessage ||
+            pickLocaleText(
+              effectiveLocale,
+              '上游模型网关返回错误响应',
+              'Upstream LLM gateway returned an error response',
+            ),
+          providerName: built.providerConfig?.name ?? built.providerLabel,
+          baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+          model: built.selectedModel.id,
+          locale: effectiveLocale,
+        });
+      }
+
       totalInputTokens += finalMessage.usage?.input ?? 0;
       totalOutputTokens += finalMessage.usage?.output ?? 0;
       piMessages.push(finalMessage);
@@ -2529,58 +3979,66 @@ export async function* runUnifiedAgentSessionStream(
           throw toAbortedError();
         }
         resetIdleTimer();
-        yield {
+        const tcArgs = (tc.arguments ?? {}) as Record<string, unknown>;
+        const tcAnchor = extractTargetAnchorFromArgs(tc.name, tcArgs);
+        emit({
           id: nextEventId(),
           event: 'tool_call',
           data: {
             id: tc.id,
             toolName: tc.name,
-            arguments: tc.arguments as Record<string, unknown>,
+            arguments: tcArgs,
+            ...(tcAnchor ? { targetAnchor: tcAnchor } : {}),
             step: step + 1,
           },
-        };
+        });
 
-        const executed = executeUnifiedToolCall(
+        const executed = await executeUnifiedToolCall(
           store,
           sessionState,
           tc,
           hadValidatorError,
           effectiveLocale,
+          prototypeTurnDraft,
+          {
+            isMock: built.isMock,
+            ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
+          },
         );
         if (executed.isError) {
           hadValidatorError = true;
         }
         allToolTraces.push(executed.trace);
 
-        yield {
+        emit({
           id: nextEventId(),
           event: 'tool_result',
           data: {
             trace: executed.trace,
             step: step + 1,
           },
-        };
+        });
 
         if (executed.artifact) {
           allArtifacts.push(executed.artifact);
-          yield {
+          emit({
             id: nextEventId(),
             event: 'artifact',
             data: {
               artifact: executed.artifact,
             },
-          };
+          });
         }
 
         if (executed.askUserPrompt) {
           pendingAskUser = executed.askUserPrompt;
-          yield {
+          emit({
             id: nextEventId(),
             event: 'ask_user',
             data: {
               askUser: executed.askUserPrompt,
             },
-          };
+          });
         }
 
         const toolResultMsg: ToolResultMessage<JsonObject> = {
@@ -2594,6 +4052,13 @@ export async function* runUnifiedAgentSessionStream(
         piMessages.push(toolResultMsg);
       }
 
+      saveSessionCheckpointSafe(store, sessionState, {
+        phase: 'STEP_PROGRESS',
+        step: step + 1,
+        toolCallsCount: allToolTraces.length,
+        accumulatedChars: accumulatedText.length,
+      });
+
       if (pendingAskUser) {
         if (!accumulatedText.trim()) {
           const defaultHeader = pickLocaleText(
@@ -2606,24 +4071,270 @@ export async function* runUnifiedAgentSessionStream(
             `请先在下方确认 **${pendingAskUser.header ?? defaultHeader}**，确认后我将立即继续执行。`,
             `Please confirm **${pendingAskUser.header ?? defaultHeader}** below so I can proceed immediately.`,
           );
-          yield {
+          emit({
             id: nextEventId(),
             event: 'delta',
             data: { step: step + 1, text: accumulatedText },
-          };
+          });
         }
         break;
+      }
+    }
+
+    if (
+      !built.isMock &&
+      !accumulatedText.trim() &&
+      allToolTraces.length === 0 &&
+      !pendingAskUser
+    ) {
+      throw new LlmGatewayError({
+        message: pickLocaleText(
+          effectiveLocale,
+          `模型网关「${built.providerLabel}」返回了空响应（未产生任何工具调用或内容）`,
+          `LLM gateway "${built.providerLabel}" returned an empty response (no tool calls or content generated)`,
+        ),
+        providerName: built.providerConfig?.name ?? built.providerLabel,
+        baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+        model: built.selectedModel.id,
+        locale: effectiveLocale,
+      });
+    }
+
+    // Live LLM recovery & honest failure check for structured domain actions (ADR 0007 / ADR 0009)
+    if (!built.isMock && structuredTurnAction && !pendingAskUser && !controller.signal.aborted) {
+      if (
+        structuredTurnAction.kind === 'SYNTHESIZE_SRS' &&
+        !allArtifacts.some((a) => a.kind === 'REQUIREMENT_DOC') &&
+        accumulatedText.trim().length >= 80
+      ) {
+        const autoSrs = await executeDomainRunToolCall(
+          store,
+          sessionState,
+          `tc-auto-srs-${Date.now().toString(36)}`,
+          'save_synthesized_srs_doc',
+          {
+            ...structuredTurnAction.params,
+            status: 'CONFIRMED',
+            content: accumulatedText,
+          },
+          effectiveLocale,
+          { isMock: false, actionParams: structuredTurnAction.params },
+        );
+        if (autoSrs) {
+          allToolTraces.push(autoSrs.trace);
+          emit({
+            id: nextEventId(),
+            event: 'tool_result',
+            data: { trace: autoSrs.trace, step: 1 },
+          });
+          if (autoSrs.artifact) {
+            allArtifacts.push(autoSrs.artifact);
+            emit({
+              id: nextEventId(),
+              event: 'artifact',
+              data: { artifact: autoSrs.artifact },
+            });
+          }
+        }
+      } else if (
+        structuredTurnAction.kind === 'SYNTHESIZE_ONTOLOGY_SUITE' &&
+        !allArtifacts.some((a) => a.kind === 'ONTOLOGY_SUITE') &&
+        accumulatedText.trim().length > 0
+      ) {
+        const parsedBp = extractJsonObjectFromText<LlmSynthesizedDomainBlueprint>(accumulatedText);
+        if (parsedBp && typeof parsedBp === 'object') {
+          const autoOnto = await executeDomainRunToolCall(
+            store,
+            sessionState,
+            `tc-auto-onto-${Date.now().toString(36)}`,
+            'synthesize_ontology_suite',
+            {
+              ...structuredTurnAction.params,
+              ...(parsedBp as Record<string, unknown>),
+            },
+            effectiveLocale,
+            { isMock: false, actionParams: structuredTurnAction.params },
+          );
+          if (autoOnto) {
+            allToolTraces.push(autoOnto.trace);
+            emit({
+              id: nextEventId(),
+              event: 'tool_result',
+              data: { trace: autoOnto.trace, step: 1 },
+            });
+            if (autoOnto.artifact) {
+              allArtifacts.push(autoOnto.artifact);
+              emit({
+                id: nextEventId(),
+                event: 'artifact',
+                data: { artifact: autoOnto.artifact },
+              });
+            }
+          }
+        }
+      } else if (
+        structuredTurnAction.kind === 'GENERATE_TECH_ARCH' &&
+        !allArtifacts.some((a) => a.kind === 'TECH_ARCH_ASSET') &&
+        accumulatedText.trim().length >= 60
+      ) {
+        const autoArch = await executeDomainRunToolCall(
+          store,
+          sessionState,
+          `tc-auto-arch-${Date.now().toString(36)}`,
+          'save_tech_architecture_spec',
+          {
+            ...structuredTurnAction.params,
+            content: accumulatedText,
+          },
+          effectiveLocale,
+          { isMock: false, actionParams: structuredTurnAction.params },
+        );
+        if (autoArch) {
+          allToolTraces.push(autoArch.trace);
+          emit({
+            id: nextEventId(),
+            event: 'tool_result',
+            data: { trace: autoArch.trace, step: 1 },
+          });
+          if (autoArch.artifact) {
+            allArtifacts.push(autoArch.artifact);
+            emit({
+              id: nextEventId(),
+              event: 'artifact',
+              data: { artifact: autoArch.artifact },
+            });
+          }
+        }
+      }
+
+      const expectedArtifactKindByAction: Record<
+        typeof structuredTurnAction.kind,
+        AgentDomainArtifact['kind']
+      > = {
+        SYNTHESIZE_SRS: 'REQUIREMENT_DOC',
+        SYNTHESIZE_ONTOLOGY_SUITE: 'ONTOLOGY_SUITE',
+        GENERATE_TECH_ARCH: 'TECH_ARCH_ASSET',
+        METRIC_INSIGHT: 'METRIC_INSIGHT',
+        SCENARIO_ATTRIBUTION: 'ANALYTICS_REPORT',
+        RUN_ONTOLOGY_EXTRACTION: 'EXTRACTION_JOB',
+      };
+      const expectedKind = expectedArtifactKindByAction[structuredTurnAction.kind];
+      if (!allArtifacts.some((a) => a.kind === expectedKind)) {
+        const lastFailedTrace = [...allToolTraces].reverse().find((t) => t.isError);
+        const detailSuffix = lastFailedTrace?.output ? ` — ${lastFailedTrace.output}` : '';
+        throw new LlmGatewayError({
+          message: pickLocaleText(
+            effectiveLocale,
+            `模型网关「${built.providerLabel}」未能完成结构化产物提交（期望产物：${expectedKind}）${detailSuffix}`,
+            `LLM gateway "${built.providerLabel}" failed to produce required structured artifact (${expectedKind})${detailSuffix}`,
+          ),
+          providerName: built.providerConfig?.name ?? built.providerLabel,
+          baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+          model: built.selectedModel.id,
+          locale: effectiveLocale,
+        });
+      }
+    }
+
+    if (
+      !built.isMock &&
+      prototypeTurnDraft &&
+      !prototypeTurnDraft.prototypeId &&
+      !prototypeTurnDraft.workingHtml.trim() &&
+      !pendingAskUser
+    ) {
+      throw new LlmGatewayError({
+        message: pickLocaleText(
+          effectiveLocale,
+          `模型网关「${built.providerLabel}」未生成有效的首版交互原型 HTML（禁止降级伪造模板）`,
+          `LLM gateway "${built.providerLabel}" did not produce valid initial prototype HTML (template fabrication is disabled)`,
+        ),
+        providerName: built.providerConfig?.name ?? built.providerLabel,
+        baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+        model: built.selectedModel.id,
+        locale: effectiveLocale,
+      });
+    }
+
+    if (prototypeTurnDraft && !controller.signal.aborted) {
+      const cleanRevisionNote = stripSelectionBlockFromPrompt(synthesizedPrompt);
+      if (
+        !prototypeTurnDraft.prototypeId &&
+        prototypeTurnDraft.workingHtml.trim().length > 0
+      ) {
+        const createdProto = store.createPrototype(sessionState.projectId, {
+          name: prototypeTurnDraft.prototypeName,
+          title: cleanRevisionNote.slice(0, 48),
+          instruction: cleanRevisionNote,
+          htmlContent: prototypeTurnDraft.workingHtml,
+          source: 'AGENT_RUN',
+          coDesignSessionId: sessionState.id,
+          ...(prototypeTurnDraft.designBrief
+            ? { designBrief: prototypeTurnDraft.designBrief }
+            : {}),
+          agentRunId: assistantMsgId,
+        });
+        sessionState = {
+          ...sessionState,
+          targetId: createdProto.prototype.id,
+        };
+        const revisionArtifact: AgentDomainArtifact = {
+          kind: 'PROTOTYPE_REVISION',
+          prototypeId: createdProto.prototype.id,
+          revisionId: createdProto.revision.id,
+          revisionNumber: createdProto.revision.revisionNumber,
+          modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
+        };
+        allArtifacts.push(revisionArtifact);
+        emit({
+          id: nextEventId(),
+          event: 'artifact',
+          data: {
+            artifact: revisionArtifact,
+          },
+        });
+      } else if (prototypeTurnDraft.prototypeId) {
+        if (prototypeTurnDraft.designBrief) {
+          store.updatePrototypeDesignBrief(
+            prototypeTurnDraft.prototypeId,
+            prototypeTurnDraft.designBrief,
+          );
+        }
+        if (prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml) {
+          const appendedRevision = store.appendPrototypeRevision(prototypeTurnDraft.prototypeId, {
+            title: cleanRevisionNote.slice(0, 48),
+            instruction: cleanRevisionNote,
+            htmlContent: prototypeTurnDraft.workingHtml,
+            source: 'AGENT_RUN',
+            agentRunId: assistantMsgId,
+          });
+          const revisionArtifact: AgentDomainArtifact = {
+            kind: 'PROTOTYPE_REVISION',
+            prototypeId: appendedRevision.prototype.id,
+            revisionId: appendedRevision.revision.id,
+            revisionNumber: appendedRevision.revision.revisionNumber,
+            modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
+          };
+          allArtifacts.push(revisionArtifact);
+          emit({
+            id: nextEventId(),
+            event: 'artifact',
+            data: {
+              artifact: revisionArtifact,
+            },
+          });
+        }
       }
     }
 
     if (!accumulatedText.trim() && allToolTraces.length > 0) {
       const sep = effectiveLocale === 'en-US' ? ': ' : '：';
       accumulatedText = allToolTraces.map((t) => `- **${t.toolName}**${sep}${t.output}`).join('\n');
-      yield {
+      emit({
         id: nextEventId(),
         event: 'delta',
         data: { step: 1, text: accumulatedText },
-      };
+      });
     }
 
     const assistantRecord: AgentSessionMessage = {
@@ -2636,12 +4347,35 @@ export async function* runUnifiedAgentSessionStream(
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
       ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
+      ...(usedVisionFallback
+        ? {
+            visionFallbackUsed: true,
+            ...(activeVisionFallbackNotice
+              ? { visionFallbackNotice: activeVisionFallbackNotice }
+              : {}),
+          }
+        : {}),
       modelUsed: built.selectedModel.id,
       providerName: built.providerLabel,
       timestamp: new Date().toISOString(),
     };
 
-    const nextMessages = [...sessionState.messages, assistantRecord];
+    const updatedPriorMessages =
+      usedVisionFallback && currentTurnUserMsgId
+        ? sessionState.messages.map((m) =>
+            m.id === currentTurnUserMsgId
+              ? {
+                  ...m,
+                  visionFallbackUsed: true,
+                  ...(activeVisionFallbackNotice
+                    ? { visionFallbackNotice: activeVisionFallbackNotice }
+                    : {}),
+                }
+              : m,
+          )
+        : sessionState.messages;
+
+    const nextMessages = [...updatedPriorMessages, assistantRecord];
     const finalStatus: AgentSession['status'] = pendingAskUser ? 'WAITING_INPUT' : 'IDLE';
     const completedSession: AgentSession = {
       ...sessionState,
@@ -2661,26 +4395,13 @@ export async function* runUnifiedAgentSessionStream(
 
     sessionState = store.saveAgentSession(completedSession);
 
-    void durableMemoryStorage;
-    if (typeof store.saveAgentCheckpoint === 'function') {
-      try {
-        store.saveAgentCheckpoint(
-          sessionState.id,
-          `PI_UNIFIED_${sessionState.agentKind}`,
-          JSON.stringify({
-            sessionId: sessionState.id,
-            status: sessionState.status,
-            messageCount: sessionState.messages.length,
-            toolCallsCount: allToolTraces.length,
-            updatedAt: sessionState.updatedAt,
-          }),
-        );
-      } catch {
-        // Non-fatal in read-only edge contexts
-      }
-    }
+    saveSessionCheckpointSafe(store, sessionState, {
+      phase: 'COMPLETED',
+      messageCount: sessionState.messages.length,
+      toolCallsCount: allToolTraces.length,
+    });
 
-    yield {
+    emit({
       id: nextEventId(),
       event: 'usage',
       data: {
@@ -2688,16 +4409,13 @@ export async function* runUnifiedAgentSessionStream(
         providerName: built.providerLabel,
         modelUsed: built.selectedModel.id,
       },
-    };
+    });
 
-    yield {
+    emit({
       id: nextEventId(),
       event: 'message_end',
-      data: {
-        session: sessionState,
-        project: store.getProject(sessionState.projectId),
-      },
-    };
+      data: buildSessionMessageEndPayload(store, sessionState),
+    });
   } catch (err) {
     const currentActive = activeSessionAbortControllers.get(existing.id);
     const supersededByNewTurn = Boolean(currentActive && currentActive !== controller);
@@ -2708,50 +4426,47 @@ export async function* runUnifiedAgentSessionStream(
       return;
     }
 
-    const hasPartialProgress = Boolean(
-      accumulatedText.trim() ||
-        accumulatedThinking.trim() ||
-        allToolTraces.length > 0 ||
-        allArtifacts.length > 0 ||
-        pendingAskUser,
-    );
-
-    if (
-      err instanceof SessionStreamAbortedError &&
-      (err.kind === 'USER_ABORT' || err.kind === 'CLIENT_DISCONNECT')
-    ) {
-      const partialMessages = hasPartialProgress
-        ? [
-            ...sessionState.messages,
-            {
-              id: assistantMsgId,
-              role: 'assistant' as const,
-              content: accumulatedText,
-              ...(accumulatedThinking
-                ? {
-                    thinking: accumulatedThinking,
-                    thinkingDurationMs: Date.now() - turnStartMs,
-                  }
-                : {}),
-              ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
-              ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
-              ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
-              ...(built
-                ? {
-                    modelUsed: built.selectedModel.id,
-                    providerName: built.providerLabel,
-                  }
-                : {}),
-              timestamp: new Date().toISOString(),
-            },
-          ]
-        : sessionState.messages;
+    if (err instanceof SessionStreamAbortedError && err.kind === 'USER_ABORT') {
+      const cancelledAssistantMsg: AgentSessionMessage = {
+        id: assistantMsgId,
+        role: 'assistant',
+        content: accumulatedText,
+        cancelled: true,
+        ...(accumulatedThinking
+          ? {
+              thinking: accumulatedThinking,
+              thinkingDurationMs: Date.now() - turnStartMs,
+            }
+          : {}),
+        ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
+        ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
+        ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
+        ...(built
+          ? {
+              modelUsed: built.selectedModel.id,
+              providerName: built.providerLabel,
+            }
+          : {}),
+        timestamp: new Date().toISOString(),
+      };
 
       sessionState = store.saveAgentSession({
         ...sessionState,
         status: 'IDLE',
-        messages: partialMessages,
+        messages: [...sessionState.messages, cancelledAssistantMsg],
         updatedAt: new Date().toISOString(),
+      });
+
+      saveSessionCheckpointSafe(store, sessionState, {
+        phase: 'CANCELLED',
+        messageCount: sessionState.messages.length,
+        toolCallsCount: allToolTraces.length,
+      });
+
+      emit({
+        id: nextEventId(),
+        event: 'message_end',
+        data: buildSessionMessageEndPayload(store, sessionState, { cancelled: true }),
       });
       return;
     }
@@ -2792,6 +4507,41 @@ export async function* runUnifiedAgentSessionStream(
             ),
           };
 
+    if (
+      structuredTurnAction?.kind === 'SYNTHESIZE_SRS' &&
+      !allArtifacts.some((a) => a.kind === 'REQUIREMENT_DOC') &&
+      accumulatedText.trim().length >= 120 &&
+      /^#{1,3}\s+/m.test(accumulatedText)
+    ) {
+      const proj = store.getProject(sessionState.projectId);
+      const draftDocId =
+        typeof structuredTurnAction.params.docId === 'string' &&
+        structuredTurnAction.params.docId.trim()
+          ? structuredTurnAction.params.docId.trim()
+          : `doc-draft-${sessionState.id}`;
+      const draftTitle =
+        typeof structuredTurnAction.params.title === 'string' &&
+        structuredTurnAction.params.title.trim()
+          ? structuredTurnAction.params.title.trim()
+          : pickLocaleText(
+              effectiveLocale,
+              `${proj?.name ?? sessionState.projectId} — 软件需求规格说明书 (草稿)`,
+              `${proj?.name ?? sessionState.projectId} — Software Requirements Specification (Draft)`,
+            );
+      store.saveRequirementDoc({
+        id: draftDocId,
+        projectId: sessionState.projectId,
+        title: draftTitle,
+        version:
+          typeof structuredTurnAction.params.version === 'string' &&
+          structuredTurnAction.params.version.trim()
+            ? structuredTurnAction.params.version.trim()
+            : 'v1.0-draft',
+        content: accumulatedText.trim(),
+        status: 'DRAFT',
+      });
+    }
+
     const errorAssistantMsg: AgentSessionMessage = {
       id: `amsg-${Date.now().toString(36)}-err`,
       role: 'assistant',
@@ -2811,30 +4561,455 @@ export async function* runUnifiedAgentSessionStream(
 
     sessionState = store.saveAgentSession({
       ...sessionState,
-      status: isGatewayErr ? 'ERROR' : 'IDLE',
+      status: 'ERROR',
       messages: [...sessionState.messages, errorAssistantMsg],
       updatedAt: new Date().toISOString(),
     });
 
-    yield {
+    saveSessionCheckpointSafe(store, sessionState, {
+      phase: 'FAILED',
+      messageCount: sessionState.messages.length,
+      errorCode: diagnostic.code,
+    });
+
+    emit({
       id: nextEventId(),
       event: 'run_error',
       data: {
         diagnostic: errorAssistantMsg.errorDiagnostic,
         session: sessionState,
+        ...(sessionState.agentKind === 'REQUIREMENT'
+          ? { requirementDocs: store.listRequirementDocs(sessionState.projectId) }
+          : {}),
       },
-    };
+    });
   } finally {
     if (idleTimer !== undefined) {
       clearTimeout(idleTimer);
-    }
-    if (input.signal) {
-      input.signal.removeEventListener('abort', abortFromClient);
     }
     if (activeSessionAbortControllers.get(existing.id) === controller) {
       activeSessionAbortControllers.delete(existing.id);
     }
   }
+}
+
+function notifyRunSubscribers(run: ActiveBackgroundSessionRun): void {
+  for (const notify of Array.from(run.subscribers)) {
+    notify();
+  }
+}
+
+function launchActiveRunInSlot(
+  store: WorkspaceStore,
+  slot: SessionRunnerSlot,
+  sessionId: string,
+  turnInput: Omit<UnifiedAgentStreamInput, 'signal'>,
+): ActiveBackgroundSessionRun {
+  const controller = new AbortController();
+  const run: ActiveBackgroundSessionRun = {
+    runId: `srun-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    sessionId,
+    controller,
+    bufferedEvents: [],
+    subscribers: new Set(),
+    done: false,
+    completionPromise: Promise.resolve(),
+  };
+
+  slot.activeRun = run;
+
+  const emit = (ev: UnifiedAgentSseEvent) => {
+    run.bufferedEvents.push(ev);
+    notifyRunSubscribers(run);
+  };
+
+  run.completionPromise = executeUnifiedTurnCore(store, turnInput, emit, controller)
+    .catch((err) => {
+      emit({
+        id: `${sessionId}-evt-fatal-${Date.now().toString(36)}`,
+        event: 'run_error',
+        data: {
+          diagnostic: {
+            code: 'AGENT_RUNTIME_ERROR',
+            message: err instanceof Error ? err.message : String(err),
+          },
+          session: store.getAgentSession(sessionId),
+        },
+      });
+    })
+    .finally(() => {
+      run.done = true;
+      notifyRunSubscribers(run);
+      if (slot.activeRun === run) {
+        slot.activeRun = null;
+        pumpNextQueuedTurn(store, slot, sessionId);
+      }
+    });
+
+  return run;
+}
+
+function pumpNextQueuedTurn(
+  store: WorkspaceStore,
+  slot: SessionRunnerSlot,
+  sessionId: string,
+): void {
+  while (slot.queue.length > 0) {
+    const next = slot.queue.shift()!;
+    if (next.cancelled) {
+      next.resolveRun(null);
+      continue;
+    }
+    if (!store.getAgentSession(sessionId)) {
+      next.resolveRun(null);
+      continue;
+    }
+    const launched = launchActiveRunInSlot(store, slot, sessionId, next.input);
+    next.resolveRun(launched);
+    return;
+  }
+}
+
+async function* subscribeToBackgroundRun(
+  run: ActiveBackgroundSessionRun,
+  signal?: AbortSignal,
+  afterEventId?: string,
+): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
+  let cursor = 0;
+  if (afterEventId) {
+    const idx = run.bufferedEvents.findIndex((e) => e.id === afterEventId);
+    if (idx >= 0) {
+      cursor = idx + 1;
+    }
+  }
+
+  while (true) {
+    if (signal?.aborted) {
+      return;
+    }
+    while (cursor < run.bufferedEvents.length) {
+      if (signal?.aborted) {
+        return;
+      }
+      const ev = run.bufferedEvents[cursor++]!;
+      yield ev;
+    }
+    if (run.done) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      const onUpdate = () => {
+        cleanup();
+        resolve();
+      };
+      const onAbort = () => {
+        cleanup();
+        resolve();
+      };
+      const cleanup = () => {
+        run.subscribers.delete(onUpdate);
+        signal?.removeEventListener('abort', onAbort);
+      };
+      run.subscribers.add(onUpdate);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (cursor < run.bufferedEvents.length || run.done || signal?.aborted) {
+        cleanup();
+        resolve();
+      }
+    });
+  }
+}
+
+export async function* runUnifiedAgentSessionStream(
+  store: WorkspaceStore,
+  input: UnifiedAgentStreamInput,
+): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
+  const existing = store.getAgentSession(input.sessionId);
+  if (!existing) {
+    throw new Error(`Agent session not found: ${input.sessionId}`);
+  }
+
+  const { signal: clientSignal, ...turnInput } = input;
+  const slot = getOrCreateSessionSlot(store, input.sessionId);
+
+  if (input.mode === 'STEER' && slot.activeRun && !slot.activeRun.done) {
+    abortActiveAgentSession(input.sessionId, 'STEER_SUPERSEDED', store);
+    const steerRun = launchActiveRunInSlot(store, slot, input.sessionId, turnInput);
+    yield* subscribeToBackgroundRun(steerRun, clientSignal);
+    return;
+  }
+
+  if (slot.activeRun && !slot.activeRun.done) {
+    const queuedRunPromise = new Promise<ActiveBackgroundSessionRun | null>((resolve) => {
+      slot.queue.push({
+        queueId: `sq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        input: turnInput,
+        cancelled: false,
+        resolveRun: resolve,
+      });
+    });
+
+    if (clientSignal?.aborted) {
+      return;
+    }
+
+    const startedRun = await new Promise<ActiveBackgroundSessionRun | null>((resolve) => {
+      const onClientDisconnect = () => {
+        resolve(null);
+      };
+      clientSignal?.addEventListener('abort', onClientDisconnect, { once: true });
+      void queuedRunPromise.then((run) => {
+        clientSignal?.removeEventListener('abort', onClientDisconnect);
+        resolve(run);
+      });
+    });
+
+    if (!startedRun || clientSignal?.aborted) {
+      return;
+    }
+
+    yield* subscribeToBackgroundRun(startedRun, clientSignal);
+    return;
+  }
+
+  const run = launchActiveRunInSlot(store, slot, input.sessionId, turnInput);
+  yield* subscribeToBackgroundRun(run, clientSignal);
+}
+
+function resolveEffectiveStructuredAction(
+  messages: AgentSessionMessage[],
+  currentPrompt: string,
+): ReturnType<typeof parseStructuredActionFromPrompt> {
+  const direct = parseStructuredActionFromPrompt(currentPrompt);
+  if (direct) return direct;
+  const trimmed = currentPrompt.trim();
+  const isResumePrompt =
+    !trimmed || /^(?:继续|重试|恢复|continue\b|resume\b|retry\b)/i.test(trimmed);
+  if (!isResumePrompt) return null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i]!;
+    if (msg.role === 'assistant') {
+      if (msg.cancelled || msg.errorDiagnostic) {
+        continue;
+      }
+      return null;
+    }
+    if (msg.role === 'user') {
+      const prior = parseStructuredActionFromPrompt(msg.content);
+      if (prior) return prior;
+    }
+  }
+  return null;
+}
+
+function buildSessionMessageEndPayload(
+  store: WorkspaceStore,
+  session: AgentSession,
+  extra?: { cancelled?: boolean },
+): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    session,
+    ...(extra?.cancelled ? { cancelled: true } : {}),
+    project: store.getProject(session.projectId),
+  };
+
+  if (session.agentKind === 'PROTOTYPE_CO_DESIGN' || session.agentKind === 'COPILOT') {
+    base.prototypes = store.listPrototypes(session.projectId);
+    base.confirmedPrototypeRevision =
+      store.getConfirmedPrototypeRevision(session.projectId) ?? null;
+  }
+  if (session.agentKind === 'REQUIREMENT') {
+    base.requirementDocs = store.listRequirementDocs(session.projectId);
+    base.requirementSessions = store.listRequirementSessions(session.projectId);
+  }
+  if (session.agentKind === 'CODING') {
+    base.fourLayerAssets = store.listFourLayerAssets();
+    base.assembledApplications = store.listAssembledApplications();
+  }
+  if (session.agentKind === 'CAPABILITY') {
+    base.extractionJobs = store.listExtractionJobs();
+  }
+  if (session.agentKind === 'REASONING') {
+    base.metrics = store.listMetrics();
+    base.analyticsReports = store.listAnalyticsReports();
+    base.reasoningSessions = store.listReasoningSessions();
+  }
+  return base;
+}
+
+function markOrphanedRunningSessionInterrupted(
+  store: WorkspaceStore,
+  session: AgentSession,
+): {
+  session: AgentSession;
+  diagnostic: NonNullable<AgentSessionMessage['errorDiagnostic']>;
+} {
+  const lastUserMsg = [...session.messages].reverse().find((m) => m.role === 'user');
+  const locale = resolveEffectiveLocale(store, undefined, lastUserMsg?.content ?? session.title);
+  const diagnostic: NonNullable<AgentSessionMessage['errorDiagnostic']> = {
+    code: 'AGENT_RUN_INTERRUPTED',
+    message: pickLocaleText(
+      locale,
+      '服务端已重启或后台运行意外中断，本轮智能体执行未完成。',
+      'Server restarted or the background agent run was interrupted before completion.',
+    ),
+    remediation: pickLocaleText(
+      locale,
+      '请点击「重试 / 继续」从最近的持久化检查点恢复执行。',
+      'Click Retry / Continue to resume execution from the latest durable checkpoint.',
+    ),
+  };
+
+  const lastMsg = session.messages[session.messages.length - 1];
+  const alreadyMarked =
+    lastMsg?.role === 'assistant' && lastMsg.errorDiagnostic?.code === 'AGENT_RUN_INTERRUPTED';
+
+  const nowIso = new Date().toISOString();
+  const nextMessages = alreadyMarked
+    ? session.messages
+    : [
+        ...session.messages,
+        {
+          id: `amsg-${Date.now().toString(36)}-interrupted`,
+          role: 'assistant' as const,
+          content: '',
+          errorDiagnostic: diagnostic,
+          timestamp: nowIso,
+        },
+      ];
+
+  const updatedSession = store.saveAgentSession({
+    ...session,
+    status: 'ERROR',
+    messages: nextMessages,
+    updatedAt: nowIso,
+  });
+
+  saveSessionCheckpointSafe(store, updatedSession, {
+    phase: 'INTERRUPTED',
+    messageCount: updatedSession.messages.length,
+    errorCode: diagnostic.code,
+  });
+
+  return { session: updatedSession, diagnostic };
+}
+
+export async function autoResumeInterruptedAgentSessions(
+  store: WorkspaceStore,
+): Promise<number> {
+  const runningSessions = store
+    .listAgentSessions()
+    .filter((session) => session.status === 'RUNNING');
+
+  let processedCount = 0;
+  for (const session of runningSessions) {
+    const slot = getSessionSlot(store, session.id);
+    if (slot?.activeRun && !slot.activeRun.done) {
+      continue;
+    }
+
+    const cp =
+      typeof store.loadAgentCheckpoint === 'function'
+        ? store.loadAgentCheckpoint(session.id)
+        : undefined;
+
+    let phase: string | undefined;
+    if (cp?.stateJson) {
+      try {
+        const parsed = JSON.parse(cp.stateJson) as { phase?: unknown };
+        if (typeof parsed.phase === 'string') {
+          phase = parsed.phase;
+        }
+      } catch {
+        phase = undefined;
+      }
+    }
+
+    const resumableCheckpoint =
+      Boolean(cp) &&
+      Boolean(phase) &&
+      phase !== 'COMPLETED' &&
+      phase !== 'AWAITING_USER' &&
+      phase !== 'CANCELLED' &&
+      phase !== 'FAILED' &&
+      phase !== 'INTERRUPTED';
+
+    const hasLastUserMsg = session.messages.some(
+      (msg) => msg.role === 'user' && Boolean(msg.content.trim()),
+    );
+    const hasRunnableBackend =
+      isMockLlmActive(store) ||
+      store.listLlmProviders().some((p) => p.enabled && Boolean(p.baseUrl?.trim()));
+
+    if (resumableCheckpoint && hasLastUserMsg && hasRunnableBackend) {
+      try {
+        await collectUnifiedAgentTurn(store, {
+          sessionId: session.id,
+          mode: 'CONTINUE',
+        });
+        const refreshed = store.getAgentSession(session.id);
+        if (!refreshed || refreshed.status === 'RUNNING') {
+          markOrphanedRunningSessionInterrupted(store, refreshed ?? session);
+        }
+      } catch {
+        const current = store.getAgentSession(session.id) ?? session;
+        markOrphanedRunningSessionInterrupted(store, current);
+      }
+    } else {
+      markOrphanedRunningSessionInterrupted(store, session);
+    }
+
+    processedCount += 1;
+  }
+
+  return processedCount;
+}
+
+export async function* attachUnifiedAgentSessionLiveStream(
+  store: WorkspaceStore,
+  sessionId: string,
+  options?: {
+    afterEventId?: string;
+    signal?: AbortSignal;
+  },
+): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
+  const slot = getSessionSlot(store, sessionId);
+  if (slot?.activeRun && !slot.activeRun.done) {
+    yield* subscribeToBackgroundRun(slot.activeRun, options?.signal, options?.afterEventId);
+    return;
+  }
+
+  const existing = store.getAgentSession(sessionId);
+  if (!existing) {
+    throw new Error(`Agent session not found: ${sessionId}`);
+  }
+
+  if (existing.status === 'RUNNING') {
+    const { session: interruptedSession, diagnostic } =
+      markOrphanedRunningSessionInterrupted(store, existing);
+    if (options?.signal?.aborted) {
+      return;
+    }
+    yield {
+      id: `${sessionId}-evt-interrupted-${Date.now().toString(36)}`,
+      event: 'run_error',
+      data: {
+        ...buildSessionMessageEndPayload(store, interruptedSession),
+        diagnostic,
+      },
+    };
+    return;
+  }
+
+  if (options?.signal?.aborted) {
+    return;
+  }
+
+  yield {
+    id: `${sessionId}-evt-snapshot-${Date.now().toString(36)}`,
+    event: 'message_end',
+    data: buildSessionMessageEndPayload(store, existing),
+  };
 }
 
 export async function collectUnifiedAgentTurn(

@@ -24,6 +24,7 @@ import {
   PackageCheck,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightOpen,
   Rocket,
   Search,
   Send,
@@ -77,7 +78,17 @@ import {
 import { KnowledgeGraphCanvas } from './views/KnowledgeGraphCanvas.js';
 import { OntologyWorkbenchView } from './views/OntologyWorkbenchView.js';
 import { Button } from './components/beautifui/index.js';
-import { GlobalPipelineTaskTray } from './components/pipeline/PipelineTaskCard.js';
+import {
+  ShellAgentPanel,
+  agentPanelSurfaceFor,
+  resolveActiveWorkspaceRuns,
+  useAgentPanelOverlayMode,
+} from './components/agent/ShellAgentPanel.js';
+import {
+  AGENT_PANEL_WIDE_CSS_WIDTH,
+  parseAgentPanelPrefs,
+  useAgentPanelStore,
+} from './components/agent/agentPanelStore.js';
 
 const NAV_ICONS: Record<NavViewId, React.ReactNode> = {
   overview: <FolderKanban size={16} />,
@@ -300,18 +311,21 @@ function ShellInner() {
     loading,
     toast,
     activeNav,
-    backgroundTasks,
+    liveSessionDrafts,
     liveAnnouncement,
     setActiveNav,
+    setActivePrototypeId,
     setSelectedModel,
     bootstrap,
     switchProject,
     saveSuiteWithUndo,
     showToast,
-    openBackgroundTaskResult,
   } = useWorkbenchStore();
   const lifecycle = data ? getProjectLifecycleState(data) : null;
-  const runningTopbarTask = backgroundTasks.find((tk) => tk.status === 'RUNNING');
+  const activeWorkspaceRuns = useMemo(
+    () => resolveActiveWorkspaceRuns(data, liveSessionDrafts),
+    [data, liveSessionDrafts],
+  );
   const activeView: NavViewId = NAV_ITEMS.some((i) => i.id === activeNav)
     ? (activeNav as NavViewId)
     : 'app-ontology';
@@ -322,6 +336,59 @@ function ShellInner() {
     readStoredJson<NavGroupId[]>('onto_nav_closed_groups', []),
   );
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Agent Panel (ADR 0009): a shell column on wide viewports, an overlay on narrow ones.
+  const agentSurface = agentPanelSurfaceFor(activeView);
+  const agentPanelOverlay = useAgentPanelOverlayMode();
+  const agentPanelOpen = useAgentPanelStore((s) => s.open);
+  const agentPanelOverlayOpen = useAgentPanelStore((s) => s.overlayOpen);
+  const agentPanelWidth = useAgentPanelStore((s) => s.width);
+  const agentPanelWideMode = useAgentPanelStore((s) => s.wideMode);
+  const agentPanelVisible =
+    Boolean(agentSurface) && (agentPanelOverlay ? agentPanelOverlayOpen : agentPanelOpen);
+  const setAgentPanelVisible = (visible: boolean) => {
+    const panel = useAgentPanelStore.getState();
+    if (agentPanelOverlay) panel.setOverlayOpen(visible);
+    else panel.setOpen(visible);
+  };
+
+  const prevViewRef = useRef<NavViewId | null>(null);
+  useEffect(() => {
+    const prevView = prevViewRef.current;
+    prevViewRef.current = activeView;
+    const prevSurface = prevView ? agentPanelSurfaceFor(prevView) : undefined;
+    const nextSurface = agentPanelSurfaceFor(activeView);
+    const panel = useAgentPanelStore.getState();
+    if (nextSurface?.conversationPrimary) {
+      panel.setWideMode(true, { commit: false });
+    } else if (prevSurface?.conversationPrimary && !nextSurface?.conversationPrimary) {
+      let persistedWide = false;
+      try {
+        persistedWide = parseAgentPanelPrefs(localStorage.getItem('onto_agent_panel')).wideMode;
+      } catch {
+        persistedWide = false;
+      }
+      if (!persistedWide) {
+        panel.setWideMode(false, { commit: false });
+      }
+    }
+  }, [activeView]);
+
+  const handleJumpToActiveRun = async () => {
+    const targetRun = activeWorkspaceRuns[0];
+    if (!targetRun) return;
+    if (data && data.activeProject.id !== targetRun.projectId) {
+      await switchProject(targetRun.projectId);
+    }
+    if (targetRun.agentKind === 'PROTOTYPE_CO_DESIGN' && targetRun.targetId) {
+      setActivePrototypeId(targetRun.projectId, targetRun.targetId);
+    }
+    setActiveNav(targetRun.targetNav, {
+      itemId: targetRun.targetId ?? null,
+      sessionId: targetRun.sessionId,
+    });
+    useAgentPanelStore.getState().revealPanel();
+  };
 
   const toggleCollapsed = () => {
     setCollapsedState((prev) => {
@@ -371,6 +438,19 @@ function ShellInner() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  useEffect(() => {
+    if (!agentSurface) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        setAgentPanelVisible(!agentPanelVisible);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentSurface, agentPanelVisible, agentPanelOverlay]);
 
   const activeNavSpec = NAV_ITEMS.find((i) => i.id === activeView);
   const activeGroupSpec = NAV_GROUPS.find((g) => g.id === activeNavSpec?.group);
@@ -434,7 +514,18 @@ function ShellInner() {
   const collapseLabel = collapsed ? t('展开侧边栏', 'Expand sidebar') : t('折叠侧边栏', 'Collapse sidebar');
 
   return (
-    <div className={`platform-shell ${collapsed ? 'sidebar-collapsed' : ''}`}>
+    <div
+      className={`platform-shell ${collapsed ? 'sidebar-collapsed' : ''} ${
+        agentPanelVisible && !agentPanelOverlay ? 'has-agent-panel' : ''
+      }`}
+      style={
+        {
+          '--agent-panel-w': agentPanelWideMode
+            ? AGENT_PANEL_WIDE_CSS_WIDTH
+            : `${agentPanelWidth}px`,
+        } as React.CSSProperties
+      }
+    >
       {/* ─── Left Sidebar ─── */}
       <aside className="platform-sidebar" aria-label={t('主导航', 'Main navigation')}>
         <div className="sidebar-brand">
@@ -511,27 +602,14 @@ function ShellInner() {
                         {!collapsed && <span>{t(item.labelZh, item.labelEn)}</span>}
                       </span>
                       <span className="nav-item-right">
-                        {backgroundTasks.some(
-                          (tk) =>
-                            tk.status === 'RUNNING' &&
-                            tk.projectId === data?.activeProject.id &&
-                            (tk.targetNav === item.id || tk.originNav === item.id),
+                        {activeWorkspaceRuns.some(
+                          (r) =>
+                            r.projectId === data?.activeProject.id &&
+                            r.targetNav === item.id,
                         ) && (
                           <span
                             className="nav-task-dot is-running"
-                            title={t('后台任务正在运行', 'Background task running')}
-                            aria-hidden="true"
-                          />
-                        )}
-                        {backgroundTasks.some(
-                          (tk) =>
-                            tk.unreadCompletion &&
-                            tk.projectId === data?.activeProject.id &&
-                            tk.targetNav === item.id,
-                        ) && (
-                          <span
-                            className="nav-task-dot is-done"
-                            title={t('新成果已生成完成，点击查看', 'New artifact ready')}
+                            title={t('智能体正在运行', 'Agent run active')}
                             aria-hidden="true"
                           />
                         )}
@@ -631,29 +709,23 @@ function ShellInner() {
           </div>
 
           <div className="topbar-right">
-            {runningTopbarTask && (
+            {activeWorkspaceRuns.length > 0 && (
               <button
                 type="button"
                 className="status-pill pipeline-topbar-pill"
-                data-testid="topbar-running-task-pill"
-                onClick={() => void openBackgroundTaskResult(runningTopbarTask.id)}
+                data-testid="topbar-running-indicator"
+                onClick={() => void handleJumpToActiveRun()}
                 title={t(
-                  `${runningTopbarTask.titleZh} — 点击前往查看实时进度`,
-                  `${runningTopbarTask.titleEn} — Click to view live progress`,
+                  `${activeWorkspaceRuns[0]!.title.zh} — 点击前往查看实时进展`,
+                  `${activeWorkspaceRuns[0]!.title.en} — Click to jump to active run`,
                 )}
               >
                 <Loader2 size={12} className="pipeline-spin" aria-hidden="true" />
                 <span>
-                  {runningTopbarTask.kind === 'SRS_SYNTHESIS'
-                    ? runningTopbarTask.completedChapters > 0
-                      ? t(
-                          `后台合成需求书 (${runningTopbarTask.completedChapters}/9 章)`,
-                          `SRS Synthesis (${runningTopbarTask.completedChapters}/9)`,
-                        )
-                      : t('后台合成需求规格书…', 'Synthesizing SRS…')
-                    : runningTopbarTask.kind === 'PROTOTYPE_GEN'
-                      ? t('后台生成交互原型…', 'Generating Prototype…')
-                      : t('后台合成 11 模型…', 'Synthesizing 11 Models…')}
+                  {t(
+                    `运行中 (${activeWorkspaceRuns.length})`,
+                    `Running (${activeWorkspaceRuns.length})`,
+                  )}
                 </span>
               </button>
             )}
@@ -693,6 +765,20 @@ function ShellInner() {
                   )}
                 </span>
               </>
+            )}
+            {agentSurface && !agentPanelVisible && (
+              <button
+                type="button"
+                className="status-pill agent-panel-toggle"
+                data-testid="agent-panel-toggle"
+                aria-controls="agent-panel"
+                aria-expanded={false}
+                title={t('展开智能体面板 (Ctrl/⌘ + J)', 'Open Agent Panel (Ctrl/⌘ + J)')}
+                onClick={() => setAgentPanelVisible(true)}
+              >
+                <PanelRightOpen size={13} aria-hidden="true" />
+                <span>{t('智能体', 'Agent')}</span>
+              </button>
             )}
           </div>
         </header>
@@ -852,11 +938,18 @@ function ShellInner() {
         </div>
       </main>
 
+      {agentSurface && agentPanelVisible && (
+        <ShellAgentPanel
+          surface={agentSurface}
+          overlay={agentPanelOverlay}
+          onClose={() => setAgentPanelVisible(false)}
+          onNavigate={setActiveView}
+        />
+      )}
+
       <div className="visually-hidden" aria-live="polite" aria-atomic="true">
         {liveAnnouncement}
       </div>
-
-      <GlobalPipelineTaskTray hasActiveToast={Boolean(toast)} />
 
       {toast && (
         <div className="toast-banner" data-testid="toast-banner" role="status" aria-live="polite">

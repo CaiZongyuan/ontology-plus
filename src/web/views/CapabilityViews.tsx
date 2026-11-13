@@ -7,6 +7,7 @@ import {
   Play,
   Plus,
   Server,
+  Sparkles,
   Trash2,
   Workflow,
 } from 'lucide-react';
@@ -32,7 +33,7 @@ import {
   triggerBrowserDownload,
   useWorkbenchStore,
 } from '../api.js';
-import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
+import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import {
   Button,
   CodeBlock,
@@ -456,7 +457,7 @@ POST /api/v1/mft/verify-audit -> verifyTransferSecurityAudit`,
 
 export function CapabilityExtractionView() {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
+  const { data, patchData, showToast, startOntologyExtractionRun } = useWorkbenchStore();
   const [systemId, setSystemId] = useState<string>('');
   const [targetProjectId, setTargetProjectId] = useState<string>('');
   const [sourceType, setSourceType] = useState<'DDL_AND_OPENAPI' | 'SOURCE_CODE' | 'LOG_AND_DOC'>(
@@ -515,46 +516,58 @@ export function CapabilityExtractionView() {
     setBusy(true);
     setExtractionError(null);
     try {
-      const json = await apiPostJson<{
-        job: ExtractionJob;
-        project?: typeof data.activeProject;
-        blockedBy?: { elementId?: string }[];
-        extractionJobs: ExtractionJob[];
-      }>('/api/capability/extraction-jobs', {
+      const normalizedSourceType: 'DDL_ONLY' | 'OPENAPI_ONLY' | 'DDL_AND_OPENAPI' =
+        sourceType === 'DDL_AND_OPENAPI'
+          ? 'DDL_AND_OPENAPI'
+          : scanPreview.tables.length > 0 && scanPreview.operations.length === 0
+            ? 'DDL_ONLY'
+            : scanPreview.operations.length > 0 && scanPreview.tables.length === 0
+              ? 'OPENAPI_ONLY'
+              : 'DDL_AND_OPENAPI';
+
+      const prevJobIds = new Set(data.extractionJobs.map((j) => j.id));
+      const runRes = await startOntologyExtractionRun({
         systemId: effectiveSystemId,
         projectId: effectiveProjectId,
         title,
-        sourceType,
+        sourceType: normalizedSourceType,
         sourceSnippet: ddlSnippet,
         applyImmediately,
       });
-      patchData({
-        extractionJobs: json.extractionJobs,
-        ...(json.project && json.project.id === data.activeProject.id
-          ? { activeProject: json.project }
-          : {}),
-      });
-      const blockedIds = Array.from(
-        new Set((json.blockedBy ?? []).map((b) => b.elementId).filter((id): id is string => Boolean(id))),
-      );
-      const blockedSuffixZh = blockedIds.length > 0 ? `（涉及：${blockedIds.slice(0, 6).join('、')}）` : '';
-      const blockedSuffixEn = blockedIds.length > 0 ? ` (${blockedIds.slice(0, 6).join(', ')})` : '';
-      showToast(
-        json.blockedBy?.length
-          ? t(
-              `本体萃取已完成，但立即合并被一致性门禁阻止（${json.blockedBy.length} 个新增一致性错误）${blockedSuffixZh}，已转为逐项确认。`,
-              `Ontology Extraction finished, but merging immediately was blocked by ${json.blockedBy.length} new Consistency Errors${blockedSuffixEn}; review the candidates instead.`,
-            )
-          : json.job.appliedToProject
+
+      const latestData = useWorkbenchStore.getState().data;
+      const runSession = runRes
+        ? latestData?.agentSessions.find((s) => s.id === runRes.sessionId)
+        : undefined;
+      const lastAssistant = [...(runSession?.messages ?? [])]
+        .reverse()
+        .find((m) => m.role === 'assistant');
+
+      if (lastAssistant?.errorDiagnostic) {
+        setExtractionError({
+          message: lastAssistant.errorDiagnostic.message,
+          diagnostic: lastAssistant.errorDiagnostic,
+        });
+        showToast(lastAssistant.errorDiagnostic.message);
+        return;
+      }
+
+      const newestJob =
+        (latestData?.extractionJobs ?? []).find((j) => !prevJobIds.has(j.id)) ??
+        latestData?.extractionJobs[0];
+      if (newestJob) {
+        showToast(
+          newestJob.appliedToProject
             ? t(
-                `本体萃取任务已完成并合并至工程：${json.job.summary}`,
-                `Ontology Extraction finished and merged into the project: ${json.job.summary}`,
+                `本体萃取任务已完成并合并至工程：${newestJob.summary}`,
+                `Ontology Extraction finished and merged into the project: ${newestJob.summary}`,
               )
             : t(
-                `本体萃取候选已生成，请逐项确认后合并：${json.job.summary}`,
-                `Ontology Extraction candidates are ready for confirmation: ${json.job.summary}`,
+                `本体萃取候选已生成，请逐项确认后合并：${newestJob.summary}`,
+                `Ontology Extraction candidates are ready for confirmation: ${newestJob.summary}`,
               ),
-      );
+        );
+      }
     } catch (err) {
       const typedErr = err as Error & {
         diagnostic?: {
@@ -1526,7 +1539,17 @@ export function CapabilityMcpView() {
 
 export function CapabilityAgentsView() {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
+  const {
+    data,
+    activeItemId,
+    liveSessionDrafts,
+    ensureProjectAgentSession,
+    patchData,
+    setActiveItemId,
+    setActiveSessionId,
+    showToast,
+    startSessionAgentRun,
+  } = useWorkbenchStore();
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
 
   // Create / Edit Agent Modal state
@@ -1542,10 +1565,18 @@ export function CapabilityAgentsView() {
   const [agentSystemPrompt, setAgentSystemPrompt] = useState('');
 
   useEffect(() => {
-    if (data && !selectedAgentId && data.capabilityAgents[0]) {
-      setSelectedAgentId(data.capabilityAgents[0].id);
+    if (!data) return;
+    if (activeItemId && data.capabilityAgents.some((a) => a.id === activeItemId)) {
+      if (selectedAgentId !== activeItemId) {
+        setSelectedAgentId(activeItemId);
+      }
+      return;
     }
-  }, [data, selectedAgentId]);
+    if (!selectedAgentId && data.capabilityAgents[0]) {
+      setSelectedAgentId(data.capabilityAgents[0].id);
+      setActiveItemId(data.capabilityAgents[0].id);
+    }
+  }, [activeItemId, data, selectedAgentId, setActiveItemId]);
 
   const activeAgent = useMemo(() => {
     if (!data) return undefined;
@@ -1610,6 +1641,7 @@ export function CapabilityAgentsView() {
     );
     patchData({ capabilityAgents: json.capabilityAgents });
     setSelectedAgentId(targetId);
+    setActiveItemId(targetId);
     setModalOpen(false);
     showToast(
       editingAgentId
@@ -1625,7 +1657,9 @@ export function CapabilityAgentsView() {
     );
     patchData({ capabilityAgents: json.capabilityAgents });
     if (selectedAgentId === deleteTarget.id) {
-      setSelectedAgentId(json.capabilityAgents[0]?.id ?? '');
+      const nextId = json.capabilityAgents[0]?.id ?? '';
+      setSelectedAgentId(nextId);
+      setActiveItemId(nextId || null);
     }
     showToast(t(`已移除智能体「${deleteTarget.name}」`, 'Deleted agent'));
     setDeleteTarget(null);
@@ -1637,6 +1671,47 @@ export function CapabilityAgentsView() {
       ...data.llmProviders.flatMap((p) => [p.defaultModel, ...p.availableModels]),
     ]),
   ).filter(Boolean);
+
+  const isRunningCapSession = (data.agentSessions ?? []).some(
+    (s) =>
+      s.agentKind === 'CAPABILITY' &&
+      (!activeAgent || s.targetId === activeAgent.id) &&
+      (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
+  );
+
+  const handleQuickPrompt = async (promptText: string) => {
+    if (!activeAgent) return;
+    setActiveItemId(activeAgent.id);
+    useAgentPanelStore.getState().revealPanel();
+    const sess = await ensureProjectAgentSession(
+      activeAgent.projectId || data.activeProject.id,
+      'CAPABILITY',
+      {
+        targetId: activeAgent.id,
+        title: `${activeAgent.name} (${t('实时 MCP 工具流式对话', 'Live MCP Smart Chat')})`,
+      },
+    );
+    setActiveSessionId(sess.id);
+    await startSessionAgentRun({
+      sessionId: sess.id,
+      prompt: promptText,
+    });
+  };
+
+  const starterPrompts = [
+    t(
+      '请查询当前合同台账并核对大额合同资信准入规则',
+      'Query active contracts and verify high-value credit gate rules',
+    ),
+    t(
+      '请列出已挂载的本体 MCP 工具清单及对应的 M3 规则约束',
+      'List mounted Ontology MCP tools and their M3 rule guards',
+    ),
+    t(
+      '按 SKILL.md 业务指导书核验当前履约异常单据的处置路径',
+      'Verify contract breach remediation workflow per SKILL.md',
+    ),
+  ];
 
   return (
     <div className="grid grid-cols-[340px_minmax(0,1fr)] gap-3.5">
@@ -1661,7 +1736,10 @@ export function CapabilityAgentsView() {
             return (
               <div
                 key={ag.id}
-                onClick={() => setSelectedAgentId(ag.id)}
+                onClick={() => {
+                  setSelectedAgentId(ag.id);
+                  setActiveItemId(ag.id);
+                }}
                 style={{
                   padding: 10,
                   borderRadius: 6,
@@ -1712,28 +1790,103 @@ export function CapabilityAgentsView() {
         </div>
       </div>
 
-      {/* Right Column: Unified Pi Durable Multi-Session Streaming Workbench */}
-      <AgentSessionWorkbench
-        agentKind="CAPABILITY"
-        targetId={activeAgent?.id}
-        title={
-          activeAgent
-            ? `${activeAgent.name} (${t('实时 MCP 工具流式对话', 'Live MCP Smart Chat')})`
-            : t('能力中心智能对话工作台', 'Capability Smart Chat')
-        }
-        subtitle={
-          activeAgent
-            ? `${activeAgent.role} · MCP: ${activeAgent.mcpIds.join(', ')} · Skills: ${activeAgent.skillIds.join(', ')}`
-            : undefined
-        }
-        placeholder={t(
-          '输入业务问题或执行指令（例如：请查询当前合同台账并核对大额合同资信准入规则）…',
-          'Ask the capability agent or trigger an Ontology MCP tool…',
+      {/* Right Column: Capability Agent Context & Quick Starters (Live Smart Chat runs in Unified Agent Panel) */}
+      <div className="card flex flex-col gap-3.5" data-testid="capability-agent-context-card">
+        <div className="card-header">
+          <div>
+            <h3 className="card-title inline-flex items-center gap-1.5">
+              <Sparkles size={15} className="text-accent" />
+              {activeAgent
+                ? activeAgent.name
+                : t('能力中心智能体上下文', 'Capability Agent Context')}
+            </h3>
+            <div className="text-[12px] text-muted-foreground mt-0.5">
+              {activeAgent
+                ? `${activeAgent.role} · ${t('对话与 MCP 工具调用已统一收敛至右侧 Agent 面板', 'Smart Chat & MCP tool runs live in the unified Agent Panel')}`
+                : t('请选择左侧能力智能体', 'Select a capability agent on the left')}
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="accent"
+            size="sm"
+            onClick={() => {
+              useAgentPanelStore.getState().revealPanel();
+              useAgentPanelStore.getState().setWideMode(true);
+            }}
+          >
+            {t('打开右侧 Agent 面板对话 →', 'Open Agent Panel →')}
+          </Button>
+        </div>
+
+        {activeAgent && (
+          <>
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="rounded-[6px] border border-line bg-inset/50 p-2.5">
+                <div className="text-[11px] font-semibold text-ink-3 mb-1.5">
+                  {t('已挂载本体 MCP 服务', 'Mounted Ontology MCP Servers')}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {activeAgent.mcpIds.map((id) => {
+                    const srv = data.mcpServers.find((m) => m.id === id);
+                    return (
+                      <span key={id} className="badge badge-accent">
+                        <Server size={11} className="mr-1 inline" />
+                        {srv ? srv.name : id}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="rounded-[6px] border border-line bg-inset/50 p-2.5">
+                <div className="text-[11px] font-semibold text-ink-3 mb-1.5">
+                  {t('已注入渐进式 SKILL.md 规则包', 'Injected SKILL.md Packages')}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {activeAgent.skillIds.map((id) => {
+                    const sk = data.generatedSkills.find((s) => s.id === id);
+                    return (
+                      <span key={id} className="badge badge-ok">
+                        <BookOpen size={11} className="mr-1 inline" />
+                        {sk ? sk.name : id}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[6px] border border-line bg-surface-2 p-3">
+              <div className="text-[11px] font-semibold text-ink-3 mb-1">
+                {t('智能体系统提示词契约', 'System Prompt Contract')}
+              </div>
+              <div className="text-[12.5px] leading-relaxed text-ink whitespace-pre-wrap">
+                {activeAgent.systemPrompt}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-[11.5px] font-semibold text-ink-2 mb-2">
+                {t('快捷业务校验指令（点击直接在右侧 Agent 面板发起运行）', 'Quick MCP Verification Runs (runs in Agent Panel)')}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {starterPrompts.map((promptText, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    disabled={isRunningCapSession}
+                    onClick={() => handleQuickPrompt(promptText)}
+                    className="flex items-center justify-between gap-2 rounded-[6px] border border-line bg-surface px-3 py-2 text-left text-[12.5px] text-ink transition-colors hover:border-accent hover:bg-accent-soft cursor-pointer disabled:opacity-50"
+                  >
+                    <span>{promptText}</span>
+                    <Play size={12} className="shrink-0 text-accent" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
         )}
-        inputTestId="smart-chat-input"
-        sendBtnTestId="smart-chat-send-btn"
-        toolLogTestId="smart-chat-tool-log"
-      />
+      </div>
 
       <ConfirmDialog
         open={modalOpen}

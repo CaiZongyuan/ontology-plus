@@ -3,20 +3,36 @@ export {
   type WorkspaceStoreOptions,
 } from './lib/store.js';
 
+export { doesProviderSupportVision } from './lib/types.js';
+export { PrototypeConfirmedDeleteError } from './lib/prototype-revisions.js';
+
 export type {
   ProjectSummary,
   ProjectDetail,
   ProjectSnapshot,
   AgentSessionKind,
+  PrototypeTargetAnchor,
   AgentToolCallTrace,
   AgentAskUserPrompt,
   AgentDomainArtifact,
+  AgentImageAttachmentRole,
+  AgentImageAttachmentRef,
   AgentSessionMessage,
   AgentSession,
   RequirementMessage,
   RequirementSession,
   RequirementDoc,
+  DesignBriefItem,
+  DesignBriefBorrowedReference,
+  DesignBrief,
+  PrototypeRevisionSource,
+  PrototypeRevision,
+  InteractivePrototype,
   PrototypeArtifact,
+  ConfirmedPrototypeRevisionRecord,
+  ConfirmedPrototypeRevision,
+  CreatePrototypeInput,
+  AppendPrototypeRevisionInput,
   FourLayerAsset,
   AssembledApplication,
   GeneratedSkill,
@@ -44,3 +60,22 @@ export type {
   SystemSettingsState,
   WorkspaceStore,
 } from './lib/types.js';
+
+export {
+  CURATED_INSPO_CATALOG,
+  INSPO_CDN_BASE,
+  deriveSourceSiteFromSlug,
+  inspoFullUrl,
+  inspoHeroUrl,
+  inspoMobileUrl,
+  inspoThumbUrl,
+  normalizeVisualReferenceItem,
+  sanitizeInspoCacheEntry,
+  type InspoCacheAction,
+  type InspoCacheEntry,
+  type InspoCacheEntryInput,
+  type InspoRecommendPick,
+  type RawVisualReferenceInput,
+  type VisualReferenceItem,
+  type VisualReferenceVibeGroup,
+} from './lib/inspo-cache.js';

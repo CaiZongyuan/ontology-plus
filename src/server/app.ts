@@ -7,13 +7,17 @@ import {
   type OntologySuite,
 } from '../packages/ontology-core/index.js';
 import {
+  PrototypeConfirmedDeleteError,
   createWorkspaceStore,
   type AgentSessionKind,
   type AnalyticsScenario,
+  type AppendPrototypeRevisionInput,
+  type CreatePrototypeInput,
   type CrossSystemFlow,
   type DataDocument,
   type DataMappingRule,
   type DatabaseResource,
+  type DesignBrief,
   type GeneratedSkill,
   type LegacySystemConfig,
   type LlmProviderConfig,
@@ -26,37 +30,22 @@ import {
   LlmGatewayError,
   SSE_RESPONSE_HEADERS,
   abortActiveAgentSession,
-  buildTurnSseEvents,
-  cancelServerPipelineTask,
+  abortActiveAgentSessionAsync,
+  assistProjectDesignBrief,
+  attachUnifiedAgentSessionLiveStream,
   compactAgentSessionWithLlm,
-  createPipelineTaskSseStream,
-  createSseEventStream,
   createUnifiedSseStream,
-  dismissServerPipelineTask,
-  generateMetricInsight,
-  generatePrototypeFromDoc,
-  generateTechArchitectureDoc,
-  getServerPipelineTask,
-  listServerPipelineTasks,
-  markServerPipelineTaskRead,
+  ensurePrototypeCoDesignSession,
+  getLiveAgentSessionStatus,
   normalizeAgentLocale,
-  refinePrototypeWithAi,
-  resumeServerPipelineTask,
-  runAppCodingAgentTurn,
-  runCapabilitySmartChatTurn,
   runDataOntologyReasoning,
-  runOntologyCopilotTurn,
-  runRequirementGrillingTurn,
-  runScenarioAttributionTurn,
   runSmartOntologyExtractionJob,
   runUnifiedAgentSessionStream,
-  startServerPipelineTask,
-  synthesizeOntologyFromPrototype,
-  synthesizeRequirementDocFromSession,
   testLlmGatewayConnection,
   type AgentLocale,
-  type PipelineTaskKind,
-  type PrototypeRefinementSelection,
+  type AssistProjectDesignBriefInput,
+  type DesignBriefAssistMode,
+  type TransientTurnImageInput,
 } from '../packages/agent-runtime/index.js';
 import {
   buildMcpClientConfigJson,
@@ -67,6 +56,7 @@ import {
   inspectOntologyMcpCapabilities,
   type JsonRpcRequest,
 } from '../packages/package-compiler/index.js';
+import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 
 export function createApiApp(customStore?: WorkspaceStore): Hono {
   const store = customStore ?? createWorkspaceStore();
@@ -101,6 +91,9 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     }
     const errCode = (err as { code?: string } | null)?.code;
     const msg = err instanceof Error ? err.message : String(err);
+    if (errCode === 'UNSUPPORTED_INSPO_ACTION') {
+      return c.json({ ok: false, error: msg, code: 'UNSUPPORTED_INSPO_ACTION' }, 400);
+    }
     if (errCode === 'ALREADY_MERGED' || msg.includes('already merged')) {
       return c.json({ error: msg, code: 'ALREADY_MERGED' }, 409);
     }
@@ -138,6 +131,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       requirementSessions: store.listRequirementSessions(activeProject.id),
       requirementDocs: store.listRequirementDocs(activeProject.id),
       prototypes: store.listPrototypes(activeProject.id),
+      confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(activeProject.id) ?? null,
       fourLayerAssets: store.listFourLayerAssets(),
       assembledApplications: store.listAssembledApplications(),
       generatedSkills: store.listGeneratedSkills(),
@@ -158,91 +152,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       writebackInterfaces: store.listWritebackInterfaces(),
       llmProviders: store.listLlmProviders(),
       systemSettings: store.getSystemSettings(),
-      pipelineTasks: listServerPipelineTasks(store),
-    });
-  });
-
-  // ─── Durable Background Pipeline Tasks (Detached from HTTP socket) ─────────
-
-  app.get('/api/pipeline-tasks', (c) => {
-    const projectId = c.req.query('projectId') || undefined;
-    return c.json({ pipelineTasks: listServerPipelineTasks(store, projectId) });
-  });
-
-  app.get('/api/pipeline-tasks/:taskId', (c) => {
-    const task = getServerPipelineTask(store, c.req.param('taskId'));
-    if (!task) return c.json({ error: 'Pipeline task not found' }, 404);
-    return c.json({ task });
-  });
-
-  app.post('/api/pipeline-tasks', async (c) => {
-    const body = await c.req.json<{
-      kind: PipelineTaskKind;
-      projectId: string;
-      sessionId?: string;
-      docId?: string;
-      prototypeId?: string;
-      prompt?: string;
-      title?: string;
-      version?: string;
-      locale?: string;
-    }>();
-    const locale = getReqLocale(c, body);
-    const { task, reusedRunning } = startServerPipelineTask(store, {
-      kind: body.kind,
-      projectId: body.projectId,
-      ...(body.sessionId ? { sessionId: body.sessionId } : {}),
-      ...(body.docId ? { docId: body.docId } : {}),
-      ...(body.prototypeId ? { prototypeId: body.prototypeId } : {}),
-      ...(body.prompt ? { prompt: body.prompt } : {}),
-      ...(body.title ? { title: body.title } : {}),
-      ...(body.version ? { version: body.version } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      task,
-      reusedRunning,
-      pipelineTasks: listServerPipelineTasks(store),
-    });
-  });
-
-  app.get('/api/pipeline-tasks/:taskId/stream', (c) => {
-    const taskId = c.req.param('taskId');
-    const stream = createPipelineTaskSseStream(store, taskId, c.req.raw.signal);
-    return new Response(stream, {
-      headers: SSE_RESPONSE_HEADERS,
-    });
-  });
-
-  app.post('/api/pipeline-tasks/:taskId/cancel', (c) => {
-    const task = cancelServerPipelineTask(store, c.req.param('taskId'));
-    if (!task) return c.json({ error: 'Pipeline task not found' }, 404);
-    return c.json({ task, pipelineTasks: listServerPipelineTasks(store) });
-  });
-
-  app.post('/api/pipeline-tasks/:taskId/dismiss', (c) => {
-    const task = dismissServerPipelineTask(store, c.req.param('taskId'));
-    if (!task) return c.json({ error: 'Pipeline task not found' }, 404);
-    return c.json({ task, pipelineTasks: listServerPipelineTasks(store) });
-  });
-
-  app.post('/api/pipeline-tasks/:taskId/read', (c) => {
-    const task = markServerPipelineTaskRead(store, c.req.param('taskId'));
-    if (!task) return c.json({ error: 'Pipeline task not found' }, 404);
-    return c.json({ task, pipelineTasks: listServerPipelineTasks(store) });
-  });
-
-  app.post('/api/pipeline-tasks/:taskId/resume', async (c) => {
-    const body = await c.req
-      .json<{ locale?: string }>()
-      .catch(() => ({ locale: undefined }));
-    const locale = getReqLocale(c, body);
-    const resumed = resumeServerPipelineTask(store, c.req.param('taskId'), locale);
-    if (!resumed) return c.json({ error: 'Pipeline task not found' }, 404);
-    return c.json({
-      task: resumed.task,
-      reusedRunning: resumed.reusedRunning,
-      pipelineTasks: listServerPipelineTasks(store),
     });
   });
 
@@ -310,7 +219,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
 
   app.delete('/api/agent-sessions/:id', (c) => {
     const id = c.req.param('id');
-    abortActiveAgentSession(id);
+    abortActiveAgentSession(id, 'USER_ABORT', store);
     store.deleteAgentSession(id);
     return c.json({
       deletedId: id,
@@ -330,22 +239,38 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     });
   });
 
-  app.post('/api/agent-sessions/:id/abort', (c) => {
+  app.post('/api/agent-sessions/:id/abort', async (c) => {
     const id = c.req.param('id');
-    const aborted = abortActiveAgentSession(id);
-    const cur = store.getAgentSession(id);
-    const session =
-      cur && cur.status === 'RUNNING'
-        ? store.saveAgentSession({
-          ...cur,
-          status: 'IDLE',
-          updatedAt: new Date().toISOString(),
-        })
-        : cur;
+    const { aborted, session } = await abortActiveAgentSessionAsync(store, id);
     return c.json({
       aborted,
       session,
       agentSessions: store.listAgentSessions(),
+    });
+  });
+
+  app.get('/api/agent-sessions/:id/live', (c) => {
+    const id = c.req.param('id');
+    const existing = store.getAgentSession(id);
+    if (!existing) return c.json({ error: 'Agent session not found' }, 404);
+    const afterEventId =
+      c.req.query('afterEventId') || c.req.header('Last-Event-ID') || undefined;
+    const generator = attachUnifiedAgentSessionLiveStream(store, id, {
+      ...(afterEventId ? { afterEventId } : {}),
+      signal: c.req.raw.signal,
+    });
+    return new Response(createUnifiedSseStream(generator), {
+      headers: SSE_RESPONSE_HEADERS,
+    });
+  });
+
+  app.get('/api/agent-sessions/:id/status', (c) => {
+    const id = c.req.param('id');
+    const existing = store.getAgentSession(id);
+    if (!existing) return c.json({ error: 'Agent session not found' }, 404);
+    return c.json({
+      session: existing,
+      live: getLiveAgentSessionStatus(store, id),
     });
   });
 
@@ -372,6 +297,9 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
           selectedAnswers: string[];
           freeformText?: string;
         };
+        images?: TransientTurnImageInput[];
+        designBrief?: DesignBrief;
+        prototypeName?: string;
         activeModelCode?: ModelCode;
         reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
         mockMode?: boolean;
@@ -421,8 +349,8 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       requirementSessions: store.listRequirementSessions(project.id),
       requirementDocs: store.listRequirementDocs(project.id),
       prototypes: store.listPrototypes(project.id),
+      confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(project.id) ?? null,
       extractionJobs: store.listExtractionJobs(project.id),
-      pipelineTasks: listServerPipelineTasks(store),
     });
   });
 
@@ -551,42 +479,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     return c.json(result);
   });
 
-  app.post('/api/projects/:id/copilot', async (c) => {
-    const projectId = c.req.param('id');
-    const body = await c.req.json<{ prompt: string; activeModel?: ModelCode; locale?: string }>();
-    const locale = getReqLocale(c, body);
-    const result = await runOntologyCopilotTurn(store, {
-      projectId,
-      prompt: body.prompt,
-      ...(body.activeModel ? { activeModel: body.activeModel } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(result);
-  });
-
-  app.post('/api/projects/:id/copilot/stream', async (c) => {
-    const projectId = c.req.param('id');
-    const body = await c.req.json<{ prompt: string; activeModel?: ModelCode; locale?: string }>();
-    const locale = getReqLocale(c, body);
-    const result = await runOntologyCopilotTurn(store, {
-      projectId,
-      prompt: body.prompt,
-      ...(body.activeModel ? { activeModel: body.activeModel } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    const events = buildTurnSseEvents({
-      sessionId: `copilot-${projectId}-${Date.now()}`,
-      reply: result.reply,
-      toolCalls: result.toolCalls,
-      renderPayload: {
-        project: result.project,
-        modelUsed: result.modelUsed,
-        latencyMs: result.latencyMs,
-      },
-    });
-    return new Response(createSseEventStream(events), { headers: SSE_RESPONSE_HEADERS });
-  });
-
   app.post('/api/projects/:id/generate-skill', (c) => {
     const project = store.getProject(c.req.param('id'));
     if (!project) return c.json({ error: 'Project not found' }, 404);
@@ -597,8 +489,13 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
 
   app.put('/api/skills/:id', async (c) => {
     const id = c.req.param('id');
-    const body = await c.req.json<Omit<GeneratedSkill, 'updatedAt'>>();
+    const existing = store.listGeneratedSkills().find((s) => s.id === id);
+    const body = await c.req.json<Partial<Omit<GeneratedSkill, 'updatedAt'>>>();
+    if (!existing && (!body.projectId || !body.name || !body.slug)) {
+      return c.json({ error: 'Skill not found' }, 404);
+    }
     const saved = store.saveGeneratedSkill({
+      ...(existing ?? ({} as Omit<GeneratedSkill, 'updatedAt'>)),
       ...body,
       id,
       isCustomRefined: body.isCustomRefined ?? true,
@@ -668,142 +565,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     });
   });
 
-  app.post('/api/requirements/:sessionId/grill', async (c) => {
-    const sessionId = c.req.param('sessionId');
-    const body = await c.req.json<{ userMessage: string; locale?: string }>();
-    const locale = getReqLocale(c, body);
-    const result = await runRequirementGrillingTurn(store, {
-      sessionId,
-      userMessage: body.userMessage,
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      ...result,
-      requirementSessions: store.listRequirementSessions(result.session.projectId),
-    });
-  });
-
-  app.post('/api/requirements/:sessionId/synthesize-doc', async (c) => {
-    const sessionId = c.req.param('sessionId');
-    const body = await c.req
-      .json<{ projectId?: string; title?: string; version?: string; locale?: string }>()
-      .catch(() => ({
-        projectId: undefined,
-        title: undefined,
-        version: undefined,
-        locale: undefined,
-      }));
-    const locale = getReqLocale(c, body);
-    const result = await synthesizeRequirementDocFromSession(store, {
-      sessionId,
-      ...(body.projectId ? { projectId: body.projectId } : {}),
-      ...(body.title ? { title: body.title } : {}),
-      ...(body.version ? { version: body.version } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      ...result,
-      requirementSessions: store.listRequirementSessions(result.session.projectId),
-      agentSessions: store.listAgentSessions(),
-    });
-  });
-
-  app.post('/api/requirements/:sessionId/synthesize-doc/stream', async (c) => {
-    const sessionId = c.req.param('sessionId');
-    const body = await c.req
-      .json<{ projectId?: string; title?: string; version?: string; locale?: string }>()
-      .catch(() => ({
-        projectId: undefined,
-        title: undefined,
-        version: undefined,
-        locale: undefined,
-      }));
-    const locale = getReqLocale(c, body);
-    const encoder = new TextEncoder();
-    const reqSignal = c.req.raw.signal;
-
-    const stream = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        let closed = false;
-        const heartbeatTimer = setInterval(() => {
-          if (closed || reqSignal.aborted) return;
-          try {
-            controller.enqueue(encoder.encode(': keepalive\n\n'));
-          } catch {
-            closed = true;
-          }
-        }, 12_000);
-
-        const sendEvent = (eventName: string, payload: unknown) => {
-          if (closed || reqSignal.aborted) return;
-          try {
-            controller.enqueue(
-              encoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`),
-            );
-          } catch {
-            closed = true;
-          }
-        };
-
-        try {
-          const result = await synthesizeRequirementDocFromSession(store, {
-            sessionId,
-            ...(body.projectId ? { projectId: body.projectId } : {}),
-            ...(body.title ? { title: body.title } : {}),
-            ...(body.version ? { version: body.version } : {}),
-            ...(locale ? { locale } : {}),
-            signal: reqSignal,
-            onProgress: (ev) => sendEvent('progress', ev),
-          });
-          if (!reqSignal.aborted) {
-            sendEvent('complete', {
-              ...result,
-              requirementSessions: store.listRequirementSessions(result.session.projectId),
-              agentSessions: store.listAgentSessions(),
-            });
-          }
-        } catch (err) {
-          if (!reqSignal.aborted && !(err instanceof DOMException && err.name === 'AbortError')) {
-            if (err instanceof LlmGatewayError) {
-              const diag = err.toDiagnostic(locale);
-              sendEvent('run_error', {
-                error: diag.message,
-                diagnostic: diag,
-              });
-            } else {
-              const msg = err instanceof Error ? err.message : String(err);
-              sendEvent('run_error', {
-                error: msg,
-                diagnostic: {
-                  code: 'SYNTHESIS_ERROR',
-                  message: msg,
-                  remediation:
-                    locale === 'en-US'
-                      ? 'Retry SRS synthesis or check LLM gateway settings in LLM Center.'
-                      : '请点击「重试合成」，或前往 LLM 中心检查大模型网关配置。',
-                },
-              });
-            }
-          }
-        } finally {
-          clearInterval(heartbeatTimer);
-          if (!closed) {
-            closed = true;
-            try {
-              controller.close();
-            } catch {
-              // Ignore already-closed stream
-            }
-          }
-        }
-      },
-    });
-
-    return new Response(stream, {
-      headers: SSE_RESPONSE_HEADERS,
-    });
-  });
-
   app.post('/api/requirements/docs', async (c) => {
     const body = await c.req.json<{
       id: string;
@@ -833,204 +594,296 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     });
   });
 
-  app.post('/api/projects/:id/prototypes', async (c) => {
+  app.get('/api/projects/:id/prototypes', (c) => {
     const projectId = c.req.param('id');
-    const body = await c.req.json<{
-      id?: string;
-      name: string;
-      version?: string;
-      htmlContent: string;
-      syncMu?: boolean;
-    }>();
-    const result = store.savePrototypeAndSyncMu(projectId, body);
+    const project = store.getProject(projectId);
+    if (!project) return c.json({ error: 'Project not found' }, 404);
     return c.json({
-      ...result,
       prototypes: store.listPrototypes(projectId),
+      confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
     });
   });
 
-  app.post('/api/prototypes/:id/clone', (c) => {
+  app.post('/api/projects/:id/prototypes', async (c) => {
+    const projectId = c.req.param('id');
+    const body = await c.req.json<CreatePrototypeInput & { syncMu?: boolean }>();
+    if (body.id) {
+      const existing = store.getPrototype(body.id);
+      if (existing && existing.projectId === projectId) {
+        const appended = store.appendPrototypeRevision(body.id, {
+          name: body.name,
+          version: body.version,
+          title: body.title,
+          instruction: body.instruction,
+          starred: body.starred,
+          htmlContent: body.htmlContent,
+          source: body.source ?? 'MANUAL_SAVE',
+          agentRunId: body.agentRunId,
+        });
+        return c.json({
+          ...appended,
+          prototypes: store.listPrototypes(projectId),
+          confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+        });
+      }
+    }
+    const created = store.createPrototype(projectId, {
+      ...body,
+      source: body.source ?? 'MANUAL_SAVE',
+    });
+    return c.json({
+      ...created,
+      prototypes: store.listPrototypes(projectId),
+      confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+    });
+  });
+
+  app.post('/api/prototypes/:id/revisions', async (c) => {
+    const prototypeId = c.req.param('id');
+    const existing = store.getPrototype(prototypeId);
+    if (!existing) return c.json({ error: 'Prototype not found' }, 404);
+    const body = await c.req.json<AppendPrototypeRevisionInput>();
+    const appended = store.appendPrototypeRevision(prototypeId, body);
+    return c.json({
+      ...appended,
+      prototypes: store.listPrototypes(existing.projectId),
+      confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+    });
+  });
+
+  app.post('/api/prototypes/:id/revisions/:revisionId/restore', async (c) => {
+    const prototypeId = c.req.param('id');
+    const revisionId = c.req.param('revisionId');
+    const existing = store.getPrototype(prototypeId);
+    if (!existing) return c.json({ error: 'Prototype not found' }, 404);
+    const body = await c.req
+      .json<{ title?: string }>()
+      .catch(() => ({ title: undefined }));
+    try {
+      const restored = store.restorePrototypeRevision(prototypeId, revisionId, body.title);
+      return c.json({
+        ...restored,
+        prototypes: store.listPrototypes(existing.projectId),
+        confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
+    }
+  });
+
+  app.patch('/api/prototypes/:id/revisions/:revisionId', async (c) => {
+    const prototypeId = c.req.param('id');
+    const revisionId = c.req.param('revisionId');
+    const existing = store.getPrototype(prototypeId);
+    if (!existing) return c.json({ error: 'Prototype not found' }, 404);
+    const body = await c.req.json<{ title?: string; starred?: boolean }>();
+    try {
+      const updated = store.updatePrototypeRevisionMeta(prototypeId, revisionId, body);
+      return c.json({
+        ...updated,
+        prototypes: store.listPrototypes(existing.projectId),
+        confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
+    }
+  });
+
+  const handleSavePrototypeDesignBrief = async (c: {
+    req: {
+      param: (name: string) => string;
+      json: <T>() => Promise<T>;
+    };
+    json: (body: unknown, status?: 200 | 400 | 404) => Response;
+  }) => {
+    const prototypeId = c.req.param('id');
+    const existing = store.getPrototype(prototypeId);
+    if (!existing) return c.json({ error: 'Prototype not found' }, 404);
+    const body = await c.req.json<{ designBrief: DesignBrief }>();
+    const prototype = store.updatePrototypeDesignBrief(prototypeId, body.designBrief);
+    return c.json({
+      prototype,
+      prototypes: store.listPrototypes(existing.projectId),
+      confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+    });
+  };
+
+  app.patch('/api/prototypes/:id/design-brief', handleSavePrototypeDesignBrief);
+  app.put('/api/prototypes/:id/design-brief', handleSavePrototypeDesignBrief);
+
+  app.post('/api/projects/:id/prototypes/confirm-revision', async (c) => {
+    const projectId = c.req.param('id');
+    const body = await c.req.json<{ revisionId: string }>();
+    if (!body.revisionId) {
+      return c.json({ error: 'revisionId is required' }, 400);
+    }
+    try {
+      const res = store.confirmPrototypeRevision(projectId, body.revisionId);
+      return c.json({
+        confirmed: res.confirmed,
+        confirmedRevision: res.confirmed,
+        prototype: res.prototype,
+        project: res.project,
+        prototypes: store.listPrototypes(projectId),
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
+    }
+  });
+
+  app.post('/api/prototypes/:id/clone', async (c) => {
     const id = c.req.param('id');
-    const prototype = store.clonePrototype(id);
+    const body = await c.req
+      .json<{ name?: string }>()
+      .catch(() => ({ name: undefined }));
+    const prototype = store.clonePrototype(id, body.name ? { name: body.name } : undefined);
     return c.json({
       prototype,
       prototypes: store.listPrototypes(prototype.projectId),
+      confirmedRevision: store.getConfirmedPrototypeRevision(prototype.projectId) ?? null,
+      agentSessions: store.listAgentSessions(),
     });
   });
 
   app.delete('/api/prototypes/:id', (c) => {
     const id = c.req.param('id');
-    const projectId = c.req.query('projectId') || store.listProjects()[0]?.id || 'proj-contract';
-    store.deletePrototype(id);
+    const locale = getReqLocale(c);
+    const existing = store.getPrototype(id);
+    const projectId =
+      existing?.projectId ||
+      c.req.query('projectId') ||
+      store.listProjects()[0]?.id ||
+      'proj-contract';
+    try {
+      store.deletePrototype(id);
+      return c.json({
+        deletedId: id,
+        prototypes: store.listPrototypes(projectId),
+        confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+      });
+    } catch (err) {
+      if (
+        err instanceof PrototypeConfirmedDeleteError ||
+        (err instanceof Error &&
+          (err as { code?: string }).code === 'PROTOTYPE_HOLDS_CONFIRMED_REVISION')
+      ) {
+        const displayError =
+          err instanceof PrototypeConfirmedDeleteError
+            ? locale === 'en-US'
+              ? err.messageEn
+              : err.messageZh
+            : err.message;
+        return c.json(
+          {
+            error: displayError,
+            code: 'PROTOTYPE_HOLDS_CONFIRMED_REVISION' as const,
+            messageZh: err instanceof PrototypeConfirmedDeleteError ? err.messageZh : err.message,
+            messageEn: err instanceof PrototypeConfirmedDeleteError ? err.messageEn : err.message,
+          },
+          409,
+        );
+      }
+      throw err;
+    }
+  });
+
+  app.post('/api/projects/:id/prototype-co-design-sessions', async (c) => {
+    const projectId = c.req.param('id');
+    const project = store.getProject(projectId);
+    if (!project) return c.json({ error: 'Project not found' }, 404);
+    const body = await c.req
+      .json<{ title?: string }>()
+      .catch(() => ({ title: undefined }));
+    const locale = getReqLocale(c);
+    const session = store.createAgentSession({
+      projectId,
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      title:
+        body.title?.trim() ||
+        (locale === 'en-US'
+          ? `Design Brief · ${project.name}`
+          : `设计简报首版原型 · ${project.name}`),
+    });
     return c.json({
-      deletedId: id,
+      session,
+      agentSessions: store.listAgentSessions(),
       prototypes: store.listPrototypes(projectId),
     });
   });
 
-  app.post('/api/projects/:id/prototypes/generate', async (c) => {
-    const projectId = c.req.param('id');
-    const body = await c.req
-      .json<{ docId?: string; prompt?: string; locale?: string }>()
-      .catch(() => ({ docId: undefined, prompt: undefined, locale: undefined }));
-    const locale = getReqLocale(c, body);
-    const result = await generatePrototypeFromDoc(store, {
-      projectId,
-      ...(body.docId ? { docId: body.docId } : {}),
-      ...(body.prompt ? { prompt: body.prompt } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(result);
-  });
-
-  app.post('/api/projects/:id/prototypes/:prototypeId/refine', async (c) => {
+  app.post('/api/projects/:id/prototypes/:prototypeId/co-design-session', (c) => {
     const projectId = c.req.param('id');
     const prototypeId = c.req.param('prototypeId');
-    const body = await c.req.json<{
-      instruction?: string;
-      selections?: PrototypeRefinementSelection[];
-      locale?: string;
-    }>();
-    const locale = getReqLocale(c, body);
-    const result = await refinePrototypeWithAi(store, {
-      projectId,
-      prototypeId,
-      instruction: body.instruction ?? '',
-      ...(body.selections && body.selections.length > 0 ? { selections: body.selections } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(result);
-  });
-
-  app.post('/api/projects/:id/prototypes/synthesize-ontology', async (c) => {
-    const projectId = c.req.param('id');
-    const body = await c.req
-      .json<{ prototypeId?: string; docId?: string; locale?: string }>()
-      .catch(() => ({ prototypeId: undefined, docId: undefined, locale: undefined }));
-    const locale = getReqLocale(c, body);
-    const result = await synthesizeOntologyFromPrototype(store, {
-      projectId,
-      ...(body.prototypeId ? { prototypeId: body.prototypeId } : {}),
-      ...(body.docId ? { docId: body.docId } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(result);
-  });
-
-  // PROTOTYPE (throwaway): Read-only proxy + in-memory cache for Nutlope/inspo MCP gallery
-  const inspoProxyCache = new Map<string, unknown>();
-  app.post('/api/prototype-inspo', async (c) => {
-    type InspoProxyBody = {
-      action: 'search' | 'similar' | 'design_system';
-      query?: string;
-      slug?: string;
-      mode?: 'light' | 'dark';
-      style?: string;
-      industry?: string;
-      macrostructure?: string;
-      vibe?: string;
-    };
-    const body: InspoProxyBody = await c.req
-      .json<InspoProxyBody>()
-      .catch((): InspoProxyBody => ({ action: 'search' }));
-
-    const cacheKey = JSON.stringify(body);
-    if (inspoProxyCache.has(cacheKey)) {
-      return c.json(inspoProxyCache.get(cacheKey));
-    }
-
-    const zhHintMap: [RegExp, string][] = [
-      [/清爽|简洁|极简|白底/, 'clean minimalist light workspace'],
-      [/暖|纸|知识|文档|杂志/, 'warm paper editorial calm'],
-      [/深色|暗黑|监控|大屏|科技/, 'dark developer analytics console'],
-      [/金融|银行|台账|财务|合同|严谨/, 'enterprise fintech banking ledger serious'],
-      [/卡片|模块|看板/, 'modular bento grid dashboard'],
-      [/电商|零售|商品/, 'ecommerce catalogue clean'],
-      [/医疗|健康/, 'health clean calm'],
-    ];
-    let enrichedQuery = (body.query || '').trim();
-    for (const [pattern, enWords] of zhHintMap) {
-      if (pattern.test(enrichedQuery)) {
-        enrichedQuery = `${enrichedQuery} ${enWords}`.trim();
-      }
-    }
-
-    let toolName = 'search_screens';
-    let toolArgs: Record<string, unknown> = {
-      query: enrichedQuery || 'clean modern SaaS product interface',
-      limit: 14,
-      detail: 'concise',
-      ...(body.mode ? { mode: body.mode } : {}),
-      ...(body.style ? { style: body.style } : {}),
-      ...(body.industry ? { industry: body.industry } : {}),
-      ...(body.macrostructure ? { macrostructure: body.macrostructure } : {}),
-      ...(body.vibe ? { vibe: body.vibe } : {}),
-    };
-
-    if (body.action === 'similar' && body.slug) {
-      toolName = 'find_similar';
-      toolArgs = { slug: body.slug, limit: 6 };
-    } else if (body.action === 'design_system' && body.slug) {
-      toolName = 'get_design_system';
-      toolArgs = { slug: body.slug, live: false };
-    }
-
     try {
-      const upstream = await fetch('https://inspomcp.dev/api/mcp', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, text/event-stream',
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/call',
-          params: { name: toolName, arguments: toolArgs },
-        }),
-        signal: AbortSignal.timeout(8000),
+      const session = ensurePrototypeCoDesignSession(store, projectId, prototypeId);
+      return c.json({
+        session,
+        prototype: store.getPrototype(prototypeId) ?? null,
+        prototypes: store.listPrototypes(projectId),
+        agentSessions: store.listAgentSessions(),
       });
-      if (!upstream.ok) {
-        return c.json({ ok: false, error: `Upstream HTTP ${upstream.status}` }, 502);
-      }
-      const rpc = (await upstream.json()) as {
-        result?: { content?: { type: string; text?: string }[] };
-      };
-      const rawText = rpc.result?.content?.[0]?.text ?? '';
-      if (body.action === 'design_system') {
-        const payload = { ok: true, markdown: rawText };
-        inspoProxyCache.set(cacheKey, payload);
-        return c.json(payload);
-      }
-      const parsed = JSON.parse(rawText) as {
-        results?: Record<string, unknown>[];
-        neighbours?: Record<string, unknown>[];
-      };
-      const list = (parsed.results ?? parsed.neighbours ?? []) as {
-        slug: string;
-        title?: string;
-        northstar?: string;
-        palette?: string[];
-        fonts?: string[];
-        mode?: string;
-        macro?: string;
-        tags?: string;
-      }[];
-      const seenRoots = new Set<string>();
-      const deduped = list.filter((item) => {
-        if (!item?.slug) return false;
-        const root = item.slug.split('--')[0]!;
-        if (seenRoots.has(root)) return false;
-        seenRoots.add(root);
-        return true;
-      });
-      const payload = { ok: true, items: deduped.slice(0, 8) };
-      inspoProxyCache.set(cacheKey, payload);
-      return c.json(payload);
     } catch (err) {
-      return c.json({ ok: false, error: (err as Error).message }, 200);
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
     }
   });
+
+  app.post('/api/projects/:id/design-brief-assist', async (c) => {
+    const projectId = c.req.param('id');
+    const project = store.getProject(projectId);
+    if (!project) return c.json({ error: 'Project not found' }, 404);
+    const body = await c.req
+      .json<Omit<AssistProjectDesignBriefInput, 'projectId' | 'mode'> & { mode?: string }>()
+      .catch((): { mode?: string } => ({}));
+    const mode: DesignBriefAssistMode =
+      body.mode === 'rewrite' || body.mode === 'decide' || body.mode === 'synthesize'
+        ? body.mode
+        : 'synthesize';
+    if (
+      body.mode !== undefined &&
+      body.mode !== 'synthesize' &&
+      body.mode !== 'rewrite' &&
+      body.mode !== 'decide'
+    ) {
+      return c.json({ ok: false, error: `Unsupported brief assist mode: ${body.mode}` }, 400);
+    }
+    const locale = getReqLocale(c, body as { locale?: string });
+    const res = await assistProjectDesignBrief(store, {
+      ...(body as Omit<AssistProjectDesignBriefInput, 'projectId' | 'mode'>),
+      projectId,
+      mode,
+      ...(locale ? { locale } : {}),
+    });
+    return c.json({
+      ok: true,
+      brief: res.brief,
+      source: res.source,
+      ...(res.visionFallbackUsed ? { visionFallbackUsed: true } : {}),
+    });
+  });
+
+  const handleInspoRoute = async (c: {
+    req: { json: <T>() => Promise<T> };
+    json: (body: unknown, status?: 200 | 400) => Response;
+  }) => {
+    const body = await c.req
+      .json<InspoProxyRequestBody>()
+      .catch((): InspoProxyRequestBody => ({ action: 'search' }));
+    if (body.action === 'similar') {
+      return c.json(
+        {
+          ok: false,
+          error: 'Unsupported Inspo action: similar',
+          code: 'UNSUPPORTED_INSPO_ACTION',
+        },
+        400,
+      );
+    }
+    const payload = await handleInspoProxyRequest(store, body);
+    return c.json(payload);
+  };
+
+  app.post('/api/prototype-inspo', handleInspoRoute);
+  app.post('/api/inspo', handleInspoRoute);
 
   app.post('/api/assets', async (c) => {
     const body = await c.req.json<{
@@ -1051,21 +904,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     const force = c.req.query('force') === '1' || c.req.query('force') === 'true';
     store.deleteFourLayerAsset(id, force);
     return c.json({ deletedId: id, fourLayerAssets: store.listFourLayerAssets() });
-  });
-
-  app.post('/api/assets/generate-tech-arch', async (c) => {
-    const body = await c.req.json<{
-      name: string;
-      stackTags?: string[];
-      prompt?: string;
-      locale?: string;
-    }>();
-    const locale = getReqLocale(c, body);
-    const result = await generateTechArchitectureDoc(store, {
-      ...body,
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(result);
   });
 
   app.post('/api/applications', async (c) => {
@@ -1122,7 +960,14 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       assets.find((a) => a.id === appItem.techArchAssetId) ??
       assets.find((a) => a.layer === 'TECH_ARCH')!;
     const reqDoc = store.listRequirementDocs(project.id)[0];
-    const proto = store.listPrototypes(project.id)[0];
+    const confirmedProto = store.getConfirmedPrototypeRevision(project.id);
+    const proto = confirmedProto
+      ? {
+          ...confirmedProto.prototype,
+          htmlContent: confirmedProto.htmlContent,
+          extractedScreenCount: confirmedProto.revision.extractedScreenCount,
+        }
+      : undefined;
 
     return { appItem, project, uiAsset, foundationAsset, archAsset, reqDoc, proto };
   };
@@ -1193,21 +1038,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 422);
     }
-  });
-
-  app.post('/api/applications/:appId/coding-agent', async (c) => {
-    const appId = c.req.param('appId');
-    const body = await c.req.json<{ instruction: string; locale?: string }>();
-    const locale = getReqLocale(c, body);
-    const res = await runAppCodingAgentTurn(store, {
-      appId,
-      instruction: body.instruction,
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      ...res,
-      assembledApplications: store.listAssembledApplications(),
-    });
   });
 
   app.post('/api/applications/:appId/publish', async (c) => {
@@ -1342,22 +1172,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     return c.json({ deletedId: id, capabilityChatSessions: store.listCapabilityChatSessions() });
   });
 
-  app.post('/api/capability/agents/:agentId/chat', async (c) => {
-    const agentId = c.req.param('agentId');
-    const body = await c.req.json<{ sessionId?: string; userMessage: string; locale?: string }>();
-    const locale = getReqLocale(c, body);
-    const res = await runCapabilitySmartChatTurn(store, {
-      agentId,
-      ...(body.sessionId ? { sessionId: body.sessionId } : {}),
-      userMessage: body.userMessage,
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      ...res,
-      capabilityChatSessions: store.listCapabilityChatSessions(),
-    });
-  });
-
   app.post('/api/capability/flows', async (c) => {
     const body = await c.req.json<CrossSystemFlow>();
     const flow = store.saveCrossSystemFlow(body);
@@ -1469,16 +1283,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     return c.json({ deletedId: id, metrics: store.listMetrics() });
   });
 
-  app.post('/api/analytics/metrics/:metricId/insight', async (c) => {
-    const metricId = c.req.param('metricId');
-    const locale = getReqLocale(c);
-    const res = await generateMetricInsight(store, {
-      metricId,
-      ...(locale ? { locale } : {}),
-    });
-    return c.json(res);
-  });
-
   app.post('/api/analytics/scenarios', async (c) => {
     const body = await c.req.json<AnalyticsScenario>();
     const scenario = store.saveAnalyticsScenario(body);
@@ -1489,24 +1293,6 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     const id = c.req.param('id');
     store.deleteAnalyticsScenario(id);
     return c.json({ deletedId: id, analyticsScenarios: store.listAnalyticsScenarios() });
-  });
-
-  app.post('/api/analytics/scenarios/:scenarioId/attribute', async (c) => {
-    const scenarioId = c.req.param('scenarioId');
-    const body = await c.req
-      .json<{ question?: string; saveAsReport?: boolean; locale?: string }>()
-      .catch(() => ({ question: undefined, saveAsReport: undefined, locale: undefined }));
-    const locale = getReqLocale(c, body);
-    const res = await runScenarioAttributionTurn(store, {
-      scenarioId,
-      ...(body.question ? { question: body.question } : {}),
-      ...(body.saveAsReport !== undefined ? { saveAsReport: body.saveAsReport } : {}),
-      ...(locale ? { locale } : {}),
-    });
-    return c.json({
-      ...res,
-      analyticsReports: store.listAnalyticsReports(),
-    });
   });
 
   app.post('/api/analytics/reports', async (c) => {

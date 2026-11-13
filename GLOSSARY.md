@@ -69,8 +69,16 @@ The top-level domain workspace container that owns one evolving Ontology Suite a
 _Avoid_: Project session,工程会话, chat workspace
 
 **Agent Session (智能体会话)**:
-A persistent, multi-turn conversation thread between a user and a specialized domain agent (such as Requirement Exploration, Ontology Copilot, Application Coding, Capability Chat, or Data Reasoning) scoped to an Ontology Project.
+A persistent, multi-turn conversation thread between a user and a specialized domain agent (such as Requirement Exploration, Prototype Co-Design, Ontology Copilot, Application Coding, Capability Chat, or Data Reasoning) scoped to an Ontology Project.
 _Avoid_: Project session, stateless prompt, one-shot turn
+
+**Agent Run (智能体运行)**:
+One bounded piece of agent work inside an Agent Session, from a user turn or a triggered action through to the resulting artifact change, that the user can watch, cancel, and retry.
+_Avoid_: Background task, pipeline task, one-shot call
+
+**Agent Panel (智能体面板)**:
+The single place in the workbench where the user talks to agents and watches every Agent Run, showing the Agent Session that belongs to the module in view.
+_Avoid_: Chat drawer, task drawer, assistant sidebar
 
 ## Application Center & Delivery
 
@@ -79,8 +87,40 @@ An interactive AI grilling session that stress-tests raw user requirements to re
 _Avoid_: Chat session, prompt log
 
 **Interactive Prototype (界面原型)**:
-A runnable HTML/UI preview generated from the confirmed requirements document and refined live with AI assistance before extracting the formal Ontology Suite.
-_Avoid_: Static mockup
+One runnable HTML/UI design direction for an Ontology Project, generated from the confirmed requirements document and evolved through Prototype Revisions before the formal Ontology Suite is extracted.
+_Avoid_: Static mockup, prototype version
+
+**Prototype Revision (原型修订)**:
+An immutable saved state of one Interactive Prototype, produced by a single Agent Run or manual edit, forming that prototype's linear history.
+_Avoid_: Version, clone, copy
+
+**Confirmed Revision (已确认修订)**:
+The single Prototype Revision in an Ontology Project that the user has approved as the source for UI Model extraction and Ontology Suite synthesis.
+_Avoid_: Latest version, active prototype
+
+**Visual Reference (视觉参考)**:
+A screenshot of a real production interface that the user picks or supplies to show the agent the look they want.
+_Avoid_: Inspo, inspiration image, mockup
+
+**Primary Reference (主参考)**:
+The one Visual Reference whose overall visual language the prototype follows.
+_Avoid_: Main inspo, base style
+
+**Borrowed Reference (借鉴参考)**:
+An additional Visual Reference from which exactly one named aspect is taken.
+_Avoid_: Secondary reference, mixed reference
+
+**Design Brief (设计简报)**:
+The agent's plain-language reading of what the user wants an Interactive Prototype to look and behave like, derived from the Visual References, Motion Schematics, and the user's own words, which the user corrects and approves before generation.
+_Avoid_: Prompt, visual DNA, compiled context
+
+**Motion Schematic (动态示意)**:
+A small playable demonstration of one interaction or motion pattern that the user picks to state how the prototype should behave.
+_Avoid_: Animation demo, 交互动效图
+
+**Style Tile (风格样张)**:
+A live sample sheet of colors, type, and representative components that shows the chosen visual language without pretending to be the user's application.
+_Avoid_: Composite preview, reference draft, 合成预览
 
 **Four-Layer Application Assembly (四层应用装配)**:
 The explicit binding of four architectural assets—`01 UI/UE Specification`, `02 Ontology Suite`, `03 Tech Foundation`, and `04 Tech Architecture`—into a buildable application blueprint.

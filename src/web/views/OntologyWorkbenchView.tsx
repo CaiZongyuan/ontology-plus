@@ -17,7 +17,7 @@ import {
   getProjectLifecycleState,
   useWorkbenchStore,
 } from '../api.js';
-import { AgentSessionWorkbench } from '../components/agent/AgentSessionWorkbench.js';
+import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import { usePreferences, type NavViewId } from '../i18n.js';
 import { KnowledgeGraphCanvas } from './KnowledgeGraphCanvas.js';
 import './ontology-workbench.css';
@@ -27,6 +27,7 @@ import {
   Boxes,
   CheckCircle2,
   Crosshair,
+  Loader2,
   Search,
   Sparkles,
 } from 'lucide-react';
@@ -208,6 +209,7 @@ export function OntologyWorkbenchView({
     data,
     selectedModel,
     selectedElementId,
+    liveSessionDrafts,
     setSelectedModel,
     saveSuiteWithUndo,
     pushUndoSnapshot,
@@ -217,7 +219,7 @@ export function OntologyWorkbenchView({
     redoStack,
     patchData,
     showToast,
-    startOntologySynthTask,
+    startOntologySynthesisRun,
   } = useWorkbenchStore();
 
   const [activeTab, setActiveTab] = useState<'STRUCTURED' | 'GRAPH' | 'YAML'>('STRUCTURED');
@@ -1350,11 +1352,17 @@ export function OntologyWorkbenchView({
                       step: '3',
                       titleZh: '界面原型',
                       titleEn: 'Prototype',
-                      done: Boolean(lifecycle?.hasPrototype),
-                      statusZh: lifecycle?.hasPrototype
-                        ? `已生成 (${lifecycle.prototypeCount})`
-                        : '待生成',
-                      statusEn: lifecycle?.hasPrototype ? 'Ready' : 'Pending',
+                      done: Boolean(data?.confirmedPrototypeRevision),
+                      statusZh: data?.confirmedPrototypeRevision
+                        ? `已确认 (${data.confirmedPrototypeRevision.revision.extractedScreenCount} 屏)`
+                        : lifecycle?.hasPrototype
+                          ? '草稿待确认'
+                          : '待生成',
+                      statusEn: data?.confirmedPrototypeRevision
+                        ? 'Confirmed'
+                        : lifecycle?.hasPrototype
+                          ? 'Draft Unconfirmed'
+                          : 'Pending',
                     },
                     {
                       step: '4',
@@ -1389,14 +1397,37 @@ export function OntologyWorkbenchView({
                 )}
 
                 <div className="flex flex-wrap items-center gap-2">
-                  {lifecycle?.hasPrototype ? (
+                  {data?.confirmedPrototypeRevision ? (
                     <Button
                       type="button"
                       variant="accent"
                       size="md"
-                      onClick={() => void startOntologySynthTask()}
+                      data-testid="synthesize-ontology-btn"
+                      disabled={(data?.agentSessions ?? []).some(
+                        (s) =>
+                          s.projectId === project.id &&
+                          s.agentKind === 'COPILOT' &&
+                          (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
+                      )}
+                      onClick={() => {
+                        const confirmedProtoId =
+                          data.confirmedPrototypeRevision?.prototype.id ??
+                          data.confirmedPrototypeRevision?.prototypeId;
+                        if (!confirmedProtoId) return;
+                        useAgentPanelStore.getState().revealPanel();
+                        void startOntologySynthesisRun({ prototypeId: confirmedProtoId });
+                      }}
                     >
-                      <Sparkles size={14} />
+                      {(data?.agentSessions ?? []).some(
+                        (s) =>
+                          s.projectId === project.id &&
+                          s.agentKind === 'COPILOT' &&
+                          (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
+                      ) ? (
+                        <Loader2 size={14} className="pipeline-spin" aria-hidden="true" />
+                      ) : (
+                        <Sparkles size={14} />
+                      )}
                       {t('从当前界面原型一键推导 11 模型本体', 'Synthesize 11-Model Ontology from Prototype')}
                     </Button>
                   ) : (
@@ -1487,23 +1518,6 @@ export function OntologyWorkbenchView({
               </>
             )}
           </div>
-        </div>
-
-        {/* ─── Right Pane: Unified Live Streaming AI Ontology Copilot ─── */}
-        <div className="workbench-right">
-          <AgentSessionWorkbench
-            agentKind="COPILOT"
-            activeModelCode={selectedModel}
-            compactRailByDefault
-            height="100%"
-            inputTestId="copilot-input"
-            sendBtnTestId="copilot-send-btn"
-            onJumpToOntology={(m, id) => {
-              setSelectedModel(m, id ?? null);
-              setActiveTab('STRUCTURED');
-            }}
-            className="rounded-none border-0 shadow-none"
-          />
         </div>
       </div>
 

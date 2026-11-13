@@ -1,0 +1,146 @@
+/* Scoped Spatial-Sync styles for Prototype Revision History, Side-by-Side Compare & Confirm-with-MU-Diff */
+
+.proto-rev-badge-bar {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.proto-rev-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--control-h-xs);
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  font-family: var(--sans);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.proto-rev-status-pill.is-confirmed {
+  background: var(--green-tint);
+  color: var(--green);
+  border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);
+}
+
+.proto-rev-status-pill.is-ahead {
+  background: var(--orange-tint);
+  color: var(--orange);
+  border: 1px solid color-mix(in srgb, var(--orange) 32%, transparent);
+}
+
+.proto-rev-status-pill.is-unconfirmed {
+  background: var(--inset);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.proto-rev-drawer {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.proto-rev-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.proto-rev-timeline {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow-y: auto;
+}
+
+.proto-rev-timeline-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+
+.proto-rev-timeline-item.is-confirmed {
+  border-color: color-mix(in srgb, var(--green) 42%, var(--line));
+  background: color-mix(in srgb, var(--green-tint) 38%, var(--surface));
+}
+
+.proto-rev-timeline-item.is-previewing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.proto-rev-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+@media (max-width: 760px) {
+  .proto-rev-compare-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.proto-rev-compare-pane {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.proto-rev-compare-iframe {
+  width: 100%;
+  height: 320px;
+  border: 0;
+  background: #ffffff;
+}
+
+dialog.proto-rev-confirm-dialog {
+  max-width: min(740px, calc(100vw - 32px));
+  width: 100%;
+}
+
+.mu-diff-badge-added {
+  background: var(--green-tint);
+  color: var(--green);
+  border: 1px solid color-mix(in srgb, var(--green) 28%, transparent);
+}
+
+.mu-diff-badge-removed {
+  background: var(--red-tint);
+  color: var(--red);
+  border: 1px solid color-mix(in srgb, var(--red) 28%, transparent);
+}
+
+.mu-diff-badge-modified {
+  background: var(--orange-tint);
+  color: var(--orange);
+  border: 1px solid color-mix(in srgb, var(--orange) 28%, transparent);
+}

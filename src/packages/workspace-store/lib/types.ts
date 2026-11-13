@@ -9,6 +9,7 @@ import type {
   ValidationDiagnostic,
   ValidationReport,
 } from '../../ontology-core/index.js';
+import type { InspoCacheEntry, InspoCacheEntryInput } from './inspo-cache.js';
 
 export interface ProjectSummary {
   id: string;
@@ -43,10 +44,18 @@ export interface ProjectSnapshot {
 
 export type AgentSessionKind =
   | 'REQUIREMENT'
+  | 'PROTOTYPE_CO_DESIGN'
   | 'COPILOT'
   | 'CODING'
   | 'CAPABILITY'
   | 'REASONING';
+
+export interface PrototypeTargetAnchor {
+  screenId?: string;
+  elementId?: string;
+  cssSelector?: string;
+  label?: string;
+}
 
 export interface AgentToolCallTrace {
   id: string;
@@ -58,6 +67,7 @@ export interface AgentToolCallTrace {
   durationMs?: number;
   targetElementId?: string;
   targetModelCode?: ModelCode;
+  targetAnchor?: PrototypeTargetAnchor;
 }
 
 export interface AgentAskUserPrompt {
@@ -114,7 +124,79 @@ export type AgentDomainArtifact =
       appId: string;
       outputDir: string;
       files: string[];
+    }
+  | {
+      kind: 'PROTOTYPE_REVISION';
+      prototypeId: string;
+      revisionId: string;
+      revisionNumber: number;
+      modifiedAnchors: PrototypeTargetAnchor[];
+    }
+  | {
+      kind: 'REQUIREMENT_DOC';
+      docId: string;
+      title: string;
+      version: string;
+      status: 'DRAFT' | 'CONFIRMED' | 'PUBLISHED';
+    }
+  | {
+      kind: 'ONTOLOGY_SUITE';
+      projectId: string;
+      prototypeId?: string;
+      modelCount: number;
+      errorCount: number;
+      warningCount: number;
+    }
+  | {
+      kind: 'TECH_ARCH_ASSET';
+      assetId: string;
+      name: string;
+      version: string;
+      tags: string[];
+      applicationId?: string;
+    }
+  | {
+      kind: 'METRIC_INSIGHT';
+      metricId: string;
+      metricCode: string;
+      metricName: string;
+      insightMarkdown: string;
+      anomalyDrivers: string[];
+      suggestedAction: string;
+      writebackInterfaceId: string;
+    }
+  | {
+      kind: 'ANALYTICS_REPORT';
+      reportId: string;
+      scenarioId?: string;
+      scenarioName?: string;
+      title: string;
+      recommendedWritebackId?: string;
+      causalBreakdown?: { factor: string; weight: string; evidence: string }[];
+    }
+  | {
+      kind: 'EXTRACTION_JOB';
+      jobId: string;
+      systemName: string;
+      candidateCount: number;
     };
+
+export type AgentImageAttachmentRole =
+  | 'primary_ref'
+  | 'borrowed_ref'
+  | 'user_upload'
+  | 'selection_crop';
+
+export interface AgentImageAttachmentRef {
+  id: string;
+  name: string;
+  mimeType: string;
+  source: 'local' | 'remote';
+  remoteUrl?: string;
+  width?: number;
+  height?: number;
+  role?: AgentImageAttachmentRole;
+}
 
 export interface AgentSessionMessage {
   id: string;
@@ -125,9 +207,13 @@ export interface AgentSessionMessage {
   timestamp: string;
   modelUsed?: string;
   providerName?: string;
+  images?: AgentImageAttachmentRef[];
+  visionFallbackUsed?: boolean;
+  visionFallbackNotice?: string;
   toolCalls?: AgentToolCallTrace[];
   askUser?: AgentAskUserPrompt;
   artifacts?: AgentDomainArtifact[];
+  cancelled?: boolean;
   errorDiagnostic?: {
     code: string;
     providerName?: string;
@@ -196,14 +282,118 @@ export interface RequirementDoc {
   updatedAt: string;
 }
 
-export interface PrototypeArtifact {
+export interface DesignBriefItem {
+  id: string;
+  category: string;
+  statement: string;
+}
+
+export interface DesignBriefBorrowedReference {
+  referenceId: string;
+  aspect: string;
+  title?: string;
+  sourceUrl?: string;
+}
+
+export interface DesignBrief {
+  items: DesignBriefItem[];
+  userFeelNote?: string;
+  primaryReferenceId?: string;
+  primaryReferenceTitle?: string;
+  primaryReferenceSourceUrl?: string;
+  borrowedReferences?: DesignBriefBorrowedReference[];
+  userImageRefs?: AgentImageAttachmentRef[];
+  motionSchematicIds?: string[];
+  approvedAt?: string;
+  updatedAt: string;
+}
+
+export type PrototypeRevisionSource =
+  | 'GENERATED'
+  | 'REFINED'
+  | 'AGENT_RUN'
+  | 'MANUAL_SAVE'
+  | 'UPLOADED'
+  | 'RESTORED'
+  | 'CLONED'
+  | 'MIGRATED';
+
+export interface PrototypeRevision {
+  id: string;
+  prototypeId: string;
+  projectId: string;
+  revisionNumber: number;
+  title: string;
+  starred?: boolean;
+  htmlContent: string;
+  extractedScreenCount: number;
+  source: PrototypeRevisionSource;
+  restoredFromRevisionId?: string;
+  agentRunId?: string;
+  createdAt: string;
+}
+
+export interface InteractivePrototype {
   id: string;
   projectId: string;
   name: string;
+  designBrief?: DesignBrief;
+  coDesignSessionId?: string;
+  revisions: PrototypeRevision[];
+  currentRevisionId: string;
+  createdAt: string;
+  updatedAt: string;
   version: string;
   htmlContent: string;
   extractedScreenCount: number;
-  updatedAt: string;
+  isConfirmed: boolean;
+  confirmedRevisionId?: string;
+  aheadOfConfirmedCount: number;
+}
+
+export type PrototypeArtifact = InteractivePrototype;
+
+export interface ConfirmedPrototypeRevisionRecord {
+  projectId: string;
+  prototypeId: string;
+  revisionId: string;
+  confirmedAt: string;
+}
+
+export interface ConfirmedPrototypeRevision {
+  projectId: string;
+  prototypeId: string;
+  revisionId: string;
+  confirmedAt: string;
+  prototype: InteractivePrototype;
+  revision: PrototypeRevision;
+  htmlContent: string;
+}
+
+export interface CreatePrototypeInput {
+  id?: string;
+  name: string;
+  version?: string;
+  title?: string;
+  instruction?: string;
+  starred?: boolean;
+  htmlContent: string;
+  source?: PrototypeRevisionSource;
+  designBrief?: DesignBrief;
+  coDesignSessionId?: string;
+  agentRunId?: string;
+}
+
+export interface AppendPrototypeRevisionInput {
+  name?: string;
+  version?: string;
+  title?: string;
+  instruction?: string;
+  starred?: boolean;
+  htmlContent: string;
+  source?: PrototypeRevisionSource;
+  restoredFromRevisionId?: string;
+  agentRunId?: string;
 }
 
 export interface FourLayerAsset {
@@ -506,8 +696,32 @@ export interface LlmProviderConfig {
   defaultModel: string;
   availableModels: string[];
   enabled: boolean;
+  /** Whether this provider/model accepts multimodal image input (Visual References, uploads, selection crops). */
+  supportsVision?: boolean;
   lastTestedStatus?: 'OK' | 'ERROR';
   lastTestedMessage?: string;
+}
+
+const KNOWN_VISION_MODEL_PATTERN =
+  /(?:glm-5\.3-flash|glm-4(?:\.\d+)?v|gpt-4o|gpt-4\.1|gpt-4\.5|gpt-5|\bo1\b|\bo3\b|\bo4-mini\b|claude-3|claude-sonnet-4|claude-opus-4|claude-haiku-4|gemini-|qwen(?:\d+(?:\.\d+)?)?-vl|pixtral|llava|vision|-vl\b)/i;
+
+/**
+ * Determine whether a configured LLM provider (and optional target model ID) supports vision input.
+ * Always honors an explicit boolean saved on `provider.supportsVision`; otherwise falls back to
+ * verified provider/model defaults (`auto/glm-5.3-flash`, Anthropic, Google Gemini, OpenAI vision models).
+ */
+export function doesProviderSupportVision(
+  provider: Pick<LlmProviderConfig, 'providerType' | 'defaultModel' | 'supportsVision'>,
+  modelId?: string,
+): boolean {
+  if (typeof provider.supportsVision === 'boolean') {
+    return provider.supportsVision;
+  }
+  if (provider.providerType === 'ANTHROPIC' || provider.providerType === 'GOOGLE_GEMINI') {
+    return true;
+  }
+  const targetModel = (modelId || provider.defaultModel || '').trim();
+  return KNOWN_VISION_MODEL_PATTERN.test(targetModel);
 }
 
 export interface SystemSettingsState {
@@ -621,12 +835,53 @@ export interface WorkspaceStore {
   saveRequirementDoc(doc: Omit<RequirementDoc, 'updatedAt'>): RequirementDoc;
   cloneRequirementDoc(docId: string): RequirementDoc;
   deleteRequirementDoc(docId: string): void;
-  listPrototypes(projectId: string): PrototypeArtifact[];
+  listPrototypes(projectId: string): InteractivePrototype[];
+  getPrototype(prototypeId: string): InteractivePrototype | undefined;
+  createPrototype(
+    projectId: string,
+    input: CreatePrototypeInput,
+  ): { prototype: InteractivePrototype; revision: PrototypeRevision; project: ProjectDetail };
+  appendPrototypeRevision(
+    prototypeId: string,
+    input: AppendPrototypeRevisionInput,
+  ): { prototype: InteractivePrototype; revision: PrototypeRevision; project: ProjectDetail };
+  restorePrototypeRevision(
+    prototypeId: string,
+    revisionId: string,
+    title?: string,
+  ): { prototype: InteractivePrototype; revision: PrototypeRevision };
+  updatePrototypeRevisionMeta(
+    prototypeId: string,
+    revisionId: string,
+    patch: { title?: string; starred?: boolean },
+  ): { prototype: InteractivePrototype; revision: PrototypeRevision };
+  updatePrototypeDesignBrief(prototypeId: string, designBrief: DesignBrief): InteractivePrototype;
+  linkPrototypeCoDesignSession(prototypeId: string, sessionId: string): InteractivePrototype;
+  confirmPrototypeRevision(
+    projectId: string,
+    revisionId: string,
+  ): {
+    confirmed: ConfirmedPrototypeRevision;
+    prototype: InteractivePrototype;
+    project: ProjectDetail;
+  };
+  getConfirmedPrototypeRevision(projectId: string): ConfirmedPrototypeRevision | undefined;
   savePrototypeAndSyncMu(
     projectId: string,
-    input: { id?: string; name: string; version?: string; htmlContent: string; syncMu?: boolean },
-  ): { prototype: PrototypeArtifact; project: ProjectDetail };
-  clonePrototype(protoId: string): PrototypeArtifact;
+    input: {
+      id?: string;
+      name: string;
+      version?: string;
+      title?: string;
+      instruction?: string;
+      htmlContent: string;
+      source?: PrototypeRevisionSource;
+      designBrief?: DesignBrief;
+      coDesignSessionId?: string;
+      syncMu?: boolean;
+    },
+  ): { prototype: InteractivePrototype; project: ProjectDetail };
+  clonePrototype(protoId: string, options?: { name?: string }): InteractivePrototype;
   deletePrototype(protoId: string): void;
   listFourLayerAssets(layer?: FourLayerAsset['layer']): FourLayerAsset[];
   saveFourLayerAsset(asset: Omit<FourLayerAsset, 'updatedAt'>): FourLayerAsset;
@@ -729,4 +984,8 @@ export interface WorkspaceStore {
   deleteLlmProvider(providerId: string): void;
   getSystemSettings(): SystemSettingsState;
   updateSystemSettings(patch: Partial<SystemSettingsState>): SystemSettingsState;
+
+  // Durable Inspo Reference Catalog Cache (metadata + remote URLs only)
+  getInspoCache(cacheKey: string): InspoCacheEntry | undefined;
+  saveInspoCache(entry: InspoCacheEntryInput): InspoCacheEntry;
 }
