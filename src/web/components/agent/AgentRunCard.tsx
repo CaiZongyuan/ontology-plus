@@ -14,6 +14,7 @@ import {
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { ApprovalCard, Button } from '../beautifui/index.js';
+import { MarkdownRenderer } from '../markdown/MarkdownRenderer.js';
 import { LocalImageThumbnail } from './VisionAttachmentControls.js';
 import {
   formatAnchorBadgeLabel,
@@ -64,6 +65,30 @@ function StepGlyph({ status }: { status: AgentRunStepStatus }) {
   return <CircleSlash size={12} aria-hidden="true" />;
 }
 
+const USER_PROMPT_CLAMP_CHARS = 280;
+
+/** The user's side of a turn. Long prompts fold so the agent's reply stays in view. */
+function UserPromptBubble({ text }: { text: string }) {
+  const { t } = usePreferences();
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > USER_PROMPT_CLAMP_CHARS || text.split('\n').length > 6;
+  return (
+    <div className={cn('agent-turn-bubble', isLong && !expanded && 'is-clamped')}>
+      <p className="agent-turn-bubble-text">{text}</p>
+      {isLong && (
+        <button
+          type="button"
+          className="agent-turn-bubble-more"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? t('收起', 'Show less') : t('展开全文', 'Show more')}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /**
  * The single presentation of an Agent Run across the workbench (ADR 0009):
  * live status, elapsed time and cancel on top; expandable steps; thinking
@@ -101,6 +126,68 @@ export function AgentRunCard({
     STOPPED: t('已停止', 'Stopped'),
   };
 
+  const failedStepCount = run.steps.filter((step) => step.status === 'FAILED').length;
+  const stepList = (
+    <ol className="agent-run-steps" aria-label={t('步骤', 'Steps')}>
+      {run.steps.map((step) => {
+        const label = t(step.label.zh, step.label.en);
+        const clock = formatStepClock(step.at);
+        const anchorBadge = formatAnchorBadgeLabel(step.targetAnchor);
+        const row = (
+          <>
+            <span className="agent-run-step-glyph">
+              <StepGlyph status={step.status} />
+            </span>
+            <span className="agent-run-step-label">{label}</span>
+            {anchorBadge && (
+              <span
+                className="agent-run-step-anchor"
+                data-testid="agent-run-step-anchor"
+                {...(step.targetAnchor?.screenId
+                  ? { 'data-anchor-screen-id': step.targetAnchor.screenId }
+                  : {})}
+                {...(step.targetAnchor?.elementId
+                  ? { 'data-anchor-element-id': step.targetAnchor.elementId }
+                  : {})}
+                title={step.targetAnchor?.label || anchorBadge}
+              >
+                {anchorBadge}
+              </span>
+            )}
+            <span className="visually-hidden">{stepStatusLabel[step.status]}</span>
+            {clock && <span className="agent-run-step-clock">{clock}</span>}
+          </>
+        );
+        return (
+          <li
+            key={step.id}
+            className="agent-run-step"
+            data-step-status={step.status}
+            {...(step.toolName ? { 'data-tool-name': step.toolName } : {})}
+            {...(onHoverAnchor && step.targetAnchor
+              ? {
+                  onMouseEnter: () => onHoverAnchor(step.targetAnchor ?? null),
+                  onMouseLeave: () => onHoverAnchor(null),
+                }
+              : {})}
+          >
+            {step.detail ? (
+              <details>
+                <summary className="agent-run-step-row">
+                  {row}
+                  <ChevronRight size={12} className="agent-run-chevron" aria-hidden="true" />
+                </summary>
+                <pre className="agent-run-detail">{step.detail}</pre>
+              </details>
+            ) : (
+              <div className="agent-run-step-row">{row}</div>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+
   return (
     <article
       className={cn('agent-run-card', className)}
@@ -108,11 +195,34 @@ export function AgentRunCard({
       data-run-status={run.status}
       aria-label={`${title} · ${statusLabel[run.status]}`}
     >
+      {run.userPrompt ? (
+        <div className="agent-turn-user" data-testid="agent-turn-user">
+          {run.images && run.images.length > 0 && (
+            <div
+              className="vision-attachment-strip agent-run-images"
+              data-testid="agent-run-images"
+              aria-label={t('参考图附件', 'Attached reference images')}
+            >
+              {run.images.map((img) => (
+                <LocalImageThumbnail key={img.id} attachment={img} compact />
+              ))}
+            </div>
+          )}
+          <UserPromptBubble text={run.userPrompt} />
+        </div>
+      ) : null}
+
       <header className="agent-run-head">
         <span className="agent-run-glyph">
           <RunStatusGlyph status={run.status} />
         </span>
-        <h3 className="agent-run-title">{title}</h3>
+        {run.userPrompt ? (
+          <h3 className="visually-hidden">{title}</h3>
+        ) : (
+          <h3 className="agent-run-title" title={title}>
+            {title}
+          </h3>
+        )}
         <span className="agent-run-meta">
           <span className="agent-run-state">{statusLabel[run.status]}</span>
           <time
@@ -135,7 +245,7 @@ export function AgentRunCard({
         )}
       </header>
 
-      {run.images && run.images.length > 0 && (
+      {!run.userPrompt && run.images && run.images.length > 0 && (
         <div
           className="vision-attachment-strip agent-run-images"
           data-testid="agent-run-images"
@@ -153,65 +263,31 @@ export function AgentRunCard({
         </p>
       )}
 
-      {run.steps.length > 0 && (
-        <ol className="agent-run-steps" aria-label={t('步骤', 'Steps')}>
-          {run.steps.map((step) => {
-            const label = t(step.label.zh, step.label.en);
-            const clock = formatStepClock(step.at);
-            const anchorBadge = formatAnchorBadgeLabel(step.targetAnchor);
-            const row = (
-              <>
-                <span className="agent-run-step-glyph">
-                  <StepGlyph status={step.status} />
+      {run.steps.length > 0 &&
+        (running ? (
+          stepList
+        ) : (
+          <details className="agent-run-steps-fold" data-testid="agent-run-steps-fold">
+            <summary>
+              <ChevronRight size={12} className="agent-run-chevron" aria-hidden="true" />
+              {t(`执行了 ${run.steps.length} 个步骤`, `${run.steps.length} step${run.steps.length === 1 ? '' : 's'}`)}
+              {failedStepCount > 0 && (
+                <span className="agent-run-steps-fold-bad">
+                  {t(`${failedStepCount} 个失败`, `${failedStepCount} failed`)}
                 </span>
-                <span className="agent-run-step-label">{label}</span>
-                {anchorBadge && (
-                  <span
-                    className="agent-run-step-anchor"
-                    data-testid="agent-run-step-anchor"
-                    {...(step.targetAnchor?.screenId
-                      ? { 'data-anchor-screen-id': step.targetAnchor.screenId }
-                      : {})}
-                    {...(step.targetAnchor?.elementId
-                      ? { 'data-anchor-element-id': step.targetAnchor.elementId }
-                      : {})}
-                    title={step.targetAnchor?.label || anchorBadge}
-                  >
-                    {anchorBadge}
-                  </span>
-                )}
-                <span className="visually-hidden">{stepStatusLabel[step.status]}</span>
-                {clock && <span className="agent-run-step-clock">{clock}</span>}
-              </>
-            );
-            return (
-              <li
-                key={step.id}
-                className="agent-run-step"
-                data-step-status={step.status}
-                {...(step.toolName ? { 'data-tool-name': step.toolName } : {})}
-                {...(onHoverAnchor && step.targetAnchor
-                  ? {
-                      onMouseEnter: () => onHoverAnchor(step.targetAnchor ?? null),
-                      onMouseLeave: () => onHoverAnchor(null),
-                    }
-                  : {})}
-              >
-                {step.detail ? (
-                  <details>
-                    <summary className="agent-run-step-row">
-                      {row}
-                      <ChevronRight size={12} className="agent-run-chevron" aria-hidden="true" />
-                    </summary>
-                    <pre className="agent-run-detail">{step.detail}</pre>
-                  </details>
-                ) : (
-                  <div className="agent-run-step-row">{row}</div>
-                )}
-              </li>
-            );
-          })}
-        </ol>
+              )}
+            </summary>
+            {stepList}
+          </details>
+        ))}
+
+      {running && run.streamingText && (
+        <MarkdownRenderer
+          content={run.streamingText}
+          isStreaming
+          className="agent-run-reply"
+          testId="agent-run-streaming-text"
+        />
       )}
 
       {run.thinking && (
@@ -241,9 +317,10 @@ export function AgentRunCard({
 
       {run.status === 'SUCCEEDED' && run.result && (
         <footer className="agent-run-outcome" data-testid="agent-run-result">
-          <p className="agent-run-outcome-text">
-            {t(run.result.summary.zh, run.result.summary.en)}
-          </p>
+          <MarkdownRenderer
+            content={t(run.result.summary.zh, run.result.summary.en)}
+            className="agent-run-outcome-text agent-run-reply"
+          />
           {run.artifact?.kind === 'REASONING_POLICY' &&
             run.artifact.policyRecommendations.length > 0 && (
               <div className="agent-run-policy-list" data-testid="agent-run-policy-list">

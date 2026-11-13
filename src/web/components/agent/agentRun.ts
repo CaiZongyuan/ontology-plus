@@ -60,6 +60,13 @@ export interface AgentRunView {
   model?: string;
   steps: AgentRunStep[];
   thinking?: string;
+  /**
+   * What the user actually sent, shown as their side of the conversation.
+   * Absent for structured action prompts, where `title` already says it all.
+   */
+  userPrompt?: string;
+  /** Assistant reply streamed so far while the run is still in flight. */
+  streamingText?: string;
   /** Source session metadata when adapted from an `AgentSession` turn. */
   sourceSessionId?: string;
   sourceUserMessageId?: string;
@@ -187,6 +194,40 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
   const firstLine = trimmed.split(/\r?\n/).find((l) => l.trim().length > 0)?.trim() ?? trimmed;
   const short = firstLine.length > 68 ? `${firstLine.slice(0, 67)}…` : firstLine;
   return { zh: short, en: short };
+}
+
+const STRUCTURED_PROMPT_PATTERN =
+  /^\[ACTION:[A-Z_]+|\[(?:全局补充精修要求|Additional Global Refinement Instruction)\]|(?:^|\n)(?:修改要求|Instruction):\s/;
+
+/**
+ * The user's own words for a turn, or `undefined` when the prompt is a compiled
+ * instruction (canvas action, selection refinement) that reads as noise in a conversation.
+ */
+export function resolveUserPromptDisplay(
+  rawPrompt: string | undefined,
+  explicitTitle?: string,
+): string | undefined {
+  const trimmed = rawPrompt?.trim();
+  if (!trimmed || explicitTitle?.trim()) return undefined;
+  if (STRUCTURED_PROMPT_PATTERN.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+/** Compact "how long ago" label for session lists. */
+export function formatRelativeTime(iso: string | undefined, now: number = Date.now()): LocalizedText {
+  const at = iso ? Date.parse(iso) : Number.NaN;
+  if (Number.isNaN(at)) return { zh: '', en: '' };
+  const sec = Math.max(0, Math.floor((now - at) / 1000));
+  if (sec < 60) return { zh: '刚刚', en: 'just now' };
+  const min = Math.floor(sec / 60);
+  if (min < 60) return { zh: `${min} 分钟前`, en: `${min}m ago` };
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return { zh: `${hr} 小时前`, en: `${hr}h ago` };
+  const day = Math.floor(hr / 24);
+  if (day < 30) return { zh: `${day} 天前`, en: `${day}d ago` };
+  const d = new Date(at);
+  const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return { zh: label, en: label };
 }
 
 function parseIsoMs(iso: string | undefined, fallback: number): number {
@@ -329,6 +370,7 @@ function buildCompletedSessionRun(
   const startedAt = parseIsoMs(uMsg.timestamp, Date.now());
   const completedAt = parseIsoMs(aMsg.timestamp, startedAt);
   const title = summarizeUserPromptTitle(uMsg.content);
+  const userPrompt = resolveUserPromptDisplay(uMsg.content);
 
   let status: AgentRunStatus = 'SUCCEEDED';
   if (aMsg.cancelled) {
@@ -369,6 +411,7 @@ function buildCompletedSessionRun(
     ...(aMsg.modelUsed ? { model: aMsg.modelUsed } : {}),
     steps,
     ...(thinking ? { thinking } : {}),
+    ...(userPrompt ? { userPrompt } : {}),
     sourceSessionId: session.id,
     sourceUserMessageId: uMsg.id,
     sourceAssistantMessageId: aMsg.id,
@@ -420,6 +463,8 @@ function buildRunFromLiveDraft(
 ): AgentRunView {
   const startedAt = uMsg ? parseIsoMs(uMsg.timestamp, draft.startedAt) : draft.startedAt;
   const thinking = draft.thinking.trim();
+  const streamingText = draft.text?.trim();
+  const userPrompt = resolveUserPromptDisplay(uMsg?.content ?? draft.userPrompt, draft.displayTitle);
   const revArtifact = extractRevisionArtifact(draft.artifacts);
   const primaryArtifact = selectPrimaryDomainArtifact(draft.artifacts);
   const images =
@@ -437,6 +482,8 @@ function buildRunFromLiveDraft(
     ...(draft.model ? { model: draft.model } : {}),
     steps: draft.steps,
     ...(thinking ? { thinking } : {}),
+    ...(userPrompt ? { userPrompt } : {}),
+    ...(streamingText ? { streamingText } : {}),
     sourceSessionId: draft.sessionId,
     ...(uMsg ? { sourceUserMessageId: uMsg.id } : {}),
     retryPrompt: uMsg?.content ?? draft.userPrompt,
@@ -510,6 +557,9 @@ export function agentRunsFromSession(
       startedAt,
       ...(fallbackStatus !== 'RUNNING' ? { completedAt: startedAt } : {}),
       steps: [],
+      ...(resolveUserPromptDisplay(msg.content)
+        ? { userPrompt: resolveUserPromptDisplay(msg.content)! }
+        : {}),
       sourceSessionId: session.id,
       sourceUserMessageId: msg.id,
       retryPrompt: msg.content,

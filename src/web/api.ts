@@ -59,7 +59,10 @@ import type {
   McpResourceDefinition,
   McpToolDefinition,
 } from '../packages/package-compiler/index.js';
-import { useAgentPanelStore } from './components/agent/agentPanelStore.js';
+import {
+  agentSessionScopeKey,
+  useAgentPanelStore,
+} from './components/agent/agentPanelStore.js';
 
 export interface BootstrapPayload {
   projects: ProjectSummary[];
@@ -872,8 +875,15 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const preferredId = opts?.preferredSessionId ?? get().activeSessionId ?? undefined;
+    // Canvas actions land in the conversation the Agent Panel is showing for this agent.
+    const rememberedId =
+      useAgentPanelStore.getState().sessionByScope[
+        agentSessionScopeKey(projectId, agentKind, opts?.targetId)
+      ];
     const existing =
-      (preferredId ? candidates.find((s) => s.id === preferredId) : undefined) ?? candidates[0];
+      (preferredId ? candidates.find((s) => s.id === preferredId) : undefined) ??
+      (rememberedId ? candidates.find((s) => s.id === rememberedId) : undefined) ??
+      candidates[0];
     if (existing) {
       return existing;
     }
@@ -897,13 +907,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     });
     const latest = get().data;
     if (latest) {
-      const otherSessions = (latest.agentSessions ?? []).filter((s) => s.projectId !== projectId);
-      set({
-        data: {
-          ...latest,
-          agentSessions: [...created.agentSessions, ...otherSessions],
-        },
-      });
+      // The server answers with every project's sessions, so replacing avoids duplicate rows.
+      set({ data: { ...latest, agentSessions: created.agentSessions } });
     }
     return created.session;
   },

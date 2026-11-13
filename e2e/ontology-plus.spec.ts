@@ -186,7 +186,8 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
       .getByTestId('agent-panel-composer-input')
       .fill('请查询当前合同台账并核对大额合同资信准入规则');
     await page.getByTestId('agent-panel-send-btn').click();
-    await expect(agentPanel.locator('.agent-run-step').first()).toBeVisible({ timeout: 25_000 });
+    // Steps fold away once a run finishes, so assert they were recorded rather than still on screen.
+    await expect(agentPanel.locator('.agent-run-step').first()).toBeAttached({ timeout: 25_000 });
     await expect(
       agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
     ).toBeVisible({ timeout: 25_000 });

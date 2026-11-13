@@ -5,6 +5,8 @@ import type {
   WritebackInterface,
 } from '../../../packages/workspace-store/index.js';
 import {
+  apiCreateAgentSession,
+  apiDeleteAgentSession,
   apiPatchAgentSession,
   apiPostJson,
   getCurrentClientLocale,
@@ -21,9 +23,14 @@ import {
   usePrototypeSelectionStore,
 } from '../prototype/prototypeSelectionStore.js';
 import { AgentPanel } from './AgentPanel.js';
-import { AGENT_PANEL_OVERLAY_QUERY, useAgentPanelStore } from './agentPanelStore.js';
+import {
+  AGENT_PANEL_OVERLAY_QUERY,
+  agentSessionScopeKey,
+  useAgentPanelStore,
+} from './agentPanelStore.js';
 import {
   agentRunsFromSession,
+  formatRelativeTime,
   summarizeUserPromptTitle,
   type LocalizedText,
 } from './agentRun.js';
@@ -40,6 +47,15 @@ export interface AgentPanelSurface {
   conversationPrimary?: boolean;
   /** Contextual composer placeholder for this module. */
   placeholder?: LocalizedText;
+  /** One-click openers offered while the conversation is still empty. */
+  starters?: LocalizedText[];
+}
+
+/** Title a session carries until its first turn names it. */
+export const NEW_AGENT_SESSION_TITLE: LocalizedText = { zh: '新会话', en: 'New session' };
+
+export function isUntitledAgentSession(title: string): boolean {
+  return title === NEW_AGENT_SESSION_TITLE.zh || title === NEW_AGENT_SESSION_TITLE.en;
 }
 
 /**
@@ -63,6 +79,20 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
       zh: '描述业务场景、核心角色或规则阈值（Enter 发送，Shift+Enter 换行）…',
       en: 'Describe domain workflows, roles, or rule thresholds (Enter to send)…',
     },
+    starters: [
+      {
+        zh: '梳理核心业务单据聚合根、关键状态流转与审批准入红线',
+        en: 'Identify core domain aggregates, lifecycles, and approval gate rules',
+      },
+      {
+        zh: '识别跨系统数据交换、外部准入接口与异常补偿策略',
+        en: 'Clarify cross-system integrations, external credit checks, and compensations',
+      },
+      {
+        zh: '核对当前未决 B 类业务边界并给出推荐决策方案',
+        en: 'Review open Class-B business ambiguities and propose options',
+      },
+    ],
   },
   'app-req-docs': {
     title: { zh: '需求规格合成助手', en: 'SRS Synthesis Agent' },
@@ -71,6 +101,16 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
       zh: '输入需求补充说明或触发九章节 SRS 合成…',
       en: 'Add requirement notes or synthesize the 9-chapter SRS…',
     },
+    starters: [
+      {
+        zh: '检查当前需求规格书还缺哪些章节或验收标准',
+        en: 'Review the current SRS for missing chapters or acceptance criteria',
+      },
+      {
+        zh: '把最近确认的业务规则补充进规格书对应章节',
+        en: 'Fold the latest confirmed business rules into the SRS',
+      },
+    ],
   },
   'app-prototype': {
     title: { zh: '原型共创', en: 'Prototype Co-Design' },
@@ -328,6 +368,8 @@ export function resolveSurfaceAgentSession(
     activePrototypeIdByProject?: Record<string, string>;
     activeItemId?: string | null;
     activeSessionId?: string | null;
+    /** Conversation last opened per agent scope; used when the URL names no session. */
+    rememberedSessionByScope?: Record<string, string>;
   },
 ): {
   session: AgentSession | undefined;
@@ -431,7 +473,14 @@ export function resolveSurfaceAgentSession(
             )
           : allCapSessions;
     const list = matching.length > 0 ? matching : allCapSessions;
-    const session = list.find((s) => s.id === opts?.activeSessionId) ?? list[0];
+    const rememberedCapId =
+      opts?.rememberedSessionByScope?.[
+        agentSessionScopeKey(activeProjectId, 'CAPABILITY', activeCapAgent?.id)
+      ];
+    const session =
+      list.find((s) => s.id === opts?.activeSessionId) ??
+      list.find((s) => s.id === rememberedCapId) ??
+      list[0];
     return {
       session,
       matchingSessions: list,
@@ -443,7 +492,12 @@ export function resolveSurfaceAgentSession(
   const matching = sessions
     .filter((s) => s.projectId === activeProjectId && s.agentKind === surface.sessionKind)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const session = matching.find((s) => s.id === opts?.activeSessionId) ?? matching[0];
+  const rememberedId =
+    opts?.rememberedSessionByScope?.[agentSessionScopeKey(activeProjectId, surface.sessionKind)];
+  const session =
+    matching.find((s) => s.id === opts?.activeSessionId) ??
+    matching.find((s) => s.id === rememberedId) ??
+    matching[0];
   return {
     session,
     matchingSessions: matching,
@@ -537,6 +591,8 @@ export function ShellAgentPanel({
   const setWidth = useAgentPanelStore((s) => s.setWidth);
   const toggleWideMode = useAgentPanelStore((s) => s.toggleWideMode);
   const setHoveredAnchor = useAgentPanelStore((s) => s.setHoveredAnchor);
+  const sessionByScope = useAgentPanelStore((s) => s.sessionByScope);
+  const rememberSession = useAgentPanelStore((s) => s.rememberSession);
   const activeProjectId = data?.activeProject?.id;
 
   const [reasoningMode, setReasoningMode] = useState<'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY'>(
@@ -554,9 +610,25 @@ export function ShellAgentPanel({
         activePrototypeIdByProject,
         activeItemId,
         activeSessionId,
+        rememberedSessionByScope: sessionByScope,
       }),
-    [surface, data, activePrototypeIdByProject, activeItemId, activeSessionId],
+    [surface, data, activePrototypeIdByProject, activeItemId, activeSessionId, sessionByScope],
   );
+
+  // Prototype sessions belong to their Interactive Prototype (ADR 0009); every other agent can hold several conversations.
+  const sessionsOwnedByArtifact = surface.sessionKind === 'PROTOTYPE_CO_DESIGN';
+  const sessionScopeKey = activeProjectId
+    ? agentSessionScopeKey(
+        activeProjectId,
+        surface.sessionKind,
+        surface.sessionKind === 'CAPABILITY' ? activeCapabilityAgentId : undefined,
+      )
+    : null;
+
+  useEffect(() => {
+    if (sessionsOwnedByArtifact || !sessionScopeKey || !activeSession) return;
+    rememberSession(sessionScopeKey, activeSession.id);
+  }, [sessionsOwnedByArtifact, sessionScopeKey, activeSession?.id, rememberSession]);
 
   useEffect(() => {
     if (activeSession?.reasoningMode) {
@@ -601,13 +673,91 @@ export function ShellAgentPanel({
 
   const sessionOptions = useMemo(
     () =>
-      matchingSessions.map((s) => ({
-        id: s.id,
-        title: s.title,
-        isFork: Boolean(s.parentSessionId),
-      })),
-    [matchingSessions],
+      matchingSessions.map((s) => {
+        const updated = formatRelativeTime(s.updatedAt);
+        return {
+          id: s.id,
+          title: isUntitledAgentSession(s.title)
+            ? t(NEW_AGENT_SESSION_TITLE.zh, NEW_AGENT_SESSION_TITLE.en)
+            : s.title,
+          isFork: Boolean(s.parentSessionId),
+          turnCount: (s.messages ?? []).filter((m) => m.role === 'user').length,
+          updatedLabel: t(updated.zh, updated.en),
+          running: s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id]),
+        };
+      }),
+    [matchingSessions, liveSessionDrafts, t],
   );
+
+  const handleCreateSession = async () => {
+    if (!activeProjectId || !data || sessionsOwnedByArtifact) return;
+    // An untouched conversation is already "new": reuse it instead of piling up empty ones.
+    const reusable = matchingSessions.find(
+      (s) => (s.messages ?? []).length === 0 && !liveSessionDrafts[s.id] && s.status !== 'RUNNING',
+    );
+    if (reusable) {
+      setActiveSessionId(reusable.id);
+      return;
+    }
+    const capAgent =
+      surface.sessionKind === 'CAPABILITY'
+        ? data.capabilityAgents.find((a) => a.id === activeCapabilityAgentId) ??
+          data.capabilityAgents[0]
+        : undefined;
+    try {
+      const created = await apiCreateAgentSession({
+        projectId: capAgent?.projectId ?? activeProjectId,
+        agentKind: surface.sessionKind,
+        ...(capAgent ? { targetId: capAgent.id } : {}),
+        title: t(NEW_AGENT_SESSION_TITLE.zh, NEW_AGENT_SESSION_TITLE.en),
+        ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
+      });
+      patchData({ agentSessions: created.agentSessions });
+      setActiveSessionId(created.session.id);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleRenameSession = async (sessionId: string, title: string) => {
+    try {
+      const res = await apiPatchAgentSession(sessionId, { title });
+      patchData({ agentSessions: res.agentSessions });
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      const res = await apiDeleteAgentSession(sessionId);
+      patchData({ agentSessions: res.agentSessions });
+      if (activeSession?.id === sessionId) {
+        const next = matchingSessions.find((s) => s.id !== sessionId);
+        setActiveSessionId(next?.id ?? null);
+        if (sessionScopeKey) rememberSession(sessionScopeKey, next?.id ?? null);
+      }
+      showToast(t('会话已删除', 'Session deleted'));
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /** The first thing said in a conversation becomes its name, so the switcher stays scannable. */
+  const autoTitleSession = (session: AgentSession, prompt: string) => {
+    if ((session.messages ?? []).length > 0 || !isUntitledAgentSession(session.title)) return;
+    const firstLine = prompt.split(/\r?\n/).find((l) => l.trim())?.trim() ?? '';
+    if (!firstLine) return;
+    const title = firstLine.length > 28 ? `${firstLine.slice(0, 27)}…` : firstLine;
+    void apiPatchAgentSession(session.id, { title })
+      .then((res) => {
+        const latest = useWorkbenchStore.getState().data?.agentSessions ?? [];
+        patchData({
+          agentSessions: latest.map((s) => (s.id === session.id ? { ...s, title: res.session.title } : s)),
+        });
+      })
+      .catch(() => undefined);
+  };
 
   const handleChangeReasoningMode = async (nextMode: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY') => {
     setReasoningMode(nextMode);
@@ -773,6 +923,7 @@ export function ShellAgentPanel({
         ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
       }));
     setActiveSessionId(targetSession.id);
+    autoTitleSession(targetSession, prompt);
     await startSessionAgentRun({
       sessionId: targetSession.id,
       prompt,
@@ -888,12 +1039,21 @@ export function ShellAgentPanel({
       onTriggerWriteback={(writebackId, actionTitle) =>
         void handleTriggerWriteback(writebackId, actionTitle)
       }
-      {...(allowPrototypeSessionSelect
-        ? {
+      {...(sessionsOwnedByArtifact
+        ? allowPrototypeSessionSelect
+          ? {
+              sessions: sessionOptions,
+              onSelectSession: handleSelectPrototypeSession,
+            }
+          : {}
+        : {
             sessions: sessionOptions,
-            onSelectSession: handleSelectPrototypeSession,
-          }
-        : {})}
+            onSelectSession: setActiveSessionId,
+            onCreateSession: handleCreateSession,
+            onRenameSession: handleRenameSession,
+            onDeleteSession: handleDeleteSession,
+          })}
+      {...(surface.starters ? { starterPrompts: surface.starters } : {})}
       {...(activeSession?.id ? { activeSessionId: activeSession.id } : {})}
       isForkSession={Boolean(activeSession?.parentSessionId)}
       {...(headerContextSlot ? { headerContextSlot } : {})}

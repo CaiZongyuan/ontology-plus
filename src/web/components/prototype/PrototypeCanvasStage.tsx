@@ -760,7 +760,7 @@ export function PrototypeCanvasStage({
         'flex flex-col overflow-hidden rounded-card border border-line bg-surface',
         focusMode
           ? 'fixed top-0 bottom-0 left-0 z-[980] rounded-none border-0 bg-ground shadow-lg'
-          : 'min-h-[calc(100vh-128px)]',
+          : 'min-h-[calc(100dvh-100px)]',
       )}
       style={focusMode ? { right: focusRightOffset, animation: 'none' } : undefined}
     >
@@ -776,10 +776,10 @@ export function PrototypeCanvasStage({
       {/* ─── Single Top Toolbar ─── */}
       <header
         data-testid="prototype-canvas-toolbar"
-        className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface px-3 py-2 shrink-0"
+        className="pcs-toolbar flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-line bg-surface px-3 py-2 shrink-0"
       >
         {/* Left group: Prototype Switcher + Back to Brief + Revision History */}
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5">
           <div ref={switcherRef} className="relative">
             <Button
               type="button"
@@ -797,11 +797,11 @@ export function PrototypeCanvasStage({
                 }
               }}
             >
-              <span className="max-w-[200px] truncate font-medium text-ink">
+              <span className="pcs-proto-name truncate font-medium text-ink">
                 {activePrototype.name}
               </span>
               {confirmedRevision?.prototypeId === activePrototype.id && (
-                <span className="badge badge-ok text-[10.5px]">
+                <span className="pcs-label-wide badge badge-ok text-[10.5px]">
                   {t('含已确认', 'Confirmed')}
                 </span>
               )}
@@ -1141,10 +1141,11 @@ export function PrototypeCanvasStage({
             variant="ghost"
             size="sm"
             data-testid="prototype-back-to-brief-btn"
+            title={t('返回设计简报，调整视觉参考与风格', 'Back to the Design Brief to adjust references and style')}
             onClick={onBackToBrief}
           >
             <ArrowLeft size={13} aria-hidden="true" />
-            <span>{t('返回简报', 'Back to Brief')}</span>
+            <span className="pcs-label">{t('返回简报', 'Back to Brief')}</span>
           </Button>
 
           <Button
@@ -1154,11 +1155,15 @@ export function PrototypeCanvasStage({
             data-testid="prototype-history-btn"
             aria-pressed={historyOpen}
             aria-expanded={historyOpen}
+            title={t(
+              `修订历史 · R${activeRevision.revisionNumber} ${activeRevision.title}`,
+              `Revision history · R${activeRevision.revisionNumber} ${activeRevision.title}`,
+            )}
             onClick={() => setHistoryOpen((v) => !v)}
           >
             <History size={13} aria-hidden="true" />
             <span className="font-mono text-[11.5px]">R{activeRevision.revisionNumber}</span>
-            <span className="max-w-[140px] truncate">{activeRevision.title}</span>
+            <span className="pcs-label-wide max-w-[140px] truncate">{activeRevision.title}</span>
             <span
               className={cn(
                 'badge text-[10.5px]',
@@ -1178,7 +1183,7 @@ export function PrototypeCanvasStage({
         <div
           role="group"
           aria-label={t('预览设备尺寸与缩放', 'Preview viewport and zoom')}
-          className="flex flex-wrap items-center gap-1"
+          className="pcs-seg"
         >
           <Button
             type="button"
@@ -1186,10 +1191,12 @@ export function PrototypeCanvasStage({
             size="xs"
             data-testid="prototype-viewport-desktop"
             aria-pressed={viewport === 'DESKTOP'}
+            title={t('桌面 1440', 'Desktop 1440')}
+            aria-label={t('桌面 1440', 'Desktop 1440')}
             onClick={() => setViewport('DESKTOP')}
           >
             <Laptop size={12.5} aria-hidden="true" />
-            <span>{t('桌面 1440', 'Desktop 1440')}</span>
+            <span className="pcs-label-wide">{t('桌面', 'Desktop')}</span>
           </Button>
           <Button
             type="button"
@@ -1197,10 +1204,12 @@ export function PrototypeCanvasStage({
             size="xs"
             data-testid="prototype-viewport-tablet"
             aria-pressed={viewport === 'TABLET'}
+            title={t('平板 768', 'Tablet 768')}
+            aria-label={t('平板 768', 'Tablet 768')}
             onClick={() => setViewport('TABLET')}
           >
             <Tablet size={12.5} aria-hidden="true" />
-            <span>{t('平板 768', 'Tablet 768')}</span>
+            <span className="pcs-label-wide">{t('平板', 'Tablet')}</span>
           </Button>
           <Button
             type="button"
@@ -1208,10 +1217,12 @@ export function PrototypeCanvasStage({
             size="xs"
             data-testid="prototype-viewport-mobile"
             aria-pressed={viewport === 'MOBILE'}
+            title={t('手机 390', 'Mobile 390')}
+            aria-label={t('手机 390', 'Mobile 390')}
             onClick={() => setViewport('MOBILE')}
           >
             <Smartphone size={12.5} aria-hidden="true" />
-            <span>{t('手机 390', 'Mobile 390')}</span>
+            <span className="pcs-label-wide">{t('手机', 'Mobile')}</span>
           </Button>
           <Button
             type="button"
@@ -1226,25 +1237,34 @@ export function PrototypeCanvasStage({
             )}
           >
             <span className="font-mono text-[11px]">
-              {zoomMode === 'FIT'
-                ? t(`自适应 ${zoomPercent}%`, `Fit ${zoomPercent}%`)
-                : '100%'}
+              {zoomMode === 'FIT' ? (
+                <>
+                  <span className="pcs-label-wide">{t('自适应 ', 'Fit ')}</span>
+                  {zoomPercent}%
+                </>
+              ) : (
+                '100%'
+              )}
             </span>
           </Button>
         </div>
 
         {/* Right group: Box-Select + Focus Mode + Open in New Tab + Agent Toggle (in Focus Mode) + Confirm Revision */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex items-center gap-1">
           <Button
             type="button"
             variant="toggle"
             size="sm"
             data-testid="prototype-inspect-toggle-btn"
             aria-pressed={inspectMode}
+            title={t(
+              '框选界面元素，作为精修指令的上下文发给智能体',
+              'Box-select an element to send it to the agent as refinement context',
+            )}
             onClick={() => setInspectMode(!inspectMode)}
           >
             <Crosshair size={13} aria-hidden="true" />
-            <span>{t('框选', 'Box-Select')}</span>
+            <span className="pcs-label">{t('框选', 'Box-Select')}</span>
             {annotations && annotations.length > 0 && (
               <span className="badge badge-accent font-mono text-[10px]">
                 {annotations.length}
@@ -1270,9 +1290,11 @@ export function PrototypeCanvasStage({
             ) : (
               <Maximize2 size={13} aria-hidden="true" />
             )}
-            <span>
-              {focusMode ? t('退出专注 (Esc)', 'Exit Focus (Esc)') : t('专注模式', 'Focus Mode')}
-            </span>
+            {focusMode ? (
+              <span>{t('退出专注 (Esc)', 'Exit Focus (Esc)')}</span>
+            ) : (
+              <span className="visually-hidden">{t('专注模式', 'Focus Mode')}</span>
+            )}
           </Button>
 
           {focusMode && (
@@ -1291,15 +1313,17 @@ export function PrototypeCanvasStage({
 
           <Button
             type="button"
-            variant="secondary"
+            variant="ghost"
             size="sm"
             data-testid="prototype-open-tab-btn"
             onClick={handleOpenInNewTab}
             title={t('在浏览器新标签页打开干净的原型 HTML', 'Open clean prototype HTML in new tab')}
           >
             <ExternalLink size={13} aria-hidden="true" />
-            <span>{t('新标签页打开', 'Open in New Tab')}</span>
+            <span className="visually-hidden">{t('新标签页打开', 'Open in New Tab')}</span>
           </Button>
+
+          <span className="pcs-divider" aria-hidden="true" />
 
           <Button
             type="button"

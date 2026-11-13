@@ -54,7 +54,10 @@ import {
   triggerBrowserDownload,
   useWorkbenchStore,
 } from '../api.js';
-import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
+import {
+  agentSessionScopeKey,
+  useAgentPanelStore,
+} from '../components/agent/agentPanelStore.js';
 import { resolveActiveVisionCapability } from '../components/agent/VisionAttachmentControls.js';
 import {
   Button,
@@ -99,6 +102,7 @@ function ViewModeHeader({
   registryLabel,
   count,
   testIdPrefix,
+  centerSlot,
   rightActions,
 }: {
   mode: 'WORKSPACE' | 'REGISTRY';
@@ -107,11 +111,13 @@ function ViewModeHeader({
   registryLabel: string;
   count: number;
   testIdPrefix: string;
+  /** Identity of the thing being edited (picker, title, version), kept on the same bar as the mode switch. */
+  centerSlot?: React.ReactNode;
   rightActions?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-3.5 py-2 shadow-2xs">
-      <div className="inline-flex items-center rounded-[7px] border border-line bg-inset p-0.5">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 overflow-hidden rounded-window border border-line bg-surface px-3.5 py-2 shadow-2xs">
+      <div className="inline-flex shrink-0 items-center rounded-[7px] border border-line bg-inset p-0.5">
         <button
           type="button"
           data-testid={`${testIdPrefix}-mode-workspace`}
@@ -145,7 +151,14 @@ function ViewModeHeader({
           </span>
         </button>
       </div>
-      {rightActions && <div className="flex flex-wrap items-center gap-2">{rightActions}</div>}
+      {rightActions && (
+        <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{rightActions}</div>
+      )}
+      {centerSlot && (
+        <div className="-mx-3.5 -mb-2 flex min-w-0 basis-[calc(100%+1.75rem)] flex-wrap items-center gap-2 border-t border-line-soft bg-inset/40 px-3.5 py-2">
+          {centerSlot}
+        </div>
+      )}
     </div>
   );
 }
@@ -1063,7 +1076,7 @@ function parseAndDedupeAggregates(rawItems: string[]): NormalizedAggregateSignal
   return [...byKey.values()];
 }
 
-type ConvergenceTab = 'ALL' | 'DECISIONS' | 'M1' | 'M3';
+type ConvergenceTab = 'DECISIONS' | 'M1' | 'M3';
 
 // ─── 2. Requirement Exploration (需求探索 / Live Streaming + Scoped HITL) ──────
 export function RequirementExploreView({
@@ -1076,13 +1089,12 @@ export function RequirementExploreView({
     data,
     activeSessionId,
     liveSessionDrafts,
-    ensureProjectAgentSession,
-    setActiveSessionId,
-    startSessionAgentRun,
     startSrsSynthesisRun,
   } = useWorkbenchStore();
+  const agentPanelOpen = useAgentPanelStore((s) => s.open);
+  const rememberedSessionByScope = useAgentPanelStore((s) => s.sessionByScope);
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<ConvergenceTab>('ALL');
+  const [activeTab, setActiveTab] = useState<ConvergenceTab>('DECISIONS');
   const [signalFilter, setSignalFilter] = useState('');
 
   useEffect(() => {
@@ -1218,24 +1230,26 @@ export function RequirementExploreView({
     [mergedDecisions, filterQ],
   );
 
-  const activeRequirementAgentSessions = useMemo(
-    () =>
-      (data.agentSessions ?? [])
-        .filter(
-          (s) =>
-            s.projectId === data.activeProject.id &&
-            s.agentKind === 'REQUIREMENT' &&
-            s.messages.length > 0,
-        )
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-    [data.agentSessions, data.activeProject.id],
-  );
-  const preferredAgentSession =
-    activeRequirementAgentSessions.find((s) => s.id === activeSessionId) ??
-    activeRequirementAgentSessions[0];
+  // SRS synthesis reads the conversation it runs in, so it goes to the one on screen
+  // unless that one is still empty; then the most recent conversation with content.
+  const preferredAgentSession = useMemo(() => {
+    const candidates = (data.agentSessions ?? [])
+      .filter((s) => s.projectId === data.activeProject.id && s.agentKind === 'REQUIREMENT')
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const rememberedId =
+      rememberedSessionByScope[agentSessionScopeKey(data.activeProject.id, 'REQUIREMENT')];
+    const onScreen =
+      candidates.find((s) => s.id === activeSessionId) ??
+      candidates.find((s) => s.id === rememberedId);
+    if (onScreen && onScreen.messages.length > 0) return onScreen;
+    return candidates.find((s) => s.messages.length > 0);
+  }, [data.agentSessions, data.activeProject.id, activeSessionId, rememberedSessionByScope]);
 
   const totalSignalCount =
     normalizedAggs.length + mergedRules.length + mergedDecisions.length;
+  const pendingDecisionCount = mergedDecisions.filter(
+    (d) => parseDecisionTag(d).badgeClass === 'badge-warn',
+  ).length;
   const canSynthesize = Boolean(
     session || preferredAgentSession || totalSignalCount > 0,
   );
@@ -1256,48 +1270,43 @@ export function RequirementExploreView({
     });
   };
 
+  const openConversation = () => {
+    useAgentPanelStore.getState().revealPanel();
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLTextAreaElement>('[data-testid="agent-panel-composer-input"]')
+        ?.focus();
+    });
+  };
+
   const renderDecisionItem = (dec: string, idx: number) => {
     const parsed = parseDecisionTag(dec);
     return (
-      <div
+      <li
         key={`${idx}-${dec.slice(0, 20)}`}
-        className="flex flex-col gap-1 rounded-control border border-line bg-surface px-2.5 py-2 text-[12px] shadow-2xs"
+        className={cn('req-item', parsed.badgeClass === 'badge-warn' && 'is-pending')}
       >
-        <div className="flex items-center justify-between gap-1.5">
+        <div className="req-item-meta">
           <span className={`badge ${parsed.badgeClass}`}>
-            {t(parsed.tag, parsed.tagEn)}
+            {t(parsed.tag, parsed.tagEn).replace(/^\[|\]$/g, '')}
           </span>
-          <span className="text-[10.5px] text-ink-3">
+          <span className="req-item-kind">
             {t(parsed.categoryLabelZh, parsed.categoryLabelEn)}
           </span>
         </div>
-        <div className="break-words leading-[1.5] text-ink">{parsed.body}</div>
-      </div>
+        <p className="req-item-body">{parsed.body}</p>
+      </li>
     );
   };
 
   const renderAggregateItem = (agg: NormalizedAggregateSignal) => (
-    <div
-      key={agg.key}
-      className="flex flex-col gap-0.5 rounded-control border border-line bg-surface px-2.5 py-2 text-[12px] shadow-2xs"
-    >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="rounded bg-accent-tint px-1.5 py-0.1 font-mono text-[10px] font-semibold text-accent">
-          M1
-        </span>
-        <span className="break-words font-semibold text-ink">{agg.title}</span>
-        {agg.englishCode && (
-          <code className="rounded bg-inset px-1.5 py-0.1 font-mono text-[10.5px] text-ink-3">
-            {agg.englishCode}
-          </code>
-        )}
+    <li key={agg.key} className="req-item">
+      <div className="req-item-meta">
+        <span className="req-item-title">{agg.title}</span>
+        {agg.englishCode && <code className="req-item-code">{agg.englishCode}</code>}
       </div>
-      {agg.detail && (
-        <div className="break-words pl-0.5 text-[11.5px] leading-[1.45] text-ink-3">
-          {agg.detail}
-        </div>
-      )}
-    </div>
+      {agg.detail && <p className="req-item-body is-muted">{agg.detail}</p>}
+    </li>
   );
 
   const renderRuleItem = (rule: string, idx: number) => {
@@ -1313,450 +1322,256 @@ export function RequirementExploreView({
       trimmedRule.startsWith('[confirmed]');
 
     return (
-      <div
-        key={`${idx}-${rule.slice(0, 20)}`}
-        className="flex items-start gap-2 rounded-control border border-line bg-surface px-2.5 py-2 text-[12px] leading-[1.5] text-ink shadow-2xs"
-      >
-        <span className="mt-[2px] inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded bg-green-tint px-1 font-mono text-[10px] font-semibold text-green tabular-nums">
+      <li key={`${idx}-${rule.slice(0, 20)}`} className="req-item is-numbered">
+        <span className="req-item-index" aria-hidden="true">
           {idx + 1}
         </span>
-        <div className="min-w-0 flex-1 break-words">
+        <p className="req-item-body">
           {hasExplicitPrefix && (
-            <span
-              className={cn(
-                'mr-1.5 inline-block rounded px-1.5 py-0.1 text-[10px] font-semibold align-[1px]',
-                parsed.badgeClass === 'badge-accent' && 'bg-accent-tint text-accent',
-                parsed.badgeClass === 'badge-warn' && 'bg-orange-tint text-orange',
-                parsed.badgeClass === 'badge-ok' && 'bg-green-tint text-green',
-              )}
-            >
+            <span className={`badge ${parsed.badgeClass} req-item-inline-badge`}>
               {t(parsed.tag, parsed.tagEn).replace(/^\[|\]$/g, '')}
             </span>
           )}
-          <span>{hasExplicitPrefix ? parsed.body : rule}</span>
-        </div>
-      </div>
+          {hasExplicitPrefix ? parsed.body : rule}
+        </p>
+      </li>
     );
   };
 
+  const columns = [
+    {
+      id: 'DECISIONS' as const,
+      icon: <CheckCircle2 size={13} aria-hidden="true" />,
+      label: t('分级决策', 'Decisions'),
+      hint: t('A 类自动补全 · B 类需你确认', 'Class-A auto-completed · Class-B needs you'),
+      total: mergedDecisions.length,
+      shown: filteredDecisions.length,
+      emptyText: t(
+        '对话中出现的业务边界决策会记录在这里。',
+        'Business-boundary decisions from the conversation are recorded here.',
+      ),
+      body: filteredDecisions.map(renderDecisionItem),
+    },
+    {
+      id: 'M1' as const,
+      icon: <Boxes size={13} aria-hidden="true" />,
+      label: t('领域聚合根 M1', 'Aggregates · M1'),
+      hint: t('核心业务对象，已去重', 'Core business objects, deduplicated'),
+      total: normalizedAggs.length,
+      shown: filteredAggs.length,
+      emptyText: t(
+        '识别出的核心业务对象会归档在这里。',
+        'Core business objects identified so far are filed here.',
+      ),
+      body: filteredAggs.map(renderAggregateItem),
+    },
+    {
+      id: 'M3' as const,
+      icon: <GitBranch size={13} aria-hidden="true" />,
+      label: t('业务规则 M3', 'Rules · M3'),
+      hint: t('阈值、准入红线与约束', 'Thresholds, gates, and constraints'),
+      total: mergedRules.length,
+      shown: filteredRules.length,
+      emptyText: t(
+        '规则阈值与准入红线会沉淀在这里。',
+        'Rule thresholds and gate conditions settle here.',
+      ),
+      body: filteredRules.map(renderRuleItem),
+    },
+  ];
+
   return (
-    <div className="flex flex-col gap-3">
-      {/* Compact Top SRS Synthesis Toolbar */}
-      <div className="card" style={{ padding: '12px 16px' }}>
-        <div className="flex flex-wrap items-center justify-between gap-2.5">
-          <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-            <h3 className="card-title">
-              {t(
-                '需求探索与分级追问',
-                'Interactive Requirement Exploration & Scoped HITL',
-              )}
-            </h3>
-            {sessions.length > 1 && (
-              <select
-                className="select"
-                style={{ width: 240 }}
-                value={session?.id ?? ''}
-                onChange={(e) => setSelectedSessionId(e.target.value)}
-              >
-                {sessions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.title} ({s.status})
-                  </option>
-                ))}
-              </select>
+    <div className="req-explore">
+      <section className="card req-explore-head">
+        <div className="req-explore-head-main">
+          <h3 className="card-title">{t('需求要素看板', 'Requirement Board')}</h3>
+          <p className="req-explore-sub">
+            {t(
+              '与智能体对话时识别出的决策、聚合根和业务规则会自动去重归档到这里，随时可合成规格说明书。',
+              'Decisions, aggregates, and rules found during the conversation are deduplicated here, ready to synthesize into an SRS.',
             )}
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-line bg-inset/60 px-2.5 py-0.5 font-mono text-[11px] text-ink-2 tabular-nums">
-              <span>M1×{normalizedAggs.length}</span>
-              <span className="text-ink-3">·</span>
-              <span>M3×{mergedRules.length}</span>
-              <span className="text-ink-3">·</span>
-              <span>
-                {t('决策', 'Dec')}×{mergedDecisions.length}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                useAgentPanelStore.getState().revealPanel();
-                useAgentPanelStore.getState().setWideMode(true);
-              }}
-            >
-              <Sparkles size={13.5} />
-              {t('打开右侧需求探索 Agent →', 'Open Requirement Agent →')}
-            </Button>
-
-            <Button
-              type="button"
-              variant="accent"
-              size="sm"
-              data-testid="synthesize-srs-btn"
-              disabled={!canSynthesize || synthesizingSrs}
-              onClick={handleSynthesizeSrs}
-            >
-              {synthesizingSrs && <Loader2 size={13.5} className="pipeline-spin" aria-hidden="true" />}
-              {synthesizingSrs
-                ? t('正在合成 9 章节规格书…', 'Synthesizing 9-Chapter SRS…')
-                : t(
-                    '一键合成 9 章节《软件需求规格说明书》',
-                    'Synthesize 9-Chapter SRS Document',
-                  )}
-            </Button>
-          </div>
+          </p>
         </div>
-      </div>
+        <div className="req-explore-head-actions">
+          {sessions.length > 1 && (
+            <select
+              className="select req-explore-source"
+              aria-label={t('需求来源', 'Requirement source')}
+              value={session?.id ?? ''}
+              onChange={(e) => setSelectedSessionId(e.target.value)}
+            >
+              {sessions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title}
+                </option>
+              ))}
+            </select>
+          )}
+          <Button type="button" variant="secondary" size="sm" onClick={() => onNavigate('app-req-docs')}>
+            {t('需求文档', 'SRS Docs')}
+            <ArrowRight size={13} aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="accent"
+            size="sm"
+            data-testid="synthesize-srs-btn"
+            disabled={!canSynthesize || synthesizingSrs}
+            title={t(
+              '基于需求探索对话合成 9 章节《软件需求规格说明书》',
+              'Synthesize the 9-chapter SRS from the requirement conversation',
+            )}
+            onClick={handleSynthesizeSrs}
+          >
+            {synthesizingSrs ? (
+              <Loader2 size={13.5} className="pipeline-spin" aria-hidden="true" />
+            ) : (
+              <Sparkles size={13.5} aria-hidden="true" />
+            )}
+            {synthesizingSrs
+              ? t('正在合成规格书…', 'Synthesizing SRS…')
+              : t('合成需求规格说明书', 'Synthesize SRS')}
+          </Button>
+        </div>
+      </section>
 
-      {/* Requirement Discovery Canvas: Quick Starter Prompts + Converged Requirement Signals */}
-      <div className="grid gap-3.5 lg:h-[max(540px,calc(100dvh-184px))] lg:grid-cols-[280px_minmax(0,1fr)]">
-        <div
-          className="card flex flex-col justify-between gap-3"
-          data-testid="requirement-explore-context-card"
-        >
-          <div className="space-y-2.5">
-            <div className="flex items-center gap-1.5">
-              <Sparkles size={14} className="text-accent" />
-              <h4 className="card-title text-[13px]">
-                {t('需求探索引导与边界澄清', 'Discovery & Scoped HITL')}
-              </h4>
-            </div>
-            <p className="text-[12px] leading-relaxed text-ink-2">
+      <section
+        className="req-board"
+        data-testid="requirement-board"
+        data-active-tab={activeTab}
+        aria-label={t('已收敛需求要素', 'Converged requirement signals')}
+      >
+        {totalSignalCount === 0 ? (
+          <div className="req-board-empty">
+            <span className="req-board-empty-mark" aria-hidden="true">
+              <Sparkles size={20} />
+            </span>
+            <h4 className="req-board-empty-title">
+              {t('还没有沉淀任何需求要素', 'No requirement signals yet')}
+            </h4>
+            <p className="req-board-empty-text">
               {t(
-                '需求探索智能体已在右侧 Agent 面板展开（宽幅模式）。A 类常规项自动补全，遇到 B 类模糊业务边界时自动弹出交互式确认卡片。',
-                'Requirement Discovery Agent runs in the unified right Agent Panel (Wide Mode). Class-A defaults auto-complete; Class-B ambiguities surface interactive HITL cards.',
+                '在右侧对话里描述业务场景、角色或规则。常规项智能体会自动补全，遇到模糊的业务边界会请你确认，结果都会归档到这块看板。',
+                'Describe a scenario, role, or rule in the conversation. Routine items are auto-completed, ambiguous boundaries come back to you for confirmation, and everything is filed on this board.',
               )}
             </p>
-            <div className="pt-1 text-[11px] font-semibold text-ink-3">
-              {t('一键发起探索示例', 'Quick Discovery Starters')}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              {[
-                t(
-                  '梳理核心业务单据聚合根、关键状态流转与审批准入红线',
-                  'Identify core domain aggregates, lifecycles, and approval gate rules',
-                ),
-                t(
-                  '识别跨系统数据交换、外部准入接口与异常补偿策略',
-                  'Clarify cross-system integrations, external credit checks, and compensations',
-                ),
-                t(
-                  '核对当前未决 B 类业务边界并给出推荐决策方案',
-                  'Review open Class-B business ambiguities and propose options',
-                ),
-              ].map((starter, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  disabled={synthesizingSrs}
-                  onClick={() => {
-                    useAgentPanelStore.getState().revealPanel();
-                    void (async () => {
-                      const targetSess =
-                        preferredAgentSession ??
-                        (await ensureProjectAgentSession(data.activeProject.id, 'REQUIREMENT', {
-                          ...(session?.id ? { targetId: session.id } : {}),
-                          title: t('需求探索与边界澄清智能体', 'Requirement Discovery Agent'),
-                        }));
-                      setActiveSessionId(targetSess.id);
-                      await startSessionAgentRun({
-                        sessionId: targetSess.id,
-                        prompt: starter,
-                      });
-                    })();
-                  }}
-                  className="rounded-control border border-line bg-surface-2 px-2.5 py-2 text-left text-[12px] leading-snug text-ink transition-colors hover:border-accent hover:bg-accent-soft cursor-pointer disabled:opacity-50"
-                >
-                  {starter}
-                </button>
-              ))}
-            </div>
+            <Button type="button" variant="accent" size="md" onClick={openConversation}>
+              <Sparkles size={14} aria-hidden="true" />
+              {t('开始需求探索', 'Start Exploring')}
+            </Button>
           </div>
-
-          <div className="rounded-control border border-line bg-inset/45 p-2.5 text-[11.5px] text-ink-3">
-            {t(
-              `当前项目：${data.activeProject.name} · 已沉淀 ${totalSignalCount} 项结构化信号`,
-              `Active Project: ${data.activeProject.name} · ${totalSignalCount} converged signals`,
-            )}
-          </div>
-        </div>
-
-        {/* Bounded Signals Panel: Fixed Height, Internal Contained Scroll, Pinned Footer */}
-        <aside
-          aria-label={t('已收敛需求要素面板', 'Converged Requirement Signals')}
-          className="flex max-h-[680px] min-h-[420px] flex-col overflow-hidden rounded-window border border-line bg-surface shadow-card lg:h-full lg:max-h-none lg:min-h-0"
-        >
-            {/* Zone 1: Sticky Header + Search + Accessible Tablist */}
-            <div className="shrink-0 border-b border-line bg-inset/35">
-              <div className="flex items-center justify-between gap-2 px-3.5 pt-2.5 pb-2">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles size={13.5} className="text-accent" />
-                  <span className="text-[13px] font-semibold text-ink">
-                    {t('已识别需求成果', 'Converged Signals')}
-                  </span>
-                </div>
-                <span className="rounded-full bg-accent-tint px-2 py-0.5 font-mono text-[10.5px] font-semibold text-accent tabular-nums">
-                  {totalSignalCount} {t('项', 'items')}
-                </span>
-              </div>
-
-              {totalSignalCount > 5 && (
-                <div className="px-3 pb-2">
-                  <div className="relative flex items-center">
-                    <Search
-                      size={12}
-                      className="pointer-events-none absolute left-2.5 text-ink-3"
-                    />
-                    <input
-                      type="search"
-                      value={signalFilter}
-                      onChange={(e) => setSignalFilter(e.target.value)}
-                      placeholder={t(
-                        '筛选聚合、规则或分级决策…',
-                        'Filter aggregates, rules, decisions…',
-                      )}
-                      className="h-7 w-full rounded-control border border-line bg-surface pl-7 pr-2.5 text-[12px] text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
-                    />
-                  </div>
-                </div>
-              )}
-
+        ) : (
+          <>
+            <div className="req-board-bar">
               <div
                 role="tablist"
-                aria-label={t('需求识别分类视图', 'Requirement signal categories')}
-                className="grid grid-cols-4 px-1.5"
+                aria-label={t('需求要素分类', 'Requirement signal categories')}
+                className="req-board-tabs"
               >
-                {(
-                  [
-                    {
-                      id: 'ALL' as const,
-                      label: t('概览', 'All'),
-                      count: totalSignalCount,
-                    },
-                    {
-                      id: 'DECISIONS' as const,
-                      label: t('决策 A/B', 'A/B'),
-                      count: filteredDecisions.length,
-                    },
-                    {
-                      id: 'M1' as const,
-                      label: t('聚合 M1', 'M1'),
-                      count: filteredAggs.length,
-                    },
-                    {
-                      id: 'M3' as const,
-                      label: t('规则 M3', 'M3'),
-                      count: filteredRules.length,
-                    },
-                  ] as const
-                ).map((tab, idx, allTabs) => (
+                {columns.map((col, idx) => (
                   <button
-                    key={tab.id}
-                    id={`req-signal-tab-${tab.id}`}
+                    key={col.id}
+                    id={`req-signal-tab-${col.id}`}
                     type="button"
                     role="tab"
-                    tabIndex={activeTab === tab.id ? 0 : -1}
-                    aria-selected={activeTab === tab.id}
-                    onClick={() => setActiveTab(tab.id)}
+                    tabIndex={activeTab === col.id ? 0 : -1}
+                    aria-selected={activeTab === col.id}
+                    aria-controls={`req-signal-panel-${col.id}`}
+                    className="req-tab"
+                    onClick={() => setActiveTab(col.id)}
                     onKeyDown={(e) => {
-                      if (
-                        e.key !== 'ArrowRight' &&
-                        e.key !== 'ArrowLeft' &&
-                        e.key !== 'Home' &&
-                        e.key !== 'End'
-                      ) {
-                        return;
-                      }
+                      if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return;
                       e.preventDefault();
                       const nextIdx =
                         e.key === 'Home'
                           ? 0
                           : e.key === 'End'
-                            ? allTabs.length - 1
-                            : (idx + (e.key === 'ArrowRight' ? 1 : -1) + allTabs.length) %
-                              allTabs.length;
-                      const nextTab = allTabs[nextIdx]!;
-                      setActiveTab(nextTab.id);
-                      document.getElementById(`req-signal-tab-${nextTab.id}`)?.focus();
+                            ? columns.length - 1
+                            : (idx + (e.key === 'ArrowRight' ? 1 : -1) + columns.length) %
+                              columns.length;
+                      const nextCol = columns[nextIdx]!;
+                      setActiveTab(nextCol.id);
+                      document.getElementById(`req-signal-tab-${nextCol.id}`)?.focus();
                     }}
-                    className="req-tab flex h-8 cursor-pointer items-center justify-center gap-1 px-1.5 text-[11.5px] font-medium text-ink-2 transition-colors hover:text-ink"
                   >
-                    <span className="truncate">{tab.label}</span>
-                    <span className="rounded-full bg-inset px-1.5 py-0.1 font-mono text-[10px] text-ink-3 tabular-nums">
-                      {tab.count}
-                    </span>
+                    {col.label}
+                    <span className="req-tab-count">{col.shown}</span>
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* Zone 2: Contained Scrollable Body (Never Grows Outer Page!) */}
-            <div
-              role="tabpanel"
-              aria-labelledby={`req-signal-tab-${activeTab}`}
-              tabIndex={0}
-              className="req-signal-scroller bui-scroller flex-1 min-h-0 space-y-3 overflow-y-auto p-3"
-            >
-              {totalSignalCount === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center px-4 py-10 text-center">
-                  <Sparkles size={18} className="mb-2 text-ink-3" />
-                  <div className="text-[12.5px] font-medium text-ink-2">
-                    {t('暂未沉淀结构化要素', 'No signals extracted yet')}
-                  </div>
-                  <p className="mt-1 text-[11.5px] leading-relaxed text-ink-3">
-                    {t(
-                      '在左侧与需求探索智能体对话，识别出的 A/B 决策、M1 聚合根与 M3 业务规则会自动去重归档至此。',
-                      'Chat with the Requirement Agent on the left to automatically extract and deduplicate decisions, M1 aggregates, and M3 rules here.',
-                    )}
-                  </p>
-                </div>
-              ) : activeTab === 'ALL' ? (
-                <>
-                  {/* Overview Section 1: A/B Decisions */}
-                  <section className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink">
-                        <CheckCircle2 size={12.5} className="text-accent" />
-                        {t('A/B 分级决策清单', 'A/B Decisions')}
-                      </span>
-                      {filteredDecisions.length > 3 && (
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('DECISIONS')}
-                          className="cursor-pointer text-[11px] font-medium text-accent hover:underline"
-                        >
-                          {t(`查看全部 ${filteredDecisions.length} 项 →`, `All ${filteredDecisions.length} →`)}
-                        </button>
-                      )}
-                    </div>
-                    {filteredDecisions.length === 0 ? (
-                      <div className="rounded-control border border-dashed border-line px-2.5 py-2 text-[11.5px] text-ink-3">
-                        {t('暂无匹配决策记录', 'No matching decisions')}
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {filteredDecisions.slice(0, 3).map(renderDecisionItem)}
-                      </div>
-                    )}
-                  </section>
-
-                  {/* Overview Section 2: Deduplicated M1 Aggregates */}
-                  <section className="space-y-1.5 pt-1">
-                    <div className="flex items-center justify-between">
-                      <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink">
-                        <Boxes size={12.5} className="text-accent" />
-                        {t('已识别领域聚合根 (M1)', 'Discovered Aggregates (M1)')}
-                      </span>
-                      {filteredAggs.length > 5 && (
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('M1')}
-                          className="cursor-pointer text-[11px] font-medium text-accent hover:underline"
-                        >
-                          {t(`查看全部 ${filteredAggs.length} 个 →`, `All ${filteredAggs.length} →`)}
-                        </button>
-                      )}
-                    </div>
-                    {filteredAggs.length === 0 ? (
-                      <div className="rounded-control border border-dashed border-line px-2.5 py-2 text-[11.5px] text-ink-3">
-                        {t('暂无匹配领域聚合根', 'No matching aggregates')}
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {filteredAggs.slice(0, 5).map(renderAggregateItem)}
-                      </div>
-                    )}
-                  </section>
-
-                  {/* Overview Section 3: M3 Business Rules */}
-                  <section className="space-y-1.5 pt-1">
-                    <div className="flex items-center justify-between">
-                      <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink">
-                        <GitBranch size={12.5} className="text-green" />
-                        {t('已收敛业务规则 (M3)', 'Discovered Rules (M3)')}
-                      </span>
-                      {filteredRules.length > 4 && (
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('M3')}
-                          className="cursor-pointer text-[11px] font-medium text-accent hover:underline"
-                        >
-                          {t(`查看全部 ${filteredRules.length} 条 →`, `All ${filteredRules.length} →`)}
-                        </button>
-                      )}
-                    </div>
-                    {filteredRules.length === 0 ? (
-                      <div className="rounded-control border border-dashed border-line px-2.5 py-2 text-[11.5px] text-ink-3">
-                        {t('暂无匹配业务规则', 'No matching rules')}
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {filteredRules.slice(0, 4).map(renderRuleItem)}
-                      </div>
-                    )}
-                  </section>
-                </>
-              ) : activeTab === 'DECISIONS' ? (
-                <div className="space-y-1.5">
-                  {filteredDecisions.length === 0 ? (
-                    <div className="py-8 text-center text-[12px] text-ink-3">
-                      {t('暂无分级决策记录', 'No A/B decisions recorded yet')}
-                    </div>
-                  ) : (
-                    filteredDecisions.map(renderDecisionItem)
-                  )}
-                </div>
-              ) : activeTab === 'M1' ? (
-                <div className="space-y-1.5">
-                  {filteredAggs.length === 0 ? (
-                    <div className="py-8 text-center text-[12px] text-ink-3">
-                      {t('暂无已识别聚合根', 'No M1 aggregates discovered yet')}
-                    </div>
-                  ) : (
-                    filteredAggs.map(renderAggregateItem)
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  {filteredRules.length === 0 ? (
-                    <div className="py-8 text-center text-[12px] text-ink-3">
-                      {t('暂无已收敛业务规则', 'No M3 rules discovered yet')}
-                    </div>
-                  ) : (
-                    filteredRules.map(renderRuleItem)
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Zone 3: Pinned Bottom Next-Step Actions */}
-            <div className="shrink-0 space-y-1.5 border-t border-line bg-inset/40 p-2.5">
-              <div className="px-0.5 text-[10.5px] font-semibold text-ink-3">
-                {t('下一步转化动作', 'Next Actions')}
+              <div className="req-board-summary">
+                {pendingDecisionCount > 0 ? (
+                  <span className="badge badge-warn">
+                    {t(`${pendingDecisionCount} 项待你确认`, `${pendingDecisionCount} awaiting you`)}
+                  </span>
+                ) : (
+                  <span className="req-board-summary-text">
+                    {t(`共 ${totalSignalCount} 项`, `${totalSignalCount} total`)}
+                  </span>
+                )}
               </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                <Button
-                  type="button"
-                  variant="accent"
-                  size="sm"
-                  onClick={() => onNavigate('app-req-docs')}
-                >
-                  {t('查看需求说明书 →', 'Open SRS Doc →')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => onNavigate('app-ontology')}
-                >
-                  {t('11 模型工作台 →', '11-Model Suite →')}
-                </Button>
-              </div>
+              <label className="req-board-search">
+                <Search size={13} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={signalFilter}
+                  onChange={(e) => setSignalFilter(e.target.value)}
+                  placeholder={t('筛选要素…', 'Filter signals…')}
+                  aria-label={t('筛选需求要素', 'Filter requirement signals')}
+                />
+              </label>
             </div>
-        </aside>
-      </div>
+
+            <div className="req-board-cols">
+              {columns.map((col) => (
+                <div
+                  key={col.id}
+                  id={`req-signal-panel-${col.id}`}
+                  role="tabpanel"
+                  aria-labelledby={`req-signal-tab-${col.id}`}
+                  className="req-col"
+                  data-col={col.id}
+                >
+                  <header className="req-col-head">
+                    <span className="req-col-title">
+                      {col.icon}
+                      {col.label}
+                    </span>
+                    <span className="req-col-count">
+                      {filterQ ? `${col.shown}/${col.total}` : col.total}
+                    </span>
+                    <span className="req-col-hint">{col.hint}</span>
+                  </header>
+                  {col.body.length === 0 ? (
+                    <p className="req-col-empty">
+                      {filterQ && col.total > 0
+                        ? t('没有匹配的条目', 'Nothing matches the filter')
+                        : col.emptyText}
+                    </p>
+                  ) : (
+                    <ul className="req-col-list req-signal-scroller bui-scroller">{col.body}</ul>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {!agentPanelOpen && (
+              <footer className="req-board-foot">
+                <span>
+                  {t(
+                    '想补充或修正？回到对话继续探索，看板会实时更新。',
+                    'Something missing or wrong? Continue the conversation and the board updates live.',
+                  )}
+                </span>
+                <Button type="button" variant="secondary" size="sm" onClick={openConversation}>
+                  <Sparkles size={13} aria-hidden="true" />
+                  {t('继续对话', 'Continue Conversation')}
+                </Button>
+              </footer>
+            )}
+          </>
+        )}
+      </section>
     </div>
   );
 }
@@ -1972,30 +1787,95 @@ export function RequirementDocsView({
       <ViewModeHeader
         mode={pageMode}
         onChange={setPageMode}
-        workspaceLabel={t('Tiptap 规格书工作台', 'SRS Editor Workspace')}
-        registryLabel={t('规格书版本管理列表', 'SRS Document Registry')}
+        workspaceLabel={t('编辑', 'Editor')}
+        registryLabel={t('全部版本', 'All Versions')}
         count={docs.length}
         testIdPrefix="srs"
+        centerSlot={
+          pageMode === 'WORKSPACE' ? (
+            <>
+              {docs.length > 1 && (
+                <select
+                  className="select"
+                  style={{ flex: '0 1 220px', width: 'auto', minWidth: 0, maxWidth: 260 }}
+                  aria-label={t('切换需求规格书', 'Switch SRS document')}
+                  value={selectedDoc?.id ?? ''}
+                  onChange={(e) => setSelectedDocId(e.target.value)}
+                >
+                  {docs.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.title} ({d.version})
+                    </option>
+                  ))}
+                </select>
+              )}
+              <input
+                className="input"
+                style={{ flex: '1 1 180px', width: 'auto', minWidth: 140 }}
+                value={docTitle}
+                onChange={(e) => setDocTitle(e.target.value)}
+                placeholder={t('文档标题', 'Document Title')}
+                aria-label={t('文档标题', 'Document Title')}
+              />
+              <input
+                className="input"
+                style={{ flex: '0 0 72px', width: 72, fontFamily: 'var(--mono)' }}
+                value={docVersion}
+                onChange={(e) => setDocVersion(e.target.value)}
+                placeholder="v1.0"
+                aria-label={t('版本号', 'Version')}
+              />
+              {selectedDoc && (
+                <span
+                  className={cn(
+                    'badge shrink-0',
+                    selectedDoc.status === 'DRAFT' ? 'badge-warn' : 'badge-ok',
+                  )}
+                >
+                  {selectedDoc.status}
+                </span>
+              )}
+            </>
+          ) : undefined
+        }
         rightActions={
           <>
             <Button
               type="button"
-              variant="secondary" size="sm"
+              variant="ghost"
+              size="sm"
+              title={t('新建空白规格书', 'New blank SRS')}
+              aria-label={t('新建空白规格书', 'New blank SRS')}
+              onClick={() => void handleCreateBlankDoc()}
+            >
+              <Plus size={14} aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              title={t('上传本地 .md', 'Upload .md')}
+              aria-label={t('上传本地 .md', 'Upload .md')}
               onClick={() => mdUploadRef.current?.click()}
             >
-              {t('上传本地 .md', 'Upload .md')}
+              <Upload size={14} aria-hidden="true" />
             </Button>
             <Button
               type="button"
               variant="accent" size="sm"
               data-testid="generate-prototype-btn"
               disabled={generatingProto}
+              title={t(
+                '基于此需求规格书生成可交互 HTML 原型',
+                'Generate an interactive HTML prototype from this SRS',
+              )}
               onClick={() => void handleGeneratePrototype()}
             >
               {generatingProto && <Loader2 size={13.5} className="pipeline-spin" aria-hidden="true" />}
               {generatingProto
-                ? t('正在生成交互原型…', 'Generating Prototype…')
-                : t('基于此需求生成可交互 HTML 原型 →', 'Generate HTML Prototype →')}
+                ? t('正在生成原型…', 'Generating…')
+                : t('生成界面原型', 'Generate Prototype')}
+              {!generatingProto && <ArrowRight size={13.5} aria-hidden="true" />}
             </Button>
           </>
         }
@@ -2105,59 +1985,15 @@ export function RequirementDocsView({
           ]}
         />
       ) : (
-        <div className="space-y-3">
-          <div className="card">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                {docs.length > 1 && (
-                  <select
-                    className="select"
-                    style={{ width: 240 }}
-                    value={selectedDoc?.id ?? ''}
-                    onChange={(e) => setSelectedDocId(e.target.value)}
-                  >
-                    {docs.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.title} ({d.version})
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <input
-                  className="input"
-                  style={{ width: 260 }}
-                  value={docTitle}
-                  onChange={(e) => setDocTitle(e.target.value)}
-                  placeholder={t('文档标题', 'Document Title')}
-                />
-                <input
-                  className="input"
-                  style={{ width: 88, fontFamily: 'var(--mono)' }}
-                  value={docVersion}
-                  onChange={(e) => setDocVersion(e.target.value)}
-                  placeholder="v1.0"
-                />
-                {selectedDoc && (
-                  <span className="badge badge-ok">{selectedDoc.status}</span>
-                )}
-              </div>
-              <Button variant="secondary" size="xs" onClick={() => void handleCreateBlankDoc()}>
-                <Plus size={12} />
-                {t('新建空白规格书', 'New Draft')}
-              </Button>
-            </div>
-          </div>
-
-          <TiptapMarkdownEditor
-            title={docTitle || t('软件需求规格说明书 (SRS)', 'SRS Specification')}
-            value={content}
-            onChange={setContent}
-            onSave={handleSaveDoc}
-            saveLabel={t('保存并确认规格书', 'Save & Confirm SRS')}
-            downloadFilename={`${(docTitle || 'SRS').replace(/[\\/:*?"<>|]+/g, '_')}-${docVersion}.md`}
-            minHeight={500}
-          />
-        </div>
+        <TiptapMarkdownEditor
+          value={content}
+          onChange={setContent}
+          onSave={handleSaveDoc}
+          saveLabel={t('保存并确认', 'Save & Confirm')}
+          downloadFilename={`${(docTitle || 'SRS').replace(/[\\/:*?"<>|]+/g, '_')}-${docVersion}.md`}
+          minHeight={320}
+          className="srs-editor"
+        />
       )}
 
       <ConfirmDialog
@@ -3162,12 +2998,16 @@ export function FourLayerAssetsView() {
   );
   const [archPrompt, setArchPrompt] = useState('');
   const [startingArch, setStartingArch] = useState(false);
+  const [archDialogOpen, setArchDialogOpen] = useState(false);
+  const [selectedAssetId, setSelectedAssetId] = useState<string>('');
+  const [assetQuery, setAssetQuery] = useState('');
 
   useEffect(() => {
     if (!data || !activeItemId) return;
     const matched = data.fourLayerAssets.find((a) => a.id === activeItemId);
     if (matched) {
       setFilterLayer(matched.layer);
+      setSelectedAssetId(matched.id);
     }
   }, [activeItemId, data?.fourLayerAssets]);
 
@@ -3232,6 +3072,7 @@ export function FourLayerAssetsView() {
       });
       patchData({ fourLayerAssets: json.fourLayerAssets });
       setEditingAsset(null);
+      setSelectedAssetId(json.asset.id);
       showToast(t(`已保存四层架构资产「${json.asset.name}」`, `Saved asset "${json.asset.name}"`));
     } finally {
       setSavingAsset(false);
@@ -3252,6 +3093,7 @@ export function FourLayerAssetsView() {
       specMarkdown: asset.specMarkdown,
     });
     patchData({ fourLayerAssets: json.fourLayerAssets });
+    setSelectedAssetId(json.asset.id);
     showToast(t(`已克隆架构资产「${asset.name}」`, `Cloned asset "${asset.name}"`));
   };
 
@@ -3291,159 +3133,365 @@ export function FourLayerAssetsView() {
     }
   };
 
-  const layerLabels: Record<'ALL' | FourLayerAsset['layer'], { zh: string; en: string }> = {
-    ALL: { zh: '全部资产 (ALL)', en: 'ALL' },
-    UI_UE: { zh: 'UI/UE 设计规范 (UI_UE)', en: 'UI_UE' },
-    TECH_FOUNDATION: { zh: '技术底座规范 (TECH_FOUNDATION)', en: 'TECH_FOUNDATION' },
-    TECH_ARCH: { zh: '技术架构文档 (TECH_ARCH)', en: 'TECH_ARCH' },
+  const layerMeta: Record<
+    FourLayerAsset['layer'],
+    { zh: string; en: string; hintZh: string; hintEn: string }
+  > = {
+    UI_UE: {
+      zh: 'UI/UE 设计规范',
+      en: 'UI/UE Guidelines',
+      hintZh: '界面与交互怎么长',
+      hintEn: 'How screens look and behave',
+    },
+    TECH_FOUNDATION: {
+      zh: '技术底座',
+      en: 'Tech Foundation',
+      hintZh: '脚手架与基础设施',
+      hintEn: 'Scaffold and infrastructure',
+    },
+    TECH_ARCH: {
+      zh: '技术架构',
+      en: 'Tech Architecture',
+      hintZh: '分层与模块怎么落地',
+      hintEn: 'How layers and modules land',
+    },
   };
+  const layerOrder: FourLayerAsset['layer'][] = ['UI_UE', 'TECH_FOUNDATION', 'TECH_ARCH'];
+
+  const query = assetQuery.trim().toLowerCase();
+  const visibleAssets = query
+    ? list.filter((a) =>
+        `${a.name} ${a.summary} ${a.tags.join(' ')} ${a.version}`.toLowerCase().includes(query),
+      )
+    : list;
+  const selectedAsset =
+    visibleAssets.find((a) => a.id === selectedAssetId) ?? visibleAssets[0] ?? null;
+  const usedByApps = selectedAsset
+    ? data.assembledApplications.filter(
+        (app) =>
+          app.uiUeAssetId === selectedAsset.id ||
+          app.techFoundationAssetId === selectedAsset.id ||
+          app.techArchAssetId === selectedAsset.id,
+      )
+    : [];
+  const presentModelCount = data.activeProject.validation.presentModels.length;
 
   return (
-    <div className="flex flex-col gap-3.5">
-      <div className="card">
-        <div className="card-header" style={{ marginBottom: 0, flexWrap: 'wrap' }}>
-          <div>
-            <h3 className="card-title">
-              {t(
-                '四层软件架构可复用资产库 (UI/UE · 技术底座 · 技术架构)',
-                'Four-Layer Architecture Reusable Asset Library',
-              )}
-            </h3>
-            <div className="text-[12.5px] text-muted-foreground">
-              {t(
-                '与业务本体自由组合装配，支持 Tiptap 富文本编辑规范文档与引用保护删除',
-                'Freely assemble with any Ontology Suite, edit specs via Tiptap, or synthesize from tech stack',
-              )}
-            </div>
+    <div className="fla">
+      {/* The four layers an application is assembled from: the project's ontology plus three reusable asset shelves */}
+      <section className="fla-layers" aria-label={t('应用的四层构成', 'The four layers of an application')}>
+        <div className="fla-layer is-ontology">
+          <span className="fla-layer-index">1</span>
+          <span className="fla-layer-text">
+            <span className="fla-layer-name">{t('业务本体', 'Business Ontology')}</span>
+            <span className="fla-layer-hint">
+              {presentModelCount > 0
+                ? t(`当前工程 · ${presentModelCount}/11 模型`, `This project · ${presentModelCount}/11 models`)
+                : t('当前工程 · 尚未生成', 'This project · not synthesized yet')}
+            </span>
+          </span>
+        </div>
+        {layerOrder.map((ly, idx) => {
+          const count = data.fourLayerAssets.filter((a) => a.layer === ly).length;
+          const active = filterLayer === ly;
+          return (
+            <button
+              key={ly}
+              type="button"
+              className="fla-layer"
+              data-testid={`asset-layer-${ly}`}
+              aria-pressed={active}
+              onClick={() => setFilterLayer(active ? 'ALL' : ly)}
+            >
+              <span className="fla-layer-index">{idx + 2}</span>
+              <span className="fla-layer-text">
+                <span className="fla-layer-name">{t(layerMeta[ly].zh, layerMeta[ly].en)}</span>
+                <span className="fla-layer-hint">{t(layerMeta[ly].hintZh, layerMeta[ly].hintEn)}</span>
+              </span>
+              <span className="fla-layer-count">{count}</span>
+            </button>
+          );
+        })}
+      </section>
+
+      <section className="fla-lib" data-testid="four-layer-asset-library">
+        <div className="fla-lib-grid">
+        {/* Master: the shelf */}
+        <div className="fla-list">
+          <div className="fla-list-head">
+            <label className="fla-search">
+              <Search size={13} aria-hidden="true" />
+              <input
+                type="search"
+                value={assetQuery}
+                onChange={(e) => setAssetQuery(e.target.value)}
+                placeholder={t('搜索资产…', 'Search assets…')}
+                aria-label={t('搜索架构资产', 'Search architecture assets')}
+              />
+            </label>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              title={t('新建架构资产', 'New asset')}
+              aria-label={t('新建架构资产', 'New asset')}
+              onClick={openNewAssetModal}
+            >
+              <Plus size={14} aria-hidden="true" />
+            </Button>
           </div>
-          <div className="flex gap-1.5 flex-wrap">
-            {(['ALL', 'UI_UE', 'TECH_FOUNDATION', 'TECH_ARCH'] as const).map((ly) => (
-              <Button
-                key={ly}
-                type="button"
-                variant="toggle" size="sm" aria-pressed={filterLayer === ly}
-                onClick={() => setFilterLayer(ly)}
-              >
-                {t(layerLabels[ly].zh, layerLabels[ly].en)}
-              </Button>
-            ))}
-            <Button type="button" variant="accent" size="sm" onClick={openNewAssetModal}>
-              + {t('新建架构资产', 'New Asset')}
+
+          <div className="fla-list-sub">
+            <span>
+              {filterLayer === 'ALL'
+                ? t(`全部资产 · ${visibleAssets.length}`, `All assets · ${visibleAssets.length}`)
+                : `${t(layerMeta[filterLayer].zh, layerMeta[filterLayer].en)} · ${visibleAssets.length}`}
+            </span>
+            {filterLayer !== 'ALL' && (
+              <button type="button" className="fla-clear" onClick={() => setFilterLayer('ALL')}>
+                {t('查看全部', 'Show all')}
+              </button>
+            )}
+          </div>
+
+          {visibleAssets.length === 0 ? (
+            <p className="fla-list-empty">
+              {query
+                ? t('没有匹配的资产', 'No assets match')
+                : t('这一层还没有资产，可以新建或让 AI 生成。', 'Nothing on this shelf yet. Create one or generate with AI.')}
+            </p>
+          ) : (
+            <ul className="fla-rows bui-scroller">
+              {visibleAssets.map((asset) => (
+                <li key={asset.id}>
+                  <button
+                    type="button"
+                    className="fla-row"
+                    data-testid={`asset-row-${asset.id}`}
+                    aria-current={selectedAsset?.id === asset.id ? 'true' : undefined}
+                    onClick={() => setSelectedAssetId(asset.id)}
+                  >
+                    <span className="fla-row-top">
+                      <span className="fla-row-name">{asset.name}</span>
+                      <span className="fla-row-version">{asset.version}</span>
+                    </span>
+                    <span className="fla-row-summary">{asset.summary}</span>
+                    {filterLayer === 'ALL' && (
+                      <span className="fla-row-layer">
+                        {t(layerMeta[asset.layer].zh, layerMeta[asset.layer].en)}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="fla-list-foot">
+            <Button
+              type="button"
+              variant="accent"
+              size="sm"
+              className="w-full"
+              data-testid="open-generate-tech-arch-btn"
+              disabled={generatingArch}
+              onClick={() => setArchDialogOpen(true)}
+            >
+              {generatingArch ? (
+                <Loader2 size={13.5} className="pipeline-spin" aria-hidden="true" />
+              ) : (
+                <Sparkles size={13.5} aria-hidden="true" />
+              )}
+              {generatingArch
+                ? t('正在生成架构文档…', 'Generating…')
+                : t('AI 生成技术架构文档', 'Generate Tech Architecture with AI')}
             </Button>
           </div>
         </div>
-      </div>
 
-      {/* AI Tech-Stack-to-Architecture Generator Panel */}
-      <div className="card">
-        <div className="card-header" style={{ marginBottom: 8 }}>
-          <div>
-            <h4 className="card-title">
-              {t(
-                'AI 技术栈一键生成《技术架构设计文档》(TECH_ARCH)',
-                'AI Tech-Stack-to-Architecture Document Generator',
-              )}
-            </h4>
-          </div>
-          <Button
-            type="button"
-            variant="accent" size="md"
-            data-testid="generate-tech-arch-btn"
-            disabled={generatingArch}
-            onClick={handleGenerateTechArch}
+        {/* Detail: the whole document, not a cropped preview */}
+        <div className="fla-detail">
+          {selectedAsset ? (
+            <>
+              <header className="fla-detail-head">
+                <div className="fla-detail-title">
+                  <div className="fla-detail-kicker">
+                    <span className="badge badge-accent">
+                      {t(layerMeta[selectedAsset.layer].zh, layerMeta[selectedAsset.layer].en)}
+                    </span>
+                    <span className="badge badge-ok">{selectedAsset.version}</span>
+                    {usedByApps.length > 0 && (
+                      <span
+                        className="fla-detail-usage"
+                        title={usedByApps.map((app) => app.name).join(' · ')}
+                      >
+                        {t(
+                          `被 ${usedByApps.length} 个应用引用`,
+                          `Used by ${usedByApps.length} app${usedByApps.length === 1 ? '' : 's'}`,
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="fla-detail-name">{selectedAsset.name}</h3>
+                  {selectedAsset.summary && selectedAsset.summary !== selectedAsset.name && (
+                    <p className="fla-detail-summary">{selectedAsset.summary}</p>
+                  )}
+                  {selectedAsset.tags.length > 0 && (
+                    <div className="fla-detail-tags">
+                      {selectedAsset.tags.map((tg) => (
+                        <span key={tg} className="badge">
+                          {tg}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="fla-detail-actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => openEditAssetModal(selectedAsset)}
+                  >
+                    <Edit3 size={13} aria-hidden="true" />
+                    {t('编辑', 'Edit')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void handleCloneAsset(selectedAsset)}
+                    title={t('克隆副本', 'Clone')}
+                    aria-label={t('克隆副本', 'Clone')}
+                  >
+                    <Copy size={13} aria-hidden="true" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-red"
+                    onClick={() => setDeletingAsset(selectedAsset)}
+                    title={
+                      usedByApps.length > 0
+                        ? t('已被应用引用，删除会被拦截', 'Referenced by an app; deletion is blocked')
+                        : t('删除资产', 'Delete')
+                    }
+                    aria-label={t('删除资产', 'Delete')}
+                  >
+                    <Trash2 size={13} aria-hidden="true" />
+                  </Button>
+                </div>
+              </header>
+              <div className="fla-detail-body bui-scroller">
+                <MarkdownRenderer content={selectedAsset.specMarkdown} />
+              </div>
+            </>
+          ) : (
+            <div className="fla-detail-empty">
+              <Layers size={22} aria-hidden="true" />
+              <p>
+                {t(
+                  '从左侧选择一份资产查看完整规范，或新建一份。',
+                  'Pick an asset on the left to read its full spec, or create a new one.',
+                )}
+              </p>
+            </div>
+          )}
+        </div>
+        </div>
+      </section>
+
+      {/* AI Tech-Stack-to-Architecture Generator: asked for only when wanted */}
+      {archDialogOpen && (
+        <div className="modal-backdrop" onClick={() => setArchDialogOpen(false)}>
+          <div
+            className="modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('AI 生成技术架构文档', 'Generate Tech Architecture with AI')}
+            style={{ maxWidth: 520 }}
+            onClick={(e) => e.stopPropagation()}
           >
-            {generatingArch
-              ? t('正在生成架构文档...', 'Generating Tech Arch...')
-              : t('AI 技术栈生成《技术架构设计文档》', 'Generate Tech Architecture Doc')}
-          </Button>
-        </div>
-
-        <div className="form-grid-3">
-          <div className="form-field">
-            <label className="form-label">{t('架构资产名称', 'Architecture Asset Name')}</label>
-            <input
-              className="input"
-              value={archName}
-              onChange={(e) => setArchName(e.target.value)}
-            />
-          </div>
-          <div className="form-field">
-            <label className="form-label">{t('技术栈标签 (逗号分隔)', 'Tech Stack Tags')}</label>
-            <input
-              className="input"
-              value={archStackTags}
-              onChange={(e) => setArchStackTags(e.target.value)}
-            />
-          </div>
-          <div className="form-field">
-            <label className="form-label">{t('补充架构约束 (可选)', 'Additional Constraints')}</label>
-            <input
-              className="input"
-              value={archPrompt}
-              onChange={(e) => setArchPrompt(e.target.value)}
-              placeholder={t('例如：要求严格的 Deep Modules 边界', 'e.g. Strict module boundaries')}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Asset Cards Grid with Rendered Markdown Preview */}
-      <div className="grid grid-cols-2 gap-3">
-        {list.map((asset) => (
-          <div key={asset.id} className="card flex flex-col gap-2">
-            <div className="card-header" style={{ marginBottom: 0 }}>
+            <div className="card-header">
               <div>
-                <span className="badge badge-accent mr-2">
-                  {asset.layer}
-                </span>
-                <strong>{asset.name}</strong>
+                <h3 className="card-title">{t('AI 生成技术架构文档', 'Generate Tech Architecture with AI')}</h3>
+                <p className="m-0 mt-1 text-[12.5px] leading-relaxed text-ink-3">
+                  {t(
+                    '给出技术栈，智能体会结合当前工程的业务本体写出四层技术架构规范，并存入「技术架构」。',
+                    'Name the stack; the agent combines it with this project\'s ontology and files the spec under Tech Architecture.',
+                  )}
+                </p>
               </div>
-              <div className="flex gap-1.25 items-center">
-                <span className="badge badge-ok">{asset.version}</span>
-                <Button
-                  type="button"
-                  variant="secondary" size="sm"
-                  onClick={() => openEditAssetModal(asset)}
-                >
-                  {t('编辑规范', 'Edit')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary" size="sm"
-                  onClick={() => void handleCloneAsset(asset)}
-                  title={t('克隆副本', 'Clone')}
-                >
-                  <Copy size={12} />
-                </Button>
-                <Button
-                  type="button"
-                  variant="danger" size="sm"
-                  onClick={() => setDeletingAsset(asset)}
-                  title={t('删除资产', 'Delete')}
-                >
-                  <Trash2 size={12} />
-                </Button>
-              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={t('关闭', 'Close')}
+                onClick={() => setArchDialogOpen(false)}
+              >
+                ✕
+              </Button>
             </div>
-
-            <div className="text-[12.5px] text-muted-foreground">{asset.summary}</div>
-
-            {asset.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {asset.tags.map((tg) => (
-                  <span key={tg} className="badge">
-                    {tg}
-                  </span>
-                ))}
+            <div className="flex flex-col gap-3">
+              <div className="form-field">
+                <label className="form-label" htmlFor="arch-gen-name">
+                  {t('文档名称', 'Document name')}
+                </label>
+                <input
+                  id="arch-gen-name"
+                  className="input"
+                  value={archName}
+                  onChange={(e) => setArchName(e.target.value)}
+                />
               </div>
-            )}
-
-            <div className="max-h-52 overflow-y-auto rounded-card border border-line bg-inset/35 p-3">
-              <MarkdownRenderer content={asset.specMarkdown} />
+              <div className="form-field">
+                <label className="form-label" htmlFor="arch-gen-stack">
+                  {t('技术栈（逗号分隔）', 'Tech stack (comma separated)')}
+                </label>
+                <input
+                  id="arch-gen-stack"
+                  className="input"
+                  value={archStackTags}
+                  onChange={(e) => setArchStackTags(e.target.value)}
+                />
+              </div>
+              <div className="form-field">
+                <label className="form-label" htmlFor="arch-gen-prompt">
+                  {t('补充约束（选填）', 'Extra constraints (optional)')}
+                </label>
+                <textarea
+                  id="arch-gen-prompt"
+                  className="input"
+                  rows={3}
+                  value={archPrompt}
+                  onChange={(e) => setArchPrompt(e.target.value)}
+                  placeholder={t('例如：要求严格的 Deep Modules 边界', 'e.g. Strict module boundaries')}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button type="button" variant="secondary" size="md" onClick={() => setArchDialogOpen(false)}>
+                  {t('取消', 'Cancel')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="accent"
+                  size="md"
+                  data-testid="generate-tech-arch-btn"
+                  disabled={generatingArch}
+                  onClick={() => {
+                    setArchDialogOpen(false);
+                    void handleGenerateTechArch();
+                  }}
+                >
+                  <Sparkles size={14} aria-hidden="true" />
+                  {t('开始生成', 'Generate')}
+                </Button>
+              </div>
             </div>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
 
       {/* Tiptap Asset Editor Modal */}
       {editingAsset && (

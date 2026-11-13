@@ -4,11 +4,41 @@ import type { PrototypeTargetAnchor } from '../../../packages/workspace-store/in
 export const AGENT_PANEL_MIN_WIDTH = 320;
 export const AGENT_PANEL_MAX_WIDTH = 640;
 export const AGENT_PANEL_DEFAULT_WIDTH = 384;
-export const AGENT_PANEL_WIDE_CSS_WIDTH = 'min(48vw, 680px)';
+/** Wide Mode leaves the module canvas at least half of the remaining shell, so it never collapses. */
+export const AGENT_PANEL_WIDE_CSS_WIDTH = 'clamp(400px, 38vw, 600px)';
 /** Below this viewport width the panel is an overlay instead of a shell column. */
 export const AGENT_PANEL_OVERLAY_QUERY = '(max-width: 1100px)';
 
 const STORAGE_KEY = 'onto_agent_panel';
+const SESSION_SCOPE_STORAGE_KEY = 'onto_agent_panel_sessions';
+
+/** Identifies "this agent in this project", the scope a user picks a conversation within. */
+export function agentSessionScopeKey(projectId: string, agentKind: string, targetId?: string): string {
+  return [projectId, agentKind, targetId ?? ''].join('::');
+}
+
+export function parseAgentSessionScopeMap(raw: string | null | undefined): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'string' && value) result[key] = value;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function readSessionScopeMap(): Record<string, string> {
+  try {
+    return parseAgentSessionScopeMap(localStorage.getItem(SESSION_SCOPE_STORAGE_KEY));
+  } catch {
+    return {};
+  }
+}
 
 export interface AgentPanelPrefs {
   open: boolean;
@@ -63,6 +93,9 @@ interface AgentPanelState extends AgentPanelPrefs {
   overlayOpen: boolean;
   /** Semantic anchor currently hovered inside an AgentRunCard step (for canvas highlight). */
   hoveredAnchor: PrototypeTargetAnchor | null;
+  /** The conversation last opened per agent scope, so leaving a module does not lose your place. */
+  sessionByScope: Record<string, string>;
+  rememberSession: (scopeKey: string, sessionId: string | null) => void;
   setOpen: (open: boolean) => void;
   setOverlayOpen: (open: boolean) => void;
   /** Opens the Agent Panel in whichever presentation mode (docked or overlay) matches the viewport. */
@@ -82,6 +115,20 @@ export const useAgentPanelStore = create<AgentPanelState>((set, get) => ({
   ...readPrefs(),
   overlayOpen: false,
   hoveredAnchor: null,
+  sessionByScope: readSessionScopeMap(),
+  rememberSession: (scopeKey, sessionId) => {
+    const current = get().sessionByScope;
+    if ((current[scopeKey] ?? null) === sessionId) return;
+    const next = { ...current };
+    if (sessionId) next[scopeKey] = sessionId;
+    else delete next[scopeKey];
+    set({ sessionByScope: next });
+    try {
+      localStorage.setItem(SESSION_SCOPE_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Ignore storage write errors in restricted contexts
+    }
+  },
   setOpen: (open) => {
     set({ open });
     writePrefs({ open, width: get().width, wideMode: get().wideMode });

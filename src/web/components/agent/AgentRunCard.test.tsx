@@ -333,7 +333,7 @@ describe('Agent Panel preferences & Wide Mode (#35)', () => {
         />
       </PreferencesProvider>,
     );
-    expect(AGENT_PANEL_WIDE_CSS_WIDTH).toBe('min(48vw, 680px)');
+    expect(AGENT_PANEL_WIDE_CSS_WIDTH).toBe('clamp(400px, 38vw, 600px)');
     expect(wideHtml).toContain('data-wide-mode="true"');
     expect(wideHtml).toContain('data-testid="agent-panel-wide-toggle"');
     expect(wideHtml).not.toContain('agent-new-session-btn');
@@ -861,7 +861,20 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_DATA"');
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_WHY"');
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_POLICY"');
-    expect(dataReasoningHtml).not.toContain('agent-new-session-btn');
+    // Every specialised agent except Prototype Co-Design can hold several conversations (ADR 0009, amended).
+    expect(dataReasoningHtml).toContain('data-testid="agent-new-session-btn"');
+    expect(dataReasoningHtml).toContain('data-testid="agent-panel-session-select"');
+    const prototypePanelHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ShellAgentPanel
+          surface={agentPanelSurfaceFor('app-prototype')!}
+          overlay={false}
+          onClose={noop}
+          onNavigate={noop}
+        />
+      </PreferencesProvider>,
+    );
+    expect(prototypePanelHtml).not.toContain('agent-new-session-btn');
 
     // AgentRunView preserves user message images & renders "图片已不在本机" when missing from localImageStore, plus EXTRACTION_JOB chip
     const extractionSession: AgentSession = {

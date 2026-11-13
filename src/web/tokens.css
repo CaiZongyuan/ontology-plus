@@ -355,25 +355,408 @@ body,
   }
 }
 
-/* Bounded scroll region & accessible underline tabs for Requirement Convergence Sidebar */
+/* The SRS editor owns the rest of the viewport, so its toolbar never scrolls away from the text. */
+.srs-editor {
+  height: max(460px, calc(100dvh - var(--topbar-h) - 160px));
+}
+
+/* ─── Requirement Board (需求探索) ───
+   The conversation lives in the Agent Panel, so this page is one board that
+   adapts to whatever width the panel leaves: three columns when there is room,
+   tabs over a single column when there is not. */
+.req-explore {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: calc(100dvh - var(--topbar-h) - 48px);
+}
+
+.req-explore-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding: 14px 18px;
+}
+
+.req-explore-head-main {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.req-explore-sub {
+  margin: 3px 0 0;
+  max-width: 64ch;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.req-explore-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.req-explore-source {
+  width: auto;
+  max-width: 220px;
+}
+
+.req-board {
+  container: req-board / inline-size;
+  flex: 1;
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-window, var(--radius-lg));
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.req-board-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--inset) 55%, transparent);
+  flex-shrink: 0;
+}
+
+.req-board-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+}
+
+.req-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.req-tab:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+.req-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.req-tab[aria-selected="true"] {
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--shadow-btn);
+}
+
+.req-tab-count,
+.req-col-count {
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+
+.req-board-summary {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: auto;
+}
+
+.req-board-summary-text {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.req-board-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  flex: 0 1 190px;
+  min-width: 110px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-3);
+}
+
+.req-board-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.req-board-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.req-board-cols {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.req-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Narrow: tabs choose the one visible column; its heading would only repeat the tab. */
+.req-board:not([data-active-tab="DECISIONS"]) .req-col[data-col="DECISIONS"],
+.req-board:not([data-active-tab="M1"]) .req-col[data-col="M1"],
+.req-board:not([data-active-tab="M3"]) .req-col[data-col="M3"] {
+  display: none;
+}
+
+.req-col-head {
+  display: none;
+}
+
+.req-col-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 12px 14px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
 .req-signal-scroller {
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
 }
 
-.req-tab {
-  position: relative;
+.req-col-empty {
+  margin: 0;
+  padding: 28px 18px;
+  text-align: center;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: balance;
 }
 
-.req-tab[aria-selected="true"] {
+.req-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.req-item.is-pending {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn-soft) 55%, var(--surface));
+}
+
+.req-item.is-numbered {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.req-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.req-item-kind {
+  font-size: var(--text-2xs);
+  color: var(--ink-3);
+}
+
+.req-item-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.req-item-code {
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--inset);
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  color: var(--ink-3);
+}
+
+.req-item-body {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.req-item-body.is-muted {
+  color: var(--ink-3);
+}
+
+.req-item-index {
+  flex-shrink: 0;
+  min-width: 18px;
+  margin-top: 1px;
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  line-height: 1.8;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  text-align: end;
+}
+
+.req-item-inline-badge {
+  height: 18px;
+  margin-inline-end: 6px;
+  vertical-align: 1px;
+}
+
+.req-board-empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 440px;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+.req-board-empty-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--inset);
   color: var(--accent);
 }
 
-.req-tab[aria-selected="true"]::after {
-  content: "";
-  position: absolute;
-  inset: auto 4px 0;
-  border-block-end: 2px solid var(--accent);
+.req-board-empty-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.req-board-empty-text {
+  margin: 0 0 6px;
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.req-board-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 8px 12px 8px 14px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--inset) 55%, transparent);
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  flex-shrink: 0;
+}
+
+/* Wide: all three columns side by side, so the tabs step aside. */
+@container req-board (min-width: 820px) {
+  .req-board-tabs {
+    display: none;
+  }
+
+  .req-board-summary {
+    margin-inline-start: 0;
+    margin-inline-end: auto;
+  }
+
+  .req-board-cols {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .req-board[data-active-tab] .req-col[data-col] {
+    display: flex;
+  }
+
+  .req-col + .req-col {
+    border-inline-start: 1px solid var(--line-soft);
+  }
+
+  .req-col-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 1px 8px;
+    padding: 12px 14px 4px;
+    flex-shrink: 0;
+  }
+
+  .req-col-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .req-col-title > svg {
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .req-col-hint {
+    flex-basis: 100%;
+    font-size: var(--text-2xs);
+    color: var(--ink-3);
+  }
 }
 
 /* Targeted text wrapping for short standalone headings & multi-line prose

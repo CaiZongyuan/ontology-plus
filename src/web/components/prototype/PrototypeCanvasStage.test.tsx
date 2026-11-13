@@ -441,7 +441,7 @@ describe('PrototypeCanvasStage toolbar, revision status & preview controls (#27)
     expect(computeFocusModeRightOffset(true, true, false, 420, true)).toBe(
       AGENT_PANEL_WIDE_CSS_WIDTH,
     );
-    expect(AGENT_PANEL_WIDE_CSS_WIDTH).toBe('min(48vw, 680px)');
+    expect(AGENT_PANEL_WIDE_CSS_WIDTH).toBe('clamp(400px, 38vw, 600px)');
     expect(computeFocusModeRightOffset(true, false, false, 420, true)).toBe('0px');
     expect(computeFocusModeRightOffset(true, true, true, 420, true)).toBe('0px');
 
@@ -464,7 +464,7 @@ describe('PrototypeCanvasStage toolbar, revision status & preview controls (#27)
     expect(focusHtml).toContain('data-focus-mode="true"');
     expect(focusHtml).toContain('right:420px');
 
-    // When Wide Mode is enabled on Agent Panel, Focus Mode reserves min(48vw, 680px) so it never overlaps
+    // When Wide Mode is enabled on Agent Panel, Focus Mode reserves clamp(400px, 38vw, 600px) so it never overlaps
     Object.assign(useAgentPanelStore.getInitialState(), {
       open: true,
       overlayOpen: false,
@@ -488,7 +488,7 @@ describe('PrototypeCanvasStage toolbar, revision status & preview controls (#27)
         />
       </PreferencesProvider>,
     );
-    expect(wideFocusHtml).toContain('right:min(48vw, 680px)');
+    expect(wideFocusHtml).toContain('right:clamp(400px, 38vw, 600px)');
     // Unconfirmed prototype disables "推导 11 元模型业务本体" with clear guidance
     expect(wideFocusHtml).toMatch(/data-testid="prototype-synthesize-ontology-btn"[^>]*disabled/);
     expect(wideFocusHtml).toContain('确认为当前原型');
