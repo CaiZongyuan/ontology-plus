@@ -146,6 +146,7 @@ interface SqliteStatementLike {
 interface SqliteDbLike {
   exec: (sql: string) => void;
   prepare: (sql: string) => SqliteStatementLike;
+  close?: () => void;
 }
 
 const ANALYTICAL_TABLE_COLUMNS: Record<string, string[]> = {
@@ -845,6 +846,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
   }
 
   const db = openSqliteOrMemoryDb(dbPath);
+  let closed = false;
   db.exec(BOOTSTRAP_SQLITE_DDL);
   let d1MutationBatch: { query: string; values: unknown[] }[] | undefined;
 
@@ -1422,6 +1424,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
   }
 
   return {
+    close() {
+      if (closed) return;
+      db.close?.();
+      closed = true;
+    },
+
     listProjects(): ProjectSummary[] {
       const rows = db
         .prepare(

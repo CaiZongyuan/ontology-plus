@@ -8,9 +8,17 @@ import {
   deriveSourceSiteFromSlug,
   normalizeVisualReferenceItem,
   type VisualReferenceItem,
+  type WorkspaceStore,
 } from '../index.js';
 
 const tempDirs: string[] = [];
+const stores: WorkspaceStore[] = [];
+
+function openStore(dbPath: string): WorkspaceStore {
+  const store = createWorkspaceStore({ dbPath, enableFileMirror: false });
+  stores.push(store);
+  return store;
+}
 
 function createIsolatedDbPath(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-inspo-cache-'));
@@ -19,6 +27,7 @@ function createIsolatedDbPath(): string {
 }
 
 afterEach(() => {
+  while (stores.length > 0) stores.pop()!.close();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir && fs.existsSync(dir)) {
@@ -66,7 +75,7 @@ describe('workspace-store Inspo reference catalog & durable cache', () => {
 
   it('persists search, recommend, and design_system cache entries across reopened SQLite stores', () => {
     const dbPath = createIsolatedDbPath();
-    const storeA = createWorkspaceStore({ dbPath, enableFileMirror: false });
+    const storeA = openStore(dbPath);
 
     expect(storeA.getInspoCache('inspo:recommend:fintech:light')).toBeUndefined();
 
@@ -99,7 +108,8 @@ describe('workspace-store Inspo reference catalog & durable cache', () => {
     });
 
     // Reopen a brand new store instance on the same SQLite database file
-    const storeB = createWorkspaceStore({ dbPath, enableFileMirror: false });
+    storeA.close();
+    const storeB = openStore(dbPath);
 
     const recHit = storeB.getInspoCache('inspo:recommend:fintech:light');
     expect(recHit).toBeDefined();
@@ -117,7 +127,7 @@ describe('workspace-store Inspo reference catalog & durable cache', () => {
 
   it('never persists data: base64 image URIs or binary image fields in inspo_cache', () => {
     const dbPath = createIsolatedDbPath();
-    const store = createWorkspaceStore({ dbPath, enableFileMirror: false });
+    const store = openStore(dbPath);
 
     const base64Attempt = {
       ...CURATED_INSPO_CATALOG[0]!,

@@ -140,9 +140,10 @@ describe('vision input & provider capability (#30)', () => {
     const remoteHeroUrl = `http://127.0.0.1:${imgPort}/captures/increase-com/hero.1440.webp`;
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-vision-sqlite-'));
     const dbPath = path.join(tmpDir, 'vision-test.db');
+    let store: ReturnType<typeof createWorkspaceStore> | undefined;
 
     try {
-      const store = createWorkspaceStore({ dbPath, enableFileMirror: false });
+      store = createWorkspaceStore({ dbPath, enableFileMirror: false });
       store.saveLlmProvider({
         id: 'llm-pi-local',
         name: 'Vision Test Gateway',
@@ -300,6 +301,7 @@ describe('vision input & provider capability (#30)', () => {
         new Promise<void>((resolve) => imgServer.close(() => resolve())),
         new Promise<void>((resolve) => llmServer.close(() => resolve())),
       ]);
+      store?.close();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

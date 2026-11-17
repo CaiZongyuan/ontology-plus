@@ -810,10 +810,11 @@ describe('server API & Cloudflare Worker integration', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-isolated-store-'));
     const prevRoot = process.env.ONTOLOGY_WORKSPACE_ROOT;
     const prevDb = process.env.ONTOLOGY_DB_PATH;
+    let isolatedStore: ReturnType<typeof createWorkspaceStore> | undefined;
     try {
       process.env.ONTOLOGY_WORKSPACE_ROOT = tmpDir;
       delete process.env.ONTOLOGY_DB_PATH;
-      const isolatedStore = createWorkspaceStore();
+      isolatedStore = createWorkspaceStore();
       expect(isolatedStore.listProjects().length).toBeGreaterThanOrEqual(2);
       expect(fs.existsSync(path.join(tmpDir, 'onto-cs.db'))).toBe(true);
     } finally {
@@ -821,6 +822,7 @@ describe('server API & Cloudflare Worker integration', () => {
       else process.env.ONTOLOGY_WORKSPACE_ROOT = prevRoot;
       if (prevDb === undefined) delete process.env.ONTOLOGY_DB_PATH;
       else process.env.ONTOLOGY_DB_PATH = prevDb;
+      isolatedStore?.close();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

@@ -767,6 +767,8 @@ export interface SystemSettingsState {
 }
 
 export interface WorkspaceStore {
+  /** Release the store's native SQLite connection. Repeated calls are safe. */
+  close(): void;
   // Projects & 11-Model Ontology Suite
   listProjects(): ProjectSummary[];
   getProject(projectId: string): ProjectDetail | undefined;
