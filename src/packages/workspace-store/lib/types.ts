@@ -10,6 +10,9 @@ import type {
   ValidationReport,
 } from '../../ontology-core/index.js';
 import type { InspoCacheEntry, InspoCacheEntryInput } from './inspo-cache.js';
+import type { TechnologyProfile } from '../../architecture-assets/index.js';
+
+export type { TechnologyProfile } from '../../architecture-assets/index.js';
 
 export interface ProjectSummary {
   id: string;
@@ -46,6 +49,7 @@ export type AgentSessionKind =
   | 'REQUIREMENT'
   | 'PROTOTYPE_CO_DESIGN'
   | 'COPILOT'
+  | 'ARCHITECTURE'
   | 'CODING'
   | 'CAPABILITY'
   | 'REASONING';
@@ -405,6 +409,10 @@ export interface FourLayerAsset {
   tags: string[];
   specMarkdown: string;
   updatedAt: string;
+  /** Repository identity; absent only for retained legacy workspace material. */
+  sourcePath?: string;
+  sourceRevision?: string;
+  technologyProfileId?: string;
 }
 
 export interface AssembledApplication {
@@ -414,12 +422,36 @@ export interface AssembledApplication {
   uiUeAssetId: string;
   techFoundationAssetId: string;
   techArchAssetId: string;
+  technologyProfileId?: string;
+  prototypeRevisionId?: string;
+  developmentInstructions?: string;
+  developmentBlockers?: string[];
+  latestPackageSnapshotId?: string;
   status: 'ASSEMBLED' | 'DEVELOPING' | 'PACKAGE_READY' | 'PUBLISHED';
   packageOutputDir?: string;
   publishedEndpoint?: string;
   publishedVersion?: string;
   agentDevLogs: { timestamp: string; phase: string; detail: string }[];
   updatedAt: string;
+}
+
+export interface DevelopmentPackageFile {
+  relativePath: string;
+  category: 'GUIDE' | 'MANIFEST' | 'REFERENCE' | 'ONTOLOGY_YAML' | 'FOUNDATION' | 'SOURCE';
+  sizeBytes: number;
+  content: string;
+}
+
+export interface DevelopmentPackageSnapshot {
+  snapshotId: string;
+  inputFingerprint: string;
+  appId: string;
+  appName: string;
+  projectId: string;
+  outputDir: string;
+  compiledAt: string;
+  files: DevelopmentPackageFile[];
+  manifestJson: Record<string, unknown>;
 }
 
 export interface GeneratedSkill {
@@ -735,6 +767,8 @@ export interface SystemSettingsState {
 }
 
 export interface WorkspaceStore {
+  /** Release the store's native SQLite connection. Repeated calls are safe. */
+  close(): void;
   // Projects & 11-Model Ontology Suite
   listProjects(): ProjectSummary[];
   getProject(projectId: string): ProjectDetail | undefined;
@@ -884,6 +918,7 @@ export interface WorkspaceStore {
   clonePrototype(protoId: string, options?: { name?: string }): InteractivePrototype;
   deletePrototype(protoId: string): void;
   listFourLayerAssets(layer?: FourLayerAsset['layer']): FourLayerAsset[];
+  listTechnologyProfiles(): TechnologyProfile[];
   saveFourLayerAsset(asset: Omit<FourLayerAsset, 'updatedAt'>): FourLayerAsset;
   deleteFourLayerAsset(assetId: string, force?: boolean): void;
   listAssembledApplications(): AssembledApplication[];
@@ -894,6 +929,9 @@ export interface WorkspaceStore {
   ): AssembledApplication;
   cloneAssembledApplication(appId: string): AssembledApplication;
   deleteAssembledApplication(appId: string): void;
+  saveDevelopmentPackageSnapshot(snapshot: DevelopmentPackageSnapshot): DevelopmentPackageSnapshot;
+  getDevelopmentPackageSnapshot(snapshotId: string): DevelopmentPackageSnapshot | undefined;
+  listDevelopmentPackageSnapshots(appId: string): DevelopmentPackageSnapshot[];
   listGeneratedSkills(projectId?: string): GeneratedSkill[];
   saveGeneratedSkill(skill: Omit<GeneratedSkill, 'updatedAt'>): GeneratedSkill;
   deleteGeneratedSkill(skillId: string, force?: boolean): void;

@@ -8,4 +8,4 @@ Ontology Extraction's structural scan is not such a fallback. It is the determin
 
 ## Amendments
 
-- **2026-11-17: the undo safeguard becomes run-level and visible (ADR 0013).** Autonomous execution is unchanged. In the `Business View` a provider problem is worded for a person who cannot configure a gateway, and the navigation to the LLM Center is kept as a link.
+- **2026-11-17: the undo safeguard becomes run-level and visible (ADR 0016).** Autonomous execution is unchanged. In the `Business View` a provider problem is worded for a person who cannot configure a gateway, and the navigation to the LLM Center is kept as a link.

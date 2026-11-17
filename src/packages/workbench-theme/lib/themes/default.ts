@@ -1,7 +1,7 @@
 import type { WorkbenchTheme } from '../types.js';
 
 /**
- * 默认: the neutral default theme (ADR 0012), with values measured from Attio's
+ * 默认: the neutral default theme (ADR 0015), with values measured from Attio's
  * product interface on 2026-11-17 (issue #39). Sans titles and interface,
  * hairline borders, one blue for the primary action, flat ground.
  *

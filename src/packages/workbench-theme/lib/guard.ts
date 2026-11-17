@@ -2,7 +2,7 @@ import { DERIVED_VARIABLES, THEME_TOKENS, type ThemeTokenGroup } from './contrac
 import { WARM_PAPER } from './themes/warm-paper.js';
 
 /**
- * The appearance guard (ADR 0012): workbench styles and components take colours, fonts,
+ * The appearance guard (ADR 0015): workbench styles and components take colours, fonts,
  * radii, shadows and texture only from contract tokens and the registered shared derived
  * variables. `pnpm lint:theme` runs it over `src/web` (and so does `pnpm check`); a
  * test runs it too.

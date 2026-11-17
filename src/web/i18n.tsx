@@ -3,7 +3,7 @@ import { resolveThemeId } from '../packages/workbench-theme/index.js';
 
 /** This device's light/dark choice; absent when it follows the system. */
 export const THEME_MODE_STORAGE_KEY = 'onto_theme';
-/** This device's Workbench Theme choice (ADR 0012); never sent to the backend. */
+/** This device's Workbench Theme choice (ADR 0015); never sent to the backend. */
 export const WORKBENCH_THEME_STORAGE_KEY = 'onto_workbench_theme';
 
 export type Locale = 'zh-CN' | 'en-US';
@@ -311,7 +311,7 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     }
   }, [themePreference, resolvedTheme]);
 
-  // Mark the root with the active Workbench Theme (ADR 0012).
+  // Mark the root with the active Workbench Theme (ADR 0015).
   useEffect(() => {
     document.documentElement.dataset.workbenchTheme = workbenchTheme;
   }, [workbenchTheme]);

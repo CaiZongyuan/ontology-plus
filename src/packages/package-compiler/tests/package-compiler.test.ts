@@ -1,16 +1,241 @@
-import { describe, expect, it } from 'vitest';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createWorkspaceStore } from '../../workspace-store/index.js';
 import {
   buildMcpClientConfigJson,
+  buildDevelopmentPackageZip,
   compileDevelopmentPackage,
   compileDevelopmentPackageZip,
   compileOntologySkill,
+  DevelopmentPackageInputError,
+  fingerprintDevelopmentPackageInputs,
   handleOntologyMcpRequest,
   inspectOntologyMcpCapabilities,
+  type CompileDevelopmentPackageInput,
 } from '../index.js';
 
+function confirmedPackageInput(): CompileDevelopmentPackageInput {
+  const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+  const confirmed = store.getConfirmedPrototypeRevision('proj-contract')!;
+  return {
+    app: store.listAssembledApplications()[0],
+    project: store.getProject('proj-contract')!,
+    uiUeAsset: store.listFourLayerAssets('UI_UE')[0],
+    techFoundationAsset: store.listFourLayerAssets('TECH_FOUNDATION')[0],
+    techArchAsset: store.listFourLayerAssets('TECH_ARCH')[0],
+    requirementDoc: store.listRequirementDocs('proj-contract')[0],
+    prototype: { ...confirmed.prototype, currentRevisionId: confirmed.revision.id, htmlContent: confirmed.htmlContent },
+    prototypeRevision: {
+      id: confirmed.revision.id,
+      prototypeId: confirmed.prototypeId,
+      revisionNumber: confirmed.revision.revisionNumber,
+      confirmedAt: confirmed.confirmedAt,
+      createdAt: confirmed.revision.createdAt,
+    },
+    writeToDisk: false,
+  };
+}
+
 describe('package-compiler deep module', () => {
-  it('compiles a complete 4-layer Development Package with progressive-disclosure guides, manifest.json, and PKZIP archive', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('rejects a selected standard whose local Markdown link is absent from the package', () => {
+    const input = confirmedPackageInput();
+    input.techArchAsset.specMarkdown += '\n[module contracts](./module-contracts.md)';
+    let rejected: unknown;
+    try { compileDevelopmentPackage(input); } catch (error) { rejected = error; }
+    expect(rejected).toBeInstanceOf(DevelopmentPackageInputError);
+    if (!(rejected instanceof DevelopmentPackageInputError)) throw new Error('Expected invalid package references to block compilation.');
+    expect(rejected.diagnostics).toContainEqual(expect.objectContaining({
+      path: 'standards/architecture.md',
+      target: './module-contracts.md',
+    }));
+  });
+
+  it.each([
+    ['application instructions', (input: CompileDevelopmentPackageInput) => { input.applicationInstructions = '[handoff](./handoff.md)'; }, 'references/application-instructions.md', './handoff.md'],
+    ['requirement reference definition', (input: CompileDevelopmentPackageInput) => { input.requirementDoc!.content += '\n[rule details][rules]\n\n[rules]: ./rules.md'; }, 'references/requirements.md', './rules.md'],
+    ['standard image', (input: CompileDevelopmentPackageInput) => { input.uiUeAsset.specMarkdown += '\n![layout](./layout.svg)'; }, 'standards/ui.md', './layout.svg'],
+    ['requirement reference image', (input: CompileDevelopmentPackageInput) => { input.requirementDoc!.content += '\n![data model][diagram]\n\n[diagram]: ./schema\\-diagram.svg'; }, 'references/requirements.md', './schema-diagram.svg'],
+  ])('rejects an unresolved local target in %s', (_description, changeSource, sourcePath, target) => {
+    const input = confirmedPackageInput();
+    changeSource(input);
+    try {
+      compileDevelopmentPackage(input);
+      expect.fail('Expected an unresolved package reference to block compilation.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(DevelopmentPackageInputError);
+      if (!(error instanceof DevelopmentPackageInputError)) throw error;
+      expect(error.diagnostics).toContainEqual(expect.objectContaining({
+        code: 'UNRESOLVED_PACKAGE_REFERENCE', path: sourcePath, target,
+      }));
+      expect(error.message).toContain(sourcePath);
+      expect(error.message).toContain(target);
+    }
+  });
+
+  it.each([
+    '../../outside.md', '..%2F..%2Foutside.md', '..%5C..%5Coutside.md',
+    '/etc/passwd', 'C:/private.md', 'file:///C:/private.md',
+    'javascript:alert(1)', './%zz.md', '../%00README.md',
+  ])('rejects an unsafe package reference %s', (target) => {
+    const input = confirmedPackageInput();
+    input.requirementDoc!.content += `\n[unsafe target](${target})`;
+    try {
+      compileDevelopmentPackage(input);
+      expect.fail('Expected an unsafe package reference to block compilation.');
+    } catch (error) {
+      if (!(error instanceof DevelopmentPackageInputError)) throw error;
+      expect(error.diagnostics).toContainEqual(expect.objectContaining({
+        code: 'UNSAFE_PACKAGE_REFERENCE', path: 'references/requirements.md', target,
+      }));
+    }
+  });
+
+  it('preserves source Markdown with valid relative and reference-style targets while ignoring code examples', () => {
+    const input = confirmedPackageInput();
+    input.techArchAsset.specMarkdown += `
+[agent entry](../%41GENTS.md#coding-agent-instructions)
+[acceptance](../docs/acceptance\\.md?raw=1#criteria)
+[implementation][build]
+![embedded icon][icon]
+[external guide](https://example.test/guide)
+[contact](mailto:team@example.test)
+[section](#authority)
+[same file](?raw=1)
+
+[build]: ../docs/implementation.md
+[icon]: data:image/png;base64,aW1hZ2U=
+
+\`[inline example](./missing-inline-example.md)\`
+
+\`\`\`markdown
+[example](./missing-fenced-example.md)
+[example definition]: ./missing-definition.md
+\`\`\`
+`;
+    input.requirementDoc!.content += '\n原始业务需求：[开发入口](../AGENTS.md)。';
+    input.applicationInstructions = 'Record [acceptance evidence](../docs/acceptance.md).';
+    const compiled = compileDevelopmentPackage(input);
+    const read = (sourcePath: string) => compiled.files.find((file) => file.relativePath === sourcePath)!.content;
+    expect(read('standards/architecture.md')).toBe(input.techArchAsset.specMarkdown);
+    expect(read('references/requirements.md')).toBe(input.requirementDoc!.content);
+    expect(read('references/application-instructions.md')).toBe(input.applicationInstructions);
+  });
+
+  it('downloads identical bytes from the retained snapshot despite later source edits and time changes', () => {
+    const input = confirmedPackageInput();
+    const fixedInputs = structuredClone(input);
+    const compiled = compileDevelopmentPackage({ ...input, snapshotId: 'snapshot-zip', compiledAt: '2026-11-17T02:00:00.000Z' });
+    const retained = JSON.stringify(compiled);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-18T12:00:00.000Z'));
+    const original = buildDevelopmentPackageZip(compiled);
+    input.requirementDoc!.content += '\nLater scope.';
+    input.prototype!.htmlContent = '<html>Later prototype</html>';
+    input.techArchAsset.specMarkdown = 'Later architecture';
+    vi.setSystemTime(new Date('2030-01-01T01:00:00.000Z'));
+    const downloaded = compileDevelopmentPackageZip(compiled);
+    expect(downloaded.zipBytes).toEqual(original.zipBytes);
+    expect(downloaded.pkg).toBe(compiled);
+    expect(downloaded.fileName).toBe('app-contract-clm-dev-package.zip');
+    expect(JSON.stringify(compiled)).toBe(retained);
+    const regenerated = compileDevelopmentPackage({ ...fixedInputs, snapshotId: 'snapshot-zip', compiledAt: '2026-11-17T02:00:00.000Z' });
+    expect(regenerated.files).toEqual(compiled.files);
+  });
+
+  it('revalidates actual ontology contracts and retains nonblocking Stage Warnings', () => {
+    const input = confirmedPackageInput();
+    input.project.suite.M2!.behaviors[0].ownerEntity = 'MissingAggregate';
+    expect(input.project.validation.errorCount).toBe(0);
+    expect(() => compileDevelopmentPackage(input)).toThrow(/Consistency Error/);
+    const progressive = confirmedPackageInput();
+    delete progressive.project.suite.MI;
+    const compiled = compileDevelopmentPackage(progressive);
+    expect(compiled.manifestJson.validation).toMatchObject({ errorCount: 0, missingModels: ['MI'], warningCount: expect.any(Number) });
+    expect((compiled.manifestJson.validation as { warningCount: number }).warningCount).toBeGreaterThan(0);
+    expect(compiled.files.some((file) => file.relativePath === 'references/ontology/MI.yaml')).toBe(false);
+    expect(compiled.files.find((file) => file.relativePath === 'docs/implementation.md')!.content).toContain('MI (not authored; see the Stage Warnings');
+  });
+
+  it.each([
+    ['missing requirements', (input: CompileDevelopmentPackageInput) => { input.requirementDoc = undefined; }, /requirements/i],
+    ['draft requirements', (input: CompileDevelopmentPackageInput) => { input.requirementDoc!.status = 'DRAFT'; }, /confirm.*requirements/i],
+    ['empty requirements', (input: CompileDevelopmentPackageInput) => { input.requirementDoc!.content = ' '; }, /requirements.*content/i],
+    ['missing prototype', (input: CompileDevelopmentPackageInput) => { input.prototype = undefined; }, /confirmed prototype/i],
+    ['unconfirmed prototype', (input: CompileDevelopmentPackageInput) => { input.prototype!.isConfirmed = false; }, /confirmed prototype/i],
+    ['different prototype HTML', (input: CompileDevelopmentPackageInput) => { input.prototype!.htmlContent += '<!-- unconfirmed change -->'; }, /confirmed revision.*content/i],
+    ['wrong revision identity', (input: CompileDevelopmentPackageInput) => { input.prototypeRevision!.id = 'other-revision'; }, /revision.*match/i],
+    ['empty selected standard', (input: CompileDevelopmentPackageInput) => { input.techFoundationAsset.specMarkdown = ''; }, /standard.*content/i],
+    ['unrelated asset', (input: CompileDevelopmentPackageInput) => { input.uiUeAsset.id = 'unrelated'; }, /selected.*asset/i],
+  ])('blocks %s with an actionable diagnostic', (_description, invalidate, expected) => {
+    const input = confirmedPackageInput();
+    invalidate(input);
+    expect(() => compileDevelopmentPackage(input)).toThrow(expected);
+  });
+
+  it('includes the complete default Node technology profile and repository standard origins', () => {
+    const compiled = compileDevelopmentPackage(confirmedPackageInput());
+    expect(compiled.manifestJson.technologyProfile).toMatchObject({
+      id: 'profile-react-hono-sqlite-node',
+      frontend: ['React', 'Vite', 'TanStack Router', 'Zustand', 'shadcn/ui with Base UI'],
+      backend: ['Hono', 'Node.js'],
+      persistence: ['Drizzle ORM', 'SQLite'],
+    });
+    const architecture = compiled.files.find((file) => file.relativePath === 'docs/architecture.md')!.content;
+    for (const technology of ['React', 'Vite', 'TanStack Router', 'Zustand', 'shadcn/ui with Base UI', 'Hono', 'Drizzle ORM', 'SQLite', 'Node.js']) {
+      expect(architecture).toContain(technology);
+    }
+    const manifest = compiled.manifestJson as { sources: { standards: { sourcePath: string; sourceRevision: string }[] } };
+    expect(manifest.sources.standards).toHaveLength(3);
+    for (const standard of manifest.sources.standards) {
+      expect(standard.sourcePath).toMatch(/^src\/packages\/architecture-assets\/lib\/catalog\/assets\/.+\.json$/);
+      expect(standard.sourceRevision).toMatch(/^sha256:[a-f0-9]{64}$/);
+    }
+  });
+
+  it('retains a traceable fixed snapshot after source edits and exposes every package-local reference', () => {
+    const input = confirmedPackageInput();
+    input.applicationInstructions = 'Keep contract approval decisions auditable.';
+    const fingerprint = fingerprintDevelopmentPackageInputs(input);
+    const compiled = compileDevelopmentPackage({
+      ...input,
+      snapshotId: 'snapshot-reviewed',
+      inputFingerprint: fingerprint,
+      compiledAt: '2026-11-17T02:00:00.000Z',
+    });
+    const retained = JSON.stringify(compiled);
+    expect(compiled.snapshotId).toBe('snapshot-reviewed');
+    expect(compiled.inputFingerprint).toBe(fingerprint);
+    expect(compiled.manifestJson).toMatchObject({
+      snapshotId: 'snapshot-reviewed',
+      compiledAt: '2026-11-17T02:00:00.000Z',
+      sources: {
+        requirements: { id: input.requirementDoc!.id, version: input.requirementDoc!.version },
+        prototype: { revisionId: input.prototypeRevision!.id, confirmedAt: input.prototypeRevision!.confirmedAt },
+        ontology: { projectId: 'proj-contract', revision: input.project.updatedAt },
+      },
+    });
+    const paths = new Set(compiled.files.map((file) => file.relativePath));
+    for (const file of compiled.files.filter((entry) => entry.category === 'GUIDE')) {
+      for (const [, target] of file.content.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
+        expect(paths.has(path.posix.normalize(path.posix.join(path.posix.dirname(file.relativePath), target)))).toBe(true);
+      }
+    }
+    const ontologyManifest = JSON.parse(compiled.files.find((file) => file.relativePath === 'references/ontology/manifest.json')!.content);
+    for (const target of Object.values(ontologyManifest.models)) {
+      expect(paths.has(`references/ontology/${target}`)).toBe(true);
+    }
+    input.requirementDoc!.content += '\nNew scope after review.';
+    input.prototype!.htmlContent += '<!-- later revision -->';
+    input.project.suite.M1!.aggregates[0].alias = 'later label';
+    input.uiUeAsset.specMarkdown += '\nChanged standard.';
+    input.app.agentDevLogs.push({ timestamp: 'later', phase: 'EDIT', detail: 'later' });
+    expect(fingerprintDevelopmentPackageInputs(input)).not.toBe(fingerprint);
+    expect(JSON.stringify(compiled)).toBe(retained);
+  });
+
+  it('exports an English specification package with original business references and no pretend implementation', () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     const project = store.getProject('proj-contract')!;
     const app = store.listAssembledApplications()[0];
@@ -36,20 +261,27 @@ describe('package-compiler deep module', () => {
     });
 
     const paths = compiled.files.map((f) => f.relativePath);
-    expect(paths).toContain('开发指导书.md');
-    expect(paths).toContain('本体模型业务功能开发指导书.md');
-    expect(paths).toContain('开发资料清单.json');
-    expect(paths).toContain('参考资料/本体模型/manifest.json');
-    expect(paths).toContain('参考资料/UI-UE界面设计规范.md');
-    expect(paths).toContain('参考资料/界面原型.html');
-    expect(paths).toContain('参考资料/本体模型/m1-object-model.yaml');
-    expect(paths).toContain('参考资料/本体模型/mi-interface-model.yaml');
+    expect(paths).toEqual(expect.arrayContaining([
+      'README.md', 'AGENTS.md', 'manifest.json',
+      'docs/architecture.md', 'docs/implementation.md', 'docs/acceptance.md',
+      'references/requirements.md', 'references/prototype/index.html',
+      'references/ontology/manifest.json', 'references/ontology/M1.yaml',
+      'references/ontology/MI.yaml',
+    ]));
+    expect(paths.every((filePath) => /^[a-zA-Z0-9./_-]+$/.test(filePath))).toBe(true);
+    expect(paths.some((filePath) => /\.(?:ts|tsx|sql)$/.test(filePath))).toBe(false);
+    expect(paths.some((filePath) => filePath.startsWith('.onto-cs/'))).toBe(false);
 
-    const featureGuide = compiled.files.find(
-      (f) => f.relativePath === '本体模型业务功能开发指导书.md',
-    )!.content;
-    expect(featureGuide).toContain('created_by');
-    expect(featureGuide).toContain('POPUP_SELECT');
+    const read = (filePath: string) => compiled.files.find((file) => file.relativePath === filePath)!.content;
+    expect(read('AGENTS.md')).toContain('[Implementation sequence](docs/implementation.md)');
+    expect(read('docs/acceptance.md')).toContain('RULE-01');
+    expect(read('docs/acceptance.md')).toContain('BHV-01');
+    for (const scenario of project.suite.M4!.event_scenarios) expect(read('docs/acceptance.md')).toContain(scenario.id);
+    for (const contract of project.suite.MI!.interfaces) expect(read('docs/acceptance.md')).toContain(contract.interfaceId);
+    expect(read('docs/acceptance.md')).not.toContain('`undefined`');
+    expect(read('references/requirements.md')).toBe(reqDoc.content);
+    expect(read('references/prototype/index.html')).toBe(proto.htmlContent);
+    expect(read('references/ontology/M1.yaml')).toContain('合同');
 
     const zipOut = compileDevelopmentPackageZip({
       app,

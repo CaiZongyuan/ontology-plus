@@ -4,7 +4,7 @@
 
 Contract version: 1
 
-A Workbench Theme is a table of values for the tokens below, one column for light and one for dark (ADR 0012). Components read only these tokens. A theme may not change layout, spacing or density, the type-size scale, component structure, motion, or copy.
+A Workbench Theme is a table of values for the tokens below, one column for light and one for dark (ADR 0015). Components read only these tokens. A theme may not change layout, spacing or density, the type-size scale, component structure, motion, or copy.
 
 A token marked "follows" takes the value of another token when a theme leaves it unset. Renaming or removing a token breaks themes and bumps the contract version.
 

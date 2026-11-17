@@ -57,6 +57,7 @@ import {
   type JsonRpcRequest,
 } from '../packages/package-compiler/index.js';
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
+import { registerApplicationDeliveryRoutes } from './application-delivery.js';
 
 export function createApiApp(customStore?: WorkspaceStore): Hono {
   const store = customStore ?? createWorkspaceStore();
@@ -91,6 +92,9 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     }
     const errCode = (err as { code?: string } | null)?.code;
     const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('Repository standards are read-only')) {
+      return c.json({ error: msg, code: 'ARCHITECTURE_CATALOG_READ_ONLY' }, 409);
+    }
     if (errCode === 'UNSUPPORTED_INSPO_ACTION') {
       return c.json({ ok: false, error: msg, code: 'UNSUPPORTED_INSPO_ACTION' }, 400);
     }
@@ -133,6 +137,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       prototypes: store.listPrototypes(activeProject.id),
       confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(activeProject.id) ?? null,
       fourLayerAssets: store.listFourLayerAssets(),
+      technologyProfiles: store.listTechnologyProfiles(),
       assembledApplications: store.listAssembledApplications(),
       generatedSkills: store.listGeneratedSkills(),
       legacySystems: store.listLegacySystems(),
@@ -180,6 +185,10 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       modelOverride?: string;
       reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
     }>();
+    if (!['REQUIREMENT', 'PROTOTYPE_CO_DESIGN', 'COPILOT', 'ARCHITECTURE', 'CODING', 'CAPABILITY', 'REASONING'].includes(body.agentKind)) {
+      return c.json({ error: 'Unknown agent specialisation.', code: 'INVALID_AGENT_KIND' }, 400);
+    }
+    if (!store.getProject(body.projectId)) return c.json({ error: 'Project not found.' }, 404);
     const session = store.createAgentSession(body);
     return c.json({
       session,
@@ -894,6 +903,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       summary: string;
       tags: string[];
       specMarkdown: string;
+      technologyProfileId?: string;
     }>();
     const asset = store.saveFourLayerAsset(body);
     return c.json({ asset, fourLayerAssets: store.listFourLayerAssets() });
@@ -914,12 +924,30 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       uiUeAssetId: string;
       techFoundationAssetId: string;
       techArchAssetId: string;
+      technologyProfileId?: string;
+      prototypeRevisionId?: string;
+      developmentInstructions?: string;
       status: 'ASSEMBLED' | 'DEVELOPING' | 'PACKAGE_READY' | 'PUBLISHED';
       publishedEndpoint?: string;
       publishedVersion?: string;
       agentDevLogs?: { timestamp: string; phase: string; detail: string }[];
     }>();
-    const appItem = store.saveAssembledApplication(body);
+    if (![body.id, body.name, body.projectId, body.uiUeAssetId, body.techFoundationAssetId, body.techArchAssetId]
+      .every((value) => typeof value === 'string' && value.trim())) {
+      return c.json({ error: 'Application identity and explicitly selected inputs are required.', code: 'INVALID_APPLICATION' }, 400);
+    }
+    if (!store.getProject(body.projectId)) return c.json({ error: 'Project not found.' }, 404);
+    const existing = store.listAssembledApplications().find((item) => item.id === body.id);
+    const appItem = store.saveAssembledApplication({
+      ...existing,
+      id: body.id, name: body.name, projectId: body.projectId,
+      uiUeAssetId: body.uiUeAssetId, techFoundationAssetId: body.techFoundationAssetId,
+      techArchAssetId: body.techArchAssetId, status: body.status,
+      technologyProfileId: body.technologyProfileId ?? existing?.technologyProfileId,
+      prototypeRevisionId: body.prototypeRevisionId ?? existing?.prototypeRevisionId,
+      developmentInstructions: body.developmentInstructions ?? existing?.developmentInstructions,
+      agentDevLogs: existing?.agentDevLogs ?? body.agentDevLogs,
+    });
     return c.json({
       application: appItem,
       assembledApplications: store.listAssembledApplications(),
@@ -943,102 +971,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     });
   });
 
-  const resolveAppBundleInputs = (appId: string) => {
-    const appItem = store.listAssembledApplications().find((a) => a.id === appId);
-    if (!appItem) return { error: 'Application not found' as const, status: 404 as const };
-    const project = store.getProject(appItem.projectId);
-    if (!project) return { error: 'Project not found' as const, status: 404 as const };
-
-    const assets = store.listFourLayerAssets();
-    const uiAsset =
-      assets.find((a) => a.id === appItem.uiUeAssetId) ??
-      assets.find((a) => a.layer === 'UI_UE')!;
-    const foundationAsset =
-      assets.find((a) => a.id === appItem.techFoundationAssetId) ??
-      assets.find((a) => a.layer === 'TECH_FOUNDATION')!;
-    const archAsset =
-      assets.find((a) => a.id === appItem.techArchAssetId) ??
-      assets.find((a) => a.layer === 'TECH_ARCH')!;
-    const reqDoc = store.listRequirementDocs(project.id)[0];
-    const confirmedProto = store.getConfirmedPrototypeRevision(project.id);
-    const proto = confirmedProto
-      ? {
-          ...confirmedProto.prototype,
-          htmlContent: confirmedProto.htmlContent,
-          extractedScreenCount: confirmedProto.revision.extractedScreenCount,
-        }
-      : undefined;
-
-    return { appItem, project, uiAsset, foundationAsset, archAsset, reqDoc, proto };
-  };
-
-  app.post('/api/applications/:appId/compile-package', (c) => {
-    const resolved = resolveAppBundleInputs(c.req.param('appId'));
-    if ('error' in resolved) return c.json({ error: resolved.error }, resolved.status);
-    const { appItem, project, uiAsset, foundationAsset, archAsset, reqDoc, proto } = resolved;
-
-    try {
-      const compiled = compileDevelopmentPackage({
-        app: appItem,
-        project,
-        uiUeAsset: uiAsset,
-        techFoundationAsset: foundationAsset,
-        techArchAsset: archAsset,
-        ...(reqDoc ? { requirementDoc: reqDoc } : {}),
-        ...(proto ? { prototype: proto } : {}),
-      });
-
-      const updatedApp = store.saveAssembledApplication({
-        ...appItem,
-        status: appItem.status === 'PUBLISHED' ? 'PUBLISHED' : 'PACKAGE_READY',
-        packageOutputDir: `.onto-cs/packages/${appItem.id}`,
-        agentDevLogs: [
-          ...appItem.agentDevLogs,
-          {
-            timestamp: new Date().toISOString(),
-            phase: 'PACKAGE_COMPILE',
-            detail: `已编译生成 ${compiled.files.length} 个开发资料包文件至 .onto-cs/packages/${appItem.id}`,
-          },
-        ],
-      });
-
-      return c.json({
-        compiledPackage: compiled,
-        application: updatedApp,
-        assembledApplications: store.listAssembledApplications(),
-      });
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : String(err) }, 422);
-    }
-  });
-
-  app.get('/api/applications/:appId/package.zip', (c) => {
-    const resolved = resolveAppBundleInputs(c.req.param('appId'));
-    if ('error' in resolved) return c.json({ error: resolved.error }, resolved.status);
-    const { appItem, project, uiAsset, foundationAsset, archAsset, reqDoc, proto } = resolved;
-
-    try {
-      const zipOut = compileDevelopmentPackageZip({
-        app: appItem,
-        project,
-        uiUeAsset: uiAsset,
-        techFoundationAsset: foundationAsset,
-        techArchAsset: archAsset,
-        ...(reqDoc ? { requirementDoc: reqDoc } : {}),
-        ...(proto ? { prototype: proto } : {}),
-      });
-      return new Response(zipOut.zipBytes, {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/zip',
-          'Content-Disposition': `attachment; filename="${zipOut.fileName}"`,
-          'Content-Length': String(zipOut.zipBytes.byteLength),
-        },
-      });
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : String(err) }, 422);
-    }
-  });
+  registerApplicationDeliveryRoutes(app, store);
 
   app.post('/api/applications/:appId/publish', async (c) => {
     const appId = c.req.param('appId');

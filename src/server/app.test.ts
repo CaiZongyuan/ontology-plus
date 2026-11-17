@@ -27,7 +27,9 @@ describe('server API & Cloudflare Worker integration', () => {
     expect(bootJson.activeProject.validation.errorCount).toBe(0);
     expect(Array.isArray(bootJson.capabilityChatSessions)).toBe(true);
 
-    // Verify PKZIP development package HTTP download
+    // Generate and review a fixed package before downloading it.
+    const generated = await app.request('/api/applications/app-contract-clm/compile-package', { method: 'POST' });
+    expect(generated.status).toBe(200);
     const zipRes = await app.request('/api/applications/app-contract-clm/package.zip');
     expect(zipRes.status).toBe(200);
     expect(zipRes.headers.get('Content-Type')).toBe('application/zip');
@@ -339,7 +341,7 @@ describe('server API & Cloudflare Worker integration', () => {
     // Helper to create session and run stream
     const runSessionAction = async (
       projectId: string,
-      agentKind: 'REQUIREMENT' | 'COPILOT' | 'CODING' | 'REASONING',
+      agentKind: 'REQUIREMENT' | 'COPILOT' | 'ARCHITECTURE' | 'CODING' | 'REASONING',
       prompt: string,
     ) => {
       const sessRes = await app.request('/api/agent-sessions', {
@@ -390,12 +392,12 @@ describe('server API & Cloudflare Worker integration', () => {
     );
     expect(store.getProject('proj-contract')!.validation.errorCount).toBe(0);
 
-    // 4. Tech Arch Generation in CODING session
+    // Architecture standards have their own specialist session.
     const assetsBefore = store.listFourLayerAssets().length;
     await runSessionAction(
       'proj-contract',
-      'CODING',
-      '[ACTION:GENERATE_TECH_ARCH {"name":"WMS 云原生四层技术架构","stackTags":["TypeScript","Hono","D1"]}]\n生成技术架构规范',
+      'ARCHITECTURE',
+      '[ACTION:GENERATE_TECH_ARCH {"name":"WMS Node.js 技术架构","stackTags":["TypeScript","Hono","SQLite"]}]\n生成技术架构规范',
     );
     expect(store.listFourLayerAssets().length).toBe(assetsBefore + 1);
 
@@ -496,14 +498,14 @@ describe('server API & Cloudflare Worker integration', () => {
     expect(savedDocs[0]!.status).toBe('DRAFT');
     expect(savedDocs[0]!.content).toContain('现烤烘焙门店');
 
-    // Now simulate HTTP 502 Bad Gateway on a CODING Tech Arch run: must emit run_error and create ZERO assets
+    // A failed architecture-provider call must create no standards.
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('Bad Gateway', { status: 502 })),
     );
     const codingSess = store.createAgentSession({
       projectId: proj.id,
-      agentKind: 'CODING',
+      agentKind: 'ARCHITECTURE',
       title: '烘焙架构生成',
     });
     const assetsBefore = store.listFourLayerAssets().length;
@@ -533,7 +535,7 @@ describe('server API & Cloudflare Worker integration', () => {
     });
     const codingSess = store.createAgentSession({
       projectId: 'proj-contract',
-      agentKind: 'CODING',
+      agentKind: 'ARCHITECTURE',
       title: '并行编码规范会话',
     });
 
@@ -768,6 +770,8 @@ describe('server API & Cloudflare Worker integration', () => {
       }),
     });
 
+    const generated = await app.request('/api/applications/app-contract-clm/compile-package', { method: 'POST' });
+    expect(generated.status).toBe(200);
     const zipRes = await app.request('/api/applications/app-contract-clm/package.zip');
     expect(zipRes.status).toBe(200);
     const zipBytes = new Uint8Array(await zipRes.arrayBuffer());
@@ -784,7 +788,7 @@ describe('server API & Cloudflare Worker integration', () => {
       );
       const dataStart = offset + 30 + nameLen + extraLen;
       const compSlice = zipBytes.subarray(dataStart, dataStart + compSize);
-      if (entryName === '参考资料/界面原型.html') {
+      if (entryName === 'references/prototype/index.html') {
         const rawBytes = method === 8 ? inflateRawSync(compSlice) : compSlice;
         extractedProtoHtml = new TextDecoder().decode(rawBytes);
         break;
@@ -806,10 +810,11 @@ describe('server API & Cloudflare Worker integration', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-isolated-store-'));
     const prevRoot = process.env.ONTOLOGY_WORKSPACE_ROOT;
     const prevDb = process.env.ONTOLOGY_DB_PATH;
+    let isolatedStore: ReturnType<typeof createWorkspaceStore> | undefined;
     try {
       process.env.ONTOLOGY_WORKSPACE_ROOT = tmpDir;
       delete process.env.ONTOLOGY_DB_PATH;
-      const isolatedStore = createWorkspaceStore();
+      isolatedStore = createWorkspaceStore();
       expect(isolatedStore.listProjects().length).toBeGreaterThanOrEqual(2);
       expect(fs.existsSync(path.join(tmpDir, 'onto-cs.db'))).toBe(true);
     } finally {
@@ -817,6 +822,7 @@ describe('server API & Cloudflare Worker integration', () => {
       else process.env.ONTOLOGY_WORKSPACE_ROOT = prevRoot;
       if (prevDb === undefined) delete process.env.ONTOLOGY_DB_PATH;
       else process.env.ONTOLOGY_DB_PATH = prevDb;
+      isolatedStore?.close();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

@@ -4,6 +4,10 @@ Agent work had grown four unrelated surfaces: embedded `Agent Session` workbench
 
 Sessions belong to one specialised agent within one `Ontology Project`, because each agent has its own tools and context; a session never mixes agents. Within that scope the user may keep several sessions per agent and switch, rename, or delete them from the `Agent Panel`, so that an unrelated topic does not have to continue an old conversation. Canvas actions post to the session the panel is showing for that agent. The one exception is `Prototype Co-Design`, where each `Interactive Prototype` owns its own session and forks it when the prototype is saved as a new one, since a conversation about one design direction is noise for another; those sessions are not created or deleted by hand. A session runs one `Agent Run` at a time and queues further input; different sessions may run concurrently.
 
+Architecture asset authoring and application development are separate specialisations with separate conversation histories and working contexts. The Architecture Asset Agent helps users add and maintain development standards; application development has its own session for work on the target application's deliverables. Both use the shared Agent Panel. Changing only the panel title while reusing one `CODING` conversation does not provide this separation.
+
+The Architecture Asset Agent authors repository-owned standards as defined in ADR 0012. The Application Development Agent checks the selected inputs, identifies missing or conflicting information, and refines the current application's implementation specification; changes to shared standards belong to architecture asset authoring. Assistant text streams as normal Markdown content, while thinking and tool details are collapsible; displayed steps correspond to actual activity.
+
 ## Considered Options
 
 - **Keep background pipeline tasks as a second mechanism and only restyle them.** Rejected: two mechanisms means two streaming protocols, two cancel and retry paths, and two places for the user to look, which is the fragmentation being removed.
@@ -15,8 +19,9 @@ Sessions belong to one specialised agent within one `Ontology Project`, because 
 - Canvas buttons such as "Synthesize SRS" or "Generate prototype" remain, but each posts a structured instruction to the owning session instead of calling a one-shot endpoint.
 - The pipeline-task endpoints and the one-shot agent endpoints are retired once their callers have moved, so resumability and cancellation have to be provided by the session engine alone.
 - A failed run is reported as failed in the panel. No agent path may substitute a template result and report success outside the explicit Mock mode of ADR 0007.
+- Development Package generation is a deterministic operation that validates and assembles saved material into the Package Snapshot defined in ADR 0013. It runs directly with ordinary operation status; conversational specification refinement remains an Agent Run. Generating or downloading a package does not require a new LLM conversation.
 
 ## Amendments
 
 - **2026-11-13: several sessions per agent.** The original text kept exactly one session per specialised agent per project. In use that forced every topic into one ever-growing conversation, so the panel now offers session management for every agent except `Prototype Co-Design`. The reasons for per-agent sessions and for one shared panel are unchanged.
-- **2026-11-17: one `AI Assistant` in presentation (ADR 0011).** The user sees a single assistant; the specialised agent behind it follows the `Project Step` in view, and switching, renaming, and deleting sessions move into a history menu. A request that belongs to another step is answered with a `Step Hand-off`, never carried out across sessions. Sessions, their scoping to one agent, and the engine are unchanged.
+- **2026-11-17: one `AI Assistant` in presentation (ADR 0014).** The user sees a single assistant; the specialised agent behind it follows the `Project Step` in view, and switching, renaming, and deleting sessions move into a history menu. A request that belongs to another step is answered with a `Step Hand-off`, never carried out across sessions. Sessions, their scoping to one agent, and the engine are unchanged.

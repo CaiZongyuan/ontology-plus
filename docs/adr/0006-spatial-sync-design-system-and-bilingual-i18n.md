@@ -18,4 +18,4 @@ A Hex-style replacement shell was prototyped (branch `prototype/hex-shell-varian
 
 ## Amendments
 
-- **2026-11-17: palette and typefaces superseded by ADR 0012.** The default look is now a neutral `Workbench Theme`; warm paper remains as the built-in theme 暖纸, where the palette and typefaces above still apply. The type roles stand, but the families come from the active theme. The rules on the single button, colour carrying meaning, depth by tone, no preflight, copy, motion, bilingual i18n, and no blocking dialogs are unchanged.
+- **2026-11-17: palette and typefaces superseded by ADR 0015.** The default look is now a neutral `Workbench Theme`; warm paper remains as the built-in theme 暖纸, where the palette and typefaces above still apply. The type roles stand, but the families come from the active theme. The rules on the single button, colour carrying meaning, depth by tone, no preflight, copy, motion, bilingual i18n, and no blocking dialogs are unchanged.

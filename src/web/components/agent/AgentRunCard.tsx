@@ -14,7 +14,7 @@ import {
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { ApprovalCard, Button } from '../beautifui/index.js';
-import { MarkdownRenderer } from '../markdown/MarkdownRenderer.js';
+import { MarkdownRenderer } from '../markdown/index.js';
 import { LocalImageThumbnail } from './VisionAttachmentControls.js';
 import {
   formatAnchorBadgeLabel,
@@ -281,15 +281,6 @@ export function AgentRunCard({
           </details>
         ))}
 
-      {running && run.streamingText && (
-        <MarkdownRenderer
-          content={run.streamingText}
-          isStreaming
-          className="agent-run-reply"
-          testId="agent-run-streaming-text"
-        />
-      )}
-
       {run.thinking && (
         <details className="agent-run-thinking" data-testid="agent-run-thinking">
           <summary>
@@ -298,6 +289,15 @@ export function AgentRunCard({
           </summary>
           <pre className="agent-run-detail">{run.thinking}</pre>
         </details>
+      )}
+
+      {run.text && (
+        <MarkdownRenderer
+          content={run.text}
+          isStreaming={running}
+          className="agent-run-text agent-run-reply"
+          testId="agent-run-text"
+        />
       )}
 
       {run.askUser && (
@@ -317,10 +317,12 @@ export function AgentRunCard({
 
       {run.status === 'SUCCEEDED' && run.result && (
         <footer className="agent-run-outcome" data-testid="agent-run-result">
-          <MarkdownRenderer
-            content={t(run.result.summary.zh, run.result.summary.en)}
-            className="agent-run-outcome-text agent-run-reply"
-          />
+          {!run.text && (
+            <MarkdownRenderer
+              content={t(run.result.summary.zh, run.result.summary.en)}
+              className="agent-run-outcome-text agent-run-reply"
+            />
+          )}
           {run.artifact?.kind === 'REASONING_POLICY' &&
             run.artifact.policyRecommendations.length > 0 && (
               <div className="agent-run-policy-list" data-testid="agent-run-policy-list">

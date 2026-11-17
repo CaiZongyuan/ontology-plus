@@ -61,6 +61,11 @@ const TOOL_CATALOG: Record<string, ToolMeta> = {
     en: 'Compile Dev Package',
     icon: FileCode2,
   },
+  read_architecture_assets: { zh: '读取仓库架构规范', en: 'Read Architecture Standards', icon: Search },
+  save_architecture_asset: { zh: '保存仓库架构规范', en: 'Save Architecture Standard', icon: FileText },
+  save_tech_architecture_spec: { zh: '保存技术架构规范', en: 'Save Technical Architecture', icon: FileText },
+  read_application_inputs: { zh: '检查应用规格输入', en: 'Inspect Application Inputs', icon: Search },
+  save_application_instructions: { zh: '保存应用专属规格', en: 'Save Application Specification', icon: FileText },
   invoke_mcp_tool: {
     zh: '调用 MCP 工具',
     en: 'Invoke MCP Tool',

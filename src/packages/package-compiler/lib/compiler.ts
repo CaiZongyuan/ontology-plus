@@ -1,16 +1,27 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { validatePackageMarkdownReferences } from './markdown-references.js';
+import {
+  DEFAULT_TECHNOLOGY_PROFILE_ID,
+  isArchitectureAssetCompatible,
+  listTechnologyProfiles,
+  type TechnologyProfile,
+} from '../../architecture-assets/index.js';
 import {
   MODEL_CODES,
   MODEL_FILE_NAMES,
-  MODEL_STAGE_ORDER,
+  OntologySuiteSchema,
   serializeManifestJson,
   serializeSuiteToYamlFiles,
+  validateOntologySuite,
   type ModelCode,
   type OntologyManifest,
 } from '../../ontology-core/index.js';
 import type {
   AssembledApplication,
+  DevelopmentPackageFile,
+  DevelopmentPackageSnapshot,
   FourLayerAsset,
   GeneratedSkill,
   ProjectDetail,
@@ -18,21 +29,15 @@ import type {
   RequirementDoc,
 } from '../../workspace-store/index.js';
 
-export interface CompiledPackageFile {
-  relativePath: string;
-  category: 'GUIDE' | 'MANIFEST' | 'REFERENCE' | 'ONTOLOGY_YAML' | 'FOUNDATION' | 'SOURCE';
-  sizeBytes: number;
-  content: string;
-}
+export type CompiledPackageFile = DevelopmentPackageFile;
+export type CompiledDevelopmentPackage = DevelopmentPackageSnapshot;
 
-export interface CompiledDevelopmentPackage {
-  appId: string;
-  appName: string;
-  projectId: string;
-  outputDir: string;
-  compiledAt: string;
-  files: CompiledPackageFile[];
-  manifestJson: Record<string, unknown>;
+export interface DevelopmentPackagePrototypeRevision {
+  id: string;
+  prototypeId: string;
+  revisionNumber: number;
+  confirmedAt?: string;
+  createdAt?: string;
 }
 
 export interface CompileDevelopmentPackageInput {
@@ -43,642 +48,434 @@ export interface CompileDevelopmentPackageInput {
   techArchAsset: FourLayerAsset;
   requirementDoc?: RequirementDoc;
   prototype?: PrototypeArtifact;
+  prototypeRevision?: DevelopmentPackagePrototypeRevision;
+  technologyProfile?: TechnologyProfile;
+  applicationInstructions?: string;
+  snapshotId?: string;
+  inputFingerprint?: string;
+  compiledAt?: string;
+  /** @deprecated Development Packages contain implementation specifications. */
   extraSourceFiles?: { relativePath: string; content: string }[];
   workspaceRoot?: string;
   writeToDisk?: boolean;
+}
+
+export interface DevelopmentPackageInputDiagnostic {
+  code: string;
+  path: string;
+  target?: string;
+  message: string;
+}
+
+export class DevelopmentPackageInputError extends Error {
+  constructor(public readonly diagnostics: DevelopmentPackageInputDiagnostic[]) {
+    super(`Cannot compile Development Package:\n${diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join('\n')}`);
+    this.name = 'DevelopmentPackageInputError';
+  }
+}
+
+function selectedTechnologyProfile(input: CompileDevelopmentPackageInput): TechnologyProfile {
+  const appProfileId = 'technologyProfileId' in input.app && typeof input.app.technologyProfileId === 'string'
+    ? input.app.technologyProfileId : undefined;
+  const profile = input.technologyProfile ?? listTechnologyProfiles().find((entry) => entry.id === (appProfileId ?? DEFAULT_TECHNOLOGY_PROFILE_ID));
+  if (!profile) throw new Error(`Cannot compile Development Package: select an available Technology Profile (${appProfileId ?? DEFAULT_TECHNOLOGY_PROFILE_ID}).`);
+  return profile;
+}
+
+function inspectDevelopmentPackageInputs(input: CompileDevelopmentPackageInput) {
+  const diagnostics: DevelopmentPackageInputDiagnostic[] = [];
+  const add = (code: string, path: string, message: string) => diagnostics.push({ code, path, message });
+  for (const blocker of input.app.developmentBlockers ?? []) {
+    add('UNRESOLVED_DEVELOPMENT_CONFLICT', 'app.developmentBlockers', blocker);
+  }
+  if (input.app.projectId !== input.project.id) add('PROJECT_MISMATCH', 'app.projectId', 'Select the Ontology Project owned by this application.');
+  for (const [field, value] of [['app.id', input.app.id], ['snapshotId', input.snapshotId]] as const) {
+    if (value !== undefined && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value)) {
+      add('INVALID_ID', field, 'Use an ID containing English letters, digits, periods, underscores, or hyphens.');
+    }
+  }
+  if (input.compiledAt !== undefined && !Number.isFinite(Date.parse(input.compiledAt))) {
+    add('INVALID_TIMESTAMP', 'compiledAt', 'Provide a valid generation timestamp.');
+  }
+  const requirement = input.requirementDoc;
+  if (!requirement) add('REQUIREMENTS_REQUIRED', 'requirementDoc', 'Select the confirmed requirements document.');
+  else {
+    if (requirement.projectId !== input.project.id) add('REQUIREMENTS_PROJECT_MISMATCH', 'requirementDoc.projectId', 'Select requirements belonging to the application\'s Ontology Project.');
+    if (!['CONFIRMED', 'PUBLISHED'].includes(requirement.status)) add('REQUIREMENTS_UNCONFIRMED', 'requirementDoc.status', 'Confirm the requirements document before generating a package.');
+    if (!requirement.content.trim()) add('REQUIREMENTS_EMPTY', 'requirementDoc.content', 'Requirements content must be nonempty.');
+  }
+  const prototype = input.prototype;
+  if (!prototype || !prototype.isConfirmed || !prototype.confirmedRevisionId) {
+    add('CONFIRMED_PROTOTYPE_REQUIRED', 'prototype', 'Select a confirmed prototype revision and synchronize its UI Model before generating a package.');
+  } else {
+    if (prototype.projectId !== input.project.id) add('PROTOTYPE_PROJECT_MISMATCH', 'prototype.projectId', 'Select a confirmed prototype belonging to the application\'s Ontology Project.');
+    const revision = prototype.revisions.find((entry) => entry.id === prototype.confirmedRevisionId);
+    if (!revision || revision.prototypeId !== prototype.id || revision.projectId !== input.project.id) {
+      add('PROTOTYPE_REVISION_MISSING', 'prototype.confirmedRevisionId', 'The saved confirmed revision must exist and belong to this prototype and project.');
+    } else if (!prototype.htmlContent.trim() || prototype.htmlContent !== revision.htmlContent) {
+      add('PROTOTYPE_CONTENT_MISMATCH', 'prototype.htmlContent', 'Use the confirmed revision\'s exact HTML content; confirm a changed revision before generating a package.');
+    }
+    if (input.prototypeRevision && (input.prototypeRevision.id !== prototype.confirmedRevisionId ||
+        input.prototypeRevision.prototypeId !== prototype.id ||
+        input.prototypeRevision.revisionNumber !== revision?.revisionNumber)) {
+      add('PROTOTYPE_REVISION_MISMATCH', 'prototypeRevision', 'Prototype revision metadata must match the saved confirmed revision.');
+    }
+  }
+  let profile: TechnologyProfile | undefined;
+  try { profile = selectedTechnologyProfile(input); }
+  catch (error) { add('PROFILE_REQUIRED', 'technologyProfile', error instanceof Error ? error.message : 'Select an available Technology Profile.'); }
+  if (profile) {
+    if (!profile.id?.trim() || !profile.version?.trim() ||
+        ![profile.frontend, profile.backend, profile.persistence, profile.deployment, profile.compatibleAssetIds]
+          .every((items) => Array.isArray(items) && items.length > 0 && items.every((item) => typeof item === 'string' && item.trim()))) {
+      add('PROFILE_INVALID', 'technologyProfile', 'Select a complete Technology Profile covering frontend, backend, persistence, deployment, and compatible standards.');
+    }
+    if ('technologyProfileId' in input.app && input.app.technologyProfileId && input.app.technologyProfileId !== profile.id) {
+      add('PROFILE_MISMATCH', 'technologyProfile.id', 'The Technology Profile must match the application\'s selection.');
+    }
+  }
+  const selections = [
+    { field: 'uiUeAsset', asset: input.uiUeAsset, id: input.app.uiUeAssetId, layer: 'UI_UE' },
+    { field: 'techFoundationAsset', asset: input.techFoundationAsset, id: input.app.techFoundationAssetId, layer: 'TECH_FOUNDATION' },
+    { field: 'techArchAsset', asset: input.techArchAsset, id: input.app.techArchAssetId, layer: 'TECH_ARCH' },
+  ];
+  for (const { field, asset, id, layer } of selections) {
+    if (!asset || asset.id !== id || asset.layer !== layer) {
+      add('ASSET_SELECTION_MISMATCH', field, 'Provide the explicitly selected asset for this application layer.');
+      continue;
+    }
+    if (!asset.specMarkdown.trim()) add('STANDARD_EMPTY', `${field}.specMarkdown`, 'Selected standard content must be nonempty.');
+    if (!asset.sourcePath?.trim() || !asset.sourceRevision?.trim()) add('STANDARD_SOURCE_REQUIRED', field, 'Select a repository-owned standard with its source path and revision.');
+    if (profile && !isArchitectureAssetCompatible(profile, asset)) {
+      add('STANDARD_PROFILE_CONFLICT', field, 'Select a standard compatible with the selected Technology Profile, or explicitly associate the repository standard with that profile.');
+    }
+  }
+  if (input.extraSourceFiles?.length) add('SOURCE_FILES_UNSUPPORTED', 'extraSourceFiles', 'Provide application-specific implementation instructions through applicationInstructions; this package exports an implementation specification.');
+  const parsedSuite = OntologySuiteSchema.safeParse(input.project.suite);
+  if (!parsedSuite.success) {
+    for (const issue of parsedSuite.error.issues) add('ONTOLOGY_SCHEMA_ERROR', `project.suite.${issue.path.join('.')}`, issue.message);
+  }
+  const validation = parsedSuite.success ? validateOntologySuite(parsedSuite.data) : undefined;
+  for (const diagnostic of validation?.diagnostics ?? []) {
+    if (diagnostic.tier === 'ERROR') add(diagnostic.code, diagnostic.path ?? `project.suite.${diagnostic.model}`, `Consistency Error: ${diagnostic.messageEn}`);
+  }
+  return { diagnostics, validation, suite: parsedSuite.success ? parsedSuite.data : input.project.suite, profile };
+}
+
+/** Blocking diagnostics only; nonblocking Stage Warnings remain in the compiled manifest. */
+export function validateDevelopmentPackageInputs(input: CompileDevelopmentPackageInput): DevelopmentPackageInputDiagnostic[] {
+  return inspectDevelopmentPackageInputs(input).diagnostics;
+}
+
+function contentHash(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, entry: unknown) => {
+    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      return Object.fromEntries(Object.entries(entry).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+    }
+    return entry;
+  });
+}
+
+/** Hash only content and source identities that can change the implementation handoff. */
+export function fingerprintDevelopmentPackageInputs(input: CompileDevelopmentPackageInput): string {
+  return contentHash(canonicalJson({
+    compilerFormat: 'development-specification-v1',
+    app: {
+      id: input.app.id, name: input.app.name, projectId: input.app.projectId,
+      uiUeAssetId: input.app.uiUeAssetId, techFoundationAssetId: input.app.techFoundationAssetId,
+      techArchAssetId: input.app.techArchAssetId,
+    },
+    project: {
+      id: input.project.id, name: input.project.name, code: input.project.code,
+      domain: input.project.domain, updatedAt: input.project.updatedAt, suite: input.project.suite,
+    },
+    requirementDoc: input.requirementDoc,
+    prototype: input.prototype && {
+      id: input.prototype.id, projectId: input.prototype.projectId,
+      htmlContent: input.prototype.htmlContent,
+      confirmedRevisionId: input.prototype.confirmedRevisionId,
+    },
+    prototypeRevision: input.prototypeRevision,
+    technologyProfile: selectedTechnologyProfile(input),
+    standards: [input.uiUeAsset, input.techFoundationAsset, input.techArchAsset],
+    applicationInstructions: input.applicationInstructions?.trim() ? input.applicationInstructions : undefined,
+  }));
 }
 
 function getPresentModelCodes(project: ProjectDetail): ModelCode[] {
   return MODEL_CODES.filter((code) => Boolean(project.suite[code]));
 }
 
+/** The existing Skill and MCP manifest keeps ontology-core's canonical filenames. */
 export function buildOntologySuiteManifest(project: ProjectDetail): OntologyManifest {
   const models: Record<string, string> = {};
-  for (const code of getPresentModelCodes(project)) {
-    models[code] = MODEL_FILE_NAMES[code];
-  }
-  return {
-    version: '1.0',
-    projectId: project.id,
-    domain: project.domain || project.name,
-    models,
-  };
+  for (const code of getPresentModelCodes(project)) models[code] = MODEL_FILE_NAMES[code];
+  return { version: '1.0', projectId: project.id, domain: project.domain || project.name, models };
 }
 
-export function buildMasterDevelopmentGuide(input: {
-  app: AssembledApplication;
-  project: ProjectDetail;
-  uiUeAsset: FourLayerAsset;
-  techFoundationAsset: FourLayerAsset;
-  techArchAsset: FourLayerAsset;
-  compiledAt: string;
-}): string {
-  const { app, project, uiUeAsset, techFoundationAsset, techArchAsset, compiledAt } = input;
-  const presentCodes = getPresentModelCodes(project);
-  const presentSet = new Set<ModelCode>(presentCodes);
+function modelLink(project: ProjectDetail, code: ModelCode): string {
+  return project.suite[code]
+    ? `[${code}](../references/ontology/${code}.yaml)`
+    : `${code} (not authored; see the Stage Warnings in the package manifest)`;
+}
 
-  const renderPointerGroup = (codes: ModelCode[], extraPaths: string[] = []): string => {
-    const lines: string[] = [];
-    for (const code of codes) {
-      if (presentSet.has(code)) {
-        const fileName = MODEL_FILE_NAMES[code];
-        lines.push(
-          `  - \`参考资料/本体模型/${fileName}\`（镜像路径：\`.onto-cs/model/${project.id}/yaml/${fileName}\`）`,
-        );
-      }
-    }
-    for (const extra of extraPaths) {
-      lines.push(`  - \`${extra}\``);
-    }
-    return lines.length > 0 ? lines.join('\n') : '  - _当前工程阶段尚未裁剪该组元模型_';
-  };
+function buildAgentInstructions(): string {
+  return `# Coding agent instructions
 
-  const aggSummary =
-    (project.suite.M1?.aggregates ?? []).map((a) => `\`${a.name}\``).join('、') || '暂无聚合根';
-  const behSummary =
-    (project.suite.M2?.behaviors ?? []).map((b) => `\`${b.id}:${b.name}\``).join('、') ||
-    '暂无行为';
-  const flowSummary =
-    (project.suite.M6?.flows ?? []).map((f) => `\`${f.id}:${f.name}\``).join('、') ||
-    '按需装配流程';
-  const screenSummary =
-    (project.suite.MU?.screens ?? []).map((s) => `\`${s.screenId}\``).join('、') ||
-    '按原型语义锚点绑定';
+Read [README](README.md) and [the snapshot manifest](manifest.json) to identify the fixed inputs and selected standards.
 
-  return `# 开发指导书 — ${app.name}
+1. Read [Architecture](docs/architecture.md) before choosing module boundaries or dependencies. Completion: each selected standard and its authority are accounted for.
+2. Follow [Implementation sequence](docs/implementation.md) in order. Open only the ontology files and references named by the current step. Completion: record evidence for that step before starting its dependent work.
+3. Use [Acceptance criteria](docs/acceptance.md) to verify delivery. Completion: each applicable criterion has a test, command result, or reviewed UI evidence tied to its ontology IDs.
 
-> **生成时间**：\`${compiledAt}\`
-> **所属本体工程**：\`${project.name} (${project.code})\`
-> **一致性门禁状态**：✅ 通过（Consistency Error === 0 · ${presentCodes.length}/11 模型就绪）
-
-## 1. 工程定位与四层架构装配件矩阵 (4-Layer Asset Assembly Matrix)
-本开发资料包由 **Ontology Plus** 平台自动编译生成，严格遵循 **渐进式披露（Progressive Disclosure）** 架构规范。编码智能体（Coding Agent）禁止一次性将全部 YAML 塞入上下文，必须先阅读本指导书与 \`manifest.json\` 建立全局索引，再按施工阶段按需加载目标元模型文件。
-
-| 架构层级 | 选用资产标识 | 选用资产名称 | 版本 | 权威规范与产物路径 |
-| :--- | :--- | :--- | :--- | :--- |
-| **01 UI/UE 原型层** | \`${uiUeAsset.id}\` | ${uiUeAsset.name} | ${uiUeAsset.version} | \`参考资料/UI-UE界面设计规范.md\` + \`参考资料/界面原型.html\` |
-| **02 业务本体层** | \`${project.id}\` | ${project.name} | v5.0 | \`本体模型业务功能开发指导书.md\` + \`参考资料/本体模型/manifest.json\` |
-| **03 技术底座层** | \`${techFoundationAsset.id}\` | ${techFoundationAsset.name} | ${techFoundationAsset.version} | \`技术底座/README.md\` |
-| **04 技术架构层** | \`${techArchAsset.id}\` | ${techArchAsset.name} | ${techArchAsset.version} | \`参考资料/技术架构设计文档.md\` |
-
-## 2. 渐进式按需上下文指针 (Progressive Context Pointers)
-- **Step 0 — 全局模型索引（必读入口）**：
-  - \`参考资料/本体模型/manifest.json\`（工作区镜像：\`.onto-cs/model/${project.id}/yaml/manifest.json\`）
-  - 已就绪元模型清单（${presentCodes.length} 个）：${presentCodes.map((c) => `\`${c}\` (\`${MODEL_FILE_NAMES[c]}\`)`).join('、')}
-- **数据模型、字典与物理表持久化上下文（M1 / MM）**：
-${renderPointerGroup(['M1', 'MM'])}
-- **领域命令、前置规则门禁与跨聚合事件协同上下文（M2 / M3 / ME / M4）**：
-${renderPointerGroup(['M2', 'M3', 'ME', 'M4'])}
-- **组织权限、审批工作流与读写分离报表上下文（M5 / M6 / M7）**：
-${renderPointerGroup(['M5', 'M6', 'M7'])}
-- **前端屏幕、原型语义锚点与外部系统接口上下文（MU / MI）**：
-${renderPointerGroup(['MU', 'MI'], ['参考资料/界面原型.html'])}
-
-## 3. 五阶段标准施工序列 (5-Phase Execution Sequence)
-1. **Phase 1 — 本体契约解析与物理建库**：读取 \`manifest.json\`、\`M1\` 与 \`MM\`，落地主从业务表、\`__dict\` 系统字典表及 5 个强制审计字段。
-2. **Phase 2 — 规则门禁与 CQRS 领域服务**：依据 \`M3\` 与 \`M2\`/\`M7\` 实现事务内三级规则拦截（属性 \`refRules\` -> 聚合 \`invariants\` -> 跨对象 \`M3\` 规则）及 1:1 读写分离查询沙箱。
-3. **Phase 3 — 事件编排、权限矩阵与审批引擎**：依据 \`ME\`、\`M4\`、\`M5\` 与 \`M6\` 装配领域事件订阅/同步触发器、RBAC+ABAC 数据范围拦截及流程节点图。
-4. **Phase 4 — 语义化前端屏幕与边界接口装配**：依据 \`MU\`、\`界面原型.html\` 与 \`MI\` 绑定 \`data-screen-id\` / \`data-binding\` / \`data-event-id\` 控件契约与 REST/外部写回适配器。
-5. **Phase 5 — 4A V-Model 闭环核验与冒烟联调**：逐项执行下方交付验收清单，确保模型、代码、数据库与界面零语义漂移。
-
-## 4. 4A V-Model 可核查交付完成标准 (4A V-Model Verification Criteria)
-- [ ] **Consistency Error === 0（本体双层校验零阻断错误）**：全套元模型通过双层校验器门禁（\`Consistency Error === 0\`），聚合根（${aggSummary}）无悬空引用或契约冲突。
-- [ ] **M3 Pre-condition Interception（M3 前置规则刚性拦截）**：所有领域行为（${behSummary}）在变更聚合状态或落库前，强制执行关联的 \`invokedRules\` 与聚合不变量，违背时原样返回 \`violationMessage\` 并回滚事务。
-- [ ] **M6 Approval Gate Reachability（M6 审批门禁可达性与双按钮契约）**：所有工作流与审批流（${flowSummary}）起点到终态 \`END\` 100% 可达、网关具备默认完备分支，且审批录入屏幕严格提供 \`DRAFT\`（保存草稿）与 \`SUBMIT\`（提交审批）双按钮。
-- [ ] **MU \`data-screen-id\` / \`data-binding\` Traceability（MU 界面语义锚点全链路追溯）**：所有前端屏幕（${screenSummary}）完整保留 \`data-screen-id\`、\`data-element-id\`、\`data-binding\`、\`data-event-id\` 锚点，交互调用链严格遵循 \`VALIDATE -> BEHAVIOR_CALL -> EVENT_EMIT\` 顺序，\`M7\` 报表严格执行 \`referenceSql\` 参数化绑定。
-- [ ] **MM Physical Persistence Audit Columns（MM 物理持久化零漂移与 5 审计列）**：所有 \`MM\` 物理表与 \`M1\` 属性 100% 映射对齐，且每张业务主从表强制注入 \`created_by\`、\`created_at\`、\`updated_by\`、\`updated_at\`、\`flag\` 五个系统审计列。
+Business semantics come from the disclosed Ontology Suite; UI intent comes from the confirmed prototype. Keep original business labels and messages. Resolve a conflict in the selected inputs explicitly before implementation. Record missing late-stage models as Stage Warnings and seek the specific missing decision before implementing that area.
 `;
 }
 
-export function buildBusinessOntologyFeatureGuide(project: ProjectDetail): string {
+function buildArchitectureGuide(input: CompileDevelopmentPackageInput): string {
+  const { app, project } = input;
+  const profile = selectedTechnologyProfile(input);
+  return `# Architecture
+
+Application: ${app.name} (\`${app.id}\`). Ontology Project: ${project.name} (\`${project.id}\`).
+
+## Authority and selected standards
+
+- Formal business semantics: [Ontology manifest](../references/ontology/manifest.json). Keep its identifiers, invariants, behavior contracts, and authorization bindings.
+- UI layout, interaction, and original copy: [Confirmed prototype](../references/prototype/index.html), traced through ${modelLink(project, 'MU')}.
+- Business scope and rationale: [Original requirements](../references/requirements.md).
+- UI engineering conventions: [Selected UI standard](../standards/ui.md).
+- Tooling, local development, and deployment: [Selected technical foundation](../standards/foundation.md).
+- Module boundaries and dependencies: [Selected technical architecture](../standards/architecture.md).
+
+Preserve the confirmed prototype's visual intent when applying generic component conventions. Resolve an explicit conflict by adjusting the selected inputs and generating a new snapshot.
+
+## Selected Technology Profile
+
+[${profile.name}](../standards/technology-profile.json), version \`${profile.version}\`.
+
+| Concern | Selection |
+| --- | --- |
+| Frontend | ${profile.frontend.join(' + ')} |
+| Backend | ${profile.backend.join(' + ')} |
+| Persistence | ${profile.persistence.join(' + ')} |
+| Deployment | ${profile.deployment.join(' + ')} |
+
+## Implementation boundaries
+
+Keep UI components and navigation separate from application use cases. Application use cases coordinate domain behavior, permissions, transactions, events, and persistence ports. Domain rules stay independent of HTTP handlers and UI components. Persistence adapters implement the declared object/table mapping; interface adapters implement the declared inbound and outbound contracts.
+
+Implement a vertical business path through the UI, behavior, rules, and persistence before extending the remaining paths. Use ontology IDs to connect the implementation and its verification to the authoritative models. Consult [Implementation sequence](implementation.md) for dependencies and [Acceptance criteria](acceptance.md) for evidence.
+`;
+}
+
+function buildImplementationGuide(input: CompileDevelopmentPackageInput): string {
+  const { project } = input;
+  const links = (...codes: ModelCode[]) => codes.map((code) => modelLink(project, code)).join(', ');
+  const ids = (items: { id: string }[] | undefined) => items?.map((item) => `\`${item.id}\``).join(', ') || 'No elements declared in this snapshot.';
+  return `# Implementation sequence
+
+Implement the target application from this fixed specification. Keep a delivery record mapping completed work to [Acceptance criteria](acceptance.md). Source business text retains its original language.${input.applicationInstructions?.trim() ? '\n\nRead [Application-specific instructions](../references/application-instructions.md) before planning the work.' : ''}
+
+## 1. Confirm scope and bootstrap the selected foundation
+
+Read [Requirements](../references/requirements.md), [Architecture](architecture.md), and [Technical foundation](../standards/foundation.md). Inspect [Ontology manifest](../references/ontology/manifest.json) before opening individual models. Establish local development, build, test, and Node.js deployment commands using the selected Technology Profile.
+
+Completion: the application starts locally, builds, runs its verification commands, and exposes a documented production startup path. Resolve required decisions missing from the inputs before implementing affected features.
+
+## 2. Implement domain objects and persistence
+
+Read ${links('M1', 'MM')}. Implement declared attributes, types, dictionaries, associations, value objects, lifecycle transitions, attribute rules, and aggregate invariants. Implement the declared table/column mapping with migrations and transaction boundaries. Keep repository operations behind application-facing ports.
+
+Aggregate scope: ${ids(project.suite.M1?.aggregates)}. Mapping scope: ${ids(project.suite.MM?.mappings)}.
+
+Completion: each mapped object round-trips through SQLite; invalid attributes, associations, invariants, and lifecycle transitions are rejected before committing changes. Track any absent mapping as a Stage Warning requiring a persistence decision.
+
+## 3. Implement behavior, rules, and read queries
+
+Read ${links('M2', 'M3', 'M7')}. Implement each behavior's input/output contract, preconditions, state changes, invoked rules, permissions, and emitted events. Evaluate side-effect-free rules before writes and preserve declared violation messages. Bind every QUERY behavior one-to-one with its query/report and execute its reference SQL with bound parameters.
+
+Behavior scope: ${ids(project.suite.M2?.behaviors)}. Rule scope: ${ids(project.suite.M3?.rules)}. Query/report scope: ${ids(project.suite.M7?.query_reports)}.
+
+Completion: each declared behavior has success and relevant rejection evidence; rejected commands roll back; each query returns the declared fields and preserves the M2/M7 binding.
+
+## 4. Implement authorization and business collaboration
+
+Read ${links('M5', 'ME', 'M4', 'M6')}. Enforce role and permission bindings at the application boundary. Implement event producers, payloads, ordering, subscribers, reactive scenarios, and role-bound collaboration/approval tasks from their contracts. Keep scenario reactions distinct from human workflow tasks.
+
+Event scope: ${ids(project.suite.ME?.events)}. Scenario scope: ${ids(project.suite.M4?.event_scenarios)}. Flow scope: ${ids(project.suite.M6?.flows)}.
+
+Completion: unauthorized calls fail, emitted facts have the declared producer and payload, subscribers execute correctly, and each declared flow reaches its valid end states through permitted routes.
+
+## 5. Connect UI interactions and system boundaries
+
+Read ${links('MU', 'MI')}, the [Confirmed prototype](../references/prototype/index.html), and [UI standard](../standards/ui.md). Implement each screen and its ordered UI event call chains. Retain semantic anchors (\`data-screen-id\`, \`data-element-id\`, \`data-binding\`, \`data-event-id\`) for traceability. Implement interface fields, direction, authentication, errors, and return rules as declared.
+
+Screen scope: ${project.suite.MU?.screens.map((screen) => `\`${screen.screenId}\``).join(', ') || 'No screens declared in this snapshot.'}. Interface scope: ${project.suite.MI?.interfaces.map((contract) => `\`${contract.interfaceId}\``).join(', ') || 'No interfaces declared in this snapshot.'}.
+
+Completion: every declared screen event reaches its modeled behavior/query/navigation target, the UI matches the confirmed design, and each declared inbound/outbound interface has contract evidence.
+
+## 6. Verify and hand over
+
+Run [Acceptance criteria](acceptance.md). Exercise representative UI-to-persistence paths plus rejection and authorization cases. Document configuration, local setup, migrations, production startup, and the exact commands used to verify delivery.
+
+Completion: every applicable criterion has evidence; unresolved Stage Warnings and required decisions are explicit in the delivery record.
+`;
+}
+
+function buildAcceptanceGuide(project: ProjectDetail): string {
   const { suite } = project;
-  const pointerFor = (code: ModelCode): string =>
-    suite[code]
-      ? `\`参考资料/本体模型/${MODEL_FILE_NAMES[code]}\`（镜像：\`.onto-cs/model/${project.id}/yaml/${MODEL_FILE_NAMES[code]}\`）`
-      : `_当前阶段未裁剪 \`${MODEL_FILE_NAMES[code]}\`（Stage Warning 非阻断项）_`;
-
-  // M1 Summary
-  const m1Summary = suite.M1
-    ? [
-        `- **模型指针**：${pointerFor('M1')}`,
-        `- **数据字典（${suite.M1.data_dictionaries.length} 组）**：${
-          suite.M1.data_dictionaries
-            .map((d) => `\`${d.id}\` ${d.name} (${d.types.map((t) => t.typeCode).join('/')})`)
-            .join('、') || '无'
-        }`,
-        `- **跨聚合关联（${suite.M1.aggregate_associations.length} 条）**：${
-          suite.M1.aggregate_associations
-            .map((a) => `\`${a.id}\` \`${a.sourceAggregate}.${a.referenceField} -> ${a.targetAggregate}\` (${a.cardinality})`)
-            .join('；') || '无'
-        }`,
-        ...suite.M1.aggregates.map(
-          (agg) =>
-            `### 聚合根 \`${agg.name}\` (${agg.alias} · \`${agg.id}\`)\n` +
-            `- **生命周期状态机**：\`${agg.lifecycle.join(' -> ') || 'ACTIVE'}\`\n` +
-            `- **核心属性（${agg.attributes.length} 项）**：${agg.attributes.map((a) => `\`${a.name}\`(${a.label}:${a.type}${a.required ? '*' : ''})`).join(', ')}\n` +
-            `- **子实体**：${agg.entities.map((e) => `\`${e.name}\`(${e.alias}:${e.cardinality})`).join(', ') || '无'} · **值对象**：${agg.valueObjects.map((v) => `\`${v.name}\`(${v.alias})`).join(', ') || '无'}\n` +
-            `- **聚合不变量**：${agg.invariants.map((inv) => `\`${inv.name}\` [\`${inv.expression}\`]`).join('；') || '无'}`,
-        ),
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('M1')}`;
-
-  // M2 Summary
-  const m2Summary = suite.M2
-    ? [
-        `- **模型指针**：${pointerFor('M2')}`,
-        ...suite.M2.behaviors.map((b) => {
-          const events = b.producedEvents.map((e) => (typeof e === 'string' ? e : e.eventRef));
-          const syncs = (b.syncTriggers ?? []).map((s) => s.behaviorRef);
-          return (
-            `- **\`${b.id}\` \`${b.name}\` (${b.alias})**：归属 \`${b.ownerEntity}\` · 类型 \`${b.behaviorType}\` · 触发 \`${b.triggerType}\` · ` +
-            `前置规则 \`[${b.invokedRules.join(', ')}]\` · 产生事件 \`[${events.join(', ')}]\`` +
-            (b.queryReportRef ? ` · 绑定报表 \`${b.queryReportRef}\`` : '') +
-            (syncs.length > 0 ? ` · 同步联动 \`[${syncs.join(', ')}]\`` : '')
-          );
-        }),
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('M2')}`;
-
-  // M3 Summary
-  const m3Summary = suite.M3
-    ? [
-        `- **模型指针**：${pointerFor('M3')}`,
-        ...suite.M3.rules.map(
-          (r) =>
-            `- **\`${r.id}\` ${r.alias} (\`${r.name}\` · \`${r.ruleType}\`)**：表达式 \`${r.expression}\` — 违背提示：「${r.violationMessage ?? '规则校验未通过'}」`,
-        ),
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('M3')}`;
-
-  // ME Summary
-  const meSummary = suite.ME
-    ? [
-        `- **模型指针**：${pointerFor('ME')}`,
-        ...suite.ME.events.map(
-          (ev) =>
-            `- **\`${ev.id}\` \`${ev.name}\` (${ev.label})**：源聚合 \`${ev.sourceAggregate}\` · 生产者 \`${ev.producerBehaviorRef || ev.producerRuleRef || '-'}\` · 投递语义 \`${ev.orderingSemantic}\` · 订阅者 ${ev.subscribers.length} 个`,
-        ),
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('ME')}`;
-
-  // M4 Summary
-  const m4Summary = suite.M4
-    ? [
-        `- **模型指针**：${pointerFor('M4')}`,
-        ...suite.M4.event_scenarios.map(
-          (sc) =>
-            `- **\`${sc.id}\` ${sc.name}**：触发事件 \`${sc.triggerEventRef}\` · 涉及聚合 \`[${sc.involvedAggregates.join(', ')}]\` · 编排步骤 \`${sc.steps.map((st) => `${st.stepOrder}.${st.stepType}(${st.refId})`).join(' -> ')}\``,
-        ),
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('M4')}`;
-
-  // M5 Summary
-  const m5Summary = suite.M5
-    ? [
-        `- **模型指针**：${pointerFor('M5')}`,
-        `- **业务主体（${suite.M5.actors.length} 类）**：${suite.M5.actors.map((a) => `\`${a.id}\` ${a.name}(${a.actorType})`).join('、') || '无'}`,
-        `- **角色与数据范围（${suite.M5.roles.length} 个）**：${suite.M5.roles.map((r) => `\`${r.id}\` ${r.name}[code=${r.code}, scope=${r.dataScope}]`).join('、') || '无'}`,
-        `- **细粒度权限点（${suite.M5.permissions.length} 项）**：${suite.M5.permissions.map((p) => `\`${p.id}\` \`${p.code}\` -> \`${p.targetAggregate}\` [${p.allowedBehaviors.join(', ')}]${p.abacCondition ? ` (ABAC: \`${p.abacCondition}\`)` : ''}`).join('；') || '无'}`,
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('M5')}`;
-
-  // M6 Summary
-  const m6Summary = suite.M6
-    ? [
-        `- **模型指针**：${pointerFor('M6')}`,
-        ...suite.M6.flows.map(
-          (fl) =>
-            `- **\`${fl.id}\` ${fl.name} (\`${fl.flowType}\`)**：主聚合 \`${fl.primaryAggregate}\` · 触发 \`${fl.trigger.triggerType}(${fl.trigger.behaviorRef ?? fl.trigger.refId ?? '-'}) \` · 节点数 ${fl.activities.length} 个（参与角色：\`[${fl.roleRefs.join(', ')}]\`）`,
-        ),
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('M6')}`;
-
-  // M7 Summary
-  const m7Summary = suite.M7
-    ? [
-        `- **模型指针**：${pointerFor('M7')}`,
-        ...suite.M7.query_reports.map(
-          (qr) =>
-            `- **\`${qr.id}\` \`${qr.name}\` (${qr.alias} · \`${qr.queryType}\`)**：1:1 绑定行为 \`${qr.behaviorRef}\` · 主数据源 \`${qr.primarySource.aggregateRef}\` · 入参 ${qr.parameters.length} 个 · 输出列 ${qr.resultColumns.length} 个 · SQL 方言 \`${qr.referenceSql.dialect}\``,
-        ),
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('M7')}`;
-
-  // MU Summary
-  const muSummary = suite.MU
-    ? [
-        `- **模型指针**：${pointerFor('MU')}`,
-        ...suite.MU.screens.map(
-          (sc) =>
-            `- **\`${sc.screenId}\` ${sc.name} (\`${sc.screenType}\` · 路由 \`${sc.route ?? '/'}\`)**：包含 ${sc.elements.length} 个语义控件、${sc.events.length} 个交互事件（角色：\`[${sc.roleRefs.join(', ')}]\`）`,
-        ),
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('MU')}`;
-
-  // MM Summary
-  const mmSummary = suite.MM
-    ? [
-        `- **模型指针**：${pointerFor('MM')}`,
-        ...suite.MM.mappings.map(
-          (mp) =>
-            `- **\`${mp.id}\` \`${mp.objectName}\` (\`${mp.objectRef}\`)**：映射物理表 ${mp.tableMappings.map((tm) => `\`${tm.tableName}\`(${tm.tableRole}, PK=\`${tm.primaryKey}\`, ${tm.columnMappings.length} 列)`).join('、')}`,
-        ),
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('MM')}`;
-
-  // MI Summary
-  const miSummary = suite.MI
-    ? [
-        `- **模型指针**：${pointerFor('MI')}`,
-        ...suite.MI.interfaces.map(
-          (iface) =>
-            `- **\`${iface.interfaceId}\` ${iface.name}** (\`${iface.direction}\` · \`${iface.interfaceCategory}\` · \`${iface.protocol}/${iface.format}\`)：关联行为 \`${iface.relatedBehaviorRef ?? '-'}\` · 关联报表 \`${iface.relatedReportRef ?? '-'}\` · 返回码规则 ${iface.returnRules.length} 条`,
-        ),
-      ].join('\n')
-    : `- **模型指针**：${pointerFor('MI')}`;
-
-  return `# 本体模型业务功能开发指导书 — ${project.domain}
-
-> **编译原则**：本指导书采用结构化摘要 + 精确 YAML 上下文指针，严禁将全量 YAML 拼接进单一提示词。编码实现任一模块前，请按对应章节指针读取权威元模型文件。
-
-## 一、标准 10 步本体驱动工程流水线 (10-Step Engineering Pipeline · §15.5)
-
-1. **Step 1 — Physical DDL & 5 Audit Fields（物理建表、5 审计字段与系统字典表）**：
-   依据 \`M1\` 与 \`MM\` 生成 SQLite/D1 增量 DDL；自动创建 \`__dict\` 系统数据字典表（\`dict_id\`, \`type_code\`, \`code\`, \`label\`, \`enabled\`, \`sort_order\`），并向所有业务主从表强制注入 \`created_by\`、\`created_at\`、\`updated_by\`、\`updated_at\`、\`flag\`（逻辑有效标记 \`1/0\`）五个系统审计列。
-2. **Step 2 — Auto-numbering（确定性业务流水号生成）**：
-   聚合根单据编号统一遵循 \`前缀3大写字母 + 4位流水号\` 公式（例如 \`CON0001\`），必须在同一数据库写事务内原子取号自增，前端表单设为只读，严禁人工输入。
-3. **Step 3 — Domain Entity & State Machine（M1 领域聚合根与生命周期状态机）**：
-   严格按 \`M1\` 封装聚合根、内部子实体（\`ONE_OR_MORE\` 映射明细子表并维护单事务级联）、不可变值对象与生命周期状态跃迁守卫；含”作废/VOID”状态的对象优先执行逻辑作废，物理删除必须执行全库外键引用保护扫描。
-4. **Step 4 — Rule Engine Interceptors（M3 多级规则引擎拦截器）**：
-   在命令服务入口建立三级规则拦截链（属性级 \`refRules\` -> 聚合级 \`invariants\` -> \`M3\` 跨对象规则），完整覆盖 \`VALIDATION\`（布尔门禁）、\`CALCULATION\`（数值计价）、\`STATE_GUARD\`（状态流转守卫）与 \`SPLIT_MERGE\`（拆分合并守恒）。
-5. **Step 5 — Command & Query Services（M2 <-> M7 1:1 读写分离服务）**：
-   \`M2\` \`COMMAND\` 行为独占写事务并持久化状态变更；\`M2\` \`QUERY\` 行为与 \`M7\` 查询报表保持严格 1:1 双向绑定，通过只读 SQL 沙箱参数化执行 \`referenceSql\`，并自动补充外键/字典 \`<field>__label\` 显示标签。
-6. **Step 6 — Event Bus & Saga Listeners（ME 领域事件总线与 M4 跨聚合协同）**：
-   在 \`M2\` 命令提交后发布过去时态 \`ME\` 领域事件（或执行单体事务内 \`syncTriggers\`），驱动 \`M4\` 跨聚合协同场景按 \`BEHAVIOR_CALL -> EVENT_EMIT -> RULE_EVALUATE\` 顺序推进。
-7. **Step 7 — Actor RBAC, ABAC & Row/Column Data Scope（M5 权限与行列级数据范围）**：
-   幂等初始化 \`M5\` 主体、角色继承链与权限码，在服务层与查询层同时拦截操作功能点权限、行级 \`dataScope\`（\`ALL\` / \`DEPT\` / \`OWN\`）及动态 \`abacCondition\` 表达式。
-8. **Step 8 — Process & Approval Engine（M6 流程审批引擎与双按钮铁律）**：
-   将 \`M6\` \`COLLABORATION\` 与 \`APPROVAL\` 流程装配至工作流节点图；任何关联审批流的录入编辑页底部必须同时落实 **双按钮规则（Two-Button Rule）**：\`保存草稿 (DRAFT)\`（松校验、不入流）与 \`提交审批 (SUBMIT)\`（全量 \`M3\` 强校验并启动 \`M6\` 流程）。
-9. **Step 9 — UI Screen Assembly（MU 屏幕控件映射与三类联动铁律）**：
-   按 \`MU\` 与 \`界面原型.html\` 确定性映射控件——\`AggregateRootRef\` 强制渲染为弹窗跳选框（\`POPUP_SELECT\`），\`DictionaryRef\` 强制渲染为字典下拉框（\`COMBO\`）；严格遵守 **三层界面联动铁律（Query Form <-> Toolbar Action <-> Detail View）** 及前端/领域/流程三类联动边界（前端联动严禁直接篡改领域持久状态）。
-10. **Step 10 — External System Adapters & Write-Back（MI 外部系统适配器与安全回写）**：
-    按 \`MI\` 契约暴露 \`PROVIDED\` 入站接口并封装 \`DEPENDENT\` 外部网关适配器（含幂等键、超时重试与标准返回码映射），所有分析问策回写操作必须经由 \`MI\` 命令接口留痕审计。
-
----
-
-## 二、11 元模型结构化实现清单与文件指针
-
-### 1. M1 领域对象与聚合根模型 (\`${MODEL_FILE_NAMES.M1}\`)
-${m1Summary}
-
-### 2. M2 领域行为与应用服务模型 (\`${MODEL_FILE_NAMES.M2}\`)
-${m2Summary}
-
-### 3. M3 刚性业务规则模型 (\`${MODEL_FILE_NAMES.M3}\`)
-${m3Summary}
-
-### 4. ME 领域事件模型 (\`${MODEL_FILE_NAMES.ME}\`)
-${meSummary}
-
-### 5. M4 跨聚合事件协同场景模型 (\`${MODEL_FILE_NAMES.M4}\`)
-${m4Summary}
-
-### 6. M5 业务主体与权限模型 (\`${MODEL_FILE_NAMES.M5}\`)
-${m5Summary}
-
-### 7. M6 业务协同与审批流程模型 (\`${MODEL_FILE_NAMES.M6}\`)
-${m6Summary}
-
-### 8. M7 查询统计与报表模型 (\`${MODEL_FILE_NAMES.M7}\`)
-${m7Summary}
-
-### 9. MU 用户界面与调用链模型 (\`${MODEL_FILE_NAMES.MU}\`)
-${muSummary}
-
-### 10. MM 对象-关系数据表映射模型 (\`${MODEL_FILE_NAMES.MM}\`)
-${mmSummary}
-
-### 11. MI 系统边界接口契约模型 (\`${MODEL_FILE_NAMES.MI}\`)
-${miSummary}
-
----
-
-## 三、已打包元模型与索引清单
-- \`参考资料/本体模型/manifest.json\`（工作区镜像：\`.onto-cs/model/${project.id}/yaml/manifest.json\`）
-${getPresentModelCodes(project)
-  .map((code) => `- \`参考资料/本体模型/${MODEL_FILE_NAMES[code]}\` (${code})`)
-  .join('\n')}
-`;
-}
-
-export function buildOntologyModelingReferenceDoc(): string {
-  const stageRows = MODEL_STAGE_ORDER.map((item) => {
-    const fileName = MODEL_FILE_NAMES[item.code];
-    const meta: Record<ModelCode, { prefix: string; upstream: string; downstream: string }> = {
-      M1: { prefix: 'AGG- / DICT- / ASSOC-', upstream: 'SRS 领域需求', downstream: 'M2, M3, M5, M6, M7, MU, MM, MI' },
-      M5: { prefix: 'ACT- / ROLE- / PERM-', upstream: 'M1', downstream: 'M2, M6, MU' },
-      M3: { prefix: 'RULE-', upstream: 'M1', downstream: 'M2, ME, M4, M6, MU' },
-      M2: { prefix: 'BHV-', upstream: 'M1, M3, M5', downstream: 'ME, M4, M6, M7, MU, MI' },
-      M7: { prefix: 'QRY- / RPT-', upstream: 'M1, M2', downstream: 'MU, MI' },
-      ME: { prefix: 'EVT-', upstream: 'M1, M2, M3', downstream: 'M3, M4, M6, MU' },
-      M4: { prefix: 'SCN-', upstream: 'M1, M2, M3, ME', downstream: 'M6, MU' },
-      M6: { prefix: 'FLOW-', upstream: 'M1, M2, M3, M4, M5, ME', downstream: 'MU' },
-      MU: { prefix: 'SCR- / EL- / UIE-', upstream: 'M1, M2, M3, ME, M4, M5, M7', downstream: '前端页面与原型提取' },
-      MM: { prefix: 'MAP-', upstream: 'M1', downstream: 'SQLite/D1 DDL 与数据映射' },
-      MI: { prefix: 'IF-', upstream: 'M1, M2, M5, M7, ME', downstream: 'REST/MCP 接口与外部回写' },
-    };
-    const m = meta[item.code];
-    return `| Stage ${item.stage} | **${item.code}** (${item.labelZh}) | \`${fileName}\` | \`${m.prefix}\` | ${m.upstream} | ${m.downstream} |`;
-  }).join('\n');
-
-  return `# Ontology Plus 11 元模型建模规范 (v5.0)
-
-## 1. 11 元模型依赖矩阵与标准文件命名 (11-Model Dependency Matrix)
-所有本体工程元数据统一以 \`manifest.json\` 为相对路径注册入口，禁止硬编码绝对路径或非标文件名。
-
-| 建模阶段 | 元模型代号与名称 | 标准 YAML 文件名 | 标准 ID 前缀 | 上游依赖模型 | 下游消费模型 |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-${stageRows}
-
-## 2. 权威标识符前缀规范表 (Canonical ID Prefix Table)
-| 前缀符号 | 归属模型 | 语义说明 | 示例标识符 |
-| :--- | :--- | :--- | :--- |
-| \`AGG-\` | \`M1\` | 领域聚合根唯一标识 | \`AGG-01\`, \`AGG-MFT-01\` |
-| \`BHV-\` | \`M2\` | 领域命令/查询/事件处理行为标识 | \`BHV-01\`, \`BHV-MFT-01\` |
-| \`RULE-\` | \`M3\` | 跨对象校验/计算/状态守卫规则标识 | \`RULE-01\`, \`RULE-MFT-01\` |
-| \`EVT-\` | \`ME\` | 过去时态领域事实事件标识 | \`EVT-01\`, \`EVT-MFT-01\` |
-| \`SCN-\` | \`M4\` | 跨聚合事件协同场景标识 | \`SCN-01\` |
-| \`ACT-\` / \`ROLE-\` / \`PERM-\` | \`M5\` | 参与者、角色与行为/界面权限标识 | \`ACT-01\`, \`ROLE-DEPT-MGR\`, \`PERM-CONTRACT-WRITE\` |
-| \`FLOW-\` | \`M6\` | 业务协同流与多级审批流标识 | \`FLOW-01\` |
-| \`QRY-\` / \`RPT-\` | \`M7\` | 实时查询与多维统计报表标识 | \`QRY-01\`, \`RPT-02\` |
-| \`SCR-\` / \`EL-\` / \`UIE-\` | \`MU\` | 屏幕、界面控件锚点与交互事件标识 | \`SCR-CONTRACT-EDIT\`, \`EL-TOTAL-AMOUNT\`, \`UIE-SAVE-DRAFT\` |
-| \`MAP-\` | \`MM\` | 领域对象到关系数据库表映射标识 | \`MAP-CONTRACT-01\` |
-| \`IF-\` | \`MI\` | 对外提供或外部依赖边界接口标识 | \`IF-01\`, \`IF-EXT-ESIGN-03\` |
-
-## 3. 双层校验门禁体系指南 (Two-Tier Validation Guide)
-1. **Tier 1 — Consistency Error（一致性阻断错误 · 红色门禁）**：
-   - **悬空引用阻断**：\`M2.ownerEntity\`、\`M2.invokedRules\`、\`ME.producerBehaviorRef\`、\`M5.permissions\`、\`MU.dataBinding\` 等引用不存在的目标标识符。
-   - **M2 <-> M7 严格 1:1 绑定门禁**：每个分析/列表 \`QUERY\` 行为必须与唯一 \`M7\` 查询报表双向互指，严禁多对一或单向悬空。
-   - **MU 调用链时序门禁**：交互事件 \`callChain\` 必须严格遵循 \`VALIDATE -> BEHAVIOR_CALL -> EVENT_EMIT -> SCENARIO_CALL -> NAVIGATE\` 顺序。
-   - **M6 流程有向图可达性门禁**：流程必须具备有效起点、可达 \`END\` 节点与完备网关默认分支，禁止无等待死循环。
-   - **打包与发布硬门禁**：当 \`Consistency Error > 0\` 时，禁止编译导出四层开发资料包。
-2. **Tier 2 — Stage Warning（阶段性演进提示 · 琥珀色非阻断）**：
-   - 在领域建模早期尚未编写 \`MM\`（物理表映射）或 \`MI\`（外部接口）等后置阶段模型，或存在暂未挂载 UI 事件的储备规则时，仅提示阶段完备度，不阻断增量迭代与技能预览。
-`;
-}
-
-export function compileDevelopmentPackage(
-  input: CompileDevelopmentPackageInput,
-): CompiledDevelopmentPackage {
-  const { app, project, uiUeAsset, techFoundationAsset, techArchAsset } = input;
-
-  if (project.validation.errorCount > 0) {
-    throw new Error(
-      `Cannot compile Development Package: project "${project.name}" has ${project.validation.errorCount} consistency error(s).`,
-    );
-  }
-
-  const compiledAt = new Date().toISOString();
-  const workspaceRoot = input.workspaceRoot ?? path.resolve(process.cwd(), '.onto-cs');
-  const outputDir = path.join(workspaceRoot, 'packages', app.id);
-  const files: CompiledPackageFile[] = [];
-
-  const addFile = (
-    relativePath: string,
-    category: CompiledPackageFile['category'],
-    content: string,
-  ) => {
-    files.push({
-      relativePath,
-      category,
-      sizeBytes: Buffer.byteLength(content, 'utf-8'),
-      content,
-    });
-  };
-
-  const yamlFiles = serializeSuiteToYamlFiles(project.suite);
-  const suiteManifestContent = serializeManifestJson(buildOntologySuiteManifest(project));
-
-  // 1. 开发指导书.md (Progressive Disclosure Root Entry Point)
-  addFile(
-    '开发指导书.md',
-    'GUIDE',
-    buildMasterDevelopmentGuide({
-      app,
-      project,
-      uiUeAsset,
-      techFoundationAsset,
-      techArchAsset,
-      compiledAt,
-    }),
-  );
-
-  // 2. 本体模型业务功能开发指导书.md (All 11 Models + 10-Step Pipeline)
-  addFile('本体模型业务功能开发指导书.md', 'GUIDE', buildBusinessOntologyFeatureGuide(project));
-
-  // 3. 参考资料/*
-  addFile('参考资料/UI-UE界面设计规范.md', 'REFERENCE', uiUeAsset.specMarkdown);
-  addFile('参考资料/本体建模规范.md', 'REFERENCE', buildOntologyModelingReferenceDoc());
-  addFile('参考资料/技术架构设计文档.md', 'REFERENCE', techArchAsset.specMarkdown);
-  addFile(
-    '参考资料/软件需求说明书.md',
-    'REFERENCE',
-    input.requirementDoc?.content ?? `# ${project.name} 软件需求说明书`,
-  );
-  addFile(
-    '参考资料/界面原型.html',
-    'REFERENCE',
-    input.prototype?.htmlContent ?? '<!DOCTYPE html><html><body>Prototype</body></html>',
-  );
-
-  // 4. 参考资料/本体模型/manifest.json + *.yaml & mirrored .onto-cs/model/${project.id}/yaml/manifest.json
-  addFile('参考资料/本体模型/manifest.json', 'MANIFEST', suiteManifestContent);
-  addFile(`.onto-cs/model/${project.id}/yaml/manifest.json`, 'MANIFEST', suiteManifestContent);
-  for (const [, info] of Object.entries(yamlFiles)) {
-    if (!info) continue;
-    addFile(`参考资料/本体模型/${info.fileName}`, 'ONTOLOGY_YAML', info.content);
-  }
-
-  // 5. 技术底座 & 动态生成的应用源码 (M1/M2/M3/M7/MM/MI 确定性代码生成)
-  addFile('技术底座/README.md', 'FOUNDATION', techFoundationAsset.specMarkdown);
-  addFile(
-    '应用源码/README.md',
-    'SOURCE',
-    `# ${app.name} — 应用源码工作区\n\n本目录包含从「${project.name}」11 元模型 AST 自动生成的物理建表 DDL、领域聚合根、M3 规则门禁、M2/M7 CQRS 应用服务及 MI 接口路由，以及 AI Coding Agent 增量构建产物。`,
-  );
-
-  // 5.1 Generate SQLite/D1 DDL from MM + M1
-  const ddlStatements: string[] = [
-    `-- Auto-generated from ${project.name} (${project.code}) MM & M1 Ontology Models`,
-    `CREATE TABLE IF NOT EXISTS __dict (`,
-    `  id TEXT PRIMARY KEY,`,
-    `  dict_id TEXT NOT NULL,`,
-    `  type_code TEXT NOT NULL,`,
-    `  item_code TEXT NOT NULL,`,
-    `  item_label TEXT NOT NULL,`,
-    `  sort_order INTEGER DEFAULT 1,`,
-    `  created_by TEXT DEFAULT 'system',`,
-    `  created_at TEXT NOT NULL,`,
-    `  updated_by TEXT DEFAULT 'system',`,
-    `  updated_at TEXT NOT NULL,`,
-    `  flag INTEGER DEFAULT 1`,
-    `);`,
+  const lines = [
+    '# Acceptance criteria',
+    '',
+    'Record a test, command result, or reviewed UI evidence for each applicable item. Ontology identifiers below refer to the linked model files; original business labels and messages remain authoritative.',
+    '',
+    '- [ ] Local startup, build, verification, migration, and production startup commands succeed using the selected Technology Profile in [Architecture](architecture.md).',
+    '- [ ] Delivered scope matches [Requirements](../references/requirements.md), and every declared contract below is accounted for in the delivery record.',
   ];
-  for (const mapping of project.suite.MM?.mappings ?? []) {
-    for (const tm of mapping.tableMappings) {
-      const colDefs = tm.columnMappings.map((cm) => {
-        const pk = cm.isPrimaryKey || cm.column === tm.primaryKey ? ' PRIMARY KEY' : '';
-        const nn = cm.nullable === false && !pk ? ' NOT NULL' : '';
-        const uq = cm.unique && !pk ? ' UNIQUE' : '';
-        return `  ${cm.column} ${cm.columnType || 'TEXT'}${pk}${nn}${uq}`;
-      });
-      if (!tm.columnMappings.some((c) => c.column === tm.primaryKey)) {
-        colDefs.unshift(`  ${tm.primaryKey} TEXT PRIMARY KEY`);
-      }
-      for (const auditCol of [
-        `  created_by TEXT DEFAULT 'system'`,
-        `  created_at TEXT NOT NULL`,
-        `  updated_by TEXT DEFAULT 'system'`,
-        `  updated_at TEXT NOT NULL`,
-        `  flag INTEGER DEFAULT 1`,
-      ]) {
-        colDefs.push(auditCol);
-      }
-      ddlStatements.push(
-        `\n-- Object: ${mapping.objectName} (${mapping.id} · ${tm.tableRole})\nCREATE TABLE IF NOT EXISTS ${tm.tableName} (\n${colDefs.join(',\n')}\n);`,
-      );
-    }
-  }
-  addFile('应用源码/db/schema.sql', 'SOURCE', ddlStatements.join('\n') + '\n');
-
-  // 5.2 Generate TypeScript Domain Entities & Lifecycle Guards from M1
-  const tsTypeFor = (t: string): string => {
-    if (t === 'Money' || t === 'Decimal' || t === 'Integer') return 'number';
-    if (t === 'Boolean') return 'boolean';
-    return 'string';
+  const group = (code: ModelCode, criteria: string[]) => {
+    if (!suite[code]) return;
+    lines.push('', `## ${code}`, '', `Source: ${modelLink(project, code)}.`, '', ...criteria.map((criterion) => `- [ ] ${criterion}`));
   };
-  const domainEntityBlocks = (project.suite.M1?.aggregates ?? []).map((agg) => {
-    const stateUnion =
-      agg.lifecycle.length > 0 ? agg.lifecycle.map((s) => `'${s}'`).join(' | ') : `'ACTIVE'`;
-    const fields = agg.attributes
-      .map((attr) => `  /** ${attr.label} (${attr.type}) */\n  ${attr.name}${attr.required ? '' : '?'}: ${tsTypeFor(attr.type)};`)
-      .join('\n');
-    const invariants = agg.invariants
-      .map(
-        (inv) =>
-          `  // [${inv.name}] ${inv.expression}\n  if (!entity) throw new Error(${JSON.stringify(inv.violationMessage || inv.name)});`,
-      )
-      .join('\n');
-    return [
-      `export type ${agg.name}LifecycleState = ${stateUnion};`,
-      `export interface ${agg.name}Aggregate {`,
-      `  id: string;`,
-      fields,
-      `  createdBy: string;`,
-      `  createdAt: string;`,
-      `  updatedBy: string;`,
-      `  updatedAt: string;`,
-      `  flag: 0 | 1;`,
-      `}`,
-      `export function assert${agg.name}Invariants(entity: Partial<${agg.name}Aggregate>): void {`,
-      invariants || `  if (!entity) throw new Error('${agg.name} entity is required');`,
-      `}`,
-    ].join('\n');
-  });
-  addFile(
-    '应用源码/src/domain/entities.ts',
-    'SOURCE',
-    `// Auto-generated Domain Model from M1 (${MODEL_FILE_NAMES.M1})\n\n${domainEntityBlocks.join('\n\n')}\n`,
-  );
+  group('M1', (suite.M1?.aggregates ?? []).map((aggregate) => `\`${aggregate.id}\` (\`${aggregate.name}\`): verify declared attribute types/required fields, dictionaries, associations, lifecycle transitions, attribute rules, and aggregate invariants; invalid writes leave persisted state unchanged.`));
+  group('MM', (suite.MM?.mappings ?? []).map((mapping) => `\`${mapping.id}\` (\`${mapping.objectRef}\`): verify every declared table/column mapping with migration and round-trip evidence, including nullability, keys, and declared audit fields.`));
+  group('M2', (suite.M2?.behaviors ?? []).map((behavior) => `\`${behavior.id}\` (\`${behavior.name}\`, ${behavior.behaviorType}): verify input/output fields, preconditions, state changes, permissions, rules ${behavior.invokedRules.map((id) => `\`${id}\``).join(', ') || '(none declared)'}, and emitted facts. Include success and applicable rejection cases; rejected writes roll back.`));
+  group('M3', (suite.M3?.rules ?? []).map((rule) => `\`${rule.id}\` (\`${rule.name}\`): verify the declared expression or decision table with accepted/rejected and boundary inputs; keep evaluation side-effect-free and preserve the declared result and violation message.`));
+  group('M7', (suite.M7?.query_reports ?? []).map((query) => `\`${query.id}\` / behavior \`${query.behaviorRef}\`: verify the one-to-one QUERY binding, bound reference SQL parameters, result fields, filtering, and declared aggregation/report behavior.`));
+  group('M5', [
+    ...(suite.M5?.roles ?? []).map((role) => `\`${role.id}\`: verify declared role and permission bindings with permitted and denied calls.`),
+    ...(suite.M5?.permissions ?? []).map((permission) => `\`${permission.id}\`: verify its declared behavior/UI targets and access constraints.`),
+  ]);
+  group('ME', (suite.ME?.events ?? []).map((event) => `\`${event.id}\`: verify its producer \`${event.producerBehaviorRef}\`, payload fields, delivery/ordering semantics, and declared subscribers.`));
+  group('M4', (suite.M4?.event_scenarios ?? []).map((scenario) => `\`${scenario.id}\`: exercise its declared behavior/event/rule chain and verify downstream aggregate effects.`));
+  group('M6', (suite.M6?.flows ?? []).map((flow) => `\`${flow.id}\` (${flow.flowType}): exercise valid start-to-end routes, role-bound tasks, rejection paths, gateway defaults, and declared sub-flow calls.`));
+  group('MU', (suite.MU?.screens ?? []).flatMap((screen) => [
+    `\`${screen.screenId}\`: compare layout, copy, states, permissions, and navigation with the [Confirmed prototype](../references/prototype/index.html); retain declared screen/element/binding/event anchors.`,
+    ...screen.events.map((event) => `\`${screen.screenId}\` / \`${event.eventId}\` / trigger \`${event.triggerElementId}\`: verify each declared call-chain step in order, including validation failures and target behavior/query/navigation effects.`),
+  ]));
+  group('MI', (suite.MI?.interfaces ?? []).map((contract) => `\`${contract.interfaceId}\`: verify declared direction, input/output fields, authentication, return rules, and applicable error/timeout behavior at the system boundary.`));
+  lines.push('', '## Package and modeling evidence', '',
+    '- [ ] Every package-local link and model manifest entry resolves to a delivered file.',
+    '- [ ] The implementation uses this snapshot\'s fixed inputs; its source identities and revisions are recorded in [Package manifest](../manifest.json).',
+    '- [ ] All Consistency Errors are resolved. Each Stage Warning in the manifest has an explicit decision or documented limit before implementing the affected area.', '');
+  return lines.join('\n');
+}
 
-  // 5.3 Generate M3 Rule Interceptors
-  const ruleBlocks = (project.suite.M3?.rules ?? []).map(
-    (rule) =>
-      `export const ${rule.id.replace(/[^A-Za-z0-9_]/g, '_')} = {\n  id: ${JSON.stringify(rule.id)},\n  name: ${JSON.stringify(rule.name)},\n  alias: ${JSON.stringify(rule.alias)},\n  ruleType: ${JSON.stringify(rule.ruleType)},\n  expression: ${JSON.stringify(rule.expression)},\n  violationMessage: ${JSON.stringify(rule.violationMessage ?? '违反业务合规规则')},\n} as const;`,
-  );
-  addFile(
-    '应用源码/src/domain/rules.ts',
-    'SOURCE',
-    `// Auto-generated M3 Business Rules (${MODEL_FILE_NAMES.M3})\n\n${ruleBlocks.join('\n\n')}\n`,
-  );
-
-  // 5.4 Generate M2 Command & M7 Query Application Services
-  const serviceBlocks = (project.suite.M2?.behaviors ?? []).map((beh) => {
-    const pairedRpt = (project.suite.M7?.query_reports ?? []).find(
-      (q) => q.id === beh.queryReportRef || q.behaviorRef === beh.id,
-    );
-    const fnName = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(beh.name)
-      ? beh.name
-      : `exec_${beh.id.replace(/[^a-zA-Z0-9_]/g, '_')}`;
-    return [
-      `/** [${beh.id}] ${beh.alias} (${beh.behaviorType}) — Owner: ${beh.ownerEntity} */`,
-      `export async function ${fnName}(input: Record<string, unknown>) {`,
-      `  const invokedRules = ${JSON.stringify(beh.invokedRules)};`,
-      pairedRpt
-        ? `  const referenceSql = ${JSON.stringify(pairedRpt.referenceSql.sql)};\n  return { behaviorId: ${JSON.stringify(beh.id)}, queryReportId: ${JSON.stringify(pairedRpt.id)}, referenceSql, input, invokedRules };`
-        : `  return { behaviorId: ${JSON.stringify(beh.id)}, ownerEntity: ${JSON.stringify(beh.ownerEntity)}, invokedRules, producedEvents: ${JSON.stringify(beh.producedEvents)}, input };`,
-      `}`,
-    ].join('\n');
-  });
-  addFile(
-    '应用源码/src/application/services.ts',
-    'SOURCE',
-    `// Auto-generated CQRS Application Services from M2 & M7\n\n${serviceBlocks.join('\n\n')}\n`,
-  );
-
-  // 5.5 Include any AI Coding Agent generated files
-  for (const extra of input.extraSourceFiles ?? []) {
-    addFile(extra.relativePath, 'SOURCE', extra.content);
+export function compileDevelopmentPackage(input: CompileDevelopmentPackageInput): CompiledDevelopmentPackage {
+  const inspected = inspectDevelopmentPackageInputs(input);
+  if (inspected.diagnostics.length || !inspected.validation || !inspected.profile) throw new DevelopmentPackageInputError(inspected.diagnostics);
+  const { app, uiUeAsset, techFoundationAsset, techArchAsset } = input;
+  const project = { ...input.project, suite: inspected.suite, validation: inspected.validation };
+  const resolvedInput = { ...input, project, technologyProfile: inspected.profile };
+  const compiledAt = input.compiledAt ?? new Date().toISOString();
+  const currentFingerprint = fingerprintDevelopmentPackageInputs(input);
+  if (input.inputFingerprint !== undefined && input.inputFingerprint !== currentFingerprint) {
+    throw new DevelopmentPackageInputError([{ code: 'INPUT_FINGERPRINT_MISMATCH', path: 'inputFingerprint', message: 'Recompute the input fingerprint from the exact inputs selected for this snapshot.' }]);
   }
+  const inputFingerprint = currentFingerprint;
+  const snapshotId = input.snapshotId ?? `snapshot-${contentHash(`${inputFingerprint}:${compiledAt}`).slice(0, 24)}`;
+  const outputDir = path.join(input.workspaceRoot ?? path.resolve(process.cwd(), '.onto-cs'), 'packages', app.id, snapshotId);
+  const files: CompiledPackageFile[] = [];
+  const addFile = (relativePath: string, category: CompiledPackageFile['category'], content: string) => {
+    files.push({ relativePath, category, content, sizeBytes: Buffer.byteLength(content, 'utf-8') });
+  };
 
-  // 6. 开发资料清单.json
-  const presentModels = getPresentModelCodes(project);
+  addFile('README.md', 'GUIDE', `# Development Package ? ${app.name}
+
+This package is an implementation specification for the target application. Start with [Coding agent instructions](AGENTS.md), then follow [Implementation sequence](docs/implementation.md) and record [Acceptance evidence](docs/acceptance.md).
+
+- [Architecture and selected standards](docs/architecture.md)
+- [Fixed input manifest](manifest.json)
+- [Original requirements](references/requirements.md)
+- [Confirmed prototype](references/prototype/index.html)
+- [Ontology model index](references/ontology/manifest.json)
+
+Snapshot \`${snapshotId}\`, generated at \`${compiledAt}\`. Package readiness describes the completeness of this handoff. The target application is implemented and verified using the linked contracts and criteria.
+`);
+  addFile('AGENTS.md', 'GUIDE', buildAgentInstructions());
+  addFile('docs/architecture.md', 'GUIDE', buildArchitectureGuide(resolvedInput));
+  addFile('docs/implementation.md', 'GUIDE', buildImplementationGuide(resolvedInput));
+  addFile('docs/acceptance.md', 'GUIDE', buildAcceptanceGuide(project));
+  addFile('standards/ui.md', 'REFERENCE', uiUeAsset.specMarkdown);
+  addFile('standards/foundation.md', 'FOUNDATION', techFoundationAsset.specMarkdown);
+  addFile('standards/architecture.md', 'REFERENCE', techArchAsset.specMarkdown);
+  const technologyProfile = structuredClone(selectedTechnologyProfile(input));
+  addFile('standards/technology-profile.json', 'MANIFEST', JSON.stringify(technologyProfile, null, 2));
+  addFile('references/requirements.md', 'REFERENCE', input.requirementDoc?.content ?? '');
+  addFile('references/prototype/index.html', 'REFERENCE', input.prototype?.htmlContent ?? '');
+  if (input.applicationInstructions?.trim()) {
+    addFile('references/application-instructions.md', 'REFERENCE', input.applicationInstructions);
+  }
+  const suiteManifest = buildOntologySuiteManifest(project);
+  suiteManifest.models = Object.fromEntries(getPresentModelCodes(project).map((code) => [code, `${code}.yaml`]));
+  addFile('references/ontology/manifest.json', 'MANIFEST', serializeManifestJson(suiteManifest));
+  const yamlFiles = serializeSuiteToYamlFiles(project.suite);
+  for (const code of getPresentModelCodes(project)) {
+    addFile(`references/ontology/${code}.yaml`, 'ONTOLOGY_YAML', yamlFiles[code]!.content);
+  }
   const manifestJson = {
-    packageVersion: '5.0.0',
-    appId: app.id,
-    appName: app.name,
-    projectId: project.id,
-    domain: project.domain,
-    compiledAt,
-    layers: {
-      ontology: { projectId: project.id, presentModels },
-      uiUe: { id: uiUeAsset.id, name: uiUeAsset.name, version: uiUeAsset.version },
-      techFoundation: {
-        id: techFoundationAsset.id,
-        name: techFoundationAsset.name,
-        version: techFoundationAsset.version,
+    packageVersion: '1.0.0', artifactType: 'DEVELOPMENT_SPECIFICATION',
+    snapshotId, inputFingerprint,
+    appId: app.id, appName: app.name, projectId: project.id, domain: project.domain, compiledAt,
+    technologyProfile,
+    sources: {
+      technologyProfile: {
+        id: technologyProfile.id, version: technologyProfile.version,
+        sourcePath: technologyProfile.sourcePath, sourceRevision: technologyProfile.sourceRevision,
+        path: 'standards/technology-profile.json',
       },
+      requirements: input.requirementDoc && {
+        id: input.requirementDoc.id, projectId: input.requirementDoc.projectId,
+        version: input.requirementDoc.version, updatedAt: input.requirementDoc.updatedAt,
+        contentHash: contentHash(input.requirementDoc.content), path: 'references/requirements.md',
+      },
+      prototype: input.prototype && {
+        id: input.prototype.id, revisionId: input.prototypeRevision?.id ?? input.prototype.confirmedRevisionId,
+        revisionNumber: input.prototypeRevision?.revisionNumber,
+        confirmedAt: input.prototypeRevision?.confirmedAt, createdAt: input.prototypeRevision?.createdAt,
+        contentHash: contentHash(input.prototype.htmlContent), path: 'references/prototype/index.html',
+      },
+      ontology: {
+        projectId: project.id, revision: project.updatedAt, contentHash: contentHash(canonicalJson(project.suite)),
+        path: 'references/ontology/manifest.json', models: getPresentModelCodes(project),
+      },
+      standards: [
+        { asset: uiUeAsset, path: 'standards/ui.md' },
+        { asset: techFoundationAsset, path: 'standards/foundation.md' },
+        { asset: techArchAsset, path: 'standards/architecture.md' },
+      ].map(({ asset, path: filePath }) => ({
+        id: asset.id, version: asset.version, updatedAt: asset.updatedAt,
+        sourcePath: asset.sourcePath, sourceRevision: asset.sourceRevision,
+        contentHash: contentHash(asset.specMarkdown), path: filePath,
+      })),
+      applicationInstructions: input.applicationInstructions?.trim() ? {
+        contentHash: contentHash(input.applicationInstructions), path: 'references/application-instructions.md',
+      } : undefined,
+    },
+    layers: {
+      ontology: { projectId: project.id, presentModels: getPresentModelCodes(project) },
+      uiUe: { id: uiUeAsset.id, name: uiUeAsset.name, version: uiUeAsset.version },
+      techFoundation: { id: techFoundationAsset.id, name: techFoundationAsset.name, version: techFoundationAsset.version },
       techArch: { id: techArchAsset.id, name: techArchAsset.name, version: techArchAsset.version },
     },
-    files: files.map((f) => ({
-      path: f.relativePath,
-      category: f.category,
-      sizeBytes: f.sizeBytes,
-    })),
+    validation: structuredClone(project.validation),
+    files: [...files.map((file) => ({ path: file.relativePath, category: file.category, sizeBytes: file.sizeBytes, contentHash: contentHash(file.content) })), { path: 'manifest.json', category: 'MANIFEST' }],
   };
-  addFile('开发资料清单.json', 'MANIFEST', JSON.stringify(manifestJson, null, 2));
-
+  addFile('manifest.json', 'MANIFEST', JSON.stringify(manifestJson, null, 2));
+  const referenceDiagnostics = validatePackageMarkdownReferences(files);
+  if (referenceDiagnostics.length) throw new DevelopmentPackageInputError(referenceDiagnostics);
   if (input.writeToDisk !== false) {
-    try {
-      for (const file of files) {
-        const fullPath = path.join(outputDir, file.relativePath);
-        fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-        fs.writeFileSync(fullPath, file.content, 'utf-8');
-      }
-    } catch {
-      // Non-fatal in read-only edge environments
+    for (const file of files) {
+      const fullPath = path.join(outputDir, file.relativePath);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, file.content, 'utf-8');
     }
   }
-
-  return {
-    appId: app.id,
-    appName: app.name,
-    projectId: project.id,
-    outputDir,
-    compiledAt,
-    files,
-    manifestJson,
-  };
+  return { snapshotId, inputFingerprint, appId: app.id, appName: app.name, projectId: project.id, outputDir, compiledAt, files, manifestJson };
 }
 
 export function compileOntologySkill(project: ProjectDetail): GeneratedSkill {

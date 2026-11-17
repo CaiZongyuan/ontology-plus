@@ -2462,7 +2462,7 @@ export function SystemSettingsView() {
           </label>
         </div>
 
-        {/* Workbench Theme (ADR 0012): kept on this device only, independent of light and dark */}
+        {/* Workbench Theme (ADR 0015): kept on this device only, independent of light and dark */}
         <div className="flex flex-wrap justify-between items-center gap-3 pb-3.5 border-b border-border"
         >
           <div>

@@ -18,6 +18,7 @@ import type {
   RequirementSession,
   WorkspaceStore,
 } from '../../workspace-store/index.js';
+import { DEFAULT_TECHNOLOGY_PROFILE_ID } from '../../workspace-store/index.js';
 import {
   applyLlmBlueprintToSuite,
   type LlmSynthesizedDomainBlueprint,
@@ -25,6 +26,10 @@ import {
 import { type AgentLocale, pickLocaleText } from './locale.js';
 import { runSmartOntologyExtractionJob } from './runtime.js';
 import { type OpenAiFunctionTool } from './tools.js';
+import {
+  readApplicationSpecificationInputs,
+  resolveSessionApplication,
+} from './application-specification.js';
 
 export { applyLlmBlueprintToSuite, type LlmSynthesizedDomainBlueprint };
 
@@ -1568,6 +1573,10 @@ export const DOMAIN_RUN_TOOL_NAMES = [
   'save_synthesized_srs_doc',
   'synthesize_ontology_suite',
   'save_tech_architecture_spec',
+  'read_architecture_assets',
+  'save_architecture_asset',
+  'read_application_inputs',
+  'save_application_instructions',
   'save_metric_insight',
   'save_scenario_attribution_report',
   'run_ontology_extraction',
@@ -1757,18 +1766,16 @@ export const DOMAIN_RUN_OPENAI_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'save_tech_architecture_spec',
       description:
-        'Persist a generated Technical Architecture Specification Markdown asset (layer=TECH_ARCH) into the 4-layer architecture library and optionally bind it to an AssembledApplication.',
+        'Author or revise a repository-owned Technical Architecture Specification (TECH_ARCH). Available only to the Architecture Asset Agent; does not change application selections.',
       parameters: {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Architecture asset name' },
+          assetId: { type: 'string', description: 'Existing TECH_ARCH asset ID to revise; omit to create a standard' },
           stackTags: { type: 'array', items: { type: 'string' } },
           summary: { type: 'string' },
           version: { type: 'string' },
-          applicationId: {
-            type: 'string',
-            description: 'Optional AssembledApplication ID whose techArchAssetId should be updated',
-          },
+          technologyProfileId: { type: 'string', description: 'Compatible Technology Profile ID; defaults to the React/Hono/SQLite/Node profile for a new standard' },
           specMarkdown: {
             type: 'string',
             description:
@@ -1776,6 +1783,69 @@ export const DOMAIN_RUN_OPENAI_TOOLS: OpenAiFunctionTool[] = [
           },
         },
         required: ['name', 'specMarkdown'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_architecture_assets',
+      description: 'List repository-owned architecture standards and their source metadata, or read one selected standard in full.',
+      parameters: {
+        type: 'object',
+        properties: { assetId: { type: 'string' } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_architecture_asset',
+      description: 'Create or revise a reusable repository-owned UI, technical foundation, or technical architecture standard. Does not modify application selections.',
+      parameters: {
+        type: 'object',
+        properties: {
+          assetId: { type: 'string', description: 'Existing standard ID to revise; omit to create' },
+          layer: { type: 'string', enum: ['UI_UE', 'TECH_FOUNDATION', 'TECH_ARCH'] },
+          name: { type: 'string' },
+          version: { type: 'string' },
+          summary: { type: 'string' },
+          stackTags: { type: 'array', items: { type: 'string' } },
+          specMarkdown: { type: 'string' },
+          technologyProfileId: { type: 'string', description: 'Compatible Technology Profile ID; defaults to the React/Hono/SQLite/Node profile for a new standard' },
+        },
+        required: ['layer', 'name', 'specMarkdown'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_application_inputs',
+      description: 'Read the target application requirements, confirmed prototype, ontology, selected standards, application instructions and missing-input diagnostics. An explicit application must belong to this session project.',
+      parameters: {
+        type: 'object',
+        properties: { applicationId: { type: 'string' } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_application_instructions',
+      description: 'Save the target application implementation specification as Markdown. Keep unresolved conflicts explicit. Does not edit shared standards, implement code, or generate packages.',
+      parameters: {
+        type: 'object',
+        properties: {
+          applicationId: { type: 'string' },
+          developmentInstructions: { type: 'string', description: 'Complete revised application-specific implementation instructions in English Markdown. Original Chinese business material may remain as clearly quoted source.' },
+          developmentBlockers: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Unresolved explicit contradictions that must block formal package generation. Omit to preserve existing blockers; send [] only after resolving them with the user.',
+          },
+        },
+        required: ['developmentInstructions'],
       },
     },
   },
@@ -2541,119 +2611,111 @@ export async function executeDomainRunToolCall(
     };
   }
 
-  // 3. Technical Architecture Specification (`CODING` session)
-  if (toolName === 'save_tech_architecture_spec') {
-    const project = store.getProject(session.projectId);
-    const name =
-      (typeof args.name === 'string' && args.name.trim()) ||
-      `${project?.name ?? 'Ontology'} ${pickLocaleText(locale, '技术架构设计文档', 'Technical Architecture Spec')}`;
-    const rawSpec =
-      typeof args.specMarkdown === 'string' && args.specMarkdown.trim()
-        ? args.specMarkdown
-        : typeof args.content === 'string'
-          ? args.content
-          : '';
-    const specMarkdown = rawSpec ? stripMarkdownFence(rawSpec).trim() : '';
-    if (!specMarkdown) {
-      const msg = pickLocaleText(
-        locale,
-        '技术架构规范正文 specMarkdown 不能为空。',
-        'Technical architecture specMarkdown cannot be empty.',
-      );
-      return {
-        trace: {
-          id: toolCallId,
-          toolName,
-          arguments: args,
-          output: msg,
-          isError: true,
-          durationMs: Date.now() - started,
-        },
-        toolResultContent: JSON.stringify({ error: msg }),
-        isError: true,
-      };
-    }
+  // Architecture authoring and application refinement have separate ownership.
+  const failure = (message: string): DomainToolExecutionResult => ({
+    trace: { id: toolCallId, toolName, arguments: args, output: message, isError: true, durationMs: Date.now() - started },
+    toolResultContent: JSON.stringify({ error: message }),
+    isError: true,
+  });
+  if (['read_architecture_assets', 'save_architecture_asset', 'save_tech_architecture_spec'].includes(toolName)
+    && session.agentKind !== 'ARCHITECTURE') {
+    return failure('Architecture standards are owned by the Architecture Asset Agent. Open architecture asset authoring to change them.');
+  }
+  if (['read_application_inputs', 'save_application_instructions'].includes(toolName)
+    && session.agentKind !== 'CODING') {
+    return failure('Application specification tools require an Application Development Agent session.');
+  }
 
-    const rawTags = Array.isArray(args.stackTags)
-      ? args.stackTags.map(String).map((t) => t.trim()).filter(Boolean)
-      : [];
-    const tags =
-      rawTags.length > 0
-        ? rawTags
-        : ['DDD', 'Deep Modules', '11-Model Mapping', 'SQLite / D1'];
-    const version =
-      (typeof args.version === 'string' && args.version.trim()) || 'v5.0';
-    const summary =
-      (typeof args.summary === 'string' && args.summary.trim()) ||
-      pickLocaleText(
-        locale,
-        `基于 [${tags.join(', ')}] 的 11 元模型深模块技术架构规范`,
-        `11-Model deep-module technical architecture based on [${tags.join(', ')}]`,
-      );
-
-    const asset = store.saveFourLayerAsset({
-      id: `asset-arch-${Date.now().toString(36)}`,
-      layer: 'TECH_ARCH',
-      name,
-      version,
-      summary,
-      tags,
-      specMarkdown,
-    });
-
-    const explicitAppId =
-      typeof args.applicationId === 'string' && args.applicationId.trim()
-        ? args.applicationId.trim()
-        : undefined;
-    let boundAppId: string | undefined;
-    if (explicitAppId) {
-      const targetApp = store.listAssembledApplications().find((a) => a.id === explicitAppId);
-      if (targetApp) {
-        store.saveAssembledApplication({
-          ...targetApp,
-          techArchAssetId: asset.id,
-        });
-        boundAppId = targetApp.id;
-      }
-    }
-
+  if (toolName === 'read_architecture_assets') {
+    const assets = store.listFourLayerAssets();
+    const assetId = typeof args.assetId === 'string' ? args.assetId.trim() : '';
+    const asset = assetId ? assets.find((candidate) => candidate.id === assetId) : undefined;
+    if (assetId && !asset) return failure(`Architecture standard not found: ${assetId}`);
+    const content = asset ?? assets.map(({ specMarkdown: _body, ...metadata }) => metadata);
     return {
-      trace: {
-        id: toolCallId,
-        toolName,
-        arguments: {
-          assetId: asset.id,
-          name: asset.name,
-          tags: asset.tags,
-          ...(boundAppId ? { applicationId: boundAppId } : {}),
-        },
-        output: pickLocaleText(
-          locale,
-          `已生成并入库 TECH_ARCH 四层资产《${asset.name}》（${asset.id}）`,
-          `Saved TECH_ARCH 4-layer asset "${asset.name}" (${asset.id})`,
-        ),
-        isError: false,
-        durationMs: Date.now() - started,
-      },
-      toolResultContent: JSON.stringify({
-        assetId: asset.id,
-        name: asset.name,
-        version: asset.version,
-        tags: asset.tags,
-        ...(boundAppId ? { applicationId: boundAppId } : {}),
-      }),
+      trace: { id: toolCallId, toolName, arguments: args, output: JSON.stringify(content), isError: false, durationMs: Date.now() - started },
+      toolResultContent: JSON.stringify(content),
       isError: false,
-      artifact: {
-        kind: 'TECH_ARCH_ASSET',
-        assetId: asset.id,
-        name: asset.name,
-        version: asset.version,
-        tags: asset.tags,
-        ...(boundAppId ? { applicationId: boundAppId } : {}),
-      },
     };
   }
 
+  if (toolName === 'read_application_inputs' || toolName === 'save_application_instructions') {
+    const resolved = resolveSessionApplication(store, session, args.applicationId);
+    if (!resolved.application) {
+      if (toolName === 'save_application_instructions') return failure(resolved.error);
+      const inputs = readApplicationSpecificationInputs(store, session, args.applicationId);
+      return {
+        ...failure(resolved.error),
+        toolResultContent: JSON.stringify(inputs),
+      };
+    }
+    if (toolName === 'read_application_inputs') {
+      const inputs = readApplicationSpecificationInputs(store, session, args.applicationId);
+      return {
+        trace: { id: toolCallId, toolName, arguments: args, output: pickLocaleText(locale, `已读取应用「${resolved.application.name}」的规格输入。`, `Read specification inputs for "${resolved.application.name}".`), isError: false, durationMs: Date.now() - started },
+        toolResultContent: JSON.stringify(inputs),
+        isError: false,
+      };
+    }
+    const developmentInstructions = typeof args.developmentInstructions === 'string' ? args.developmentInstructions.trim() : '';
+    if (!developmentInstructions) return failure('developmentInstructions must contain the application-specific Markdown specification.');
+    if (args.developmentBlockers !== undefined && (!Array.isArray(args.developmentBlockers)
+      || args.developmentBlockers.some((blocker) => typeof blocker !== 'string' || !blocker.trim()))) {
+      return failure('developmentBlockers must be an array of non-empty contradiction descriptions; omit it to preserve existing blockers.');
+    }
+    const blockerUpdate = Array.isArray(args.developmentBlockers)
+      ? { developmentBlockers: [...new Set(args.developmentBlockers.map((blocker: string) => blocker.trim()))] }
+      : {};
+    const app = store.saveAssembledApplication({ ...resolved.application, developmentInstructions, ...blockerUpdate });
+    const output = pickLocaleText(locale, `已保存应用「${app.name}」的开发规格指令。`, `Saved implementation instructions for "${app.name}".`);
+    return {
+      trace: { id: toolCallId, toolName, arguments: { applicationId: app.id, developmentInstructions, ...blockerUpdate }, output, isError: false, durationMs: Date.now() - started },
+      toolResultContent: JSON.stringify({ applicationId: app.id, developmentInstructions, application: app }),
+      isError: false,
+    };
+  }
+
+  if (toolName === 'save_tech_architecture_spec' || toolName === 'save_architecture_asset') {
+    const layer = toolName === 'save_tech_architecture_spec' ? 'TECH_ARCH' : args.layer;
+    if (layer !== 'UI_UE' && layer !== 'TECH_FOUNDATION' && layer !== 'TECH_ARCH') {
+      return failure('Select a valid architecture standard layer: UI_UE, TECH_FOUNDATION, or TECH_ARCH.');
+    }
+    const assetId = typeof args.assetId === 'string' ? args.assetId.trim() : '';
+    const existing = assetId ? store.listFourLayerAssets().find((asset) => asset.id === assetId) : undefined;
+    if (assetId && !existing) return failure(`Architecture standard not found: ${assetId}`);
+    if (existing && existing.layer !== layer) return failure(`Architecture standard ${assetId} belongs to ${existing.layer}, not ${layer}.`);
+    const name = typeof args.name === 'string' ? args.name.trim() : '';
+    const rawSpec = typeof args.specMarkdown === 'string' ? args.specMarkdown : typeof args.content === 'string' ? args.content : '';
+    const specMarkdown = stripMarkdownFence(rawSpec).trim();
+    if (!name || !specMarkdown) return failure('Architecture standards require a name and non-empty specMarkdown.');
+    const tags = Array.isArray(args.stackTags)
+      ? args.stackTags.map(String).map((tag) => tag.trim()).filter(Boolean)
+      : existing?.tags ?? [];
+    const technologyProfileId = typeof args.technologyProfileId === 'string' && args.technologyProfileId.trim()
+      ? args.technologyProfileId.trim()
+      : existing?.technologyProfileId ?? DEFAULT_TECHNOLOGY_PROFILE_ID;
+    if (!store.listTechnologyProfiles().some((profile) => profile.id === technologyProfileId)) {
+      return failure(`Technology Profile not found: ${technologyProfileId}`);
+    }
+    const asset = store.saveFourLayerAsset({
+      ...existing,
+      id: existing?.id ?? `asset-arch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      layer,
+      name,
+      version: typeof args.version === 'string' && args.version.trim() ? args.version.trim() : existing?.version ?? 'v1.0.0',
+      summary: typeof args.summary === 'string' && args.summary.trim() ? args.summary.trim() : existing?.summary ?? name,
+      tags,
+      specMarkdown,
+      technologyProfileId,
+    });
+    const output = pickLocaleText(locale, `已保存仓库架构规范《${asset.name}》（${asset.id}）。`, `Saved repository architecture standard "${asset.name}" (${asset.id}).`);
+    return {
+      trace: { id: toolCallId, toolName, arguments: { assetId: asset.id, name: asset.name, layer: asset.layer, tags: asset.tags }, output, isError: false, durationMs: Date.now() - started },
+      toolResultContent: JSON.stringify(asset),
+      isError: false,
+      ...(asset.layer === 'TECH_ARCH' ? { artifact: { kind: 'TECH_ARCH_ASSET' as const, assetId: asset.id, name: asset.name, version: asset.version, tags: asset.tags } } : {}),
+    };
+  }
   // 4. Metric Anomaly Insight (`REASONING` session)
   if (toolName === 'save_metric_insight') {
     const metricIdArg = typeof args.metricId === 'string' ? args.metricId.trim() : '';

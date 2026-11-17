@@ -15,7 +15,7 @@ An ontology-driven software modeling, application assembly, capability extractio
 - All environments share the SQLite dialect (`drizzle-orm/sqlite-core` across local SQLite, Cloudflare D1, and Durable Object SQLite) behind `src/packages/workspace-store`.
 - Interactive HTML prototypes (`界面原型.html`) carry semantic `data-screen-id`, `data-element-id`, `data-binding`, and `data-event-id` anchors for deterministic `MU` UI Model extraction.
 - Exported agent artifacts (`SKILL.md`, `开发指导书.md`, `本体模型业务功能开发指导书.md`) use progressive disclosure (context pointers + checkable completion criteria) rather than monolithic YAML concatenation.
-- UI takes colours, fonts, radii, shadows, and texture only from Workbench Theme contract tokens (`src/packages/workbench-theme`, `docs/workbench-theme-contract.md`, ADR 0012). Built-in themes: 默认 / Default (what a device gets until it chooses) and 暖纸 / Warm Paper (the `spatial-sync` identity of ADR 0006), each with light and dark; the theme is chosen per device, independently of light and dark. Bilingual (`zh-CN` / `en-US`) i18n and zero blocking browser dialogs (`window.alert/confirm/prompt` are forbidden).
+- UI takes colours, fonts, radii, shadows, and texture only from Workbench Theme contract tokens (`src/packages/workbench-theme`, `docs/workbench-theme-contract.md`, ADR 0015). Built-in themes: 默认 / Default (what a device gets until it chooses) and 暖纸 / Warm Paper (the `spatial-sync` identity of ADR 0006), each with light and dark; the theme is chosen per device, independently of light and dark. Bilingual (`zh-CN` / `en-US`) i18n and zero blocking browser dialogs (`window.alert/confirm/prompt` are forbidden).
 
 ## Agent skills
 

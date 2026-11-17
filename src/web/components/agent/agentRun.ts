@@ -65,8 +65,8 @@ export interface AgentRunView {
    * Absent for structured action prompts, where `title` already says it all.
    */
   userPrompt?: string;
-  /** Assistant reply streamed so far while the run is still in flight. */
-  streamingText?: string;
+  /** Assistant Markdown, available during streaming and after completion. */
+  text?: string;
   /** Source session metadata when adapted from an `AgentSession` turn. */
   sourceSessionId?: string;
   sourceUserMessageId?: string;
@@ -121,7 +121,7 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
   }
   const trimmed = rawPrompt.trim();
   if (!trimmed) {
-    return { zh: '原型精修', en: 'Prototype refinement' };
+    return { zh: '智能体运行', en: 'Agent run' };
   }
 
   const actionMatch = /^\[ACTION:([A-Z_]+)(?:\s+(\{[^\r\n]*\}))?\]/.exec(trimmed);
@@ -412,6 +412,7 @@ function buildCompletedSessionRun(
     steps,
     ...(thinking ? { thinking } : {}),
     ...(userPrompt ? { userPrompt } : {}),
+    ...(aMsg.content ? { text: aMsg.content } : {}),
     sourceSessionId: session.id,
     sourceUserMessageId: uMsg.id,
     sourceAssistantMessageId: aMsg.id,
@@ -463,7 +464,6 @@ function buildRunFromLiveDraft(
 ): AgentRunView {
   const startedAt = uMsg ? parseIsoMs(uMsg.timestamp, draft.startedAt) : draft.startedAt;
   const thinking = draft.thinking.trim();
-  const streamingText = draft.text?.trim();
   const userPrompt = resolveUserPromptDisplay(uMsg?.content ?? draft.userPrompt, draft.displayTitle);
   const revArtifact = extractRevisionArtifact(draft.artifacts);
   const primaryArtifact = selectPrimaryDomainArtifact(draft.artifacts);
@@ -483,7 +483,7 @@ function buildRunFromLiveDraft(
     steps: draft.steps,
     ...(thinking ? { thinking } : {}),
     ...(userPrompt ? { userPrompt } : {}),
-    ...(streamingText ? { streamingText } : {}),
+    ...(draft.text ? { text: draft.text } : {}),
     sourceSessionId: draft.sessionId,
     ...(uMsg ? { sourceUserMessageId: uMsg.id } : {}),
     retryPrompt: uMsg?.content ?? draft.userPrompt,

@@ -47,6 +47,7 @@ import type {
   RequirementDoc,
   RequirementSession,
   SystemSettingsState,
+  TechnologyProfile,
   WritebackInterface,
 } from '../packages/workspace-store/index.js';
 import type {
@@ -65,6 +66,7 @@ import {
 } from './components/agent/agentPanelStore.js';
 
 export interface BootstrapPayload {
+  technologyProfiles?: TechnologyProfile[];
   projects: ProjectSummary[];
   activeProject: ProjectDetail;
   projectSnapshots: ProjectSnapshot[];
@@ -404,6 +406,14 @@ export function formatToolStepLabel(toolName: string): { zh: string; en: string 
       return { zh: '校验并持久化 11 模型本体套件', en: 'Validate & save 11-model ontology suite' };
     case 'save_tech_architecture_spec':
       return { zh: '持久化技术架构规格资产', en: 'Save technical architecture spec' };
+    case 'read_architecture_assets':
+      return { zh: '读取仓库架构规范', en: 'Read repository architecture standards' };
+    case 'save_architecture_asset':
+      return { zh: '保存仓库架构规范', en: 'Save repository architecture standard' };
+    case 'read_application_inputs':
+      return { zh: '检查应用开发规格输入', en: 'Inspect application specification inputs' };
+    case 'save_application_instructions':
+      return { zh: '保存应用专属开发规格', en: 'Save application implementation instructions' };
     case 'save_metric_insight':
       return { zh: '生成并保存指标波动解读', en: 'Generate & save metric insight' };
     case 'save_scenario_attribution_report':
@@ -893,7 +903,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       REQUIREMENT: { zh: '需求探索与 SRS 合成会话', en: 'Requirement & SRS Session' },
       COPILOT: { zh: '本体智能助手会话', en: 'Ontology Copilot Session' },
       PROTOTYPE_CO_DESIGN: { zh: '原型协同精修会话', en: 'Prototype Co-Design Session' },
-      CODING: { zh: '应用装配与技术架构会话', en: 'Assembly & Tech Arch Session' },
+      ARCHITECTURE: { zh: '架构资产编写会话', en: 'Architecture Asset Authoring Session' },
+      CODING: { zh: '应用开发规格会话', en: 'Application Specification Session' },
       CAPABILITY: { zh: '能力智能体会话', en: 'Capability Agent Session' },
       REASONING: { zh: '数据归因与指标洞察会话', en: 'Data Reasoning & Insight Session' },
     };
@@ -1052,7 +1063,7 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
           ...(input.displayTitle ? { displayTitle: input.displayTitle } : {}),
           ...(draftImages ? { images: draftImages } : {}),
           startedAt: Date.now(),
-          liveStatus: { zh: '正在理解指令并分析锚点…', en: 'Analyzing instruction & anchors…' },
+          liveStatus: { zh: '正在读取指令…', en: 'Reading your instruction…' },
           thinking: '',
           text: '',
           steps: [],
@@ -1293,23 +1304,19 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     if (!curData) return null;
     const projectId = curData.activeProject.id;
     const locale = getCurrentClientLocale();
-    const targetAppId = input.applicationId ?? curData.assembledApplications[0]?.id;
-    const session = await get().ensureProjectAgentSession(projectId, 'CODING', {
-      ...(targetAppId ? { targetId: targetAppId } : {}),
-    });
+    const session = await get().ensureProjectAgentSession(projectId, 'ARCHITECTURE');
     get().setActiveSessionId(session.id);
 
     const payload: Record<string, unknown> = {
       name: input.name.trim(),
       ...(input.stackTags && input.stackTags.length > 0 ? { stackTags: input.stackTags } : {}),
       ...(input.prompt?.trim() ? { prompt: input.prompt.trim() } : {}),
-      ...(targetAppId ? { applicationId: targetAppId } : {}),
     };
     const header = `[ACTION:GENERATE_TECH_ARCH ${JSON.stringify(payload)}]`;
     const instruction =
       locale === 'en-US'
         ? `Generate a production technical architecture specification "${input.name}"${input.prompt?.trim() ? ` (${input.prompt.trim()})` : ''} and save it via save_tech_architecture_spec.`
-        : `请基于当前项目本体与工程栈生成技术架构规范「${input.name}」${input.prompt?.trim() ? `（补充要求：${input.prompt.trim()}）` : ''}，并通过 save_tech_architecture_spec 工具保存为四层资产。`;
+        : `请编写可复用的技术架构规范「${input.name}」${input.prompt?.trim() ? `（补充要求：${input.prompt.trim()}）` : ''}，并通过 save_tech_architecture_spec 工具保存为仓库规范。`;
     const displayTitle =
       locale === 'en-US'
         ? `Generate Tech Arch: ${input.name}`
@@ -1995,14 +2002,14 @@ function buildStoreSessionStreamCallbacks(
         thinking: `${cur.thinking}${delta}`,
         liveStatus: cur.activeAnchor
           ? cur.liveStatus
-          : { zh: '正在思考修改方案…', en: 'Planning localized edits…' },
+          : { zh: '正在思考…', en: 'Thinking…' },
       }));
     },
     onTextDelta: (delta) => {
       patchDraft((cur) => ({
         ...cur,
         text: `${cur.text}${delta}`,
-        liveStatus: { zh: '正在整理修改说明…', en: 'Summarizing changes…' },
+        liveStatus: { zh: '正在回复…', en: 'Responding…' },
       }));
     },
     onToolCall: (call) => {

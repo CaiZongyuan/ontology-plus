@@ -14,14 +14,12 @@ import {
   type StructuralScanResult,
 } from '../../ontology-core/index.js';
 import {
-  compileDevelopmentPackage,
   compileOntologySkill,
   handleOntologyMcpRequest,
   inspectOntologyMcpCapabilities,
   type McpToolDefinition,
 } from '../../package-compiler/index.js';
 import type {
-  AssembledApplication,
   CapabilityChatMessage,
   CapabilityChatSession,
   ExtractionJob,
@@ -80,13 +78,6 @@ export interface PrototypeRefinementSelection {
   htmlSnippet?: string;
   matchedElementsSummary?: string[];
   note?: string;
-}
-
-export interface AppCodingAgentResult {
-  application: AssembledApplication;
-  reply: string;
-  generatedFilesCount: number;
-  providerUsed: string;
 }
 
 export interface CapabilitySmartChatResult {
@@ -869,217 +860,6 @@ export function formatSelectionsForPrompt(
     return lines.join('\n');
   });
   return `${header}\n${blocks.join('\n')}\n\n`;
-}
-
-function extractExecutableTsFromLlmResponse(raw: string): {
-  code: string | null;
-  explanation: string;
-} {
-  const codeBlockMatch = raw.match(/```(?:ts|typescript|tsx|js|javascript)\s*\r?\n([\s\S]*?)\r?\n```/i);
-  if (codeBlockMatch && codeBlockMatch[1].trim().length > 24) {
-    const code = codeBlockMatch[1].trim();
-    const explanation = raw.replace(codeBlockMatch[0], '').trim();
-    return { code, explanation };
-  }
-  const stripped = stripMarkdownFence(raw);
-  if (
-    stripped.includes('export ') &&
-    (stripped.includes('function ') || stripped.includes('interface ') || stripped.includes('class '))
-  ) {
-    return { code: stripped, explanation: '' };
-  }
-  return { code: null, explanation: raw.trim() };
-}
-
-export async function runAppCodingAgentTurn(
-  store: WorkspaceStore,
-  input: {
-    appId: string;
-    instruction: string;
-    locale?: AgentLocale | string;
-  },
-): Promise<AppCodingAgentResult> {
-  const appItem = store.listAssembledApplications().find((a) => a.id === input.appId);
-  if (!appItem) throw new Error(`Assembled application not found: ${input.appId}`);
-
-  const project = store.getProject(appItem.projectId);
-  if (!project) throw new Error(`Project not found: ${appItem.projectId}`);
-
-  if (project.validation.errorCount > 0) {
-    throw new Error(
-      `Ontology validation gate blocked coding turn: ${project.validation.errorCount} consistency error(s) in ${project.name}.`,
-    );
-  }
-
-  const locale = resolveEffectiveLocale(store, input.locale, input.instruction);
-  const assets = store.listFourLayerAssets();
-  const uiAsset =
-    assets.find((a) => a.id === appItem.uiUeAssetId) ?? assets.find((a) => a.layer === 'UI_UE')!;
-  const foundationAsset =
-    assets.find((a) => a.id === appItem.techFoundationAssetId) ??
-    assets.find((a) => a.layer === 'TECH_FOUNDATION')!;
-  const archAsset =
-    assets.find((a) => a.id === appItem.techArchAssetId) ??
-    assets.find((a) => a.layer === 'TECH_ARCH')!;
-  const requirementDoc = store.listRequirementDocs(project.id)[0];
-  const confirmedProto = store.getConfirmedPrototypeRevision(project.id);
-  const prototype = confirmedProto
-    ? {
-        ...confirmedProto.prototype,
-        htmlContent: confirmedProto.htmlContent,
-        extractedScreenCount: confirmedProto.revision.extractedScreenCount,
-      }
-    : undefined;
-
-  const activeProvider = resolvePreferredProvider(store, project.id);
-
-  const aggsSummary = (project.suite.M1?.aggregates ?? [])
-    .map(
-      (a) =>
-        `${a.name}(${a.alias})[${a.attributes.map((at) => `${at.name}:${at.type}`).join(',')}]`,
-    )
-    .join('; ');
-  const behaviorsSummary = (project.suite.M2?.behaviors ?? [])
-    .map((b) => `${b.id}:${b.name}(${b.behaviorType})`)
-    .join(', ');
-  const rulesSummary = (project.suite.M3?.rules ?? [])
-    .map((r) => `${r.id}:${r.expression}`)
-    .join('; ');
-
-  const llmRes = await callOpenAiCompatibleChat(
-    activeProvider,
-    [
-      {
-        role: 'system',
-        content:
-          locale === 'en-US'
-            ? [
-                `You are the Ontology Plus 4-Layer App Coding Agent.`,
-                `Active Project: ${project.name} (${project.domain}); M1 Aggregates: ${aggsSummary}; M2 Behaviors: ${behaviorsSummary}; M3 Rules: ${rulesSummary}.`,
-                `Tech Foundation: ${foundationAsset.name}; Architecture: ${archAsset.name}; UI Spec: ${uiAsset.name}.`,
-                `Provide a brief implementation summary followed by a complete, self-contained, executable TypeScript module inside a \`\`\`ts code block implementing the requested business logic (importing \`{ evaluateM3Rules }\` from \`./domain/rules\` if rule checks apply).`,
-              ].join('\n')
-            : [
-                `你是 Ontology Plus 的四层资产应用开发智能体（App Coding Agent）。`,
-                `当前工程：${project.name}（${project.domain}），M1 聚合根：${aggsSummary}，M2 行为：${behaviorsSummary}，M3 规则：${rulesSummary}。`,
-                `技术底座：${foundationAsset.name}，架构规范：${archAsset.name}，UI 规范：${uiAsset.name}。`,
-                `请先用简明要点说明实现方案，随后在一个 \`\`\`ts 代码块中输出完整、可编译执行的 TypeScript 业务模块源码（可按需 \`import { evaluateM3Rules } from './domain/rules';\` 执行规则门禁校验）。`,
-              ].join('\n'),
-      },
-      {
-        role: 'user',
-        content: input.instruction,
-      },
-    ],
-    { store, maxTokens: 6144 },
-  );
-
-  const parsedCode = llmRes?.content
-    ? extractExecutableTsFromLlmResponse(llmRes.content)
-    : { code: null, explanation: '' };
-
-  const generatedFeatureSource = parsedCode.code
-    ? [
-        `// Generated by Ontology Plus AI Coding Agent for ${appItem.name}`,
-        `// Instruction: ${input.instruction.replace(/\r?\n/g, ' ')}`,
-        `// Timestamp: ${new Date().toISOString()}`,
-        ``,
-        parsedCode.code,
-        ``,
-      ].join('\n')
-    : [
-        `// Generated by Ontology Plus AI Coding Agent for ${appItem.name}`,
-        `// Instruction: ${input.instruction.replace(/\r?\n/g, ' ')}`,
-        `// Timestamp: ${new Date().toISOString()}`,
-        `import { evaluateM3Rules } from './domain/rules';`,
-        ``,
-        `export interface AgentFeatureExecutionContext {`,
-        `  instruction: string;`,
-        `  operatorId: string;`,
-        `  payload: Record<string, unknown>;`,
-        `}`,
-        ``,
-        `export function executeAgentGeneratedFeature(ctx: AgentFeatureExecutionContext) {`,
-        `  const violations = evaluateM3Rules(ctx.payload);`,
-        `  if (violations.length > 0) {`,
-        `    return { ok: false, blockedByRules: violations };`,
-        `  }`,
-        `  return {`,
-        `    ok: true,`,
-        `    appId: ${JSON.stringify(appItem.id)},`,
-        `    instruction: ctx.instruction,`,
-        `    executedAt: new Date().toISOString(),`,
-        `  };`,
-        `}`,
-        ``,
-      ].join('\n');
-
-  const compiled = compileDevelopmentPackage({
-    app: appItem,
-    project,
-    uiUeAsset: uiAsset,
-    techFoundationAsset: foundationAsset,
-    techArchAsset: archAsset,
-    requirementDoc,
-    prototype,
-    extraSourceFiles: [
-      {
-        relativePath: '应用源码/src/agent-generated-feature.ts',
-        content: generatedFeatureSource,
-      },
-    ],
-    writeToDisk: true,
-  });
-
-  const now = new Date().toISOString();
-  const updatedApp = store.saveAssembledApplication({
-    ...appItem,
-    status: appItem.status === 'PUBLISHED' ? 'PUBLISHED' : 'PACKAGE_READY',
-    packageOutputDir:
-      compiled.outputDir || appItem.packageOutputDir || `.onto-cs/packages/${appItem.id}`,
-    agentDevLogs: [
-      ...appItem.agentDevLogs,
-      {
-        timestamp: now,
-        phase: 'AI_CODING_AGENT',
-        detail: pickLocaleText(
-          locale,
-          `已按指令「${input.instruction}」生成可执行领域与服务层源码并同步开发包（共 ${compiled.files.length} 个制品文件，0 一致性错误）。`,
-          `Generated executable domain/service TypeScript modules per "${input.instruction}" and synced dev package (${compiled.files.length} files, 0 consistency errors).`,
-        ),
-      },
-    ],
-  });
-
-  const reply =
-    locale === 'en-US'
-      ? [
-          `Completed App Coding Agent turn for **${updatedApp.name}**:`,
-          `- **Instruction**: ${input.instruction}`,
-          `- **Ontology Gate**: ${project.validation.presentModels.length} models active, **0 consistency errors**`,
-          `- **Compiled Artifacts**: Generated \`应用源码/db/schema.sql\`, \`src/domain/entities.ts\`, \`src/domain/rules.ts\`, \`src/application/services.ts\`, and \`src/agent-generated-feature.ts\` (**${compiled.files.length}** files total).`,
-          ...(llmRes?.content ? [`\n${llmRes.content}`] : []),
-        ].join('\n')
-      : [
-          `已针对组装应用「${updatedApp.name}」执行开发智能体回合：`,
-          `- **指令解析**：${input.instruction}`,
-          `- **本体门禁校验**：${project.validation.presentModels.length} 个模型在线，**0 错误**`,
-          `- **动态编译源码**：已生成 \`应用源码/db/schema.sql\`、\`src/domain/entities.ts\`、\`src/domain/rules.ts\`、\`src/application/services.ts\` 与 \`src/agent-generated-feature.ts\`（共 **${compiled.files.length}** 个文件）。`,
-          ...(llmRes?.content ? [`\n${llmRes.content}`] : []),
-        ].join('\n');
-
-  saveCheckpointSafe(store, `app-dev-${input.appId}`, 'APP_CODING_AGENT', {
-    appId: input.appId,
-    instruction: input.instruction,
-    filesCount: compiled.files.length,
-  });
-
-  return {
-    application: updatedApp,
-    reply,
-    generatedFilesCount: compiled.files.length,
-    providerUsed: llmRes?.modelUsed || activeProvider?.defaultModel || 'auto/glm-5.3-flash',
-  };
 }
 
 /**

@@ -124,7 +124,7 @@
 /* ─── Root Colour-Scheme, Type, Spacing and Motion Scales ───
    Colours, fonts, radii, shadows and the background texture come only from the active
    Workbench Theme's contract tokens and the shared derived variables, both written to
-   workbench-themes.generated.css (ADR 0012, docs/workbench-theme-contract.md).
+   workbench-themes.generated.css (ADR 0015, docs/workbench-theme-contract.md).
    `pnpm lint:theme` fails on anything else. */
 :root {
   color-scheme: light dark;

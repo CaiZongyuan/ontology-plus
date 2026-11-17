@@ -1,5 +1,5 @@
 /**
- * The Workbench Theme contract (ADR 0012): the only appearance tokens a
+ * The Workbench Theme contract (ADR 0015): the only appearance tokens a
  * component may read, and the only ones a theme may set.
  *
  * Renaming or removing a token breaks themes and bumps

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { checkWorkbenchSources, formatAppearanceProblems, type SourceFile } from '../src/packages/workbench-theme/index.js';
 
 /**
- * The appearance guard over the workbench sources (ADR 0012): styles and components read
+ * The appearance guard over the workbench sources (ADR 0015): styles and components read
  * only Workbench Theme contract tokens and the registered shared derived variables, and
  * paint no literal colours outside the registered places. Part of `pnpm check`.
  */

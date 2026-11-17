@@ -12,7 +12,11 @@ process.env.ONTOLOGY_E2E_WORKSPACE_ROOT = e2eWorkspaceRoot;
 const explicitChannel = process.env.PLAYWRIGHT_CHANNEL?.trim();
 const hasSystemEdge =
   fs.existsSync('/opt/microsoft/msedge/msedge') ||
-  fs.existsSync('/usr/bin/microsoft-edge');
+  fs.existsSync('/usr/bin/microsoft-edge') ||
+  (process.platform === 'win32' && [
+    process.env['ProgramFiles(x86)'] ?? 'C:/Program Files (x86)',
+    process.env.ProgramFiles ?? 'C:/Program Files',
+  ].some((directory) => fs.existsSync(path.join(directory, 'Microsoft/Edge/Application/msedge.exe'))));
 const browserChannel = explicitChannel || (hasSystemEdge ? 'msedge' : undefined);
 
 function resolveCachedChromiumExecutable(): string | undefined {
@@ -80,6 +84,7 @@ export default defineConfig({
       ...process.env,
       PORT: String(e2ePort),
       ONTOLOGY_WORKSPACE_ROOT: e2eWorkspaceRoot,
+      ONTOLOGY_ARCHITECTURE_ASSETS_ROOT: path.join(e2eWorkspaceRoot, 'architecture-catalog'),
       ONTOLOGY_MOCK_LLM: '1',
     },
   },

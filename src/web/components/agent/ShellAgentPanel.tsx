@@ -146,19 +146,19 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
     },
   },
   'app-four-layer-assets': {
-    title: { zh: '技术架构规范生成助手', en: 'Tech Architecture Agent' },
-    sessionKind: 'CODING',
+    title: { zh: '架构资产智能体', en: 'Architecture Asset Agent' },
+    sessionKind: 'ARCHITECTURE',
     placeholder: {
-      zh: '描述技术栈约束或生成四层技术架构规范…',
-      en: 'Specify stack constraints or generate a 4-layer tech architecture spec…',
+      zh: '编写或完善可复用的 UI、技术底座与技术架构规范…',
+      en: 'Author or refine reusable UI, foundation and architecture standards…',
     },
   },
   'app-assembly-dev': {
-    title: { zh: '应用装配与开发包编译', en: 'Assembly & Coding Agent' },
+    title: { zh: '应用开发规格助手', en: 'Application Specification Assistant' },
     sessionKind: 'CODING',
     placeholder: {
-      zh: '输入研发装配、接口契约检查或编译《开发指导书》指令…',
-      en: 'Ask the Coding Agent to inspect bindings or compile the Dev Guidebook…',
+      zh: '检查当前应用的输入缺项与冲突，完善实施规格和验收条件…',
+      en: 'Inspect this application’s missing inputs and conflicts, or refine its implementation specification…',
     },
   },
   'app-skills': {
@@ -170,11 +170,11 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
     },
   },
   'app-publish': {
-    title: { zh: '研发资料包与发布助手', en: 'Package & Release Agent' },
+    title: { zh: '应用交付规格助手', en: 'Application Delivery Specification Assistant' },
     sessionKind: 'CODING',
     placeholder: {
-      zh: '检查交付资料包清单或编译导出研发指导资产…',
-      en: 'Check release artifacts or compile progressive-disclosure dev guides…',
+      zh: '检查当前应用的资料包输入与验收条件…',
+      en: 'Inspect this application’s package inputs and acceptance criteria…',
     },
   },
   'cap-systems': {
@@ -297,6 +297,8 @@ export function defaultNavForSessionKind(kind: AgentSessionKind): NavViewId {
       return 'app-prototype';
     case 'COPILOT':
       return 'app-ontology';
+    case 'ARCHITECTURE':
+      return 'app-four-layer-assets';
     case 'CODING':
       return 'app-assembly-dev';
     case 'CAPABILITY':
@@ -489,8 +491,23 @@ export function resolveSurfaceAgentSession(
     };
   }
 
+  const projectApplication = surface.sessionKind === 'CODING'
+    ? data?.assembledApplications.find((app) => app.id === opts?.activeItemId && app.projectId === activeProjectId)
+    : undefined;
+  const explicitApplicationSession = surface.sessionKind === 'CODING'
+    ? sessions.find((session) => session.id === opts?.activeSessionId && session.agentKind === 'CODING'
+      && session.projectId === activeProjectId && (!session.targetId || data?.assembledApplications.some(
+        (app) => app.id === session.targetId && app.projectId === activeProjectId,
+      )))
+    : undefined;
+  const applicationTargetId = projectApplication?.id
+    ?? (opts?.activeItemId ? undefined : explicitApplicationSession?.targetId);
   const matching = sessions
-    .filter((s) => s.projectId === activeProjectId && s.agentKind === surface.sessionKind)
+    .filter((s) => {
+      if (s.projectId !== activeProjectId || s.agentKind !== surface.sessionKind) return false;
+      if (surface.sessionKind !== 'CODING') return true;
+      return !s.targetId || s.targetId === applicationTargetId;
+    })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const rememberedId =
     opts?.rememberedSessionByScope?.[agentSessionScopeKey(activeProjectId, surface.sessionKind)];
@@ -920,13 +937,18 @@ export function ShellAgentPanel({
       activeSession ??
       (await ensureProjectAgentSession(targetProjectId, surface.sessionKind, {
         ...(capAgent ? { targetId: capAgent.id } : {}),
+        ...(surface.sessionKind === 'CODING' && data.assembledApplications.some(
+          (app) => app.id === activeItemId && app.projectId === activeProjectId,
+        ) ? { targetId: activeItemId! } : {}),
         ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
       }));
     setActiveSessionId(targetSession.id);
     autoTitleSession(targetSession, prompt);
     await startSessionAgentRun({
       sessionId: targetSession.id,
-      prompt,
+      prompt: surface.sessionKind === 'CODING' && !targetSession.targetId && data.assembledApplications.some(
+        (app) => app.id === activeItemId && app.projectId === activeProjectId,
+      ) ? `[Target application ID: ${activeItemId}]\n${prompt}` : prompt,
       ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
       ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
     });

@@ -4211,6 +4211,29 @@ details[open] > summary .agent-run-chevron {
   min-height: 560px;
 }
 
+.fla-intro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.fla-intro-title {
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--foreground);
+}
+
+.fla-intro-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--faint-foreground);
+}
+
 .fla-layers {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -4570,6 +4593,25 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+
+/* Where the standard lives in the repository; the package snapshot cites this path. */
+.fla-detail-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--faint-foreground);
+  flex-shrink: 0;
+}
+
+.fla-detail-source-path {
+  font-family: var(--font-mono);
+  word-break: break-all;
 }
 
 .fla-detail-body {
