@@ -29,6 +29,7 @@ import {
 import { Button } from '../beautifui/index.js';
 import { ChangeSummaryCard } from '../history/index.js';
 import { decideDesignBriefForMe } from '../prototype/DesignBriefAndStyleTile.js';
+import { formatPrototypeLabelForBusinessView } from '../prototype/PrototypeRevisionHistory.js';
 import { SelectionAttachmentStrip } from '../prototype/SelectionAttachmentStrip.js';
 import {
   submitPrototypeComposerTurnWithSelections,
@@ -473,22 +474,32 @@ export function ShellAgentPanel({
       <SelectionAttachmentStrip prototypeId={activePrototypeId} />
     ) : undefined);
 
+  const isProjectStepSurface =
+    surface.sessionKind === 'REQUIREMENT' ||
+    surface.sessionKind === 'PROTOTYPE_CO_DESIGN' ||
+    surface.sessionKind === 'COPILOT' ||
+    surface.sessionKind === 'CODING';
+
   const sessionOptions = useMemo(
     () =>
       matchingSessions.map((s) => {
         const updated = formatRelativeTime(s.updatedAt);
+        const defaultTitle = t(NEW_AGENT_SESSION_TITLE.zh, NEW_AGENT_SESSION_TITLE.en);
+        const displayTitle = isUntitledAgentSession(s.title)
+          ? defaultTitle
+          : isProjectStepSurface
+            ? formatPrototypeLabelForBusinessView(s.title, defaultTitle)
+            : s.title;
         return {
           id: s.id,
-          title: isUntitledAgentSession(s.title)
-            ? t(NEW_AGENT_SESSION_TITLE.zh, NEW_AGENT_SESSION_TITLE.en)
-            : s.title,
+          title: displayTitle,
           isFork: Boolean(s.parentSessionId),
           turnCount: (s.messages ?? []).filter((m) => m.role === 'user').length,
           updatedLabel: t(updated.zh, updated.en),
           running: s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id]),
         };
       }),
-    [matchingSessions, liveSessionDrafts, t],
+    [matchingSessions, liveSessionDrafts, isProjectStepSurface, t],
   );
 
   const handleCreateSession = async () => {

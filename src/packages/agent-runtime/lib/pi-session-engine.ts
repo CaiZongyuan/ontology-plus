@@ -162,25 +162,41 @@ function extractPrimaryObjectFromRequirements(
   markdown: string | undefined,
 ): { name?: string; label?: string } {
   if (!markdown) return {};
-  // Match "**中文名**（EnglishName）" or "**中文名** (EnglishName)" or "**名称**"
-  const biBoldMatch = /\*\*([^*\n]{2,24})\*\*\s*[（(]\s*([A-Za-z][A-Za-z0-9_]*)\s*[)）]/.exec(
-    markdown,
-  );
-  if (biBoldMatch) {
-    return {
-      label: biBoldMatch[1]!.trim(),
-      name: biBoldMatch[2]!.trim(),
-    };
+  // Match "**中文名**（EnglishName）" or "**中文名** (`EnglishName`)" while skipping generic placeholders
+  const biBoldRe =
+    /\*\*([^*\n]{2,24})\*\*\s*[（(]\s*`?([A-Za-z][A-Za-z0-9_]*)`?(?:\s*\/[^)）]*)?[)）]/g;
+  let biBoldMatch: RegExpExecArray | null;
+  while ((biBoldMatch = biBoldRe.exec(markdown)) !== null) {
+    const label = biBoldMatch[1]!.trim();
+    const name = biBoldMatch[2]!.trim();
+    if (name === 'PrimaryEntity' || label === '核心业务对象') continue;
+    return { label, name };
   }
-  const plainBoldMatch = /\*\*([^*\n]{2,24})\*\*/.exec(markdown);
-  if (plainBoldMatch) {
+  const plainBoldRe = /\*\*([^*\n]{2,24})\*\*/g;
+  let plainBoldMatch: RegExpExecArray | null;
+  while ((plainBoldMatch = plainBoldRe.exec(markdown)) !== null) {
     const label = plainBoldMatch[1]!.trim();
+    if (
+      /^(?:来源会话|生成版本|核心诉求摘要|业务主流程|异常处理路径|11 元模型业务本体)/.test(label)
+    ) {
+      continue;
+    }
     const ascii = /^[A-Za-z][A-Za-z0-9_]*$/.exec(label);
     return {
       label,
       ...(ascii ? { name: ascii[0] } : {}),
     };
   }
+  return {};
+}
+
+function inferPrimaryObjectFromProject(
+  project: ProjectDetail | undefined,
+): { name?: string; label?: string } {
+  const hay = `${project?.name ?? ''} ${project?.domain ?? ''} ${project?.description ?? ''}`;
+  if (/合同|contract/i.test(hay)) return { name: 'Contract', label: '合同' };
+  if (/供应商|supplier/i.test(hay)) return { name: 'SupplierApplication', label: '供应商准入申请' };
+  if (/工单|售后|ticket/i.test(hay)) return { name: 'ServiceTicket', label: '售后工单' };
   return {};
 }
 
@@ -202,10 +218,12 @@ function buildMockGeneratedPrototypeHtml(
   const accent = hexMatches[1] ?? (wantsDark ? '#38bdf8' : '#2563eb');
   const firstAgg = project?.suite.M1?.aggregates?.[0];
   const fromRequirements = extractPrimaryObjectFromRequirements(confirmedRequirementsContent);
-  const aggName = firstAgg?.name || fromRequirements.name || 'BusinessOrder';
+  const fromProject = inferPrimaryObjectFromProject(project);
+  const aggName = firstAgg?.name || fromRequirements.name || fromProject.name || 'BusinessOrder';
   const aggLabel =
     firstAgg?.alias ||
     fromRequirements.label ||
+    fromProject.label ||
     project?.name?.replace(/管理系统|平台|工作台|系统|工程/g, '').trim() ||
     (locale === 'en-US' ? 'Business Record' : '核心业务单据');
   const titleText =

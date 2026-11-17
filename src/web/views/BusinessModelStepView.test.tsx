@@ -466,6 +466,24 @@ describe('BusinessModelStepView (#68)', () => {
     expect(blockedEmptyHtml).toContain('data-testid="business-model-empty-state"');
     expect(blockedEmptyHtml).not.toContain('data-testid="organize-business-model-btn"');
     assertCleanBusinessView(blockedEmptyHtml, 'Empty state without confirmed prototype');
+
+    // 3. Prototype confirmed synced MU only (before Business Model synthesis) -> still renders clean organize empty state
+    seedStore({
+      loading: false,
+      activeNav: 'app-ontology',
+      data: makeSuiteBootstrap(
+        { MU: CONTRACT_LIFECYCLE_SUITE.MU! },
+        { confirmedPrototype: true },
+      ),
+    });
+    const muOnlyEmptyHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <BusinessModelStepView viewModeOverride="business" />
+      </PreferencesProvider>,
+    );
+    expect(muOnlyEmptyHtml).toContain('data-testid="business-model-empty-state"');
+    expect(muOnlyEmptyHtml).toContain('data-testid="organize-business-model-btn"');
+    assertCleanBusinessView(muOnlyEmptyHtml, 'MU-only pre-synthesis state');
   });
 
   it('remembers Technical Details per step in localStorage and renders all 3 Technical Details sub-tabs plus element focus', () => {

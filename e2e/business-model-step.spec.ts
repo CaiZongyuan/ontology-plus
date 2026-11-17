@@ -10,7 +10,7 @@ test.describe('Business Model Step (#68): Business Object Projection, Technical 
   test('browses Business Objects & Cross-Object Views, expands collapsed sections, locates exact element in Technical Details, remembers per-step mode across reload, and jumps via Command Palette & legacy URLs', async ({
     page,
   }) => {
-    await page.goto('/?projectId=proj-contract');
+    await page.goto('/?projectId=proj-contract&step=business-model');
 
     // 1. Default is Business View with zero legacy 3-button subview bar
     await expect(page.getByTestId('business-model-business-view')).toBeVisible();
@@ -139,7 +139,7 @@ test.describe('Business Model Step (#68): Business Object Projection, Technical 
     const { project: cloned } = (await cloneRes.json()) as { project: { id: string } };
 
     try {
-      await page.goto(`/?projectId=${cloned.id}`);
+      await page.goto(`/?projectId=${cloned.id}&step=business-model`);
       await expect(page.getByTestId('business-model-business-view')).toBeVisible();
 
       // 1. Happy-path inline rename & description edit on Business Object "合同" -> "商务合同"

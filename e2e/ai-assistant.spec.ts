@@ -13,7 +13,7 @@ test.describe('Single AI Assistant & History Menu (#62)', () => {
   test('presents a single AI 助手 / AI Assistant across all 4 Project Steps, Technical Details, and Secondary Areas while keeping per-step conversations separate', async ({
     page,
   }) => {
-    await page.goto('/');
+    await page.goto('/?step=business-model');
 
     const panel = page.getByTestId('agent-panel');
     await expect(panel).toBeVisible();
@@ -90,7 +90,7 @@ test.describe('Single AI Assistant & History Menu (#62)', () => {
   test('manages conversations inside the History Menu (create, switch, rename, delete) and forbids manual create/delete for Prototype Co-Design', async ({
     page,
   }) => {
-    await page.goto('/');
+    await page.goto('/?step=business-model');
     await page.getByTestId('step-tab-REQUIREMENTS').click();
 
     const panel = page.getByTestId('agent-panel');
@@ -197,7 +197,7 @@ test.describe('Run Progress in Business Language, Cancel/Retry & Platform Proble
   test('shows concise deterministic business-language progress, folds technical details under 查看细节, supports cancel & retry, and surfaces unified platform notice with settings navigation', async ({
     page,
   }) => {
-    await page.goto('/?projectId=proj-contract');
+    await page.goto('/?projectId=proj-contract&step=business-model');
     await page.getByTestId('step-tab-BUSINESS_MODEL').click();
 
     const panel = page.getByTestId('agent-panel');

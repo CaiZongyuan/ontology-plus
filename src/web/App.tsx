@@ -678,9 +678,15 @@ export function WorkbenchShell({
   );
 
   const validation = data?.activeProject.validation;
+  const hasCoreBusinessModel = Boolean(validation?.presentModels.some((m) => m !== 'MU'));
   const healthSummary = useMemo(
-    () => (validation ? deriveProjectHealthSummary(validation) : null),
-    [validation],
+    () =>
+      validation
+        ? deriveProjectHealthSummary(
+            hasCoreBusinessModel ? validation : { errorCount: 0, warningCount: 0 },
+          )
+        : null,
+    [validation, hasCoreBusinessModel],
   );
 
   const showStepSubbar =

@@ -276,6 +276,7 @@ export const TECHNICAL_IDENTIFIER_PREFIXES = [
   'ROL',
   'ROLE',
   'PERM',
+  'PG',
   'PGRP',
   'FLW',
   'FLOW',
@@ -293,6 +294,8 @@ export const TECHNICAL_IDENTIFIER_PREFIXES = [
   'MET',
   'ASCN',
   'WB',
+  'PROF',
+  'SNAP',
 ] as const;
 
 export type TechnicalIdentifierPrefix = (typeof TECHNICAL_IDENTIFIER_PREFIXES)[number];

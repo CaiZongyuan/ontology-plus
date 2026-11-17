@@ -169,14 +169,25 @@ export function formatStepClock(iso: string | undefined): string {
   return Number.isNaN(d.getTime()) ? '' : d.toTimeString().slice(0, 8);
 }
 
+const TARGET_APP_PREFIX_RE = /^\[Target application ID:[^\r\n]*\]\s*\n*/i;
+const BRIEF_GENERATION_PROMPT_RE = /^【已确认设计简报|^===\s*CONFIRMED DESIGN BRIEF/i;
+const BRIEF_RESTYLE_PROMPT_RE = /^\[PROTOTYPE_BRIEF_RESTYLE\]/i;
+
 export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: string): LocalizedText {
   if (explicitTitle?.trim()) {
     const clean = explicitTitle.trim();
     return { zh: clean, en: clean };
   }
-  const trimmed = rawPrompt.trim();
+  const trimmed = rawPrompt.replace(TARGET_APP_PREFIX_RE, '').trim();
   if (!trimmed) {
     return { zh: '对话请求', en: 'Assistant request' };
+  }
+
+  if (BRIEF_GENERATION_PROMPT_RE.test(trimmed)) {
+    return { zh: '确认设计简报并生成原型', en: 'Confirm Brief & Generate Prototype' };
+  }
+  if (BRIEF_RESTYLE_PROMPT_RE.test(trimmed)) {
+    return { zh: '按新简报重做风格', en: 'Restyle from updated brief' };
   }
 
   const actionMatch = /^\[ACTION:([A-Z_]+)(?:\s+(\{[^\r\n]*\}))?\]/.exec(trimmed);
@@ -279,17 +290,18 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
 }
 
 const STRUCTURED_PROMPT_PATTERN =
-  /^\[ACTION:[A-Z_]+|\[(?:全局补充精修要求|Additional Global Refinement Instruction)\]|(?:^|\n)(?:修改要求|Instruction):\s/;
+  /^\[ACTION:[A-Z_]+|^【已确认设计简报|^===\s*CONFIRMED DESIGN BRIEF|^\[PROTOTYPE_BRIEF_RESTYLE\]|\[(?:全局补充精修要求|Additional Global Refinement Instruction)\]|(?:^|\n)(?:修改要求|Instruction):\s/;
 
 /**
  * The user's own words for a turn, or `undefined` when the prompt is a compiled
- * instruction (canvas action, selection refinement) that reads as noise in a conversation.
+ * instruction (canvas action, design brief generation/restyle, selection refinement)
+ * that reads as noise in a conversation.
  */
 export function resolveUserPromptDisplay(
   rawPrompt: string | undefined,
   explicitTitle?: string,
 ): string | undefined {
-  const trimmed = rawPrompt?.trim();
+  const trimmed = rawPrompt?.replace(TARGET_APP_PREFIX_RE, '').trim();
   if (!trimmed || explicitTitle?.trim()) return undefined;
   if (STRUCTURED_PROMPT_PATTERN.test(trimmed)) return undefined;
   return trimmed;

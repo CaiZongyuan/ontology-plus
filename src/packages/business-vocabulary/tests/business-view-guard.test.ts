@@ -105,6 +105,7 @@ describe('Business View vocabulary guard (checkBusinessViewMarkup)', () => {
       'ROLE-CONTRACT-SPEC',
       'PERM-01',
       'PERM-CONTRACT-APPROVE',
+      'PG-CONTRACT-OPS',
       'FLW-01',
       'ACTV-LEGAL-APPROVE',
       'QRY-01',
@@ -120,6 +121,8 @@ describe('Business View vocabulary guard (checkBusinessViewMarkup)', () => {
       'DICT-CONTRACT',
       'ENT-01',
       'VO-01',
+      'PROF-REACT-HONO',
+      'SNAP-20261117',
       'M1_DANGLING_AGGREGATE_REF',
       't_contract',
     ];

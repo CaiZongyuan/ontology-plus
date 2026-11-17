@@ -74,7 +74,7 @@ export interface NavItemSpec {
   badge?: string;
 }
 
-export const DEFAULT_NAV_VIEW: CanonicalNavViewId = 'app-ontology';
+export const DEFAULT_NAV_VIEW: CanonicalNavViewId = 'overview';
 
 export const LEGACY_NAV_VIEW_ALIASES: Readonly<Record<LegacyNavViewAlias, CanonicalNavViewId>> = {
   'app-req-explore': 'app-requirements',

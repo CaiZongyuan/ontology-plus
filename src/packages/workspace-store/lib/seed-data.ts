@@ -1179,13 +1179,13 @@ export const SEED_AGENT_SESSIONS: AgentSession[] = [
         thinking: '识别合同全生命周期核心聚合根（Contract, Counterparty, SettlementOrder）与关键准入/里程碑校验规则。',
         thinkingDurationMs: 1240,
         content:
-          '已完成首轮领域实体与规则收敛：\n\n1. **M1 领域聚合根**：`Contract`（含 `ContractLineItem`、`PaymentMilestone`）、`Counterparty`、`SettlementOrder`\n2. **M3 刚性业务规则**：大额合同资信准入（`RULE-01`）、里程碑收款比例守恒 100%（`RULE-02`）\n\n您可以继续补充多币种折算、印章用印策略或直接生成 **结构化 SRS 需求规格书**。',
+          '已完成首轮核心业务对象与规则整理：\n\n1. **核心业务对象**：合同（含合同标的明细、付款里程碑）、签约相对方、履约结算单\n2. **核心业务规则**：大额合同资信准入规则、里程碑收款比例守恒 100% 规则\n\n您可以继续补充多币种折算、印章用印要求，或直接整理生成 **需求文档**。',
         timestamp: '2026-11-10T09:06:00.000Z',
         artifacts: [
           {
             kind: 'REQUIREMENT_HINTS',
             aggregates: ['Contract', 'Counterparty', 'SettlementOrder'],
-            rules: ['RULE-01 大额合同资信准入', 'RULE-02 里程碑收款比例守恒 100%'],
+            rules: ['大额合同资信准入规则', '里程碑收款比例守恒 100% 规则'],
             openQuestions: ['跨境合同汇率锁定基准日采取签约日还是结算日？'],
           },
         ],
@@ -1196,7 +1196,7 @@ export const SEED_AGENT_SESSIONS: AgentSession[] = [
     id: 'asess-copilot-01',
     projectId: 'proj-contract',
     agentKind: 'COPILOT',
-    title: '11 元模型本体建模助手主会话',
+    title: '合同业务模型主对话',
     pinned: true,
     status: 'IDLE',
     createdAt: '2026-11-10T09:15:00.000Z',
@@ -1206,7 +1206,7 @@ export const SEED_AGENT_SESSIONS: AgentSession[] = [
         id: 'amsg-cop-1',
         role: 'assistant',
         content:
-          '您好！我是 **AI 本体助手 (Ontology Copilot)**。所有工具调用默认自动执行并通过 `ontology-core` 双层一致性校验器守门。您可以直接要求：\n- 为 `Contract` 新增字段或业务不变量\n- 在 `M3` 新增业务规则并关联 `M2` 行为\n- 检查跨模型引用完整性或执行级联重命名',
+          '您好！我是 **AI 助手**。每次调整都会自动检查业务模型的一致性并生成变更说明。您可以直接要求：\n- 为「合同」补充字段或约束条件\n- 新增业务规则并关联对应的业务操作\n- 检查跨对象关联或同步调整名称',
         timestamp: '2026-11-10T09:15:00.000Z',
       },
     ],

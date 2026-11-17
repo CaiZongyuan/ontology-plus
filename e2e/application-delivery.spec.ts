@@ -8,8 +8,7 @@ test('confirms a selected prototype revision in Technical Details, previews a fi
   const appended = await (await request.post(`/api/prototypes/${confirmed.prototypeId}/revisions`, {
     data: { htmlContent: `${confirmed.htmlContent}\n<!-- APPLICATION_PACKAGE_REVISION -->`, title: 'Application package review candidate' },
   })).json();
-  await page.goto('/');
-  await page.getByTestId('step-tab-DELIVERY').click();
+  await page.goto('/?step=delivery');
   await expect(page.getByTestId('delivery-business-view')).toBeVisible();
   await page.getByTestId('open-technical-details-btn').click();
   await expect(page.getByTestId('application-development-workflow')).toBeVisible();
@@ -53,8 +52,7 @@ test('confirms a selected prototype revision in Technical Details, previews a fi
 
 test('keeps architecture authoring in Technical Details separate from Delivery CODING review and renders assistant Markdown', async ({ page, request }) => {
   page.on('dialog', (dialog) => { throw new Error(`Blocking browser dialog: ${dialog.message()}`); });
-  await page.goto('/');
-  await page.getByTestId('step-tab-DELIVERY').click();
+  await page.goto('/?step=delivery');
   await expect(page.getByTestId('delivery-business-view')).toBeVisible();
   const panel = page.getByTestId('agent-panel');
   await page.getByTestId('agent-panel-composer-input').fill('Review this application input specification.');

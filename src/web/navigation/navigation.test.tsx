@@ -175,9 +175,15 @@ describe('navigation catalog and URL state', () => {
     expect(replaceState).toHaveBeenCalledOnce();
     expect(readHashView()).toBe('app-assembly-dev');
 
-    // Unknown view falls back to default 'app-ontology'
-    expect(readHashView({ search: '?mode=not-a-real-view', hash: '' })).toBe('app-ontology');
-    expect(readHashView({ search: '', hash: '#/not-a-real-view' })).toBe('app-ontology');
+    // Bare root '/' and unknown views land on Home ('overview') by default (#74)
+    expect(DEFAULT_NAV_VIEW).toBe('overview');
+    expect(readHashView({ search: '', hash: '' })).toBe('overview');
+    expect(resolveShellRouteContext(readHashView({ search: '', hash: '' }))).toEqual({
+      kind: 'home',
+      view: 'overview',
+    });
+    expect(readHashView({ search: '?mode=not-a-real-view', hash: '' })).toBe('overview');
+    expect(readHashView({ search: '', hash: '#/not-a-real-view' })).toBe('overview');
   });
 
   it('maps every NavViewId (including legacy requirement aliases) to its specialist AgentPanelSurface and round-trips all 7 AgentSessionKinds', () => {

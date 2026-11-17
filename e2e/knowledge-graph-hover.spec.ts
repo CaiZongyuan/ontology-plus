@@ -4,8 +4,7 @@ test.describe('Knowledge Graph hover stability', () => {
   test('hovering entity blocks in Swimlane and Ego modes does not hide nodes or oscillate mouseleave', async ({
     page,
   }) => {
-    await page.goto('/');
-    await page.getByTestId('step-tab-BUSINESS_MODEL').click();
+    await page.goto('/?step=business-model');
     await page.getByTestId('open-technical-details-btn').click();
     await page.getByTestId('tech-tab-graph').click();
 

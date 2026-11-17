@@ -898,10 +898,30 @@ export function alignSuiteWithExtractedMu(
         const safeAggName = aggName ?? 'BusinessOrder';
         let agg = suite.M1.aggregates.find((a) => a.name === safeAggName || a.id === safeAggName);
         if (!agg) {
+          const knownAliases: Readonly<Record<string, string>> = {
+            Contract: '合同',
+            Counterparty: '签约相对方',
+            SettlementOrder: '履约结算单',
+            SupplierApplication: '供应商准入申请',
+            ServiceTicket: '售后工单',
+            BusinessOrder: '业务主单据',
+          };
+          const inferredScreenSubject = screen.name
+            ?.replace(/(?:台账|列表|详情|管理|工作台|登记|看板|页|界面)+$/g, '')
+            .trim();
+          const cleanAlias =
+            knownAliases[safeAggName] ||
+            (inferredScreenSubject && inferredScreenSubject.length >= 2
+              ? inferredScreenSubject
+              : '') ||
+            domain
+              .replace(/(?:全生命周期)?(?:管理系统|管理平台|系统|平台|工作台)$/g, '')
+              .trim() ||
+            safeAggName;
           agg = {
             id: `AGG-0${suite.M1.aggregates.length + 1}`,
             name: safeAggName,
-            alias: `${safeAggName}聚合`,
+            alias: cleanAlias,
             aggregateType: 'AGGREGATE_ROOT',
             lifecycle: ['DRAFT', 'ACTIVE', 'COMPLETED'],
             tags: ['SYNTHESIZED'],

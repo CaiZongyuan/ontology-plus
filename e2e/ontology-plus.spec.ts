@@ -11,7 +11,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
   test('1. Shell navigation, Warm-Paper / Film-Grain 3-state theme sync, zh-CN / en-US locale, Unified Agent Panel Wide Mode, 11-model structured/graph/YAML workbench & atomic cascade rename', async ({
     page,
   }) => {
-    await page.goto('/');
+    await page.goto('/?step=business-model');
 
     // 1. Verify initial light theme, business-language health status, and Conversation-left + Canvas-right layout
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
@@ -77,7 +77,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
   test('2. Application Center forward discovery via Unified ShellAgentPanel: Requirement Exploration + SRS synthesis, Prototype Briefing/Canvas localized refinement + Confirm Revision MU sync, AI Ontology Copilot tool mutation, OWL/Skill/MCP export & 4-Layer ZIP package', async ({
     page,
   }) => {
-    await page.goto('/');
+    await page.goto('/?step=business-model');
 
     const agentPanel = page.getByTestId('agent-panel');
 

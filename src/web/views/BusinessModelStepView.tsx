@@ -1005,8 +1005,9 @@ export function BusinessModelStepView({
     );
   }
 
-  /* ─── Business View Empty State (`!lifecycle.hasOntology`) ─── */
-  if (!lifecycle.hasOntology) {
+  /* ─── Business View Empty State (no core M1–MI models yet, including MU-only right after Prototype confirmation) ─── */
+  const hasCoreBusinessModel = validation.presentModels.some((m) => m !== 'MU');
+  if (!hasCoreBusinessModel) {
     const canOrganizeFromPrototype = lifecycle.hasConfirmedPrototype;
     return (
       <div className="bm-step-root" data-testid="business-model-business-view">
