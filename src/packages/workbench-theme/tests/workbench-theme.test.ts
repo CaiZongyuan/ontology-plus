@@ -19,6 +19,7 @@ import {
   renderContractDoc,
   resolveThemeId,
   resolveThemeTokens,
+  themeSelectionColor,
   type WorkbenchTheme,
 } from '../index.js';
 
@@ -140,6 +141,12 @@ describe('built-in themes', () => {
       expect(tokens['font-title']).not.toMatch(/Serif|Georgia/);
       expect(tokens['backdrop-image']).toBe('none');
     }
+  });
+
+  it('give a prototype selection the light primary of the chosen theme, whatever the workbench mode', () => {
+    expect(themeSelectionColor('warm-paper')).toBe('#4c50c4');
+    expect(themeSelectionColor('default')).toBe('#2466de');
+    expect(themeSelectionColor('no-such-theme')).toBe(themeSelectionColor(DEFAULT_THEME_ID));
   });
 
   it('fall back to the default for an unknown, missing, or malformed stored id', () => {

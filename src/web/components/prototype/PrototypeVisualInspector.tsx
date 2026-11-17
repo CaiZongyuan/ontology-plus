@@ -3,7 +3,7 @@ import { Crosshair, Layers, Loader2, Plus, Sparkles, X } from 'lucide-react';
 import type { PrototypeRefinementSelection } from '../../../packages/agent-runtime/index.js';
 import type { PrototypeTargetAnchor } from '../../../packages/workspace-store/index.js';
 import { Button } from '../beautifui/index.js';
-import { findTheme, resolveThemeId, resolveThemeTokens } from '../../../packages/workbench-theme/index.js';
+import { themeSelectionColor } from '../../../packages/workbench-theme/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 
@@ -1315,12 +1315,7 @@ export function PrototypeVisualPreviewStage({
   fillHeight = false,
 }: PrototypeVisualPreviewStageProps) {
   const { locale, t, workbenchTheme } = usePreferences();
-  // The prototype page is light or dark on its own terms, so selection takes the theme's
-  // light primary whatever the workbench mode.
-  const selectionColor = useMemo(
-    () => resolveThemeTokens(findTheme(resolveThemeId(workbenchTheme))!, 'light').primary!,
-    [workbenchTheme],
-  );
+  const selectionColor = useMemo(() => themeSelectionColor(workbenchTheme), [workbenchTheme]);
   const popoverInputId = useId();
   const stageRef = useRef<HTMLDivElement | null>(null);
   const viewportHostRef = useRef<HTMLDivElement | null>(null);

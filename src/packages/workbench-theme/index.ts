@@ -22,6 +22,7 @@ export { BUILT_IN_THEMES, DEFAULT_THEME_ID, findTheme, resolveThemeId } from './
 
 export {
   resolveThemeTokens,
+  themeSelectionColor,
   compileThemeCss,
   compileBuiltInThemesCss,
   type CompileThemeOptions,

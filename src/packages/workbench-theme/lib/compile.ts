@@ -1,5 +1,5 @@
 import { DERIVED_VARIABLES, THEME_TOKENS, cssVarName } from './contract.js';
-import { BUILT_IN_THEMES, DEFAULT_THEME_ID } from './themes.js';
+import { BUILT_IN_THEMES, DEFAULT_THEME_ID, findTheme, resolveThemeId } from './themes.js';
 import type { ThemeMode, WorkbenchTheme } from './types.js';
 
 const SPEC_BY_NAME = new Map(THEME_TOKENS.map((spec) => [spec.name, spec]));
@@ -104,4 +104,13 @@ export function compileBuiltInThemesCss(): string {
     compileThemeCss(theme, { isDefault: theme.id === DEFAULT_THEME_ID }),
   );
   return `${header}\n${themes.join('\n')}\n${compileDerivedCss()}`;
+}
+
+/**
+ * The colour that marks a selection inside a prototype page: the theme's light `primary`.
+ * A prototype is light or dark on its own terms, so the workbench mode does not change it.
+ * An id that names no built-in theme gets the default theme's.
+ */
+export function themeSelectionColor(themeId: string): string {
+  return resolveThemeTokens(findTheme(resolveThemeId(themeId))!, 'light').primary!;
 }
