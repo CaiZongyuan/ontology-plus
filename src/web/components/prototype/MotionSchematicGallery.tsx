@@ -518,7 +518,7 @@ export function InteractiveMiniStage({
       data-stage-phase={isActive ? 'active' : 'idle'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
       className={cn(
-        'mp-interactive-stage mp-anim relative flex flex-col justify-between overflow-hidden border-b border-line select-none',
+        'mp-interactive-stage mp-anim relative flex flex-col justify-between overflow-hidden border-b border-border select-none',
         compact ? 'min-h-[118px] p-2' : 'min-h-[148px] p-2.5',
       )}
       style={{
@@ -1451,7 +1451,7 @@ export function StyleTileMotionSampleStrip({
       className={cn('flex flex-col gap-2.5', className)}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink">
+        <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-foreground">
           <Sparkles size={13} className="text-primary" />
           <span>
             {t(
@@ -1460,7 +1460,7 @@ export function StyleTileMotionSampleStrip({
             )}
           </span>
         </div>
-        <span className="font-mono text-[11px] text-ink-3">
+        <span className="font-mono text-[11px] text-faint-foreground">
           {effectiveReducedMotion
             ? t('已启用减少动态效果 (0ms)', 'Reduced Motion Active (0ms)')
             : t('硬性动效规格已就绪', 'Hard Motion Specs Active')}
@@ -1476,7 +1476,7 @@ export function StyleTileMotionSampleStrip({
               key={group.key}
               data-testid={`style-tile-motion-sample-${group.key}`}
               data-schematic-id={item.id}
-              className="flex flex-col overflow-hidden rounded-card border border-line bg-surface shadow-2xs"
+              className="flex flex-col overflow-hidden rounded-card border border-border bg-card shadow-2xs"
             >
               <InteractiveMiniStage
                 id={item.id}
@@ -1490,15 +1490,15 @@ export function StyleTileMotionSampleStrip({
               />
               <div className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 text-[11.5px]">
                 <div className="min-w-0">
-                  <div className="text-[10.5px] text-ink-3">
+                  <div className="text-[10.5px] text-faint-foreground">
                     {group.index}. {t(group.title.zh, group.title.en)}
                   </div>
-                  <div className="truncate font-semibold text-ink">
+                  <div className="truncate font-semibold text-foreground">
                     {t(item.plainTitle.zh, item.plainTitle.en)}
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                  <span className="rounded bg-inset px-1.5 py-0.5 font-mono text-[10px] text-ink-3">
+                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-faint-foreground">
                     {effectiveReducedMotion ? '0ms' : `${item.motionSpec.durationMs}ms`}
                   </span>
                   {onSelectGroup && (
@@ -1506,7 +1506,7 @@ export function StyleTileMotionSampleStrip({
                       type="button"
                       data-testid={`style-tile-jump-${group.key}`}
                       onClick={() => onSelectGroup(group.key)}
-                      className="cursor-pointer rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] font-medium text-ink-2 hover:border-primary hover:text-primary"
+                      className="cursor-pointer rounded border border-border bg-card px-1.5 py-0.5 text-[10px] font-medium text-foreground-soft hover:border-primary hover:text-primary"
                     >
                       {t('调整', 'Change')}
                     </button>
@@ -1551,10 +1551,10 @@ function SchematicOptionCard({
     <article
       data-testid={`motion-card-${item.id}`}
       className={cn(
-        'flex flex-col overflow-hidden rounded-card border bg-surface transition-colors',
+        'flex flex-col overflow-hidden rounded-card border bg-card transition-colors',
         selected
           ? 'border-primary ring-2 ring-primary/25 shadow-xs'
-          : 'border-line hover:border-primary/55',
+          : 'border-border hover:border-primary/55',
       )}
     >
       {/* Interactive Playable Stage (has its own trigger <button>, never nested inside another <button>) */}
@@ -1578,7 +1578,7 @@ function SchematicOptionCard({
         className="flex flex-1 cursor-pointer flex-col justify-between gap-1.5 p-3 text-left focus-visible:outline-2 focus-visible:outline-primary"
       >
         <div className="flex items-start justify-between gap-2">
-          <div className="text-[13px] font-semibold leading-snug text-ink">
+          <div className="text-[13px] font-semibold leading-snug text-foreground">
             {pick(item.plainTitle.zh, item.plainTitle.en)}
           </div>
           <span
@@ -1586,18 +1586,18 @@ function SchematicOptionCard({
               'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors',
               selected
                 ? 'border-primary bg-primary text-white'
-                : 'border-line bg-inset text-transparent',
+                : 'border-border bg-muted text-transparent',
             )}
           >
             <Check size={11.5} strokeWidth={2.6} />
           </span>
         </div>
 
-        <p className="m-0 text-[12px] leading-[1.5] text-ink-3">
+        <p className="m-0 text-[12px] leading-[1.5] text-faint-foreground">
           {pick(item.plainDesc.zh, item.plainDesc.en)}
         </p>
 
-        <div className="mt-1 flex items-center justify-between gap-2 pt-0.5 font-mono text-[10.5px] text-ink-3">
+        <div className="mt-1 flex items-center justify-between gap-2 pt-0.5 font-mono text-[10.5px] text-faint-foreground">
           <span>{item.refCode}</span>
           <span>
             {reducedMotion ? '0ms (reduced)' : `${spec.durationMs}ms · ${spec.easing}`}
@@ -1608,13 +1608,13 @@ function SchematicOptionCard({
       {/* Progressive Disclosure: Hard Motion Spec & Adaptable Example Code */}
       <details
         data-testid={`motion-spec-disclosure-${item.id}`}
-        className="border-t border-line bg-inset/40 px-3 py-1.5 text-[11px]"
+        className="border-t border-border bg-muted/40 px-3 py-1.5 text-[11px]"
       >
-        <summary className="flex cursor-pointer items-center gap-1.5 font-medium text-ink-2 select-none">
+        <summary className="flex cursor-pointer items-center gap-1.5 font-medium text-foreground-soft select-none">
           <Code2 size={11.5} className="text-primary" />
           <span>{pick('查看动效硬规格与示例代码', 'Motion Spec & Example Code')}</span>
         </summary>
-        <div className="mt-2 space-y-1.5 pb-1 text-ink-2">
+        <div className="mt-2 space-y-1.5 pb-1 text-foreground-soft">
           <div>
             <strong>{pick('触发：', 'Trigger: ')}</strong>
             {pick(spec.trigger.zh, spec.trigger.en)}
@@ -1633,7 +1633,7 @@ function SchematicOptionCard({
             <strong>{pick('减少动态效果：', 'Reduced Motion: ')}</strong>
             {pick(spec.reducedMotionFallback.zh, spec.reducedMotionFallback.en)}
           </div>
-          <pre className="m-0 overflow-x-auto rounded border border-line bg-surface p-2 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-ink">
+          <pre className="m-0 overflow-x-auto rounded border border-border bg-card p-2 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-foreground">
             {spec.exampleCode}
           </pre>
         </div>
@@ -1769,21 +1769,21 @@ export function MotionSchematicGallery({
       className="flex flex-col gap-5"
     >
       {/* Header Bar */}
-      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line pb-3">
+      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border pb-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="badge badge-accent">
               <Sparkles size={11.5} />
               {t('7 组动态示意选型', '7-Group Motion Schematics')}
             </span>
-            <h3 className="m-0 font-serif text-[16.5px] font-semibold text-ink">
+            <h3 className="m-0 font-serif text-[16.5px] font-semibold text-foreground">
               {t(
                 '亲手点一点试手感 — 已按需求规格书为您预选全套默认方案',
                 'Click Any Mini Stage to Feel the Interaction — Pre-Selected from Your SRS',
               )}
             </h3>
           </div>
-          <p className="m-0 mt-1 text-[12.5px] text-ink-3">
+          <p className="m-0 mt-1 text-[12.5px] text-faint-foreground">
             {t(
               '每张示意已套用主参考配色与当前业务名词。点右上角按钮可实时触发交互；不改动也能直接继续，所选动效规格将作为硬性约束交给 Agent。',
               'Styled with your Primary Reference palette and SRS domain nouns. Click any stage button to trigger its live state transition, or proceed immediately with the SRS defaults.',
@@ -1793,7 +1793,7 @@ export function MotionSchematicGallery({
 
         <span
           data-testid="motion-gallery-preselect-badge"
-          className="rounded-full border border-line bg-inset px-2.5 py-1 font-mono text-[11px] text-ink-2"
+          className="rounded-full border border-border bg-muted px-2.5 py-1 font-mono text-[11px] text-foreground-soft"
         >
           {effectiveReducedMotion
             ? t('减少动态效果已开启 · 0ms 瞬时切换', 'Reduced Motion · 0ms Instant')
@@ -1819,13 +1819,13 @@ export function MotionSchematicGallery({
             className="space-y-2.5"
           >
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <div className="text-[13.5px] font-semibold text-ink">
+              <div className="text-[13.5px] font-semibold text-foreground">
                 {group.index}. {t(group.title.zh, group.title.en)}
-                <span className="ml-2 font-normal text-[12.5px] text-ink-2">
+                <span className="ml-2 font-normal text-[12.5px] text-foreground-soft">
                   — {t(group.promptQuestion.zh, group.promptQuestion.en)}
                 </span>
               </div>
-              <span className="font-mono text-[11.5px] text-ink-3">
+              <span className="font-mono text-[11.5px] text-faint-foreground">
                 {t(
                   `已选：${currentSelectedDef.plainTitle.zh}`,
                   `Selected: ${currentSelectedDef.plainTitle.en}`,

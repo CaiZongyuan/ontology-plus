@@ -1262,13 +1262,13 @@ export function OntologyWorkbenchView({
                 style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}
               >
                 <div className="space-y-0.5 max-w-[680px]">
-                  <div className="text-[13px] font-semibold text-ink">
+                  <div className="text-[13px] font-semibold text-foreground">
                     {t(
                       `提示：当前展示的是创建工程时预置的「${lifecycle.foreignTemplateNameZh}」示例模板数据`,
                       `Notice: Showing preloaded "${lifecycle.foreignTemplateNameEn}" demo template models`,
                     )}
                   </div>
-                  <div className="text-[12px] text-ink-2">
+                  <div className="text-[12px] text-foreground-soft">
                     {t(
                       `「${project.name}」尚未执行专属本体推导。您可以一键清空这些示例模板，消除干扰后再按【需求探索 → 需求文档 → 界面原型 → 业务本体】顺序自动生成。`,
                       `"${project.name}" has not synthesized its own ontology yet. Clear the demo template to avoid confusion before running forward synthesis.`,
@@ -1301,7 +1301,7 @@ export function OntologyWorkbenchView({
                 data-testid="ontology-stage-pending-guide"
               >
                 <div className="flex items-start gap-3">
-                  <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-inset text-primary">
+                  <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-primary">
                     <Boxes size={18} />
                   </div>
                   <div className="space-y-1">
@@ -1309,15 +1309,15 @@ export function OntologyWorkbenchView({
                       <span className="badge badge-warn">
                         {t('第 4 步 · 尚未到达此阶段', 'Step 4 · Stage Not Reached Yet')}
                       </span>
-                      <span className="text-[12px] text-ink-3 font-mono">0 / 11 Models</span>
+                      <span className="text-[12px] text-faint-foreground font-mono">0 / 11 Models</span>
                     </div>
-                    <h3 className="font-serif text-[17.5px] font-semibold text-ink m-0">
+                    <h3 className="font-serif text-[17.5px] font-semibold text-foreground m-0">
                       {t(
                         `「${project.name}」暂未生成业务本体（无预置无关内容）`,
                         `"${project.name}" has no ontology models yet (clean slate)`,
                       )}
                     </h3>
-                    <p className="text-[13px] text-ink-2 leading-relaxed m-0">
+                    <p className="text-[13px] text-foreground-soft leading-relaxed m-0">
                       {t(
                         '业务本体不是预先写死的静态模板，而是等您完成上游「需求探索 → 需求文档 → 界面原型」后，由 AI 根据您的真实业务规则与原型界面自动推导生成的结构化蓝图。',
                         'Your business ontology is synthesized automatically after completing upstream Requirement Exploration, SRS Document, and UI Prototype.',
@@ -1375,9 +1375,9 @@ export function OntologyWorkbenchView({
                   ].map((item) => (
                     <div
                       key={item.step}
-                      className="rounded-[6px] border border-line bg-inset px-3 py-2.5 flex flex-col gap-1"
+                      className="rounded-[6px] border border-border bg-muted px-3 py-2.5 flex flex-col gap-1"
                     >
-                      <div className="flex items-center justify-between text-[12px] font-semibold text-ink">
+                      <div className="flex items-center justify-between text-[12px] font-semibold text-foreground">
                         <span>
                           {item.step}. {t(item.titleZh, item.titleEn)}
                         </span>
@@ -1391,7 +1391,7 @@ export function OntologyWorkbenchView({
                 </div>
 
                 {lifecycle && (
-                  <div className="rounded-[6px] border border-line bg-inset px-3.5 py-2.5 text-[12.5px] text-ink-2">
+                  <div className="rounded-[6px] border border-border bg-muted px-3.5 py-2.5 text-[12.5px] text-foreground-soft">
                     {t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
                   </div>
                 )}
@@ -1660,7 +1660,7 @@ export function OntologyWorkbenchView({
             </div>
 
             {pendingDeleteAction && (
-              <div className="mb-3 p-[8px_10px] rounded-[6px] bg-orange-tint text-orange text-[12.5px] font-medium"
+              <div className="mb-3 p-[8px_10px] rounded-[6px] bg-warning-soft text-warning text-[12.5px] font-medium"
               >
                 {t(
                   `检测到「${pendingDeleteAction.label} (${pendingDeleteAction.elementId})」仍被其他元模型引用。建议先解除引用或执行级联重命名；如确认移除，可点击底部「强制删除此元素」。`,
@@ -1719,7 +1719,7 @@ export function OntologyWorkbenchView({
                   </span>
                   )
                 </div>
-                <div className="max-h-[220px] overflow-y-auto border border-line rounded-[5px]"
+                <div className="max-h-[220px] overflow-y-auto border border-border rounded-[5px]"
                 >
                   <table className="data-table">
                     <thead>
@@ -1768,7 +1768,7 @@ export function OntologyWorkbenchView({
               {pendingDeleteAction && (
                 <Button
                   type="button"
-                  variant="secondary" size="md" className="text-red border-[var(--bad)]"
+                  variant="secondary" size="md" className="text-destructive border-[var(--bad)]"
                   onClick={() => pendingDeleteAction.execute()}
                 >
                   {t('强制删除此元素', 'Force Delete Element')}
@@ -2454,7 +2454,7 @@ function StructuredModelInspector({
                   <div className="flex flex-wrap gap-1.5">
                     {b.inputParameters.map((p, pIdx) => (
                       <div
-                        key={`${b.id}-p-${pIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-inset border border-[var(--line-2)]"
+                        key={`${b.id}-p-${pIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-muted border border-[var(--line-2)]"
                       >
                         <input
                           className="input"
@@ -2814,7 +2814,7 @@ function StructuredModelInspector({
                   <div className="flex flex-wrap gap-1.5">
                     {ev.payload.map((pf, pfIdx) => (
                       <div
-                        key={`${ev.id}-pf-${pfIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-inset border border-[var(--line-2)]"
+                        key={`${ev.id}-pf-${pfIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-muted border border-[var(--line-2)]"
                       >
                         <input
                           className="input"
@@ -3348,7 +3348,7 @@ function StructuredModelInspector({
                 </div>
 
                 {/* Visual Node Sequence Strip */}
-                <div className="p-[8px_10px] mb-2.5 rounded-[5px] bg-inset border border-[var(--line-2)] flex items-center flex-wrap gap-1.5"
+                <div className="p-[8px_10px] mb-2.5 rounded-[5px] bg-muted border border-[var(--line-2)] flex items-center flex-wrap gap-1.5"
                 >
                   {fl.activities.map((a, idx) => (
                     <React.Fragment key={a.id}>
@@ -3830,7 +3830,7 @@ function StructuredModelInspector({
                   >
                     {sc.elements.map((el, elIdx) => (
                       <div
-                        key={el.elementId} className="inline-flex items-center gap-1.25 p-[4px_8px] rounded-[4px] bg-inset border border-[var(--line-2)] text-[11.5px]"
+                        key={el.elementId} className="inline-flex items-center gap-1.25 p-[4px_8px] rounded-[4px] bg-muted border border-[var(--line-2)] text-[11.5px]"
                       >
                         <span className="font-mono font-semibold">
                           [{el.elementId}]
@@ -3864,7 +3864,7 @@ function StructuredModelInspector({
                   </div>
                   {sc.events.map((ev, evIdx) => (
                     <div
-                      key={ev.eventId} className="p-[6px_10px] bg-inset rounded-[4px] mb-1.5 font-mono text-[11.5px] flex items-center justify-between gap-2 flex-wrap"
+                      key={ev.eventId} className="p-[6px_10px] bg-muted rounded-[4px] mb-1.5 font-mono text-[11.5px] flex items-center justify-between gap-2 flex-wrap"
                     >
                       <div>
                         <strong>{ev.eventId}</strong> (
@@ -3949,7 +3949,7 @@ function StructuredModelInspector({
                 {mp.tableMappings.map((tm, tmIdx) => (
                   <div key={`${mp.id}-tm-${tmIdx}`} className="mb-2.5">
                     <div
-                      className="form-grid-3 mb-2 p-2 rounded-[5px] bg-inset"
+                      className="form-grid-3 mb-2 p-2 rounded-[5px] bg-muted"
                     >
                       <div className="form-field">
                         <label className="form-label">{t('物理表名', 'Table Name')}</label>

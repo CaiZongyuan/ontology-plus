@@ -96,7 +96,7 @@ Each package under `src/packages/` is a **deep module**: one public entry point,
 | **Data Center** | Data resources, object↔table mappings, metrics & reports, data reasoning chat, writeback |
 | **Application Center** | Requirement exploration (agent-driven), SRS documents, application assembly, four-layer architecture assets, publishing, skills |
 
-Design follows the **`spatial-sync`** token system (warm-paper light / film-grain dark), fully bilingual (`zh-CN` / `en-US`), with zero blocking browser dialogs.
+Colours, fonts, radii, shadows, and texture come from the active **Workbench Theme** (ADR 0012): the neutral **Default** theme, or the `spatial-sync` **Warm Paper** theme of ADR 0006. Each has light and dark, chosen separately in System Settings; the theme choice is kept on the device. Fully bilingual (`zh-CN` / `en-US`), with zero blocking browser dialogs.
 
 ## 🤖 Agent sessions
 

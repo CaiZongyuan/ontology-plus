@@ -97,7 +97,7 @@ export function ExtractionJobCard(props: {
 
   return (
     <div
-      className="p-2.5 rounded-[6px] bg-inset border border-line flex flex-col gap-1.5"
+      className="p-2.5 rounded-[6px] bg-muted border border-border flex flex-col gap-1.5"
       data-testid={`extraction-job-${job.id}`}
     >
       <div className="flex justify-between items-start gap-2">
@@ -123,7 +123,7 @@ export function ExtractionJobCard(props: {
             onClick={() => onDelete(job)}
             title={t('删除任务记录', 'Delete job')}
           >
-            <Trash2 size={11.5} className="text-red" />
+            <Trash2 size={11.5} className="text-destructive" />
           </Button>
         </div>
       </div>
@@ -156,7 +156,7 @@ export function ExtractionJobCard(props: {
       </div>
 
       {structureOnly && alignment.status === 'FAILED' && (
-        <div className="text-[12.5px] p-2 rounded-[6px] border border-line bg-surface">
+        <div className="text-[12.5px] p-2 rounded-[6px] border border-border bg-card">
           <div className="font-medium">{alignmentReason}</div>
           {alignment.diagnostic && (
             <div className="text-muted-foreground">
@@ -219,7 +219,7 @@ export function ExtractionJobCard(props: {
       </div>
 
       {expanded && (
-        <div className="flex flex-col gap-2 pt-1 border-t border-line">
+        <div className="flex flex-col gap-2 pt-1 border-t border-border">
           {!merged && !project && (
             <div className="text-[12.5px] text-muted-foreground">
               {t(
@@ -267,7 +267,7 @@ export function ExtractionJobCard(props: {
                 return (
                   <div
                     key={cand.key}
-                    className="p-2 rounded-[6px] bg-surface border border-line flex flex-col gap-1"
+                    className="p-2 rounded-[6px] bg-card border border-border flex flex-col gap-1"
                     data-testid={`extraction-candidate-${cand.key}`}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -370,7 +370,7 @@ export function ExtractionJobCard(props: {
                                 {` · ${formatEvidenceNote(ev, locale)}`}
                               </div>
                               {ev.excerpt && (
-                                <pre className="m-0 p-2 rounded-[6px] bg-inset border border-line font-mono text-[11.5px] whitespace-pre-wrap break-words">
+                                <pre className="m-0 p-2 rounded-[6px] bg-muted border border-border font-mono text-[11.5px] whitespace-pre-wrap break-words">
                                   {ev.excerpt}
                                 </pre>
                               )}
@@ -386,13 +386,13 @@ export function ExtractionJobCard(props: {
           ))}
 
           {canReview && preview && (
-            <div className="sticky bottom-0 z-10 bg-surface pt-2 pb-1 border-t border-line flex flex-col gap-1.5">
+            <div className="sticky bottom-0 z-10 bg-card pt-2 pb-1 border-t border-border flex flex-col gap-1.5">
               {preview.newErrors.length > 0 ? (
                 <div
-                  className="text-[12.5px] p-2 rounded-[6px] border border-line bg-surface"
+                  className="text-[12.5px] p-2 rounded-[6px] border border-border bg-card"
                   data-testid={`extraction-merge-blocked-${job.id}`}
                 >
-                  <div className="font-medium text-red">
+                  <div className="font-medium text-destructive">
                     {t(
                       `按当前选择合并会引入 ${preview.newErrors.length} 个一致性错误，需调整采纳项：`,
                       `Merging this selection would introduce ${preview.newErrors.length} Consistency Errors; adjust what you accept:`,

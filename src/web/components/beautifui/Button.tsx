@@ -17,14 +17,14 @@ export const buttonVariants = cva(
       variant: {
         primary: 'bg-primary border-primary text-primary-foreground enabled:hover:brightness-[0.93]',
         accent: 'bg-primary border-primary text-primary-foreground enabled:hover:brightness-[0.93]',
-        secondary: 'bg-surface border-line text-ink enabled:hover:bg-inset enabled:hover:border-line-strong',
-        ghost: 'bg-transparent border-transparent text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink',
-        quiet: 'bg-inset border-transparent text-ink-2 enabled:hover:bg-hover-2 enabled:hover:text-ink',
-        success: 'bg-green-tint border-green/30 text-green enabled:hover:border-green/60',
+        secondary: 'bg-card border-border text-foreground enabled:hover:bg-muted enabled:hover:border-line-strong',
+        ghost: 'bg-transparent border-transparent text-foreground-soft enabled:hover:bg-accent enabled:hover:text-foreground',
+        quiet: 'bg-muted border-transparent text-foreground-soft enabled:hover:bg-hover-2 enabled:hover:text-foreground',
+        success: 'bg-success-soft border-success/30 text-success enabled:hover:border-success/60',
         // Segment / filter toggle: pair with aria-pressed (or aria-selected for tabs).
         toggle:
-          'bg-transparent border-transparent text-ink-2 enabled:hover:text-ink enabled:hover:bg-hover aria-pressed:bg-surface aria-pressed:border-line aria-pressed:text-ink aria-pressed:shadow-xs aria-selected:bg-surface aria-selected:border-line aria-selected:text-ink aria-selected:shadow-xs',
-        danger: 'bg-surface border-line text-red enabled:hover:bg-red-tint enabled:hover:border-red/40',
+          'bg-transparent border-transparent text-foreground-soft enabled:hover:text-foreground enabled:hover:bg-accent aria-pressed:bg-card aria-pressed:border-border aria-pressed:text-foreground aria-pressed:shadow-xs aria-selected:bg-card aria-selected:border-border aria-selected:text-foreground aria-selected:shadow-xs',
+        danger: 'bg-card border-border text-destructive enabled:hover:bg-destructive-soft enabled:hover:border-destructive/40',
       },
       size: {
         xs: 'h-6 px-2 text-[11.5px] gap-1',

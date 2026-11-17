@@ -91,6 +91,29 @@
   src: url("/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
 }
 
+/* ─── Bundled Offline Fonts for the 默认 theme (Inter & JetBrains Mono) ───
+   Variable fonts from @fontsource-variable 5.3.0 (OFL-1.1), Latin subset.
+   Inter carries the optical-size axis, so large titles get its display cut. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin-opsz-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /* ─── Root Colour-Scheme & Workbench Theme Token Aliases ───
    Colours, fonts, radii, shadows and the background texture come from the active
    Workbench Theme: see workbench-themes.generated.css and ADR 0012. The names in the
@@ -866,6 +889,15 @@ progress.loading-spinner:indeterminate {
   --color-orange-tint: var(--orange-tint);
   --color-red: var(--red);
   --color-red-tint: var(--red-tint);
+  /* Contract names for the text and status utilities markup now uses (#44). */
+  --color-foreground-soft: var(--foreground-soft);
+  --color-faint-foreground: var(--faint-foreground);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
 
   --shadow-hairline: var(--shadow-hairline);
   --shadow-btn: var(--shadow-btn);

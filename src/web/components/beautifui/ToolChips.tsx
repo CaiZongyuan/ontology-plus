@@ -309,14 +309,14 @@ function highlightJsonText(json: string): React.ReactNode {
     if (keyToken) {
       const colonSuffix = full.slice(keyToken.length);
       nodes.push(
-        <span key={k++} className="font-medium text-ink">
+        <span key={k++} className="font-medium text-foreground">
           {keyToken}
         </span>,
       );
       if (colonSuffix) nodes.push(colonSuffix);
     } else if (strToken) {
       nodes.push(
-        <span key={k++} className="text-green">
+        <span key={k++} className="text-success">
           {strToken}
         </span>,
       );
@@ -328,7 +328,7 @@ function highlightJsonText(json: string): React.ReactNode {
       );
     } else if (numToken) {
       nodes.push(
-        <span key={k++} className="text-orange">
+        <span key={k++} className="text-warning">
           {numToken}
         </span>,
       );
@@ -415,20 +415,20 @@ export function ToolChips({
                 'group/chip inline-flex min-h-[28px] max-w-full cursor-pointer items-center gap-1.5 rounded-control border px-2 py-1 text-left text-[12px]',
                 'transition-[background-color,border-color,color,box-shadow] duration-150 ease-out-strong',
                 running && 'border-primary/40 bg-primary-soft/55 text-primary',
-                isError && !isExpanded && 'border-red/35 bg-red-tint/45 text-red hover:border-red/55',
-                isError && isExpanded && 'border-red/60 bg-red-tint/60 text-red shadow-xs',
+                isError && !isExpanded && 'border-destructive/35 bg-destructive-soft/45 text-destructive hover:border-destructive/55',
+                isError && isExpanded && 'border-destructive/60 bg-destructive-soft/60 text-destructive shadow-xs',
                 !running &&
                   !isError &&
                   !isExpanded &&
-                  'border-line bg-surface text-ink-2 shadow-2xs hover:border-line-strong hover:bg-hover hover:text-ink',
+                  'border-border bg-card text-foreground-soft shadow-2xs hover:border-line-strong hover:bg-accent hover:text-foreground',
                 !running &&
                   !isError &&
                   isExpanded &&
-                  'border-primary/55 bg-primary-soft/35 text-ink shadow-xs',
+                  'border-primary/55 bg-primary-soft/35 text-foreground shadow-xs',
               )}
             >
               {traces.length > 1 && (
-                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[4px] bg-inset px-1 font-mono text-[10px] font-semibold text-ink-3 tabular-nums">
+                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[4px] bg-muted px-1 font-mono text-[10px] font-semibold text-faint-foreground tabular-nums">
                   {index + 1}
                 </span>
               )}
@@ -437,8 +437,8 @@ export function ToolChips({
                 className={cn(
                   'inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px]',
                   running && 'bg-primary-soft text-primary',
-                  isError && 'bg-red-tint text-red',
-                  !running && !isError && 'bg-inset text-primary group-hover/chip:bg-primary-soft/70',
+                  isError && 'bg-destructive-soft text-destructive',
+                  !running && !isError && 'bg-muted text-primary group-hover/chip:bg-primary-soft/70',
                 )}
               >
                 {running ? (
@@ -450,11 +450,11 @@ export function ToolChips({
                 )}
               </span>
 
-              <span className="truncate font-medium text-ink">
+              <span className="truncate font-medium text-foreground">
                 {t(meta.zh, meta.en)}
               </span>
 
-              <span className="max-w-[180px] truncate rounded bg-inset/85 px-1.5 py-0.2 font-mono text-[10.5px] text-ink-3">
+              <span className="max-w-[180px] truncate rounded bg-muted/85 px-1.5 py-0.2 font-mono text-[10.5px] text-faint-foreground">
                 {trace.toolName}
               </span>
 
@@ -466,13 +466,13 @@ export function ToolChips({
               )}
 
               {trace.validatorRepair && (
-                <span className="shrink-0 rounded bg-orange-tint px-1.5 py-0.2 font-mono text-[10.5px] font-medium text-orange">
+                <span className="shrink-0 rounded bg-warning-soft px-1.5 py-0.2 font-mono text-[10.5px] font-medium text-warning">
                   Auto-Repair
                 </span>
               )}
 
               {durationLabel && (
-                <span className="shrink-0 font-mono text-[10.5px] text-ink-3 tabular-nums">
+                <span className="shrink-0 font-mono text-[10.5px] text-faint-foreground tabular-nums">
                   {durationLabel}
                 </span>
               )}
@@ -481,14 +481,14 @@ export function ToolChips({
                 <Check
                   size={11}
                   strokeWidth={2.5}
-                  className="shrink-0 text-green animate-[pop-in_180ms_var(--ease-out-strong)_both]"
+                  className="shrink-0 text-success animate-[pop-in_180ms_var(--ease-out-strong)_both]"
                 />
               )}
 
               <ChevronRight
                 size={11.5}
                 className={cn(
-                  'shrink-0 text-ink-3 transition-transform duration-150 ease-out-strong',
+                  'shrink-0 text-faint-foreground transition-transform duration-150 ease-out-strong',
                   isExpanded && 'rotate-90 text-primary',
                 )}
               />
@@ -497,7 +497,7 @@ export function ToolChips({
         })}
 
         {singleDoneTrace && (
-          <span className="tool-chip-inline-summary min-w-0 flex-1 truncate text-[11.5px] text-ink-3">
+          <span className="tool-chip-inline-summary min-w-0 flex-1 truncate text-[11.5px] text-faint-foreground">
             {singleDoneTrace.output}
           </span>
         )}
@@ -517,18 +517,18 @@ export function ToolChips({
             id={panelId}
             role="region"
             aria-label={`${active.toolName} details`}
-            className="overflow-hidden rounded-card border border-line bg-inset/45 text-[12px] shadow-xs animate-[fade-up_160ms_var(--ease-out-strong)_both]"
+            className="overflow-hidden rounded-card border border-border bg-muted/45 text-[12px] shadow-xs animate-[fade-up_160ms_var(--ease-out-strong)_both]"
           >
             {/* Top Inspector Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface/85 px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-card/85 px-3 py-2">
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <ActiveIcon
                   size={13}
                   strokeWidth={1.85}
-                  className={cn('shrink-0', isError ? 'text-red' : 'text-primary')}
+                  className={cn('shrink-0', isError ? 'text-destructive' : 'text-primary')}
                 />
-                <span className="font-semibold text-ink">{t(meta.zh, meta.en)}</span>
-                <code className="rounded border border-line bg-inset px-1.5 py-0.2 font-mono text-[11px] text-ink-2">
+                <span className="font-semibold text-foreground">{t(meta.zh, meta.en)}</span>
+                <code className="rounded border border-border bg-muted px-1.5 py-0.2 font-mono text-[11px] text-foreground-soft">
                   {active.toolName}
                 </code>
 
@@ -536,12 +536,12 @@ export function ToolChips({
                   className={cn(
                     'inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[10.5px] font-medium',
                     isError
-                      ? 'bg-red-tint text-red'
+                      ? 'bg-destructive-soft text-destructive'
                       : active.validatorRepair
-                        ? 'bg-orange-tint text-orange'
+                        ? 'bg-warning-soft text-warning'
                         : running
                           ? 'bg-primary-soft text-primary'
-                          : 'bg-green-tint text-green',
+                          : 'bg-success-soft text-success',
                   )}
                 >
                   {isError
@@ -554,7 +554,7 @@ export function ToolChips({
                 </span>
 
                 {durationLabel && (
-                  <span className="font-mono text-[10.5px] text-ink-3 tabular-nums">
+                  <span className="font-mono text-[10.5px] text-faint-foreground tabular-nums">
                     {durationLabel}
                   </span>
                 )}
@@ -580,7 +580,7 @@ export function ToolChips({
 
                 {/* Segmented Structured / Raw JSON Switch */}
                 <div
-                  className="inline-flex h-6 items-center rounded-chip border border-line bg-inset p-0.5"
+                  className="inline-flex h-6 items-center rounded-chip border border-border bg-muted p-0.5"
                   role="group"
                   aria-label={t('参数视图模式', 'Arguments view mode')}
                 >
@@ -590,8 +590,8 @@ export function ToolChips({
                     className={cn(
                       'inline-flex h-[18px] cursor-pointer items-center gap-1 rounded-[4px] px-1.5 text-[10.5px] font-medium transition-colors',
                       viewMode === 'structured'
-                        ? 'bg-surface text-ink shadow-2xs'
-                        : 'text-ink-3 hover:text-ink-2',
+                        ? 'bg-card text-foreground shadow-2xs'
+                        : 'text-faint-foreground hover:text-foreground-soft',
                     )}
                   >
                     <ListTree size={10.5} />
@@ -603,8 +603,8 @@ export function ToolChips({
                     className={cn(
                       'inline-flex h-[18px] cursor-pointer items-center gap-1 rounded-[4px] px-1.5 font-mono text-[10.5px] font-medium transition-colors',
                       viewMode === 'json'
-                        ? 'bg-surface text-ink shadow-2xs'
-                        : 'text-ink-3 hover:text-ink-2',
+                        ? 'bg-card text-foreground shadow-2xs'
+                        : 'text-faint-foreground hover:text-foreground-soft',
                     )}
                   >
                     <Code2 size={10.5} />
@@ -617,10 +617,10 @@ export function ToolChips({
                   onClick={() => handleCopyJson(active)}
                   title={t('复制工具调用详情 (JSON)', 'Copy tool call JSON')}
                   aria-label={t('复制工具调用详情', 'Copy tool call JSON')}
-                  className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-chip border border-line bg-surface text-ink-3 transition-colors hover:bg-hover hover:text-ink"
+                  className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-chip border border-border bg-card text-faint-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   {isCopied ? (
-                    <Check size={11.5} strokeWidth={2.3} className="text-green" />
+                    <Check size={11.5} strokeWidth={2.3} className="text-success" />
                   ) : (
                     <Copy size={11.5} strokeWidth={1.8} />
                   )}
@@ -634,20 +634,20 @@ export function ToolChips({
                 className={cn(
                   'flex items-start gap-2 rounded-control border px-2.5 py-2 text-[12px] leading-relaxed',
                   isError
-                    ? 'border-red/35 bg-red-tint/35 text-ink'
+                    ? 'border-destructive/35 bg-destructive-soft/35 text-foreground'
                     : running
-                      ? 'border-primary/30 bg-primary-soft/25 text-ink-2'
-                      : 'border-line bg-surface text-ink',
+                      ? 'border-primary/30 bg-primary-soft/25 text-foreground-soft'
+                      : 'border-border bg-card text-foreground',
                 )}
               >
                 <span
                   className={cn(
                     'mt-[2px] inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full',
                     isError
-                      ? 'bg-red-tint text-red'
+                      ? 'bg-destructive-soft text-destructive'
                       : running
                         ? 'bg-primary-soft text-primary'
-                        : 'bg-green-tint text-green',
+                        : 'bg-success-soft text-success',
                   )}
                 >
                   {isError ? (
@@ -659,10 +659,10 @@ export function ToolChips({
                   )}
                 </span>
                 <div className="min-w-0 flex-1 break-words">
-                  <span className="mr-1.5 text-[11px] font-semibold text-ink-3">
+                  <span className="mr-1.5 text-[11px] font-semibold text-faint-foreground">
                     {t('执行结果 / 门禁反馈：', 'Result / Validator Feedback:')}
                   </span>
-                  <span className="whitespace-pre-wrap text-ink">
+                  <span className="whitespace-pre-wrap text-foreground">
                     {active.output || t('正在执行并校验 11 模型约束…', 'Executing & validating…')}
                   </span>
                 </div>
@@ -673,10 +673,10 @@ export function ToolChips({
                 <StructuredArgumentsView args={active.arguments ?? {}} />
               ) : (
                 <div className="space-y-1">
-                  <div className="text-[10.5px] font-medium text-ink-3">
+                  <div className="text-[10.5px] font-medium text-faint-foreground">
                     {t('原始调用入参 (JSON)', 'Raw Arguments (JSON)')}
                   </div>
-                  <pre className="bui-scroller m-0 max-h-72 overflow-y-auto overflow-x-hidden rounded-control border border-line bg-surface p-2.5 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-ink-2">
+                  <pre className="bui-scroller m-0 max-h-72 overflow-y-auto overflow-x-hidden rounded-control border border-border bg-card p-2.5 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-foreground-soft">
                     {highlightJsonText(JSON.stringify(active.arguments ?? {}, null, 2))}
                   </pre>
                 </div>
@@ -698,7 +698,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
 
   if (entries.length === 0) {
     return (
-      <div className="rounded-control border border-line bg-surface px-2.5 py-1.5 text-[11.5px] text-ink-3">
+      <div className="rounded-control border border-border bg-card px-2.5 py-1.5 text-[11.5px] text-faint-foreground">
         {t('无显式传入参数（使用当前会话默认上下文）', 'No explicit arguments (using session context)')}
       </div>
     );
@@ -712,15 +712,15 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
     return (
       <div className="flex flex-wrap items-center justify-between gap-1.5">
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-semibold text-ink-2">
+          <span className="text-[11px] font-semibold text-foreground-soft">
             {labelSpec ? t(labelSpec.zh, labelSpec.en) : key}
           </span>
           {labelSpec && (
-            <span className="font-mono text-[10px] text-ink-3">{key}</span>
+            <span className="font-mono text-[10px] text-faint-foreground">{key}</span>
           )}
         </div>
         {typeof count === 'number' && (
-          <span className="rounded-full bg-inset px-1.5 py-0.1 font-mono text-[10px] text-ink-3 tabular-nums">
+          <span className="rounded-full bg-muted px-1.5 py-0.1 font-mono text-[10px] text-faint-foreground tabular-nums">
             {count}
           </span>
         )}
@@ -738,22 +738,22 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
             return (
               <div
                 key={key}
-                className="flex flex-col gap-0.5 rounded-control border border-line bg-surface px-2.5 py-1.5"
+                className="flex flex-col gap-0.5 rounded-control border border-border bg-card px-2.5 py-1.5"
               >
                 <div className="flex items-center justify-between gap-1">
-                  <span className="truncate text-[10.5px] font-medium text-ink-3">
+                  <span className="truncate text-[10.5px] font-medium text-faint-foreground">
                     {labelSpec ? t(labelSpec.zh, labelSpec.en) : key}
                   </span>
                   {labelSpec && (
-                    <span className="shrink-0 font-mono text-[9.5px] text-ink-3/80">{key}</span>
+                    <span className="shrink-0 font-mono text-[9.5px] text-faint-foreground/80">{key}</span>
                   )}
                 </div>
-                <div className="min-w-0 break-words font-mono text-[12px] font-medium text-ink">
+                <div className="min-w-0 break-words font-mono text-[12px] font-medium text-foreground">
                   {typeof val === 'boolean' ? (
                     <span
                       className={cn(
                         'inline-block rounded px-1.5 py-0.1 text-[10.5px]',
-                        val ? 'bg-primary-soft text-primary' : 'bg-inset text-ink-3',
+                        val ? 'bg-primary-soft text-primary' : 'bg-muted text-faint-foreground',
                       )}
                     >
                       {val ? 'true' : 'false'}
@@ -775,7 +775,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
           return (
             <div key={key} className="space-y-1">
               {renderFieldHeader(key)}
-              <pre className="bui-scroller m-0 max-h-56 overflow-y-auto overflow-x-hidden rounded-control border border-line bg-surface px-2.5 py-2 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-ink">
+              <pre className="bui-scroller m-0 max-h-56 overflow-y-auto overflow-x-hidden rounded-control border border-border bg-card px-2.5 py-2 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-foreground">
                 {val}
               </pre>
             </div>
@@ -788,7 +788,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
           return (
             <div key={key} className="space-y-1">
               {renderFieldHeader(key)}
-              <div className="rounded-control border border-line bg-surface px-2.5 py-2 text-[12.5px] leading-[1.6] whitespace-pre-wrap break-words text-ink">
+              <div className="rounded-control border border-border bg-card px-2.5 py-2 text-[12.5px] leading-[1.6] whitespace-pre-wrap break-words text-foreground">
                 <TaggedInlineContent parsed={parsed} />
               </div>
             </div>
@@ -801,11 +801,11 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
             return (
               <div key={key} className="space-y-1">
                 {renderFieldHeader(key, val.length)}
-                <div className="flex flex-wrap gap-1.5 rounded-control border border-line bg-surface px-2.5 py-2">
+                <div className="flex flex-wrap gap-1.5 rounded-control border border-border bg-card px-2.5 py-2">
                   {val.map((token, idx) => (
                     <span
                       key={`${String(token)}-${idx}`}
-                      className="rounded border border-line bg-inset px-2 py-0.5 font-mono text-[11px] font-medium text-ink-2"
+                      className="rounded border border-border bg-muted px-2 py-0.5 font-mono text-[11px] font-medium text-foreground-soft"
                     >
                       {String(token)}
                     </span>
@@ -823,15 +823,15 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
             return (
               <div key={key} className="space-y-1">
                 {renderFieldHeader(key, val.length)}
-                <ul className="bui-scroller m-0 max-h-64 divide-y divide-line overflow-y-auto overflow-x-hidden rounded-control border border-line bg-surface p-0 list-none">
+                <ul className="bui-scroller m-0 max-h-64 divide-y divide-border overflow-y-auto overflow-x-hidden rounded-control border border-border bg-card p-0 list-none">
                   {val.map((item, idx) => {
                     const parsed = parseTaggedListItem(String(item));
                     return (
                       <li
                         key={idx}
-                        className="flex items-start gap-2 px-2.5 py-2 text-[12.5px] leading-[1.58] text-ink"
+                        className="flex items-start gap-2 px-2.5 py-2 text-[12.5px] leading-[1.58] text-foreground"
                       >
-                        <span className="mt-[2px] inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded bg-inset px-1 font-mono text-[10px] font-medium text-ink-3 tabular-nums">
+                        <span className="mt-[2px] inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded bg-muted px-1 font-mono text-[10px] font-medium text-faint-foreground tabular-nums">
                           {idx + 1}
                         </span>
                         <div className="min-w-0 flex-1 break-words">
@@ -849,11 +849,11 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
           return (
             <div key={key} className="space-y-1">
               {renderFieldHeader(key, val.length)}
-              <div className="bui-scroller max-h-64 divide-y divide-line overflow-y-auto overflow-x-hidden rounded-control border border-line bg-surface">
+              <div className="bui-scroller max-h-64 divide-y divide-border overflow-y-auto overflow-x-hidden rounded-control border border-border bg-card">
                 {val.map((obj, idx) => {
                   if (!obj || typeof obj !== 'object') {
                     return (
-                      <div key={idx} className="px-2.5 py-1.5 font-mono text-[11.5px] text-ink-2 break-words">
+                      <div key={idx} className="px-2.5 py-1.5 font-mono text-[11.5px] text-foreground-soft break-words">
                         {String(obj)}
                       </div>
                     );
@@ -862,11 +862,11 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
                   const entriesOfObj = Object.entries(rec).filter(([, v]) => !isEmptyValue(v));
                   return (
                     <div key={idx} className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-2.5 py-2 text-[11.5px]">
-                      <span className="font-mono text-[10px] text-ink-3 tabular-nums">#{idx + 1}</span>
+                      <span className="font-mono text-[10px] text-faint-foreground tabular-nums">#{idx + 1}</span>
                       {entriesOfObj.map(([subK, subV]) => (
                         <span key={subK} className="inline-flex max-w-full items-baseline gap-1 break-words">
-                          <span className="font-mono text-[10.5px] text-ink-3">{subK}:</span>
-                          <span className="font-medium text-ink">
+                          <span className="font-mono text-[10.5px] text-faint-foreground">{subK}:</span>
+                          <span className="font-medium text-foreground">
                             {typeof subV === 'object' ? JSON.stringify(subV) : String(subV)}
                           </span>
                         </span>
@@ -887,14 +887,14 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
           return (
             <div key={key} className="space-y-1">
               {renderFieldHeader(key, subEntries.length)}
-              <div className="divide-y divide-line rounded-control border border-line bg-surface">
+              <div className="divide-y divide-border rounded-control border border-border bg-card">
                 {subEntries.map(([subK, subV]) => (
                   <div
                     key={subK}
                     className="flex flex-wrap items-baseline justify-between gap-2 px-2.5 py-1.5 text-[11.5px]"
                   >
-                    <span className="font-mono text-ink-3">{subK}</span>
-                    <span className="min-w-0 break-words font-mono text-ink">
+                    <span className="font-mono text-faint-foreground">{subK}</span>
+                    <span className="min-w-0 break-words font-mono text-foreground">
                       {typeof subV === 'object' ? JSON.stringify(subV) : String(subV)}
                     </span>
                   </div>
@@ -909,12 +909,12 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
 
       {/* Quiet Footer for Empty Optional Fields */}
       {emptyKeys.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1 pt-0.5 text-[10.5px] text-ink-3">
+        <div className="flex flex-wrap items-center gap-1 pt-0.5 text-[10.5px] text-faint-foreground">
           <span>{t('未传入可选字段：', 'Empty optional fields:')}</span>
           {emptyKeys.map((k) => (
             <code
               key={k}
-              className="rounded bg-surface/80 px-1.5 py-0.1 font-mono text-[10px] text-ink-3 shadow-hairline"
+              className="rounded bg-card/80 px-1.5 py-0.1 font-mono text-[10px] text-faint-foreground shadow-hairline"
             >
               {k}
             </code>
@@ -933,9 +933,9 @@ function TaggedInlineContent({ parsed }: { parsed: ParsedTaggedText }) {
           className={cn(
             'mr-1.5 inline-flex items-center rounded px-1.5 py-0.2 align-[1px] text-[10.5px] font-semibold leading-tight',
             parsed.tagTone === 'accent' && 'bg-primary-soft text-primary',
-            parsed.tagTone === 'warn' && 'bg-orange-tint text-orange',
-            parsed.tagTone === 'ok' && 'bg-green-tint text-green',
-            parsed.tagTone === 'neutral' && 'bg-inset text-ink-2',
+            parsed.tagTone === 'warn' && 'bg-warning-soft text-warning',
+            parsed.tagTone === 'ok' && 'bg-success-soft text-success',
+            parsed.tagTone === 'neutral' && 'bg-muted text-foreground-soft',
           )}
         >
           {parsed.tag}

@@ -1086,17 +1086,17 @@ export function DesignBriefCard({
       aria-label={t('设计简报', 'Design Brief')}
       className="card flex flex-col gap-3.5"
     >
-      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line pb-3">
+      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border pb-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="m-0 font-serif text-[16px] font-semibold text-ink">
+            <h3 className="m-0 font-serif text-[16px] font-semibold text-foreground">
               {t('设计简报', 'Design Brief')}
             </h3>
             <span className="badge badge-accent font-mono text-[10.5px] tabular-nums">
               {brief.items.length} {t('条共识', 'items')}
             </span>
           </div>
-          <p className="m-0 mt-0.5 text-[12px] text-ink-3">
+          <p className="m-0 mt-0.5 text-[12px] text-faint-foreground">
             {isRestyleMode
               ? t(
                   `正在编辑「${activePrototype?.name ?? ''}」的设计简报，确认后将按新简报重做整页风格并生成新修订版本。`,
@@ -1154,7 +1154,7 @@ export function DesignBriefCard({
 
       {brief.userImageRefs && brief.userImageRefs.length > 0 && (
         <div
-          className="flex flex-wrap items-center gap-2 rounded-control border border-line bg-inset/40 p-2"
+          className="flex flex-wrap items-center gap-2 rounded-control border border-border bg-muted/40 p-2"
           data-testid="design-brief-image-refs"
         >
           {brief.userImageRefs.map((imgRef) => (
@@ -1170,7 +1170,7 @@ export function DesignBriefCard({
 
       {docs.length > 0 && onSelectDocId && (
         <div className="flex flex-col gap-1">
-          <label className="text-[11.5px] font-medium text-ink-2">
+          <label className="text-[11.5px] font-medium text-foreground-soft">
             {t('关联需求规格说明书：', 'Linked SRS Specification:')}
           </label>
           <select
@@ -1190,7 +1190,7 @@ export function DesignBriefCard({
 
       {/* One-sentence Agent rewrite input */}
       <form
-        className="flex gap-1.5 rounded-control border border-line bg-inset/55 p-2"
+        className="flex gap-1.5 rounded-control border border-border bg-muted/55 p-2"
         onSubmit={(e) => {
           e.preventDefault();
           if (!rewriteDraft.trim()) return;
@@ -1202,7 +1202,7 @@ export function DesignBriefCard({
         <input
           type="text"
           data-testid="brief-one-sentence-input"
-          className="input h-8 flex-1 bg-surface text-[12.5px]"
+          className="input h-8 flex-1 bg-card text-[12.5px]"
           placeholder={t(
             '用一句话改写整份简报，如：改成深色高密度交易风…',
             'Rewrite brief in one sentence, e.g., Switch to dark high-density trading style…',
@@ -1234,13 +1234,13 @@ export function DesignBriefCard({
             <li
               key={item.id}
               data-testid={`design-brief-item-${item.id}`}
-              className="rounded-control border border-line bg-inset/35 px-3 py-2 text-[12.5px] leading-relaxed text-ink"
+              className="rounded-control border border-border bg-muted/35 px-3 py-2 text-[12.5px] leading-relaxed text-foreground"
             >
               {isEditing ? (
                 <div className="flex flex-col gap-2">
                   <textarea
                     rows={2}
-                    className="input w-full bg-surface text-[12.5px]"
+                    className="input w-full bg-card text-[12.5px]"
                     value={editingDraft}
                     onChange={(e) => setEditingDraft(e.target.value)}
                   />
@@ -1277,7 +1277,7 @@ export function DesignBriefCard({
               ) : (
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <span className="mr-1.5 inline-block rounded bg-surface px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-ink-2">
+                    <span className="mr-1.5 inline-block rounded bg-card px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-foreground-soft">
                       {categoryBadgeLabel(item.category)}
                     </span>
                     <span>{item.statement}</span>
@@ -1290,7 +1290,7 @@ export function DesignBriefCard({
                         setEditingId(item.id);
                         setEditingDraft(item.statement);
                       }}
-                      className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-ink-3 hover:bg-surface hover:text-ink"
+                      className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-faint-foreground hover:bg-card hover:text-foreground"
                     >
                       <Edit3 size={12} />
                     </button>
@@ -1298,7 +1298,7 @@ export function DesignBriefCard({
                       type="button"
                       aria-label={t('删除简报条目', 'Remove brief item')}
                       onClick={() => onRemoveItem(item.id)}
-                      className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-ink-3 hover:bg-surface hover:text-red"
+                      className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-faint-foreground hover:bg-card hover:text-destructive"
                     >
                       <Trash2 size={12} />
                     </button>
@@ -1344,7 +1344,7 @@ export function DesignBriefCard({
       </form>
 
       {/* Primary Action Footer */}
-      <div className="flex flex-col gap-2 border-t border-line pt-3">
+      <div className="flex flex-col gap-2 border-t border-border pt-3">
         {isRestyleMode && onConfirmRestyle ? (
           <>
             <Button
@@ -1440,10 +1440,10 @@ export function StyleTileCard({
       aria-label={t('实时风格样张', 'Live Style Tile')}
       className="card flex flex-col gap-3.5"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2.5">
         <div className="flex items-center gap-2">
           <Palette size={15} className="text-primary" />
-          <h3 className="m-0 font-serif text-[15.5px] font-semibold text-ink">
+          <h3 className="m-0 font-serif text-[15.5px] font-semibold text-foreground">
             {t('实时风格样张', 'Live Style Tile')}
           </h3>
         </div>
@@ -1458,15 +1458,15 @@ export function StyleTileCard({
         {swatches.map((sw) => (
           <div
             key={sw.key}
-            className="flex items-center gap-2 rounded-control border border-line bg-inset/40 px-2 py-1.5"
+            className="flex items-center gap-2 rounded-control border border-border bg-muted/40 px-2 py-1.5"
           >
             <span
               className="h-5 w-5 shrink-0 rounded border border-black/15"
               style={{ background: sw.hex }}
             />
             <div className="min-w-0 leading-tight">
-              <div className="truncate text-[10.5px] font-medium text-ink-2">{sw.label}</div>
-              <div className="truncate font-mono text-[10px] text-ink-3 uppercase">{sw.hex}</div>
+              <div className="truncate text-[10.5px] font-medium text-foreground-soft">{sw.label}</div>
+              <div className="truncate font-mono text-[10px] text-faint-foreground uppercase">{sw.hex}</div>
             </div>
           </div>
         ))}

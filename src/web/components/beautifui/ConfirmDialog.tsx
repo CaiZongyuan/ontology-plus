@@ -110,14 +110,14 @@ export function ConfirmDialog({
       onClose={onClose}
     >
       <div className="flex flex-col">
-        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
             {danger && (
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-tint text-red">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-destructive-soft text-destructive">
                 <AlertTriangle size={13} strokeWidth={2} />
               </span>
             )}
-            <h3 id={titleId} className="m-0 text-[14px] font-semibold text-ink">
+            <h3 id={titleId} className="m-0 text-[14px] font-semibold text-foreground">
               {title}
             </h3>
           </div>
@@ -125,18 +125,18 @@ export function ConfirmDialog({
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="primitive-icon-button cursor-pointer text-ink-3 hover:bg-hover hover:text-ink"
+            className="primitive-icon-button cursor-pointer text-faint-foreground hover:bg-accent hover:text-foreground"
           >
             <X size={14} />
           </button>
         </div>
 
-        <div className="space-y-3 px-4 py-3.5 text-[13px] leading-relaxed text-ink-2">
+        <div className="space-y-3 px-4 py-3.5 text-[13px] leading-relaxed text-foreground-soft">
           {description && <div>{description}</div>}
           {children}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line bg-inset/45 px-4 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/45 px-4 py-2.5">
           <div>{footerExtra}</div>
           <div className="flex items-center justify-end gap-2">
             <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>
