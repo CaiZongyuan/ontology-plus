@@ -64,6 +64,26 @@ import {
   agentSessionScopeKey,
   useAgentPanelStore,
 } from './components/agent/agentPanelStore.js';
+import {
+  DEFAULT_NAV_VIEW,
+  deriveProjectStepProgress,
+  getProjectLifecycleState,
+  readUrlNavState,
+  writeUrlNavState,
+  type ProjectLifecycleState,
+  type ProjectStepProgressInput,
+  type UrlNavState,
+} from './navigation/index.js';
+
+export {
+  deriveProjectStepProgress,
+  getProjectLifecycleState,
+  readUrlNavState,
+  writeUrlNavState,
+  type ProjectLifecycleState,
+  type ProjectStepProgressInput,
+  type UrlNavState,
+};
 
 export interface BootstrapPayload {
   technologyProfiles?: TechnologyProfile[];
@@ -95,158 +115,6 @@ export interface BootstrapPayload {
   writebackInterfaces: WritebackInterface[];
   llmProviders: LlmProviderConfig[];
   systemSettings: SystemSettingsState;
-}
-
-export interface ProjectLifecycleState {
-  hasExploration: boolean;
-  explorationCount: number;
-  hasSrsDoc: boolean;
-  srsDocCount: number;
-  hasPrototype: boolean;
-  hasConfirmedPrototype: boolean;
-  prototypeCount: number;
-  presentModelCount: number;
-  hasOntology: boolean;
-  hasForeignDemoTemplate: boolean;
-  foreignTemplateNameZh?: string;
-  foreignTemplateNameEn?: string;
-  projectApps: AssembledApplication[];
-  projectSkills: GeneratedSkill[];
-  nextStep: {
-    step: 1 | 2 | 3 | 4 | 5;
-    targetView:
-      | 'app-req-explore'
-      | 'app-req-docs'
-      | 'app-prototype'
-      | 'app-ontology'
-      | 'app-assembly-dev';
-    labelZh: string;
-    labelEn: string;
-    hintZh: string;
-    hintEn: string;
-  };
-}
-
-export function getProjectLifecycleState(data: BootstrapPayload): ProjectLifecycleState {
-  const active = data.activeProject;
-  const reqAgentSessions = (data.agentSessions ?? []).filter(
-    (s) => s.projectId === active.id && s.agentKind === 'REQUIREMENT' && s.messages.length > 0,
-  );
-  const explorationCount = Math.max(data.requirementSessions.length, reqAgentSessions.length);
-  const hasExploration = explorationCount > 0;
-  const srsDocCount = data.requirementDocs.length;
-  const hasSrsDoc = srsDocCount > 0;
-  const prototypeCount = data.prototypes.length;
-  const hasPrototype = prototypeCount > 0;
-  const hasConfirmedPrototype = Boolean(data.confirmedPrototypeRevision);
-  const presentModelCount = active.validation.presentModels.length;
-  const hasOntology = presentModelCount > 0;
-
-  const isContractForeign =
-    active.id !== 'proj-contract' &&
-    active.suite.M1?.domain === '合同全生命周期管理系统' &&
-    active.domain !== '合同全生命周期管理系统';
-  const isMftForeign =
-    active.id !== 'proj-mft' &&
-    active.suite.M1?.domain === '企业文件安全传输系统 (MFT)' &&
-    active.domain !== '企业文件安全传输系统 (MFT)';
-  const hasForeignDemoTemplate = isContractForeign || isMftForeign;
-
-  const projectApps = (data.assembledApplications ?? []).filter((a) => a.projectId === active.id);
-  const projectSkills = (data.generatedSkills ?? []).filter((s) => s.projectId === active.id);
-
-  let nextStep: ProjectLifecycleState['nextStep'];
-  if (!hasExploration) {
-    nextStep = {
-      step: 1,
-      targetView: 'app-req-explore',
-      labelZh: '前往第 1 步：开始需求探索',
-      labelEn: 'Step 1: Start Requirement Exploration',
-      hintZh: '先与 AI 澄清核心业务角色、单据与规则决策，再逐步自动生成规格书、原型与业务本体。',
-      hintEn: 'Clarify domain roles, entities, and rules with AI first before generating downstream artifacts.',
-    };
-  } else if (!hasSrsDoc) {
-    nextStep = {
-      step: 2,
-      targetView: 'app-req-explore',
-      labelZh: '前往需求探索：合成《需求文档》',
-      labelEn: 'Step 2: Synthesize SRS Document',
-      hintZh: '您已完成需求探索对话，下一步请合成《软件需求说明书》，作为原型与本体的输入依据。',
-      hintEn: 'Exploration session found. Next, synthesize the Software Requirements Specification (SRS).',
-    };
-  } else if (!hasConfirmedPrototype) {
-    nextStep = hasPrototype
-      ? {
-          step: 3,
-          targetView: 'app-prototype',
-          labelZh: '前往界面原型：确认为当前原型',
-          labelEn: 'Step 3: Confirm Current Prototype',
-          hintZh: '草稿原型已生成，请先在「界面原型」中点击「确认为当前原型」，再推导 11 元模型业务本体。',
-          hintEn: 'Draft prototype exists. Confirm a prototype revision ("Confirm Current Prototype") first before synthesizing the 11-model ontology.',
-        }
-      : {
-          step: 3,
-          targetView: 'app-req-docs',
-          labelZh: '前往需求文档：生成交互界面原型',
-          labelEn: 'Step 3: Generate UI Prototype',
-          hintZh: '《需求文档》已就绪，下一步请生成交互式 HTML 原型以确认页面布局与业务操作流。',
-          hintEn: 'SRS is ready. Next, generate an interactive HTML prototype to confirm screens and actions.',
-        };
-  } else if (!hasOntology) {
-    nextStep = {
-      step: 4,
-      targetView: 'app-prototype',
-      labelZh: '前往界面原型：一键推导业务本体',
-      labelEn: 'Step 4: Synthesize 11-Model Ontology',
-      hintZh: '交互原型已就绪，现在可在「界面原型」中一键推导出本工程专属的 11 元模型业务本体。',
-      hintEn: 'Prototype is ready. Synthesize your project-specific 11-model ontology from the prototype.',
-    };
-  } else {
-    nextStep = {
-      step: 5,
-      targetView: 'app-assembly-dev',
-      labelZh: '前往应用开发：组装四层开发资料包',
-      labelEn: 'Step 5: Assemble 4-Layer Dev Package',
-      hintZh: '业务本体已就绪，可绑定四层架构资产并编译导出《开发指导书》与开发资料包。',
-      hintEn: 'Business ontology is ready. Bind 4-layer assets and compile the development package.',
-    };
-  }
-
-  return {
-    hasExploration,
-    explorationCount,
-    hasSrsDoc,
-    srsDocCount,
-    hasPrototype,
-    hasConfirmedPrototype,
-    prototypeCount,
-    presentModelCount,
-    hasOntology,
-    hasForeignDemoTemplate,
-    ...(isContractForeign
-      ? {
-          foreignTemplateNameZh: '合同全生命周期管理系统 (CLM)',
-          foreignTemplateNameEn: 'Contract Lifecycle Management (CLM)',
-        }
-      : isMftForeign
-        ? {
-            foreignTemplateNameZh: '企业文件安全传输系统 (MFT)',
-            foreignTemplateNameEn: 'Enterprise MFT Security',
-          }
-        : {}),
-    projectApps,
-    projectSkills,
-    nextStep,
-  };
-}
-
-// ─── URL Deep-Link State Sync (projectId / nav / itemId / sessionId) ─────────
-
-export interface UrlNavState {
-  projectId?: string;
-  nav?: string;
-  itemId?: string;
-  sessionId?: string;
 }
 
 export function getCurrentClientLocale(): 'zh-CN' | 'en-US' {
@@ -289,48 +157,6 @@ function writeLastProjectIdToStorage(projectId: string): void {
   } catch {
     // Ignore storage quota errors
   }
-}
-
-export function readUrlNavState(): UrlNavState {
-  if (typeof window === 'undefined') return {};
-  const params = new URLSearchParams(window.location.search);
-  const hashNav = window.location.hash.replace(/^#\/?/, '').trim();
-  const projectId = params.get('projectId') || undefined;
-  const nav = params.get('mode') || hashNav || undefined;
-  const itemId = params.get('itemId') || undefined;
-  const sessionId = params.get('sessionId') || undefined;
-  return {
-    ...(projectId ? { projectId } : {}),
-    ...(nav ? { nav } : {}),
-    ...(itemId ? { itemId } : {}),
-    ...(sessionId ? { sessionId } : {}),
-  };
-}
-
-export function writeUrlNavState(patch: UrlNavState): void {
-  if (typeof window === 'undefined') return;
-  const url = new URL(window.location.href);
-  if (patch.projectId !== undefined) {
-    if (patch.projectId) url.searchParams.set('projectId', patch.projectId);
-    else url.searchParams.delete('projectId');
-  }
-  if (patch.nav !== undefined) {
-    if (patch.nav) {
-      url.searchParams.set('mode', patch.nav);
-      url.hash = `#/${patch.nav}`;
-    } else {
-      url.searchParams.delete('mode');
-    }
-  }
-  if (patch.itemId !== undefined) {
-    if (patch.itemId) url.searchParams.set('itemId', patch.itemId);
-    else url.searchParams.delete('itemId');
-  }
-  if (patch.sessionId !== undefined) {
-    if (patch.sessionId) url.searchParams.set('sessionId', patch.sessionId);
-    else url.searchParams.delete('sessionId');
-  }
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
 export interface SessionLiveStep {
@@ -673,7 +499,7 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   data: null,
   loading: true,
   toast: null,
-  activeNav: initialUrl.nav || 'app-ontology',
+  activeNav: initialUrl.nav || DEFAULT_NAV_VIEW,
   activeItemId: initialUrl.itemId || null,
   activeSessionId: initialUrl.sessionId || null,
   activePrototypeIdByProject: {},

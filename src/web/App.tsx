@@ -1,88 +1,43 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity,
-  ArrowRight,
-  Blocks,
-  BookOpen,
-  Bot,
-  Boxes,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Cpu,
-  Database,
-  FileCode2,
-  FileText,
   FolderKanban,
-  GitBranch,
   Globe,
-  Layers,
-  LayoutTemplate,
   Loader2,
-  MessageSquare,
-  Network,
-  PackageCheck,
+  Moon,
+  Palette,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightOpen,
-  Rocket,
   Search,
-  Send,
-  Settings,
-  Sparkles,
   Sun,
-  Moon,
-  Palette,
-  Workflow,
-  BarChart3,
 } from 'lucide-react';
-import {
-  getProjectLifecycleState,
-  readUrlNavState,
-  useWorkbenchStore,
-  writeUrlNavState,
-} from './api.js';
+import { useWorkbenchStore } from './api.js';
+import { PreferencesProvider, usePreferences } from './i18n.js';
 import {
   NAV_GROUPS,
+  NAV_ICONS,
   NAV_ITEMS,
-  PreferencesProvider,
-  usePreferences,
-  type NavItemSpec,
+  agentPanelSurfaceFor,
+  getNavGroupSpec,
+  getNavItemSpec,
+  getNavItemsByGroup,
+  getProjectLifecycleState,
+  isFlushNavView,
+  readHashView,
+  readUrlNavState,
+  resolveNavViewId,
+  writeUrlNavState,
+  type NavGroupId,
   type NavViewId,
-} from './i18n.js';
+} from './navigation/index.js';
+import { WorkbenchViewHost } from './navigation/viewDispatch.js';
 import { BUILT_IN_THEMES } from '../packages/workbench-theme/index.js';
-import {
-  AppPublishView,
-  ApplicationAssemblyDevView,
-  FourLayerAssetsView,
-  ModelFilesView,
-  OntologySkillsView,
-  OverviewSessionsView,
-  PrototypeStudioView,
-  RequirementDocsView,
-  RequirementExploreView,
-} from './views/ApplicationCenterViews.js';
-import {
-  CapabilityAgentsView,
-  CapabilityCrossFlowsView,
-  CapabilityExtractionView,
-  CapabilityMcpView,
-  CapabilitySystemsView,
-  DataMappingsView,
-  DataMetricsReportsView,
-  DataReasoningView,
-  DataResourcesView,
-  DataWritebackView,
-  KnowledgeCenterView,
-  LlmCenterView,
-  SystemSettingsView,
-} from './views/CapabilityAndDataViews.js';
-import { KnowledgeGraphCanvas } from './views/KnowledgeGraphCanvas.js';
-import { OntologyWorkbenchView } from './views/OntologyWorkbenchView.js';
 import { Button } from './components/beautifui/index.js';
 import {
   ShellAgentPanel,
-  agentPanelSurfaceFor,
   resolveActiveWorkspaceRuns,
   useAgentPanelOverlayMode,
 } from './components/agent/ShellAgentPanel.js';
@@ -91,42 +46,6 @@ import {
   parseAgentPanelPrefs,
   useAgentPanelStore,
 } from './components/agent/agentPanelStore.js';
-
-const NAV_ICONS: Record<NavViewId, React.ReactNode> = {
-  overview: <FolderKanban size={16} />,
-  'app-req-explore': <MessageSquare size={16} />,
-  'app-req-docs': <FileText size={16} />,
-  'app-prototype': <LayoutTemplate size={16} />,
-  'app-ontology': <Boxes size={16} />,
-  'app-model-files': <FileCode2 size={16} />,
-  'app-knowledge-graph': <Network size={16} />,
-  'app-four-layer-assets': <Layers size={16} />,
-  'app-assembly-dev': <PackageCheck size={16} />,
-  'app-skills': <Blocks size={16} />,
-  'app-publish': <Rocket size={16} />,
-  'cap-systems': <Cpu size={16} />,
-  'cap-extraction': <GitBranch size={16} />,
-  'cap-mcp': <Activity size={16} />,
-  'cap-agents': <Bot size={16} />,
-  'cap-cross-flows': <Workflow size={16} />,
-  'cap-knowledge': <BookOpen size={16} />,
-  'data-resources': <Database size={16} />,
-  'data-mappings': <Layers size={16} />,
-  'data-metrics-reports': <BarChart3 size={16} />,
-  'data-reasoning': <Sparkles size={16} />,
-  'data-writeback': <Send size={16} />,
-  'llm-center': <Cpu size={16} />,
-  'system-settings': <Settings size={16} />,
-};
-
-function readHashView(): NavViewId {
-  if (typeof window === 'undefined') return 'app-ontology';
-  const urlState = readUrlNavState();
-  const candidate = (urlState.nav || '') as NavViewId;
-  return NAV_ITEMS.some((i) => i.id === candidate) ? candidate : 'app-ontology';
-}
-
-type NavGroupId = NavItemSpec['group'];
 
 function readStoredJson<T>(key: string, fallback: T): T {
   try {
@@ -317,20 +236,15 @@ function ShellInner() {
     liveAnnouncement,
     setActiveNav,
     setActivePrototypeId,
-    setSelectedModel,
     bootstrap,
     switchProject,
-    saveSuiteWithUndo,
-    showToast,
   } = useWorkbenchStore();
   const lifecycle = data ? getProjectLifecycleState(data) : null;
   const activeWorkspaceRuns = useMemo(
     () => resolveActiveWorkspaceRuns(data, liveSessionDrafts),
     [data, liveSessionDrafts],
   );
-  const activeView: NavViewId = NAV_ITEMS.some((i) => i.id === activeNav)
-    ? (activeNav as NavViewId)
-    : 'app-ontology';
+  const activeView: NavViewId = resolveNavViewId(activeNav);
   const [collapsed, setCollapsedState] = useState<boolean>(() =>
     readStoredJson('onto_sidebar_collapsed', false),
   );
@@ -454,8 +368,8 @@ function ShellInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentSurface, agentPanelVisible, agentPanelOverlay]);
 
-  const activeNavSpec = NAV_ITEMS.find((i) => i.id === activeView);
-  const activeGroupSpec = NAV_GROUPS.find((g) => g.id === activeNavSpec?.group);
+  const activeNavSpec = getNavItemSpec(activeView);
+  const activeGroupSpec = activeNavSpec ? getNavGroupSpec(activeNavSpec.group) : undefined;
   const activeLabel = activeNavSpec ? t(activeNavSpec.labelZh, activeNavSpec.labelEn) : '';
 
   useEffect(() => {
@@ -464,7 +378,7 @@ function ShellInner() {
 
   const paletteEntries = useMemo<CommandEntry[]>(() => {
     const pageEntries: CommandEntry[] = NAV_ITEMS.map((item) => {
-      const grp = NAV_GROUPS.find((g) => g.id === item.group);
+      const grp = getNavGroupSpec(item.group);
       return {
         key: `nav:${item.id}`,
         section: t('页面', 'Pages'),
@@ -579,7 +493,7 @@ function ShellInner() {
 
         <nav className="sidebar-scroll">
           {NAV_GROUPS.map((grp, gi) => {
-            const items = NAV_ITEMS.filter((i) => i.group === grp.id);
+            const items = getNavItemsByGroup(grp.id);
             const containsActive = items.some((i) => i.id === activeView);
             const isClosed = !collapsed && closedGroups.includes(grp.id) && !containsActive;
             const showHeader = !collapsed && grp.id !== 'OVERVIEW';
@@ -795,156 +709,12 @@ function ShellInner() {
           </div>
         </header>
 
-        <div className={`platform-content ${activeView === 'app-ontology' ? 'flush' : ''}`}>
+        <div className={`platform-content ${isFlushNavView(activeView) ? 'flush' : ''}`}>
           {loading || !data ? (
             <LoadingState />
           ) : (
             <div className="view-frame" key={activeView}>
-              {activeView === 'overview' && (
-                <OverviewSessionsView onNavigate={setActiveView} />
-              )}
-              {activeView === 'app-req-explore' && (
-                <RequirementExploreView onNavigate={setActiveView} />
-              )}
-              {activeView === 'app-req-docs' && (
-                <RequirementDocsView onNavigate={setActiveView} />
-              )}
-              {activeView === 'app-prototype' && (
-                <PrototypeStudioView onNavigate={setActiveView} />
-              )}
-              {activeView === 'app-ontology' && (
-                <OntologyWorkbenchView onNavigate={setActiveView} />
-              )}
-              {activeView === 'app-model-files' && (
-                <ModelFilesView onNavigate={setActiveView} />
-              )}
-              {activeView === 'app-knowledge-graph' &&
-                (!lifecycle?.hasOntology || data.activeProject.knowledgeGraph.nodes.length === 0 ? (
-                  <div className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-6">
-                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-muted text-primary">
-                      <Network size={20} />
-                    </div>
-                    <span className="badge badge-warn">
-                      {t('尚未到达此阶段 · 暂无图谱节点', 'Stage Not Yet Reached · No Graph Nodes')}
-                    </span>
-                    <h3 className="font-title text-[18px] font-semibold text-foreground m-0">
-                      {t(
-                        `「${data.activeProject.name}」尚未生成业务本体`,
-                        `"${data.activeProject.name}" has not synthesized its ontology yet`,
-                      )}
-                    </h3>
-                    <p className="text-[13px] text-faint-foreground max-w-[520px] leading-relaxed m-0">
-                      {t(
-                        '知识图谱会根据第 4 步「业务本体」中的对象、行为、规则、事件与界面引用关系自动绘制，无需手工连线。当前工程仍在推进前置阶段，保持空白可避免示例模板干扰。',
-                        'The Knowledge Graph is automatically rendered from your project ontology once Step 4 (Business Ontology) is generated.',
-                      )}
-                    </p>
-                    {lifecycle && (
-                      <p className="text-[12.5px] text-foreground-soft bg-muted border border-border rounded-sm px-3.5 py-2 m-0">
-                        {t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
-                      </p>
-                    )}
-                    {lifecycle && (
-                      <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
-                        <Button
-                          type="button"
-                          variant="accent"
-                          size="md"
-                          onClick={() => setActiveView(lifecycle.nextStep.targetView)}
-                        >
-                          {t(lifecycle.nextStep.labelZh, lifecycle.nextStep.labelEn)}
-                          <ArrowRight size={14} />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="md"
-                          onClick={() => setActiveView('app-ontology')}
-                        >
-                          {t('进入业务本体手工建模', 'Manual Ontology Authoring')}
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {lifecycle?.hasForeignDemoTemplate && (
-                      <div
-                        className="card flex flex-wrap items-center justify-between gap-3"
-                        style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}
-                      >
-                        <div className="text-[12.5px] text-foreground">
-                          <strong>{t('提示：当前图谱来自创建工程时的示例模板', 'Notice: Graph shows preloaded demo template')}</strong>
-                          {' — '}
-                          {t(
-                            `当前展示的是「${lifecycle.foreignTemplateNameZh}」演示数据，并非由「${data.activeProject.name}」推导生成。`,
-                            `Showing "${lifecycle.foreignTemplateNameEn}" demo data rather than "${data.activeProject.name}".`,
-                          )}
-                        </div>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={async () => {
-                            await saveSuiteWithUndo({}, 'Cleared preloaded demo template');
-                            showToast(
-                              t(
-                                '已清空预置示例模板，完成前置界面原型后即可推导本工程专属本体',
-                                'Cleared demo template; ready for clean synthesis from prototype',
-                              ),
-                            );
-                          }}
-                        >
-                          {t('清空示例模板数据', 'Clear Demo Template')}
-                        </Button>
-                      </div>
-                    )}
-                    <div className="card">
-                      <div className="card-header">
-                        <h3 className="card-title">
-                          {t('11 元模型全域业务本体知识图谱', '11-Model Business Ontology Knowledge Graph')}
-                        </h3>
-                      </div>
-                      <KnowledgeGraphCanvas
-                        graph={data.activeProject.knowledgeGraph}
-                        preset="GLOBAL_SWIMLANE"
-                        height={Math.max(600, (typeof window !== 'undefined' ? window.innerHeight : 900) - 250)}
-                        onNavigateToElement={(model, elementId) => {
-                          setSelectedModel(model, elementId);
-                          setActiveView('app-ontology');
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              {activeView === 'app-four-layer-assets' && <FourLayerAssetsView />}
-              {activeView === 'app-assembly-dev' && (
-                <ApplicationAssemblyDevView onNavigate={setActiveView} />
-              )}
-              {activeView === 'app-skills' && (
-                <OntologySkillsView onNavigate={setActiveView} />
-              )}
-              {activeView === 'app-publish' && (
-                <AppPublishView onNavigate={setActiveView} />
-              )}
-
-              {activeView === 'cap-systems' && <CapabilitySystemsView />}
-              {activeView === 'cap-extraction' && <CapabilityExtractionView />}
-              {activeView === 'cap-mcp' && <CapabilityMcpView />}
-              {activeView === 'cap-agents' && <CapabilityAgentsView />}
-              {activeView === 'cap-cross-flows' && <CapabilityCrossFlowsView />}
-              {activeView === 'cap-knowledge' && <KnowledgeCenterView />}
-
-              {activeView === 'data-resources' && (
-                <DataResourcesView onNavigate={setActiveView} />
-              )}
-              {activeView === 'data-mappings' && <DataMappingsView />}
-              {activeView === 'data-metrics-reports' && <DataMetricsReportsView />}
-              {activeView === 'data-reasoning' && <DataReasoningView />}
-              {activeView === 'data-writeback' && <DataWritebackView />}
-
-              {activeView === 'llm-center' && <LlmCenterView />}
-              {activeView === 'system-settings' && <SystemSettingsView />}
+              <WorkbenchViewHost activeView={activeView} onNavigate={setActiveView} />
             </div>
           )}
         </div>
