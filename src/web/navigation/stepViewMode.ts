@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import type { ProjectStepId } from '../../packages/business-vocabulary/index.js';
+import type { DeliveryTechTab } from './catalog.js';
 
 export type StepViewMode = 'business' | 'technical';
 
@@ -114,4 +115,69 @@ export function useStepViewMode(
     [step],
   );
   return [mode, setMode] as const;
+}
+
+export const DELIVERY_TECH_TAB_STORAGE_KEY = 'onto_delivery_tech_tab';
+
+const deliveryTechTabListeners = new Set<() => void>();
+
+export function parseDeliveryTechTab(raw: string | null | undefined): DeliveryTechTab {
+  if (raw === 'standards' || raw === 'skills' || raw === 'releases') {
+    return raw;
+  }
+  return 'assembly';
+}
+
+export function readDeliveryTechTab(): DeliveryTechTab {
+  const storage = getStorage();
+  if (!storage) return 'assembly';
+  try {
+    return parseDeliveryTechTab(storage.getItem(DELIVERY_TECH_TAB_STORAGE_KEY));
+  } catch {
+    return 'assembly';
+  }
+}
+
+export function writeDeliveryTechTab(tab: DeliveryTechTab): void {
+  const normalized = parseDeliveryTechTab(tab);
+  const storage = getStorage();
+  if (storage) {
+    try {
+      storage.setItem(DELIVERY_TECH_TAB_STORAGE_KEY, normalized);
+    } catch {
+      // Ignore quota errors
+    }
+  }
+  for (const listener of [...deliveryTechTabListeners]) {
+    listener();
+  }
+}
+
+export function subscribeDeliveryTechTab(listener: () => void): () => void {
+  deliveryTechTabListeners.add(listener);
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === DELIVERY_TECH_TAB_STORAGE_KEY || e.key === null) {
+      listener();
+    }
+  };
+  const canListenWindow =
+    typeof window !== 'undefined' && typeof window.addEventListener === 'function';
+  if (canListenWindow) {
+    window.addEventListener('storage', onStorage);
+  }
+  return () => {
+    deliveryTechTabListeners.delete(listener);
+    if (canListenWindow && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('storage', onStorage);
+    }
+  };
+}
+
+export function useDeliveryTechTab(): readonly [DeliveryTechTab, (next: DeliveryTechTab) => void] {
+  const tab = useSyncExternalStore(
+    subscribeDeliveryTechTab,
+    readDeliveryTechTab,
+    readDeliveryTechTab,
+  );
+  return [tab, writeDeliveryTechTab] as const;
 }

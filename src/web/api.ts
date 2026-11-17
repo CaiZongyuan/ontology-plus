@@ -3000,8 +3000,20 @@ export async function apiCompileDevPackage(
   compiledPackage: CompiledDevelopmentPackage;
   application: AssembledApplication;
   assembledApplications: AssembledApplication[];
+  packageSnapshots?: DevelopmentPackageSnapshot[];
 }> {
-  return apiPostJson(`/api/applications/${appId}/compile-package`, {});
+  return apiPostJson(`/api/applications/${encodeURIComponent(appId)}/compile-package`, {});
+}
+
+export async function apiCompileProjectDevPackage(
+  projectId: string,
+): Promise<{
+  compiledPackage: CompiledDevelopmentPackage;
+  application: AssembledApplication;
+  assembledApplications: AssembledApplication[];
+  packageSnapshots?: DevelopmentPackageSnapshot[];
+}> {
+  return apiPostJson(`/api/projects/${encodeURIComponent(projectId)}/compile-package`, {});
 }
 
 export async function apiInspectMcp(projectId: string): Promise<{

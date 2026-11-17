@@ -54,7 +54,7 @@ export type CanonicalNavViewId =
   | 'llm-center'
   | 'system-settings';
 
-export type LegacyNavViewAlias = 'app-req-explore' | 'app-req-docs';
+export type LegacyNavViewAlias = 'app-req-explore' | 'app-req-docs' | 'app-delivery';
 
 export type NavViewId = CanonicalNavViewId | LegacyNavViewAlias;
 
@@ -79,6 +79,7 @@ export const DEFAULT_NAV_VIEW: CanonicalNavViewId = 'app-ontology';
 export const LEGACY_NAV_VIEW_ALIASES: Readonly<Record<LegacyNavViewAlias, CanonicalNavViewId>> = {
   'app-req-explore': 'app-requirements',
   'app-req-docs': 'app-requirements',
+  'app-delivery': 'app-assembly-dev',
 };
 
 export function normalizeNavViewAlias(value: string | null | undefined): string | undefined {
@@ -149,8 +150,8 @@ export const NAV_ITEMS: NavItemSpec[] = [
   {
     id: 'app-assembly-dev',
     group: 'APPLICATION',
-    labelZh: '应用开发',
-    labelEn: 'App Dev & Package',
+    labelZh: '交付',
+    labelEn: 'Delivery',
   },
   {
     id: 'app-skills',
@@ -260,6 +261,7 @@ export const NAV_ICONS: Record<NavViewId, React.ReactNode> = {
   'app-knowledge-graph': <Network size={16} />,
   'app-four-layer-assets': <Layers size={16} />,
   'app-assembly-dev': <PackageCheck size={16} />,
+  'app-delivery': <PackageCheck size={16} />,
   'app-skills': <Blocks size={16} />,
   'app-publish': <Rocket size={16} />,
   'cap-systems': <Cpu size={16} />,
@@ -306,11 +308,18 @@ export function getNavItemsByGroup(group: NavGroupId): NavItemSpec[] {
 
 export type BusinessModelTechTab = 'editor' | 'files' | 'graph';
 
+export type DeliveryTechTab = 'assembly' | 'standards' | 'skills' | 'releases';
+
 const RETIRED_STEP_NAV_ENTRIES = new Set<NavViewId>([
   'app-prototype',
   'app-ontology',
   'app-model-files',
   'app-knowledge-graph',
+  'app-four-layer-assets',
+  'app-assembly-dev',
+  'app-skills',
+  'app-publish',
+  'app-delivery',
 ]);
 
 export function isRetiredNavEntry(view: NavViewId): boolean {
@@ -322,6 +331,15 @@ export function resolveLegacyBusinessModelTechTab(
 ): BusinessModelTechTab | null {
   if (rawNav === 'app-model-files') return 'files';
   if (rawNav === 'app-knowledge-graph') return 'graph';
+  return null;
+}
+
+export function resolveLegacyDeliveryTechTab(
+  rawNav: string | null | undefined,
+): DeliveryTechTab | null {
+  if (rawNav === 'app-four-layer-assets') return 'standards';
+  if (rawNav === 'app-skills') return 'skills';
+  if (rawNav === 'app-publish') return 'releases';
   return null;
 }
 
@@ -354,7 +372,7 @@ export const PROJECT_STEP_VIEWS: Readonly<Record<ProjectStepId, ProjectStepViewS
   },
   DELIVERY: {
     defaultView: 'app-assembly-dev',
-    views: ['app-four-layer-assets', 'app-assembly-dev', 'app-skills', 'app-publish'],
+    views: ['app-assembly-dev'],
   },
 };
 
@@ -401,6 +419,10 @@ for (const [stepId, spec] of Object.entries(PROJECT_STEP_VIEWS) as [ProjectStepI
 // Legacy Business Model deep-link views stay URL-compatible and route into BUSINESS_MODEL (#68).
 VIEW_TO_STEP.set('app-model-files', 'BUSINESS_MODEL');
 VIEW_TO_STEP.set('app-knowledge-graph', 'BUSINESS_MODEL');
+// Legacy Delivery deep-link views stay URL-compatible and route into DELIVERY (#73).
+VIEW_TO_STEP.set('app-four-layer-assets', 'DELIVERY');
+VIEW_TO_STEP.set('app-skills', 'DELIVERY');
+VIEW_TO_STEP.set('app-publish', 'DELIVERY');
 
 const VIEW_TO_SECONDARY_AREA = new Map<CanonicalNavViewId, SecondaryAreaSpec>();
 for (const area of SECONDARY_AREAS) {

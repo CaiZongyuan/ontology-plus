@@ -1,9 +1,6 @@
 import React from 'react';
 import {
-  AppPublishView,
-  ApplicationAssemblyDevView,
-  FourLayerAssetsView,
-  OntologySkillsView,
+  DeliveryStepView,
   OverviewSessionsView,
   PrototypeStudioView,
   RequirementsStepView,
@@ -50,10 +47,16 @@ export const NAV_VIEW_REGISTRY: Record<CanonicalNavViewId, NavViewRenderer> = {
   'app-knowledge-graph': ({ onNavigate }) => (
     <BusinessModelStepView onNavigate={onNavigate} legacyTechTab="graph" />
   ),
-  'app-four-layer-assets': () => <FourLayerAssetsView />,
-  'app-assembly-dev': ({ onNavigate }) => <ApplicationAssemblyDevView onNavigate={onNavigate} />,
-  'app-skills': ({ onNavigate }) => <OntologySkillsView onNavigate={onNavigate} />,
-  'app-publish': ({ onNavigate }) => <AppPublishView onNavigate={onNavigate} />,
+  'app-four-layer-assets': ({ onNavigate }) => (
+    <DeliveryStepView onNavigate={onNavigate} legacyTechTab="standards" />
+  ),
+  'app-assembly-dev': ({ onNavigate }) => <DeliveryStepView onNavigate={onNavigate} />,
+  'app-skills': ({ onNavigate }) => (
+    <DeliveryStepView onNavigate={onNavigate} legacyTechTab="skills" />
+  ),
+  'app-publish': ({ onNavigate }) => (
+    <DeliveryStepView onNavigate={onNavigate} legacyTechTab="releases" />
+  ),
 
   'cap-systems': () => <CapabilitySystemsView />,
   'cap-extraction': () => <CapabilityExtractionView />,

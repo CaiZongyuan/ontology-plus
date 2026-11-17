@@ -116,8 +116,8 @@ The user's explicit approval of a Project Step's result, which makes that result
 _Avoid_: Confirmation (reserved for Extraction Candidates), sign-off, publish
 
 **Outdated (待更新)**:
-The state of a Project Step's result when an earlier step has changed since it was produced; it stays as it is until the user accepts an update.
-_Avoid_: Stale, dirty, invalid, out of sync
+The state of a Project Step's result when an earlier step's confirmation or a selected delivery input has changed since it was produced; it stays as it is until the user accepts or generates an update.
+_Avoid_: Stale, dirty, invalid, out of sync, 输入已变化
 
 **Change Summary (变更说明)**:
 The plain-language account of what one Agent Run changed, shown when the run ends, from which that run can be undone.
@@ -191,8 +191,12 @@ A self-contained implementation specification exported from a Four-Layer Applica
 _Avoid_: Source zip, release build
 
 **Package Snapshot (开发包快照)**:
-An immutable Development Package produced from one fixed set of application inputs, retaining their source revisions so that preview and download refer to the same content.
+An immutable Development Package produced from one fixed set of application inputs, retaining their source revisions and the Business Model Step Confirmation it rests on so that preview and download refer to the same content.
 _Avoid_: Latest project state, live export
+
+**Runnable System (可运行系统)**:
+The future live application capability reserved by an endpoint slot in the Delivery step, distinct from today's Development Package handoff.
+_Avoid_: Pretending a Development Package is already a deployed live system
 
 **Architecture Asset Agent (架构资产智能体)**:
 A specialist that helps users create, refine, and maintain reusable architecture assets and development standards.

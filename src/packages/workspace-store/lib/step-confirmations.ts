@@ -1,7 +1,10 @@
+import { DEFAULT_TECHNOLOGY_PROFILE_ID } from '../../architecture-assets/index.js';
 import type { ModelCode, OntologySuite } from '../../ontology-core/index.js';
 import type {
+  AssembledApplication,
   BusinessModelStepConfirmationRecord,
   ConfirmedPrototypeRevisionRecord,
+  DevelopmentPackageSnapshot,
   ProjectStepConfirmations,
   PrototypeStepConfirmationRecord,
   StepConfirmationRecord,
@@ -156,4 +159,80 @@ export function resolveCurrentStepConfirmations(
 
 export function listPresentModelCodes(suite: OntologySuite): ModelCode[] {
   return (Object.keys(suite) as ModelCode[]).filter((code) => Boolean(suite[code]));
+}
+
+export function isPackageSnapshotOutdatedForApp(
+  snapshot: Pick<
+    DevelopmentPackageSnapshot,
+    'basedOnBusinessModelConfirmationId'
+  > &
+    Partial<Pick<DevelopmentPackageSnapshot, 'manifestJson'>>,
+  application: Partial<
+    Pick<
+      AssembledApplication,
+      | 'technologyProfileId'
+      | 'uiUeAssetId'
+      | 'techFoundationAssetId'
+      | 'techArchAssetId'
+      | 'developmentInstructions'
+    >
+  > | undefined,
+  businessModelConfirmationId: string,
+): boolean {
+  if (
+    snapshot.basedOnBusinessModelConfirmationId !== undefined &&
+    snapshot.basedOnBusinessModelConfirmationId !== businessModelConfirmationId
+  ) {
+    return true;
+  }
+  const manifest = snapshot.manifestJson as
+    | {
+        technologyProfile?: { id?: string };
+        layers?: {
+          uiUe?: { id?: string };
+          techFoundation?: { id?: string };
+          techArch?: { id?: string };
+        };
+        sources?: {
+          applicationInstructionsText?: string;
+        };
+      }
+    | undefined;
+  if (!manifest || !application) {
+    return false;
+  }
+  const expectedProfileId =
+    application.technologyProfileId ?? DEFAULT_TECHNOLOGY_PROFILE_ID;
+  if (manifest.technologyProfile?.id && expectedProfileId !== manifest.technologyProfile.id) {
+    return true;
+  }
+  if (
+    application.uiUeAssetId &&
+    manifest.layers?.uiUe?.id &&
+    application.uiUeAssetId !== manifest.layers.uiUe.id
+  ) {
+    return true;
+  }
+  if (
+    application.techFoundationAssetId &&
+    manifest.layers?.techFoundation?.id &&
+    application.techFoundationAssetId !== manifest.layers.techFoundation.id
+  ) {
+    return true;
+  }
+  if (
+    application.techArchAssetId &&
+    manifest.layers?.techArch?.id &&
+    application.techArchAssetId !== manifest.layers.techArch.id
+  ) {
+    return true;
+  }
+  if (
+    typeof manifest.sources?.applicationInstructionsText === 'string' &&
+    (application.developmentInstructions?.trim() ?? '') !==
+      manifest.sources.applicationInstructionsText
+  ) {
+    return true;
+  }
+  return false;
 }

@@ -29,6 +29,7 @@ import {
   readUrlNavState,
   resolveArtifactNavTarget,
   resolveLegacyBusinessModelTechTab,
+  resolveLegacyDeliveryTechTab,
   resolveNavViewId,
   resolveShellRouteContext,
   writeUrlNavState,
@@ -256,20 +257,41 @@ describe('navigation catalog and URL state', () => {
       defaultView: 'app-ontology',
       views: ['app-ontology'],
     });
+    expect(PROJECT_STEP_VIEWS.DELIVERY).toEqual({
+      defaultView: 'app-assembly-dev',
+      views: ['app-assembly-dev'],
+    });
     expect(isRetiredNavEntry('app-ontology')).toBe(true);
     expect(isRetiredNavEntry('app-model-files')).toBe(true);
     expect(isRetiredNavEntry('app-knowledge-graph')).toBe(true);
+    expect(isRetiredNavEntry('app-four-layer-assets')).toBe(true);
+    expect(isRetiredNavEntry('app-assembly-dev')).toBe(true);
+    expect(isRetiredNavEntry('app-skills')).toBe(true);
+    expect(isRetiredNavEntry('app-publish')).toBe(true);
     expect(isRetiredNavEntry('cap-extraction')).toBe(false);
     expect(resolveLegacyBusinessModelTechTab('app-model-files')).toBe('files');
     expect(resolveLegacyBusinessModelTechTab('app-knowledge-graph')).toBe('graph');
     expect(resolveLegacyBusinessModelTechTab('app-ontology')).toBeNull();
+    expect(resolveLegacyDeliveryTechTab('app-four-layer-assets')).toBe('standards');
+    expect(resolveLegacyDeliveryTechTab('app-skills')).toBe('skills');
+    expect(resolveLegacyDeliveryTechTab('app-publish')).toBe('releases');
+    expect(resolveLegacyDeliveryTechTab('app-assembly-dev')).toBeNull();
+    expect(readHashView({ search: '?mode=app-delivery', hash: '' })).toBe('app-assembly-dev');
+    expect(readHashView({ search: '', hash: '#/app-delivery' })).toBe('app-assembly-dev');
     expect(isFlushNavView('app-model-files')).toBe(true);
     expect(isFlushNavView('app-knowledge-graph')).toBe(true);
 
     const stepAssignedViews = PROJECT_STEP_IDS.flatMap((id) => PROJECT_STEP_VIEWS[id].views);
-    expect(new Set(stepAssignedViews).size).toBe(7);
+    expect(new Set(stepAssignedViews).size).toBe(4);
     expect(
-      [...stepAssignedViews, 'app-model-files', 'app-knowledge-graph'].sort(),
+      [
+        ...stepAssignedViews,
+        'app-model-files',
+        'app-knowledge-graph',
+        'app-four-layer-assets',
+        'app-skills',
+        'app-publish',
+      ].sort(),
     ).toEqual(
       getNavItemsByGroup('APPLICATION')
         .map((item) => item.id)
@@ -310,6 +332,24 @@ describe('navigation catalog and URL state', () => {
       step: 'BUSINESS_MODEL',
       view: 'app-model-files',
       stepViews: ['app-ontology'],
+    });
+    expect(resolveShellRouteContext('app-four-layer-assets')).toEqual({
+      kind: 'project',
+      step: 'DELIVERY',
+      view: 'app-four-layer-assets',
+      stepViews: ['app-assembly-dev'],
+    });
+    expect(resolveShellRouteContext('app-skills')).toEqual({
+      kind: 'project',
+      step: 'DELIVERY',
+      view: 'app-skills',
+      stepViews: ['app-assembly-dev'],
+    });
+    expect(resolveShellRouteContext('app-publish')).toEqual({
+      kind: 'project',
+      step: 'DELIVERY',
+      view: 'app-publish',
+      stepViews: ['app-assembly-dev'],
     });
     expect(resolveShellRouteContext('cap-extraction')).toMatchObject({
       kind: 'secondary',

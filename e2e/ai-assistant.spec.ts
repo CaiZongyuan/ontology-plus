@@ -49,10 +49,12 @@ test.describe('Single AI Assistant & History Menu (#62)', () => {
     // Step 4: DELIVERY (Business View & Technical Details) -> header says AI 助手, never Architecture/Application Agent
     await page.getByTestId('step-tab-DELIVERY').click();
     await expect(panel.getByTestId('assistant-panel-title')).toHaveText('AI 助手');
-    await expect(page.getByTestId('coding-agent-context-card')).toContainText('AI 助手');
+    await expect(page.getByTestId('delivery-business-view')).toBeVisible();
     await expect(page.locator('body')).not.toContainText(FORBIDDEN_INTERNAL_AGENT_TERMS);
 
-    await page.getByTestId('nav-app-four-layer-assets').click();
+    await page.getByTestId('open-technical-details-btn').click();
+    await expect(page.getByTestId('coding-agent-context-card')).toContainText('AI 助手');
+    await page.getByTestId('delivery-tech-tab-standards').click();
     await expect(panel.getByTestId('assistant-panel-title')).toHaveText('AI 助手');
     await expect(panel.getByTestId('assistant-panel-subtitle')).toHaveText('编写与维护开发规范');
     await expect(page.getByTestId('open-generate-tech-arch-btn')).toContainText(

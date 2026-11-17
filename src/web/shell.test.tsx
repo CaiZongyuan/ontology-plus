@@ -366,15 +366,17 @@ describe('WorkbenchShell (#60)', () => {
     expect(reqHtml).not.toContain('data-testid="step-subview-bar"');
     expect(reqHtml).not.toContain('data-testid="nav-app-req-explore"');
 
-    // Multi-view step not yet collapsed (DELIVERY) still renders its temporary sub-view switcher bar
+    // DELIVERY is now also a single-view step (#73): legacy app-skills deep link opens Technical Details without a subview bar
     seedStore({ activeNav: 'app-skills' });
     const deliveryHtml = renderToStaticMarkup(
       <PreferencesProvider>
         <WorkbenchShell />
       </PreferencesProvider>,
     );
-    expect(deliveryHtml).toContain('data-testid="step-subview-bar"');
-    expect(deliveryHtml).toContain('data-testid="nav-app-skills"');
+    expect(deliveryHtml).toContain('data-testid="delivery-technical-view"');
+    expect(deliveryHtml).toContain('data-testid="delivery-tech-bar"');
+    expect(deliveryHtml).not.toContain('data-testid="step-subview-bar"');
+    expect(deliveryHtml).not.toContain('data-testid="nav-app-skills"');
 
     // Single-view step (PROTOTYPE) omits the temporary sub-view switcher bar
     seedStore({ activeNav: 'app-prototype' });
@@ -501,6 +503,10 @@ describe('WorkbenchShell (#60)', () => {
     expect(keys).not.toContain('nav:app-ontology');
     expect(keys).not.toContain('nav:app-model-files');
     expect(keys).not.toContain('nav:app-knowledge-graph');
+    expect(keys).not.toContain('nav:app-four-layer-assets');
+    expect(keys).not.toContain('nav:app-assembly-dev');
+    expect(keys).not.toContain('nav:app-skills');
+    expect(keys).not.toContain('nav:app-publish');
 
     const counterpartyEntry = entries.find((e) => e.key === 'object:AGG-02');
     expect(counterpartyEntry?.label).toBe('签约相对方');

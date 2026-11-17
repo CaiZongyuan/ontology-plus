@@ -71,6 +71,9 @@ import {
   readUrlNavState,
   resolveNavViewId,
   resolveShellRouteContext,
+  resolveWorkspaceAgentSurface,
+  useDeliveryTechTab,
+  useStepViewMode,
   writeUrlNavState,
   type NavViewId,
   type SecondaryAreaId,
@@ -492,7 +495,12 @@ export function WorkbenchShell({
   // Agent Panel integration:
   // - In Project Workspace (`>= 1280px`), ShellAgentPanel is permanently docked on the LEFT.
   // - In Secondary Areas (`cap-*`, `data-*`, `llm-center`, `system-settings`), it stays docked/overlay on the RIGHT.
-  const agentSurface = agentPanelSurfaceFor(activeView);
+  const [deliveryViewMode] = useStepViewMode('DELIVERY');
+  const [deliveryTechTab] = useDeliveryTechTab();
+  const agentSurface = resolveWorkspaceAgentSurface(activeView, {
+    deliveryViewMode,
+    deliveryTechTab,
+  });
   const secondaryAgentOverlay = useAgentPanelOverlayMode();
   const agentPanelOpen = useAgentPanelStore((s) => s.open);
   const agentPanelOverlayOpen = useAgentPanelStore((s) => s.overlayOpen);
@@ -680,7 +688,8 @@ export function WorkbenchShell({
   const showBlockedBanner = Boolean(
     routeContext.kind === 'project' &&
       activeStepStatus?.blocked &&
-      !activeStepStatus.hasContent,
+      !activeStepStatus.hasContent &&
+      routeContext.step !== 'DELIVERY',
   );
 
   const agentPanelWidthVar = agentPanelWideMode

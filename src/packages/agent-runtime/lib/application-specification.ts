@@ -1,7 +1,9 @@
+import { validateOntologySuite } from '../../ontology-core/index.js';
 import {
   DEFAULT_TECHNOLOGY_PROFILE_ID,
   type AgentSession,
   type AssembledApplication,
+  type RequirementDoc,
   type WorkspaceStore,
 } from '../../workspace-store/index.js';
 
@@ -44,7 +46,22 @@ export function readApplicationSpecificationInputs(
   }
   const app = resolved.application;
   const project = store.getProject(session.projectId);
-  const requirementDocs = store.listRequirementDocs(session.projectId);
+  const stepConfirmations = store.getProjectStepConfirmations(session.projectId);
+  const confirmedReq = stepConfirmations.requirements;
+  const confirmedModel = stepConfirmations.businessModel;
+  const requirementDocs: RequirementDoc[] = confirmedReq
+    ? [
+        {
+          id: confirmedReq.docId,
+          projectId: session.projectId,
+          title: confirmedReq.title,
+          version: confirmedReq.version,
+          status: 'CONFIRMED',
+          content: confirmedReq.content,
+          updatedAt: confirmedReq.confirmedAt,
+        },
+      ]
+    : store.listRequirementDocs(session.projectId);
   const confirmedPrototype = store.getConfirmedPrototypeRevision(session.projectId);
   const assets = store.listFourLayerAssets();
   const diagnostics: string[] = [];
@@ -77,21 +94,39 @@ export function readApplicationSpecificationInputs(
     diagnostics.push(`Selected prototype revision ${selectedPrototypeRevision.id} must be confirmed and synchronised with MU before package generation.`);
   }
   if (!project) diagnostics.push(`Project ${session.projectId} is missing.`);
-  if (!requirementDocs.some((document) => document.status === 'CONFIRMED' || document.status === 'PUBLISHED')) {
+  if (!confirmedReq && !requirementDocs.some((document) => document.status === 'CONFIRMED' || document.status === 'PUBLISHED')) {
     diagnostics.push('A confirmed requirements document is missing.');
   }
   diagnostics.push(...(app.developmentBlockers ?? []).map((blocker) => `Unresolved development conflict: ${blocker}`));
   if (!confirmedPrototype) diagnostics.push('Confirmed prototype revision is missing.');
-  if (!project?.validation.presentModels.length) diagnostics.push('Ontology Suite is missing.');
-  if (project?.validation.errorCount) {
-    diagnostics.push(`Ontology Suite has ${project.validation.errorCount} consistency errors.`);
+
+  const effectiveSuite = confirmedModel
+    ? structuredClone(confirmedModel.suiteSnapshot ?? confirmedModel.suite)
+    : project?.suite;
+  const effectiveValidation = effectiveSuite ? validateOntologySuite(effectiveSuite) : undefined;
+
+  if (!effectiveValidation?.presentModels.length) {
+    diagnostics.push('Ontology Suite is missing.');
+  } else if (!confirmedModel) {
+    diagnostics.push('Business Model has not been confirmed yet.');
+  }
+  if (effectiveValidation?.errorCount) {
+    diagnostics.push(`Ontology Suite has ${effectiveValidation.errorCount} consistency errors.`);
   }
   return {
     application: app,
     requirementDocs,
     confirmedPrototype: confirmedPrototype ?? null,
     selectedPrototypeRevision: selectedPrototypeRevision ?? null,
-    ontology: project ? { suite: project.suite, validation: project.validation } : null,
+    ontology:
+      effectiveSuite && effectiveValidation
+        ? {
+            suite: effectiveSuite,
+            validation: effectiveValidation,
+            confirmed: Boolean(confirmedModel),
+            confirmationId: confirmedModel?.id ?? null,
+          }
+        : null,
     selectedStandards,
     selectedTechnologyProfile: selectedTechnologyProfile ?? null,
     diagnostics,

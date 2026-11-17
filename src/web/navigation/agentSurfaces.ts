@@ -7,7 +7,14 @@ import type {
   AgentDomainArtifact,
   AgentSessionKind,
 } from '../../packages/workspace-store/index.js';
-import type { CanonicalNavViewId, NavViewId } from './catalog.js';
+import {
+  getProjectStepForView,
+  resolveLegacyDeliveryTechTab,
+  type CanonicalNavViewId,
+  type DeliveryTechTab,
+  type NavViewId,
+} from './catalog.js';
+import type { StepViewMode } from './stepViewMode.js';
 
 export interface AgentSurfaceLocalizedText {
   zh: string;
@@ -129,6 +136,14 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
     },
   },
   'app-assembly-dev': {
+    title: AI_ASSISTANT_TITLE,
+    sessionKind: 'CODING',
+    placeholder: {
+      zh: '检查当前应用的输入缺项与冲突，完善实施规格和验收条件…',
+      en: 'Inspect this application’s missing inputs and conflicts, or refine its implementation specification…',
+    },
+  },
+  'app-delivery': {
     title: AI_ASSISTANT_TITLE,
     sessionKind: 'CODING',
     placeholder: {
@@ -261,6 +276,31 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
 };
 
 export function agentPanelSurfaceFor(view: NavViewId): AgentPanelSurface {
+  return AGENT_PANEL_SURFACES[view];
+}
+
+export function resolveWorkspaceAgentSurface(
+  view: NavViewId,
+  options?: {
+    deliveryViewMode?: StepViewMode;
+    deliveryTechTab?: DeliveryTechTab;
+  },
+): AgentPanelSurface {
+  const legacyDeliveryTab = resolveLegacyDeliveryTechTab(view);
+  if (legacyDeliveryTab === 'standards') {
+    return AGENT_PANEL_SURFACES['app-four-layer-assets'];
+  }
+  if (getProjectStepForView(view) === 'DELIVERY') {
+    const effectiveMode: StepViewMode = legacyDeliveryTab
+      ? 'technical'
+      : (options?.deliveryViewMode ?? 'business');
+    const effectiveTab: DeliveryTechTab =
+      legacyDeliveryTab ?? options?.deliveryTechTab ?? 'assembly';
+    if (effectiveMode === 'technical' && effectiveTab === 'standards') {
+      return AGENT_PANEL_SURFACES['app-four-layer-assets'];
+    }
+    return AGENT_PANEL_SURFACES['app-assembly-dev'];
+  }
   return AGENT_PANEL_SURFACES[view];
 }
 

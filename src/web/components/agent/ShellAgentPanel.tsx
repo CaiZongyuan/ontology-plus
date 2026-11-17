@@ -250,8 +250,12 @@ export function resolveSurfaceAgentSession(
     };
   }
 
+  const projectApps = surface.sessionKind === 'CODING'
+    ? (data?.assembledApplications ?? []).filter((app) => app.projectId === activeProjectId)
+    : [];
   const projectApplication = surface.sessionKind === 'CODING'
-    ? data?.assembledApplications.find((app) => app.id === opts?.activeItemId && app.projectId === activeProjectId)
+    ? projectApps.find((app) => app.id === opts?.activeItemId) ??
+      (projectApps.length === 1 ? projectApps[0] : undefined)
     : undefined;
   const explicitApplicationSession = surface.sessionKind === 'CODING'
     ? sessions.find((session) => session.id === opts?.activeSessionId && session.agentKind === 'CODING'
@@ -758,22 +762,30 @@ export function ShellAgentPanel({
           data.capabilityAgents[0]
         : undefined;
     const targetProjectId = capAgent?.projectId ?? activeProjectId;
+    const projectCodingApps =
+      surface.sessionKind === 'CODING'
+        ? data.assembledApplications.filter((app) => app.projectId === activeProjectId)
+        : [];
+    const codingTargetApp =
+      surface.sessionKind === 'CODING'
+        ? projectCodingApps.find((app) => app.id === activeItemId) ??
+          (projectCodingApps.length === 1 ? projectCodingApps[0] : undefined)
+        : undefined;
     const targetSession =
       activeSession ??
       (await ensureProjectAgentSession(targetProjectId, surface.sessionKind, {
         ...(capAgent ? { targetId: capAgent.id } : {}),
-        ...(surface.sessionKind === 'CODING' && data.assembledApplications.some(
-          (app) => app.id === activeItemId && app.projectId === activeProjectId,
-        ) ? { targetId: activeItemId! } : {}),
+        ...(codingTargetApp ? { targetId: codingTargetApp.id } : {}),
         ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
       }));
     setActiveSessionId(targetSession.id);
     autoTitleSession(targetSession, prompt);
     await startSessionAgentRun({
       sessionId: targetSession.id,
-      prompt: surface.sessionKind === 'CODING' && !targetSession.targetId && data.assembledApplications.some(
-        (app) => app.id === activeItemId && app.projectId === activeProjectId,
-      ) ? `[Target application ID: ${activeItemId}]\n${prompt}` : prompt,
+      prompt:
+        surface.sessionKind === 'CODING' && !targetSession.targetId && codingTargetApp
+          ? `[Target application ID: ${codingTargetApp.id}]\n${prompt}`
+          : prompt,
       ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
       ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
     });

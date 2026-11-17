@@ -20,9 +20,12 @@ import { ModelFilesView } from './application-center/ModelFilesView.js';
 import {
   AppPublishView,
   ApplicationAssemblyDevView,
+  DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE,
+  DeliveryStepView,
   fetchSavedApplicationPackage,
   FourLayerAssetsView,
   OntologySkillsView,
+  RunnableSystemSlot,
 } from './application-center/DeliveryStepViews.js';
 import { ViewModeHeader } from './application-center/ViewModeHeader.js';
 
@@ -163,10 +166,15 @@ describe('ApplicationCenterViews step module split', () => {
     expect(ApplicationAssemblyDevView).toBe(Barrel.ApplicationAssemblyDevView);
     expect(OntologySkillsView).toBe(Barrel.OntologySkillsView);
     expect(AppPublishView).toBe(Barrel.AppPublishView);
+    expect(DeliveryStepView).toBe(Barrel.DeliveryStepView);
+    expect(RunnableSystemSlot).toBe(Barrel.RunnableSystemSlot);
+    expect(DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE).toBe(Barrel.DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE);
 
     expect(Object.keys(Barrel).sort()).toEqual([
       'AppPublishView',
       'ApplicationAssemblyDevView',
+      'DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE',
+      'DeliveryStepView',
       'FourLayerAssetsView',
       'ModelFilesView',
       'OntologySkillsView',
@@ -175,6 +183,7 @@ describe('ApplicationCenterViews step module split', () => {
       'RequirementDocsView',
       'RequirementExploreView',
       'RequirementsStepView',
+      'RunnableSystemSlot',
       'fetchSavedApplicationPackage',
       'formatRequirementTextForBusinessView',
       'resolvePrototypeStudioStage',

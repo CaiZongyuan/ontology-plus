@@ -73,6 +73,7 @@ import {
   RequirementsConfirmError,
   computeOntologySuiteHash,
   computeStepContentHash,
+  isPackageSnapshotOutdatedForApp,
   listPresentModelCodes,
   normalizeBusinessModelConfirmation,
   normalizeStepMarkdown,
@@ -1513,10 +1514,9 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     const packageSnapshotsById = new Map<string, DevelopmentPackageSnapshot>();
     for (const snap of listItems<DevelopmentPackageSnapshot>(
-      'package_snapshots',
-      singleProjectId,
+      'development_package_snapshots',
     )) {
-      if (snap?.snapshotId) {
+      if (snap?.snapshotId && (!singleProjectId || snap.projectId === singleProjectId)) {
         packageSnapshotsById.set(snap.snapshotId, snap);
       }
     }
@@ -1620,26 +1620,26 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
           : 'CONFIRMED';
     }
 
-    // 4. DELIVERY
+    // 4. DELIVERY (#48 Decision #4)
     const projectApps = collections.appsByProject.get(projectId) ?? [];
-    const projectSkills = collections.skillsByProject.get(projectId) ?? [];
-    const hasDeliveryContent = projectApps.length > 0 || projectSkills.length > 0;
     const appsWithSnapshot = projectApps.filter((app) => Boolean(app.latestPackageSnapshotId));
     let deliveryState: ProjectStepStateId;
     if (!modelConf) {
-      deliveryState = hasDeliveryContent ? 'IN_PROGRESS' : 'NOT_STARTED';
+      deliveryState = 'NOT_STARTED';
     } else if (appsWithSnapshot.length === 0) {
       deliveryState = 'IN_PROGRESS';
     } else {
-      const resolvedSnapshots = appsWithSnapshot
-        .map((app) => collections.packageSnapshotsById.get(app.latestPackageSnapshotId!))
-        .filter((s): s is DevelopmentPackageSnapshot => Boolean(s))
-        .sort((a, b) => b.compiledAt.localeCompare(a.compiledAt));
-      const latestSnapshot = resolvedSnapshots[0];
+      const resolvedEntries = appsWithSnapshot
+        .map((app) => {
+          const snapshot = collections.packageSnapshotsById.get(app.latestPackageSnapshotId!);
+          return snapshot ? { app, snapshot } : null;
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        .sort((a, b) => b.snapshot.compiledAt.localeCompare(a.snapshot.compiledAt));
+      const latestEntry = resolvedEntries[0];
       if (
-        latestSnapshot &&
-        latestSnapshot.basedOnBusinessModelConfirmationId !== undefined &&
-        latestSnapshot.basedOnBusinessModelConfirmationId !== modelConf.id
+        latestEntry &&
+        isPackageSnapshotOutdatedForApp(latestEntry.snapshot, latestEntry.app, modelConf.id)
       ) {
         deliveryState = 'OUTDATED';
       } else {

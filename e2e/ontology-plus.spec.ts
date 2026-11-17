@@ -162,10 +162,13 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.getByTestId('generate-skill-btn').click();
     await page.getByTestId('publish-mcp-btn').click();
 
-    // 5. 4-Layer Application Assembly -> Coding Agent context + Compile Development Package & verify ZIP endpoint
+    // 5. Delivery Step (#73) -> Business View readiness + RunnableSystemSlot + Technical Details package compilation
     await page.getByTestId('step-tab-DELIVERY').click();
-    await expect(page.getByTestId('coding-agent-context-card')).toBeVisible();
+    await expect(page.getByTestId('delivery-business-view')).toBeVisible();
+    await expect(page.getByTestId('runnable-system-slot')).toContainText('蓝图已就绪，可交付开发');
     await expect(agentPanel).toBeVisible();
+    await page.getByTestId('open-technical-details-btn').click();
+    await expect(page.getByTestId('coding-agent-context-card')).toBeVisible();
     const currentSources = await (await page.request.get('/api/bootstrap?projectId=proj-contract')).json();
     await page.getByTestId('development-prototype-revision').selectOption(currentSources.confirmedPrototypeRevision.revisionId);
     await page.getByTestId('compile-dev-package-btn').click();
@@ -279,9 +282,10 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.getByTestId('srs-mode-registry').click();
     await expect(page.locator('table').first()).toBeVisible();
 
-    // 3. Ontology SKILL.md Custom Refinement + Overwrite Protection ConfirmDialog
+    // 3. Ontology SKILL.md Custom Refinement + Overwrite Protection ConfirmDialog (inside Delivery Technical Details)
     await page.getByTestId('step-tab-DELIVERY').click();
-    await page.getByTestId('nav-app-skills').click();
+    await page.getByTestId('open-technical-details-btn').click();
+    await page.getByTestId('delivery-tech-tab-skills').click();
     const compileBtn = page
       .getByRole('button', {
         name: /^(编译当前工程 SKILL\.md|Compile Current Project SKILL\.md)$/,
@@ -408,8 +412,13 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.reload();
     await expect(page.getByTestId('run-extraction-btn')).toBeVisible();
 
+    await page.goto('/?projectId=proj-contract&mode=app-four-layer-assets');
+    await expect(page.getByTestId('four-layer-asset-library')).toBeVisible();
+    await page.getByTestId('back-to-business-view-btn').click();
+    await expect(page.getByTestId('delivery-business-view')).toBeVisible();
+
     await page.goto('/?projectId=proj-contract&mode=app-assembly-dev');
-    await expect(page.getByTestId('application-development-workflow')).toBeVisible();
+    await expect(page.getByTestId('delivery-business-view')).toBeVisible();
 
     // 3. Tablet viewport (1024x768 < 1280px): Conversation <-> Canvas segmented toggle
     await page.setViewportSize({ width: 1024, height: 768 });

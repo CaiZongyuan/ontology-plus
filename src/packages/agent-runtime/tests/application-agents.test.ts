@@ -149,6 +149,39 @@ describe('architecture authoring and application specification agents', () => {
     expect(store.listDevelopmentPackageSnapshots(application.id)).toHaveLength(0);
   });
 
+  it('reads the confirmed Business Model and Requirements snapshots in read_application_inputs without leaking unconfirmed drafts (#73)', async () => {
+    const { store } = fixture();
+    const project = store.getProject('proj-contract')!;
+    const draftSuite = structuredClone(project.suite);
+    draftSuite.M1!.aggregates[0]!.description = 'UNCONFIRMED_AGENT_DRAFT_73';
+    store.updateSuite('proj-contract', draftSuite, 'Unconfirmed draft');
+    const existingDoc = store.listRequirementDocs('proj-contract')[0]!;
+    store.saveRequirementDoc({
+      ...existingDoc,
+      status: 'DRAFT',
+      content: '# Draft\n\nUNCONFIRMED_REQ_AGENT_DRAFT_73',
+    });
+
+    const session = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'CODING',
+      targetId: 'app-contract-clm',
+    });
+    const result = await executeDomainRunToolCall(
+      store,
+      session,
+      'read-confirmed',
+      'read_application_inputs',
+      {},
+      'en-US',
+    );
+    expect(result?.isError).toBe(false);
+    const inputs = JSON.parse(result!.toolResultContent);
+    expect(JSON.stringify(inputs.ontology.suite)).not.toContain('UNCONFIRMED_AGENT_DRAFT_73');
+    expect(JSON.stringify(inputs.requirementDocs)).not.toContain('UNCONFIRMED_REQ_AGENT_DRAFT_73');
+    expect(inputs.diagnostics).toEqual([]);
+  });
+
   it('authors English mock directives while preserving Chinese business requests as quoted source', async () => {
     const { store } = fixture();
     const application = store.listAssembledApplications().find((app) => app.id === 'app-contract-clm')!;

@@ -51,6 +51,7 @@ export interface CompileDevelopmentPackageInput {
   prototypeRevision?: DevelopmentPackagePrototypeRevision;
   technologyProfile?: TechnologyProfile;
   applicationInstructions?: string;
+  basedOnBusinessModelConfirmationId?: string | null;
   snapshotId?: string;
   inputFingerprint?: string;
   compiledAt?: string;
@@ -203,6 +204,9 @@ export function fingerprintDevelopmentPackageInputs(input: CompileDevelopmentPac
     technologyProfile: selectedTechnologyProfile(input),
     standards: [input.uiUeAsset, input.techFoundationAsset, input.techArchAsset],
     applicationInstructions: input.applicationInstructions?.trim() ? input.applicationInstructions : undefined,
+    ...(input.basedOnBusinessModelConfirmationId !== undefined
+      ? { basedOnBusinessModelConfirmationId: input.basedOnBusinessModelConfirmationId }
+      : {}),
   }));
 }
 
@@ -417,9 +421,12 @@ Snapshot \`${snapshotId}\`, generated at \`${compiledAt}\`. Package readiness de
   for (const code of getPresentModelCodes(project)) {
     addFile(`references/ontology/${code}.yaml`, 'ONTOLOGY_YAML', yamlFiles[code]!.content);
   }
+  const basedOnBusinessModelConfirmationId =
+    input.basedOnBusinessModelConfirmationId ?? null;
   const manifestJson = {
     packageVersion: '1.0.0', artifactType: 'DEVELOPMENT_SPECIFICATION',
     snapshotId, inputFingerprint,
+    basedOnBusinessModelConfirmationId,
     appId: app.id, appName: app.name, projectId: project.id, domain: project.domain, compiledAt,
     technologyProfile,
     sources: {
@@ -440,7 +447,10 @@ Snapshot \`${snapshotId}\`, generated at \`${compiledAt}\`. Package readiness de
         contentHash: contentHash(input.prototype.htmlContent), path: 'references/prototype/index.html',
       },
       ontology: {
-        projectId: project.id, revision: project.updatedAt, contentHash: contentHash(canonicalJson(project.suite)),
+        projectId: project.id,
+        confirmationId: basedOnBusinessModelConfirmationId,
+        revision: project.updatedAt,
+        contentHash: contentHash(canonicalJson(project.suite)),
         path: 'references/ontology/manifest.json', models: getPresentModelCodes(project),
       },
       standards: [
@@ -455,6 +465,7 @@ Snapshot \`${snapshotId}\`, generated at \`${compiledAt}\`. Package readiness de
       applicationInstructions: input.applicationInstructions?.trim() ? {
         contentHash: contentHash(input.applicationInstructions), path: 'references/application-instructions.md',
       } : undefined,
+      applicationInstructionsText: input.applicationInstructions?.trim() ?? '',
     },
     layers: {
       ontology: { projectId: project.id, presentModels: getPresentModelCodes(project) },
@@ -475,7 +486,20 @@ Snapshot \`${snapshotId}\`, generated at \`${compiledAt}\`. Package readiness de
       fs.writeFileSync(fullPath, file.content, 'utf-8');
     }
   }
-  return { snapshotId, inputFingerprint, appId: app.id, appName: app.name, projectId: project.id, outputDir, compiledAt, files, manifestJson };
+  return {
+    snapshotId,
+    inputFingerprint,
+    appId: app.id,
+    appName: app.name,
+    projectId: project.id,
+    outputDir,
+    compiledAt,
+    ...(input.basedOnBusinessModelConfirmationId !== undefined
+      ? { basedOnBusinessModelConfirmationId }
+      : {}),
+    files,
+    manifestJson,
+  };
 }
 
 export function compileOntologySkill(project: ProjectDetail): GeneratedSkill {

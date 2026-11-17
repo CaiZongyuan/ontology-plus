@@ -14,6 +14,7 @@ export {
   RequirementsConfirmError,
   computeOntologySuiteHash,
   computeStepContentHash,
+  isPackageSnapshotOutdatedForApp,
   normalizeStepMarkdown,
   type BusinessModelConfirmErrorCode,
 } from './lib/step-confirmations.js';

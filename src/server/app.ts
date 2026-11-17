@@ -611,7 +611,15 @@ export function createApiApp(
   app.post('/api/projects/:id/generate-skill', (c) => {
     const project = store.getProject(c.req.param('id'));
     if (!project) return c.json({ error: 'Project not found' }, 404);
-    const compiled = compileOntologySkill(project);
+    const confirmedModel = store.getProjectStepConfirmations(project.id).businessModel;
+    const sourceProject: ProjectDetail = confirmedModel
+      ? {
+          ...project,
+          suite: structuredClone(confirmedModel.suiteSnapshot ?? confirmedModel.suite),
+          updatedAt: confirmedModel.confirmedAt,
+        }
+      : project;
+    const compiled = compileOntologySkill(sourceProject);
     const saved = store.saveGeneratedSkill({ ...compiled, isCustomRefined: false });
     return c.json({ skill: saved, skills: store.listGeneratedSkills() });
   });

@@ -1,16 +1,33 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   ArrowRight,
+  Blocks,
+  CheckCircle2,
+  CircleDot,
+  Code2,
   Copy,
+  Download,
   Edit3,
+  ExternalLink,
   Layers,
   Loader2,
+  PackageCheck,
   Plus,
+  Rocket,
   Search,
   Sparkles,
   Trash2,
+  TriangleAlert,
 } from 'lucide-react';
-import { BUSINESS_VOCABULARY } from '../../../packages/business-vocabulary/index.js';
+import {
+  BUSINESS_VOCABULARY,
+  PROJECT_STEP_STATE_NAMES,
+  sanitizeBusinessText,
+  type BusinessLocale,
+  type ProjectStepStateId,
+} from '../../../packages/business-vocabulary/index.js';
+import { validateOntologySuite } from '../../../packages/ontology-core/index.js';
 import type { CompiledDevelopmentPackage } from '../../../packages/package-compiler/index.js';
 import type {
   AssembledApplication,
@@ -20,8 +37,9 @@ import type {
   TechnologyProfile,
 } from '../../../packages/workspace-store/index.js';
 import {
-  apiConfirmPrototypeRevision,
   apiCompileDevPackage,
+  apiCompileProjectDevPackage,
+  apiConfirmPrototypeRevision,
   apiDeleteResource,
   apiPostJson,
   apiPutJson,
@@ -43,6 +61,16 @@ import {
 } from '../../components/markdown/index.js';
 import { usePreferences, type NavViewId } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
+import {
+  getProjectStepsFromBootstrap,
+  resolveLegacyDeliveryTechTab,
+  useDeliveryTechTab,
+  useStepViewMode,
+  writeDeliveryTechTab,
+  writeStepViewMode,
+  type DeliveryTechTab,
+  type StepViewMode,
+} from '../../navigation/index.js';
 import { ViewModeHeader } from './ViewModeHeader.js';
 
 // ─── 6. Four-Layer Architecture Assets (四层架构资产: CRUD + Tiptap Markdown) ─
@@ -923,7 +951,10 @@ export function ApplicationAssemblyDevView({
         setPackageInputIssue('');
         setSelectedFilePath('AGENTS.md');
       }
-      patchData({ assembledApplications: result.assembledApplications });
+      patchData({
+        assembledApplications: result.assembledApplications,
+        ...(result.packageSnapshots ? { packageSnapshots: result.packageSnapshots } : {}),
+      });
       showToast(t(`已生成包含 ${result.compiledPackage.files.length} 个文件的开发包快照`, `Generated a package snapshot with ${result.compiledPackage.files.length} files`));
     } catch (error) { setOperationError(error instanceof Error ? error.message : String(error)); }
     finally { setGenerating(false); }
@@ -1128,7 +1159,7 @@ export function ApplicationAssemblyDevView({
           {packageInputIssue && <div role="alert" className="text-[length:var(--text-sm)] text-destructive" data-testid="saved-package-input-issue">{packageInputIssue}</div>}
           {compiledPkg && <>
             <div className="flex flex-wrap items-center gap-2 text-[length:var(--text-xs)]" data-testid="saved-package-snapshot">
-              <span className={`badge ${packageStale || notesDirty ? 'badge-warn' : 'badge-ok'}`} data-testid="package-stale-indicator">{packageStale || notesDirty ? t('输入已变化，等待重新生成', 'Inputs changed · regenerate to update') : t('已保存开发包快照', 'Saved package snapshot')}</span>
+              <span className={`badge ${packageStale || notesDirty ? 'badge-warn' : 'badge-ok'}`} data-testid="package-stale-indicator">{packageStale || notesDirty ? t('待更新 · 重新生成后生效', 'Outdated · regenerate to update') : t('已保存开发包快照', 'Saved package snapshot')}</span>
               <span className="break-all font-mono text-faint-foreground">{snapshotId} · {compiledPkg.compiledAt}</span>
             </div>
             {(packageStale || notesDirty) && <p className="m-0 text-[length:var(--text-sm)] text-faint-foreground">{t('下方预览与下载仍使用同一份已保存快照。重新生成后才会包含输入更新。', 'Preview and download use the same saved snapshot. Generate again to include input changes.')}</p>}
@@ -1519,16 +1550,16 @@ function ApplicationPackageDeliveryCard({ app, sourceKey, onNavigate }: {
   return <div className="card flex flex-col gap-3" data-testid={`package-delivery-${app.id}`}>
     <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="card-title">{app.name}</h4>
       <span className={`badge ${saved?.stale ? 'badge-warn' : saved?.compiledPackage ? 'badge-ok' : 'badge-warn'}`}>
-        {saved?.stale ? t('输入已变化', 'Inputs changed') : saved?.compiledPackage ? t('开发包已保存', 'Package saved') : t('等待生成开发包', 'Awaiting package generation')}
+        {saved?.stale ? t('待更新', 'Outdated') : saved?.compiledPackage ? t('开发包已保存', 'Package saved') : t('等待生成开发包', 'Awaiting package generation')}
       </span>
     </div>
     {saved?.compiledPackage ? <div className="break-all font-mono text-[length:var(--text-xs)] text-faint-foreground">{String(saved.compiledPackage.manifestJson.snapshotId ?? app.latestPackageSnapshotId ?? '')} · {saved.compiledPackage.compiledAt} · {saved.compiledPackage.files.length} {t('个文件', 'files')}</div>
       : <p className="m-0 text-[length:var(--text-sm)] text-faint-foreground">{t('在应用开发中确认输入并生成开发资料包。', 'Confirm the inputs and generate a Development Package in application development.')}</p>}
-    {saved?.stale && <p className="m-0 text-[length:var(--text-sm)] text-faint-foreground">{t('下载保留已保存快照。请在应用开发中重新生成以包含最新输入。', 'Download keeps the saved snapshot. Regenerate in application development to include current inputs.')}</p>}
+    {saved?.stale && <p className="m-0 text-[length:var(--text-sm)] text-faint-foreground">{t('下载保留已保存快照。请在应用开发中重新生成以包含最新确认内容。', 'Download keeps the saved snapshot. Regenerate in application development to include current inputs.')}</p>}
     {error && <div role="alert" className="text-[length:var(--text-sm)] text-destructive">{error}</div>}
     {saved?.inputIssue && <div role="alert" className="text-[length:var(--text-sm)] text-destructive">{saved.inputIssue}</div>}
     <div className="flex flex-wrap gap-2">
-      {onNavigate && <Button onClick={() => { setActiveItemId(app.id); onNavigate('app-assembly-dev'); }}>{t('检查开发规格', 'Review implementation specification')}</Button>}
+      {onNavigate && <Button onClick={() => { setActiveItemId(app.id); writeDeliveryTechTab('assembly'); writeStepViewMode('DELIVERY', 'technical'); onNavigate('app-assembly-dev'); }}>{t('检查开发规格', 'Review implementation specification')}</Button>}
       <Button variant="accent" disabled={!saved?.compiledPackage || downloading} onClick={() => void download()}>{downloading ? t('正在下载…', 'Downloading…') : t('下载已保存开发包', 'Download saved package')}</Button>
     </div>
   </div>;
@@ -1550,7 +1581,992 @@ export function AppPublishView({ onNavigate }: { onNavigate?: (view: NavViewId) 
       <p className="mt-1 mb-0 text-[length:var(--text-sm)] text-faint-foreground">{t('将已审阅的实施规格、原型、本体与规范交给编码智能体。', 'Hand the reviewed implementation specification, prototype, ontology, and standards to a coding agent.')}</p>
     </div>
     {apps.length === 0 ? <div className="card flex flex-col items-start gap-3"><p className="m-0 text-[length:var(--text-base)] text-faint-foreground">{t('当前工程尚未创建应用开发规格。', 'This project has no application specification yet.')}</p>
-      {onNavigate && <Button variant="accent" onClick={() => onNavigate('app-assembly-dev')}>{t('前往应用开发', 'Open application development')}</Button>}
+      {onNavigate && <Button variant="accent" onClick={() => { writeDeliveryTechTab('assembly'); writeStepViewMode('DELIVERY', 'technical'); onNavigate('app-assembly-dev'); }}>{t('前往应用开发', 'Open application development')}</Button>}
     </div> : apps.map((app) => <ApplicationPackageDeliveryCard key={app.id} app={app} sourceKey={sourceKey} onNavigate={onNavigate} />)}
   </div>;
+}
+
+// ─── 9. Unified Delivery Step Canvas & Runnable System Endpoint Slot (#73) ───
+
+export type RunnableSystemSlotStatus = 'UNAVAILABLE' | 'PREPARING' | 'READY';
+
+export interface RunnableSystemSlotState {
+  readonly status: RunnableSystemSlotStatus;
+  readonly openUrl?: string | null;
+}
+
+export const DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE: RunnableSystemSlotState = {
+  status: 'UNAVAILABLE',
+  openUrl: null,
+};
+
+export interface RunnableSystemSlotProps {
+  readonly state?: RunnableSystemSlotState;
+}
+
+export function RunnableSystemSlot({
+  state = DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE,
+}: RunnableSystemSlotProps) {
+  const { t } = usePreferences();
+  const hasOpenUrl = state.status === 'READY' && Boolean(state.openUrl?.trim());
+
+  const badgeText =
+    state.status === 'READY'
+      ? t('可打开', 'Ready to open')
+      : state.status === 'PREPARING'
+        ? t('准备中', 'Preparing')
+        : t('蓝图已就绪，可交付开发', 'Blueprint is ready for development');
+
+  const badgeTone =
+    state.status === 'READY' ? 'badge-ok' : state.status === 'PREPARING' ? 'badge-accent' : 'badge';
+
+  const description =
+    state.status === 'READY'
+      ? t(
+          '你的可运行系统已准备就绪，可以直接打开试用。',
+          'Your runnable system is ready to open and try.',
+        )
+      : state.status === 'PREPARING'
+        ? t(
+            '正在根据已确认的业务模型准备你的可运行系统，请稍候。',
+            'Preparing your runnable system from the confirmed Business Model.',
+          )
+        : t(
+            '蓝图已就绪，可交付开发。当前交付的是完整开发包，可交给工程师或编码工具构建系统；在线直接运行能力上线后将在此同一位置打开。',
+            'Blueprint is ready for development. Today’s deliverable is a complete development package for engineers or coding tools; direct live access will appear right here once available.',
+          );
+
+  return (
+    <article
+      className="card flex flex-col gap-2.5 border-dashed"
+      data-testid="runnable-system-slot"
+      data-slot-status={state.status}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Rocket size={16} className="shrink-0 text-primary" aria-hidden="true" />
+          <h4 className="card-title m-0">{t('可运行系统', 'Runnable system')}</h4>
+        </div>
+        <span className={badgeTone} data-testid="runnable-system-slot-badge">
+          {state.status === 'PREPARING' && (
+            <Loader2 size={12} className="pipeline-spin" aria-hidden="true" />
+          )}
+          {badgeText}
+        </span>
+      </div>
+      <p className="m-0 text-[13px] leading-relaxed text-muted-foreground">{description}</p>
+      {hasOpenUrl && (
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          <a
+            href={state.openUrl!}
+            target="_blank"
+            rel="noreferrer noopener"
+            data-testid="runnable-system-open-link"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-[13px] font-medium text-foreground no-underline hover:bg-muted"
+          >
+            <span>{t('打开你的系统', 'Open your system')}</span>
+            <ExternalLink size={13.5} aria-hidden="true" />
+          </a>
+        </div>
+      )}
+    </article>
+  );
+}
+
+export interface DeliveryStepViewProps {
+  readonly onNavigate?: (view: NavViewId) => void;
+  readonly viewModeOverride?: StepViewMode;
+  readonly legacyTechTab?: DeliveryTechTab | null;
+  readonly runnableSystemSlot?: RunnableSystemSlotState;
+}
+
+export function DeliveryStepView({
+  onNavigate,
+  viewModeOverride,
+  legacyTechTab: legacyTechTabProp,
+  runnableSystemSlot = DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE,
+}: DeliveryStepViewProps = {}) {
+  const { locale, t } = usePreferences();
+  const businessLocale: BusinessLocale = locale === 'en-US' ? 'en-US' : 'zh-CN';
+  const {
+    data,
+    activeNav,
+    activeItemId,
+    patchData,
+    setActiveItemId,
+    showToast,
+  } = useWorkbenchStore();
+
+  const [storedMode, setStoredMode] = useStepViewMode('DELIVERY');
+  const [storedTechTab, setStoredTechTab] = useDeliveryTechTab();
+  const inferredLegacyTab =
+    legacyTechTabProp ?? resolveLegacyDeliveryTechTab(activeNav);
+  const [legacyTabDismissed, setLegacyTabDismissed] = useState(false);
+
+  useEffect(() => {
+    setLegacyTabDismissed(false);
+  }, [inferredLegacyTab]);
+
+  const effectiveLegacyTab = legacyTabDismissed ? null : inferredLegacyTab;
+  const effectiveMode: StepViewMode =
+    viewModeOverride ?? (effectiveLegacyTab ? 'technical' : storedMode);
+  const activeTechTab: DeliveryTechTab = effectiveLegacyTab ?? storedTechTab;
+
+  const [compilingPackage, setCompilingPackage] = useState(false);
+  const [downloadingZip, setDownloadingZip] = useState(false);
+  const [compilingSkill, setCompilingSkill] = useState(false);
+  const [recordingRelease, setRecordingRelease] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [livePackageOutdated, setLivePackageOutdated] = useState(false);
+
+  const projectId = data?.activeProject.id ?? '';
+  const projectApps = useMemo(
+    () => (data?.assembledApplications ?? []).filter((item) => item.projectId === projectId),
+    [data?.assembledApplications, projectId],
+  );
+  const primaryApp =
+    projectApps.find((item) => item.id === activeItemId) ?? projectApps[0] ?? null;
+
+  useEffect(() => {
+    setActionError(null);
+    setLivePackageOutdated(false);
+  }, [projectId, data?.stepConfirmations?.businessModel?.id]);
+
+  useEffect(() => {
+    if (primaryApp && activeItemId !== primaryApp.id) {
+      setActiveItemId(primaryApp.id);
+    }
+  }, [primaryApp?.id, activeItemId, setActiveItemId]);
+
+  useEffect(() => {
+    if (!primaryApp?.id || !primaryApp.latestPackageSnapshotId || effectiveMode !== 'business') {
+      setLivePackageOutdated(false);
+      return;
+    }
+    const controller = new AbortController();
+    void fetchSavedApplicationPackage(primaryApp.id, controller.signal)
+      .then((res) => {
+        if (!controller.signal.aborted) {
+          setLivePackageOutdated(res.stale);
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [
+    primaryApp?.id,
+    primaryApp?.latestPackageSnapshotId,
+    primaryApp?.updatedAt,
+    effectiveMode,
+    data?.fourLayerAssets,
+  ]);
+
+  if (!data) return null;
+
+  const cleanText = (raw: string | undefined): string =>
+    sanitizeBusinessText(raw, businessLocale);
+
+  const handleOpenTechnicalDetails = (tab: DeliveryTechTab = 'assembly') => {
+    setLegacyTabDismissed(true);
+    setStoredTechTab(tab);
+    setStoredMode('technical');
+    if (activeNav !== 'app-assembly-dev') {
+      onNavigate?.('app-assembly-dev');
+    }
+  };
+
+  const handleBackToBusinessView = () => {
+    setLegacyTabDismissed(true);
+    setStoredMode('business');
+    if (activeNav !== 'app-assembly-dev') {
+      onNavigate?.('app-assembly-dev');
+    }
+  };
+
+  /* ─── Technical Details (`effectiveMode === 'technical'`) ─── */
+  if (effectiveMode === 'technical') {
+    const techTabs: {
+      id: DeliveryTechTab;
+      testId: string;
+      icon: React.ReactNode;
+      zh: string;
+      en: string;
+    }[] = [
+      {
+        id: 'assembly',
+        testId: 'delivery-tech-tab-assembly',
+        icon: <PackageCheck size={14} aria-hidden="true" />,
+        zh: '应用装配与开发包详情',
+        en: 'Assembly & Package Details',
+      },
+      {
+        id: 'standards',
+        testId: 'delivery-tech-tab-standards',
+        icon: <Layers size={14} aria-hidden="true" />,
+        zh: '四层架构资产与规范',
+        en: 'Architecture Standards',
+      },
+      {
+        id: 'skills',
+        testId: 'delivery-tech-tab-skills',
+        icon: <Blocks size={14} aria-hidden="true" />,
+        zh: '本体技能与服务',
+        en: 'Ontology Skills',
+      },
+      {
+        id: 'releases',
+        testId: 'delivery-tech-tab-releases',
+        icon: <Rocket size={14} aria-hidden="true" />,
+        zh: '版本交付记录',
+        en: 'Release Handoff',
+      },
+    ];
+
+    return (
+      <div className="space-y-4" data-testid="delivery-step-canvas">
+        <div className="space-y-4" data-testid="delivery-technical-view">
+          <div
+            className="card flex flex-wrap items-center justify-between gap-2 p-2.5"
+            data-testid="delivery-tech-bar"
+          >
+            <div
+              className="flex flex-wrap items-center gap-1"
+              role="tablist"
+              aria-label={t('交付技术细节视图', 'Delivery Technical Details views')}
+            >
+              {techTabs.map((tab) => {
+                const isSelected = activeTechTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    data-testid={tab.testId}
+                    aria-selected={isSelected}
+                    onClick={() => handleOpenTechnicalDetails(tab.id)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[13px] font-medium',
+                      isSelected
+                        ? 'border-border bg-secondary text-foreground'
+                        : 'border-transparent bg-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                    )}
+                  >
+                    {tab.icon}
+                    <span>{t(tab.zh, tab.en)}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="back-to-business-view-btn"
+              onClick={handleBackToBusinessView}
+            >
+              <ArrowLeft size={14} aria-hidden="true" />
+              <span>
+                {t(
+                  `返回${BUSINESS_VOCABULARY.BUSINESS_VIEW.zh}`,
+                  `Back to ${BUSINESS_VOCABULARY.BUSINESS_VIEW.en}`,
+                )}
+              </span>
+            </Button>
+          </div>
+
+          <div>
+            {activeTechTab === 'assembly' && (
+              <ApplicationAssemblyDevView onNavigate={onNavigate} />
+            )}
+            {activeTechTab === 'standards' && <FourLayerAssetsView />}
+            {activeTechTab === 'skills' && <OntologySkillsView onNavigate={onNavigate} />}
+            {activeTechTab === 'releases' && <AppPublishView onNavigate={onNavigate} />}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Business View (`effectiveMode === 'business'`) ─── */
+  const steps = getProjectStepsFromBootstrap(data);
+  const deliveryStep = steps.find((s) => s.id === 'DELIVERY');
+  const rawStepState: ProjectStepStateId = deliveryStep?.state ?? 'NOT_STARTED';
+  const effectiveState: ProjectStepStateId =
+    rawStepState === 'CONFIRMED' && livePackageOutdated ? 'OUTDATED' : rawStepState;
+
+  const reqConfirmed = Boolean(data.stepConfirmations?.requirements);
+  const protoConfirmed = Boolean(
+    data.stepConfirmations?.prototype ?? data.confirmedPrototypeRevision,
+  );
+  const modelConf = data.stepConfirmations?.businessModel ?? null;
+
+  const effectiveValidation = modelConf
+    ? validateOntologySuite(modelConf.suiteSnapshot ?? modelConf.suite)
+    : data.activeProject.validation;
+  const recordedBlockers = primaryApp?.developmentBlockers ?? [];
+  const totalProblemCount = effectiveValidation.errorCount + recordedBlockers.length;
+
+  const projectSnapshots = (data.packageSnapshots ?? [])
+    .filter((snap) => snap.projectId === projectId)
+    .sort((a, b) => b.compiledAt.localeCompare(a.compiledAt));
+  const latestSnapshot =
+    (primaryApp?.latestPackageSnapshotId
+      ? projectSnapshots.find((s) => s.snapshotId === primaryApp.latestPackageSnapshotId)
+      : undefined) ??
+    projectSnapshots[0] ??
+    null;
+  const canDownloadSnapshot = Boolean(
+    primaryApp && (latestSnapshot || primaryApp.latestPackageSnapshotId),
+  );
+  const snapshotDocCount = latestSnapshot?.files.length ?? 0;
+
+  const projectSkills = data.generatedSkills.filter((s) => s.projectId === projectId);
+  const activeSkill = projectSkills[0] ?? null;
+
+  const publishedApp =
+    projectApps.find((a) => Boolean(a.publishedVersion?.trim())) ?? null;
+  const publishedVersionLabel = publishedApp?.publishedVersion
+    ? cleanText(publishedApp.publishedVersion)
+    : '';
+
+  const handleCompileProjectPackage = async () => {
+    if (compilingPackage || !modelConf || totalProblemCount > 0) return;
+    setCompilingPackage(true);
+    setActionError(null);
+    try {
+      const result = await apiCompileProjectDevPackage(projectId);
+      setActiveItemId(result.application.id);
+      setLivePackageOutdated(false);
+      patchData({
+        assembledApplications: result.assembledApplications,
+        ...(result.packageSnapshots ? { packageSnapshots: result.packageSnapshots } : {}),
+      });
+      showToast(
+        t(
+          `已生成开发包（共 ${result.compiledPackage.files.length} 份文档）`,
+          `Generated development package (${result.compiledPackage.files.length} documents)`,
+        ),
+      );
+    } catch (error) {
+      const rawMsg = error instanceof Error ? error.message : String(error);
+      setActionError(
+        cleanText(rawMsg) ||
+          t('暂时无法生成开发包，请先检查上游步骤是否已确认。', 'Unable to generate the development package yet; check upstream confirmations.'),
+      );
+    } finally {
+      setCompilingPackage(false);
+    }
+  };
+
+  const handleDownloadPackage = async () => {
+    if (!primaryApp || !canDownloadSnapshot || downloadingZip) return;
+    setDownloadingZip(true);
+    setActionError(null);
+    try {
+      const snapId = latestSnapshot?.snapshotId ?? primaryApp.latestPackageSnapshotId ?? '';
+      const query = snapId ? `?snapshotId=${encodeURIComponent(snapId)}` : '';
+      const response = await fetch(
+        `/api/applications/${encodeURIComponent(primaryApp.id)}/package.zip${query}`,
+      );
+      if (!response.ok) {
+        const errBody = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errBody.error || t('下载开发包失败', 'Could not download development package'));
+      }
+      triggerBrowserDownload(
+        `${primaryApp.id}-development-package.zip`,
+        await response.blob(),
+        'application/zip',
+      );
+    } catch (error) {
+      const rawMsg = error instanceof Error ? error.message : String(error);
+      setActionError(cleanText(rawMsg) || t('下载开发包失败', 'Could not download development package'));
+    } finally {
+      setDownloadingZip(false);
+    }
+  };
+
+  const handleGenerateSkill = async () => {
+    if (!modelConf || compilingSkill) return;
+    setCompilingSkill(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/generate-skill`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        throw new Error(t('生成本体技能失败', 'Failed to generate ontology skill'));
+      }
+      const json = (await res.json()) as { skill: GeneratedSkill; skills: GeneratedSkill[] };
+      patchData({ generatedSkills: json.skills });
+      showToast(t('已根据已确认的业务模型生成本体技能', 'Generated ontology skill from confirmed Business Model'));
+    } catch (error) {
+      const rawMsg = error instanceof Error ? error.message : String(error);
+      setActionError(cleanText(rawMsg));
+    } finally {
+      setCompilingSkill(false);
+    }
+  };
+
+  const handleDownloadSkill = () => {
+    if (!activeSkill) return;
+    triggerBrowserDownload(
+      `${activeSkill.slug}-SKILL.md`,
+      new Blob([activeSkill.skillMarkdown], { type: 'text/markdown;charset=utf-8' }),
+      'text/markdown;charset=utf-8',
+    );
+  };
+
+  const handleCopySkill = async () => {
+    if (!activeSkill || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(activeSkill.skillMarkdown);
+      showToast(t('已复制本体技能内容', 'Copied ontology skill content'));
+    } catch {
+      // Ignore clipboard permission errors in non-secure contexts
+    }
+  };
+
+  const handleRecordVersion = async () => {
+    if (!primaryApp || !canDownloadSnapshot || recordingRelease) return;
+    setRecordingRelease(true);
+    setActionError(null);
+    try {
+      const res = await apiPostJson<{
+        application: AssembledApplication;
+        assembledApplications: AssembledApplication[];
+      }>(`/api/applications/${encodeURIComponent(primaryApp.id)}/publish`, {});
+      patchData({ assembledApplications: res.assembledApplications });
+      const ver = cleanText(res.application.publishedVersion) || 'v1.0.0';
+      showToast(t(`已登记版本记录 ${ver}`, `Recorded release milestone ${ver}`));
+    } catch (error) {
+      const rawMsg = error instanceof Error ? error.message : String(error);
+      setActionError(cleanText(rawMsg));
+    } finally {
+      setRecordingRelease(false);
+    }
+  };
+
+  const stateBadgeLabel = PROJECT_STEP_STATE_NAMES[effectiveState];
+  const canGenerateCleanly = Boolean(
+    modelConf && reqConfirmed && protoConfirmed && totalProblemCount === 0,
+  );
+
+  const bannerCopy =
+    effectiveState === 'NOT_STARTED'
+      ? t(
+          '需要先在「业务模型」步骤确认业务模型，确认后即可在这里一键生成开发包。',
+          'Confirm your Business Model in the Business Model step first, then generate your development package here.',
+        )
+      : totalProblemCount > 0
+        ? t(
+            `当前还有 ${totalProblemCount} 个需要修正的问题，处理完后即可生成开发包。`,
+            `Resolve ${totalProblemCount} ${totalProblemCount === 1 ? 'problem to fix' : 'problems to fix'} before generating the development package.`,
+          )
+        : !reqConfirmed || !protoConfirmed
+          ? t(
+              '请先确认上游的需求与原型，再生成开发包。',
+              'Confirm upstream Requirements and Prototype first before generating the development package.',
+            )
+          : effectiveState === 'OUTDATED'
+            ? t(
+                '待更新：业务模型或交付设置已有新变化，更新开发包即可纳入最新确认内容，上次生成的开发包仍可下载。',
+                'Outdated: your Business Model or delivery settings changed; update the development package to include the latest confirmed content while keeping the previous snapshot available.',
+              )
+            : effectiveState === 'CONFIRMED'
+              ? t(
+                  '已根据当前确认的业务模型生成开发包，可直接下载交给工程师或编码工具实施。',
+                  'A development package has been generated from your confirmed Business Model and is ready to download.',
+                )
+              : t(
+                  '业务模型已确认，技术底座与技术架构已采用平台默认配置，现在可以生成开发包。',
+                  'Your Business Model is confirmed with default technical foundation and architecture; generate your development package now.',
+                );
+
+  const renderPrimaryBannerCta = () => {
+    if (effectiveState === 'NOT_STARTED' || totalProblemCount > 0) {
+      return (
+        <Button
+          type="button"
+          variant="accent"
+          size="sm"
+          data-testid="delivery-go-to-business-model-btn"
+          onClick={() => onNavigate?.('app-ontology')}
+        >
+          <span>{t('前往业务模型', 'Go to Business Model')}</span>
+          <ArrowRight size={14} aria-hidden="true" />
+        </Button>
+      );
+    }
+    if (!reqConfirmed) {
+      return (
+        <Button
+          type="button"
+          variant="accent"
+          size="sm"
+          data-testid="delivery-go-to-requirements-btn"
+          onClick={() => onNavigate?.('app-requirements')}
+        >
+          <span>{t('前往需求', 'Go to Requirements')}</span>
+          <ArrowRight size={14} aria-hidden="true" />
+        </Button>
+      );
+    }
+    if (!protoConfirmed) {
+      return (
+        <Button
+          type="button"
+          variant="accent"
+          size="sm"
+          data-testid="delivery-go-to-prototype-btn"
+          onClick={() => onNavigate?.('app-prototype')}
+        >
+          <span>{t('前往原型', 'Go to Prototype')}</span>
+          <ArrowRight size={14} aria-hidden="true" />
+        </Button>
+      );
+    }
+    if (effectiveState === 'CONFIRMED') {
+      return (
+        <Button
+          type="button"
+          variant="accent"
+          size="sm"
+          data-testid="download-package-zip-btn"
+          disabled={!canDownloadSnapshot || downloadingZip}
+          onClick={() => void handleDownloadPackage()}
+        >
+          <Download size={14} aria-hidden="true" />
+          <span>
+            {downloadingZip
+              ? t('正在下载…', 'Downloading…')
+              : t('下载开发包', 'Download development package')}
+          </span>
+        </Button>
+      );
+    }
+    return (
+      <Button
+        type="button"
+        variant="accent"
+        size="sm"
+        data-testid="compile-dev-package-btn"
+        disabled={!canGenerateCleanly || compilingPackage}
+        onClick={() => void handleCompileProjectPackage()}
+      >
+        {compilingPackage ? (
+          <Loader2 size={14} className="pipeline-spin" aria-hidden="true" />
+        ) : (
+          <PackageCheck size={14} aria-hidden="true" />
+        )}
+        <span>
+          {compilingPackage
+            ? t('正在生成…', 'Generating…')
+            : effectiveState === 'OUTDATED'
+              ? t('更新开发包', 'Update development package')
+              : t('生成开发包', 'Generate development package')}
+        </span>
+      </Button>
+    );
+  };
+
+  return (
+    <div className="space-y-4" data-testid="delivery-step-canvas">
+      <div className="space-y-4" data-testid="delivery-business-view">
+        {/* Header & Single-Sentence Status Banner */}
+        <section className="card flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="m-0 font-title text-[18px] font-semibold text-foreground">
+                {t('交付', 'Delivery')}
+              </h2>
+              <span
+                className={cn(
+                  'badge',
+                  effectiveState === 'CONFIRMED'
+                    ? 'badge-ok'
+                    : effectiveState === 'OUTDATED'
+                      ? 'badge-warn'
+                      : effectiveState === 'IN_PROGRESS'
+                        ? 'badge-accent'
+                        : '',
+                )}
+              >
+                {t(stateBadgeLabel.zh, stateBadgeLabel.en)}
+              </span>
+            </div>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="open-technical-details-btn"
+              onClick={() => handleOpenTechnicalDetails('assembly')}
+            >
+              <Code2 size={14} aria-hidden="true" />
+              <span>
+                {t(
+                  BUSINESS_VOCABULARY.TECHNICAL_DETAILS.zh,
+                  BUSINESS_VOCABULARY.TECHNICAL_DETAILS.en,
+                )}
+              </span>
+            </Button>
+          </div>
+
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-muted/55 px-3.5 py-2.5"
+            data-testid="delivery-status-banner"
+            data-step-state={effectiveState}
+          >
+            <div className="flex min-w-0 flex-1 items-center gap-2 text-[13px] leading-relaxed text-foreground">
+              {effectiveState === 'CONFIRMED' ? (
+                <CheckCircle2 size={15} className="shrink-0 text-primary" aria-hidden="true" />
+              ) : totalProblemCount > 0 || effectiveState === 'OUTDATED' ? (
+                <TriangleAlert size={15} className="shrink-0 text-warning" aria-hidden="true" />
+              ) : (
+                <CircleDot size={15} className="shrink-0 text-primary" aria-hidden="true" />
+              )}
+              <span>{bannerCopy}</span>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">{renderPrimaryBannerCta()}</div>
+          </div>
+
+          {actionError && (
+            <div
+              role="alert"
+              data-testid="delivery-action-error"
+              className="rounded-md border border-destructive/30 bg-destructive-soft px-3 py-2 text-[13px] text-destructive"
+            >
+              {actionError}
+            </div>
+          )}
+        </section>
+
+        {/* Readiness Check */}
+        <section className="card flex flex-col gap-3" data-testid="delivery-readiness-check">
+          <h3 className="card-title m-0">{t('就绪检查', 'Readiness check')}</h3>
+          <ul className="m-0 flex list-none flex-col gap-2 p-0 text-[13px]">
+            <li
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2"
+              data-testid="readiness-item-business-model"
+            >
+              <span className="flex items-center gap-2 font-medium text-foreground">
+                {modelConf ? (
+                  <CheckCircle2 size={15} className="shrink-0 text-primary" aria-hidden="true" />
+                ) : (
+                  <CircleDot size={15} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+                )}
+                <span>
+                  {modelConf
+                    ? t('业务模型已确认', 'Business Model confirmed')
+                    : t('业务模型尚未确认', 'Business Model not yet confirmed')}
+                </span>
+              </span>
+              <span className={cn('badge', modelConf ? 'badge-ok' : 'badge-warn')}>
+                {modelConf ? t('已就绪', 'Ready') : t('待确认', 'Pending')}
+              </span>
+            </li>
+
+            <li
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2"
+              data-testid="readiness-item-no-problems"
+            >
+              <span className="flex items-center gap-2 font-medium text-foreground">
+                {totalProblemCount === 0 ? (
+                  <CheckCircle2 size={15} className="shrink-0 text-primary" aria-hidden="true" />
+                ) : (
+                  <TriangleAlert size={15} className="shrink-0 text-destructive" aria-hidden="true" />
+                )}
+                <span>
+                  {totalProblemCount === 0
+                    ? t('没有需要修正的问题', 'No problems to fix')
+                    : t(
+                        `${totalProblemCount} 个需要修正的问题`,
+                        `${totalProblemCount} ${totalProblemCount === 1 ? 'problem to fix' : 'problems to fix'}`,
+                      )}
+                </span>
+              </span>
+              <span className={cn('badge', totalProblemCount === 0 ? 'badge-ok' : 'badge-warn')}>
+                {totalProblemCount === 0 ? t('通过', 'Passed') : t('需处理', 'Needs attention')}
+              </span>
+            </li>
+
+            <li
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2"
+              data-testid="readiness-item-defaults"
+            >
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <CheckCircle2 size={15} className="shrink-0 text-primary" aria-hidden="true" />
+                <span>
+                  {reqConfirmed && protoConfirmed
+                    ? t(
+                        '需求与原型已确认，技术底座与技术架构已采用平台默认方案',
+                        'Requirements and prototype confirmed; default technical foundation and architecture applied',
+                      )
+                    : t(
+                        '技术底座与技术架构已预设平台默认方案；请先完成上游步骤确认',
+                        'Default technical foundation and architecture are preset; confirm upstream steps first',
+                      )}
+                </span>
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                data-testid="delivery-adjust-standards-btn"
+                onClick={() => handleOpenTechnicalDetails('standards')}
+              >
+                {t('调整技术架构', 'Adjust architecture')}
+              </Button>
+            </li>
+          </ul>
+        </section>
+
+        {/* Deliverables List + Endpoint Slot */}
+        <section className="flex flex-col gap-3" data-testid="delivery-deliverables-list">
+          <h3 className="m-0 px-0.5 text-[14px] font-semibold text-foreground">
+            {t('交付物列表', 'Deliverables')}
+          </h3>
+
+          {/* 1. Endpoint Slot: Runnable System */}
+          <RunnableSystemSlot state={runnableSystemSlot} />
+
+          {/* 2. Development Package */}
+          <article className="card flex flex-col gap-2.5" data-testid="deliverable-dev-package">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <PackageCheck size={16} className="shrink-0 text-primary" aria-hidden="true" />
+                <h4 className="card-title m-0">{t('开发包', 'Development package')}</h4>
+              </div>
+              <span
+                className={cn(
+                  'badge',
+                  effectiveState === 'CONFIRMED'
+                    ? 'badge-ok'
+                    : effectiveState === 'OUTDATED'
+                      ? 'badge-warn'
+                      : effectiveState === 'IN_PROGRESS'
+                        ? 'badge-accent'
+                        : '',
+                )}
+                data-testid="deliverable-dev-package-badge"
+              >
+                {effectiveState === 'CONFIRMED'
+                  ? t('已生成', 'Ready')
+                  : effectiveState === 'OUTDATED'
+                    ? t('待更新', 'Outdated')
+                    : effectiveState === 'IN_PROGRESS'
+                      ? t('可生成', 'Ready to generate')
+                      : t('等待确认业务模型', 'Waiting for Business Model')}
+              </span>
+            </div>
+
+            <p className="m-0 text-[13px] leading-relaxed text-muted-foreground">
+              {canDownloadSnapshot
+                ? t(
+                    `已打包已确认的需求说明、原型界面、业务模型以及实施步骤与验收清单${snapshotDocCount > 0 ? `（共 ${snapshotDocCount} 份文档）` : ''}。`,
+                    `Packages your confirmed requirements, prototype screens, Business Model, implementation steps, and acceptance checklist${snapshotDocCount > 0 ? ` (${snapshotDocCount} documents)` : ''}.`,
+                  )
+                : t(
+                    '将已确认的需求、原型、业务模型与默认工程规范整理成一份完整开发资料包，供开发团队或编码工具直接实施。',
+                    'Bundles your confirmed requirements, prototype, Business Model, and default engineering standards into one complete handoff package.',
+                  )}
+            </p>
+
+            <details
+              className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[13px]"
+              data-testid="deliverable-dev-package-details"
+            >
+              <summary className="cursor-pointer font-medium text-foreground">
+                {t('查看包含内容', 'View included contents')}
+              </summary>
+              <ul className="m-0 mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
+                <li>{t('已确认的需求文档与业务背景说明', 'Confirmed requirements document and business scope')}</li>
+                <li>{t('已确认的交互界面原型与页面调用关系', 'Confirmed interactive prototype screens and flows')}</li>
+                <li>{t('已确认的完整业务模型（业务对象、操作、规则与权限）', 'Confirmed Business Model (objects, actions, rules, and permissions)')}</li>
+                <li>{t('平台默认技术底座、技术架构规范、实施顺序与验收标准', 'Default technical foundation, architecture standards, implementation sequence, and acceptance criteria')}</li>
+              </ul>
+            </details>
+
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              {effectiveState === 'CONFIRMED' ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="compile-dev-package-btn"
+                  disabled={!canGenerateCleanly || compilingPackage}
+                  onClick={() => void handleCompileProjectPackage()}
+                >
+                  {compilingPackage
+                    ? t('正在生成…', 'Generating…')
+                    : t('重新生成开发包', 'Regenerate package')}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="download-package-zip-btn"
+                  disabled={!canDownloadSnapshot || downloadingZip}
+                  onClick={() => void handleDownloadPackage()}
+                >
+                  <Download size={13.5} aria-hidden="true" />
+                  <span>
+                    {downloadingZip
+                      ? t('正在下载…', 'Downloading…')
+                      : effectiveState === 'OUTDATED'
+                        ? t('下载上次开发包', 'Download previous package')
+                        : t('下载开发包', 'Download development package')}
+                  </span>
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="delivery-inspect-package-btn"
+                onClick={() => handleOpenTechnicalDetails('assembly')}
+              >
+                {t('查看开发包细节', 'Inspect package details')}
+              </Button>
+            </div>
+          </article>
+
+          {/* 3. Ontology Skill */}
+          <article className="card flex flex-col gap-2.5" data-testid="deliverable-ontology-skill">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Blocks size={16} className="shrink-0 text-primary" aria-hidden="true" />
+                <h4 className="card-title m-0">{t('本体技能', 'Ontology skill')}</h4>
+              </div>
+              <span className={cn('badge', activeSkill ? 'badge-ok' : modelConf ? 'badge-accent' : '')}>
+                {activeSkill
+                  ? t(
+                      `已生成 · 版本 ${cleanText(activeSkill.version)}`,
+                      `Generated · v${cleanText(activeSkill.version)}`,
+                    )
+                  : modelConf
+                    ? t('可生成', 'Ready to generate')
+                    : t('等待确认业务模型', 'Waiting for Business Model')}
+              </span>
+            </div>
+
+            <p className="m-0 text-[13px] leading-relaxed text-muted-foreground">
+              {t(
+                '把已确认业务模型中的业务对象、业务操作与业务规则整理成可供智能助手直接理解的能力说明。',
+                'Packages the business objects, actions, and business rules from your confirmed Business Model into a reusable capability guide.',
+              )}
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                data-testid="delivery-generate-skill-btn"
+                disabled={!modelConf || compilingSkill}
+                onClick={() => void handleGenerateSkill()}
+              >
+                <Sparkles size={13.5} aria-hidden="true" />
+                <span>
+                  {compilingSkill
+                    ? t('正在生成…', 'Generating…')
+                    : activeSkill
+                      ? t('更新本体技能', 'Update ontology skill')
+                      : t('生成本体技能', 'Generate ontology skill')}
+                </span>
+              </Button>
+              {activeSkill && (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    data-testid="delivery-download-skill-btn"
+                    onClick={handleDownloadSkill}
+                  >
+                    <Download size={13.5} aria-hidden="true" />
+                    <span>{t('下载本体技能', 'Download ontology skill')}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    data-testid="delivery-copy-skill-btn"
+                    onClick={() => void handleCopySkill()}
+                  >
+                    <Copy size={13.5} aria-hidden="true" />
+                    <span>{t('复制内容', 'Copy content')}</span>
+                  </Button>
+                </>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="delivery-inspect-skill-btn"
+                onClick={() => handleOpenTechnicalDetails('skills')}
+              >
+                {t('编辑细节', 'Edit details')}
+              </Button>
+            </div>
+          </article>
+
+          {/* 4. Published Releases */}
+          <article
+            className="card flex flex-col gap-2.5"
+            data-testid="deliverable-published-versions"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={16} className="shrink-0 text-primary" aria-hidden="true" />
+                <h4 className="card-title m-0">{t('已发布版本', 'Published versions')}</h4>
+              </div>
+              <span className={cn('badge', publishedVersionLabel ? 'badge-ok' : '')}>
+                {publishedVersionLabel
+                  ? t(`当前版本 ${publishedVersionLabel}`, `Version ${publishedVersionLabel}`)
+                  : t('暂无记录', 'None yet')}
+              </span>
+            </div>
+
+            <p className="m-0 text-[13px] leading-relaxed text-muted-foreground">
+              {publishedVersionLabel
+                ? t(
+                    `已登记交付版本里程碑 ${publishedVersionLabel}（用于记录对外移交的版本进度，不代表在线系统已部署运行）。`,
+                    `Recorded handoff milestone ${publishedVersionLabel} (tracks delivered specification versions rather than a live deployment).`,
+                  )
+                : t(
+                    '生成开发包后，可在此登记每次移交开发团队的版本里程碑。',
+                    'Once a development package is generated, record version milestones handed over for implementation here.',
+                  )}
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                data-testid="delivery-record-version-btn"
+                disabled={!primaryApp || !canDownloadSnapshot || recordingRelease}
+                onClick={() => void handleRecordVersion()}
+              >
+                {recordingRelease
+                  ? t('正在登记…', 'Recording…')
+                  : t('登记新版本', 'Record version')}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="delivery-inspect-releases-btn"
+                onClick={() => handleOpenTechnicalDetails('releases')}
+              >
+                {t('查看版本记录', 'View release records')}
+              </Button>
+            </div>
+          </article>
+        </section>
+      </div>
+    </div>
+  );
 }
