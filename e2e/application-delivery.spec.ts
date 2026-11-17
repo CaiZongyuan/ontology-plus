@@ -55,7 +55,8 @@ test('keeps architecture authoring separate from application review and renders 
   await expect(panel.locator('[data-tool-name="read_application_inputs"]').last()).toBeAttached();
   await expect(panel.getByTestId('agent-run-text').getByRole('heading', { name: /Application specification input review|应用规格输入检查/ })).toBeVisible();
   await page.getByTestId('nav-app-four-layer-assets').click();
-  await expect(panel.locator('.agent-panel-kicker')).toContainText(/架构资产|Architecture Asset/);
+  await expect(panel.getByTestId('assistant-panel-title')).toHaveText(/^(AI 助手|AI Assistant)$/);
+  await expect(panel.getByTestId('assistant-panel-subtitle')).toContainText(/编写与维护开发规范|Authoring development standards/);
   await expect(panel.locator('[data-tool-name="read_application_inputs"]')).toHaveCount(0);
   await page.getByTestId('agent-panel-composer-input').fill('Inspect the repository standards catalog.');
   await page.getByTestId('agent-panel-send-btn').click();

@@ -277,7 +277,7 @@ const GUARD_RULES: readonly GuardRule[] = [
   {
     category: 'INTERNAL_TERM',
     pattern:
-      /(?<![A-Za-z0-9_])(?:Agent\s+Session|Agent\s+Run|Agent\s+Panel|Copilot|PROTOTYPE_CO_DESIGN)(?![A-Za-z0-9_])|智能体会话|智能体运行|智能体面板/gi,
+      /(?<![A-Za-z0-9_])(?:Agent\s+Sessions?|Agent\s+Runs?|Agent\s+Panels?|Architecture\s+Asset\s+Agent|Application\s+Development\s+Agent|Application\s+Coding\s+Agent|Copilot|PROTOTYPE_CO_DESIGN)(?![A-Za-z0-9_])|智能体会话|智能体运行|智能体面板|Agent\s*面板|Agent\s*运行|架构资产智能体|应用开发智能体/gi,
   },
 ];
 

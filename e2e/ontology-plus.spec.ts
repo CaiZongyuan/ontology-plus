@@ -334,12 +334,14 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
       { timeout: 15_000 },
     );
     await expect(agentPanel.getByTestId('agent-panel-fork-badge')).toBeVisible({ timeout: 15_000 });
-    await expect(agentPanel.getByTestId('agent-panel-session-select')).toBeVisible();
+    await agentPanel.getByTestId('assistant-history-menu-btn').click();
+    await expect(page.getByTestId('assistant-history-menu')).toContainText('合同工作台原型 · 分支方向');
 
-    // Reload page and verify cloned prototype + forked multi-prototype session selector persist in SQLite
+    // Reload page and verify cloned prototype + forked multi-prototype history menu persist in SQLite
     await page.reload();
     await expect(page.getByTestId('prototype-canvas-stage')).toBeVisible();
-    await expect(page.getByTestId('agent-panel').getByTestId('agent-panel-session-select')).toBeVisible();
+    await page.getByTestId('agent-panel').getByTestId('assistant-history-menu-btn').click();
+    await expect(page.getByTestId('assistant-history-menu')).toContainText('合同工作台原型 · 分支方向');
   });
 
   test('5. New Workbench Shell (#60): 4-step bar & blocked step (>=12px secondary color), More secondary menu, legacy ?mode= URL recovery, and tablet (<1280px) Conversation <-> Canvas toggle', async ({

@@ -37,7 +37,9 @@ export {
 } from './urlState.js';
 
 export {
+  AI_ASSISTANT_TITLE,
   AGENT_PANEL_SURFACES,
+  STEP_SPECIALIST_AGENT_KINDS,
   agentPanelSurfaceFor,
   defaultNavForSessionKind,
   resolveArtifactNavTarget,

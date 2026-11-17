@@ -163,15 +163,23 @@ describe('Business View vocabulary guard (checkBusinessViewMarkup)', () => {
     }
   });
 
-  it('flags internal agent terms (Agent Session, Agent Run, Agent Panel, Copilot, and Chinese equivalents)', () => {
+  it('flags internal agent terms (Agent Session, Agent Run, Agent Panel, Copilot, specialist agent names, and Chinese equivalents)', () => {
     const internalTerms = [
       'Agent Session',
+      'Agent Sessions',
       'Agent Run',
+      'Agent Runs',
       'Agent Panel',
       'Copilot',
+      'Architecture Asset Agent',
+      'Application Development Agent',
       '智能体会话',
       '智能体运行',
       '智能体面板',
+      'Agent 面板',
+      'Agent 运行',
+      '架构资产智能体',
+      '应用开发智能体',
     ];
     for (const term of internalTerms) {
       const violations = checkBusinessViewMarkup(`<h2>${term}</h2>`);

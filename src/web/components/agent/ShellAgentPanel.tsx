@@ -51,11 +51,16 @@ export {
   type AgentPanelSurface,
 };
 
-/** Title a session carries until its first turn names it. */
-export const NEW_AGENT_SESSION_TITLE: LocalizedText = { zh: '新会话', en: 'New session' };
+/** Title a conversation carries until its first turn names it. */
+export const NEW_AGENT_SESSION_TITLE: LocalizedText = { zh: '新对话', en: 'New conversation' };
 
 export function isUntitledAgentSession(title: string): boolean {
-  return title === NEW_AGENT_SESSION_TITLE.zh || title === NEW_AGENT_SESSION_TITLE.en;
+  return (
+    title === NEW_AGENT_SESSION_TITLE.zh ||
+    title === NEW_AGENT_SESSION_TITLE.en ||
+    title === '新会话' ||
+    title === 'New session'
+  );
 }
 
 export interface ActiveWorkspaceRunInfo {
@@ -319,6 +324,7 @@ export interface ShellAgentPanelProps {
   side?: 'left' | 'right';
   closable?: boolean;
   resizable?: boolean;
+  defaultHistoryOpen?: boolean;
   onClose: () => void;
   onNavigate: (view: NavViewId) => void;
   composerHeaderSlot?: React.ReactNode;
@@ -331,6 +337,7 @@ export function ShellAgentPanel({
   side = 'right',
   closable = true,
   resizable,
+  defaultHistoryOpen,
   onClose,
   onNavigate,
   composerHeaderSlot,
@@ -510,7 +517,7 @@ export function ShellAgentPanel({
         setActiveSessionId(next?.id ?? null);
         if (sessionScopeKey) rememberSession(sessionScopeKey, next?.id ?? null);
       }
-      showToast(t('会话已删除', 'Session deleted'));
+      showToast(t('对话已删除', 'Conversation deleted'));
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err));
     }
@@ -583,7 +590,7 @@ export function ShellAgentPanel({
         <select
           className="agent-panel-session-select"
           data-testid="agent-panel-capability-select"
-          aria-label={t('选择能力智能体', 'Select Capability Agent')}
+          aria-label={t('选择能力配置', 'Select capability profile')}
           value={selectedCap.id}
           onChange={(e) => setActiveItemId(e.target.value)}
         >
@@ -747,9 +754,6 @@ export function ShellAgentPanel({
     setActiveNav(navTarget.view, ...(navTarget.itemId ? [{ itemId: navTarget.itemId }] : []));
   };
 
-  const allowPrototypeSessionSelect =
-    surface.sessionKind === 'PROTOTYPE_CO_DESIGN' && (data?.prototypes?.length ?? 0) > 1;
-
   const handleSelectPrototypeSession = (sessionId: string) => {
     setActiveSessionId(sessionId);
     if (!activeProjectId || !data) return;
@@ -765,6 +769,7 @@ export function ShellAgentPanel({
   return (
     <AgentPanel
       title={surface.title}
+      {...(surface.subtitle ? { subtitle: surface.subtitle } : {})}
       runs={runs}
       width={width}
       wideMode={wideMode}
@@ -773,6 +778,7 @@ export function ShellAgentPanel({
       side={side}
       closable={closable}
       {...(resizable !== undefined ? { resizable } : {})}
+      {...(defaultHistoryOpen !== undefined ? { defaultHistoryOpen } : {})}
       onClose={onClose}
       onResize={(next, opts) => setWidth(next, opts)}
       onCancelRun={handleCancelRun}
@@ -787,12 +793,12 @@ export function ShellAgentPanel({
         void handleTriggerWriteback(writebackId, actionTitle)
       }
       {...(sessionsOwnedByArtifact
-        ? allowPrototypeSessionSelect
-          ? {
-              sessions: sessionOptions,
-              onSelectSession: handleSelectPrototypeSession,
-            }
-          : {}
+        ? {
+            sessions: sessionOptions,
+            sessionsOwnedByArtifact: true,
+            onSelectSession: handleSelectPrototypeSession,
+            onRenameSession: handleRenameSession,
+          }
         : {
             sessions: sessionOptions,
             onSelectSession: setActiveSessionId,

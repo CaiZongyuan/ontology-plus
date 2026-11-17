@@ -1,3 +1,7 @@
+import {
+  BUSINESS_VOCABULARY,
+  type ProjectStepId,
+} from '../../packages/business-vocabulary/index.js';
 import type { ModelCode } from '../../packages/ontology-core/index.js';
 import type {
   AgentDomainArtifact,
@@ -10,77 +14,91 @@ export interface AgentSurfaceLocalizedText {
   en: string;
 }
 
+export const AI_ASSISTANT_TITLE: AgentSurfaceLocalizedText = {
+  zh: BUSINESS_VOCABULARY.AI_ASSISTANT.zh,
+  en: BUSINESS_VOCABULARY.AI_ASSISTANT.en,
+};
+
 export interface AgentPanelSurface {
-  /** Name of the Agent Session this module shows. */
+  /** User-facing title of the conversational counterpart (always `AI 助手` / `AI Assistant`). */
   title: AgentSurfaceLocalizedText;
-  /** Durable Agent Session kind bound to this module's Agent Panel. */
+  /** Optional contextual subtitle explaining what the AI Assistant handles in this view. */
+  subtitle?: AgentSurfaceLocalizedText;
+  /** Specialist AgentSessionKind bound to this view (ADR 0009). */
   sessionKind: AgentSessionKind;
-  /** Whether this module's agent uses visual references/uploads and should warn if vision is unsupported. */
+  /** Whether this view's specialist uses visual references/uploads and should warn if vision is unsupported. */
   usesVision?: boolean;
   /** Whether conversation is the primary workflow on this page (auto-reveals Wide Mode). */
   conversationPrimary?: boolean;
-  /** Contextual composer placeholder for this module. */
+  /** Contextual composer placeholder for this view. */
   placeholder?: AgentSurfaceLocalizedText;
   /** One-click openers offered while the conversation is still empty. */
   starters?: AgentSurfaceLocalizedText[];
 }
 
+export const STEP_SPECIALIST_AGENT_KINDS: Readonly<Record<ProjectStepId, AgentSessionKind>> = {
+  REQUIREMENTS: 'REQUIREMENT',
+  PROTOTYPE: 'PROTOTYPE_CO_DESIGN',
+  BUSINESS_MODEL: 'COPILOT',
+  DELIVERY: 'CODING',
+};
+
 /**
- * Every workbench view maps to its owning project specialist Agent Session (ADR 0009),
- * so the right-hand ShellAgentPanel stays available across all 24 views.
+ * Every workbench view presents the single `AI 助手` / `AI Assistant` in the UI
+ * while binding to its owning specialist `AgentSessionKind` underneath (ADR 0009, amended).
  */
 export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
   overview: {
-    title: { zh: '工程概览与全流程助手', en: 'Project Overview Copilot' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'COPILOT',
     placeholder: {
-      zh: '询问工程阶段进展或发起本体协同操作…',
-      en: 'Ask about project lifecycle status or run ontology copilot actions…',
+      zh: '询问项目进展或发起下一步操作…',
+      en: 'Ask about project progress or start the next action…',
     },
   },
   'app-req-explore': {
-    title: { zh: '需求探索与 SRS 合成', en: 'Requirement & SRS Agent' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'REQUIREMENT',
     conversationPrimary: true,
     placeholder: {
-      zh: '描述业务场景、核心角色或规则阈值（Enter 发送，Shift+Enter 换行）…',
-      en: 'Describe domain workflows, roles, or rule thresholds (Enter to send)…',
+      zh: '描述业务场景、参与角色或业务规则（Enter 发送，Shift+Enter 换行）…',
+      en: 'Describe workflows, roles, or business rules (Enter to send)…',
     },
     starters: [
       {
-        zh: '梳理核心业务单据聚合根、关键状态流转与审批准入红线',
-        en: 'Identify core domain aggregates, lifecycles, and approval gate rules',
+        zh: '梳理核心业务对象、关键状态流转与审批准入条件',
+        en: 'Identify core business objects, lifecycles, and approval rules',
       },
       {
-        zh: '识别跨系统数据交换、外部准入接口与异常补偿策略',
-        en: 'Clarify cross-system integrations, external credit checks, and compensations',
+        zh: '识别跨系统协作、对外接口与异常补偿方式',
+        en: 'Clarify cross-system integrations, external interfaces, and compensations',
       },
       {
-        zh: '核对当前未决 B 类业务边界并给出推荐决策方案',
-        en: 'Review open Class-B business ambiguities and propose options',
+        zh: '核对当前尚未明确的业务边界并给出推荐方案',
+        en: 'Review open business ambiguities and propose options',
       },
     ],
   },
   'app-req-docs': {
-    title: { zh: '需求规格合成助手', en: 'SRS Synthesis Agent' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'REQUIREMENT',
     placeholder: {
-      zh: '输入需求补充说明或触发九章节 SRS 合成…',
-      en: 'Add requirement notes or synthesize the 9-chapter SRS…',
+      zh: '输入需求补充说明或整理需求规格书…',
+      en: 'Add requirement notes or synthesize the requirements specification…',
     },
     starters: [
       {
-        zh: '检查当前需求规格书还缺哪些章节或验收标准',
-        en: 'Review the current SRS for missing chapters or acceptance criteria',
+        zh: '检查当前需求规格书还缺哪些章节或验收条件',
+        en: 'Review the current specification for missing sections or acceptance criteria',
       },
       {
-        zh: '把最近确认的业务规则补充进规格书对应章节',
-        en: 'Fold the latest confirmed business rules into the SRS',
+        zh: '把最近确认的业务规则补充进对应章节',
+        en: 'Fold the latest confirmed business rules into the specification',
       },
     ],
   },
   'app-prototype': {
-    title: { zh: '原型共创', en: 'Prototype Co-Design' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'PROTOTYPE_CO_DESIGN',
     usesVision: true,
     placeholder: {
@@ -89,39 +107,43 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
     },
   },
   'app-ontology': {
-    title: { zh: '本体建模与 11 模型合成', en: 'Ontology Copilot & Synthesis' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'COPILOT',
     placeholder: {
-      zh: '输入本体建模指令（如：新增 M3 业务规则或从原型合成 11 模型）…',
-      en: 'Describe an ontology change (e.g. upsert M3 rule or synthesize 11-model suite)…',
+      zh: '描述你想新增或修改的业务对象、业务操作或业务规则…',
+      en: 'Describe a business object, action, or rule to add or refine…',
     },
   },
   'app-model-files': {
-    title: { zh: '本体模型文件与校验助手', en: 'Model Files & Validation Copilot' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'COPILOT',
     placeholder: {
-      zh: '询问模型 YAML 契约或修复一致性校验问题…',
-      en: 'Inspect YAML contracts or resolve consistency validation findings…',
+      zh: '询问模型文件结构或处理需要修正的问题…',
+      en: 'Inspect model files or resolve problems to fix…',
     },
   },
   'app-knowledge-graph': {
-    title: { zh: '本体知识图谱助手', en: 'Knowledge Graph Copilot' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'COPILOT',
     placeholder: {
-      zh: '询问聚合根跨层关联、血缘影响或补充模型映射…',
-      en: 'Explore cross-model lineage, impact paths, or ontology links…',
+      zh: '询问业务对象之间的关联、链路影响或补充关系…',
+      en: 'Explore cross-object relationships, impact paths, or links…',
     },
   },
   'app-four-layer-assets': {
-    title: { zh: '架构资产智能体', en: 'Architecture Asset Agent' },
+    title: AI_ASSISTANT_TITLE,
+    subtitle: {
+      zh: '编写与维护开发规范',
+      en: 'Authoring development standards',
+    },
     sessionKind: 'ARCHITECTURE',
     placeholder: {
-      zh: '编写或完善可复用的 UI、技术底座与技术架构规范…',
-      en: 'Author or refine reusable UI, foundation and architecture standards…',
+      zh: '编写或完善可复用的界面、技术底座与技术架构规范…',
+      en: 'Author or refine reusable UI, foundation, and architecture standards…',
     },
   },
   'app-assembly-dev': {
-    title: { zh: '应用开发规格助手', en: 'Application Specification Assistant' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'CODING',
     placeholder: {
       zh: '检查当前应用的输入缺项与冲突，完善实施规格和验收条件…',
@@ -129,15 +151,15 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
     },
   },
   'app-skills': {
-    title: { zh: '领域 SKILL 资产助手', en: 'Domain SKILL Copilot' },
-    sessionKind: 'COPILOT',
+    title: AI_ASSISTANT_TITLE,
+    sessionKind: 'CODING',
     placeholder: {
-      zh: '围绕本体派生 SKILL 指令集提出优化或校验问题…',
-      en: 'Refine or inspect ontology-derived SKILL assets…',
+      zh: '围绕当前项目的本体技能与交付物提出优化或核对问题…',
+      en: 'Refine or inspect ontology skills and deliverables for this project…',
     },
   },
   'app-publish': {
-    title: { zh: '应用交付规格助手', en: 'Application Delivery Specification Assistant' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'CODING',
     placeholder: {
       zh: '检查当前应用的资料包输入与验收条件…',
@@ -145,109 +167,109 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
     },
   },
   'cap-systems': {
-    title: { zh: '存量系统接入与能力助手', en: 'Legacy Systems Capability Agent' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'CAPABILITY',
     placeholder: {
-      zh: '询问存量系统接入契约、数据源配置或发起能力萃取…',
-      en: 'Ask about legacy system contracts, connectors, or capability extraction…',
+      zh: '询问存量系统接入方式、数据连接配置或发起本体萃取…',
+      en: 'Ask about existing system connectors or ontology extraction…',
     },
   },
   'cap-extraction': {
-    title: { zh: '存量系统本体萃取智能体', en: 'Ontology Extraction Agent' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'CAPABILITY',
     placeholder: {
-      zh: '解析 DDL / OpenAPI 萃取本体候选，或询问候选对齐策略…',
-      en: 'Extract ontology candidates from DDL / OpenAPI or align candidates…',
+      zh: '解析存量系统结构萃取候选条目，或询问候选确认建议…',
+      en: 'Extract ontology candidates from existing system sources or review alignment…',
     },
   },
   'cap-mcp': {
-    title: { zh: '本体 MCP 服务助手', en: 'Ontology MCP Capability Agent' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'CAPABILITY',
     placeholder: {
-      zh: '探查本体编译生成的 MCP 工具契约与资源端点…',
-      en: 'Inspect compiled Ontology MCP tool schemas and resource endpoints…',
+      zh: '查看由业务模型发布的服务能力与工具定义…',
+      en: 'Inspect published capability tools and resource definitions…',
     },
   },
   'cap-agents': {
-    title: { zh: '能力智能体对话 (MCP + SKILL)', en: 'Capability Smart Chat (MCP + SKILL)' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'CAPABILITY',
     conversationPrimary: true,
     placeholder: {
-      zh: '输入业务指令以调用本体 MCP 工具与领域 SKILL（Enter 发送）…',
-      en: 'Send a business query to invoke Ontology MCP tools & SKILL rules…',
+      zh: '输入业务指令以调用已挂载的服务能力与本体技能（Enter 发送）…',
+      en: 'Send a business request using mounted capabilities and ontology skills…',
     },
   },
   'cap-cross-flows': {
-    title: { zh: '跨系统编排能力助手', en: 'Cross-System Flow Agent' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'CAPABILITY',
     placeholder: {
-      zh: '梳理跨系统事件编排、接口调用链与补偿规则…',
-      en: 'Design cross-system event orchestration and compensation rules…',
+      zh: '梳理跨系统事件协同、调用顺序与异常补偿规则…',
+      en: 'Design cross-system event coordination and compensation rules…',
     },
   },
   'cap-knowledge': {
-    title: { zh: '领域知识库与能力助手', en: 'Domain Knowledge Agent' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'CAPABILITY',
     placeholder: {
-      zh: '结合领域知识条目与 MCP 能力进行检索问答…',
-      en: 'Query domain knowledge entries alongside Ontology MCP capabilities…',
+      zh: '结合领域知识条目进行检索与问答…',
+      en: 'Query domain knowledge entries and business context…',
     },
   },
   'data-resources': {
-    title: { zh: '数据资源与数据本体助手', en: 'Data Resource Copilot' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'COPILOT',
     placeholder: {
-      zh: '分析数据库表结构、元数据约定或发起数据本体抽取…',
-      en: 'Inspect database schemas, metadata conventions, or data ontology alignment…',
+      zh: '分析数据表结构、字段约定或对齐业务对象…',
+      en: 'Inspect table structures, metadata conventions, or business object alignment…',
     },
   },
   'data-mappings': {
-    title: { zh: '语义映射与字段对齐助手', en: 'Semantic Mapping Copilot' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'COPILOT',
     placeholder: {
-      zh: '检查 M1 聚合属性与物理库表字段之间的 ME/MM 语义映射…',
-      en: 'Verify ME/MM semantic mappings between M1 attributes and physical columns…',
+      zh: '核对业务对象属性与底层表字段之间的存储映射…',
+      en: 'Verify storage mappings between business object fields and physical columns…',
     },
   },
   'data-metrics-reports': {
-    title: { zh: '指标洞察与场景归因', en: 'Metric Insight & Attribution' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'REASONING',
     placeholder: {
-      zh: '输入指标异动追问或多维场景归因指令…',
-      en: 'Ask about metric anomalies or multi-dimensional scenario attribution…',
+      zh: '输入指标异动追问或多维归因分析问题…',
+      en: 'Ask about metric anomalies or multi-dimensional attribution…',
     },
   },
   'data-reasoning': {
-    title: { zh: '三段式数据本体推理', en: '3-Stage Data Ontology Reasoning' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'REASONING',
     conversationPrimary: true,
     placeholder: {
-      zh: '输入问数 / 问因 / 问策问题（结合 M1 对象关联、M3 规则阈值与回写接口）…',
-      en: 'Ask Data / Why / Policy questions grounded in M1 objects, M3 rules & write-backs…',
+      zh: '输入问数 / 问因 / 问策问题（结合业务对象、业务规则与策略回写）…',
+      en: 'Ask Data / Why / Policy questions grounded in business objects, rules, and write-backs…',
     },
   },
   'data-writeback': {
-    title: { zh: '策略回写与闭环推理助手', en: 'Policy Write-Back Reasoning Agent' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'REASONING',
     placeholder: {
-      zh: '推演策略回写动作影响并校验 M7/ME 执行契约…',
-      en: 'Evaluate policy write-back impact and M7/ME execution contracts…',
+      zh: '推演策略回写动作的影响范围并核对执行条件…',
+      en: 'Evaluate policy write-back impact and execution conditions…',
     },
   },
   'llm-center': {
-    title: { zh: '模型网关与工作台助手', en: 'LLM Gateway & Workbench Copilot' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'COPILOT',
     placeholder: {
-      zh: '询问网关配置要求、多模态视觉支持或测试建议…',
-      en: 'Ask about gateway configuration, vision support, or model routing…',
+      zh: '询问模型服务配置、多模态视觉支持或连接测试建议…',
+      en: 'Ask about model gateway configuration, vision support, or connection checks…',
     },
   },
   'system-settings': {
-    title: { zh: '平台治理与工作台助手', en: 'Platform Governance Copilot' },
+    title: AI_ASSISTANT_TITLE,
     sessionKind: 'COPILOT',
     placeholder: {
-      zh: '询问工作区设置、离线演示模式或本体治理规范…',
-      en: 'Ask about workspace settings, demo mock mode, or governance rules…',
+      zh: '询问工作台设置、离线演示模式或项目治理约定…',
+      en: 'Ask about workbench settings, demo mock mode, or governance conventions…',
     },
   },
 };

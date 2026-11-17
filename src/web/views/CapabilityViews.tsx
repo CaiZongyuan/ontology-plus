@@ -1798,12 +1798,12 @@ export function CapabilityAgentsView() {
               <Sparkles size={15} className="text-primary" />
               {activeAgent
                 ? activeAgent.name
-                : t('能力中心智能体上下文', 'Capability Agent Context')}
+                : t('能力对话上下文', 'Capability Context')}
             </h3>
             <div className="text-[12px] text-muted-foreground mt-0.5">
               {activeAgent
-                ? `${activeAgent.role} · ${t('对话与 MCP 工具调用已统一收敛至右侧 Agent 面板', 'Smart Chat & MCP tool runs live in the unified Agent Panel')}`
-                : t('请选择左侧能力智能体', 'Select a capability agent on the left')}
+                ? `${activeAgent.role} · ${t('对话与工具调用统一在右侧 AI 助手中进行', 'Conversations and tool calls run in the AI Assistant on the right')}`
+                : t('请选择左侧能力配置', 'Select a capability profile on the left')}
             </div>
           </div>
           <Button
@@ -1815,7 +1815,7 @@ export function CapabilityAgentsView() {
               useAgentPanelStore.getState().setWideMode(true);
             }}
           >
-            {t('打开右侧 Agent 面板对话 →', 'Open Agent Panel →')}
+            {t('打开 AI 助手 →', 'Open AI Assistant →')}
           </Button>
         </div>
 
@@ -1867,7 +1867,7 @@ export function CapabilityAgentsView() {
 
             <div>
               <div className="text-[11.5px] font-semibold text-foreground-soft mb-2">
-                {t('快捷业务校验指令（点击直接在右侧 Agent 面板发起运行）', 'Quick MCP Verification Runs (runs in Agent Panel)')}
+                {t('快捷业务校验指令（点击交给 AI 助手执行）', 'Quick verification prompts (runs in AI Assistant)')}
               </div>
               <div className="flex flex-col gap-1.5">
                 {starterPrompts.map((promptText, idx) => (

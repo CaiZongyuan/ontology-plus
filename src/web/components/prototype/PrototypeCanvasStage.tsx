@@ -1258,8 +1258,8 @@ export function PrototypeCanvasStage({
             data-testid="prototype-inspect-toggle-btn"
             aria-pressed={inspectMode}
             title={t(
-              '框选界面元素，作为精修指令的上下文发给智能体',
-              'Box-select an element to send it to the agent as refinement context',
+              '框选界面元素，作为精修指令的上下文发给 AI 助手',
+              'Box-select an element to send it to the AI Assistant as refinement context',
             )}
             onClick={() => setInspectMode(!inspectMode)}
           >
@@ -1307,7 +1307,7 @@ export function PrototypeCanvasStage({
               onClick={toggleShellAgentPanel}
             >
               <PanelRightOpen size={13} aria-hidden="true" />
-              <span>{t('智能体面板', 'Agent Panel')}</span>
+              <span>{t('AI 助手', 'AI Assistant')}</span>
             </Button>
           )}
 
