@@ -1600,11 +1600,11 @@ export function PrototypeVisualPreviewStage({
           data-testid="prototype-live-modifying-badge"
           role="status"
           aria-live="polite"
-          className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-primary-soft/55 px-3 py-1.5 text-[12px] text-ink shrink-0"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-primary-soft/55 px-3 py-1.5 text-[12px] text-foreground shrink-0"
         >
           <div className="flex items-center gap-2 min-w-0">
             <Loader2 size={13} className="agent-run-spin text-primary shrink-0" aria-hidden="true" />
-            <span className="font-medium text-ink">
+            <span className="font-medium text-foreground">
               {t('Agent 正在修改', 'Modifying...')}
             </span>
             {runningAnchorSummary && (
@@ -1623,7 +1623,7 @@ export function PrototypeVisualPreviewStage({
         <div className="proto-inspector-banner shrink-0" data-testid="visual-select-banner">
           <div className="flex flex-wrap items-center gap-2">
             <span className="proto-inspector-dot" aria-hidden="true" />
-            <span className="font-medium text-ink">
+            <span className="font-medium text-foreground">
               {t('框选精修已开启', 'Visual Select Active')}
             </span>
             <span className="text-muted-foreground">
@@ -1661,7 +1661,7 @@ export function PrototypeVisualPreviewStage({
       >
         <div
           data-testid="prototype-viewport-frame"
-          className="relative shrink-0 overflow-hidden rounded-[6px] border border-line bg-surface shadow-xs"
+          className="relative shrink-0 overflow-hidden rounded-[6px] border border-border bg-card shadow-xs"
           style={{
             width: `${fitMetrics.scaledWidth}px`,
             height: `${visualHeight}px`,
@@ -1672,7 +1672,7 @@ export function PrototypeVisualPreviewStage({
             title={t('交互式 HTML 原型沙箱预览', 'Interactive Prototype Sandbox')}
             sandbox="allow-scripts"
             srcDoc={previewSrcDoc}
-            className="block border-0 bg-surface"
+            className="block border-0 bg-card"
             style={{
               width: `${fitMetrics.targetWidth}px`,
               height: `${unscaledIframeHeight}px`,

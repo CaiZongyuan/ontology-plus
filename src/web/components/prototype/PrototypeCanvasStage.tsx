@@ -757,7 +757,7 @@ export function PrototypeCanvasStage({
       data-focus-mode={focusMode ? 'true' : 'false'}
       aria-label={t('界面原型画布工作区', 'Interactive Prototype Canvas Stage')}
       className={cn(
-        'flex flex-col overflow-hidden rounded-card border border-line bg-surface',
+        'flex flex-col overflow-hidden rounded-card border border-border bg-card',
         focusMode
           ? 'fixed top-0 bottom-0 left-0 z-[980] rounded-none border-0 bg-ground shadow-lg'
           : 'min-h-[calc(100dvh-100px)]',
@@ -776,7 +776,7 @@ export function PrototypeCanvasStage({
       {/* ─── Single Top Toolbar ─── */}
       <header
         data-testid="prototype-canvas-toolbar"
-        className="pcs-toolbar flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-line bg-surface px-3 py-2 shrink-0"
+        className="pcs-toolbar flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-border bg-card px-3 py-2 shrink-0"
       >
         {/* Left group: Prototype Switcher + Back to Brief + Revision History */}
         <div className="flex min-w-0 items-center gap-1.5">
@@ -797,7 +797,7 @@ export function PrototypeCanvasStage({
                 }
               }}
             >
-              <span className="pcs-proto-name truncate font-medium text-ink">
+              <span className="pcs-proto-name truncate font-medium text-foreground">
                 {activePrototype.name}
               </span>
               {confirmedRevision?.prototypeId === activePrototype.id && (
@@ -813,7 +813,7 @@ export function PrototypeCanvasStage({
                 role="menu"
                 aria-label={t('切换与管理界面原型', 'Switch and manage prototypes')}
                 data-testid="prototype-switcher-menu"
-                className="absolute top-[calc(100%+6px)] left-0 z-50 flex w-[min(360px,92vw)] flex-col gap-1.5 rounded-card border border-line bg-surface p-2 shadow-lg"
+                className="absolute top-[calc(100%+6px)] left-0 z-50 flex w-[min(360px,92vw)] flex-col gap-1.5 rounded-card border border-border bg-card p-2 shadow-lg"
               >
                 <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground">
                   {t(
@@ -844,8 +844,8 @@ export function PrototypeCanvasStage({
                         className={cn(
                           'flex w-full cursor-pointer items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] transition-colors',
                           isSelected
-                            ? 'bg-primary-soft/60 font-medium text-ink'
-                            : 'text-ink-2 hover:bg-hover hover:text-ink',
+                            ? 'bg-primary-soft/60 font-medium text-foreground'
+                            : 'text-foreground-soft hover:bg-accent hover:text-foreground',
                         )}
                       >
                         <div className="flex min-w-0 items-center gap-1.5">
@@ -864,7 +864,7 @@ export function PrototypeCanvasStage({
                   })}
                 </div>
 
-                <div className="my-0.5 h-px bg-line" />
+                <div className="my-0.5 h-px bg-border" />
 
                 {/* Switcher Actions */}
                 <div className="flex flex-col gap-1">
@@ -878,7 +878,7 @@ export function PrototypeCanvasStage({
                         cur === 'IMPORT_HTML' ? 'NONE' : 'IMPORT_HTML',
                       );
                     }}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink"
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-foreground-soft hover:bg-accent hover:text-foreground"
                   >
                     <Upload size={13} className="text-muted-foreground" aria-hidden="true" />
                     <span>{t('导入 HTML…', 'Import HTML…')}</span>
@@ -887,14 +887,14 @@ export function PrototypeCanvasStage({
                   {switcherSubPanel === 'IMPORT_HTML' && (
                     <form
                       data-testid="prototype-import-panel"
-                      className="flex flex-col gap-2 rounded-[6px] border border-line bg-surface-2 p-2.5"
+                      className="flex flex-col gap-2 rounded-[6px] border border-border bg-surface-2 p-2.5"
                       onSubmit={(e) => {
                         e.preventDefault();
                         void handleImportHtmlContent(importNameDraft, importHtmlDraft);
                       }}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11.5px] font-medium text-ink">
+                        <span className="text-[11.5px] font-medium text-foreground">
                           {t('导入单条修订新原型', 'Import 1-Revision Prototype')}
                         </span>
                         <Button
@@ -963,7 +963,7 @@ export function PrototypeCanvasStage({
                       );
                       setSwitcherSubPanel((cur) => (cur === 'CLONE' ? 'NONE' : 'CLONE'));
                     }}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink"
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-foreground-soft hover:bg-accent hover:text-foreground"
                   >
                     <Copy size={13} className="text-muted-foreground" aria-hidden="true" />
                     <span>{t('另存为新原型…', 'Save as New Prototype…')}</span>
@@ -972,10 +972,10 @@ export function PrototypeCanvasStage({
                   {switcherSubPanel === 'CLONE' && (
                     <form
                       data-testid="prototype-clone-panel"
-                      className="flex flex-col gap-2 rounded-[6px] border border-line bg-surface-2 p-2.5"
+                      className="flex flex-col gap-2 rounded-[6px] border border-border bg-surface-2 p-2.5"
                       onSubmit={(e) => void handleCloneSubmit(e)}
                     >
-                      <label htmlFor={cloneNameId} className="text-[11.5px] font-medium text-ink">
+                      <label htmlFor={cloneNameId} className="text-[11.5px] font-medium text-foreground">
                         {t(
                           '复制当前修订、设计简报并分叉共创会话：',
                           'Copy current revision, Design Brief & fork session:',
@@ -1019,7 +1019,7 @@ export function PrototypeCanvasStage({
                       setSwitcherSubPanel('NONE');
                       onBackToBrief();
                     }}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink"
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-foreground-soft hover:bg-accent hover:text-foreground"
                   >
                     <ArrowLeft size={13} className="text-muted-foreground" aria-hidden="true" />
                     <span>{t('返回设计简报', 'Edit Design Brief')}</span>
@@ -1055,7 +1055,7 @@ export function PrototypeCanvasStage({
                           confirmedRevision.prototype.id || confirmedRevision.prototypeId,
                         );
                       }}
-                      className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-foreground-soft hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Sparkles size={13} className="text-primary" aria-hidden="true" />
                       <span>
@@ -1079,7 +1079,7 @@ export function PrototypeCanvasStage({
                       setDeleteError(null);
                       setSwitcherSubPanel((cur) => (cur === 'DELETE' ? 'NONE' : 'DELETE'));
                     }}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-red hover:bg-hover"
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-destructive hover:bg-accent"
                   >
                     <Trash2 size={13} aria-hidden="true" />
                     <span>{t('删除此原型…', 'Delete Prototype…')}</span>
@@ -1088,9 +1088,9 @@ export function PrototypeCanvasStage({
                   {switcherSubPanel === 'DELETE' && (
                     <div
                       data-testid="prototype-delete-confirm-box"
-                      className="flex flex-col gap-2 rounded-[6px] border border-red/40 bg-surface-2 p-2.5"
+                      className="flex flex-col gap-2 rounded-[6px] border border-destructive/40 bg-surface-2 p-2.5"
                     >
-                      <p className="m-0 text-[12px] text-ink">
+                      <p className="m-0 text-[12px] text-foreground">
                         {t(
                           `确定删除原型「${activePrototype.name}」及其全部修订记录吗？`,
                           `Delete "${activePrototype.name}" and all its revisions?`,
@@ -1100,7 +1100,7 @@ export function PrototypeCanvasStage({
                         <div
                           role="alert"
                           data-testid="prototype-delete-error-banner"
-                          className="rounded-[5px] border border-red/40 bg-surface px-2.5 py-1.5 text-[11.5px] text-red"
+                          className="rounded-[5px] border border-destructive/40 bg-card px-2.5 py-1.5 text-[11.5px] text-destructive"
                         >
                           {deleteError}
                         </div>
@@ -1122,7 +1122,7 @@ export function PrototypeCanvasStage({
                           variant="secondary"
                           size="xs"
                           data-testid="prototype-delete-confirm-btn"
-                          className="border-red/40 text-red"
+                          className="border-destructive/40 text-destructive"
                           disabled={actionBusy}
                           onClick={() => void handleDeleteConfirm()}
                         >
@@ -1342,7 +1342,7 @@ export function PrototypeCanvasStage({
             }}
           >
             {revStatus.isConfirmed ? (
-              <CheckCircle2 size={13.5} className="text-green" aria-hidden="true" />
+              <CheckCircle2 size={13.5} className="text-success" aria-hidden="true" />
             ) : (
               <Check size={13.5} aria-hidden="true" />
             )}
@@ -1359,7 +1359,7 @@ export function PrototypeCanvasStage({
       {isPreviewingHistorical && (
         <div
           data-testid="prototype-historical-preview-banner"
-          className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface-2 px-3 py-1.5 text-[12px] text-ink-2 shrink-0"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-2 px-3 py-1.5 text-[12px] text-foreground-soft shrink-0"
         >
           <span>
             {t(

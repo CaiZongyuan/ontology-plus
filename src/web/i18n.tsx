@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { DEFAULT_THEME_ID } from '../packages/workbench-theme/index.js';
+import { resolveThemeId } from '../packages/workbench-theme/index.js';
+
+/** This device's Workbench Theme choice (ADR 0012); never sent to the backend. */
+export const WORKBENCH_THEME_STORAGE_KEY = 'onto_workbench_theme';
 
 export type Locale = 'zh-CN' | 'en-US';
 export type ThemePreference = 'system' | 'light' | 'dark';
@@ -224,6 +227,9 @@ interface PreferencesContextValue {
   theme: ResolvedTheme;
   setTheme: (t: ThemePreference) => void;
   toggleTheme: () => void;
+  /** The id of the active Workbench Theme, always a built-in one. */
+  workbenchTheme: string;
+  setWorkbenchTheme: (id: string) => void;
   t: (zh: string, en: string) => string;
 }
 
@@ -249,6 +255,14 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     }
   });
 
+  const [workbenchTheme, setWorkbenchThemeState] = useState<string>(() => {
+    try {
+      return resolveThemeId(localStorage.getItem(WORKBENCH_THEME_STORAGE_KEY));
+    } catch {
+      return resolveThemeId(null);
+    }
+  });
+
   const [systemScheme, setSystemScheme] = useState<ResolvedTheme>(getSystemColorScheme);
   const resolvedTheme: ResolvedTheme =
     themePreference === 'system' ? systemScheme : themePreference;
@@ -265,6 +279,8 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
         setThemePreference(
           e.newValue === 'light' || e.newValue === 'dark' ? e.newValue : 'system',
         );
+      } else if (e.key === WORKBENCH_THEME_STORAGE_KEY) {
+        setWorkbenchThemeState(resolveThemeId(e.newValue));
       } else if (e.key === 'onto_locale' && (e.newValue === 'zh-CN' || e.newValue === 'en-US')) {
         setLocaleState(e.newValue);
       }
@@ -295,8 +311,8 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
 
   // Mark the root with the active Workbench Theme (ADR 0012).
   useEffect(() => {
-    document.documentElement.dataset.workbenchTheme = DEFAULT_THEME_ID;
-  }, []);
+    document.documentElement.dataset.workbenchTheme = workbenchTheme;
+  }, [workbenchTheme]);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -311,6 +327,16 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
   const toggleLocale = () => setLocaleState((prev) => (prev === 'zh-CN' ? 'en-US' : 'zh-CN'));
 
   const setTheme = (next: ThemePreference) => setThemePreference(next);
+  // A device that never chooses keeps nothing stored, so it follows whichever theme is the default.
+  const setWorkbenchTheme = (id: string) => {
+    const next = resolveThemeId(id);
+    setWorkbenchThemeState(next);
+    try {
+      localStorage.setItem(WORKBENCH_THEME_STORAGE_KEY, next);
+    } catch {
+      // Ignore storage write errors in restricted contexts
+    }
+  };
 
   // Two-state chrome toggle per modern-web-guidance `dark-mode-toggle`:
   // selects the opposite of the currently rendered scheme; if that matches system default, clears override back to 'system'.
@@ -332,6 +358,8 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
         theme: resolvedTheme,
         setTheme,
         toggleTheme,
+        workbenchTheme,
+        setWorkbenchTheme,
         t,
       }}
     >

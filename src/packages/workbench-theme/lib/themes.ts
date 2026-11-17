@@ -1,8 +1,9 @@
+import { DEFAULT_NEUTRAL } from './themes/default.js';
 import { WARM_PAPER } from './themes/warm-paper.js';
 import type { WorkbenchTheme } from './types.js';
 
 /** The first theme is the one a device gets when it has not chosen. */
-export const BUILT_IN_THEMES: readonly WorkbenchTheme[] = [WARM_PAPER];
+export const BUILT_IN_THEMES: readonly WorkbenchTheme[] = [DEFAULT_NEUTRAL, WARM_PAPER];
 
 export const DEFAULT_THEME_ID: string = BUILT_IN_THEMES[0]!.id;
 

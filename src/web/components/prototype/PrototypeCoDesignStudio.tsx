@@ -623,7 +623,7 @@ export function PrototypeCoDesignStudio({
       >
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="m-0 text-[15px] font-semibold text-ink">
+            <h2 className="m-0 text-[15px] font-semibold text-foreground">
               {t('设计简报', 'Design Brief')}
             </h2>
             <span className="badge font-mono text-[11px]">
@@ -633,7 +633,7 @@ export function PrototypeCoDesignStudio({
               )}
             </span>
           </div>
-          <p className="m-0 mt-0.5 text-[12px] text-ink-3">
+          <p className="m-0 mt-0.5 text-[12px] text-faint-foreground">
             {t(
               '选好参考、说清感受、点选交互方式，风格样张会实时预演；确认后由共创智能体生成可交互原型。',
               'Pick a reference, describe the feel, choose interactions, and watch the Style Tile update; then the agent builds the prototype.',
@@ -774,17 +774,17 @@ export function PrototypeCoDesignStudio({
             )}
             className={cn('card flex-col gap-3', briefStep === 'FEEL' ? 'flex' : 'hidden')}
           >
-            <div className="border-b border-line pb-2.5">
+            <div className="border-b border-border pb-2.5">
               <div className="flex items-center gap-2">
                 <ImagePlus size={15} className="text-primary" />
-                <h3 className="m-0 text-[14.5px] font-semibold text-ink">
+                <h3 className="m-0 text-[14.5px] font-semibold text-foreground">
                   {t(
                     '上传自己的参考图与直白感受描述（选填）',
                     'Your Own Reference Images & Plain-Language Feel (Optional)',
                   )}
                 </h3>
               </div>
-              <p className="m-0 mt-0.5 text-[12px] text-ink-3">
+              <p className="m-0 mt-0.5 text-[12px] text-faint-foreground">
                 {t(
                   '可直接上传或粘贴手头喜欢的系统截图（仅保存在当前浏览器本机存储），并用大白话描述想要的整体气质与重点关切。',
                   'Upload or paste screenshots from your clipboard (persisted in browser-local storage) and describe the desired feel in plain words.',
@@ -805,7 +805,7 @@ export function PrototypeCoDesignStudio({
             <div className="flex flex-col gap-1.5">
               <label
                 htmlFor="user-feel-note-textarea"
-                className="text-[12px] font-semibold text-ink-2"
+                className="text-[12px] font-semibold text-foreground-soft"
               >
                 {t(
                   '用大白话写下想要的整体感觉或盯紧的重点：',
@@ -816,7 +816,7 @@ export function PrototypeCoDesignStudio({
                 id="user-feel-note-textarea"
                 data-testid="user-feel-note-input"
                 rows={3}
-                className="input w-full bg-surface text-[12.5px] leading-relaxed"
+                className="input w-full bg-card text-[12.5px] leading-relaxed"
                 placeholder={t(
                   '例如：想要像银行内部台账那样稳重紧凑、一眼看清待审批金额，状态标签一眼分清通过还是退回…',
                   'e.g., Steady and compact like an internal bank ledger, with pending approval amounts clear at a glance…',
@@ -856,8 +856,8 @@ export function PrototypeCoDesignStudio({
               project={project}
             />
 
-            <div className="rounded-card border border-line bg-inset/45 p-3.5">
-              <div className="mb-2 text-[13px] font-semibold text-ink">
+            <div className="rounded-card border border-border bg-muted/45 p-3.5">
+              <div className="mb-2 text-[13px] font-semibold text-foreground">
                 {t(
                   '补充业务场景或页面细节（选填）',
                   'Extra business details for the Agent (Optional)',
@@ -876,7 +876,7 @@ export function PrototypeCoDesignStudio({
                 }}
               >
                 <input
-                  className="input flex-1 bg-surface"
+                  className="input flex-1 bg-card"
                   placeholder={t(
                     '例如：超过 10 万金额标红预警、列表增加「所属部门」筛选…',
                     'e.g., Highlight amounts over 100k in red, add a Department filter…',
@@ -895,7 +895,7 @@ export function PrototypeCoDesignStudio({
                   {alignment.customNotes.map((n, idx) => (
                     <span
                       key={`${idx}-${n}`}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-0.5 text-[12px] text-ink"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-0.5 text-[12px] text-foreground"
                     >
                       <span>✓ {n}</span>
                       <button
@@ -906,7 +906,7 @@ export function PrototypeCoDesignStudio({
                             customNotes: prev.customNotes.filter((_, i) => i !== idx),
                           }))
                         }
-                        className="cursor-pointer text-ink-3 hover:text-red"
+                        className="cursor-pointer text-faint-foreground hover:text-destructive"
                       >
                         <X size={11.5} />
                       </button>

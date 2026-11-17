@@ -283,12 +283,12 @@ export function MuDiffSummaryPanel({
         <span className="px-2 py-0.5 rounded-full mu-diff-badge-modified font-mono">
           ~{summary.modifiedScreens} {t('屏幕', 'Screens')}
         </span>
-        <span className="text-ink-3">·</span>
-        <span className="px-2 py-0.5 rounded-full bg-inset border border-line text-ink-2 font-mono">
+        <span className="text-faint-foreground">·</span>
+        <span className="px-2 py-0.5 rounded-full bg-muted border border-border text-foreground-soft font-mono">
           +{summary.addedElements} / -{summary.removedElements} / ~{summary.modifiedElements}{' '}
           {t('元素', 'Elements')}
         </span>
-        <span className="px-2 py-0.5 rounded-full bg-inset border border-line text-ink-2 font-mono">
+        <span className="px-2 py-0.5 rounded-full bg-muted border border-border text-foreground-soft font-mono">
           +{summary.addedEvents} / -{summary.removedEvents} / ~{summary.modifiedEvents}{' '}
           {t('事件', 'Events')}
         </span>
@@ -296,7 +296,7 @@ export function MuDiffSummaryPanel({
 
       {!summary.hasChanges ? (
         <div
-          className="rounded-[8px] border border-line bg-inset px-3.5 py-3 text-[12.5px] text-ink-2"
+          className="rounded-[8px] border border-border bg-muted px-3.5 py-3 text-[12.5px] text-foreground-soft"
           data-testid="mu-diff-empty-state"
         >
           {nextMu.screens.length === 0
@@ -318,7 +318,7 @@ export function MuDiffSummaryPanel({
             return (
               <div
                 key={sc.screenId}
-                className="rounded-[8px] border border-line bg-surface p-3 space-y-2"
+                className="rounded-[8px] border border-border bg-card p-3 space-y-2"
                 data-testid={`mu-diff-screen-${sc.screenId}`}
                 data-diff-status={sc.status}
               >
@@ -332,20 +332,20 @@ export function MuDiffSummaryPanel({
                     >
                       {formatDiffStatusLabel(sc.status, t)}
                     </span>
-                    <span className="font-semibold text-[13px] text-ink">{sc.name}</span>
-                    <code className="font-mono text-[11.5px] text-ink-3">({sc.screenId})</code>
-                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-inset border border-line text-ink-3 font-mono">
+                    <span className="font-semibold text-[13px] text-foreground">{sc.name}</span>
+                    <code className="font-mono text-[11.5px] text-faint-foreground">({sc.screenId})</code>
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted border border-border text-faint-foreground font-mono">
                       {sc.screenType}
                     </span>
                   </div>
                 </div>
 
                 {sc.changedFields.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 text-[11.5px] text-ink-2">
+                  <div className="flex flex-wrap gap-1.5 text-[11.5px] text-foreground-soft">
                     {sc.changedFields.map((chg) => (
                       <span
                         key={chg.field}
-                        className="px-1.5 py-0.5 rounded bg-inset border border-line font-mono"
+                        className="px-1.5 py-0.5 rounded bg-muted border border-border font-mono"
                       >
                         {chg.field}: {chg.before} → {chg.after}
                       </span>
@@ -354,15 +354,15 @@ export function MuDiffSummaryPanel({
                 )}
 
                 {changedElements.length > 0 && (
-                  <div className="space-y-1 pt-1 border-t border-line/60">
-                    <div className="text-[11px] font-medium text-ink-3">
+                  <div className="space-y-1 pt-1 border-t border-border/60">
+                    <div className="text-[11px] font-medium text-faint-foreground">
                       {t('元素变更', 'Elements')} ({changedElements.length})
                     </div>
                     <ul className="list-none m-0 p-0 space-y-1">
                       {changedElements.map((el) => (
                         <li
                           key={el.elementId}
-                          className="flex flex-col gap-0.5 rounded bg-inset/60 px-2 py-1 text-[12px]"
+                          className="flex flex-col gap-0.5 rounded bg-muted/60 px-2 py-1 text-[12px]"
                           data-testid={`mu-diff-element-${el.elementId}`}
                           data-diff-status={el.status}
                         >
@@ -375,11 +375,11 @@ export function MuDiffSummaryPanel({
                             >
                               {formatDiffStatusLabel(el.status, t)}
                             </span>
-                            <span className="font-medium text-ink">{el.label}</span>
-                            <code className="font-mono text-[11px] text-ink-3">
+                            <span className="font-medium text-foreground">{el.label}</span>
+                            <code className="font-mono text-[11px] text-faint-foreground">
                               [{el.elementId}]
                             </code>
-                            <span className="font-mono text-[11px] text-ink-2">
+                            <span className="font-mono text-[11px] text-foreground-soft">
                               {el.elementType}
                             </span>
                             {el.dataBinding && (
@@ -389,7 +389,7 @@ export function MuDiffSummaryPanel({
                             )}
                           </div>
                           {el.changedFields.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 text-[11px] text-ink-2 font-mono">
+                            <div className="flex flex-wrap gap-1.5 text-[11px] text-foreground-soft font-mono">
                               {el.changedFields.map((chg) => (
                                 <span key={chg.field}>
                                   {chg.field}: {chg.before} → {chg.after}
@@ -404,15 +404,15 @@ export function MuDiffSummaryPanel({
                 )}
 
                 {changedEvents.length > 0 && (
-                  <div className="space-y-1 pt-1 border-t border-line/60">
-                    <div className="text-[11px] font-medium text-ink-3">
+                  <div className="space-y-1 pt-1 border-t border-border/60">
+                    <div className="text-[11px] font-medium text-faint-foreground">
                       {t('UI 事件调用链变更', 'UI Events')} ({changedEvents.length})
                     </div>
                     <ul className="list-none m-0 p-0 space-y-1">
                       {changedEvents.map((ev) => (
                         <li
                           key={ev.eventId}
-                          className="flex flex-col gap-0.5 rounded bg-inset/60 px-2 py-1 text-[11.5px]"
+                          className="flex flex-col gap-0.5 rounded bg-muted/60 px-2 py-1 text-[11.5px]"
                           data-testid={`mu-diff-event-${ev.eventId}`}
                           data-diff-status={ev.status}
                         >
@@ -425,10 +425,10 @@ export function MuDiffSummaryPanel({
                             >
                               {formatDiffStatusLabel(ev.status, t)}
                             </span>
-                            <code className="font-mono font-medium text-ink">{ev.eventId}</code>
-                            <span className="text-ink-2">({ev.name})</span>
+                            <code className="font-mono font-medium text-foreground">{ev.eventId}</code>
+                            <span className="text-foreground-soft">({ev.name})</span>
                           </div>
-                          <div className="font-mono text-[11px] text-ink-2">
+                          <div className="font-mono text-[11px] text-foreground-soft">
                             {ev.previousCallChainSummary
                               ? `${ev.previousCallChainSummary} → ${ev.callChainSummary}`
                               : ev.callChainSummary}
@@ -513,17 +513,17 @@ export function PrototypeRevisionCompareView({
 
   return (
     <div
-      className={cn('border-b border-line bg-inset/45 p-3.5 space-y-3', className)}
+      className={cn('border-b border-border bg-muted/45 p-3.5 space-y-3', className)}
       data-testid="revision-side-by-side-compare"
     >
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center flex-wrap gap-2">
-          <label className="flex items-center gap-1.5 text-[12px] text-ink-2">
+          <label className="flex items-center gap-1.5 text-[12px] text-foreground-soft">
             <span>{t('基准修订', 'Left')}</span>
             <select
               value={leftRev.id}
               onChange={(e) => onSelectLeft(e.target.value)}
-              className="h-7 px-2 rounded-[6px] border border-line bg-surface text-[12px] text-ink"
+              className="h-7 px-2 rounded-[6px] border border-border bg-card text-[12px] text-foreground"
               data-testid="compare-left-revision-select"
             >
               {orderedAsc.map((rev) => (
@@ -549,12 +549,12 @@ export function PrototypeRevisionCompareView({
             </Button>
           )}
 
-          <label className="flex items-center gap-1.5 text-[12px] text-ink-2">
+          <label className="flex items-center gap-1.5 text-[12px] text-foreground-soft">
             <span>{t('对比修订', 'Right')}</span>
             <select
               value={rightRev.id}
               onChange={(e) => onSelectRight(e.target.value)}
-              className="h-7 px-2 rounded-[6px] border border-line bg-surface text-[12px] text-ink"
+              className="h-7 px-2 rounded-[6px] border border-border bg-card text-[12px] text-foreground"
               data-testid="compare-right-revision-select"
             >
               {orderedAsc.map((rev) => (
@@ -606,8 +606,8 @@ export function PrototypeRevisionCompareView({
 
       <div className="proto-rev-compare-grid">
         <div className="proto-rev-compare-pane">
-          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-line bg-surface-2 text-[12px]">
-            <span className="font-medium text-ink truncate">
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border bg-surface-2 text-[12px]">
+            <span className="font-medium text-foreground truncate">
               #{leftRev.revisionNumber} · {leftRev.title}
             </span>
             {confirmedRevisionId === leftRev.id && (
@@ -629,8 +629,8 @@ export function PrototypeRevisionCompareView({
         </div>
 
         <div className="proto-rev-compare-pane">
-          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-line bg-surface-2 text-[12px]">
-            <span className="font-medium text-ink truncate">
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border bg-surface-2 text-[12px]">
+            <span className="font-medium text-foreground truncate">
               #{rightRev.revisionNumber} · {rightRev.title}
             </span>
             {confirmedRevisionId === rightRev.id && (
@@ -663,17 +663,17 @@ export function PrototypeRevisionCompareView({
           className="space-y-2"
           data-testid="compare-html-diff-section"
         >
-          <div className="text-[11.5px] text-ink-3 font-mono">
+          <div className="text-[11.5px] text-faint-foreground font-mono">
             {t(
               `左栏 #${leftRev.revisionNumber}：${leftLines.length} 行（${leftCleanHtml.length} 字符） · 右栏 #${rightRev.revisionNumber}：${rightLines.length} 行（${rightCleanHtml.length} 字符）`,
               `Left #${leftRev.revisionNumber}: ${leftLines.length} lines (${leftCleanHtml.length} chars) · Right #${rightRev.revisionNumber}: ${rightLines.length} lines (${rightCleanHtml.length} chars)`,
             )}
           </div>
           <div className="proto-rev-compare-grid">
-            <pre className="m-0 max-h-[200px] overflow-auto rounded-[6px] border border-line bg-surface p-2.5 font-mono text-[11px] text-ink-2">
+            <pre className="m-0 max-h-[200px] overflow-auto rounded-[6px] border border-border bg-card p-2.5 font-mono text-[11px] text-foreground-soft">
               {leftCleanHtml}
             </pre>
-            <pre className="m-0 max-h-[200px] overflow-auto rounded-[6px] border border-line bg-surface p-2.5 font-mono text-[11px] text-ink-2">
+            <pre className="m-0 max-h-[200px] overflow-auto rounded-[6px] border border-border bg-card p-2.5 font-mono text-[11px] text-foreground-soft">
               {rightCleanHtml}
             </pre>
           </div>
@@ -951,10 +951,10 @@ export function PrototypeRevisionHistoryDrawer({
       <header className="proto-rev-drawer-header">
         <div className="flex items-center gap-2 min-w-0">
           <History size={15} className="text-primary shrink-0" aria-hidden="true" />
-          <h3 className="m-0 text-[13.5px] font-semibold text-ink truncate">
+          <h3 className="m-0 text-[13.5px] font-semibold text-foreground truncate">
             {t('修订历史', 'Revision History')}
           </h3>
-          <span className="text-[11.5px] text-ink-3 font-mono">
+          <span className="text-[11.5px] text-faint-foreground font-mono">
             ({prototype.revisions.length})
           </span>
           {prototype.isConfirmed && prototype.aheadOfConfirmedCount > 0 && (
@@ -1011,7 +1011,7 @@ export function PrototypeRevisionHistoryDrawer({
               type="button"
               onClick={onClose}
               aria-label={t('关闭修订历史', 'Close revision history')}
-              className="primitive-icon-button text-ink-3 hover:bg-hover hover:text-ink"
+              className="primitive-icon-button text-faint-foreground hover:bg-accent hover:text-foreground"
               data-testid="revision-drawer-close-btn"
             >
               <X size={14} />
@@ -1022,7 +1022,7 @@ export function PrototypeRevisionHistoryDrawer({
 
       {previewingRevision && previewingRevision.id !== prototype.currentRevisionId && (
         <div
-          className="flex items-center justify-between gap-2 border-b border-line bg-primary-soft px-3.5 py-2 text-[12px] text-ink"
+          className="flex items-center justify-between gap-2 border-b border-border bg-primary-soft px-3.5 py-2 text-[12px] text-foreground"
           role="status"
           data-testid="revision-preview-banner"
         >
@@ -1045,7 +1045,7 @@ export function PrototypeRevisionHistoryDrawer({
 
       {confirmedRevision && confirmedRevision.prototypeId !== prototype.id && (
         <div
-          className="border-b border-line bg-inset px-3.5 py-2 text-[11.5px] text-ink-2"
+          className="border-b border-border bg-muted px-3.5 py-2 text-[11.5px] text-foreground-soft"
           data-testid="other-prototype-confirmed-banner"
         >
           {t(
@@ -1074,7 +1074,7 @@ export function PrototypeRevisionHistoryDrawer({
       <ol className="proto-rev-timeline" data-testid="revision-timeline-list">
         {visibleRevisions.length === 0 ? (
           <li
-            className="py-6 text-center text-[12.5px] text-ink-3"
+            className="py-6 text-center text-[12.5px] text-faint-foreground"
             data-testid="revision-timeline-empty"
           >
             {state.starredOnly
@@ -1105,11 +1105,11 @@ export function PrototypeRevisionHistoryDrawer({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center flex-wrap gap-1.5 min-w-0">
-                    <span className="font-mono text-[11.5px] font-semibold text-ink px-1.5 py-0.5 rounded bg-inset border border-line">
+                    <span className="font-mono text-[11.5px] font-semibold text-foreground px-1.5 py-0.5 rounded bg-muted border border-border">
                       #{rev.revisionNumber}
                     </span>
 
-                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-inset text-ink-2 border border-line">
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-foreground-soft border border-border">
                       {formatRevisionSourceBadge(rev.source, t)}
                     </span>
 
@@ -1142,8 +1142,8 @@ export function PrototypeRevisionHistoryDrawer({
                       onClick={() => void onToggleStarRevision(rev.id, !rev.starred)}
                       disabled={isBusy}
                       className={cn(
-                        'primitive-icon-button text-ink-3 hover:bg-hover hover:text-ink',
-                        rev.starred && 'text-orange',
+                        'primitive-icon-button text-faint-foreground hover:bg-accent hover:text-foreground',
+                        rev.starred && 'text-warning',
                       )}
                       data-testid={`revision-star-btn-${rev.revisionNumber}`}
                     >
@@ -1166,7 +1166,7 @@ export function PrototypeRevisionHistoryDrawer({
                           })
                         }
                         disabled={isBusy}
-                        className="primitive-icon-button text-ink-3 hover:bg-hover hover:text-ink"
+                        className="primitive-icon-button text-faint-foreground hover:bg-accent hover:text-foreground"
                         data-testid={`revision-rename-btn-${rev.revisionNumber}`}
                       >
                         <Pencil size={12.5} aria-hidden="true" />
@@ -1201,7 +1201,7 @@ export function PrototypeRevisionHistoryDrawer({
                         }
                       }}
                       aria-label={t('修订名称', 'Revision title')}
-                      className="flex-1 min-w-0 h-7 px-2 rounded-[6px] border border-line bg-field text-[12.5px] text-ink"
+                      className="flex-1 min-w-0 h-7 px-2 rounded-[6px] border border-border bg-muted text-[12.5px] text-foreground"
                       data-testid={`revision-rename-input-${rev.revisionNumber}`}
                     />
                     <Button
@@ -1225,12 +1225,12 @@ export function PrototypeRevisionHistoryDrawer({
                     </Button>
                   </form>
                 ) : (
-                  <div className="text-[13px] font-medium text-ink leading-snug">
+                  <div className="text-[13px] font-medium text-foreground leading-snug">
                     {rev.title}
                   </div>
                 )}
 
-                <div className="flex items-center justify-between flex-wrap gap-2 text-[11.5px] text-ink-3">
+                <div className="flex items-center justify-between flex-wrap gap-2 text-[11.5px] text-faint-foreground">
                   <div className="flex items-center gap-2">
                     <time dateTime={rev.createdAt}>{formatRevisionTimestamp(rev.createdAt)}</time>
                     <span>·</span>
@@ -1409,10 +1409,10 @@ export function ConfirmRevisionMuDiffModal({
       onClose={onClose}
     >
       <div className="flex flex-col">
-        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 bg-surface-2">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 bg-surface-2">
           <div className="flex items-center gap-2 min-w-0">
             <CheckCircle2 size={16} className="text-primary shrink-0" aria-hidden="true" />
-            <h3 id={titleId} className="m-0 text-[14px] font-semibold text-ink truncate">
+            <h3 id={titleId} className="m-0 text-[14px] font-semibold text-foreground truncate">
               {t(
                 `确认原型修订 #${revision.revisionNumber} 并同步 MU 模型`,
                 `Confirm Revision #${revision.revisionNumber} & Sync MU Model`,
@@ -1424,20 +1424,20 @@ export function ConfirmRevisionMuDiffModal({
             onClick={onClose}
             disabled={busy}
             aria-label={t('关闭确认窗口', 'Close confirmation dialog')}
-            className="primitive-icon-button text-ink-3 hover:bg-hover hover:text-ink"
+            className="primitive-icon-button text-faint-foreground hover:bg-accent hover:text-foreground"
             data-testid="confirm-revision-close-btn"
           >
             <X size={14} />
           </button>
         </div>
 
-        <div className="space-y-3 px-4 py-3.5 text-[13px] leading-relaxed text-ink-2">
-          <div className="rounded-[8px] border border-line bg-inset/55 px-3 py-2 text-[12.5px]">
-            <div className="font-medium text-ink">
+        <div className="space-y-3 px-4 py-3.5 text-[13px] leading-relaxed text-foreground-soft">
+          <div className="rounded-[8px] border border-border bg-muted/55 px-3 py-2 text-[12.5px]">
+            <div className="font-medium text-foreground">
               {prototypeName ? `${prototypeName} · ` : ''}#{revision.revisionNumber}{' '}
               {revision.title}
             </div>
-            <div className="text-[11.5px] text-ink-3 mt-0.5">
+            <div className="text-[11.5px] text-faint-foreground mt-0.5">
               {confirmedRevision
                 ? t(
                     `当前已确认基准：${confirmedRevision.prototype.name} #${confirmedRevision.revision.revisionNumber}（${confirmedRevision.revision.title}）`,
@@ -1457,7 +1457,7 @@ export function ConfirmRevisionMuDiffModal({
 
           {resolvedHasNonMu && (
             <div
-              className="flex items-start gap-2 rounded-[8px] border border-primary/30 bg-primary-soft px-3 py-2 text-[12px] text-ink"
+              className="flex items-start gap-2 rounded-[8px] border border-primary/30 bg-primary-soft px-3 py-2 text-[12px] text-foreground"
               role="note"
               data-testid="confirm-mu-only-safeguard"
             >
@@ -1478,8 +1478,8 @@ export function ConfirmRevisionMuDiffModal({
           />
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-line bg-inset/45 px-4 py-2.5">
-          <span className="text-[11.5px] text-ink-3">
+        <div className="flex items-center justify-between gap-2 border-t border-border bg-muted/45 px-4 py-2.5">
+          <span className="text-[11.5px] text-faint-foreground">
             {t(
               `提取目标屏幕数：${nextMu.screens.length}`,
               `Target extracted screens: ${nextMu.screens.length}`,

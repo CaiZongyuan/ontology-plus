@@ -1,9 +1,132 @@
 /* Generated from src/packages/workbench-theme by `pnpm themes:generate`. Do not edit by hand:
    change the theme tables or the contract and regenerate. */
 
-/* Warm Paper (warm-paper) */
+/* Default (default) */
 
 :root {
+  --background: #ffffff;
+  --canvas: #fbfbfb;
+  --foreground: #101112;
+  --foreground-soft: #242629;
+  --card: #ffffff;
+  --card-foreground: #101112;
+  --popover: #ffffff;
+  --popover-foreground: #101112;
+  --muted: #f6f7f7;
+  --muted-foreground: rgba(0, 0, 0, 0.631);
+  --faint-foreground: rgba(0, 0, 0, 0.55);
+  --accent: rgba(0, 0, 0, 0.04);
+  --accent-foreground: #101112;
+  --primary: #2466de;
+  --primary-foreground: #ffffff;
+  --primary-soft: rgba(38, 109, 240, 0.1);
+  --secondary: #ffffff;
+  --secondary-foreground: #101112;
+  --border: #e6e7ea;
+  --border-subtle: #eeeff1;
+  --input: #e6e7ea;
+  --ring: #266df0;
+  --scrollbar-thumb: #898a8d;
+  --success: #007d53;
+  --success-soft: #e0fced;
+  --warning: #874d00;
+  --warning-soft: #fff3cc;
+  --destructive: #ba2525;
+  --destructive-foreground: #ffffff;
+  --destructive-soft: #ffebeb;
+  --font-title: "Inter", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Inter", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", monospace;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-card: 12px;
+  --radius-window: 16px;
+  --shadow-xs: 0 0 2px rgba(28, 40, 64, 0.18), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 2px rgba(11, 13, 24, 0.04);
+  --shadow-md: 0 0 0 1px rgba(28, 40, 64, 0.04), 0 4px 8px -4px rgba(28, 40, 64, 0.12), 0 4px 12px -2px rgba(24, 41, 75, 0.16);
+  --shadow-lg: 0 8px 28px -6px rgba(28, 40, 64, 0.12), 0 18px 88px -4px rgba(28, 40, 64, 0.16), 0 0 1px rgba(28, 40, 64, 0.16);
+  --backdrop-image: none;
+  --backdrop-size: auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: #101112;
+    --canvas: #0b0c0d;
+    --foreground: #f1f2f3;
+    --foreground-soft: #e6e7ea;
+    --card: #101112;
+    --card-foreground: #f1f2f3;
+    --popover: #17181a;
+    --popover-foreground: #f1f2f3;
+    --muted: #1b1c1f;
+    --muted-foreground: rgba(255, 255, 255, 0.6);
+    --faint-foreground: rgba(255, 255, 255, 0.46);
+    --accent: rgba(255, 255, 255, 0.05);
+    --accent-foreground: #f1f2f3;
+    --primary: #4e8cfc;
+    --primary-foreground: #101112;
+    --secondary: #1b1c1f;
+    --secondary-foreground: #f1f2f3;
+    --border: #212224;
+    --border-subtle: #1b1c1f;
+    --input: #212224;
+    --scrollbar-thumb: #77797c;
+    --success: #4ad99a;
+    --success-soft: #1d4034;
+    --warning: #f5a300;
+    --warning-soft: #3a2d12;
+    --destructive: #ff8180;
+    --destructive-foreground: #101112;
+    --destructive-soft: #4e1b28;
+    --shadow-xs: 0 0 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.12);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+    --shadow-md: 0 0 0 1px rgba(0, 0, 0, 0.16), 0 4px 8px -4px rgba(0, 0, 0, 0.24), 0 4px 12px -2px rgba(0, 0, 0, 0.32);
+    --shadow-lg: 0 8px 28px -6px rgba(0, 0, 0, 0.48), 0 18px 88px -4px rgba(0, 0, 0, 0.64);
+  }
+}
+
+:root:has(> head > meta[name="color-scheme"][content="dark"]),
+[data-theme="dark"] {
+  --background: #101112;
+  --canvas: #0b0c0d;
+  --foreground: #f1f2f3;
+  --foreground-soft: #e6e7ea;
+  --card: #101112;
+  --card-foreground: #f1f2f3;
+  --popover: #17181a;
+  --popover-foreground: #f1f2f3;
+  --muted: #1b1c1f;
+  --muted-foreground: rgba(255, 255, 255, 0.6);
+  --faint-foreground: rgba(255, 255, 255, 0.46);
+  --accent: rgba(255, 255, 255, 0.05);
+  --accent-foreground: #f1f2f3;
+  --primary: #4e8cfc;
+  --primary-foreground: #101112;
+  --secondary: #1b1c1f;
+  --secondary-foreground: #f1f2f3;
+  --border: #212224;
+  --border-subtle: #1b1c1f;
+  --input: #212224;
+  --scrollbar-thumb: #77797c;
+  --success: #4ad99a;
+  --success-soft: #1d4034;
+  --warning: #f5a300;
+  --warning-soft: #3a2d12;
+  --destructive: #ff8180;
+  --destructive-foreground: #101112;
+  --destructive-soft: #4e1b28;
+  --shadow-xs: 0 0 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.12);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 0 0 1px rgba(0, 0, 0, 0.16), 0 4px 8px -4px rgba(0, 0, 0, 0.24), 0 4px 12px -2px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 8px 28px -6px rgba(0, 0, 0, 0.48), 0 18px 88px -4px rgba(0, 0, 0, 0.64);
+}
+
+/* Warm Paper (warm-paper) */
+
+:root[data-workbench-theme="warm-paper"] {
   --background: #f3f2ee;
   --canvas: #eae8e2;
   --foreground: #1a1a18;
@@ -53,7 +176,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root[data-workbench-theme="warm-paper"]:not([data-theme="light"]) {
     --background: #121211;
     --canvas: #0d0d0c;
     --foreground: #eceae3;
@@ -77,6 +200,7 @@
     --input: #33332e;
     --ring: #9ca4ff;
     --scrollbar-thumb: #737169;
+    --overlay: #0f0f0e;
     --success: #4ca97c;
     --success-soft: rgba(76, 169, 124, 0.16);
     --warning: #df9a42;
@@ -84,16 +208,27 @@
     --destructive: #e26e66;
     --destructive-foreground: #0f1026;
     --destructive-soft: rgba(224, 97, 89, 0.16);
+    --font-title: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
+    --font-sans: "IBM Plex Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-card: 10px;
+    --radius-window: 14px;
     --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
     --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
     --backdrop-image: none;
+    --backdrop-size: 260px 260px, 260px 260px, 900px 900px;
   }
 }
 
-:root:has(> head > meta[name="color-scheme"][content="dark"]),
-[data-theme="dark"] {
+:root[data-workbench-theme="warm-paper"]:has(> head > meta[name="color-scheme"][content="dark"]),
+:root[data-workbench-theme="warm-paper"][data-theme="dark"],
+[data-workbench-theme="warm-paper"] [data-theme="dark"] {
   --background: #121211;
   --canvas: #0d0d0c;
   --foreground: #eceae3;
@@ -117,6 +252,7 @@
   --input: #33332e;
   --ring: #9ca4ff;
   --scrollbar-thumb: #737169;
+  --overlay: #0f0f0e;
   --success: #4ca97c;
   --success-soft: rgba(76, 169, 124, 0.16);
   --warning: #df9a42;
@@ -124,9 +260,19 @@
   --destructive: #e26e66;
   --destructive-foreground: #0f1026;
   --destructive-soft: rgba(224, 97, 89, 0.16);
+  --font-title: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
+  --font-sans: "IBM Plex Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-card: 10px;
+  --radius-window: 14px;
   --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
   --backdrop-image: none;
+  --backdrop-size: 260px 260px, 260px 260px, 900px 900px;
 }
