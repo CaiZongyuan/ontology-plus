@@ -4378,11 +4378,11 @@ function ApplicationPackageDeliveryCard({ app, sourceKey, onNavigate }: {
         {saved?.stale ? t('输入已变化', 'Inputs changed') : saved?.compiledPackage ? t('开发包已保存', 'Package saved') : t('等待生成开发包', 'Awaiting package generation')}
       </span>
     </div>
-    {saved?.compiledPackage ? <div className="break-all font-mono text-[11.5px] text-ink-3">{String(saved.compiledPackage.manifestJson.snapshotId ?? app.latestPackageSnapshotId ?? '')} · {saved.compiledPackage.compiledAt} · {saved.compiledPackage.files.length} {t('个文件', 'files')}</div>
-      : <p className="m-0 text-[12.5px] text-ink-3">{t('在应用开发中确认输入并生成开发资料包。', 'Confirm the inputs and generate a Development Package in application development.')}</p>}
-    {saved?.stale && <p className="m-0 text-[12px] text-ink-3">{t('下载保留已保存快照。请在应用开发中重新生成以包含最新输入。', 'Download keeps the saved snapshot. Regenerate in application development to include current inputs.')}</p>}
-    {error && <div role="alert" className="text-[12px] text-red">{error}</div>}
-    {saved?.inputIssue && <div role="alert" className="text-[12px] text-red">{saved.inputIssue}</div>}
+    {saved?.compiledPackage ? <div className="break-all font-mono text-[length:var(--text-xs)] text-ink-3">{String(saved.compiledPackage.manifestJson.snapshotId ?? app.latestPackageSnapshotId ?? '')} · {saved.compiledPackage.compiledAt} · {saved.compiledPackage.files.length} {t('个文件', 'files')}</div>
+      : <p className="m-0 text-[length:var(--text-sm)] text-ink-3">{t('在应用开发中确认输入并生成开发资料包。', 'Confirm the inputs and generate a Development Package in application development.')}</p>}
+    {saved?.stale && <p className="m-0 text-[length:var(--text-sm)] text-ink-3">{t('下载保留已保存快照。请在应用开发中重新生成以包含最新输入。', 'Download keeps the saved snapshot. Regenerate in application development to include current inputs.')}</p>}
+    {error && <div role="alert" className="text-[length:var(--text-sm)] text-red">{error}</div>}
+    {saved?.inputIssue && <div role="alert" className="text-[length:var(--text-sm)] text-red">{saved.inputIssue}</div>}
     <div className="flex flex-wrap gap-2">
       {onNavigate && <Button onClick={() => { setActiveItemId(app.id); onNavigate('app-assembly-dev'); }}>{t('检查开发规格', 'Review implementation specification')}</Button>}
       <Button variant="accent" disabled={!saved?.compiledPackage || downloading} onClick={() => void download()}>{downloading ? t('正在下载…', 'Downloading…') : t('下载已保存开发包', 'Download saved package')}</Button>
