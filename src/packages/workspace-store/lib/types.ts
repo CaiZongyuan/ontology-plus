@@ -819,6 +819,7 @@ export interface BusinessModelStepConfirmationRecord {
   projectId: string;
   step: 'BUSINESS_MODEL';
   suite: OntologySuite;
+  suiteSnapshot?: OntologySuite;
   suiteHash: string;
   presentModels: ModelCode[];
   basedOnConfirmationId: string | null;

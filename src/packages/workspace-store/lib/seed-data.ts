@@ -389,6 +389,7 @@ export const SEED_STEP_CONFIRMATIONS: StepConfirmationRecord[] = [
     projectId: 'proj-contract',
     step: 'BUSINESS_MODEL',
     suite: CONTRACT_LIFECYCLE_SUITE,
+    suiteSnapshot: CONTRACT_LIFECYCLE_SUITE,
     suiteHash: computeOntologySuiteHash(CONTRACT_LIFECYCLE_SUITE),
     presentModels: listPresentModelCodes(CONTRACT_LIFECYCLE_SUITE),
     basedOnConfirmationId: 'sconf-proto-contract-v1',

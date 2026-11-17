@@ -74,6 +74,7 @@ import {
   computeOntologySuiteHash,
   computeStepContentHash,
   listPresentModelCodes,
+  normalizeBusinessModelConfirmation,
   normalizeStepMarkdown,
   resolveCurrentStepConfirmations,
 } from './step-confirmations.js';
@@ -2199,11 +2200,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       }
       if (sourceStepConfirmations.businessModel) {
         const srcModel = sourceStepConfirmations.businessModel;
+        const clonedSnapshot = structuredClone(srcModel.suiteSnapshot ?? srcModel.suite);
         const clonedModelConf: BusinessModelStepConfirmationRecord = {
           id: nextUniqueId('sconf-model'),
           projectId: id,
           step: 'BUSINESS_MODEL',
-          suite: structuredClone(srcModel.suite),
+          suite: clonedSnapshot,
+          suiteSnapshot: structuredClone(clonedSnapshot),
           suiteHash: srcModel.suiteHash,
           presentModels: [...srcModel.presentModels],
           basedOnConfirmationId: clonedProtoConfId,
@@ -2923,7 +2926,9 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     listStepConfirmations(projectId, step) {
-      const all = listItems<StepConfirmationRecord>('step_confirmations', projectId);
+      const all = listItems<StepConfirmationRecord>('step_confirmations', projectId).map((rec) =>
+        rec.step === 'BUSINESS_MODEL' ? normalizeBusinessModelConfirmation(rec) : rec,
+      );
       return step ? all.filter((rec) => rec.step === step) : all;
     },
 
@@ -2995,6 +3000,15 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     confirmBusinessModelStep(projectId) {
       const project = this.getProject(projectId);
       if (!project) throw new Error(`Project not found: ${projectId}`);
+      const currentProtoConfirmation = this.getProjectStepConfirmations(projectId).prototype;
+      if (!currentProtoConfirmation) {
+        throw new BusinessModelConfirmError({
+          code: 'PROTOTYPE_NOT_CONFIRMED',
+          messageZh: '当前项目还没有已确认的原型，请先确认界面原型后再确认业务模型。',
+          messageEn:
+            'No confirmed prototype exists yet; confirm an interactive prototype first before confirming the Business Model.',
+        });
+      }
       if (project.validation.presentModels.length === 0) {
         throw new BusinessModelConfirmError({
           code: 'EMPTY_BUSINESS_MODEL',
@@ -3003,22 +3017,23 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         });
       }
       if (project.validation.errorCount > 0) {
+        const count = project.validation.errorCount;
         throw new BusinessModelConfirmError({
           code: 'CONSISTENCY_ERRORS_PRESENT',
-          errorCount: project.validation.errorCount,
-          messageZh: `业务模型还有 ${project.validation.errorCount} 个需要修正的问题，修正后才能确认。`,
-          messageEn: `The Business Model still has ${project.validation.errorCount} problem(s) to fix before it can be confirmed.`,
+          errorCount: count,
+          messageZh: `业务模型还有 ${count} 个需要修正的问题，修正后才能确认。`,
+          messageEn: `The Business Model still has ${count} ${count === 1 ? 'problem to fix' : 'problems to fix'} before it can be confirmed.`,
         });
       }
       const confirmedAt = new Date().toISOString();
-      const basedOnConfirmationId =
-        this.getProjectStepConfirmations(projectId).prototype?.id ?? null;
+      const basedOnConfirmationId = currentProtoConfirmation.id;
       const suiteSnapshot = structuredClone(project.suite);
       const confirmation: BusinessModelStepConfirmationRecord = {
         id: nextUniqueId('sconf-model'),
         projectId,
         step: 'BUSINESS_MODEL',
         suite: suiteSnapshot,
+        suiteSnapshot: structuredClone(suiteSnapshot),
         suiteHash: computeOntologySuiteHash(suiteSnapshot),
         presentModels: listPresentModelCodes(suiteSnapshot),
         basedOnConfirmationId,
@@ -3026,7 +3041,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       };
       putItem('step_confirmations', confirmation.id, confirmation, projectId, confirmedAt);
       return {
-        confirmation,
+        confirmation: normalizeBusinessModelConfirmation(confirmation),
         project,
         stepConfirmations: this.getProjectStepConfirmations(projectId),
       };

@@ -507,6 +507,9 @@ interface WorkbenchStoreState {
   startOntologySynthesisRun: (opts?: {
     prototypeId?: string;
     docId?: string;
+    mode?: 'synthesize' | 'update' | 'fix_problems' | 'complete_missing';
+    instruction?: string;
+    displayTitle?: string;
     mockMode?: boolean;
   }) => Promise<{ sessionId: string } | null>;
   startOntologyCopilotRun: (
@@ -1379,21 +1382,19 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     const payload: Record<string, unknown> = {
       ...(opts?.prototypeId ? { prototypeId: opts.prototypeId } : {}),
       ...(opts?.docId ? { docId: opts.docId } : {}),
+      ...(opts?.mode ? { mode: opts.mode } : {}),
     };
     const header = `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE ${JSON.stringify(payload)}]`;
-    const instruction =
+    const defaultInstruction =
       locale === 'en-US'
         ? 'Synthesize and validate the 11-model Ontology Suite from the confirmed UI prototype and SRS context via synthesize_ontology_suite.'
         : '请从已确认的界面原型锚点与需求规格上下文推导并校验完整的 11 模型本体套件，通过 synthesize_ontology_suite 工具保存。';
-    const displayTitle =
-      locale === 'en-US'
-        ? 'Synthesize 11-Model Ontology Suite'
-        : '从已确认原型合成 11 模型本体';
+    const instruction = opts?.instruction?.trim() || defaultInstruction;
 
     await get().startSessionAgentRun({
       sessionId: session.id,
       prompt: `${header}\n${instruction}`,
-      displayTitle,
+      ...(opts?.displayTitle?.trim() ? { displayTitle: opts.displayTitle.trim() } : {}),
       activeModelCode: get().selectedModel,
       ...(opts?.mockMode !== undefined ? { mockMode: opts.mockMode } : {}),
     });

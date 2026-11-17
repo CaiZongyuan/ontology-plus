@@ -15,6 +15,10 @@ import {
   validateOntologySuite,
   type OntologySuite,
 } from '../../packages/ontology-core/index.js';
+import {
+  computeOntologySuiteHash,
+  type ProjectStepConfirmations,
+} from '../../packages/workspace-store/index.js';
 import { useWorkbenchStore, type BootstrapPayload } from '../api.js';
 import { PreferencesProvider } from '../i18n.js';
 import { readStepViewMode, writeStepViewMode } from '../navigation/index.js';
@@ -45,6 +49,7 @@ function makeSuiteBootstrap(
     name?: string;
     domain?: string;
     confirmedPrototype?: boolean;
+    stepConfirmations?: ProjectStepConfirmations;
   },
 ): BootstrapPayload {
   const id = opts?.id ?? 'proj-contract';
@@ -126,6 +131,7 @@ function makeSuiteBootstrap(
           htmlContent: '<div>proto</div>',
         } as unknown as BootstrapPayload['confirmedPrototypeRevision'])
       : null,
+    ...(opts?.stepConfirmations ? { stepConfirmations: opts.stepConfirmations } : {}),
     fourLayerAssets: [],
     assembledApplications: [],
     generatedSkills: [],
@@ -192,7 +198,10 @@ function assertCleanBusinessView(html: string, contextLabel: string) {
   ).toEqual([]);
 
   // Spec #37 §5 Rule 1: at most 1 primary action button on any Business View screen
-  const primaryMatches = html.match(/class="[^"]*\bbui-btn-accent\b[^"]*"/g) ?? [];
+  const primaryMatches =
+    html.match(
+      /<button[^>]*\b(?:bui-btn-accent|bg-primary border-primary text-primary-foreground)\b[^>]*>/g,
+    ) ?? [];
   expect(
     primaryMatches.length,
     `${contextLabel} must have at most 1 primary action button`,
@@ -671,6 +680,355 @@ describe('BusinessModelStepView (#68)', () => {
       expect(rolesHtml).toContain('data-testid="roles-standalone-permissions-section"');
       expect(rolesHtml).toContain('相对方冻结管控权限');
       assertCleanBusinessView(rolesHtml, `Full roles cross-view [${locale}]`);
+    }
+  });
+
+  it('renders status banner & confirmation controls across NOT_STARTED, IN_PROGRESS, UNCONFIRMED_CHANGES, CONFIRMED, and OUTDATED in zh-CN and en-US with 0 Business View violations (#71)', () => {
+    const cleanSuite: OntologySuite = structuredClone(CONTRACT_LIFECYCLE_SUITE);
+    const cleanHash = computeOntologySuiteHash(cleanSuite);
+
+    const editedSuite: OntologySuite = structuredClone(CONTRACT_LIFECYCLE_SUITE);
+    editedSuite.M1!.aggregates[0]!.alias = '集团采购合同';
+
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      const storage = createMemoryStorage({ onto_locale: locale });
+      vi.stubGlobal('localStorage', storage);
+      vi.stubGlobal('window', { localStorage: storage });
+
+      // 1. NOT_STARTED (blocked when Prototype unconfirmed)
+      seedStore({
+        loading: false,
+        activeNav: 'app-ontology',
+        data: makeSuiteBootstrap({}, { confirmedPrototype: false }),
+      });
+      const blockedHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView viewModeOverride="business" onNavigate={() => undefined} />
+        </PreferencesProvider>,
+      );
+      expect(blockedHtml).toContain('data-testid="business-model-status-banner"');
+      expect(blockedHtml).toContain('data-step-state="NOT_STARTED"');
+      assertCleanBusinessView(blockedHtml, `NOT_STARTED blocked [${locale}]`);
+
+      // 2. IN_PROGRESS (Prototype confirmed, suite clean, not yet confirmed) -> confirm-business-model-btn enabled
+      seedStore({
+        loading: false,
+        activeNav: 'app-ontology',
+        data: makeSuiteBootstrap(cleanSuite, {
+          confirmedPrototype: true,
+          stepConfirmations: {
+            requirements: null,
+            prototype: {
+              id: 'sconf-proto-v1',
+              projectId: 'proj-contract',
+              step: 'PROTOTYPE',
+              prototypeId: 'proto-1',
+              revisionId: 'rev-1',
+              basedOnConfirmationId: null,
+              confirmedAt: '2026-11-17T00:00:00Z',
+            },
+            businessModel: null,
+          },
+        }),
+      });
+      const inProgressHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView viewModeOverride="business" onNavigate={() => undefined} />
+        </PreferencesProvider>,
+      );
+      expect(inProgressHtml).toContain('data-testid="business-model-status-banner"');
+      expect(inProgressHtml).toContain('data-step-state="IN_PROGRESS"');
+      const confirmBtnInProg = extractSubtreeByTestId(inProgressHtml, 'confirm-business-model-btn');
+      expect(confirmBtnInProg).toContain(
+        locale === 'en-US' ? 'Confirm Business Model' : '确认业务模型',
+      );
+      expect(confirmBtnInProg).not.toContain('disabled=""');
+      assertCleanBusinessView(inProgressHtml, `IN_PROGRESS clean [${locale}]`);
+
+      // 3. UNCONFIRMED_CHANGES (edited after confirmation, clean) -> confirm-business-model-btn enabled
+      seedStore({
+        loading: false,
+        activeNav: 'app-ontology',
+        data: makeSuiteBootstrap(editedSuite, {
+          confirmedPrototype: true,
+          stepConfirmations: {
+            requirements: null,
+            prototype: {
+              id: 'sconf-proto-v1',
+              projectId: 'proj-contract',
+              step: 'PROTOTYPE',
+              prototypeId: 'proto-1',
+              revisionId: 'rev-1',
+              basedOnConfirmationId: null,
+              confirmedAt: '2026-11-17T00:00:00Z',
+            },
+            businessModel: {
+              id: 'sconf-model-v1',
+              projectId: 'proj-contract',
+              step: 'BUSINESS_MODEL',
+              suite: cleanSuite,
+              suiteSnapshot: cleanSuite,
+              suiteHash: cleanHash,
+              presentModels: ['M1', 'M2', 'M3', 'ME', 'M4', 'M5', 'M6', 'M7', 'MU', 'MM', 'MI'],
+              basedOnConfirmationId: 'sconf-proto-v1',
+              confirmedAt: '2026-11-17T01:00:00Z',
+            },
+          },
+        }),
+      });
+      const unconfirmedHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView viewModeOverride="business" onNavigate={() => undefined} />
+        </PreferencesProvider>,
+      );
+      expect(unconfirmedHtml).toContain('data-testid="business-model-status-banner"');
+      expect(unconfirmedHtml).toContain('data-step-state="UNCONFIRMED_CHANGES"');
+      expect(unconfirmedHtml).toContain('data-testid="confirm-business-model-btn"');
+      assertCleanBusinessView(unconfirmedHtml, `UNCONFIRMED_CHANGES clean [${locale}]`);
+
+      // 4. CONFIRMED -> states Business Model is confirmed and offers going to Delivery
+      seedStore({
+        loading: false,
+        activeNav: 'app-ontology',
+        data: makeSuiteBootstrap(cleanSuite, {
+          confirmedPrototype: true,
+          stepConfirmations: {
+            requirements: null,
+            prototype: {
+              id: 'sconf-proto-v1',
+              projectId: 'proj-contract',
+              step: 'PROTOTYPE',
+              prototypeId: 'proto-1',
+              revisionId: 'rev-1',
+              basedOnConfirmationId: null,
+              confirmedAt: '2026-11-17T00:00:00Z',
+            },
+            businessModel: {
+              id: 'sconf-model-v1',
+              projectId: 'proj-contract',
+              step: 'BUSINESS_MODEL',
+              suite: cleanSuite,
+              suiteSnapshot: cleanSuite,
+              suiteHash: cleanHash,
+              presentModels: ['M1', 'M2', 'M3', 'ME', 'M4', 'M5', 'M6', 'M7', 'MU', 'MM', 'MI'],
+              basedOnConfirmationId: 'sconf-proto-v1',
+              confirmedAt: '2026-11-17T01:00:00Z',
+            },
+          },
+        }),
+      });
+      const confirmedHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView viewModeOverride="business" onNavigate={() => undefined} />
+        </PreferencesProvider>,
+      );
+      expect(confirmedHtml).toContain('data-testid="business-model-status-banner"');
+      expect(confirmedHtml).toContain('data-step-state="CONFIRMED"');
+      expect(confirmedHtml).toContain('data-testid="go-to-delivery-btn"');
+      expect(confirmedHtml).not.toContain('data-testid="confirm-business-model-btn"');
+      assertCleanBusinessView(confirmedHtml, `CONFIRMED clean [${locale}]`);
+
+      // 5. OUTDATED (Prototype re-confirmed to sconf-proto-v2) -> intact Business Model + outdated banner + primary Update + secondary Confirm as is
+      seedStore({
+        loading: false,
+        activeNav: 'app-ontology',
+        data: makeSuiteBootstrap(cleanSuite, {
+          confirmedPrototype: true,
+          stepConfirmations: {
+            requirements: null,
+            prototype: {
+              id: 'sconf-proto-v2',
+              projectId: 'proj-contract',
+              step: 'PROTOTYPE',
+              prototypeId: 'proto-1',
+              revisionId: 'rev-2',
+              basedOnConfirmationId: null,
+              confirmedAt: '2026-11-17T02:00:00Z',
+            },
+            businessModel: {
+              id: 'sconf-model-v1',
+              projectId: 'proj-contract',
+              step: 'BUSINESS_MODEL',
+              suite: cleanSuite,
+              suiteSnapshot: cleanSuite,
+              suiteHash: cleanHash,
+              presentModels: ['M1', 'M2', 'M3', 'ME', 'M4', 'M5', 'M6', 'M7', 'MU', 'MM', 'MI'],
+              basedOnConfirmationId: 'sconf-proto-v1',
+              confirmedAt: '2026-11-17T01:00:00Z',
+            },
+          },
+        }),
+      });
+      const outdatedHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView viewModeOverride="business" onNavigate={() => undefined} />
+        </PreferencesProvider>,
+      );
+      expect(outdatedHtml).toContain('data-testid="business-object-page"');
+      expect(outdatedHtml).toContain('data-testid="business-model-outdated-banner"');
+      expect(outdatedHtml).toContain('data-testid="business-model-status-banner"');
+      expect(outdatedHtml).toContain('data-testid="business-model-ask-assistant-update-btn"');
+      expect(outdatedHtml).toContain(
+        locale === 'en-US' ? 'Update with AI Assistant' : '让 AI 助手更新',
+      );
+      const confirmAsIsBtn = extractSubtreeByTestId(
+        outdatedHtml,
+        'business-model-confirm-as-is-btn',
+      );
+      expect(confirmAsIsBtn).toContain(
+        locale === 'en-US' ? 'Confirm as is without changes' : '不需要改动，按现状确认',
+      );
+      expect(confirmAsIsBtn).not.toContain('disabled=""');
+      assertCleanBusinessView(outdatedHtml, `OUTDATED clean [${locale}]`);
+    }
+  });
+
+  it('renders plain-language "需要修正的问题" (open by default, blocking confirm & confirm-as-is) and "尚未完成的部分" (collapsed by default) with 0 Business View violations in zh-CN and en-US (#71)', () => {
+    const suiteWithIssues: OntologySuite = structuredClone(CONTRACT_LIFECYCLE_SUITE);
+    // Remove MM & MI so there are 2 Stage Warnings ("数据存储", "对外接口")
+    delete suiteWithIssues.MM;
+    delete suiteWithIssues.MI;
+    // Introduce Consistency Errors on M2 (dangling ownerEntity) and M1 (missing dictionaryRef)
+    suiteWithIssues.M2!.behaviors[0]!.ownerEntity = 'GhostMissingObject';
+    suiteWithIssues.M1!.aggregates[0]!.attributes.push({
+      name: 'brokenDictAttr',
+      label: '结算方式选项',
+      type: 'DictionaryRef',
+      dictionaryRef: { dictionaryId: 'DICT-MISSING-99', typeCode: 'SETTLE_WAY' },
+      required: true,
+      refRules: [],
+    });
+
+    const checkReport = validateOntologySuite(suiteWithIssues);
+    expect(checkReport.errorCount).toBeGreaterThanOrEqual(2);
+    expect(checkReport.warningCount).toBe(2);
+
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      const storage = createMemoryStorage({ onto_locale: locale });
+      vi.stubGlobal('localStorage', storage);
+      vi.stubGlobal('window', { localStorage: storage });
+
+      // 1. IN_PROGRESS with both Consistency Errors & Stage Warnings
+      seedStore({
+        loading: false,
+        activeNav: 'app-ontology',
+        data: makeSuiteBootstrap(suiteWithIssues, {
+          confirmedPrototype: true,
+          stepConfirmations: {
+            requirements: null,
+            prototype: {
+              id: 'sconf-proto-v1',
+              projectId: 'proj-contract',
+              step: 'PROTOTYPE',
+              prototypeId: 'proto-1',
+              revisionId: 'rev-1',
+              basedOnConfirmationId: null,
+              confirmedAt: '2026-11-17T00:00:00Z',
+            },
+            businessModel: null,
+          },
+        }),
+      });
+
+      const defaultHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView viewModeOverride="business" onNavigate={() => undefined} />
+        </PreferencesProvider>,
+      );
+
+      // Confirm button is blocked/disabled when errorCount > 0
+      const blockedConfirmBtn = extractSubtreeByTestId(defaultHtml, 'confirm-business-model-btn');
+      expect(blockedConfirmBtn).toContain('disabled=""');
+
+      // "需要修正的问题" card is OPEN by default with "让 AI 助手处理"
+      const problemsCard = extractSubtreeByTestId(defaultHtml, 'business-model-problems-card');
+      expect(problemsCard).toContain(locale === 'en-US' ? 'Problems to fix' : '需要修正的问题');
+      expect(problemsCard).toContain('data-testid="fix-problems-with-assistant-btn"');
+      expect(problemsCard).toContain('起草合同');
+
+      // "尚未完成的部分" card is COLLAPSED by default
+      const incompleteCardCollapsed = extractSubtreeByTestId(
+        defaultHtml,
+        'business-model-incomplete-card',
+      );
+      expect(incompleteCardCollapsed).toContain(
+        locale === 'en-US' ? 'Not yet completed' : '尚未完成的部分',
+      );
+      expect(incompleteCardCollapsed).toContain('aria-expanded="false"');
+      expect(incompleteCardCollapsed).not.toContain(
+        'data-testid="complete-missing-with-assistant-btn"',
+      );
+      assertCleanBusinessView(defaultHtml, `Problems open + Incomplete collapsed [${locale}]`);
+
+      // Expand "尚未完成的部分" -> shows MODEL_BUSINESS_NAMES + "让 AI 助手补全" with 0 violations
+      const expandedIncompleteHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView
+            viewModeOverride="business"
+            onNavigate={() => undefined}
+            defaultShowIncomplete
+          />
+        </PreferencesProvider>,
+      );
+      const incompleteCardExpanded = extractSubtreeByTestId(
+        expandedIncompleteHtml,
+        'business-model-incomplete-card',
+      );
+      expect(incompleteCardExpanded).toContain('aria-expanded="true"');
+      expect(incompleteCardExpanded).toContain('data-testid="complete-missing-with-assistant-btn"');
+      expect(incompleteCardExpanded).toContain(
+        locale === 'en-US' ? 'Data Storage' : '数据存储',
+      );
+      expect(incompleteCardExpanded).toContain(
+        locale === 'en-US' ? 'Integrations' : '对外接口',
+      );
+      assertCleanBusinessView(
+        expandedIncompleteHtml,
+        `Problems open + Incomplete expanded [${locale}]`,
+      );
+
+      // 2. OUTDATED + errorCount > 0 -> "不需要改动，按现状确认" is disabled while single primary action rule holds!
+      seedStore({
+        loading: false,
+        activeNav: 'app-ontology',
+        data: makeSuiteBootstrap(suiteWithIssues, {
+          confirmedPrototype: true,
+          stepConfirmations: {
+            requirements: null,
+            prototype: {
+              id: 'sconf-proto-v2',
+              projectId: 'proj-contract',
+              step: 'PROTOTYPE',
+              prototypeId: 'proto-1',
+              revisionId: 'rev-2',
+              basedOnConfirmationId: null,
+              confirmedAt: '2026-11-17T02:00:00Z',
+            },
+            businessModel: {
+              id: 'sconf-model-v1',
+              projectId: 'proj-contract',
+              step: 'BUSINESS_MODEL',
+              suite: CONTRACT_LIFECYCLE_SUITE,
+              suiteSnapshot: CONTRACT_LIFECYCLE_SUITE,
+              suiteHash: computeOntologySuiteHash(CONTRACT_LIFECYCLE_SUITE),
+              presentModels: ['M1', 'M2', 'M3', 'ME', 'M4', 'M5', 'M6', 'M7', 'MU', 'MM', 'MI'],
+              basedOnConfirmationId: 'sconf-proto-v1',
+              confirmedAt: '2026-11-17T01:00:00Z',
+            },
+          },
+        }),
+      });
+      const outdatedWithErrorsHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView viewModeOverride="business" onNavigate={() => undefined} />
+        </PreferencesProvider>,
+      );
+      const disabledConfirmAsIs = extractSubtreeByTestId(
+        outdatedWithErrorsHtml,
+        'business-model-confirm-as-is-btn',
+      );
+      expect(disabledConfirmAsIs).toContain('disabled=""');
+      assertCleanBusinessView(outdatedWithErrorsHtml, `OUTDATED with errors [${locale}]`);
     }
   });
 });

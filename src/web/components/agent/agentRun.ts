@@ -192,11 +192,31 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
     switch (actionKind) {
       case 'SYNTHESIZE_SRS':
         return { zh: '合成 9 章节需求规格书', en: 'Synthesize 9-Chapter SRS' };
-      case 'SYNTHESIZE_ONTOLOGY_SUITE':
+      case 'SYNTHESIZE_ONTOLOGY_SUITE': {
+        const mode = typeof params.mode === 'string' ? params.mode : '';
+        if (mode === 'update') {
+          return {
+            zh: `根据已确认的原型更新${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh}`,
+            en: `Update ${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en} from confirmed prototype`,
+          };
+        }
+        if (mode === 'fix_problems') {
+          return {
+            zh: `处理${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh}中${BUSINESS_VOCABULARY.CONSISTENCY_ERROR.zh}`,
+            en: `Fix problems in ${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en}`,
+          };
+        }
+        if (mode === 'complete_missing') {
+          return {
+            zh: `补全${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh}中${BUSINESS_VOCABULARY.STAGE_WARNING.zh}`,
+            en: `Complete missing ${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en} parts`,
+          };
+        }
         return {
           zh: `生成${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh}`,
           en: `Generate ${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en}`,
         };
+      }
       case 'GENERATE_TECH_ARCH': {
         const name = typeof params.name === 'string' && params.name.trim() ? params.name.trim() : '';
         return name

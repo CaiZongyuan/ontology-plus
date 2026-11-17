@@ -42,65 +42,200 @@
   flex-wrap: wrap;
 }
 
-.bm-status-line {
+.bm-status-banner {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 6px 0 0;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--muted);
   font-size: 13px;
   line-height: 1.5;
   color: var(--muted-foreground);
 }
 
-.bm-status-line[data-tone='ok'] svg {
+.bm-status-banner[data-tone='ok'] {
+  background: var(--success-soft);
+  color: var(--foreground);
+}
+
+.bm-status-banner[data-tone='ok'] > svg {
   color: var(--success);
   flex-shrink: 0;
 }
 
-.bm-status-line[data-tone='warn'] svg {
+.bm-status-banner[data-tone='warn'] {
+  background: var(--warning-soft);
+  color: var(--foreground);
+}
+
+.bm-status-banner[data-tone='warn'] > svg {
   color: var(--warning);
   flex-shrink: 0;
 }
 
-.bm-status-line[data-tone='error'] svg {
+.bm-status-banner[data-tone='error'] {
+  background: var(--destructive-soft);
+  color: var(--foreground);
+}
+
+.bm-status-banner[data-tone='error'] > svg {
   color: var(--destructive);
   flex-shrink: 0;
 }
 
-.bm-status-line[data-tone='info'] svg {
+.bm-status-banner[data-tone='info'] > svg {
   color: var(--primary);
   flex-shrink: 0;
 }
 
-.bm-fold-btn {
+.bm-outdated-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+}
+
+.bm-outdated-copy {
+  margin: 0;
+  display: flex;
+  flex: 1 1 260px;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+
+.bm-outdated-copy > svg {
+  color: var(--warning);
+  flex-shrink: 0;
+}
+
+.bm-outdated-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.bm-diag-card {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.bm-diag-card.is-problems {
+  border-left: 3px solid var(--destructive);
+}
+
+.bm-diag-card.is-incomplete {
+  padding: 8px 12px;
+  border-color: var(--border-subtle);
+  background: var(--canvas);
+}
+
+.bm-diag-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bm-diag-title {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 8px;
-  padding: 2px 6px;
-  margin-left: -6px;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.bm-diag-title.is-error > svg {
+  color: var(--destructive);
+  flex-shrink: 0;
+}
+
+.bm-diag-toggle {
+  display: inline-flex;
+  flex: 1 1 220px;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  margin: -2px -4px;
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   font-size: 13px;
+  font-weight: 500;
   color: var(--muted-foreground);
+  text-align: left;
   cursor: pointer;
 }
 
-.bm-fold-btn:hover {
+.bm-diag-toggle:hover {
   background: var(--accent);
   color: var(--foreground);
 }
 
-.bm-warning-list {
-  margin: 6px 0 0;
-  padding: 0 0 0 20px;
-  list-style: disc;
+.bm-diag-toggle > svg {
+  flex-shrink: 0;
+  color: var(--faint-foreground);
+}
+
+.bm-diag-summary {
+  min-width: 0;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bm-diag-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+}
+
+.bm-diag-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-subtle);
   font-size: 13px;
-  color: var(--muted-foreground);
+  line-height: 1.5;
+  color: var(--foreground-soft);
+}
+
+.bm-diag-item-text {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.bm-diag-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ─── Business View Split Body (Left Object/Cross-View Rail + Right Page) ─── */
