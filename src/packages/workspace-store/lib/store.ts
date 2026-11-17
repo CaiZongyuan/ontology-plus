@@ -3,6 +3,7 @@ import nodeModule from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
+import { createArchitectureAssetCatalog } from '../../architecture-assets/index.js';
 import {
   CONTRACT_LIFECYCLE_SUITE,
   MFT_ENTERPRISE_SUITE,
@@ -41,7 +42,6 @@ import {
   SEED_DATA_MAPPINGS,
   SEED_DICT_ROWS,
   SEED_EXTRACTION_JOBS,
-  SEED_FOUR_LAYER_ASSETS,
   SEED_KNOWLEDGE_ENTRIES,
   SEED_LEGACY_SYSTEMS,
   SEED_LLM_PROVIDERS,
@@ -79,6 +79,7 @@ import {
   DataMappingRule,
   DatabaseResource,
   DesignBrief,
+  DevelopmentPackageSnapshot,
   ExtractionJob,
   FourLayerAsset,
   GeneratedSkill,
@@ -123,6 +124,7 @@ export interface D1PreparedStatementBinding {
 export interface D1DatabaseBinding {
   prepare(query: string): D1PreparedStatementBinding;
   exec(query: string): Promise<unknown>;
+  batch?(statements: D1PreparedStatementBinding[]): Promise<unknown>;
 }
 
 export interface WorkspaceStoreOptions {
@@ -130,6 +132,9 @@ export interface WorkspaceStoreOptions {
   workspaceRoot?: string;
   enableFileMirror?: boolean;
   d1Database?: D1DatabaseBinding;
+  /** Alternate source root, primarily for isolated tests. A new directory receives the bundled catalog. */
+  architectureAssetsRoot?: string;
+  architectureAssetsWritable?: boolean;
 }
 
 interface SqliteStatementLike {
@@ -141,6 +146,7 @@ interface SqliteStatementLike {
 interface SqliteDbLike {
   exec: (sql: string) => void;
   prepare: (sql: string) => SqliteStatementLike;
+  close?: () => void;
 }
 
 const ANALYTICAL_TABLE_COLUMNS: Record<string, string[]> = {
@@ -259,6 +265,7 @@ function createEdgeMemoryFallbackDb(): SqliteDbLike {
     string,
     { project_id: string | null; payload_json: string; updated_at: string }
   >();
+  const entitySavepoints: { name: string; entities: typeof entitiesMap }[] = [];
   const checkpointsMap = new Map<string, AgentCheckpointRecord>();
   const eaRelationsMap = new Map<string, Record<string, unknown>[]>();
   const analyticalTables = new Map<string, Map<string, Record<string, unknown>>>();
@@ -267,7 +274,27 @@ function createEdgeMemoryFallbackDb(): SqliteDbLike {
   }
 
   return {
-    exec() {},
+    exec(sql) {
+      const normalized = sql.trim().replace(/\s+/g, ' ');
+      const begin = /^SAVEPOINT (\w+)$/i.exec(normalized);
+      if (begin) {
+        entitySavepoints.push({ name: begin[1], entities: new Map(entitiesMap) });
+        return;
+      }
+      const rollback = /^ROLLBACK TO SAVEPOINT (\w+)$/i.exec(normalized);
+      const release = /^RELEASE SAVEPOINT (\w+)$/i.exec(normalized);
+      const name = rollback?.[1] ?? release?.[1];
+      if (!name) return;
+      const index = entitySavepoints.findLastIndex((entry) => entry.name === name);
+      if (index < 0) throw new Error(`Unknown workspace savepoint: ${name}`);
+      if (rollback) {
+        entitiesMap.clear();
+        for (const [key, value] of entitySavepoints[index].entities) entitiesMap.set(key, value);
+        entitySavepoints.splice(index + 1);
+      } else {
+        entitySavepoints.splice(index);
+      }
+    },
     prepare(sql: string): SqliteStatementLike {
       const s = sql.trim().replace(/\s+/g, ' ');
       return {
@@ -794,6 +821,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         : path.resolve(envDbPath)
       : path.join(workspaceRoot, 'onto-cs.db'));
   const d1Database = options.d1Database;
+  const envArchitectureAssetsRoot = typeof process !== 'undefined'
+    ? process.env.ONTOLOGY_ARCHITECTURE_ASSETS_ROOT?.trim() : undefined;
+  const architectureAssetsRoot = options.architectureAssetsRoot ??
+    (envArchitectureAssetsRoot ? path.resolve(envArchitectureAssetsRoot) : undefined) ??
+    (dbPath === ':memory:' && options.architectureAssetsWritable !== false
+      ? path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ontology-standards-')), 'catalog')
+      : undefined);
+  const architectureCatalog = createArchitectureAssetCatalog({
+    rootDirectory: architectureAssetsRoot,
+    writable: options.architectureAssetsWritable,
+  });
+  const bundledAssetIds = new Set([
+    ...architectureCatalog.listAssets().map((asset) => asset.id),
+    ...architectureCatalog.listTechnologyProfiles().flatMap((profile) => profile.compatibleAssetIds),
+  ]);
 
   if (dbPath !== ':memory:') {
     try {
@@ -804,10 +846,16 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
   }
 
   const db = openSqliteOrMemoryDb(dbPath);
+  let closed = false;
   db.exec(BOOTSTRAP_SQLITE_DDL);
+  let d1MutationBatch: { query: string; values: unknown[] }[] | undefined;
 
   function replicateToD1(query: string, ...values: unknown[]): void {
     if (!d1Database) return;
+    if (d1MutationBatch) {
+      d1MutationBatch.push({ query, values });
+      return;
+    }
     try {
       void d1Database
         .prepare(query)
@@ -816,6 +864,24 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         .catch(() => undefined);
     } catch {
       // Non-fatal background D1 mirror
+    }
+  }
+
+  function replicateCommittedBatch(mutations: { query: string; values: unknown[] }[]): void {
+    if (!d1Database || mutations.length === 0) return;
+    if (d1MutationBatch) {
+      d1MutationBatch.push(...mutations);
+      return;
+    }
+    try {
+      if (d1Database.batch) {
+        void d1Database.batch(mutations.map(({ query, values }) => d1Database.prepare(query).bind(...values)))
+          .catch(() => undefined);
+      } else {
+        for (const { query, values } of mutations) replicateToD1(query, ...values);
+      }
+    } catch {
+      // Local persistence remains authoritative when the optional D1 mirror is unavailable.
     }
   }
 
@@ -1193,7 +1259,6 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         putItem('prototype_confirmations', pr.projectId, confirmation, pr.projectId);
       }
     }
-    for (const a of SEED_FOUR_LAYER_ASSETS) putItem('four_layer_assets', a.id, a);
     for (const app of SEED_ASSEMBLED_APPS) putItem('assembled_apps', app.id, app, app.projectId);
     for (const sk of SEED_SKILLS) putItem('skills', sk.id, sk, sk.projectId);
     for (const sys of SEED_LEGACY_SYSTEMS) putItem('legacy_systems', sys.id, sys, sys.linkedProjectId);
@@ -1359,6 +1424,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
   }
 
   return {
+    close() {
+      if (closed) return;
+      db.close?.();
+      closed = true;
+    },
+
     listProjects(): ProjectSummary[] {
       const rows = db
         .prepare(
@@ -1584,6 +1655,17 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
           `Project "${target.name}" is referenced by ${boundApps.length} assembled application(s): ${boundApps.map((a) => a.name).join(', ')}. Confirm force deletion or unbind first.`,
         );
       }
+      for (const application of boundApps) this.deleteAssembledApplication(application.id);
+      const survivingApplications = new Set(this.listAssembledApplications().map((application) => application.id));
+      // Older snapshots used their source project as an index owner. Their immutable
+      // content stays with the application even when that former source is deleted.
+      for (const snapshot of listItems<DevelopmentPackageSnapshot>('development_package_snapshots', projectId)) {
+        if (survivingApplications.has(snapshot.appId)) {
+          putItem('development_package_snapshots', snapshot.snapshotId, snapshot, undefined, snapshot.compiledAt);
+        } else {
+          deleteItem('development_package_snapshots', snapshot.snapshotId);
+        }
+      }
       db.prepare(`DELETE FROM ea_relations WHERE project_id = ?`).run(projectId);
       replicateToD1(`DELETE FROM ea_relations WHERE project_id = ?`, projectId);
       db.prepare(`DELETE FROM workspace_entities WHERE project_id = ?`).run(projectId);
@@ -1763,7 +1845,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         REQUIREMENT: '新建需求探索会话',
         PROTOTYPE_CO_DESIGN: '原型共创会话',
         COPILOT: '新建本体建模对话',
-        CODING: '新建四层编码任务会话',
+        ARCHITECTURE: '架构资产编写会话',
+        CODING: '应用开发规格会话',
         CAPABILITY: '新建智能体工具对话',
         REASONING: '新建数据本体推演会话',
       };
@@ -2199,12 +2282,27 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     listFourLayerAssets(layer) {
-      const all = listItems<FourLayerAsset>('four_layer_assets');
+      // Repository files win on every read, including in workspaces created before the catalog existed.
+      // Keep useful custom legacy records until the user explicitly saves them into source.
+      const sources = architectureCatalog.listAssets();
+      const sourceIds = new Set(sources.map((asset) => asset.id));
+      const legacy = listItems<FourLayerAsset>('four_layer_assets').filter(
+        (asset) => !asset.sourcePath && !bundledAssetIds.has(asset.id) && !sourceIds.has(asset.id),
+      );
+      const all = [...sources, ...legacy];
       return layer ? all.filter((a) => a.layer === layer) : all;
     },
 
+    listTechnologyProfiles() {
+      return architectureCatalog.listTechnologyProfiles();
+    },
+
     saveFourLayerAsset(asset) {
-      const full: FourLayerAsset = { ...asset, updatedAt: new Date().toISOString() };
+      const existing = this.listFourLayerAssets().find((item) => item.id === asset.id);
+      const full = architectureCatalog.saveAsset({
+        ...asset,
+        technologyProfileId: asset.technologyProfileId ?? existing?.technologyProfileId,
+      });
       return putItem('four_layer_assets', full.id, full);
     },
 
@@ -2220,6 +2318,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
           `Asset is referenced by assembled application(s): ${boundApps.map((a) => a.name).join(', ')}. Unbind or confirm force deletion.`,
         );
       }
+      architectureCatalog.deleteAsset(assetId);
       deleteItem('four_layer_assets', assetId);
     },
 
@@ -2229,10 +2328,19 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     saveAssembledApplication(app) {
       const existing = getItem<AssembledApplication>('assembled_apps', app.id);
+      const changedProject = existing && existing.projectId !== app.projectId;
       const full: AssembledApplication = {
+        ...existing,
         ...app,
         agentDevLogs: app.agentDevLogs ?? existing?.agentDevLogs ?? [],
         updatedAt: new Date().toISOString(),
+        ...(changedProject ? {
+          latestPackageSnapshotId: undefined,
+          packageOutputDir: undefined,
+          prototypeRevisionId: app.prototypeRevisionId !== existing.prototypeRevisionId
+            ? app.prototypeRevisionId : undefined,
+          status: 'ASSEMBLED' as const,
+        } : {}),
       };
       return putItem('assembled_apps', full.id, full, full.projectId);
     },
@@ -2246,6 +2354,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         name: `${existing.name} (副本)`,
         status: 'ASSEMBLED',
         packageOutputDir: undefined,
+        latestPackageSnapshotId: undefined,
         publishedEndpoint: undefined,
         publishedVersion: undefined,
         agentDevLogs: [],
@@ -2253,7 +2362,69 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     deleteAssembledApplication(appId) {
+      for (const snapshot of this.listDevelopmentPackageSnapshots(appId)) {
+        deleteItem('development_package_snapshots', snapshot.snapshotId);
+      }
       deleteItem('assembled_apps', appId);
+    },
+
+    saveDevelopmentPackageSnapshot(snapshot) {
+      const application = getItem<AssembledApplication>('assembled_apps', snapshot.appId);
+      if (!application) throw new Error(`Assembled application not found: ${snapshot.appId}`);
+      if (application.projectId !== snapshot.projectId) {
+        throw new Error('Development package project must match its application project.');
+      }
+      if (!snapshot.snapshotId || !snapshot.inputFingerprint) {
+        throw new Error('Development package snapshot and input revision are required.');
+      }
+      if (getItem<DevelopmentPackageSnapshot>('development_package_snapshots', snapshot.snapshotId)) {
+        throw new Error(`Development package snapshot is immutable: ${snapshot.snapshotId}`);
+      }
+      const payloadJson = JSON.stringify(snapshot);
+      const now = new Date().toISOString();
+      db.exec('SAVEPOINT development_package_generation');
+      const previousBatch = d1MutationBatch;
+      const mutations: { query: string; values: unknown[] }[] = [];
+      d1MutationBatch = mutations;
+      try {
+        db.prepare(`INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at)
+          VALUES (?, ?, ?, ?, ?)`).run(
+          'development_package_snapshots', snapshot.snapshotId, null, payloadJson, now,
+        );
+        replicateToD1(
+          'INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at) VALUES (?, ?, ?, ?, ?)',
+          'development_package_snapshots', snapshot.snapshotId, null, payloadJson, now,
+        );
+        this.saveAssembledApplication({
+          ...application,
+          latestPackageSnapshotId: snapshot.snapshotId,
+          packageOutputDir: snapshot.outputDir,
+          status: application.status === 'PUBLISHED' ? 'PUBLISHED' : 'PACKAGE_READY',
+          agentDevLogs: [...application.agentDevLogs, {
+            timestamp: snapshot.compiledAt,
+            phase: 'PACKAGE_GENERATED',
+            detail: `Generated implementation specification ${snapshot.snapshotId} (${snapshot.files.length} files).`,
+          }],
+        });
+        db.exec('RELEASE SAVEPOINT development_package_generation');
+      } catch (error) {
+        db.exec('ROLLBACK TO SAVEPOINT development_package_generation');
+        db.exec('RELEASE SAVEPOINT development_package_generation');
+        throw error;
+      } finally {
+        d1MutationBatch = previousBatch;
+      }
+      replicateCommittedBatch(mutations);
+      return JSON.parse(payloadJson) as DevelopmentPackageSnapshot;
+    },
+
+    getDevelopmentPackageSnapshot(snapshotId) {
+      return getItem<DevelopmentPackageSnapshot>('development_package_snapshots', snapshotId);
+    },
+
+    listDevelopmentPackageSnapshots(appId) {
+      return listItems<DevelopmentPackageSnapshot>('development_package_snapshots')
+        .filter((snapshot) => snapshot.appId === appId);
     },
 
     listGeneratedSkills(projectId) {

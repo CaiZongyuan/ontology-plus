@@ -1,0 +1,16 @@
+{
+  "id": "profile-react-hono-sqlite-node",
+  "name": "React + Hono + SQLite on Node.js",
+  "version": "1.0.0",
+  "summary": "A complete local development and Node.js deployment path that preserves the confirmed prototype's visual design.",
+  "frontend": ["React", "Vite", "TanStack Router", "Zustand", "shadcn/ui with Base UI"],
+  "backend": ["Hono", "Node.js"],
+  "persistence": ["Drizzle ORM", "SQLite"],
+  "deployment": ["Node.js service", "Vite production assets", "Persistent SQLite volume"],
+  "compatibleAssetIds": ["asset-ui-spatial-paper", "asset-foundation-ts-edge", "asset-arch-ddd-deep-module"],
+  "defaultAssetIds": {
+    "uiUeAssetId": "asset-ui-spatial-paper",
+    "techFoundationAssetId": "asset-foundation-ts-edge",
+    "techArchAssetId": "asset-arch-ddd-deep-module"
+  }
+}

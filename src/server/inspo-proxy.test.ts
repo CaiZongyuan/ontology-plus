@@ -4,19 +4,23 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { desensitizeRecommendBriefWithAgent } from '../packages/agent-runtime/index.js';
-import { createWorkspaceStore, type VisualReferenceItem } from '../packages/workspace-store/index.js';
+import { createWorkspaceStore, type VisualReferenceItem, type WorkspaceStore } from '../packages/workspace-store/index.js';
 import { createApiApp } from './app.js';
 import { buildSanitizedRecommendBrief } from './inspo-proxy.js';
 
 const tempDirs: string[] = [];
+const stores: WorkspaceStore[] = [];
 
-function createIsolatedDbPath(): string {
+function createIsolatedStore(): WorkspaceStore {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-inspo-proxy-'));
   tempDirs.push(dir);
-  return path.join(dir, 'test.db');
+  const store = createWorkspaceStore({ dbPath: path.join(dir, 'test.db'), enableFileMirror: false });
+  stores.push(store);
+  return store;
 }
 
 afterEach(() => {
+  while (stores.length > 0) stores.pop()!.close();
   vi.unstubAllGlobals();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
@@ -28,7 +32,7 @@ afterEach(() => {
 
 describe('Inspo MCP proxy, privacy-safe recommend desensitization, and offline fallback', () => {
   it('strips all SRS raw clauses, project name, project code, customer names, and numbers from outbound recommend requests and parses exemplars', async () => {
-    const store = createWorkspaceStore({ dbPath: createIsolatedDbPath(), enableFileMirror: false });
+    const store = createIsolatedStore();
 
     const secretProject = store.createProject({
       name: '华泰星辰核心清结算工作台',
@@ -178,7 +182,7 @@ describe('Inspo MCP proxy, privacy-safe recommend desensitization, and offline f
   });
 
   it('caches search, recommend, design_system, and filters in workspace-store across separate app instances without re-calling upstream fetch', async () => {
-    const store = createWorkspaceStore({ dbPath: createIsolatedDbPath(), enableFileMirror: false });
+    const store = createIsolatedStore();
 
     const mockFetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const rpcReq = JSON.parse(String(init?.body ?? '{}')) as {
@@ -315,7 +319,7 @@ describe('Inspo MCP proxy, privacy-safe recommend desensitization, and offline f
   });
 
   it('falls back cleanly to CURATED_INSPO_CATALOG when Inspo MCP times out or is unreachable', async () => {
-    const store = createWorkspaceStore({ dbPath: createIsolatedDbPath(), enableFileMirror: false });
+    const store = createIsolatedStore();
 
     const failingFetch = vi.fn(async () => {
       throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
@@ -359,7 +363,7 @@ describe('Inspo MCP proxy, privacy-safe recommend desensitization, and offline f
   });
 
   it('rejects unrequested similar (find_similar) action with HTTP 400 on both /api/inspo and /api/prototype-inspo', async () => {
-    const store = createWorkspaceStore({ dbPath: createIsolatedDbPath(), enableFileMirror: false });
+    const store = createIsolatedStore();
     const app = createApiApp(store);
 
     for (const endpoint of ['/api/inspo', '/api/prototype-inspo']) {
@@ -403,7 +407,7 @@ describe('Inspo MCP proxy, privacy-safe recommend desensitization, and offline f
 
     try {
       process.env.ONTOLOGY_LIVE_LLM = '1';
-      const store = createWorkspaceStore({ dbPath: createIsolatedDbPath(), enableFileMirror: false });
+      const store = createIsolatedStore();
       store.updateSystemSettings({ mockLlmMode: false });
       store.saveLlmProvider({
         id: 'prov-live-desensitize',

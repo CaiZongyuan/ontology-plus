@@ -1,5 +1,8 @@
 import http from 'node:http';
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { CONTRACT_LIFECYCLE_SUITE, validateOntologySuite } from '../../ontology-core/index.js';
 import { createWorkspaceStore } from '../../workspace-store/index.js';
 import {
@@ -26,6 +29,14 @@ import {
   runUnifiedAgentSessionStream,
   testLlmGatewayConnection,
 } from '../index.js';
+
+const architectureDirectories: string[] = [];
+afterEach(() => {
+  for (const directory of architectureDirectories.splice(0)) {
+    if (path.dirname(directory) !== os.tmpdir()) throw new Error('Unexpected test catalog directory');
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe('agent-runtime deep module', () => {
   it('connects to the configured local Pi LLM gateway (auto/glm-5.3-flash) or reports status cleanly', async () => {
@@ -145,7 +156,7 @@ describe('agent-runtime deep module', () => {
 
   it('synthesizes canonical 9-Part SRS (需求规格说明书.md) via REQUIREMENT Agent Run including mandatory sub-items 9.1 through 9.7', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
-    expect(DOMAIN_RUN_TOOL_NAMES).toHaveLength(6);
+    expect(DOMAIN_RUN_TOOL_NAMES).toHaveLength(10);
     expect(DOMAIN_RUN_TOOL_NAMES).toContain('run_ontology_extraction');
     const reqAgentSess = store.createAgentSession({
       projectId: 'proj-contract',
@@ -181,7 +192,9 @@ describe('agent-runtime deep module', () => {
   }, 20000);
 
   it('generates semantic HTML prototype, refines it, and synthesizes 11-model ontology & tech arch via Agent Runs with 0 consistency errors', async () => {
-    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-runtime-architecture-'));
+    architectureDirectories.push(directory);
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false, architectureAssetsRoot: path.join(directory, 'catalog') });
     const emptyProj = store.createProject({
       name: '供应商采购订单协同系统',
       code: 'SRM-PO',
@@ -302,13 +315,13 @@ describe('agent-runtime deep module', () => {
       coffeeUpdatedProj.suite.M1?.aggregates.some((a) => a.name === 'CoffeeOrder'),
     ).toBe(true);
 
-    const codingSess = store.createAgentSession({
+    const architectureSession = store.createAgentSession({
       projectId: emptyProj.id,
-      agentKind: 'CODING',
-      title: 'SRM 架构研发会话',
+      agentKind: 'ARCHITECTURE',
+      title: 'SRM 架构资产会话',
     });
     const archTurn = await collectUnifiedAgentTurn(store, {
-      sessionId: codingSess.id,
+      sessionId: architectureSession.id,
       prompt:
         '[ACTION:GENERATE_TECH_ARCH {"name":"SRM 11模型深模块云原生架构","stackTags":["TypeScript","Hono","D1"]}]\n生成技术架构规范',
       mockMode: true,
@@ -326,7 +339,8 @@ describe('agent-runtime deep module', () => {
       appId: 'app-contract-clm',
       instruction: '同步最新 M3 合规校验规则至后端应用服务层',
     });
-    expect(coding.generatedFilesCount).toBeGreaterThan(5);
+    expect(coding.generatedFilesCount).toBe(0);
+    expect(store.listAgentSessions({ projectId: 'proj-contract', agentKind: 'CODING' }).some((session) => session.targetId === 'app-contract-clm')).toBe(true);
   }, 30000);
 
   it('runs capability smart chat turn invoking dynamic MCP tools and citing SKILL.md rules', async () => {
@@ -425,7 +439,7 @@ describe('agent-runtime deep module', () => {
     const assetsBefore = store.listFourLayerAssets().length;
     const reportsBefore = store.listAnalyticsReports().length;
 
-    const probes: { kind: 'COPILOT' | 'REQUIREMENT' | 'CODING' | 'REASONING'; prompt: string }[] = [
+    const probes: { kind: 'COPILOT' | 'REQUIREMENT' | 'ARCHITECTURE' | 'REASONING'; prompt: string }[] = [
       { kind: 'COPILOT', prompt: '测试离线网关诊断' },
       {
         kind: 'COPILOT',
@@ -436,7 +450,7 @@ describe('agent-runtime deep module', () => {
         prompt: '[ACTION:SYNTHESIZE_SRS {}]\n合成九章节 SRS',
       },
       {
-        kind: 'CODING',
+        kind: 'ARCHITECTURE',
         prompt: '[ACTION:GENERATE_TECH_ARCH {"name":"探测技术架构"}]\n生成技术架构',
       },
       {

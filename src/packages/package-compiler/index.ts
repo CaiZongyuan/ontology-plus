@@ -1,14 +1,20 @@
 export {
   buildOntologySuiteManifest,
   compileDevelopmentPackage,
+  fingerprintDevelopmentPackageInputs,
+  validateDevelopmentPackageInputs,
+  DevelopmentPackageInputError,
   compileOntologySkill,
   type CompileDevelopmentPackageInput,
+  type DevelopmentPackagePrototypeRevision,
+  type DevelopmentPackageInputDiagnostic,
   type CompiledPackageFile,
   type CompiledDevelopmentPackage,
 } from './lib/compiler.js';
 
 export {
   buildZipArchive,
+  buildDevelopmentPackageZip,
   compileDevelopmentPackageZip,
   type ZipArchiveEntryInput,
   type CompiledDevelopmentPackageZip,

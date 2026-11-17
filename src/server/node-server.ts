@@ -13,8 +13,12 @@ void autoResumeInterruptedAgentSessions(store).catch((err) => {
   console.error('Failed to auto-resume interrupted agent sessions on startup:', err);
 });
 
-process.once('SIGINT', () => process.exit(0));
-process.once('SIGTERM', () => process.exit(0));
+const shutdown = () => {
+  store.close();
+  process.exit(0);
+};
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
 
 // Serve built frontend assets in production/start mode if dist/client exists
 const distDir = path.resolve(process.cwd(), 'dist', 'client');

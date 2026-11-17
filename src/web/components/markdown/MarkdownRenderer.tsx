@@ -10,6 +10,7 @@ export interface MarkdownRendererProps {
   isStreaming?: boolean;
   className?: string;
   testId?: string;
+  onLinkClick?: (href: string, event: React.MouseEvent<HTMLAnchorElement>) => void;
 }
 
 export function MarkdownRenderer({
@@ -17,10 +18,11 @@ export function MarkdownRenderer({
   isStreaming = false,
   className,
   testId,
+  onLinkClick,
 }: MarkdownRendererProps) {
   return (
     <div
-      className={cn('md-prose text-[13px] leading-[1.65] text-ink break-words', className)}
+      className={cn('md-prose text-[length:var(--text-base)] leading-[1.65] text-ink break-words', className)}
       data-testid={testId}
     >
       <ReactMarkdown
@@ -70,6 +72,7 @@ export function MarkdownRenderer({
                 rel="noopener noreferrer"
                 className="font-medium text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
                 {...rest}
+                onClick={(event) => onLinkClick?.(href ?? '', event)}
               >
                 {children}
               </a>

@@ -1,6 +1,6 @@
 # Ontology Plus
 
-An ontology-driven software modeling and application assembly workbench that turns business requirements into formal 11-model specifications, interactive prototypes, and executable development packages.
+An ontology-driven software modeling and application assembly workbench that turns business requirements into formal 11-model specifications, interactive prototypes, and development specifications for coding agents.
 
 ## Core Ontology Suite
 
@@ -69,7 +69,7 @@ The top-level domain workspace container that owns one evolving Ontology Suite a
 _Avoid_: Project session,工程会话, chat workspace
 
 **Agent Session (智能体会话)**:
-A persistent, multi-turn conversation thread between a user and a specialized domain agent (such as Requirement Exploration, Prototype Co-Design, Ontology Copilot, Application Coding, Capability Chat, or Data Reasoning) scoped to an Ontology Project.
+A persistent, multi-turn conversation thread between a user and a specialized domain agent (such as Requirement Exploration, Prototype Co-Design, Ontology Copilot, Architecture Asset Authoring, Application Development, Capability Chat, or Data Reasoning) scoped to an Ontology Project.
 _Avoid_: Project session, stateless prompt, one-shot turn
 
 **Agent Run (智能体运行)**:
@@ -123,12 +123,32 @@ A live sample sheet of colors, type, and representative components that shows th
 _Avoid_: Composite preview, reference draft, 合成预览
 
 **Four-Layer Application Assembly (四层应用装配)**:
-The explicit binding of four architectural assets—`01 UI/UE Specification`, `02 Ontology Suite`, `03 Tech Foundation`, and `04 Tech Architecture`—into a buildable application blueprint.
+The binding of four concerns—UI/UE design, Ontology Suite, technical foundation, and technical architecture—into an application implementation blueprint, using the project's confirmed UI source and explicitly selected engineering standards.
 _Avoid_: Project template, app config
 
-**Development Package (开发包)**:
-A self-contained, deterministic bundle exported from a Four-Layer Application Assembly (containing compiled development guides, file verification manifests, ontology YAML files, prototype, and foundation source) consumed by an Agent Harness to implement the target system.
+**Architecture Asset (架构资产)**:
+A reusable specification of UI standards, technical foundation conventions, or technical architecture constraints that an application explicitly selects.
+_Avoid_: Interactive Prototype, technology tag
+
+**Technology Profile (技术方案)**:
+A coherent choice of frontend, backend, persistence, deployment approach, and compatible development standards selected together for an application.
+_Avoid_: Technology tag list, framework label
+
+**Development Package (开发资料包 / 开发包)**:
+A self-contained implementation specification exported from a Four-Layer Application Assembly, giving a coding agent the requirements, confirmed prototype, Ontology Suite, selected engineering standards, and acceptance criteria needed to build the target application.
 _Avoid_: Source zip, release build
+
+**Package Snapshot (开发包快照)**:
+An immutable Development Package produced from one fixed set of application inputs, retaining their source revisions so that preview and download refer to the same content.
+_Avoid_: Latest project state, live export
+
+**Architecture Asset Agent (架构资产智能体)**:
+A specialist that helps users create, refine, and maintain reusable architecture assets and development standards.
+_Avoid_: Application Coding Agent, package compiler
+
+**Application Development Agent (应用开发智能体)**:
+A specialist that helps users inspect application assembly inputs, resolve missing or conflicting information, and refine the target application's implementation specification.
+_Avoid_: Architecture Asset Agent, package compiler
 
 **Ontology Skill (本体技能)**:
 An agent-consumable skill (`SKILL.md` plus disclosed YAML references) compiled from an Ontology Suite using context pointers and checkable completion criteria.

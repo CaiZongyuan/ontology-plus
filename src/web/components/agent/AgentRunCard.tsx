@@ -15,6 +15,7 @@ import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { ApprovalCard, Button } from '../beautifui/index.js';
 import { LocalImageThumbnail } from './VisionAttachmentControls.js';
+import { MarkdownRenderer } from '../markdown/index.js';
 import {
   formatAnchorBadgeLabel,
   formatRunElapsed,
@@ -224,6 +225,15 @@ export function AgentRunCard({
         </details>
       )}
 
+      {run.text && (
+        <MarkdownRenderer
+          content={run.text}
+          isStreaming={running}
+          className="agent-run-text"
+          testId="agent-run-text"
+        />
+      )}
+
       {run.askUser && (
         <div className="agent-run-hitl">
           <ApprovalCard
@@ -241,9 +251,12 @@ export function AgentRunCard({
 
       {run.status === 'SUCCEEDED' && run.result && (
         <footer className="agent-run-outcome" data-testid="agent-run-result">
-          <p className="agent-run-outcome-text">
-            {t(run.result.summary.zh, run.result.summary.en)}
-          </p>
+          {!run.text && (
+            <MarkdownRenderer
+              content={t(run.result.summary.zh, run.result.summary.en)}
+              className="agent-run-outcome-text"
+            />
+          )}
           {run.artifact?.kind === 'REASONING_POLICY' &&
             run.artifact.policyRecommendations.length > 0 && (
               <div className="agent-run-policy-list" data-testid="agent-run-policy-list">

@@ -4,6 +4,10 @@ Agent work had grown four unrelated surfaces: embedded `Agent Session` workbench
 
 Sessions stay one per specialised agent per `Ontology Project`, because each agent has its own tools and context. The one exception is `Prototype Co-Design`, where each `Interactive Prototype` owns its own session and forks it when the prototype is saved as a new one, since a conversation about one design direction is noise for another. A session runs one `Agent Run` at a time and queues further input; different sessions may run concurrently.
 
+Architecture asset authoring and application development are separate specialisations with separate conversation histories and working contexts. The Architecture Asset Agent helps users add and maintain development standards; application development has its own session for work on the target application's deliverables. Both use the shared Agent Panel. Changing only the panel title while reusing one `CODING` conversation does not provide this separation.
+
+The Architecture Asset Agent authors repository-owned standards as defined in ADR 0012. The Application Development Agent checks the selected inputs, identifies missing or conflicting information, and refines the current application's implementation specification; changes to shared standards belong to architecture asset authoring. Assistant text streams as normal Markdown content, while thinking and tool details are collapsible; displayed steps correspond to actual activity.
+
 ## Considered Options
 
 - **Keep background pipeline tasks as a second mechanism and only restyle them.** Rejected: two mechanisms means two streaming protocols, two cancel and retry paths, and two places for the user to look, which is the fragmentation being removed.
@@ -15,3 +19,4 @@ Sessions stay one per specialised agent per `Ontology Project`, because each age
 - Canvas buttons such as "Synthesize SRS" or "Generate prototype" remain, but each posts a structured instruction to the owning session instead of calling a one-shot endpoint.
 - The pipeline-task endpoints and the one-shot agent endpoints are retired once their callers have moved, so resumability and cancellation have to be provided by the session engine alone.
 - A failed run is reported as failed in the panel. No agent path may substitute a template result and report success outside the explicit Mock mode of ADR 0007.
+- Development Package generation is a deterministic operation that validates and assembles saved material into the Package Snapshot defined in ADR 0013. It runs directly with ordinary operation status; conversational specification refinement remains an Agent Run. Generating or downloading a package does not require a new LLM conversation.

@@ -43,7 +43,8 @@ function computeCrc32(bytes: Uint8Array): number {
 }
 
 function encodeDosDateTime(date: Date): { dosTime: number; dosDate: number } {
-  const year = Math.max(date.getUTCFullYear(), 1980);
+  if (!Number.isFinite(date.getTime())) throw new Error('A valid ZIP timestamp is required.');
+  const year = Math.min(Math.max(date.getUTCFullYear(), 1980), 2107);
   const month = date.getUTCMonth() + 1;
   const day = date.getUTCDate();
   const hours = date.getUTCHours();
@@ -62,9 +63,12 @@ function normalizeZipPath(rawPath: string): string {
     .replace(/^\/+/, '');
 }
 
-export function buildZipArchive(files: ZipArchiveEntryInput[]): Uint8Array {
+export function buildZipArchive(
+  files: ZipArchiveEntryInput[],
+  timestamp: string | Date = '1980-01-01T00:00:00.000Z',
+): Uint8Array {
   const encoder = new TextEncoder();
-  const { dosTime, dosDate } = encodeDosDateTime(new Date());
+  const { dosTime, dosDate } = encodeDosDateTime(new Date(timestamp));
 
   interface PreparedEntry {
     nameBytes: Uint8Array;
@@ -179,22 +183,17 @@ export function buildZipArchive(files: ZipArchiveEntryInput[]): Uint8Array {
   return output;
 }
 
-export function compileDevelopmentPackageZip(
-  input: CompileDevelopmentPackageInput,
-): CompiledDevelopmentPackageZip {
-  const pkg = compileDevelopmentPackage({
-    ...input,
-    writeToDisk: input.writeToDisk ?? false,
-  });
-
+/** Package only a retained snapshot; this never reads live workspace inputs. */
+export function buildDevelopmentPackageZip(pkg: CompiledDevelopmentPackage): CompiledDevelopmentPackageZip {
   const zipBytes = buildZipArchive(
     pkg.files.map((file) => ({
       path: file.relativePath,
       content: file.content,
     })),
+    pkg.compiledAt,
   );
 
-  const safeSlug = input.app.id.replace(/[^a-zA-Z0-9._-]+/g, '-') || 'ontology-package';
+  const safeSlug = pkg.appId.replace(/[^a-zA-Z0-9._-]+/g, '-') || 'ontology-package';
   const fileName = `${safeSlug}-dev-package.zip`;
 
   return {
@@ -202,4 +201,14 @@ export function compileDevelopmentPackageZip(
     zipBytes,
     fileName,
   };
+}
+
+export function compileDevelopmentPackageZip(
+  input: CompileDevelopmentPackageInput | CompiledDevelopmentPackage,
+): CompiledDevelopmentPackageZip {
+  const pkg = 'files' in input ? input : compileDevelopmentPackage({
+    ...input,
+    writeToDisk: input.writeToDisk ?? false,
+  });
+  return buildDevelopmentPackageZip(pkg);
 }
