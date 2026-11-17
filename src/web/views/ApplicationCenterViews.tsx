@@ -1819,7 +1819,7 @@ export function RequirementDocsView({
               />
               <input
                 className="input"
-                style={{ flex: '0 0 72px', width: 72, fontFamily: 'var(--mono)' }}
+                style={{ flex: '0 0 72px', width: 72, fontFamily: 'var(--font-mono)' }}
                 value={docVersion}
                 onChange={(e) => setDocVersion(e.target.value)}
                 placeholder="v1.0"
@@ -2717,7 +2717,7 @@ export function ModelFilesView({
       {lifecycle.hasForeignDemoTemplate && (
         <div
           className="card flex flex-wrap items-center justify-between gap-3"
-          style={{ borderColor: 'var(--warn)', background: 'var(--warn-soft, var(--inset))' }}
+          style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}
         >
           <div className="text-[12.5px] text-ink max-w-[680px]">
             <strong>
@@ -2858,7 +2858,7 @@ export function ModelFilesView({
       {importErrors.length > 0 && (
         <div
           className="card"
-          style={{ borderColor: 'var(--bad)', background: 'var(--bad-soft)' }}
+          style={{ borderColor: 'var(--destructive)', background: 'var(--destructive-soft)' }}
         >
           <div className="card-header" style={{ marginBottom: 6 }}>
             <strong>{t('YAML 导入解析诊断', 'YAML Import Parse Errors')}</strong>
@@ -4795,7 +4795,7 @@ export function AppPublishView({
           >
             <input
               className="input"
-              style={{ width: 150, fontFamily: 'var(--mono)' }}
+              style={{ width: 150, fontFamily: 'var(--font-mono)' }}
               placeholder={t('新版本号 (可选)', 'Next Version')}
               value={versionInputs[app.id] ?? ''}
               onChange={(e) =>
@@ -4804,7 +4804,7 @@ export function AppPublishView({
             />
             <input
               className="input"
-              style={{ flex: 1, minWidth: 200, fontFamily: 'var(--mono)' }}
+              style={{ flex: 1, minWidth: 200, fontFamily: 'var(--font-mono)' }}
               placeholder={app.publishedEndpoint || `/apps/${app.id}`}
               value={endpointInputs[app.id] ?? ''}
               onChange={(e) =>

@@ -413,7 +413,7 @@ export function DataResourcesView({
                 <thead>
                   <tr>
                     {sqlResult.columns.map((col) => (
-                      <th key={col} style={{ fontFamily: 'var(--mono)', whiteSpace: 'nowrap' }}>
+                      <th key={col} style={{ fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
                         {col}
                         {col.endsWith('__label') && (
                           <span className="badge badge-accent ml-1">
@@ -434,7 +434,7 @@ export function DataResourcesView({
                           <td
                             key={col}
                             style={{
-                              fontFamily: isDictLabel ? 'var(--sans)' : 'var(--mono)',
+                              fontFamily: isDictLabel ? 'var(--font-sans)' : 'var(--font-mono)',
                               fontSize: 11.5,
                               whiteSpace: 'nowrap',
                             }}
@@ -485,8 +485,8 @@ export function DataResourcesView({
                     padding: '8px 10px',
                     borderRadius: 6,
                     cursor: 'pointer',
-                    background: active ? 'var(--primary-soft)' : 'var(--surface-2)',
-                    border: `1px solid ${active ? 'var(--primary)' : 'var(--line)'}`,
+                    background: active ? 'var(--primary-soft)' : 'var(--muted)',
+                    border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
                   }}
                 >
                   <div className="flex items-start justify-between gap-2">
@@ -2421,8 +2421,8 @@ export function SystemSettingsView() {
             gap: 12,
             padding: 12,
             borderRadius: 8,
-            background: settings.mockLlmMode ? 'var(--warn-soft)' : 'var(--surface-2)',
-            border: '1px solid var(--line)',
+            background: settings.mockLlmMode ? 'var(--warning-soft)' : 'var(--muted)',
+            border: '1px solid var(--border)',
           }}
         >
           <div>

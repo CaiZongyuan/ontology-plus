@@ -733,7 +733,7 @@ function ShellInner() {
               <button
                 type="button"
                 className="status-pill"
-                style={{ cursor: 'pointer', color: 'var(--warn)', borderColor: 'var(--warn)' }}
+                style={{ cursor: 'pointer', color: 'var(--warning)', borderColor: 'var(--warning)' }}
                 onClick={() => setActiveView('system-settings')}
                 title={t('当前处于离线演示 Mock 模式，点击前往系统设置切换', 'Mock LLM Mode Active — Click to configure')}
               >
@@ -859,7 +859,7 @@ function ShellInner() {
                     {lifecycle?.hasForeignDemoTemplate && (
                       <div
                         className="card flex flex-wrap items-center justify-between gap-3"
-                        style={{ borderColor: 'var(--warn)', background: 'var(--warn-soft, var(--inset))' }}
+                        style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}
                       >
                         <div className="text-[12.5px] text-ink">
                           <strong>{t('提示：当前图谱来自创建工程时的示例模板', 'Notice: Graph shows preloaded demo template')}</strong>

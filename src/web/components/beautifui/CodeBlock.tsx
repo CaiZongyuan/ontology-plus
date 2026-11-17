@@ -19,13 +19,13 @@ function highlightLine(text: string): React.ReactNode {
     if (idx > last) out.push(text.slice(last, idx));
     const [full, comment, str, kw, num] = m;
     const color = comment
-      ? 'var(--ink-3)'
+      ? 'var(--faint-foreground)'
       : str
-        ? 'var(--green)'
+        ? 'var(--success)'
         : kw
           ? 'var(--primary)'
           : num
-            ? 'var(--orange)'
+            ? 'var(--warning)'
             : undefined;
     out.push(
       <span key={k++} style={color ? { color } : undefined}>

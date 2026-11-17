@@ -33,6 +33,18 @@
   --warning-soft: rgba(168, 100, 22, 0.12);
   --destructive: #b83a32;
   --destructive-soft: rgba(184, 58, 50, 0.12);
+  --model-m1: #4c50c4;
+  --model-m2: #287452;
+  --model-m3: #a86416;
+  --model-me: #8a3ab9;
+  --model-m4: #1d70b8;
+  --model-m5: #6e56cf;
+  --model-m6: #0f766e;
+  --model-m7: #b45309;
+  --model-mu: #be185d;
+  --model-mm: #4b5563;
+  --model-mi: #0369a1;
+  --model-foreground: #ffffff;
   --font-title: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
   --font-sans: "IBM Plex Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -46,6 +58,7 @@
   --shadow-sm: 0 1px 2px rgba(26, 26, 24, 0.06), 0 1px 1px rgba(26, 26, 24, 0.03);
   --shadow-md: 0 4px 14px rgba(26, 26, 24, 0.08), 0 1px 3px rgba(26, 26, 24, 0.05);
   --shadow-lg: 0 18px 48px rgba(26, 26, 24, 0.16), 0 4px 12px rgba(26, 26, 24, 0.08);
+  --shadow-color: #000000;
   --backdrop-image: url("/textures/paper/warm-grain.png"), url("/textures/paper/white-grain.png"), url("/textures/paper/cloud.png");
   --backdrop-size: 260px 260px, 260px 260px, 900px 900px;
 }

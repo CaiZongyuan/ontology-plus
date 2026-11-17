@@ -99,6 +99,9 @@ export interface MotionSchematicSelection {
   approvalAndFeedback: ApprovalFeedbackSchematicId;
 }
 
+// The `css` examples below style a generated prototype, which defines its own `--accent`,
+// `--surface` and colours. They are not workbench appearance, so they never read the
+// Workbench Theme's tokens.
 export const DEFAULT_MOTION_SELECTION: MotionSchematicSelection = {
   detailOpen: 'DRAWER',
   informationDensity: 'BALANCED_WORKSPACE',

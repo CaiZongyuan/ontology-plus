@@ -48,9 +48,9 @@ function variant(
 }
 
 describe('the contract', () => {
-  it('has a version, six groups, and uniquely named tokens', () => {
+  it('has a version, seven groups, and uniquely named tokens', () => {
     expect(THEME_CONTRACT_VERSION).toBe(1);
-    expect(Object.keys(THEME_TOKEN_GROUPS)).toEqual(['color', 'status', 'font', 'radius', 'shadow', 'backdrop']);
+    expect(Object.keys(THEME_TOKEN_GROUPS)).toEqual(['color', 'status', 'model', 'font', 'radius', 'shadow', 'backdrop']);
     const names = THEME_TOKENS.map((token) => token.name);
     expect(new Set(names).size).toBe(names.length);
     for (const token of THEME_TOKENS) {
@@ -308,14 +308,16 @@ describe('accent and muted keep their contract meaning', () => {
       'accent as a text, border, or ring colour utility (use primary)',
       /(?<![\w-])(?:text|border(?:-[xytrblse])?|ring|outline|decoration|fill|stroke|caret|divide|placeholder)-accent(?![\w-])/,
     ],
+    // SVG `fill` is left out of the two below: it paints shapes such as graph cards and
+    // label backgrounds, which is what the quiet fill and the hover fill are for.
     [
       'var(--accent) or var(--muted) as a text, border, or outline colour (use primary or muted-foreground)',
-      /(?<![\w-])(?:color|border[\w-]*|outline[\w-]*|fill|stroke|caret-color|accent-color|text-decoration[\w-]*|box-shadow)\s*:[^;{}]*?var\(--(?:accent|muted)[\s,)]/,
+      /(?<![\w-])(?:color|border[\w-]*|outline[\w-]*|stroke|caret-color|accent-color|text-decoration[\w-]*|box-shadow)\s*:[^;{}]*?var\(--(?:accent|muted)[\s,)]/,
       true,
     ],
     [
       'var(--accent) or var(--muted) as a text, border, or outline colour in an inline style',
-      /(?<![\w-])(?:color|border\w*|outline\w*|fill|stroke|caretColor|accentColor|textDecoration\w*|boxShadow)\s*:\s*(?:[^'"`\n]*\?\s*)?['"`][^'"`]*var\(--(?:accent|muted)[\s,)]/,
+      /(?<![\w-])(?:color|border\w*|outline\w*|stroke|caretColor|accentColor|textDecoration\w*|boxShadow)\s*:\s*(?:[^'"`\n]*\?\s*)?['"`][^'"`]*var\(--(?:accent|muted)[\s,)]/,
     ],
     ['a redefinition of --accent or --muted outside the theme stylesheet', /(?<![\w-])--(?:accent|muted)\s*:/],
   ];

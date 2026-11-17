@@ -82,6 +82,9 @@ function isLightHexColor(hex: string): boolean {
   return (r * 299 + g * 587 + b * 114) / 1000 >= 140;
 }
 
+// The style tile previews the app being designed: its surfaces, ink, accent, and status
+// colours are the prototype's, not workbench appearance, and stay literal whatever
+// Workbench Theme is active.
 function pickReadableInkForAccent(hex: string): string {
   const clean = hex.replace('#', '').trim();
   if (clean.length !== 6) return '#ffffff';

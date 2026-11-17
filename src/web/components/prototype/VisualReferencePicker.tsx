@@ -436,7 +436,12 @@ const VIBE_FILTERS: {
   { key: 'bento', labelZh: '模块卡片', labelEn: 'Bento Cards', emoji: '🍱' },
 ];
 
-/** A two-tone chip per look (surface, then accent): reads at a glance and needs no emoji font. */
+/**
+ * A two-tone chip per look (surface, then accent): reads at a glance and needs no emoji font.
+ * These swatches, like the fallback card for a reference whose image fails to load, show a
+ * reference style the designed app can borrow. They are not workbench colours and stay
+ * literal whatever Workbench Theme is active.
+ */
 const VIBE_SWATCH: Record<VisualReferenceVibeGroup, string> = {
   'clean-saas': 'linear-gradient(135deg, #ffffff 50%, #1c74ec 50%)',
   fintech: 'linear-gradient(135deg, #f5f7fb 50%, #4f46b8 50%)',

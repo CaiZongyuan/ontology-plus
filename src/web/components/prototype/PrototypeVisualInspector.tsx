@@ -389,6 +389,11 @@ export function toRefinementSelections(
   return list;
 }
 
+/**
+ * The script runs inside the prototype's own document, which does not load the workbench
+ * stylesheet, so its overlay and capture colours cannot read Workbench Theme tokens. They
+ * are drawn over, and sampled from, the app being designed: not workbench appearance.
+ */
 export function injectVisualInspectorIntoHtml(
   rawHtml: string,
   options: {
