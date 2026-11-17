@@ -529,4 +529,79 @@ describe('BusinessModelStepView (#68)', () => {
     expect(useWorkbenchStore.getState().activeNav).toBe('app-ontology');
     expect(useWorkbenchStore.getState().activeItemId).toBe('AGG-03');
   });
+
+  it('renders inline rename/description controls, active inline editor, and calm consistency-error rejection banner with 0 checkBusinessViewMarkup violations in zh-CN and en-US (#69)', () => {
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      const storage = createMemoryStorage({ onto_locale: locale });
+      vi.stubGlobal('localStorage', storage);
+      vi.stubGlobal('window', { localStorage: storage });
+
+      seedStore({
+        loading: false,
+        activeNav: 'app-ontology',
+        data: makeSuiteBootstrap(CONTRACT_LIFECYCLE_SUITE),
+      });
+
+      // 1. Resting state exposes inline edit triggers for Business Object, fields, actions, and rules
+      const restingHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView activePageId="AGG-01" viewModeOverride="business" />
+        </PreferencesProvider>,
+      );
+      expect(restingHtml).toContain('data-testid="business-object-title"');
+      expect(restingHtml).toContain('data-testid="inline-edit-trigger-object-name-AGG-01"');
+      expect(restingHtml).toContain('data-testid="inline-edit-trigger-object-desc-AGG-01"');
+      expect(restingHtml).toContain('data-testid="inline-edit-trigger-field-name-AGG-01-title"');
+      expect(restingHtml).toContain('data-testid="inline-edit-trigger-action-name-BHV-01"');
+      expect(restingHtml).toContain('data-testid="inline-edit-trigger-rule-name-RULE-03"');
+      assertCleanBusinessView(restingHtml, `Resting inline controls [${locale}]`);
+
+      // 2. Active inline editor state passes checkBusinessViewMarkup and keeps <= 1 primary button
+      const editingHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView
+            activePageId="AGG-01"
+            viewModeOverride="business"
+            initialInlineEditState={{
+              slotKey: 'object-name-AGG-01',
+              draftValue: locale === 'en-US' ? 'Commercial Contract' : '商务合同',
+            }}
+          />
+        </PreferencesProvider>,
+      );
+      expect(editingHtml).toContain('data-testid="business-inline-editor"');
+      expect(editingHtml).toContain('data-testid="business-inline-input"');
+      expect(editingHtml).toContain('data-testid="business-inline-save-btn"');
+      expect(editingHtml).toContain('data-testid="business-inline-cancel-btn"');
+      assertCleanBusinessView(editingHtml, `Active inline editor [${locale}]`);
+
+      // 3. Rejected inline edit banner renders business-language explanation + "让 AI 助手处理" + Cancel with 0 violations
+      const rejectedHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView
+            activePageId="AGG-02"
+            viewModeOverride="business"
+            initialRejectionState={{
+              slotKey: 'object-name-AGG-02',
+              reasonZh:
+                '已经存在同名的「合同」，直接改成相同名称会产生需要修正的问题；如需合并这两项，请交给 AI 助手同步调整关联内容。',
+              reasonEn:
+                'Another item is already named "Contract", so renaming directly would create problems to fix; let AI Assistant merge them and update linked items together.',
+              assistantPromptZh:
+                '我想把业务对象「签约相对方」改名为「合同」，请帮我同步调整所有关联内容。',
+              assistantPromptEn:
+                'I want to rename the business object "Counterparty" to "Contract"; please coordinate all linked updates.',
+            }}
+          />
+        </PreferencesProvider>,
+      );
+      expect(rejectedHtml).toContain('data-testid="business-edit-rejected-banner"');
+      expect(rejectedHtml).toContain('data-testid="business-edit-ask-assistant-btn"');
+      expect(rejectedHtml).toContain('data-testid="business-edit-cancel-btn"');
+      expect(rejectedHtml).toContain(
+        locale === 'en-US' ? 'Let AI Assistant handle it' : '让 AI 助手处理',
+      );
+      assertCleanBusinessView(rejectedHtml, `Rejected inline edit banner [${locale}]`);
+    }
+  });
 });

@@ -63,6 +63,7 @@ import {
 } from '../packages/package-compiler/index.js';
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
+import { registerBusinessModelEditRoutes } from './business-model-edits.js';
 import {
   deriveProjectStepsForStoreProject,
   listProjectPackageSnapshots,
@@ -1108,6 +1109,7 @@ export function createApiApp(
   });
 
   registerApplicationDeliveryRoutes(app, store);
+  registerBusinessModelEditRoutes(app, store);
   registerStepConfirmationRoutes(app, store);
 
   app.post('/api/applications/:appId/publish', async (c) => {

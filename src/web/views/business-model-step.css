@@ -311,6 +311,177 @@
   color: var(--foreground);
 }
 
+/* ─── Calm Inline Rename & Description Editing (#69) ─── */
+.bm-editable {
+  display: inline;
+  padding: 1px 4px;
+  margin: -1px -4px;
+  border-radius: var(--radius-xs);
+  border-bottom: 1px dashed transparent;
+  cursor: text;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+
+.bm-editable:hover,
+.bm-editable:focus-visible {
+  background: var(--accent);
+  border-bottom-color: var(--border);
+  outline: none;
+}
+
+.bm-editable-placeholder {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  color: var(--faint-foreground);
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) ease, background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+tr:hover .bm-editable-placeholder,
+li:hover .bm-editable-placeholder,
+.bm-sec-head:hover .bm-editable-placeholder,
+.bm-editable-placeholder:focus-visible {
+  opacity: 1;
+}
+
+.bm-editable-placeholder:hover,
+.bm-editable-placeholder:focus-visible {
+  background: var(--accent);
+  color: var(--muted-foreground);
+  outline: none;
+}
+
+.bm-inline-editor {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.bm-inline-editor.is-block {
+  display: flex;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.bm-inline-input {
+  flex: 1 1 200px;
+  min-width: 160px;
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 1px solid var(--ring);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: inherit;
+  line-height: 1.45;
+  box-shadow: var(--shadow-xs);
+}
+
+.bm-inline-input:focus {
+  outline: none;
+}
+
+textarea.bm-inline-input {
+  min-height: 54px;
+  resize: vertical;
+  font-weight: 400;
+}
+
+.bm-inline-save-btn,
+.bm-inline-cancel-btn,
+.bm-reject-assist-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, opacity var(--dur-fast) ease;
+}
+
+.bm-inline-save-btn {
+  border: 1px solid var(--border);
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.bm-inline-save-btn:disabled,
+.bm-inline-cancel-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.bm-inline-cancel-btn {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+
+.bm-inline-cancel-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.bm-reject-banner {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--destructive);
+  border-radius: var(--radius-md);
+  background: var(--destructive-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bm-reject-reason {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--foreground);
+}
+
+.bm-reject-reason > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--destructive);
+}
+
+.bm-reject-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.bm-reject-assist-btn {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--primary);
+}
+
+.bm-reject-assist-btn:hover {
+  background: var(--primary-soft);
+}
+
 /* ─── Sections (Level 1) & Flat Items/Rows (Level 2) ─── */
 .bm-sec {
   border-top: 1px solid var(--border-subtle);

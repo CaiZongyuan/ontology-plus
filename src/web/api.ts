@@ -361,6 +361,9 @@ interface WorkbenchStoreState {
     runPromise: Promise<void>;
   }>;
   saveSuiteWithUndo: (suite: OntologySuite, note?: string) => Promise<void>;
+  applyBusinessModelEdit: (
+    payload: PatchBusinessModelInput,
+  ) => Promise<BusinessModelEditResult>;
   pushUndoSnapshot: (prevSuite: OntologySuite) => void;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
@@ -670,6 +673,48 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       undoStack: [...get().undoStack, prevSuite],
       redoStack: [],
     });
+  },
+
+  applyBusinessModelEdit: async (payload) => {
+    const cur = get().data;
+    if (!cur) {
+      return {
+        ok: false,
+        rejection: {
+          code: 'SUITE_VALIDATION_REJECTED',
+          reasonZh: '当前未加载项目，无法保存修改。',
+          reasonEn: 'No active project is loaded.',
+          assistantPromptZh: '',
+          assistantPromptEn: '',
+          newErrorCount: 0,
+        },
+      };
+    }
+    const prevSuite = JSON.parse(JSON.stringify(cur.activeProject.suite)) as OntologySuite;
+    const result = await apiPatchBusinessModel(cur.activeProject.id, payload);
+    if (!result.ok) {
+      return result;
+    }
+
+    const latest = get().data ?? cur;
+    set({
+      data: {
+        ...latest,
+        activeProject: result.project,
+        projects: result.projects ?? latest.projects.map((p) =>
+          p.id === result.project.id
+            ? {
+                ...p,
+                currentStage: result.project.currentStage,
+                updatedAt: result.project.updatedAt,
+              }
+            : p,
+        ),
+      },
+      undoStack: [...get().undoStack, prevSuite],
+      redoStack: [],
+    });
+    return result;
   },
 
   undo: async () => {
@@ -2413,6 +2458,66 @@ export async function apiEnsurePrototypeCoDesignSession(
     `/api/projects/${encodeURIComponent(projectId)}/prototypes/${encodeURIComponent(prototypeId)}/co-design-session`,
     {},
   );
+}
+
+export type {
+  BusinessModelInlineEditTarget,
+  BusinessModelIntentSummary,
+} from '../packages/workspace-store/index.js';
+
+export interface PatchBusinessModelInput {
+  edit?: import('../packages/workspace-store/index.js').BusinessModelInlineEditTarget;
+  suite?: OntologySuite;
+  note?: string;
+  intentSummary?: import('../packages/workspace-store/index.js').BusinessModelIntentSummary;
+}
+
+export interface BusinessModelEditRejection {
+  code: 'SUITE_VALIDATION_REJECTED';
+  reasonZh: string;
+  reasonEn: string;
+  assistantPromptZh: string;
+  assistantPromptEn: string;
+  newErrorCount: number;
+}
+
+export type BusinessModelEditResult =
+  | {
+      ok: true;
+      project: ProjectDetail;
+      projects?: ProjectSummary[];
+    }
+  | {
+      ok: false;
+      rejection: BusinessModelEditRejection;
+    };
+
+export async function apiPatchBusinessModel(
+  projectId: string,
+  payload: PatchBusinessModelInput,
+): Promise<BusinessModelEditResult> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/business-model`, {
+    method: 'PATCH',
+    headers: buildJsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 422 || res.status === 409) {
+    const rejection = (await res.json()) as BusinessModelEditRejection;
+    return { ok: false, rejection };
+  }
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error || `Business model update failed (${res.status})`);
+  }
+  const data = (await res.json()) as {
+    project: ProjectDetail;
+    projects?: ProjectSummary[];
+  };
+  return {
+    ok: true,
+    project: data.project,
+    ...(data.projects ? { projects: data.projects } : {}),
+  };
 }
 
 export async function apiCompileDevPackage(

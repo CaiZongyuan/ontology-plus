@@ -208,13 +208,62 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
       dictionaryTypes.set(dict.id, typeMap);
     }
 
+    const seenAggIds = new Set<string>();
+    const seenAggKeys = new Map<string, string>();
+
     for (const agg of suite.M1.aggregates) {
+      const trimmedId = agg.id.trim();
+      const trimmedName = agg.name.trim();
+      const trimmedAlias = agg.alias.trim();
+
+      if (!trimmedName) {
+        diagnostics.push({
+          id: `M1-EMPTY-AGG-NAME-${agg.id}`,
+          tier: 'ERROR',
+          code: 'M1_EMPTY_AGGREGATE_NAME',
+          model: 'M1',
+          elementId: agg.id,
+          messageZh: `聚合根「${agg.id}」的名称不能为空。`,
+          messageEn: `Aggregate "${agg.id}" name must not be empty.`,
+        });
+      }
+
+      if (trimmedId && seenAggIds.has(trimmedId)) {
+        diagnostics.push({
+          id: `M1-DUP-AGG-ID-${agg.id}`,
+          tier: 'ERROR',
+          code: 'M1_DUPLICATE_AGGREGATE_ID',
+          model: 'M1',
+          elementId: agg.id,
+          messageZh: `存在重复的聚合根标识「${agg.id}」。`,
+          messageEn: `Duplicate aggregate id "${agg.id}".`,
+        });
+      }
+      if (trimmedId) seenAggIds.add(trimmedId);
+
+      for (const key of new Set([trimmedName, trimmedAlias].filter(Boolean))) {
+        const existingOwner = seenAggKeys.get(key);
+        if (existingOwner && existingOwner !== agg.id) {
+          diagnostics.push({
+            id: `M1-DUP-AGG-NAME-${agg.id}-${key}`,
+            tier: 'ERROR',
+            code: 'M1_DUPLICATE_AGGREGATE_NAME',
+            model: 'M1',
+            elementId: agg.id,
+            messageZh: `业务对象名称「${key}」已被另一对象占用，同一模型内业务对象不能重名。`,
+            messageEn: `Aggregate name or alias "${key}" is already used by another aggregate.`,
+          });
+        } else {
+          seenAggKeys.set(key, agg.id);
+        }
+      }
+
       aggregateIds.add(agg.id);
       aggregateIds.add(agg.name);
       aggregateIds.add(agg.alias);
-      canonicalAggByKey.set(agg.id, agg);
-      canonicalAggByKey.set(agg.name, agg);
-      canonicalAggByKey.set(agg.alias, agg);
+      if (!canonicalAggByKey.has(agg.id)) canonicalAggByKey.set(agg.id, agg);
+      if (trimmedName && !canonicalAggByKey.has(agg.name)) canonicalAggByKey.set(agg.name, agg);
+      if (trimmedAlias && !canonicalAggByKey.has(agg.alias)) canonicalAggByKey.set(agg.alias, agg);
       for (const ent of agg.entities) {
         aggregateIds.add(`${agg.name}.${ent.name}`);
       }
@@ -339,10 +388,80 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
       }
     };
 
+    const validateAttributeGroupNames = (
+      agg: AggregateRoot,
+      attrList: Attribute[],
+      groupPath: string,
+    ) => {
+      const seenNames = new Set<string>();
+      const seenLabels = new Set<string>();
+      for (const [idx, attr] of attrList.entries()) {
+        const trimmedName = attr.name.trim();
+        const trimmedLabel = attr.label.trim();
+        if (!trimmedName || !trimmedLabel) {
+          diagnostics.push({
+            id: `M1-EMPTY-ATTR-NAME-${agg.id}-${groupPath}-${idx}`,
+            tier: 'ERROR',
+            code: 'M1_EMPTY_ATTRIBUTE_NAME',
+            model: 'M1',
+            elementId: agg.id,
+            path: `${groupPath}.${trimmedName || String(idx)}`,
+            messageZh: `业务对象「${agg.alias || agg.name}」中存在名称为空的字段。`,
+            messageEn: `Aggregate "${agg.name}" has an attribute with an empty name or label.`,
+          });
+          continue;
+        }
+        if (seenNames.has(trimmedName)) {
+          diagnostics.push({
+            id: `M1-DUP-ATTR-NAME-${agg.id}-${groupPath}-${trimmedName}`,
+            tier: 'ERROR',
+            code: 'M1_DUPLICATE_ATTRIBUTE_NAME',
+            model: 'M1',
+            elementId: agg.id,
+            path: `${groupPath}.${trimmedName}`,
+            messageZh: `业务对象「${agg.alias || agg.name}」中存在重复的字段标识「${trimmedName}」。`,
+            messageEn: `Duplicate attribute name "${trimmedName}" on "${agg.name}".`,
+          });
+        }
+        seenNames.add(trimmedName);
+
+        if (seenLabels.has(trimmedLabel)) {
+          diagnostics.push({
+            id: `M1-DUP-ATTR-LABEL-${agg.id}-${groupPath}-${trimmedLabel}`,
+            tier: 'ERROR',
+            code: 'M1_DUPLICATE_ATTRIBUTE_NAME',
+            model: 'M1',
+            elementId: agg.id,
+            path: `${groupPath}.${trimmedName}`,
+            messageZh: `业务对象「${agg.alias || agg.name}」中存在重复的字段名称「${trimmedLabel}」。`,
+            messageEn: `Duplicate attribute label "${trimmedLabel}" on "${agg.name}".`,
+          });
+        }
+        seenLabels.add(trimmedLabel);
+      }
+    };
+
     for (const agg of suite.M1.aggregates) {
       const attrs = new Set<string>(['id']);
       const voNames = new Set<string>();
       const voByKey = new Map<string, AggregateRoot['valueObjects'][number]>();
+
+      validateAttributeGroupNames(agg, agg.attributes, `aggregates.${agg.id}.attributes`);
+
+      for (const [invIdx, inv] of agg.invariants.entries()) {
+        if (!inv.violationMessage.trim()) {
+          diagnostics.push({
+            id: `M1-EMPTY-INV-MSG-${agg.id}-${inv.name || invIdx}`,
+            tier: 'ERROR',
+            code: 'M1_EMPTY_INVARIANT_MESSAGE',
+            model: 'M1',
+            elementId: agg.id,
+            path: `aggregates.${agg.id}.invariants.${inv.name || invIdx}`,
+            messageZh: `业务对象「${agg.alias || agg.name}」的业务规则说明不能为空。`,
+            messageEn: `Invariant "${inv.name}" on "${agg.name}" must have a non-empty message.`,
+          });
+        }
+      }
 
       for (const vo of agg.valueObjects) {
         voNames.add(vo.name);
@@ -351,6 +470,11 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
         voByKey.set(vo.alias, vo);
         attrs.add(vo.name);
         attrs.add(vo.alias);
+        validateAttributeGroupNames(
+          agg,
+          vo.attributes,
+          `aggregates.${agg.id}.valueObjects.${vo.name}.attributes`,
+        );
         for (const voAttr of vo.attributes) {
           attrs.add(voAttr.name);
           attrs.add(`${vo.name}.${voAttr.name}`);
@@ -393,6 +517,11 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
         attrs.add(`${ent.alias}.${ent.localId}`);
         attrs.add(`${ent.alias}[].${ent.localId}`);
         attrs.add(`items[].${ent.localId}`);
+        validateAttributeGroupNames(
+          agg,
+          ent.attributes,
+          `aggregates.${agg.id}.entities.${ent.name}.attributes`,
+        );
 
         for (const entAttr of ent.attributes) {
           attrs.add(entAttr.name);
@@ -562,6 +691,17 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
   const reportedM2M7Pairs = new Set<string>();
   if (suite.M2) {
     for (const b of suite.M2.behaviors) {
+      if (!b.name.trim()) {
+        diagnostics.push({
+          id: `M2-EMPTY-NAME-${b.id}`,
+          tier: 'ERROR',
+          code: 'M2_EMPTY_BEHAVIOR_NAME',
+          model: 'M2',
+          elementId: b.id,
+          messageZh: `行为「${b.id}」的名称不能为空。`,
+          messageEn: `Behavior "${b.id}" name must not be empty.`,
+        });
+      }
       if (suite.M1 && !resolveCanonicalAgg(b.ownerEntity)) {
         diagnostics.push({
           id: `M2-OWNER-${b.id}`,
@@ -698,6 +838,17 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
   // ─── M3 Validation ──────────────────────────────────────────────────────────
   if (suite.M3) {
     for (const r of suite.M3.rules) {
+      if (!r.name.trim()) {
+        diagnostics.push({
+          id: `M3-EMPTY-NAME-${r.id}`,
+          tier: 'ERROR',
+          code: 'M3_EMPTY_RULE_NAME',
+          model: 'M3',
+          elementId: r.id,
+          messageZh: `规则「${r.id}」的名称不能为空。`,
+          messageEn: `Rule "${r.id}" name must not be empty.`,
+        });
+      }
       if (suite.M1) {
         for (const objId of r.referencedObjects) {
           if (!resolveCanonicalAgg(objId)) {
@@ -1038,7 +1189,32 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
     }
 
     const cycleReportedRoles = new Set<string>();
+    const seenRoleNames = new Set<string>();
     for (const role of suite.M5.roles) {
+      const trimmedRoleName = role.name.trim();
+      if (!trimmedRoleName) {
+        diagnostics.push({
+          id: `M5-EMPTY-ROLE-NAME-${role.id}`,
+          tier: 'ERROR',
+          code: 'M5_EMPTY_ROLE_NAME',
+          model: 'M5',
+          elementId: role.id,
+          messageZh: `角色「${role.id}」的名称不能为空。`,
+          messageEn: `Role "${role.id}" name must not be empty.`,
+        });
+      } else if (seenRoleNames.has(trimmedRoleName)) {
+        diagnostics.push({
+          id: `M5-DUP-ROLE-NAME-${role.id}-${trimmedRoleName}`,
+          tier: 'ERROR',
+          code: 'M5_DUPLICATE_ROLE_NAME',
+          model: 'M5',
+          elementId: role.id,
+          messageZh: `存在重复的角色名称「${trimmedRoleName}」。`,
+          messageEn: `Duplicate role name "${trimmedRoleName}".`,
+        });
+      } else {
+        seenRoleNames.add(trimmedRoleName);
+      }
       for (const pId of role.permissions) {
         if (!permissionIds.has(pId)) {
           diagnostics.push({
@@ -1141,9 +1317,34 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
   // ─── M6 Validation ──────────────────────────────────────────────────────────
   if (suite.M6) {
     const subFlowGraph = new Map<string, Set<string>>();
+    const seenFlowNames = new Set<string>();
 
     for (const flow of suite.M6.flows) {
       subFlowGraph.set(flow.id, new Set());
+      const trimmedFlowName = flow.name.trim();
+      if (!trimmedFlowName) {
+        diagnostics.push({
+          id: `M6-EMPTY-FLOW-NAME-${flow.id}`,
+          tier: 'ERROR',
+          code: 'M6_EMPTY_FLOW_NAME',
+          model: 'M6',
+          elementId: flow.id,
+          messageZh: `流程「${flow.id}」的名称不能为空。`,
+          messageEn: `Flow "${flow.id}" name must not be empty.`,
+        });
+      } else if (seenFlowNames.has(trimmedFlowName)) {
+        diagnostics.push({
+          id: `M6-DUP-FLOW-NAME-${flow.id}-${trimmedFlowName}`,
+          tier: 'ERROR',
+          code: 'M6_DUPLICATE_FLOW_NAME',
+          model: 'M6',
+          elementId: flow.id,
+          messageZh: `存在重复的流程名称「${trimmedFlowName}」。`,
+          messageEn: `Duplicate flow name "${trimmedFlowName}".`,
+        });
+      } else {
+        seenFlowNames.add(trimmedFlowName);
+      }
 
       if (suite.M1 && !resolveCanonicalAgg(flow.primaryAggregate)) {
         diagnostics.push({
@@ -1543,6 +1744,17 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
   if (suite.M7) {
     const boundBehaviors = new Set<string>();
     for (const qr of suite.M7.query_reports) {
+      if (!qr.name.trim()) {
+        diagnostics.push({
+          id: `M7-EMPTY-NAME-${qr.id}`,
+          tier: 'ERROR',
+          code: 'M7_EMPTY_REPORT_NAME',
+          model: 'M7',
+          elementId: qr.id,
+          messageZh: `查询报表「${qr.id}」的名称不能为空。`,
+          messageEn: `Query/report "${qr.id}" name must not be empty.`,
+        });
+      }
       if (boundBehaviors.has(qr.behaviorRef)) {
         diagnostics.push({
           id: `M7-DUP-BEH-${qr.id}`,
