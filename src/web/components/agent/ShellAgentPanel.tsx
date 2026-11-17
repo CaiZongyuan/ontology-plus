@@ -419,9 +419,13 @@ export function ShellAgentPanel({
   const liveDraft = activeSession ? liveSessionDrafts[activeSession.id] : undefined;
   const queuedItems = activeSession ? (sessionQueues[activeSession.id] ?? []) : [];
 
+  const activeSuite = data?.activeProject?.suite;
   const runs = useMemo(
-    () => agentRunsFromSession(activeSession, liveDraft),
-    [activeSession, liveDraft],
+    () =>
+      agentRunsFromSession(activeSession, liveDraft, {
+        ...(activeSuite ? { suite: activeSuite } : {}),
+      }),
+    [activeSession, liveDraft, activeSuite],
   );
 
   const queuedPrompts = useMemo(
@@ -729,7 +733,11 @@ export function ShellAgentPanel({
     const target = runs.find((r) => r.id === runId);
     const sessionId = target?.sourceSessionId ?? activeSession?.id;
     if (sessionId) {
-      void retrySessionAgentRun(sessionId, target?.sourceUserMessageId ?? runId);
+      void retrySessionAgentRun(
+        sessionId,
+        target?.sourceUserMessageId ?? runId,
+        target?.retryPrompt,
+      );
     }
   };
 
@@ -784,6 +792,7 @@ export function ShellAgentPanel({
       onCancelRun={handleCancelRun}
       onRetryRun={handleRetryRun}
       onOpenRunArtifact={handleOpenArtifact}
+      onOpenPlatformSettings={() => onNavigate('llm-center')}
       onOpenLlmCenter={() => onNavigate('llm-center')}
       onHoverAnchor={setHoveredAnchor}
       onAnswerAskUser={(runId, promptId, selectedAnswers, freeformText) =>
