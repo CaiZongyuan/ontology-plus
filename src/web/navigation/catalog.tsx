@@ -88,6 +88,9 @@ export function normalizeNavViewAlias(value: string | null | undefined): string 
   if (Object.prototype.hasOwnProperty.call(LEGACY_NAV_VIEW_ALIASES, trimmed)) {
     return LEGACY_NAV_VIEW_ALIASES[trimmed as LegacyNavViewAlias];
   }
+  if (trimmed === 'prototype' || trimmed === 'ui-prototype') {
+    return 'app-prototype';
+  }
   return trimmed;
 }
 
@@ -116,8 +119,8 @@ export const NAV_ITEMS: NavItemSpec[] = [
   {
     id: 'app-prototype',
     group: 'APPLICATION',
-    labelZh: '界面原型',
-    labelEn: 'UI Prototype & MU',
+    labelZh: '原型',
+    labelEn: 'Prototype',
   },
   {
     id: 'app-ontology',
@@ -303,14 +306,15 @@ export function getNavItemsByGroup(group: NavGroupId): NavItemSpec[] {
 
 export type BusinessModelTechTab = 'editor' | 'files' | 'graph';
 
-const RETIRED_BUSINESS_MODEL_NAV_ENTRIES = new Set<NavViewId>([
+const RETIRED_STEP_NAV_ENTRIES = new Set<NavViewId>([
+  'app-prototype',
   'app-ontology',
   'app-model-files',
   'app-knowledge-graph',
 ]);
 
 export function isRetiredNavEntry(view: NavViewId): boolean {
-  return RETIRED_BUSINESS_MODEL_NAV_ENTRIES.has(view);
+  return RETIRED_STEP_NAV_ENTRIES.has(view);
 }
 
 export function resolveLegacyBusinessModelTechTab(

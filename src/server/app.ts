@@ -840,19 +840,27 @@ export function createApiApp(
 
   app.post('/api/projects/:id/prototypes/confirm-revision', async (c) => {
     const projectId = c.req.param('id');
-    const body = await c.req.json<{ revisionId: string }>();
-    if (!body.revisionId) {
+    const body = await c.req
+      .json<{ revisionId?: string }>()
+      .catch((): { revisionId?: string } => ({}));
+    const targetRevisionId =
+      body.revisionId ||
+      store.getConfirmedPrototypeRevision(projectId)?.revisionId ||
+      store.listPrototypes(projectId)[0]?.currentRevisionId;
+    if (!targetRevisionId) {
       return c.json({ error: 'revisionId is required' }, 400);
     }
     try {
-      const res = store.confirmPrototypeRevision(projectId, body.revisionId);
+      const res = store.confirmPrototypeRevision(projectId, targetRevisionId);
+      const stepConfirmations = store.getProjectStepConfirmations(projectId);
       return c.json({
+        confirmation: stepConfirmations.prototype,
         confirmed: res.confirmed,
         confirmedRevision: res.confirmed,
         prototype: res.prototype,
         project: res.project,
         prototypes: store.listPrototypes(projectId),
-        stepConfirmations: store.getProjectStepConfirmations(projectId),
+        stepConfirmations,
         steps: deriveProjectStepsForStoreProject(store, projectId),
       });
     } catch (err) {

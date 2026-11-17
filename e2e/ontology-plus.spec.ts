@@ -129,7 +129,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.getByTestId('prototype-confirm-revision-btn').click();
     await expect(page.getByTestId('confirm-revision-mu-diff-modal')).toBeVisible();
     await page.getByTestId('confirm-revision-approve-btn').click();
-    await expect(page.getByTestId('toast-banner')).toContainText('MU');
+    await expect(page.getByTestId('toast-banner')).toContainText(/已确认|原型/);
 
     // 3. AI Ontology Copilot via Unified ShellAgentPanel -> Execute tool mutation
     await page.getByTestId('step-tab-BUSINESS_MODEL').click();

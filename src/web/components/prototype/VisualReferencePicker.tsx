@@ -20,6 +20,10 @@ import {
   X,
 } from 'lucide-react';
 import {
+  checkBusinessViewMarkup,
+  sanitizeBusinessText,
+} from '../../../packages/business-vocabulary/index.js';
+import {
   CURATED_INSPO_CATALOG,
   INSPO_CDN_BASE,
   deriveSourceSiteFromSlug,
@@ -711,7 +715,7 @@ function VisualReferenceLightboxDialog({
               onClick={() => setTab('DESIGN_MD')}
             >
               <FileText size={12} />
-              {t('提取设计令牌', 'Extracted DESIGN.md')}
+              {t('提取设计配色与字号', 'Extracted design tokens')}
             </Button>
           </div>
 
@@ -720,7 +724,7 @@ function VisualReferenceLightboxDialog({
               loadingMd ? (
                 <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-faint-foreground">
                   <Loader2 size={16} className="animate-spin" />
-                  {t('正在拉取站点 DESIGN.md 令牌…', 'Fetching DESIGN.md tokens…')}
+                  {t('正在拉取站点设计令牌…', 'Fetching site design tokens…')}
                 </div>
               ) : (
                 <pre className="overflow-x-auto rounded-card border border-border bg-card p-4 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-foreground">
@@ -756,6 +760,19 @@ export interface VisualReferencePickerProps {
   onContinue?: () => void;
   continueLabelZh?: string;
   continueLabelEn?: string;
+  businessView?: boolean;
+}
+
+function isSafeVisualReferenceForBusinessView(item: VisualReferenceItem): boolean {
+  const combined = [
+    item.title,
+    item.sourceDomain,
+    item.plainLabelZh,
+    item.plainLabelEn,
+    item.plainDescZh,
+    item.plainDescEn,
+  ].join(' ');
+  return checkBusinessViewMarkup(combined, { plainText: true }).length === 0;
 }
 
 export function VisualReferencePicker({
@@ -767,8 +784,9 @@ export function VisualReferencePicker({
   onContinue,
   continueLabelZh = '以此主参考继续 →',
   continueLabelEn = 'Continue with Primary Reference →',
+  businessView = false,
 }: VisualReferencePickerProps) {
-  const { t } = usePreferences();
+  const { locale, t } = usePreferences();
   const primaryNoteId = useId();
 
   const [catalog, setCatalog] = useState<VisualReferenceItem[]>(
@@ -852,15 +870,20 @@ export function VisualReferencePicker({
     }
   };
 
+  const effectiveCatalog = useMemo(
+    () => (businessView ? catalog.filter(isSafeVisualReferenceForBusinessView) : catalog),
+    [businessView, catalog],
+  );
+
   const vibeCounts = useMemo(() => {
     const counts: Record<string, number> = { ALL: 0 };
-    for (const item of catalog) {
+    for (const item of effectiveCatalog) {
       if (filterMode && item.mode !== filterMode) continue;
       counts.ALL = (counts.ALL ?? 0) + 1;
       counts[item.vibeGroup] = (counts[item.vibeGroup] ?? 0) + 1;
     }
     return counts;
-  }, [catalog, filterMode]);
+  }, [effectiveCatalog, filterMode]);
 
   const handleRecommend = async () => {
     setLoadingAction('recommend');
@@ -898,19 +921,26 @@ export function VisualReferencePicker({
   };
 
   const visibleItems = useMemo(() => {
-    return catalog.filter((item) => {
+    return effectiveCatalog.filter((item) => {
       if (vibe !== 'ALL' && item.vibeGroup !== vibe) return false;
       if (filterMode && item.mode !== filterMode) return false;
       return true;
     });
-  }, [catalog, vibe, filterMode]);
+  }, [effectiveCatalog, vibe, filterMode]);
 
   const canAddMoreBorrowed = selection.borrowed.length < MAX_BORROWED_REFERENCES;
 
   const borrowedCandidates = useMemo(
-    () => catalog.filter((item) => item.slug !== selection.primary.slug),
-    [catalog, selection.primary.slug],
+    () => effectiveCatalog.filter((item) => item.slug !== selection.primary.slug),
+    [effectiveCatalog, selection.primary.slug],
   );
+
+  const primaryTitle = businessView
+    ? sanitizeBusinessText(selection.primary.title, locale)
+    : selection.primary.title;
+  const primaryDomain = businessView
+    ? sanitizeBusinessText(selection.primary.sourceDomain, locale)
+    : selection.primary.sourceDomain;
 
   const inspectingBorrowed = useMemo(
     () =>
@@ -931,7 +961,7 @@ export function VisualReferencePicker({
             </h3>
             <span
               data-testid="inspo-attribution"
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2.5 py-0.5 text-[11.5px] text-foreground-soft"
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2.5 py-0.5 text-[12px] text-foreground-soft"
             >
               <Sparkles size={11} className="text-primary" />
               <span>{t('推荐由 Inspo 提供', 'Recommendations powered by Inspo')}</span>
@@ -939,7 +969,7 @@ export function VisualReferencePicker({
                 href="https://inspomcp.dev"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-0.5 font-mono text-[11px] text-primary hover:underline"
+                className="inline-flex items-center gap-0.5 font-mono text-[12px] text-primary hover:underline"
               >
                 <span>inspo</span>
                 <ExternalLink size={10} />
@@ -956,7 +986,7 @@ export function VisualReferencePicker({
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {catalogSourceNote !== 'curated' && (
-            <span className="rounded-full border border-border bg-muted px-2.5 py-0.5 font-mono text-[11px] text-faint-foreground">
+            <span className="rounded-full border border-border bg-muted px-2.5 py-0.5 font-mono text-[12px] text-faint-foreground">
               {catalogSourceNote === 'cache'
                 ? t('已命中本地缓存', 'Cached')
                 : t('实时推荐', 'Live References')}
@@ -988,14 +1018,14 @@ export function VisualReferencePicker({
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-[13px]">
           <Palette size={15} className="shrink-0 text-primary" />
           <span className="badge badge-accent">{t('主参考', 'Primary Reference')}</span>
-          <strong className="text-foreground">{selection.primary.title}</strong>
+          <strong className="text-foreground">{primaryTitle}</strong>
           <a
             href={selection.primary.sourceUrl}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1 font-mono text-[12px] text-foreground-soft hover:text-primary hover:underline"
           >
-            <span>{selection.primary.sourceDomain}</span>
+            <span>{primaryDomain}</span>
             <ExternalLink size={11} />
           </a>
           <div className="flex items-center gap-1">
@@ -1024,7 +1054,7 @@ export function VisualReferencePicker({
         {onContinue && (
           <Button
             type="button"
-            variant="accent"
+            variant={businessView ? 'secondary' : 'accent'}
             size="sm"
             data-testid="visual-ref-continue-btn"
             disabled={!selection.primary}
@@ -1048,7 +1078,7 @@ export function VisualReferencePicker({
               `Optional: borrow one aspect from another site, or annotate the primary`,
             )}
           </span>
-          <span className="font-mono text-[11px] text-faint-foreground">
+          <span className="font-mono text-[12px] text-faint-foreground">
             {t(
               `借鉴 ${selection.borrowed.length}/${MAX_BORROWED_REFERENCES}`,
               `Borrowed ${selection.borrowed.length}/${MAX_BORROWED_REFERENCES}`,
@@ -1246,7 +1276,7 @@ export function VisualReferencePicker({
                 />
               )}
               <span>{t(vf.labelZh, vf.labelEn)}</span>
-              <span className="font-mono text-[10.5px] tabular-nums opacity-70">
+              <span className="font-mono text-[12px] tabular-nums opacity-70">
                 {vibeCounts[vf.key] ?? 0}
               </span>
             </Button>
@@ -1409,13 +1439,13 @@ export function VisualReferencePicker({
                   <Maximize2 size={12.5} />
                 </button>
                 {isPrimary && (
-                  <div className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[11.5px] font-semibold text-white shadow-md">
+                  <div className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[12px] font-semibold text-white shadow-md">
                     <Check size={12} strokeWidth={2.5} />
                     {t('当前主参考', 'Primary Reference')}
                   </div>
                 )}
                 {!isPrimary && borrowedEntry && (
-                  <div className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1.5 rounded-full border border-primary bg-card/95 px-2.5 py-1 text-[11.5px] font-semibold text-foreground shadow-sm">
+                  <div className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1.5 rounded-full border border-primary bg-card/95 px-2.5 py-1 text-[12px] font-semibold text-foreground shadow-sm">
                     <Check size={12} className="text-primary" />
                     {t(
                       `借鉴参考 · ${borrowedAspectMeta?.labelZh ?? ''}`,
@@ -1434,12 +1464,12 @@ export function VisualReferencePicker({
                     target="_blank"
                     rel="noreferrer"
                     onClick={(e) => e.stopPropagation()}
-                    className="inline-flex min-w-0 items-center gap-1 font-mono text-[11px] text-faint-foreground hover:text-primary"
+                    className="inline-flex min-w-0 items-center gap-1 font-mono text-[12px] text-faint-foreground hover:text-primary"
                   >
                     <span className="truncate">{item.sourceDomain}</span>
                     <ExternalLink size={10} className="shrink-0" />
                   </a>
-                  <span className="ml-auto shrink-0 text-[11px] text-faint-foreground">
+                  <span className="ml-auto shrink-0 text-[12px] text-faint-foreground">
                     {item.mode === 'dark' ? t('深色', 'Dark') : t('浅色', 'Light')}
                   </span>
                 </div>
@@ -1468,7 +1498,7 @@ export function VisualReferencePicker({
 
                   <Button
                     type="button"
-                    variant={isPrimary ? 'secondary' : 'accent'}
+                    variant={isPrimary || businessView ? 'secondary' : 'accent'}
                     size="xs"
                     data-testid={`select-primary-ref-${item.slug}`}
                     onClick={() => onSelectionChange(selectPrimaryReference(selection, item))}

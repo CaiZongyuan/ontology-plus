@@ -1622,15 +1622,23 @@ export function PrototypeVisualPreviewStage({
           <div className="flex items-center gap-2 min-w-0">
             <Loader2 size={13} className="agent-run-spin text-primary shrink-0" aria-hidden="true" />
             <span className="font-medium text-foreground">
-              {t('Agent 正在修改', 'Modifying...')}
+              {t('AI 助手正在修改', 'AI Assistant is updating...')}
             </span>
-            {runningAnchorSummary && (
-              <span className="badge badge-accent font-mono text-[10.5px]">
-                {runningAnchorSummary}
+            {activeRunningAnchor.label && (
+              <span className="badge badge-accent text-[12px]">
+                {activeRunningAnchor.label}
               </span>
             )}
+            {runningAnchorSummary && runningAnchorSummary !== activeRunningAnchor.label && (
+              <details className="text-[12px] text-muted-foreground">
+                <summary className="cursor-pointer select-none">
+                  {t('查看细节', 'View details')}
+                </summary>
+                <span className="ml-1 font-mono">{runningAnchorSummary}</span>
+              </details>
+            )}
           </div>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[12px] text-muted-foreground">
             {t('修改期间仍可自由浏览或框选下一轮目标', 'You can keep browsing or box-selecting for the next queued turn')}
           </span>
         </div>
@@ -1686,7 +1694,7 @@ export function PrototypeVisualPreviewStage({
         >
           <iframe
             ref={iframeRef}
-            title={t('交互式 HTML 原型沙箱预览', 'Interactive Prototype Sandbox')}
+            title={t('交互式原型预览', 'Interactive Prototype Preview')}
             sandbox="allow-scripts"
             srcDoc={previewSrcDoc}
             className="block border-0 bg-card"

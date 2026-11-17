@@ -97,6 +97,55 @@ export function registerStepConfirmationRoutes(app: Hono, store: WorkspaceStore)
     }
   });
 
+  app.post('/api/projects/:id/steps/prototype/confirm', async (c) => {
+    const projectId = c.req.param('id');
+    const locale = resolveRouteLocale(c);
+    const project = store.getProject(projectId);
+    if (!project) return c.json({ error: 'Project not found' }, 404);
+    const body = await c.req
+      .json<{ revisionId?: string; prototypeId?: string }>()
+      .catch((): { revisionId?: string; prototypeId?: string } => ({}));
+
+    const prototypes = store.listPrototypes(projectId);
+    const confirmedProto = store.getConfirmedPrototypeRevision(projectId);
+    const targetProto = body.prototypeId
+      ? prototypes.find((p) => p.id === body.prototypeId)
+      : prototypes.find((p) => p.id === confirmedProto?.prototypeId) ?? prototypes[0];
+    const targetRevisionId =
+      body.revisionId || targetProto?.currentRevisionId || confirmedProto?.revisionId;
+
+    if (!targetRevisionId) {
+      const messageZh = '当前项目还没有可确认的原型，请先生成或准备原型后再确认。';
+      const messageEn = 'No prototype is available to confirm yet; generate a prototype first.';
+      return c.json(
+        {
+          error: locale === 'en-US' ? messageEn : messageZh,
+          code: 'PROTOTYPE_MISSING',
+          messageZh,
+          messageEn,
+        },
+        409,
+      );
+    }
+
+    try {
+      const res = store.confirmPrototypeRevision(projectId, targetRevisionId);
+      const stepConfirmations = store.getProjectStepConfirmations(projectId);
+      return c.json({
+        confirmation: stepConfirmations.prototype,
+        confirmed: res.confirmed,
+        confirmedRevision: res.confirmed,
+        prototype: res.prototype,
+        project: res.project,
+        prototypes: store.listPrototypes(projectId),
+        stepConfirmations,
+        steps: deriveProjectStepsForStoreProject(store, projectId),
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
+    }
+  });
+
   app.post('/api/projects/:id/steps/business-model/confirm', (c) => {
     const projectId = c.req.param('id');
     const locale = resolveRouteLocale(c);

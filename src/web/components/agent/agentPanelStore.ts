@@ -138,7 +138,8 @@ export const useAgentPanelStore = create<AgentPanelState>((set, get) => ({
     const isNarrow =
       typeof window !== 'undefined' &&
       typeof window.matchMedia === 'function' &&
-      window.matchMedia(AGENT_PANEL_OVERLAY_QUERY).matches;
+      (window.matchMedia(AGENT_PANEL_OVERLAY_QUERY).matches ||
+        window.matchMedia('(max-width: 1279px)').matches);
     if (isNarrow) {
       set({ overlayOpen: true, open: true });
     } else {

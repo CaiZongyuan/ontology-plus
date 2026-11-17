@@ -126,7 +126,8 @@ describe('ApplicationCenterViews step module split', () => {
         <PrototypeStudioView {...props} />
       </PreferencesProvider>,
     );
-    expect(canvasHtml).toContain(data.prototypes[0]!.name);
+    expect(canvasHtml).toContain('合同台账、起草与法务会签交互原型');
+    expect(canvasHtml).not.toContain('界面原型.html');
   });
 
   it('renders ModelFilesView for both synthesized suites and pre-ontology projects identically to the barrel', async () => {

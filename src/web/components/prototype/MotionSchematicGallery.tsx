@@ -1551,7 +1551,7 @@ function SchematicOptionCard({
     <article
       data-testid={`motion-card-${item.id}`}
       className={cn(
-        'flex flex-col overflow-hidden rounded-card border bg-card transition-colors',
+        'flex flex-col overflow-hidden rounded-card border bg-card',
         selected
           ? 'border-primary ring-2 ring-primary/25 shadow-xs'
           : 'border-border hover:border-primary/55',
@@ -1583,7 +1583,7 @@ function SchematicOptionCard({
           </div>
           <span
             className={cn(
-              'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors',
+              'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
               selected
                 ? 'border-primary bg-primary text-white'
                 : 'border-border bg-muted text-transparent',
@@ -1597,7 +1597,7 @@ function SchematicOptionCard({
           {pick(item.plainDesc.zh, item.plainDesc.en)}
         </p>
 
-        <div className="mt-1 flex items-center justify-between gap-2 pt-0.5 font-mono text-[10.5px] text-faint-foreground">
+        <div className="mt-1 flex items-center justify-between gap-2 pt-0.5 font-mono text-[12px] text-faint-foreground">
           <span>{item.refCode}</span>
           <span>
             {reducedMotion ? '0ms (reduced)' : `${spec.durationMs}ms · ${spec.easing}`}
@@ -1608,7 +1608,7 @@ function SchematicOptionCard({
       {/* Progressive Disclosure: Hard Motion Spec & Adaptable Example Code */}
       <details
         data-testid={`motion-spec-disclosure-${item.id}`}
-        className="border-t border-border bg-muted/40 px-3 py-1.5 text-[11px]"
+        className="border-t border-border bg-muted/40 px-3 py-1.5 text-[12px]"
       >
         <summary className="flex cursor-pointer items-center gap-1.5 font-medium text-foreground-soft select-none">
           <Code2 size={11.5} className="text-primary" />
@@ -1778,26 +1778,26 @@ export function MotionSchematicGallery({
             </span>
             <h3 className="m-0 font-title text-[16.5px] font-semibold text-foreground">
               {t(
-                '亲手点一点试手感 — 已按需求规格书为您预选全套默认方案',
-                'Click Any Mini Stage to Feel the Interaction — Pre-Selected from Your SRS',
+                '亲手点一点试手感 — 已按需求文档为您预选全套默认方案',
+                'Click Any Mini Stage to Feel the Interaction — Pre-Selected from Requirements',
               )}
             </h3>
           </div>
           <p className="m-0 mt-1 text-[12.5px] text-faint-foreground">
             {t(
-              '每张示意已套用主参考配色与当前业务名词。点右上角按钮可实时触发交互；不改动也能直接继续，所选动效规格将作为硬性约束交给 Agent。',
-              'Styled with your Primary Reference palette and SRS domain nouns. Click any stage button to trigger its live state transition, or proceed immediately with the SRS defaults.',
+              '每张示意已套用主参考配色与当前业务名词。点右上角按钮可实时触发交互；不改动也能直接继续，所选动效规格将作为硬性约束交给 AI 助手。',
+              'Styled with your Primary Reference palette and domain nouns. Click any stage button to trigger its live state transition, or proceed immediately with the defaults.',
             )}
           </p>
         </div>
 
         <span
           data-testid="motion-gallery-preselect-badge"
-          className="rounded-full border border-border bg-muted px-2.5 py-1 font-mono text-[11px] text-foreground-soft"
+          className="rounded-full border border-border bg-muted px-2.5 py-1 font-mono text-[12px] text-foreground-soft"
         >
           {effectiveReducedMotion
             ? t('减少动态效果已开启 · 0ms 瞬时切换', 'Reduced Motion · 0ms Instant')
-            : t('已按 SRS 预选 7 / 7 组', '7 / 7 Pre-selected from SRS')}
+            : t('已按需求预选 7 / 7 组', '7 / 7 Pre-selected')}
         </span>
       </div>
 
@@ -1825,7 +1825,7 @@ export function MotionSchematicGallery({
                   — {t(group.promptQuestion.zh, group.promptQuestion.en)}
                 </span>
               </div>
-              <span className="font-mono text-[11.5px] text-faint-foreground">
+              <span className="font-mono text-[12px] text-faint-foreground">
                 {t(
                   `已选：${currentSelectedDef.plainTitle.zh}`,
                   `Selected: ${currentSelectedDef.plainTitle.en}`,

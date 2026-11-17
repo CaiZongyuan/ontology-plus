@@ -235,6 +235,20 @@ describe('navigation catalog and URL state', () => {
       views: ['app-requirements'],
     });
     expect(getDefaultViewForStep('PROTOTYPE')).toBe('app-prototype');
+    expect(PROJECT_STEP_VIEWS.PROTOTYPE).toEqual({
+      defaultView: 'app-prototype',
+      views: ['app-prototype'],
+    });
+    expect(getNavItemSpec('app-prototype')).toMatchObject({
+      id: 'app-prototype',
+      labelZh: '原型',
+      labelEn: 'Prototype',
+    });
+    expect(isRetiredNavEntry('app-prototype')).toBe(true);
+    expect(readHashView({ search: '?mode=app-prototype', hash: '' })).toBe('app-prototype');
+    expect(readHashView({ search: '', hash: '#/app-prototype' })).toBe('app-prototype');
+    expect(readHashView({ search: '?mode=ui-prototype', hash: '' })).toBe('app-prototype');
+    expect(readHashView({ search: '', hash: '#/prototype' })).toBe('app-prototype');
     expect(getDefaultViewForStep('BUSINESS_MODEL')).toBe('app-ontology');
     expect(getDefaultViewForStep('DELIVERY')).toBe('app-assembly-dev');
 

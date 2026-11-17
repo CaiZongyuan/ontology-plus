@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import type { TransientTurnImageInput } from '../../../packages/agent-runtime/index.js';
+import { sanitizeBusinessText } from '../../../packages/business-vocabulary/index.js';
 import type {
   AgentImageAttachmentRef,
   DesignBrief,
@@ -22,6 +23,7 @@ import type {
 import { apiUpdatePrototypeDesignBrief, useWorkbenchStore } from '../../api.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
+import type { StepViewMode } from '../../navigation/index.js';
 import { VisionAttachmentControls } from '../agent/VisionAttachmentControls.js';
 import { Button } from '../beautifui/index.js';
 import {
@@ -150,6 +152,8 @@ export interface PrototypeCoDesignStudioProps {
     activeHtml: string,
     immediateDraft?: { target: PrototypeSelectionTarget; note: string },
   ) => Promise<void>;
+  viewMode?: StepViewMode;
+  defaultBriefStep?: BriefStep;
 }
 
 export function PrototypeCoDesignStudio({
@@ -168,6 +172,8 @@ export function PrototypeCoDesignStudio({
   onBackToCanvas,
   onImportHtmlClick,
   isBusyProto,
+  viewMode = 'technical',
+  defaultBriefStep = 'REFERENCES',
 }: PrototypeCoDesignStudioProps) {
   const { locale, t } = usePreferences();
   const patchData = useWorkbenchStore((s) => s.patchData);
@@ -225,7 +231,7 @@ export function PrototypeCoDesignStudio({
   );
   const [customNoteDraft, setCustomNoteDraft] = useState('');
   // The brief is gathered in three short steps, one on screen at a time, instead of one long page.
-  const [briefStep, setBriefStep] = useState<BriefStep>('REFERENCES');
+  const [briefStep, setBriefStep] = useState<BriefStep>(defaultBriefStep);
   const stageRef = useRef<HTMLElement | null>(null);
   // Side-by-side only when the stage itself is wide; the Agent Panel can take half the window.
   const [stageWide, setStageWide] = useState(true);
@@ -586,12 +592,16 @@ export function PrototypeCoDesignStudio({
     stageRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   };
 
+  const isBusinessView = viewMode === 'business';
+  const displayPrimaryTitle = isBusinessView
+    ? sanitizeBusinessText(referenceSelection.primary.title, locale)
+    : referenceSelection.primary.title;
   const feelProvided = localAttachments.length > 0 || userFeelNote.trim().length > 0;
   const briefSteps: { id: BriefStep; label: string; status: string }[] = [
     {
       id: 'REFERENCES',
       label: t('视觉参考', 'Visual Reference'),
-      status: referenceSelection.primary.title,
+      status: displayPrimaryTitle,
     },
     {
       id: 'FEEL',
@@ -626,17 +636,17 @@ export function PrototypeCoDesignStudio({
             <h2 className="m-0 text-[15px] font-semibold text-foreground">
               {t('设计简报', 'Design Brief')}
             </h2>
-            <span className="badge font-mono text-[11px]">
+            <span className="badge font-mono text-[12px]">
               {t(
-                `主参考 ${referenceSelection.primary.title}${referenceSelection.borrowed.length > 0 ? ` + ${referenceSelection.borrowed.length} 借鉴` : ''}`,
-                `Primary: ${referenceSelection.primary.title}${referenceSelection.borrowed.length > 0 ? ` +${referenceSelection.borrowed.length}` : ''}`,
+                `主参考 ${displayPrimaryTitle}${referenceSelection.borrowed.length > 0 ? ` + ${referenceSelection.borrowed.length} 借鉴` : ''}`,
+                `Primary: ${displayPrimaryTitle}${referenceSelection.borrowed.length > 0 ? ` +${referenceSelection.borrowed.length}` : ''}`,
               )}
             </span>
           </div>
           <p className="m-0 mt-0.5 text-[12px] text-faint-foreground">
             {t(
-              '选好参考、说清感受、点选交互方式，风格样张会实时预演；确认后由共创智能体生成可交互原型。',
-              'Pick a reference, describe the feel, choose interactions, and watch the Style Tile update; then the agent builds the prototype.',
+              '选好参考、说清感受、点选交互方式，风格样张会实时预演；确认后由 AI 助手生成可交互原型。',
+              'Pick a reference, describe the feel, choose interactions, and watch the Style Tile update; then the AI Assistant builds the prototype.',
             )}
           </p>
         </div>
@@ -657,7 +667,7 @@ export function PrototypeCoDesignStudio({
               )}
             </Button>
           )}
-          {onImportHtmlClick && (
+          {!isBusinessView && onImportHtmlClick && (
             <Button
               type="button"
               variant="secondary"
@@ -671,7 +681,7 @@ export function PrototypeCoDesignStudio({
           )}
           <Button
             type="button"
-            variant="accent"
+            variant={isBusinessView ? 'secondary' : 'accent'}
             size="sm"
             data-testid="briefing-generate-prototype-btn"
             disabled={effectiveBusy}
@@ -759,6 +769,7 @@ export function PrototypeCoDesignStudio({
               onContinue={() => goToBriefStep('FEEL')}
               continueLabelZh="下一步：我的参考与感受"
               continueLabelEn="Next: My Images & Feel"
+              businessView={isBusinessView}
             />
           </div>
 
@@ -827,7 +838,12 @@ export function PrototypeCoDesignStudio({
             </div>
 
             <div className="flex justify-end border-t pt-3">
-              <Button type="button" variant="accent" size="sm" onClick={() => goToBriefStep('MOTION')}>
+              <Button
+                type="button"
+                variant={isBusinessView ? 'secondary' : 'accent'}
+                size="sm"
+                onClick={() => goToBriefStep('MOTION')}
+              >
                 {t('下一步：交互示意', 'Next: Interactions')}
                 <ArrowRight size={13.5} aria-hidden="true" />
               </Button>
@@ -860,7 +876,7 @@ export function PrototypeCoDesignStudio({
               <div className="mb-2 text-[13px] font-semibold text-foreground">
                 {t(
                   '补充业务场景或页面细节（选填）',
-                  'Extra business details for the Agent (Optional)',
+                  'Extra business details for the AI Assistant (Optional)',
                 )}
               </div>
               <form
@@ -952,6 +968,7 @@ export function PrototypeCoDesignStudio({
             visionSupported={visionSupported}
             {...(visionProviderLabel ? { visionProviderLabel } : {})}
             {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
+            viewMode={viewMode}
           />
 
           <StyleTileCard

@@ -497,6 +497,7 @@ describe('WorkbenchShell (#60)', () => {
     expect(keys).toContain('object:AGG-02');
     expect(keys).toContain('object:AGG-03');
     // Legacy entries retired from Command Palette
+    expect(keys).not.toContain('nav:app-prototype');
     expect(keys).not.toContain('nav:app-ontology');
     expect(keys).not.toContain('nav:app-model-files');
     expect(keys).not.toContain('nav:app-knowledge-graph');

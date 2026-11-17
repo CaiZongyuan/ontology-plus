@@ -1,5 +1,6 @@
 import React from 'react';
 import { Crosshair, RotateCcw, Sparkles, X } from 'lucide-react';
+import { sanitizeBusinessText } from '../../../packages/business-vocabulary/index.js';
 import type { PrototypeTargetAnchor } from '../../../packages/workspace-store/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
@@ -31,7 +32,7 @@ export function SelectionAttachmentStrip({
   prototypeId,
   className,
 }: SelectionAttachmentStripProps) {
-  const { t } = usePreferences();
+  const { locale, t } = usePreferences();
   const attachments = usePrototypeSelectionStore(
     (s) => s.attachmentsByPrototype[prototypeId] ?? EMPTY_ATTACHMENTS,
   );
@@ -52,7 +53,7 @@ export function SelectionAttachmentStrip({
         className,
       )}
     >
-      <div className="flex items-center justify-between gap-2 px-0.5 text-[11px] text-muted-foreground">
+      <div className="flex items-center justify-between gap-2 px-0.5 text-[12px] text-muted-foreground">
         <span className="inline-flex items-center gap-1.5 font-medium text-foreground-soft">
           <Crosshair size={12} className="text-primary shrink-0" aria-hidden="true" />
           <span>
@@ -65,7 +66,7 @@ export function SelectionAttachmentStrip({
         <button
           type="button"
           data-testid="selection-attachment-clear-all"
-          className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+          className="text-[12px] text-muted-foreground hover:text-foreground"
           onClick={() => clearAttachments(prototypeId)}
         >
           {t('清空', 'Clear')}
@@ -77,6 +78,10 @@ export function SelectionAttachmentStrip({
           const anchorBadge = [att.target.screenId, att.target.elementId]
             .filter(Boolean)
             .join(' · ');
+          const cleanLabel =
+            sanitizeBusinessText(att.target.label || '', locale) ||
+            t(`区域 ${idx + 1}`, `Region ${idx + 1}`);
+          const detailText = anchorBadge || att.target.cssSelector;
           return (
             <div
               key={att.id}
@@ -85,7 +90,7 @@ export function SelectionAttachmentStrip({
               onMouseLeave={() => hoverAttachment(null)}
               onFocus={() => hoverAttachment(att)}
               onBlur={() => hoverAttachment(null)}
-              className="group relative flex items-center gap-2 rounded-sm border border-border bg-card p-1.5 transition-colors hover:border-primary"
+              className="group relative flex items-center gap-2 rounded-sm border border-border bg-card p-1.5 hover:border-primary"
             >
               <LocalImageThumbnail
                 attachment={att.imageRef}
@@ -95,34 +100,30 @@ export function SelectionAttachmentStrip({
 
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 font-mono text-[10px] font-semibold text-primary-foreground shrink-0">
+                  <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 font-mono text-[12px] font-semibold text-primary-foreground shrink-0">
                     {idx + 1}
                   </span>
-                  {anchorBadge ? (
-                    <span
-                      className="truncate font-mono text-[10.5px] font-medium text-primary"
-                      title={anchorBadge}
-                    >
-                      {anchorBadge}
-                    </span>
-                  ) : (
-                    <span className="truncate font-mono text-[10.5px] text-muted-foreground">
-                      {att.target.cssSelector}
-                    </span>
-                  )}
-                </div>
-
-                <div
-                  className="truncate text-[11.5px] font-medium text-foreground"
-                  title={att.target.label}
-                >
-                  {att.target.label}
+                  <span
+                    className="truncate text-[12px] font-medium text-foreground"
+                    title={cleanLabel}
+                  >
+                    {cleanLabel}
+                  </span>
                 </div>
 
                 {att.note && (
-                  <div className="truncate text-[11px] text-muted-foreground" title={att.note}>
+                  <div className="truncate text-[12px] text-muted-foreground" title={att.note}>
                     {att.note}
                   </div>
+                )}
+
+                {detailText && (
+                  <details className="text-[12px] text-muted-foreground">
+                    <summary className="cursor-pointer select-none">
+                      {t('查看细节', 'View details')}
+                    </summary>
+                    <span className="truncate font-mono text-primary">{detailText}</span>
+                  </details>
                 )}
               </div>
 
@@ -130,12 +131,12 @@ export function SelectionAttachmentStrip({
                 type="button"
                 data-testid={`selection-attachment-remove-${att.id}`}
                 aria-label={t(
-                  `移除框选附件 ${att.semanticLabel}`,
-                  `Remove selection ${att.semanticLabel}`,
+                  `移除框选附件 ${cleanLabel}`,
+                  `Remove selection ${cleanLabel}`,
                 )}
                 title={t('移除此框选目标', 'Remove selection')}
                 onClick={() => removeSelectionAttachment(prototypeId, att.id)}
-                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-muted-foreground transition-colors hover:text-foreground"
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-muted-foreground hover:text-foreground"
               >
                 <X size={12.5} aria-hidden="true" />
               </button>
@@ -166,8 +167,11 @@ export function PrototypePostRunBanner({
   onDismiss,
   className,
 }: PrototypePostRunBannerProps) {
-  const { t } = usePreferences();
+  const { locale, t } = usePreferences();
   const anchorChips = review.modifiedAnchors.map(formatAnchorChip).filter(Boolean);
+  const cleanLabels = review.modifiedAnchors
+    .map((a) => sanitizeBusinessText(a.label || '', locale))
+    .filter(Boolean);
 
   return (
     <div
@@ -181,7 +185,7 @@ export function PrototypePostRunBanner({
     >
       <div className="flex flex-wrap items-center gap-1.5 min-w-0">
         <Sparkles size={13.5} className="text-primary shrink-0" aria-hidden="true" />
-        <span className="badge badge-accent font-mono text-[10.5px]">
+        <span className="badge badge-accent font-mono text-[12px]">
           R{review.revision.revisionNumber}
         </span>
         <span className="font-medium text-foreground">
@@ -192,22 +196,35 @@ export function PrototypePostRunBanner({
               )
             : t('已生成新修订', 'New revision ready')}
         </span>
+        {cleanLabels.slice(0, 3).map((lbl) => (
+          <span
+            key={lbl}
+            className="rounded-xs border border-border bg-card px-1.5 py-0.5 text-[12px] text-foreground-soft"
+          >
+            {lbl}
+          </span>
+        ))}
         {anchorChips.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1">
-            {anchorChips.slice(0, 3).map((chip) => (
-              <span
-                key={chip}
-                className="rounded-xs border border-border bg-card px-1.5 py-0.5 font-mono text-[10.5px] text-foreground-soft"
-              >
-                {chip}
-              </span>
-            ))}
-            {anchorChips.length > 3 && (
-              <span className="font-mono text-[10.5px] text-muted-foreground">
-                +{anchorChips.length - 3}
-              </span>
-            )}
-          </div>
+          <details className="text-[12px] text-muted-foreground">
+            <summary className="cursor-pointer select-none">
+              {t('查看细节', 'View details')}
+            </summary>
+            <span className="mt-0.5 inline-flex flex-wrap items-center gap-1">
+              {anchorChips.slice(0, 3).map((chip) => (
+                <span
+                  key={chip}
+                  className="rounded-xs border border-border bg-card px-1.5 py-0.5 font-mono text-[12px] text-foreground-soft"
+                >
+                  {chip}
+                </span>
+              ))}
+              {anchorChips.length > 3 && (
+                <span className="font-mono text-[12px] text-muted-foreground">
+                  +{anchorChips.length - 3}
+                </span>
+              )}
+            </span>
+          </details>
         )}
       </div>
 
@@ -226,7 +243,7 @@ export function PrototypePostRunBanner({
             onClick={() => onModeChange('BEFORE')}
           >
             {t('改前', 'Before')}{' '}
-            <span className="font-mono text-[10.5px] opacity-85">
+            <span className="font-mono text-[12px] opacity-85">
               R{review.previousRevision.revisionNumber}
             </span>
           </Button>
@@ -239,7 +256,7 @@ export function PrototypePostRunBanner({
             onClick={() => onModeChange('AFTER')}
           >
             {t('改后', 'After')}{' '}
-            <span className="font-mono text-[10.5px] opacity-85">
+            <span className="font-mono text-[12px] opacity-85">
               R{review.revision.revisionNumber}
             </span>
           </Button>
@@ -263,7 +280,7 @@ export function PrototypePostRunBanner({
           aria-label={t('关闭改前改后对比条', 'Dismiss Before/After bar')}
           title={t('关闭', 'Dismiss')}
           onClick={onDismiss}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-card hover:text-foreground"
         >
           <X size={13} aria-hidden="true" />
         </button>
