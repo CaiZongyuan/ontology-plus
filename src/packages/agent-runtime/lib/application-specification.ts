@@ -1,7 +1,8 @@
-import type {
-  AgentSession,
-  AssembledApplication,
-  WorkspaceStore,
+import {
+  DEFAULT_TECHNOLOGY_PROFILE_ID,
+  type AgentSession,
+  type AssembledApplication,
+  type WorkspaceStore,
 } from '../../workspace-store/index.js';
 
 /** Resolve only an explicit application in the session's project. Never substitute another app. */
@@ -57,8 +58,8 @@ export function readApplicationSpecificationInputs(
     return { layer, selectedId: id, asset: asset ?? null };
   });
   const selectedTechnologyProfile = store.listTechnologyProfiles()
-    .find((profile) => profile.id === app.technologyProfileId);
-  if (!selectedTechnologyProfile) diagnostics.push(`Technology Profile is missing or invalid: ${app.technologyProfileId || '(unselected)'}.`);
+    .find((profile) => profile.id === (app.technologyProfileId ?? DEFAULT_TECHNOLOGY_PROFILE_ID));
+  if (!selectedTechnologyProfile) diagnostics.push(`Technology Profile is missing or invalid: ${app.technologyProfileId ?? DEFAULT_TECHNOLOGY_PROFILE_ID}.`);
   if (selectedTechnologyProfile) {
     for (const { asset } of selectedStandards) {
       if (asset && !selectedTechnologyProfile.compatibleAssetIds.includes(asset.id)
@@ -76,7 +77,10 @@ export function readApplicationSpecificationInputs(
     diagnostics.push(`Selected prototype revision ${selectedPrototypeRevision.id} must be confirmed and synchronised with MU before package generation.`);
   }
   if (!project) diagnostics.push(`Project ${session.projectId} is missing.`);
-  if (!requirementDocs.length) diagnostics.push('Requirements document is missing.');
+  if (!requirementDocs.some((document) => document.status === 'CONFIRMED' || document.status === 'PUBLISHED')) {
+    diagnostics.push('A confirmed requirements document is missing.');
+  }
+  diagnostics.push(...(app.developmentBlockers ?? []).map((blocker) => `Unresolved development conflict: ${blocker}`));
   if (!confirmedPrototype) diagnostics.push('Confirmed prototype revision is missing.');
   if (!project?.validation.presentModels.length) diagnostics.push('Ontology Suite is missing.');
   if (project?.validation.errorCount) {

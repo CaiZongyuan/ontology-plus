@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
+import url from 'node:url';
 import uiAsset from './catalog/assets/asset-ui-spatial-paper.json';
 import foundationAsset from './catalog/assets/asset-foundation-ts-edge.json';
 import architectureAsset from './catalog/assets/asset-arch-ddd-deep-module.json';
@@ -30,7 +30,7 @@ function assertId(id: string): void {
 }
 
 function revision(content: string): string {
-  return `sha256:${createHash('sha256').update(content).digest('hex')}`;
+  return `sha256:${crypto.createHash('sha256').update(content).digest('hex')}`;
 }
 
 function assertAsset(value: unknown): asserts value is ArchitectureAsset {
@@ -71,7 +71,7 @@ function serialize(value: object): string {
 export function createArchitectureAssetCatalog(options: ArchitectureAssetCatalogOptions = {}): ArchitectureAssetCatalog {
   const fileRuntime = import.meta.url.startsWith('file:');
   const rootDirectory = options.rootDirectory ??
-    (fileRuntime ? fileURLToPath(new URL('./catalog/', import.meta.url)) : undefined);
+    (fileRuntime ? url.fileURLToPath(new URL('./catalog/', import.meta.url)) : undefined);
   const writable = options.writable !== false && Boolean(rootDirectory);
 
   // Only an explicitly supplied, new directory is initialized. A missing real source catalog is an error.
@@ -141,7 +141,7 @@ export function createArchitectureAssetCatalog(options: ArchitectureAssetCatalog
         updatedAt: new Date().toISOString(),
       };
       const content = serialize(full);
-      const temporary = path.join(path.dirname(target), `.${asset.id}-${randomUUID()}.tmp`);
+      const temporary = path.join(path.dirname(target), `.${asset.id}-${crypto.randomUUID()}.tmp`);
       try {
         // The directory and filename are selected by the catalog, never by caller-supplied paths.
         fs.writeFileSync(temporary, content, { flag: 'wx' });
