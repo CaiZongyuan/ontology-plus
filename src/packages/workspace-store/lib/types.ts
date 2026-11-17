@@ -425,6 +425,7 @@ export interface AssembledApplication {
   technologyProfileId?: string;
   prototypeRevisionId?: string;
   developmentInstructions?: string;
+  developmentBlockers?: string[];
   latestPackageSnapshotId?: string;
   status: 'ASSEMBLED' | 'DEVELOPING' | 'PACKAGE_READY' | 'PUBLISHED';
   packageOutputDir?: string;

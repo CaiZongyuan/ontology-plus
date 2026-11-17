@@ -11,6 +11,7 @@ export interface CloudflareD1Statement {
 export interface CloudflareD1Database {
   prepare(query: string): CloudflareD1Statement;
   exec(query: string): Promise<unknown>;
+  batch?(statements: CloudflareD1Statement[]): Promise<unknown>;
 }
 
 export interface WorkerEnv {
@@ -39,6 +40,7 @@ function ensureWorkerApp(env?: WorkerEnv): ReturnType<typeof createApiApp> {
     edgeStore = createWorkspaceStore({
       dbPath: ':memory:',
       enableFileMirror: false,
+      architectureAssetsWritable: false,
       d1Database: env?.ONTOLOGY_DB,
     });
   }

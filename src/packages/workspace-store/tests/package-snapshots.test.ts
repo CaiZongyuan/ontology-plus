@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createWorkspaceStore, type DevelopmentPackageSnapshot } from '../index.js';
 
 function packageSnapshot(snapshotId: string): DevelopmentPackageSnapshot {
@@ -44,5 +44,46 @@ describe('immutable development package storage', () => {
     const clone = store.cloneAssembledApplication('app-contract-clm');
     expect(clone.latestPackageSnapshotId).toBeUndefined();
     expect(store.listDevelopmentPackageSnapshots(clone.id)).toEqual([]);
+  });
+
+  it('rolls back the package, latest pointer, and generation log when a transactional write fails', () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const original = store.saveAssembledApplication.bind(store);
+    const originalApplication = store.listAssembledApplications().find((item) => item.id === 'app-contract-clm')!;
+    vi.spyOn(store, 'saveAssembledApplication').mockImplementation((application) => {
+      original(application);
+      throw new Error('Simulated failure after saving the pointer and log');
+    });
+    expect(() => store.saveDevelopmentPackageSnapshot(packageSnapshot('failed-generation'))).toThrow(/Simulated failure/);
+    expect(store.listDevelopmentPackageSnapshots('app-contract-clm')).toEqual([]);
+    expect(store.listAssembledApplications().find((item) => item.id === 'app-contract-clm')).toEqual(originalApplication);
+  });
+
+  it('mirrors a committed snapshot and its application pointer together through D1 batch', () => {
+    const batches: unknown[][] = [];
+    const store = createWorkspaceStore({
+      dbPath: ':memory:', enableFileMirror: false,
+      d1Database: {
+        async exec() {},
+        prepare(query) {
+          let parameters: unknown[] = [];
+          return {
+            query, get values() { return parameters; },
+            bind(...values: unknown[]) { parameters = values; return this; },
+            async run() {},
+            async all() { return { results: [] }; },
+            async first() { return null; },
+          };
+        },
+        async batch(statements) { batches.push(statements); },
+      },
+    });
+    store.saveDevelopmentPackageSnapshot(packageSnapshot('mirrored-generation'));
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(2);
+    expect(batches[0]).toEqual([
+      expect.objectContaining({ values: expect.arrayContaining(['development_package_snapshots', 'mirrored-generation']) }),
+      expect.objectContaining({ values: expect.arrayContaining(['assembled_apps', 'app-contract-clm']) }),
+    ]);
   });
 });

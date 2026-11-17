@@ -80,6 +80,7 @@ export default defineConfig({
       ...process.env,
       PORT: String(e2ePort),
       ONTOLOGY_WORKSPACE_ROOT: e2eWorkspaceRoot,
+      ONTOLOGY_ARCHITECTURE_ASSETS_ROOT: path.join(e2eWorkspaceRoot, 'architecture-catalog'),
       ONTOLOGY_MOCK_LLM: '1',
     },
   },

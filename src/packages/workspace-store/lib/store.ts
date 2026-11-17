@@ -124,6 +124,7 @@ export interface D1PreparedStatementBinding {
 export interface D1DatabaseBinding {
   prepare(query: string): D1PreparedStatementBinding;
   exec(query: string): Promise<unknown>;
+  batch?(statements: D1PreparedStatementBinding[]): Promise<unknown>;
 }
 
 export interface WorkspaceStoreOptions {
@@ -263,6 +264,7 @@ function createEdgeMemoryFallbackDb(): SqliteDbLike {
     string,
     { project_id: string | null; payload_json: string; updated_at: string }
   >();
+  const entitySavepoints: { name: string; entities: typeof entitiesMap }[] = [];
   const checkpointsMap = new Map<string, AgentCheckpointRecord>();
   const eaRelationsMap = new Map<string, Record<string, unknown>[]>();
   const analyticalTables = new Map<string, Map<string, Record<string, unknown>>>();
@@ -271,7 +273,27 @@ function createEdgeMemoryFallbackDb(): SqliteDbLike {
   }
 
   return {
-    exec() {},
+    exec(sql) {
+      const normalized = sql.trim().replace(/\s+/g, ' ');
+      const begin = /^SAVEPOINT (\w+)$/i.exec(normalized);
+      if (begin) {
+        entitySavepoints.push({ name: begin[1], entities: new Map(entitiesMap) });
+        return;
+      }
+      const rollback = /^ROLLBACK TO SAVEPOINT (\w+)$/i.exec(normalized);
+      const release = /^RELEASE SAVEPOINT (\w+)$/i.exec(normalized);
+      const name = rollback?.[1] ?? release?.[1];
+      if (!name) return;
+      const index = entitySavepoints.findLastIndex((entry) => entry.name === name);
+      if (index < 0) throw new Error(`Unknown workspace savepoint: ${name}`);
+      if (rollback) {
+        entitiesMap.clear();
+        for (const [key, value] of entitySavepoints[index].entities) entitiesMap.set(key, value);
+        entitySavepoints.splice(index + 1);
+      } else {
+        entitySavepoints.splice(index);
+      }
+    },
     prepare(sql: string): SqliteStatementLike {
       const s = sql.trim().replace(/\s+/g, ' ');
       return {
@@ -798,7 +820,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         : path.resolve(envDbPath)
       : path.join(workspaceRoot, 'onto-cs.db'));
   const d1Database = options.d1Database;
+  const envArchitectureAssetsRoot = typeof process !== 'undefined'
+    ? process.env.ONTOLOGY_ARCHITECTURE_ASSETS_ROOT?.trim() : undefined;
   const architectureAssetsRoot = options.architectureAssetsRoot ??
+    (envArchitectureAssetsRoot ? path.resolve(envArchitectureAssetsRoot) : undefined) ??
     (dbPath === ':memory:' && options.architectureAssetsWritable !== false
       ? path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ontology-standards-')), 'catalog')
       : undefined);
@@ -821,9 +846,14 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
   const db = openSqliteOrMemoryDb(dbPath);
   db.exec(BOOTSTRAP_SQLITE_DDL);
+  let d1MutationBatch: { query: string; values: unknown[] }[] | undefined;
 
   function replicateToD1(query: string, ...values: unknown[]): void {
     if (!d1Database) return;
+    if (d1MutationBatch) {
+      d1MutationBatch.push({ query, values });
+      return;
+    }
     try {
       void d1Database
         .prepare(query)
@@ -832,6 +862,24 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         .catch(() => undefined);
     } catch {
       // Non-fatal background D1 mirror
+    }
+  }
+
+  function replicateCommittedBatch(mutations: { query: string; values: unknown[] }[]): void {
+    if (!d1Database || mutations.length === 0) return;
+    if (d1MutationBatch) {
+      d1MutationBatch.push(...mutations);
+      return;
+    }
+    try {
+      if (d1Database.batch) {
+        void d1Database.batch(mutations.map(({ query, values }) => d1Database.prepare(query).bind(...values)))
+          .catch(() => undefined);
+      } else {
+        for (const { query, values } of mutations) replicateToD1(query, ...values);
+      }
+    } catch {
+      // Local persistence remains authoritative when the optional D1 mirror is unavailable.
     }
   }
 
@@ -2261,11 +2309,19 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     saveAssembledApplication(app) {
       const existing = getItem<AssembledApplication>('assembled_apps', app.id);
+      const changedProject = existing && existing.projectId !== app.projectId;
       const full: AssembledApplication = {
         ...existing,
         ...app,
         agentDevLogs: app.agentDevLogs ?? existing?.agentDevLogs ?? [],
         updatedAt: new Date().toISOString(),
+        ...(changedProject ? {
+          latestPackageSnapshotId: undefined,
+          packageOutputDir: undefined,
+          prototypeRevisionId: app.prototypeRevisionId !== existing.prototypeRevisionId
+            ? app.prototypeRevisionId : undefined,
+          status: 'ASSEMBLED' as const,
+        } : {}),
       };
       return putItem('assembled_apps', full.id, full, full.projectId);
     },
@@ -2308,9 +2364,16 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const payloadJson = JSON.stringify(snapshot);
       const now = new Date().toISOString();
       db.exec('SAVEPOINT development_package_generation');
+      const previousBatch = d1MutationBatch;
+      const mutations: { query: string; values: unknown[] }[] = [];
+      d1MutationBatch = mutations;
       try {
         db.prepare(`INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at)
           VALUES (?, ?, ?, ?, ?)`).run(
+          'development_package_snapshots', snapshot.snapshotId, snapshot.projectId, payloadJson, now,
+        );
+        replicateToD1(
+          'INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at) VALUES (?, ?, ?, ?, ?)',
           'development_package_snapshots', snapshot.snapshotId, snapshot.projectId, payloadJson, now,
         );
         this.saveAssembledApplication({
@@ -2318,17 +2381,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
           latestPackageSnapshotId: snapshot.snapshotId,
           packageOutputDir: snapshot.outputDir,
           status: application.status === 'PUBLISHED' ? 'PUBLISHED' : 'PACKAGE_READY',
+          agentDevLogs: [...application.agentDevLogs, {
+            timestamp: snapshot.compiledAt,
+            phase: 'PACKAGE_GENERATED',
+            detail: `Generated implementation specification ${snapshot.snapshotId} (${snapshot.files.length} files).`,
+          }],
         });
         db.exec('RELEASE SAVEPOINT development_package_generation');
       } catch (error) {
         db.exec('ROLLBACK TO SAVEPOINT development_package_generation');
         db.exec('RELEASE SAVEPOINT development_package_generation');
         throw error;
+      } finally {
+        d1MutationBatch = previousBatch;
       }
-      replicateToD1(
-        'INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at) VALUES (?, ?, ?, ?, ?)',
-        'development_package_snapshots', snapshot.snapshotId, snapshot.projectId, payloadJson, now,
-      );
+      replicateCommittedBatch(mutations);
       return JSON.parse(payloadJson) as DevelopmentPackageSnapshot;
     },
 

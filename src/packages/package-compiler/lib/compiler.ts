@@ -83,6 +83,9 @@ function selectedTechnologyProfile(input: CompileDevelopmentPackageInput): Techn
 function inspectDevelopmentPackageInputs(input: CompileDevelopmentPackageInput) {
   const diagnostics: DevelopmentPackageInputDiagnostic[] = [];
   const add = (code: string, path: string, message: string) => diagnostics.push({ code, path, message });
+  for (const blocker of input.app.developmentBlockers ?? []) {
+    add('UNRESOLVED_DEVELOPMENT_CONFLICT', 'app.developmentBlockers', blocker);
+  }
   if (input.app.projectId !== input.project.id) add('PROJECT_MISMATCH', 'app.projectId', 'Select the Ontology Project owned by this application.');
   for (const [field, value] of [['app.id', input.app.id], ['snapshotId', input.snapshotId]] as const) {
     if (value !== undefined && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value)) {
