@@ -7,6 +7,7 @@ import {
   compileDevelopmentPackage,
   compileDevelopmentPackageZip,
   compileOntologySkill,
+  DevelopmentPackageInputError,
   fingerprintDevelopmentPackageInputs,
   handleOntologyMcpRequest,
   inspectOntologyMcpCapabilities,
@@ -37,6 +38,90 @@ function confirmedPackageInput(): CompileDevelopmentPackageInput {
 
 describe('package-compiler deep module', () => {
   afterEach(() => vi.useRealTimers());
+
+  it('rejects a selected standard whose local Markdown link is absent from the package', () => {
+    const input = confirmedPackageInput();
+    input.techArchAsset.specMarkdown += '\n[module contracts](./module-contracts.md)';
+    let rejected: unknown;
+    try { compileDevelopmentPackage(input); } catch (error) { rejected = error; }
+    expect(rejected).toBeInstanceOf(DevelopmentPackageInputError);
+    if (!(rejected instanceof DevelopmentPackageInputError)) throw new Error('Expected invalid package references to block compilation.');
+    expect(rejected.diagnostics).toContainEqual(expect.objectContaining({
+      path: 'standards/architecture.md',
+      target: './module-contracts.md',
+    }));
+  });
+
+  it.each([
+    ['application instructions', (input: CompileDevelopmentPackageInput) => { input.applicationInstructions = '[handoff](./handoff.md)'; }, 'references/application-instructions.md', './handoff.md'],
+    ['requirement reference definition', (input: CompileDevelopmentPackageInput) => { input.requirementDoc!.content += '\n[rule details][rules]\n\n[rules]: ./rules.md'; }, 'references/requirements.md', './rules.md'],
+    ['standard image', (input: CompileDevelopmentPackageInput) => { input.uiUeAsset.specMarkdown += '\n![layout](./layout.svg)'; }, 'standards/ui.md', './layout.svg'],
+    ['requirement reference image', (input: CompileDevelopmentPackageInput) => { input.requirementDoc!.content += '\n![data model][diagram]\n\n[diagram]: ./schema\\-diagram.svg'; }, 'references/requirements.md', './schema-diagram.svg'],
+  ])('rejects an unresolved local target in %s', (_description, changeSource, sourcePath, target) => {
+    const input = confirmedPackageInput();
+    changeSource(input);
+    try {
+      compileDevelopmentPackage(input);
+      expect.fail('Expected an unresolved package reference to block compilation.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(DevelopmentPackageInputError);
+      if (!(error instanceof DevelopmentPackageInputError)) throw error;
+      expect(error.diagnostics).toContainEqual(expect.objectContaining({
+        code: 'UNRESOLVED_PACKAGE_REFERENCE', path: sourcePath, target,
+      }));
+      expect(error.message).toContain(sourcePath);
+      expect(error.message).toContain(target);
+    }
+  });
+
+  it.each([
+    '../../outside.md', '..%2F..%2Foutside.md', '..%5C..%5Coutside.md',
+    '/etc/passwd', 'C:/private.md', 'file:///C:/private.md',
+    'javascript:alert(1)', './%zz.md', '../%00README.md',
+  ])('rejects an unsafe package reference %s', (target) => {
+    const input = confirmedPackageInput();
+    input.requirementDoc!.content += `\n[unsafe target](${target})`;
+    try {
+      compileDevelopmentPackage(input);
+      expect.fail('Expected an unsafe package reference to block compilation.');
+    } catch (error) {
+      if (!(error instanceof DevelopmentPackageInputError)) throw error;
+      expect(error.diagnostics).toContainEqual(expect.objectContaining({
+        code: 'UNSAFE_PACKAGE_REFERENCE', path: 'references/requirements.md', target,
+      }));
+    }
+  });
+
+  it('preserves source Markdown with valid relative and reference-style targets while ignoring code examples', () => {
+    const input = confirmedPackageInput();
+    input.techArchAsset.specMarkdown += `
+[agent entry](../%41GENTS.md#coding-agent-instructions)
+[acceptance](../docs/acceptance\\.md?raw=1#criteria)
+[implementation][build]
+![embedded icon][icon]
+[external guide](https://example.test/guide)
+[contact](mailto:team@example.test)
+[section](#authority)
+[same file](?raw=1)
+
+[build]: ../docs/implementation.md
+[icon]: data:image/png;base64,aW1hZ2U=
+
+\`[inline example](./missing-inline-example.md)\`
+
+\`\`\`markdown
+[example](./missing-fenced-example.md)
+[example definition]: ./missing-definition.md
+\`\`\`
+`;
+    input.requirementDoc!.content += '\n原始业务需求：[开发入口](../AGENTS.md)。';
+    input.applicationInstructions = 'Record [acceptance evidence](../docs/acceptance.md).';
+    const compiled = compileDevelopmentPackage(input);
+    const read = (sourcePath: string) => compiled.files.find((file) => file.relativePath === sourcePath)!.content;
+    expect(read('standards/architecture.md')).toBe(input.techArchAsset.specMarkdown);
+    expect(read('references/requirements.md')).toBe(input.requirementDoc!.content);
+    expect(read('references/application-instructions.md')).toBe(input.applicationInstructions);
+  });
 
   it('downloads identical bytes from the retained snapshot despite later source edits and time changes', () => {
     const input = confirmedPackageInput();

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { validatePackageMarkdownReferences } from './markdown-references.js';
 import {
   DEFAULT_TECHNOLOGY_PROFILE_ID,
   isArchitectureAssetCompatible,
@@ -62,6 +63,7 @@ export interface CompileDevelopmentPackageInput {
 export interface DevelopmentPackageInputDiagnostic {
   code: string;
   path: string;
+  target?: string;
   message: string;
 }
 
@@ -464,6 +466,8 @@ Snapshot \`${snapshotId}\`, generated at \`${compiledAt}\`. Package readiness de
     files: [...files.map((file) => ({ path: file.relativePath, category: file.category, sizeBytes: file.sizeBytes, contentHash: contentHash(file.content) })), { path: 'manifest.json', category: 'MANIFEST' }],
   };
   addFile('manifest.json', 'MANIFEST', JSON.stringify(manifestJson, null, 2));
+  const referenceDiagnostics = validatePackageMarkdownReferences(files);
+  if (referenceDiagnostics.length) throw new DevelopmentPackageInputError(referenceDiagnostics);
   if (input.writeToDisk !== false) {
     for (const file of files) {
       const fullPath = path.join(outputDir, file.relativePath);
