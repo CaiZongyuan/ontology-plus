@@ -20,6 +20,8 @@ test('confirms a selected prototype revision, previews a fixed English package a
   await expect(page.getByTestId('compiled-package-inspector')).toBeVisible();
   await expect(page.getByTestId('package-preview-path')).toHaveText('AGENTS.md');
   await expect(page.getByTestId('package-file-preview').getByRole('heading', { name: 'Coding agent instructions' })).toBeVisible();
+  await page.getByTestId('package-file-preview').getByRole('link', { name: 'Architecture', exact: true }).click();
+  await expect(page.getByTestId('package-preview-path')).toHaveText('docs/architecture.md');
   const applicationId = await page.getByTestId('development-application-select').inputValue();
   const first = await (await request.get(`/api/applications/${applicationId}/package`)).json();
   expect(first.stale).toBe(false);

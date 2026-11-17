@@ -3324,7 +3324,7 @@ export function FourLayerAssetsView() {
                 'Repository development standards',
               )}
             </h3>
-            <div className="text-[12.5px] text-muted-foreground">
+            <div className="text-[length:var(--text-sm)] text-muted-foreground">
               {t(
                 '规范源文件随平台代码维护。编辑后写回仓库，已生成的开发包保留原快照。',
                 'Standards live with the platform source. Saving writes to repository files; generated packages keep their saved snapshots.',
@@ -3441,8 +3441,8 @@ export function FourLayerAssetsView() {
               </div>
             </div>
 
-            <div className="text-[12.5px] text-muted-foreground">{asset.summary}</div>
-            <div className="rounded-control border border-line bg-inset p-2 text-[11px] text-ink-3" data-testid={`asset-source-${asset.id}`}>
+            <div className="text-[length:var(--text-sm)] text-muted-foreground">{asset.summary}</div>
+            <div className="rounded-control border border-line bg-inset p-2 text-[length:var(--text-xs)] text-ink-3" data-testid={`asset-source-${asset.id}`}>
               <div className="break-all font-mono">{asset.sourcePath || t('工作区历史资料 · 保存后写入仓库', 'Legacy workspace material · save to write repository source')}</div>
               {asset.sourceRevision && <div className="break-all font-mono mt-1">{asset.sourceRevision}</div>}
               {asset.technologyProfileId && <div className="mt-1">{t('技术方案', 'Technology profile')}: {asset.technologyProfileId}</div>}
@@ -3472,7 +3472,7 @@ export function FourLayerAssetsView() {
           confirmLabel={t('保存到仓库源文件', 'Save to repository source')}
           onConfirm={() => void handleSaveAsset()} onClose={() => setEditingAsset(null)} testId="architecture-standard-editor">
             <div className="flex flex-col gap-2.5">
-              <p className="m-0 break-all font-mono text-[11px] text-ink-3">{editingAsset.sourcePath ?? `src/packages/architecture-assets/lib/catalog/assets/${editingAsset.id}.json`}</p>
+              <p className="m-0 break-all font-mono text-[length:var(--text-xs)] text-ink-3">{editingAsset.sourcePath ?? `src/packages/architecture-assets/lib/catalog/assets/${editingAsset.id}.json`}</p>
               <div className="form-grid-3">
                 <div className="form-field">
                   <label className="form-label" htmlFor="architecture-standard-layer">{t('所属架构层', 'Layer')}</label>
@@ -3818,12 +3818,31 @@ export function ApplicationAssemblyDevView({
     compiledPkg?.files.find((file) => file.relativePath === 'AGENTS.md');
   const snapshotId = String(compiledPkg?.manifestJson.snapshotId ?? app?.latestPackageSnapshotId ?? '');
 
+  const openPackageReference = (href: string, event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!activeFile || !compiledPkg || !href) return;
+    const packageOrigin = 'https://development-package.invalid';
+    let target: URL;
+    try { target = new URL(href, `${packageOrigin}/${activeFile.relativePath}`); }
+    catch { return; }
+    if (target.origin !== packageOrigin) return;
+    event.preventDefault();
+    let filePath: string;
+    try { filePath = decodeURIComponent(target.pathname.slice(1)); }
+    catch { setOperationError(t('开发包引用路径无效。', 'The package reference path is invalid.')); return; }
+    if (!compiledPkg.files.some((file) => file.relativePath === filePath)) {
+      setOperationError(t(`开发包中缺少引用文件：${filePath}`, `Referenced file is missing from this package: ${filePath}`));
+      return;
+    }
+    setSelectedFilePath(filePath);
+    setPkgPreviewRaw(false);
+  };
+
   return (
     <div className="flex min-w-0 flex-col gap-3.5" data-testid="application-development-workflow">
       <div className="card flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="card-title">{t('应用开发 · 准备可执行的开发规格', 'Application development · Prepare the implementation specification')}</h3>
-          <p className="mt-1 mb-0 max-w-[780px] text-[12.5px] leading-relaxed text-ink-3">{t(
+          <p className="mt-1 mb-0 max-w-[780px] text-[length:var(--text-sm)] leading-relaxed text-ink-3">{t(
             '确认业务与界面来源，选择工程规范，将完整规格交给编码智能体实施。',
             'Confirm business and UI sources, select engineering standards, and prepare the complete handoff for a coding agent.')}</p>
         </div>
@@ -3835,7 +3854,7 @@ export function ApplicationAssemblyDevView({
         workspaceLabel={t('当前工程开发流程', 'Project development workflow')}
         registryLabel={t('高级：应用注册表', 'Advanced: application registry')}
         count={allApps.length} testIdPrefix="app-assembly" />
-      {operationError && <div role="alert" className="rounded-card border border-red/30 bg-red-tint p-3 text-[12.5px] text-red" data-testid="application-operation-error">{operationError}</div>}
+      {operationError && <div role="alert" className="rounded-card border border-red/30 bg-red-tint p-3 text-[length:var(--text-sm)] text-red" data-testid="application-operation-error">{operationError}</div>}
       {pageMode === 'REGISTRY' ? (
         <RegistryTable<AssembledApplication> testId="assembled-app-registry" title={t('应用规格注册表', 'Application specifications')}
           rows={allApps} getRowKey={(item) => item.id} activeRowKey={app?.id}
@@ -3850,7 +3869,7 @@ export function ApplicationAssemblyDevView({
           ]} />
       ) : (<>
         <div className="card flex flex-wrap items-center justify-between gap-3">
-          <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold" htmlFor="development-application-select">
+          <label className="flex flex-wrap items-center gap-2 text-[length:var(--text-base)] font-semibold" htmlFor="development-application-select">
             {t('当前应用', 'Current application')}
             <select id="development-application-select" className="select max-w-full" value={app?.id ?? ''} disabled={generating || savingInputs} onChange={(event) => setSelectedAppId(event.target.value)} data-testid="development-application-select">
               {!app && <option value="">{t('尚未创建应用', 'No application yet')}</option>}
@@ -3878,16 +3897,16 @@ export function ApplicationAssemblyDevView({
             {previewRevision && previewRevision.id !== confirmed?.revisionId && <Button variant="accent" onClick={() => setPendingRevision(previewRevision)} data-testid="development-confirm-revision-btn">{t('查看 MU 变更并确认', 'Review MU changes and confirm')}</Button>}
             {onNavigate && <Button onClick={() => onNavigate('app-ontology')}>{t('检查本体套件', 'Inspect Ontology Suite')}</Button>}
           </div>
-          <p className="m-0 text-[12px] text-ink-3">{confirmed
+          <p className="m-0 text-[length:var(--text-sm)] text-ink-3">{confirmed
             ? t(`工程已确认：${confirmed.prototype.name} #${confirmed.revision.revisionNumber}。确认其他修订将先展示 MU 变更。`, `Confirmed source: ${confirmed.prototype.name} #${confirmed.revision.revisionNumber}. A different revision requires reviewing its MU changes.`)
             : t('选择修订后先检查 MU 变更；确认后才成为开发包的 UI 来源。', 'Review MU changes before confirmation. Only a confirmed revision becomes a package UI source.')}</p>
           {previewRevision ? <iframe title={t('应用原型修订预览', 'Application prototype revision preview')} srcDoc={previewRevision.htmlContent} sandbox="allow-scripts" className="h-[340px] w-full rounded-card border border-line bg-surface" data-testid="development-prototype-preview" />
-            : <div className="rounded-card border border-dashed border-line p-6 text-center text-[12.5px] text-ink-3">{t('选择一个原型修订进行预览。', 'Select a prototype revision to preview.')}{onNavigate && <Button className="ml-2" onClick={() => onNavigate('app-prototype')}>{t('前往界面原型', 'Open prototypes')}</Button>}</div>}
+            : <div className="rounded-card border border-dashed border-line p-6 text-center text-[length:var(--text-sm)] text-ink-3">{t('选择一个原型修订进行预览。', 'Select a prototype revision to preview.')}{onNavigate && <Button className="ml-2" onClick={() => onNavigate('app-prototype')}>{t('前往界面原型', 'Open prototypes')}</Button>}</div>}
         </section>
 
         <section className="card flex flex-col gap-3" data-testid="development-step-standards">
           <h4 className="card-title">2 · {t('选择技术方案与开发规范', 'Choose a Technology Profile and standards')}</h4>
-          {!app ? <p className="m-0 text-[12.5px] text-ink-3">{t('创建应用后选择技术方案及其兼容规范。', 'Create an application to select its profile and compatible standards.')}</p> : <>
+          {!app ? <p className="m-0 text-[length:var(--text-sm)] text-ink-3">{t('创建应用后选择技术方案及其兼容规范。', 'Create an application to select its profile and compatible standards.')}</p> : <>
             <label className="form-field" htmlFor="development-profile-select"><span className="form-label">{t('技术方案', 'Technology Profile')}</span>
               <select id="development-profile-select" className="select" value={profileId} disabled={savingInputs || generating} data-testid="development-profile-select" onChange={(event) => {
                 const next = profiles.find((item) => item.id === event.target.value);
@@ -3897,7 +3916,7 @@ export function ApplicationAssemblyDevView({
                 {profiles.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.version}</option>)}
               </select>
             </label>
-            {profile && <div className="rounded-card border border-line bg-inset/45 p-3 text-[12px] leading-relaxed text-ink-2">
+            {profile && <div className="rounded-card border border-line bg-inset/45 p-3 text-[length:var(--text-sm)] leading-relaxed text-ink-2">
               <p className="mt-0 mb-2">{profile.summary}</p>
               <div>{profile.frontend.join(' · ')}</div><div>{profile.backend.join(' · ')} · {profile.persistence.join(' · ')}</div><div>{profile.deployment.join(' · ')}</div>
               <p className="mt-2 mb-0 text-ink-3">{t('以已确认原型的视觉设计为准。选择不同方案会改用该方案明确指定的默认规范。', 'The confirmed prototype governs visual design. Changing profiles selects that profile’s explicit default standards.')}</p>
@@ -3922,11 +3941,11 @@ export function ApplicationAssemblyDevView({
 
         <section className="card flex min-w-0 flex-col gap-3" data-testid="development-step-origins">
           <h4 className="card-title">3 · {t('检查输入来源与应用说明', 'Inspect input origins and application instructions')}</h4>
-          {recordedBlockers.length > 0 && <div role="alert" className="rounded-card border border-red/30 bg-red-tint p-3 text-[12px] text-red" data-testid="application-recorded-blockers">
+          {recordedBlockers.length > 0 && <div role="alert" className="rounded-card border border-red/30 bg-red-tint p-3 text-[length:var(--text-sm)] text-red" data-testid="application-recorded-blockers">
             <strong>{t('需要解决的输入冲突', 'Input contradictions to resolve')}</strong>
             <ul className="mb-0 mt-1 list-disc pl-4">{recordedBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>
           </div>}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 text-[12px]">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 text-[length:var(--text-sm)]">
             <div className="rounded-card border border-line bg-inset/35 p-3"><strong>{t('业务来源', 'Business sources')}</strong>
               <div className="mt-1">{project.name} · {project.code}</div>
               {data.requirementDocs.map((doc) => <div key={doc.id} className="mt-1 text-ink-3">{doc.title} · {doc.updatedAt}</div>)}
@@ -3939,14 +3958,14 @@ export function ApplicationAssemblyDevView({
             </div>
           </div>
           {selectedAssets.map((asset, index) => asset && <details key={asset.id} className="rounded-card border border-line p-3" data-testid={`development-standard-origin-${index}`}>
-            <summary className="cursor-pointer text-[12.5px] font-medium">{asset.name} · {asset.version}</summary>
-            <div className="my-2 break-all font-mono text-[11px] text-ink-3">{asset.sourcePath ?? t('工作区历史资料；请在规范库保存为仓库规范。', 'Legacy workspace material; save it to repository source in the standards library.')}<br />{asset.sourceRevision}</div>
+            <summary className="cursor-pointer text-[length:var(--text-sm)] font-medium">{asset.name} · {asset.version}</summary>
+            <div className="my-2 break-all font-mono text-[length:var(--text-xs)] text-ink-3">{asset.sourcePath ?? t('工作区历史资料；请在规范库保存为仓库规范。', 'Legacy workspace material; save it to repository source in the standards library.')}<br />{asset.sourceRevision}</div>
             <MarkdownRenderer content={asset.specMarkdown} />
           </details>)}
           {app && <div className="form-field">
             <label className="form-label" htmlFor="application-development-instructions">{t('当前应用的补充实施说明', 'Application-specific implementation instructions')}</label>
             <textarea id="application-development-instructions" className="textarea min-h-[100px]" value={instructionsDraft} disabled={savingInputs || generating} onChange={(event) => setInstructionsDraft(event.target.value)} data-testid="application-development-instructions" placeholder={t('记录当前应用的范围、约束或需要编码智能体关注的决策。', 'Record application scope, constraints, and decisions for the coding agent.')} />
-            <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-[11.5px] text-ink-3">{t('应用说明进入下一份开发包；共享规范在架构资产库维护。', 'Instructions enter the next package. Maintain shared standards in the architecture library.')}</span>
+            <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-[length:var(--text-xs)] text-ink-3">{t('应用说明进入下一份开发包；共享规范在架构资产库维护。', 'Instructions enter the next package. Maintain shared standards in the architecture library.')}</span>
               <Button disabled={!notesDirty || savingInputs || generating} onClick={() => void saveInputs({ developmentInstructions: instructionsDraft })} data-testid="save-application-instructions-btn">{savingInputs ? t('正在保存…', 'Saving…') : t('保存应用说明', 'Save instructions')}</Button></div>
           </div>}
         </section>
@@ -3958,26 +3977,26 @@ export function ApplicationAssemblyDevView({
               <Button variant="accent" data-testid="compile-dev-package-btn" disabled={!app || diagnostics.length > 0 || generating || savingInputs || confirmingRevision} onClick={() => void generatePackage()}>{generating ? t('正在生成…', 'Generating…') : compiledPkg ? t('重新生成开发包', 'Regenerate package') : t('生成开发包', 'Generate package')}</Button>
             </div>
           </div>
-          <p className="m-0 text-[12px] text-ink-3">{t('生成会校验并固定当前输入，产出 AGENTS.md、实施顺序、验收条件和原始参考资料。', 'Generation validates and fixes the inputs into AGENTS.md, implementation order, acceptance criteria, and original references.')}</p>
-          {diagnostics.length > 0 && <ul className="m-0 list-disc pl-5 text-[12px] leading-relaxed text-ink-3" data-testid="development-input-diagnostics">{diagnostics.map((message) => <li key={message}>{message}</li>)}</ul>}
-          {loadingPackage && <div role="status" className="text-[12px] text-ink-3">{t('正在读取已保存的开发包…', 'Loading the saved package…')}</div>}
-          {packageLoadError && <div role="alert" className="flex flex-wrap items-center gap-2 text-[12px] text-red">{packageLoadError}<Button size="xs" onClick={() => setPackageReload((value) => value + 1)}>{t('重试', 'Retry')}</Button></div>}
-          {packageInputIssue && <div role="alert" className="text-[12px] text-red" data-testid="saved-package-input-issue">{packageInputIssue}</div>}
+          <p className="m-0 text-[length:var(--text-sm)] text-ink-3">{t('生成会校验并固定当前输入，产出 AGENTS.md、实施顺序、验收条件和原始参考资料。', 'Generation validates and fixes the inputs into AGENTS.md, implementation order, acceptance criteria, and original references.')}</p>
+          {diagnostics.length > 0 && <ul className="m-0 list-disc pl-5 text-[length:var(--text-sm)] leading-relaxed text-ink-3" data-testid="development-input-diagnostics">{diagnostics.map((message) => <li key={message}>{message}</li>)}</ul>}
+          {loadingPackage && <div role="status" className="text-[length:var(--text-sm)] text-ink-3">{t('正在读取已保存的开发包…', 'Loading the saved package…')}</div>}
+          {packageLoadError && <div role="alert" className="flex flex-wrap items-center gap-2 text-[length:var(--text-sm)] text-red">{packageLoadError}<Button size="xs" onClick={() => setPackageReload((value) => value + 1)}>{t('重试', 'Retry')}</Button></div>}
+          {packageInputIssue && <div role="alert" className="text-[length:var(--text-sm)] text-red" data-testid="saved-package-input-issue">{packageInputIssue}</div>}
           {compiledPkg && <>
-            <div className="flex flex-wrap items-center gap-2 text-[11.5px]" data-testid="saved-package-snapshot">
+            <div className="flex flex-wrap items-center gap-2 text-[length:var(--text-xs)]" data-testid="saved-package-snapshot">
               <span className={`badge ${packageStale || notesDirty ? 'badge-warn' : 'badge-ok'}`} data-testid="package-stale-indicator">{packageStale || notesDirty ? t('输入已变化，等待重新生成', 'Inputs changed · regenerate to update') : t('已保存开发包快照', 'Saved package snapshot')}</span>
               <span className="break-all font-mono text-ink-3">{snapshotId} · {compiledPkg.compiledAt}</span>
             </div>
-            {(packageStale || notesDirty) && <p className="m-0 text-[12px] text-ink-3">{t('下方预览与下载仍使用同一份已保存快照。重新生成后才会包含输入更新。', 'Preview and download use the same saved snapshot. Generate again to include input changes.')}</p>}
+            {(packageStale || notesDirty) && <p className="m-0 text-[length:var(--text-sm)] text-ink-3">{t('下方预览与下载仍使用同一份已保存快照。重新生成后才会包含输入更新。', 'Preview and download use the same saved snapshot. Generate again to include input changes.')}</p>}
             <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-3" data-testid="compiled-package-inspector">
               <nav aria-label={t('开发包文件', 'Development Package files')} className="flex max-h-[520px] flex-col gap-1 overflow-auto rounded-card border border-line p-2">
-                {compiledPkg.files.map((file) => <button type="button" key={file.relativePath} className={cn('nav-item text-left', activeFile?.relativePath === file.relativePath && 'active')} aria-current={activeFile?.relativePath === file.relativePath ? 'page' : undefined} onClick={() => setSelectedFilePath(file.relativePath)}><span className="break-all font-mono text-[11.5px]">{file.relativePath}</span></button>)}
+                {compiledPkg.files.map((file) => <button type="button" key={file.relativePath} className={cn('nav-item text-left', activeFile?.relativePath === file.relativePath && 'active')} aria-current={activeFile?.relativePath === file.relativePath ? 'page' : undefined} onClick={() => setSelectedFilePath(file.relativePath)}><span className="break-all font-mono text-[length:var(--text-xs)]">{file.relativePath}</span></button>)}
               </nav>
               <div className="min-w-0 rounded-card border border-line p-3">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><strong className="font-mono text-[12px]" data-testid="package-preview-path">{activeFile?.relativePath}</strong>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><strong className="font-mono text-[length:var(--text-sm)]" data-testid="package-preview-path">{activeFile?.relativePath}</strong>
                   {activeFile?.relativePath.endsWith('.md') && <Button variant="ghost" size="xs" onClick={() => setPkgPreviewRaw((value) => !value)}>{pkgPreviewRaw ? t('排版预览', 'Rendered preview') : t('查看源码', 'View source')}</Button>}</div>
                 <div className="max-h-[520px] overflow-auto" data-testid="package-file-preview">{activeFile && (activeFile.relativePath.endsWith('.md') && !pkgPreviewRaw
-                  ? <MarkdownRenderer content={activeFile.content} />
+                  ? <MarkdownRenderer content={activeFile.content} onLinkClick={openPackageReference} />
                   : <CodeBlock code={activeFile.content} language={activeFile.relativePath.split('.').pop() ?? 'text'} filename={activeFile.relativePath} maxHeight={500} />)}</div>
               </div>
             </div>
@@ -3985,7 +4004,7 @@ export function ApplicationAssemblyDevView({
         </section>
         {app && <section className="card flex flex-col gap-3" data-testid="coding-agent-context-card">
           <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="card-title">{t('应用开发智能体', 'Application Development Agent')}</h4><Button onClick={() => void openApplicationAgent()}>{t('打开智能体面板', 'Open Agent Panel')}</Button></div>
-          <p className="m-0 text-[12px] text-ink-3">{t('检查当前应用的输入、指出缺失或冲突，并完善实施规格。', 'Inspect this application’s inputs, identify gaps or conflicts, and refine its implementation specification.')}</p>
+          <p className="m-0 text-[length:var(--text-sm)] text-ink-3">{t('检查当前应用的输入、指出缺失或冲突，并完善实施规格。', 'Inspect this application’s inputs, identify gaps or conflicts, and refine its implementation specification.')}</p>
           <div className="flex flex-wrap gap-2">{[
             t('检查当前应用的输入来源，列出缺失内容和明确冲突。', 'Review this application’s input sources and identify missing information or explicit contradictions.'),
             t('结合已确认原型与本体套件，完善当前应用的实施顺序和验收说明。', 'Refine this application’s implementation order and acceptance instructions using its confirmed prototype and Ontology Suite.'),
@@ -3996,10 +4015,10 @@ export function ApplicationAssemblyDevView({
         confirmLabel={t('创建应用', 'Create application')} busy={creatingApp} confirmDisabled={!profiles.some((item) => item.id === newProfileId)}
         onClose={() => setNewAppOpen(false)} onConfirm={() => void createApplication()} testId="create-application-dialog">
         <div className="flex flex-col gap-3">
-          <div className="text-[12px] text-ink-3">{project.name} · {t('使用当前工程的需求、已确认原型和本体套件。', 'Uses this project’s requirements, confirmed prototype, and Ontology Suite.')}</div>
+          <div className="text-[length:var(--text-sm)] text-ink-3">{project.name} · {t('使用当前工程的需求、已确认原型和本体套件。', 'Uses this project’s requirements, confirmed prototype, and Ontology Suite.')}</div>
           <label className="form-field" htmlFor="new-application-name"><span className="form-label">{t('应用名称', 'Application name')}</span><input id="new-application-name" className="input" value={newAppName} onChange={(event) => setNewAppName(event.target.value)} /></label>
           <label className="form-field" htmlFor="new-application-profile"><span className="form-label">{t('技术方案', 'Technology Profile')}</span><select id="new-application-profile" className="select" value={newProfileId} onChange={(event) => setNewProfileId(event.target.value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          {operationError && <div role="alert" className="text-[12px] text-red">{operationError}</div>}
+          {operationError && <div role="alert" className="text-[length:var(--text-sm)] text-red">{operationError}</div>}
         </div>
       </ConfirmDialog>
       <ConfirmRevisionMuDiffModal open={Boolean(pendingRevision)} revision={pendingRevision} prototypeName={data.prototypes.find((item) => item.id === pendingRevision?.prototypeId)?.name}
@@ -4384,9 +4403,9 @@ export function AppPublishView({ onNavigate }: { onNavigate?: (view: NavViewId) 
   });
   return <div className="flex flex-col gap-3" data-testid="development-package-delivery">
     <div className="card"><h3 className="card-title">{t('开发包交付', 'Development Package handoff')}</h3>
-      <p className="mt-1 mb-0 text-[12.5px] text-ink-3">{t('将已审阅的实施规格、原型、本体与规范交给编码智能体。', 'Hand the reviewed implementation specification, prototype, ontology, and standards to a coding agent.')}</p>
+      <p className="mt-1 mb-0 text-[length:var(--text-sm)] text-ink-3">{t('将已审阅的实施规格、原型、本体与规范交给编码智能体。', 'Hand the reviewed implementation specification, prototype, ontology, and standards to a coding agent.')}</p>
     </div>
-    {apps.length === 0 ? <div className="card flex flex-col items-start gap-3"><p className="m-0 text-[13px] text-ink-3">{t('当前工程尚未创建应用开发规格。', 'This project has no application specification yet.')}</p>
+    {apps.length === 0 ? <div className="card flex flex-col items-start gap-3"><p className="m-0 text-[length:var(--text-base)] text-ink-3">{t('当前工程尚未创建应用开发规格。', 'This project has no application specification yet.')}</p>
       {onNavigate && <Button variant="accent" onClick={() => onNavigate('app-assembly-dev')}>{t('前往应用开发', 'Open application development')}</Button>}
     </div> : apps.map((app) => <ApplicationPackageDeliveryCard key={app.id} app={app} sourceKey={sourceKey} onNavigate={onNavigate} />)}
   </div>;

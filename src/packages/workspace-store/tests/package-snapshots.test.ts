@@ -86,4 +86,25 @@ describe('immutable development package storage', () => {
       expect.objectContaining({ values: expect.arrayContaining(['assembled_apps', 'app-contract-clm']) }),
     ]);
   });
+
+  it('retains application-owned history when deleting a former source project after rebinding', () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.saveDevelopmentPackageSnapshot(packageSnapshot('retained-source-project'));
+    const application = store.listAssembledApplications().find((item) => item.id === 'app-contract-clm')!;
+    store.saveAssembledApplication({ ...application, projectId: 'proj-mft' });
+    store.deleteProject('proj-contract');
+    expect(store.getDevelopmentPackageSnapshot('retained-source-project')).toEqual(packageSnapshot('retained-source-project'));
+    expect(store.listAssembledApplications().some((item) => item.id === application.id)).toBe(true);
+  });
+
+  it('removes every snapshot of applications deleted with their current project, including history from other projects', () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.saveDevelopmentPackageSnapshot(packageSnapshot('previous-project-history'));
+    const application = store.listAssembledApplications().find((item) => item.id === 'app-contract-clm')!;
+    store.saveAssembledApplication({ ...application, projectId: 'proj-mft' });
+    store.saveDevelopmentPackageSnapshot({ ...packageSnapshot('current-project-history'), projectId: 'proj-mft' });
+    store.deleteProject('proj-mft', true);
+    expect(store.getDevelopmentPackageSnapshot('previous-project-history')).toBeUndefined();
+    expect(store.getDevelopmentPackageSnapshot('current-project-history')).toBeUndefined();
+  });
 });

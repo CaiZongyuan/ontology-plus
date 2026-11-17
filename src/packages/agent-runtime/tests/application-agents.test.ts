@@ -106,7 +106,7 @@ describe('architecture authoring and application specification agents', () => {
     expect(inputs.selectedStandards.every((selected: { asset: unknown }) => selected.asset === null)).toBe(true);
     expect(inputs.selectedTechnologyProfile.id).toBe(DEFAULT_TECHNOLOGY_PROFILE_ID);
     expect(inputs.diagnostics.join('\n')).toMatch(/missing-ui/);
-    expect(inputs.diagnostics.join('\n')).toMatch(/Requirements document is missing/);
+    expect(inputs.diagnostics.join('\n')).toMatch(/confirmed requirements document is missing/);
     expect(inputs.diagnostics.join('\n')).toMatch(/Confirmed prototype revision is missing/);
     expect(inputs.diagnostics.join('\n')).toMatch(/Ontology Suite is missing/);
     const unbound = store.createAgentSession({ projectId: project.id, agentKind: 'CODING' });

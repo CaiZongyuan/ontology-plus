@@ -1655,6 +1655,17 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
           `Project "${target.name}" is referenced by ${boundApps.length} assembled application(s): ${boundApps.map((a) => a.name).join(', ')}. Confirm force deletion or unbind first.`,
         );
       }
+      for (const application of boundApps) this.deleteAssembledApplication(application.id);
+      const survivingApplications = new Set(this.listAssembledApplications().map((application) => application.id));
+      // Older snapshots used their source project as an index owner. Their immutable
+      // content stays with the application even when that former source is deleted.
+      for (const snapshot of listItems<DevelopmentPackageSnapshot>('development_package_snapshots', projectId)) {
+        if (survivingApplications.has(snapshot.appId)) {
+          putItem('development_package_snapshots', snapshot.snapshotId, snapshot, undefined, snapshot.compiledAt);
+        } else {
+          deleteItem('development_package_snapshots', snapshot.snapshotId);
+        }
+      }
       db.prepare(`DELETE FROM ea_relations WHERE project_id = ?`).run(projectId);
       replicateToD1(`DELETE FROM ea_relations WHERE project_id = ?`, projectId);
       db.prepare(`DELETE FROM workspace_entities WHERE project_id = ?`).run(projectId);
@@ -2378,11 +2389,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       try {
         db.prepare(`INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at)
           VALUES (?, ?, ?, ?, ?)`).run(
-          'development_package_snapshots', snapshot.snapshotId, snapshot.projectId, payloadJson, now,
+          'development_package_snapshots', snapshot.snapshotId, null, payloadJson, now,
         );
         replicateToD1(
           'INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at) VALUES (?, ?, ?, ?, ?)',
-          'development_package_snapshots', snapshot.snapshotId, snapshot.projectId, payloadJson, now,
+          'development_package_snapshots', snapshot.snapshotId, null, payloadJson, now,
         );
         this.saveAssembledApplication({
           ...application,

@@ -140,6 +140,8 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.getByTestId('nav-app-assembly-dev').click();
     await expect(page.getByTestId('coding-agent-context-card')).toBeVisible();
     await expect(agentPanel).toBeVisible();
+    const currentSources = await (await page.request.get('/api/bootstrap?projectId=proj-contract')).json();
+    await page.getByTestId('development-prototype-revision').selectOption(currentSources.confirmedPrototypeRevision.revisionId);
     await page.getByTestId('compile-dev-package-btn').click();
     await expect(page.getByTestId('compiled-package-inspector')).toBeVisible();
     await expect(page.getByTestId('compiled-package-inspector')).toContainText('AGENTS.md');
