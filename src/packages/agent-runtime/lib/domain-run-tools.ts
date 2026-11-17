@@ -1838,7 +1838,7 @@ export const DOMAIN_RUN_OPENAI_TOOLS: OpenAiFunctionTool[] = [
         type: 'object',
         properties: {
           applicationId: { type: 'string' },
-          developmentInstructions: { type: 'string', description: 'Complete revised application-specific implementation instructions in Markdown' },
+          developmentInstructions: { type: 'string', description: 'Complete revised application-specific implementation instructions in English Markdown. Original Chinese business material may remain as clearly quoted source.' },
           developmentBlockers: {
             type: 'array',
             items: { type: 'string' },
