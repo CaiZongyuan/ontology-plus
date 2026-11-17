@@ -333,7 +333,7 @@ export function OverviewSessionsView({
           )}
         </p>
 
-        <div className="mt-5 rounded-card border border-input bg-card p-3.5 shadow-sm transition-colors focus-within:border-ring">
+        <div className="mt-5 rounded-card border border-input bg-card p-3.5 shadow-sm focus-within:border-ring">
           <textarea
             ref={textareaRef}
             rows={3}
@@ -392,7 +392,7 @@ export function OverviewSessionsView({
                 type="button"
                 data-testid={`home-example-${index}`}
                 onClick={() => handleSelectExample(example)}
-                className="flex cursor-pointer flex-col gap-1.5 rounded-card border border-border-subtle bg-card p-3.5 text-left transition-colors hover:border-border hover:bg-accent"
+                className="flex cursor-pointer flex-col gap-1.5 rounded-card border border-border-subtle bg-card p-3.5 text-left hover:border-border hover:bg-accent"
               >
                 <span className="text-[14px] font-semibold text-foreground">
                   {t(example.title.zh, example.title.en)}
@@ -434,7 +434,7 @@ export function OverviewSessionsView({
                   key={project.id}
                   data-testid={`home-project-row-${project.id}`}
                   className={cn(
-                    'flex items-center gap-2 pr-2 transition-colors hover:bg-accent',
+                    'flex items-center gap-2 pr-2 hover:bg-accent',
                     index > 0 && 'border-t border-border-subtle',
                   )}
                 >
@@ -502,7 +502,7 @@ export function OverviewSessionsView({
                         `${project.name} 更多操作`,
                         `More actions for ${project.name}`,
                       )}
-                      className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-faint-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-faint-foreground hover:bg-muted hover:text-foreground"
                     >
                       <MoreHorizontal size={15} aria-hidden="true" />
                     </DropdownMenuTrigger>

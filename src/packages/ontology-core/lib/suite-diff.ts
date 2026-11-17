@@ -4,6 +4,7 @@ import { MODEL_CODES, type ModelCode, type OntologySuite, type UIEvent } from '.
 export type SuiteDiffStatus = 'ADDED' | 'REMOVED' | 'MODIFIED';
 
 export type OntologyElementCollection =
+  | 'model_metadata'
   | 'aggregates'
   | 'data_dictionaries'
   | 'aggregate_associations'
@@ -24,6 +25,7 @@ export type OntologyElementCollection =
   | 'interfaces';
 
 export type OntologyElementKind =
+  | 'model_metadata'
   | 'aggregate'
   | 'data_dictionary'
   | 'aggregate_association'
@@ -136,6 +138,17 @@ const SUITE_COLLECTION_SPECS: readonly CollectionSpec[] = [
   { modelCode: 'MM', collection: 'mappings', elementKind: 'mapping', idKey: 'id' },
   { modelCode: 'MI', collection: 'interfaces', elementKind: 'interface', idKey: 'interfaceId' },
 ];
+
+const MODEL_COLLECTION_KEYS: Readonly<Record<ModelCode, ReadonlySet<string>>> = (() => {
+  const map = {} as Record<ModelCode, Set<string>>;
+  for (const code of MODEL_CODES) {
+    map[code] = new Set<string>();
+  }
+  for (const spec of SUITE_COLLECTION_SPECS) {
+    map[spec.modelCode].add(spec.collection);
+  }
+  return map;
+})();
 
 const ORDERED_NESTED_ARRAY_FIELDS = new Set<string>([
   'steps',
@@ -905,6 +918,28 @@ function buildUnpairedElementDiff(
   };
 }
 
+function resolveModelMetadataNames(
+  model: LooseRecord,
+  modelCode: ModelCode,
+): { name: string; displayName: string } {
+  const domain = nonEmptyString(model.domain);
+  const name = domain ?? modelCode;
+  return { name, displayName: name };
+}
+
+function compareModelMetadataFields(
+  changes: SuiteFieldChange[],
+  prevModel: LooseRecord,
+  nextModel: LooseRecord,
+  collectionKeys: ReadonlySet<string>,
+): void {
+  const keys = new Set<string>([...Object.keys(prevModel), ...Object.keys(nextModel)]);
+  for (const key of keys) {
+    if (collectionKeys.has(key)) continue;
+    compareFieldValues(changes, key, key, prevModel[key], nextModel[key]);
+  }
+}
+
 export function diffOntologySuites(
   previousSuite: OntologySuite | undefined,
   nextSuite: OntologySuite | undefined,
@@ -978,6 +1013,69 @@ export function diffOntologySuites(
           buildUnpairedElementDiff(prevEl, spec, elementId, 'REMOVED', prevCtx),
         );
       }
+    }
+  }
+
+  for (const code of MODEL_CODES) {
+    const prevRaw = previousSuite?.[code];
+    const nextRaw = nextSuite?.[code];
+    const prevModel = isPlainObject(prevRaw) ? prevRaw : undefined;
+    const nextModel = isPlainObject(nextRaw) ? nextRaw : undefined;
+    const modelDiff = models[code];
+
+    if (prevModel && nextModel) {
+      const changedFields: SuiteFieldChange[] = [];
+      compareModelMetadataFields(
+        changedFields,
+        prevModel,
+        nextModel,
+        MODEL_COLLECTION_KEYS[code],
+      );
+      if (changedFields.length > 0) {
+        const prevNames = resolveModelMetadataNames(prevModel, code);
+        const nextNames = resolveModelMetadataNames(nextModel, code);
+        recordElementDiff(modelDiff, allChanges, {
+          modelCode: code,
+          collection: 'model_metadata',
+          elementKind: 'model_metadata',
+          elementId: code,
+          name: nextNames.name,
+          ...(prevNames.name !== nextNames.name ? { previousName: prevNames.name } : {}),
+          displayName: nextNames.displayName,
+          ...(prevNames.displayName !== nextNames.displayName
+            ? { previousDisplayName: prevNames.displayName }
+            : {}),
+          status: 'MODIFIED',
+          changedFields,
+          relatedAggregates: [],
+        });
+      }
+    } else if (!prevModel && nextModel && modelDiff.changes.length === 0) {
+      const nextNames = resolveModelMetadataNames(nextModel, code);
+      recordElementDiff(modelDiff, allChanges, {
+        modelCode: code,
+        collection: 'model_metadata',
+        elementKind: 'model_metadata',
+        elementId: code,
+        name: nextNames.name,
+        displayName: nextNames.displayName,
+        status: 'ADDED',
+        changedFields: [],
+        relatedAggregates: [],
+      });
+    } else if (prevModel && !nextModel && modelDiff.changes.length === 0) {
+      const prevNames = resolveModelMetadataNames(prevModel, code);
+      recordElementDiff(modelDiff, allChanges, {
+        modelCode: code,
+        collection: 'model_metadata',
+        elementKind: 'model_metadata',
+        elementId: code,
+        name: prevNames.name,
+        displayName: prevNames.displayName,
+        status: 'REMOVED',
+        changedFields: [],
+        relatedAggregates: [],
+      });
     }
   }
 

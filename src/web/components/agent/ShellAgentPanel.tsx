@@ -835,6 +835,7 @@ export function ShellAgentPanel({
         ? {
             visionSupported: visionState.visionSupported,
             ...(visionState.providerLabel ? { visionProviderLabel: visionState.providerLabel } : {}),
+            ...(visionState.modelLabel ? { visionModelLabel: visionState.modelLabel } : {}),
           }
         : {})}
     />

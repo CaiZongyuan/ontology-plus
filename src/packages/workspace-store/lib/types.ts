@@ -240,6 +240,34 @@ export type BusinessModelInlineEditTarget =
       dictionaryId: string;
       name?: string;
       description?: string;
+    }
+  | {
+      kind: 'ASSOCIATION';
+      associationId: string;
+      description?: string;
+    }
+  | {
+      kind: 'CROSS_CUTTING_UI';
+      crossCuttingId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'ACTOR';
+      actorId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'PERMISSION_GROUP';
+      groupId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'PERMISSION';
+      permissionId: string;
+      name?: string;
     };
 
 export interface BusinessModelIntentSummary {

@@ -1,13 +1,12 @@
 import type { Hono } from 'hono';
 import {
   BUSINESS_VOCABULARY,
-  checkBusinessViewMarkup,
   getModelBusinessName,
   pickBusinessText,
+  sanitizeBusinessText,
   type BusinessLocale,
 } from '../packages/business-vocabulary/index.js';
 import {
-  MODEL_CODES,
   type Attribute,
   type ModelCode,
   type OntologySuite,
@@ -66,49 +65,9 @@ interface EditIntentContext {
 }
 
 function sanitizeBusinessPhrase(raw: string | undefined, locale: BusinessLocale): string {
-  if (!raw) return '';
-  let text = raw.trim();
-  if (!text) return '';
-  if (checkBusinessViewMarkup(text, { plainText: true }).length === 0) {
-    return text;
-  }
-
-  for (const code of MODEL_CODES) {
-    const re = new RegExp(`(?<![A-Za-z0-9_])${code}(?![A-Za-z0-9_])`, 'g');
-    text = text.replace(re, getModelBusinessName(code, locale, { singular: true }));
-  }
-
-  text = text
-    .replace(
-      /(?<![A-Za-z0-9_-])(?:AGG|ENT|VO|DIC|DICT|ASSOC|BHV|BEH|RUL|RULE|EVT|SCN|ACT|ROL|ROLE|PERM|PGRP|FLW|FLOW|ACTV|QRY|RPT|SCR|EL|UIE|NAV|CC|MAP|INT|IF|MET|ASCN|WB)-[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Za-z0-9_-])/g,
-      locale === 'en-US' ? 'item' : '条目',
-    )
-    .replace(
-      /(?<![A-Za-z0-9_])(?:M[1-7]|ME|MU|MM|MI|STAGE)_[A-Z0-9_]+(?![A-Za-z0-9_])/g,
-      locale === 'en-US' ? 'check' : '检查项',
-    )
-    .replace(
-      /(?<![A-Za-z0-9_])t_[a-z][a-z0-9_]+(?![A-Za-z0-9_])/g,
-      locale === 'en-US' ? 'data record' : '数据记录',
-    )
-    .replace(
-      /\.(?:yaml|yml|json|owl|ddl|sql|md|html|css|zip)(?![A-Za-z0-9_])/gi,
-      locale === 'en-US' ? ' file' : '文件',
-    )
-    .replace(
-      /(?<![A-Za-z0-9_])(?:YAML|YML|JSON|OWL|DDL|SQLite|SQL|Markdown|HTML5?|CSS|ZIP)(?![A-Za-z0-9_])/gi,
-      locale === 'en-US' ? 'content' : '内容',
-    )
-    .replace(
-      /(?<![A-Za-z0-9_])(?:gRPC|RPC|MCP|SSE|REST|HTTPS?|RESTful|GraphQL|OpenAPI)(?![A-Za-z0-9_])/gi,
-      locale === 'en-US' ? 'external service' : '外部服务',
-    )
-    .replace(
-      /(?<![A-Za-z0-9_])(?:Agent\s+Sessions?|Agent\s+Runs?|Agent\s+Panels?|Architecture\s+Asset\s+Agent|Application\s+Development\s+Agent|Application\s+Coding\s+Agent|Copilot|PROTOTYPE_CO_DESIGN)(?![A-Za-z0-9_])|智能体会话|智能体运行|智能体面板|Agent\s*面板|Agent\s*运行|架构资产智能体|应用开发智能体/gi,
-      pickBusinessText(BUSINESS_VOCABULARY.AI_ASSISTANT, locale),
-    );
-
-  return text.replace(/\s+/g, ' ').trim();
+  return sanitizeBusinessText(raw, locale, {
+    elementIdFallback: { zh: '条目', en: 'item' },
+  });
 }
 
 function updateAliasOrNamePair(
@@ -622,6 +581,147 @@ export function applyBusinessModelInlineEdit(
           ...(edit.description !== undefined
             ? { desiredDescription: edit.description.trim() }
             : {}),
+        },
+      };
+    }
+
+    case 'ASSOCIATION': {
+      const assoc = nextSuite.M1?.aggregate_associations.find(
+        (a) => a.id === edit.associationId,
+      );
+      if (!assoc) {
+        throw new BusinessModelTargetError(`Association not found: ${edit.associationId}`);
+      }
+      const beforeLabel =
+        assoc.description?.trim() || `${assoc.sourceRole}-${assoc.targetRole}` || assoc.id;
+      if (edit.description !== undefined) {
+        const cleanDesc = edit.description.trim();
+        if (cleanDesc) assoc.description = cleanDesc;
+        else delete assoc.description;
+      }
+      return {
+        nextSuite,
+        modelCode: 'M1',
+        defaultNote: `Updated object relation "${beforeLabel}"`,
+        intent: {
+          conceptZh: '对象关联',
+          conceptEn: 'object relation',
+          beforeLabel,
+          ...(edit.description !== undefined
+            ? { desiredDescription: edit.description.trim() }
+            : {}),
+        },
+      };
+    }
+
+    case 'CROSS_CUTTING_UI': {
+      const cc = nextSuite.MU?.cross_cutting_ui.find((item) => item.id === edit.crossCuttingId);
+      if (!cc) {
+        throw new BusinessModelTargetError(
+          `Shared screen element not found: ${edit.crossCuttingId}`,
+        );
+      }
+      const beforeLabel = cc.name.trim() || cc.id;
+      if (edit.name !== undefined) {
+        cc.name = edit.name.trim();
+      }
+      if (edit.description !== undefined) {
+        const cleanDesc = edit.description.trim();
+        if (cleanDesc) cc.description = cleanDesc;
+        else delete cc.description;
+      }
+      return {
+        nextSuite,
+        modelCode: 'MU',
+        defaultNote: `Updated shared screen element "${beforeLabel}"`,
+        intent: {
+          conceptZh: '全局界面元素',
+          conceptEn: 'shared screen element',
+          beforeLabel,
+          ...(edit.name !== undefined ? { desiredName: edit.name.trim() } : {}),
+          ...(edit.description !== undefined
+            ? { desiredDescription: edit.description.trim() }
+            : {}),
+        },
+      };
+    }
+
+    case 'ACTOR': {
+      const actor = nextSuite.M5?.actors.find((a) => a.id === edit.actorId);
+      if (!actor) throw new BusinessModelTargetError(`Actor not found: ${edit.actorId}`);
+      const beforeLabel = actor.name.trim() || actor.id;
+      if (edit.name !== undefined) {
+        actor.name = edit.name.trim();
+      }
+      if (edit.description !== undefined) {
+        const cleanDesc = edit.description.trim();
+        if (cleanDesc) actor.description = cleanDesc;
+        else delete actor.description;
+      }
+      return {
+        nextSuite,
+        modelCode: 'M5',
+        defaultNote: `Updated actor "${beforeLabel}"`,
+        intent: {
+          conceptZh: '参与主体',
+          conceptEn: 'actor',
+          beforeLabel,
+          ...(edit.name !== undefined ? { desiredName: edit.name.trim() } : {}),
+          ...(edit.description !== undefined
+            ? { desiredDescription: edit.description.trim() }
+            : {}),
+        },
+      };
+    }
+
+    case 'PERMISSION_GROUP': {
+      const group = nextSuite.M5?.permissionGroups?.find((g) => g.id === edit.groupId);
+      if (!group) {
+        throw new BusinessModelTargetError(`Permission group not found: ${edit.groupId}`);
+      }
+      const beforeLabel = group.name.trim() || group.id;
+      if (edit.name !== undefined) {
+        group.name = edit.name.trim();
+      }
+      if (edit.description !== undefined) {
+        const cleanDesc = edit.description.trim();
+        if (cleanDesc) group.description = cleanDesc;
+        else delete group.description;
+      }
+      return {
+        nextSuite,
+        modelCode: 'M5',
+        defaultNote: `Updated permission group "${beforeLabel}"`,
+        intent: {
+          conceptZh: '权限分组',
+          conceptEn: 'permission group',
+          beforeLabel,
+          ...(edit.name !== undefined ? { desiredName: edit.name.trim() } : {}),
+          ...(edit.description !== undefined
+            ? { desiredDescription: edit.description.trim() }
+            : {}),
+        },
+      };
+    }
+
+    case 'PERMISSION': {
+      const perm = nextSuite.M5?.permissions.find((p) => p.id === edit.permissionId);
+      if (!perm) {
+        throw new BusinessModelTargetError(`Permission not found: ${edit.permissionId}`);
+      }
+      const beforeLabel = perm.name.trim() || perm.id;
+      if (edit.name !== undefined) {
+        perm.name = edit.name.trim();
+      }
+      return {
+        nextSuite,
+        modelCode: 'M5',
+        defaultNote: `Updated permission "${beforeLabel}"`,
+        intent: {
+          conceptZh: '权限项',
+          conceptEn: 'permission',
+          beforeLabel,
+          ...(edit.name !== undefined ? { desiredName: edit.name.trim() } : {}),
         },
       };
     }

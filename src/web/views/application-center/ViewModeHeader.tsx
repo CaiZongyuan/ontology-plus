@@ -33,7 +33,7 @@ export function ViewModeHeader({
           data-testid={`${testIdPrefix}-mode-workspace`}
           onClick={() => onChange('WORKSPACE')}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-sm px-3 text-[12.5px] font-medium cursor-pointer transition-colors',
+            'inline-flex h-7 items-center gap-1.5 rounded-sm px-3 text-[12.5px] font-medium cursor-pointer',
             mode === 'WORKSPACE' ? 'bg-card text-foreground shadow-hairline' : 'text-foreground-soft hover:text-foreground',
           )}
         >
@@ -45,7 +45,7 @@ export function ViewModeHeader({
           data-testid={`${testIdPrefix}-mode-registry`}
           onClick={() => onChange('REGISTRY')}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-sm px-3 text-[12.5px] font-medium cursor-pointer transition-colors',
+            'inline-flex h-7 items-center gap-1.5 rounded-sm px-3 text-[12.5px] font-medium cursor-pointer',
             mode === 'REGISTRY' ? 'bg-card text-foreground shadow-hairline' : 'text-foreground-soft hover:text-foreground',
           )}
         >
@@ -53,7 +53,7 @@ export function ViewModeHeader({
           {registryLabel}
           <span
             className={cn(
-              'rounded-full px-1.5 font-mono text-[10.5px] tabular-nums',
+              'rounded-full px-1.5 font-mono text-xs tabular-nums',
               mode === 'REGISTRY' ? 'bg-muted text-muted-foreground' : 'bg-card text-faint-foreground',
             )}
           >

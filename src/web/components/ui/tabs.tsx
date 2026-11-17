@@ -64,7 +64,7 @@ export function TabsTrigger({ className, ...props }: TabsTriggerProps) {
     <TabsPrimitive.Tab
       data-slot="tabs-trigger"
       className={cn(
-        'relative inline-flex h-full flex-1 items-center justify-center gap-1.5 rounded-sm border border-solid border-transparent px-2.5 py-1 font-sans text-[12.5px] font-medium whitespace-nowrap text-muted-foreground select-none cursor-pointer transition-[background-color,color,border-color,box-shadow] duration-150 ease-out-strong',
+        'relative inline-flex h-full flex-1 items-center justify-center gap-1.5 rounded-sm border border-solid border-transparent px-2.5 py-1 font-sans text-[12.5px] font-medium whitespace-nowrap text-muted-foreground select-none cursor-pointer',
         'hover:text-foreground',
         'data-[active]:bg-card data-[active]:border-border data-[active]:text-foreground data-[active]:shadow-xs',
         'group-data-[variant=line]/tabs-list:rounded-none group-data-[variant=line]/tabs-list:border-0 group-data-[variant=line]/tabs-list:border-b-2 group-data-[variant=line]/tabs-list:border-transparent group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:px-2 group-data-[variant=line]/tabs-list:data-[active]:border-primary group-data-[variant=line]/tabs-list:data-[active]:bg-transparent group-data-[variant=line]/tabs-list:data-[active]:shadow-none',
@@ -96,7 +96,7 @@ export function TabsIndicator({ className, ...props }: TabsIndicatorProps) {
     <TabsPrimitive.Indicator
       data-slot="tabs-indicator"
       className={cn(
-        'rounded-sm bg-primary transition-[transform,width,height] duration-150 ease-out-strong',
+        'rounded-sm bg-primary transition-transform duration-150 ease-out-strong',
         className,
       )}
       {...props}

@@ -388,10 +388,6 @@ export function createApiApp(
     return c.json({ projects: store.listProjects() });
   });
 
-  app.get('/api/projects/overview', (c) => {
-    return c.json({ projects: store.listProjects() });
-  });
-
   const handleCreateProject = async (c: {
     req: { json: <T>() => Promise<T> };
     json: (data: unknown, status?: 200 | 201 | 400) => Response;
@@ -436,7 +432,6 @@ export function createApiApp(
   };
 
   app.post('/api/projects', handleCreateProject);
-  app.post('/api/projects/from-description', handleCreateProject);
 
   app.get('/api/projects/:id', (c) => {
     const project = store.getProject(c.req.param('id'));

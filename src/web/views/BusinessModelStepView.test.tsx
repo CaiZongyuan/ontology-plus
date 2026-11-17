@@ -604,4 +604,73 @@ describe('BusinessModelStepView (#68)', () => {
       assertCleanBusinessView(rejectedHtml, `Rejected inline edit banner [${locale}]`);
     }
   });
+
+  it('renders associations, screen navigationEdges & crossCuttingUi, and rolesAndPermissions actors/permissionGroups/standalone permissions with 0 checkBusinessViewMarkup violations', () => {
+    const suiteWithFullRoles: OntologySuite = JSON.parse(
+      JSON.stringify(CONTRACT_LIFECYCLE_SUITE),
+    );
+    suiteWithFullRoles.M5!.permissionGroups = [
+      {
+        id: 'PG-CONTRACT-OPS',
+        name: '合同日常经办权限组',
+        description: '覆盖合同台账查询与草稿起草的常用权限组合',
+        permissions: ['PERM-CONTRACT-READ', 'PERM-CONTRACT-WRITE'],
+      },
+    ];
+    suiteWithFullRoles.M5!.permissions.push({
+      id: 'PERM-COUNTERPARTY-FREEZE',
+      name: '相对方冻结管控权限',
+      code: 'counterparty:freeze',
+      targetAggregate: 'Counterparty',
+      allowedBehaviors: [],
+      uiControlledElements: [],
+    });
+
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      const storage = createMemoryStorage({ onto_locale: locale });
+      vi.stubGlobal('localStorage', storage);
+      vi.stubGlobal('window', { localStorage: storage });
+
+      seedStore({
+        loading: false,
+        activeNav: 'app-ontology',
+        data: makeSuiteBootstrap(suiteWithFullRoles),
+      });
+
+      // 1. Business Object page with all collapsed sections expanded (associations + screens navigationEdges & crossCuttingUi)
+      const expandedObjectHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView
+            activePageId="AGG-01"
+            viewModeOverride="business"
+            defaultExpandedSections={[...DEFAULT_COLLAPSED_OBJECT_SECTIONS]}
+          />
+        </PreferencesProvider>,
+      );
+      expect(expandedObjectHtml).toContain('data-testid="object-associations-list"');
+      expect(expandedObjectHtml).toContain('每份合同必须绑定一个准入状态正常的签约相对方');
+      expect(expandedObjectHtml).toContain('data-testid="object-screen-navigations"');
+      expect(expandedObjectHtml).toContain(
+        '合同台账与风险监控工作台 → 合同起草与条款配置页',
+      );
+      expect(expandedObjectHtml).toContain('data-testid="object-screen-crosscutting"');
+      expect(expandedObjectHtml).toContain('高风险合同法务红线提示横幅');
+      assertCleanBusinessView(expandedObjectHtml, `Expanded object page [${locale}]`);
+
+      // 2. Roles & Permissions cross-view renders matrix + actors + permissionGroups + standalone permissions
+      const rolesHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView activePageId="view:roles" viewModeOverride="business" />
+        </PreferencesProvider>,
+      );
+      expect(rolesHtml).toContain('data-testid="roles-actors-section"');
+      expect(rolesHtml).toContain('商务合同专员');
+      expect(rolesHtml).toContain('电子签章服务网关');
+      expect(rolesHtml).toContain('data-testid="roles-permission-groups-section"');
+      expect(rolesHtml).toContain('合同日常经办权限组');
+      expect(rolesHtml).toContain('data-testid="roles-standalone-permissions-section"');
+      expect(rolesHtml).toContain('相对方冻结管控权限');
+      assertCleanBusinessView(rolesHtml, `Full roles cross-view [${locale}]`);
+    }
+  });
 });

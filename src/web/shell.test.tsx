@@ -427,7 +427,7 @@ describe('WorkbenchShell (#60)', () => {
     expect(settingsHtml).toContain('data-testid="nav-system-settings"');
   });
 
-  it('builds Command Palette entries for Projects, Project Steps, and Business Objects while retiring legacy ontology nav items (#68)', () => {
+  it('builds Command Palette entries for Projects, Project Steps, and Business Objects while retiring legacy ontology nav items (#68)', async () => {
     const storeMap = new Map<string, string>();
     const storage = {
       getItem: (k: string) => storeMap.get(k) ?? null,
@@ -499,5 +499,57 @@ describe('WorkbenchShell (#60)', () => {
     expect(readStepViewMode('BUSINESS_MODEL')).toBe('business');
     expect(useWorkbenchStore.getState().activeNav).toBe('app-ontology');
     expect(useWorkbenchStore.getState().activeItemId).toBe('AGG-02');
+
+    // Selecting a project in Command Palette from Home or a secondary page enters that project's currentStep
+    const switchedIds: string[] = [];
+    const navigatedViews: string[] = [];
+    const payloadWithSteps: BootstrapPayload = {
+      ...payload,
+      projects: payload.projects.map((p) =>
+        p.id === 'proj-mft' ? { ...p, currentStep: 'BUSINESS_MODEL' as const } : p,
+      ),
+    };
+
+    const fromHomeEntries = buildCommandPaletteEntries({
+      data: payloadWithSteps,
+      activeView: 'overview',
+      locale: 'zh-CN',
+      theme: 'light',
+      workbenchTheme: 'default',
+      t: (zh) => zh,
+      onSelectStep: () => undefined,
+      onSelectView: (view) => navigatedViews.push(view),
+      onSwitchProject: (id) => {
+        switchedIds.push(id);
+      },
+      onToggleTheme: () => undefined,
+      onSelectWorkbenchTheme: () => undefined,
+      onToggleLocale: () => undefined,
+    });
+    fromHomeEntries.find((e) => e.key === 'project:proj-mft')!.run();
+    await Promise.resolve();
+    expect(switchedIds).toEqual(['proj-mft']);
+    expect(navigatedViews).toEqual(['app-ontology']);
+
+    const fromSecondaryEntries = buildCommandPaletteEntries({
+      data: payloadWithSteps,
+      activeView: 'llm-center',
+      locale: 'zh-CN',
+      theme: 'light',
+      workbenchTheme: 'default',
+      t: (zh) => zh,
+      onSelectStep: () => undefined,
+      onSelectView: (view) => navigatedViews.push(view),
+      onSwitchProject: (id) => {
+        switchedIds.push(id);
+      },
+      onToggleTheme: () => undefined,
+      onSelectWorkbenchTheme: () => undefined,
+      onToggleLocale: () => undefined,
+    });
+    fromSecondaryEntries.find((e) => e.key === 'project:proj-contract')!.run();
+    await Promise.resolve();
+    expect(switchedIds).toEqual(['proj-mft', 'proj-contract']);
+    expect(navigatedViews).toEqual(['app-ontology', 'app-req-explore']);
   });
 });

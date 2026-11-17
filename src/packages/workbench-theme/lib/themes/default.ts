@@ -34,11 +34,13 @@ import type { WorkbenchTheme } from '../types.js';
  */
 
 const CJK = '"Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei"';
+const LINUX_MONO =
+  '"DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", "Noto Sans Mono CJK SC"';
 
 const type = {
   'font-title': `"Inter", ${CJK}, system-ui, -apple-system, "Segoe UI", sans-serif`,
   'font-sans': `"Inter", ${CJK}, system-ui, -apple-system, "Segoe UI", sans-serif`,
-  'font-mono': `"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, ${CJK}, monospace`,
+  'font-mono': `"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, ${LINUX_MONO}, ${CJK}, monospace`,
 };
 
 const shape = {

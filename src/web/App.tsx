@@ -121,6 +121,7 @@ export interface CommandEntry {
 
 export function buildCommandPaletteEntries({
   data,
+  activeView,
   locale,
   theme,
   workbenchTheme,
@@ -133,6 +134,7 @@ export function buildCommandPaletteEntries({
   onToggleLocale,
 }: {
   data: BootstrapPayload | null;
+  activeView?: NavViewId;
   locale: 'zh-CN' | 'en-US';
   theme: 'light' | 'dark';
   workbenchTheme: string;
@@ -196,7 +198,15 @@ export function buildCommandPaletteEntries({
       icon: <FolderKanban size={15} />,
       keywords: [p.name, p.code, 'project', '项目', '工程'],
       run: () => {
-        void onSwitchProject(p.id);
+        const currentView = activeView ?? resolveNavViewId(useWorkbenchStore.getState().activeNav);
+        const routeKind = resolveShellRouteContext(currentView).kind;
+        const shouldEnterProject = routeKind === 'home' || routeKind === 'secondary';
+        const targetView = getDefaultViewForStep(p.currentStep ?? 'REQUIREMENTS');
+        void Promise.resolve(onSwitchProject(p.id)).then(() => {
+          if (shouldEnterProject) {
+            onSelectView(targetView);
+          }
+        });
       },
     })),
   ];
@@ -643,6 +653,7 @@ export function WorkbenchShell({
     () =>
       buildCommandPaletteEntries({
         data,
+        activeView,
         locale,
         theme,
         workbenchTheme,
@@ -655,7 +666,7 @@ export function WorkbenchShell({
         onToggleLocale: toggleLocale,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, locale, theme, workbenchTheme],
+    [data, activeView, locale, theme, workbenchTheme],
   );
 
   const validation = data?.activeProject.validation;

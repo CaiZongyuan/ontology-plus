@@ -132,13 +132,27 @@ describe('built-in themes', () => {
     expect(findTheme('default')!.name).toEqual({ zh: '默认', en: 'Default' });
   });
 
-  it('give 默认 the same sans-serif family for titles and interface, and no background texture', () => {
+  it('give 默认 the same sans-serif family for titles and interface, Linux monospace fallbacks ahead of CJK, and no background texture', () => {
     const theme = findTheme('default')!;
     for (const mode of ['light', 'dark'] as const) {
       const tokens = resolveThemeTokens(theme, mode);
       expect(tokens['font-title']).toBe(tokens['font-sans']);
       expect(tokens['font-title']).toMatch(/^"Inter", .*, sans-serif$/);
       expect(tokens['font-title']).not.toMatch(/Serif|Georgia/);
+      const mono = tokens['font-mono'];
+      const cjkIdx = mono.indexOf('"Noto Sans SC"');
+      expect(cjkIdx).toBeGreaterThan(-1);
+      for (const linuxMono of [
+        '"DejaVu Sans Mono"',
+        '"Liberation Mono"',
+        '"Noto Sans Mono"',
+        '"Noto Sans Mono CJK SC"',
+      ]) {
+        const idx = mono.indexOf(linuxMono);
+        expect(idx).toBeGreaterThan(-1);
+        expect(idx).toBeLessThan(cjkIdx);
+      }
+      expect(mono.endsWith(', monospace')).toBe(true);
       expect(tokens['backdrop-image']).toBe('none');
     }
   });

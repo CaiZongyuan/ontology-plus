@@ -122,6 +122,7 @@ export interface AgentPanelProps {
   /** Whether the active provider/model supports multimodal vision input (`false` shows explicit fallback banner). */
   visionSupported?: boolean;
   visionProviderLabel?: string;
+  visionModelLabel?: string;
   /** Fixed clock passed through to the run cards for deterministic rendering. */
   now?: number;
 }
@@ -174,6 +175,7 @@ export function AgentPanel({
   onRemoveQueuedPrompt,
   visionSupported,
   visionProviderLabel,
+  visionModelLabel,
   now,
 }: AgentPanelProps) {
   const { t } = usePreferences();
@@ -439,6 +441,8 @@ export function AgentPanel({
           <VisionCapabilityBanner
             visionSupported={false}
             {...(visionProviderLabel ? { providerLabel: visionProviderLabel } : {})}
+            {...(visionModelLabel ? { modelLabel: visionModelLabel } : {})}
+            {...(onOpenPlatformSettings ? { onOpenPlatformSettings } : {})}
             {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
             className="agent-panel-vision-banner"
           />
@@ -654,7 +658,7 @@ function AssistantHistoryMenu({
             {t('新建对话', 'New conversation')}
           </button>
         ) : sessionsOwnedByArtifact ? (
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {t('随界面原型自动管理', 'Follows each prototype')}
           </span>
         ) : null}

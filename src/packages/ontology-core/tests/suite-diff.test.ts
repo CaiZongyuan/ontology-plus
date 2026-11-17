@@ -44,7 +44,7 @@ describe('suite-diff: typed Ontology Suite diff across all 11 models', () => {
       });
     }
 
-    // Undefined optional models vs empty model shells should also produce zero changes
+    // Identical empty model shells produce zero changes
     const shellSuite: OntologySuite = {
       M1: {
         model_type: 'OBJECT',
@@ -66,8 +66,7 @@ describe('suite-diff: typed Ontology Suite diff across all 11 models', () => {
         cross_cutting_ui: [],
       },
     };
-    expect(diffOntologySuites({}, shellSuite).hasChanges).toBe(false);
-    expect(diffOntologySuites(shellSuite, {}).hasChanges).toBe(false);
+    expect(diffOntologySuites(shellSuite, cloneSuite(shellSuite)).hasChanges).toBe(false);
 
     // Benchmark suites against deep clones of themselves
     const contractDiff = diffOntologySuites(
@@ -707,5 +706,105 @@ describe('suite-diff: typed Ontology Suite diff across all 11 models', () => {
       status: 'ADDED',
       relatedAggregates: [{ aggregateId: 'AGG-01', name: 'Contract', displayName: '合同' }],
     });
+  });
+
+  it('detects empty-model additions/removals and model-level metadata modifications across all 11 models', () => {
+    const emptyShellAll11: OntologySuite = {
+      M1: {
+        model_type: 'OBJECT',
+        version: '5.0',
+        domain: '合同管理',
+        aggregates: [],
+        data_dictionaries: [],
+        aggregate_associations: [],
+      },
+      M2: { model_type: 'BEHAVIOR', version: '5.0', domain: '合同管理', behaviors: [] },
+      M3: { model_type: 'RULE', version: '5.0', domain: '合同管理', rules: [] },
+      ME: { model_type: 'EVENT', version: '5.0', domain: '合同管理', events: [] },
+      M4: { model_type: 'SCENARIO', version: '5.0', domain: '合同管理', event_scenarios: [] },
+      M5: {
+        model_type: 'ACTOR',
+        version: '5.0',
+        domain: '合同管理',
+        actors: [],
+        roles: [],
+        permissions: [],
+      },
+      M6: { model_type: 'FLOW', version: '5.0', domain: '合同管理', flows: [] },
+      M7: { model_type: 'QUERY_REPORT', version: '5.0', domain: '合同管理', query_reports: [] },
+      MU: {
+        model_type: 'UI',
+        version: '5.0',
+        domain: '合同管理',
+        application: 'contract-portal',
+        screens: [],
+        navigation_edges: [],
+        cross_cutting_ui: [],
+      },
+      MM: { model_type: 'MAPPING', version: '1.0', domain: '合同管理', mappings: [] },
+      MI: { model_type: 'INTERFACE', version: '1.0', domain: '合同管理', interfaces: [] },
+    };
+
+    const addEmptyDiff = diffOntologySuites({}, emptyShellAll11);
+    expect(addEmptyDiff.hasChanges).toBe(true);
+    expect(addEmptyDiff.summary.addedCount).toBe(11);
+    expect(addEmptyDiff.summary.changedModels).toEqual(MODEL_CODES);
+    for (const code of MODEL_CODES) {
+      expect(addEmptyDiff.models[code].added).toEqual([
+        {
+          modelCode: code,
+          collection: 'model_metadata',
+          elementKind: 'model_metadata',
+          elementId: code,
+          name: '合同管理',
+          displayName: '合同管理',
+          status: 'ADDED',
+          changedFields: [],
+          relatedAggregates: [],
+        },
+      ]);
+    }
+
+    const removeEmptyDiff = diffOntologySuites(emptyShellAll11, {});
+    expect(removeEmptyDiff.hasChanges).toBe(true);
+    expect(removeEmptyDiff.summary.removedCount).toBe(11);
+    expect(removeEmptyDiff.summary.changedModels).toEqual(MODEL_CODES);
+    expect(
+      removeEmptyDiff.changes.every(
+        (c) => c.elementKind === 'model_metadata' && c.status === 'REMOVED',
+      ),
+    ).toBe(true);
+
+    // Modifying model-level metadata fields across all 11 models on a populated suite
+    const nextPopulated = cloneSuite(CONTRACT_LIFECYCLE_SUITE);
+    for (const code of MODEL_CODES) {
+      const m = nextPopulated[code] as Record<string, unknown>;
+      m.domain = '集团合同中心';
+      m.version = '6.0';
+    }
+    nextPopulated.MU!.application = 'group-contract-app';
+
+    const metaDiff = diffOntologySuites(CONTRACT_LIFECYCLE_SUITE, nextPopulated);
+    expect(metaDiff.hasChanges).toBe(true);
+    expect(metaDiff.summary.modifiedCount).toBe(11);
+    expect(metaDiff.summary.changedModels).toEqual(MODEL_CODES);
+    expect(metaDiff.models.M1.modified[0]).toMatchObject({
+      modelCode: 'M1',
+      collection: 'model_metadata',
+      elementKind: 'model_metadata',
+      elementId: 'M1',
+      name: '集团合同中心',
+      previousName: '合同全生命周期管理系统',
+      displayName: '集团合同中心',
+      previousDisplayName: '合同全生命周期管理系统',
+      status: 'MODIFIED',
+    });
+    expect(metaDiff.models.MU.modified[0]!.changedFields).toEqual(
+      expect.arrayContaining([
+        { field: 'domain', before: '合同全生命周期管理系统', after: '集团合同中心' },
+        { field: 'version', before: '5.0', after: '6.0' },
+        { field: 'application', before: '—', after: 'group-contract-app' },
+      ]),
+    );
   });
 });
