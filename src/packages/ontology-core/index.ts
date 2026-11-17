@@ -140,3 +140,17 @@ export {
   type MuModelDiff,
   type MuScreenDiff,
 } from './lib/mu-diff.js';
+
+export {
+  diffOntologySuites,
+  type OntologyElementCollection,
+  type OntologyElementDiff,
+  type OntologyElementKind,
+  type OntologyModelDiff,
+  type OntologyModelDiffSummary,
+  type OntologySuiteDiff,
+  type OntologySuiteDiffSummary,
+  type RelatedAggregateRef,
+  type SuiteDiffStatus,
+  type SuiteFieldChange,
+} from './lib/suite-diff.js';
