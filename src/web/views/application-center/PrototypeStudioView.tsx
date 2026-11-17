@@ -951,19 +951,6 @@ export function PrototypeStudioView({
               )}
             </span>
           </p>
-
-          {onNavigate && (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              data-testid="prototype-go-to-requirements-btn"
-              onClick={() => onNavigate('app-requirements')}
-            >
-              {t('前往需求步骤', 'Go to Requirements')}
-              <ArrowRight size={13.5} aria-hidden="true" />
-            </Button>
-          )}
         </section>
       </div>
     );

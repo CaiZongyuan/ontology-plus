@@ -14,7 +14,8 @@ A theme is a table of values for the contract, with one column for light and one
 ## Consequences
 
 - Every built-in theme passes an automated check: each contract token has a light and a dark value, and text contrast meets the threshold. Adding a theme is filling in a table.
-- The old token names stay as aliases during the migration and are removed when no caller remains.
+- Components and stylesheets are guarded by `pnpm lint:theme` (part of `pnpm check`) so they read only contract tokens and shared derived variables; transitional legacy token aliases were retired once all callers migrated, and `pnpm themes:generate` emits the theme CSS and `docs/workbench-theme-contract.md`.
+- The `Default` theme uses the Attio-measured blue accent alongside self-hosted `Inter` and `JetBrains Mono` (paired with system sans for Chinese); shared typography uses a `14px` base (`>= 12px` minimum) across all themes.
 - Tailwind preflight stays off (ADR 0006), so primitives copied from shadcn/ui need a scoped reset.
 - Density and font size, if they become adjustable, are user preferences separate from the theme.
 - Renaming or removing a contract token breaks themes and bumps the contract version.

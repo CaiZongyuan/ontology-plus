@@ -671,7 +671,15 @@ export function BusinessModelStepView({
     return map;
   }, [suite]);
   const humanize = useCallback(
-    (raw: string | undefined) => sanitizeBusinessText(raw, elementDisplayMap, businessLocale),
+    (raw: string | undefined) => {
+      const cleaned = sanitizeBusinessText(raw, elementDisplayMap, businessLocale);
+      if (!cleaned) return '';
+      return businessLocale === 'en-US'
+        ? cleaned
+            .replace(/\baggregate\s+roots?\b/gi, 'business object')
+            .replace(/\binvariants?\b/gi, 'business rules')
+        : cleaned.replace(/聚合根/g, '').replace(/不变量/g, '业务规则');
+    },
     [elementDisplayMap, businessLocale],
   );
 

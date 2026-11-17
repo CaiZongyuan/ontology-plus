@@ -10,7 +10,7 @@ _Avoid_: Schema bundle, config files, YAML set
 _Shown to business users as_: 业务模型 (Business Model)
 
 **Object Model (`M1` 对象模型)**:
-The structural foundation defining domain Aggregate Roots, internal Entities, immutable Value Objects, Data Dictionaries, attribute constraints (`refRules`),aggregate invariants (`invariants`), and ID-based cross-aggregate associations.
+The structural foundation defining domain Aggregate Roots, internal Entities, immutable Value Objects, Data Dictionaries, attribute constraints (`refRules`), aggregate invariants (`invariants`), and ID-based cross-aggregate associations.
 _Avoid_: Database schema, ER diagram, table model
 _Shown to business users as_: 业务对象 (Business Objects)
 
@@ -67,7 +67,7 @@ _Shown to business users as_: 对外接口 (Integrations)
 ## Validation & Lifecycle
 
 **Consistency Error (一致性错误)**:
-A blocking model defect—such as a dangling ID reference, broken `M2`/`M7` 1-to-1 binding, or invalid `MU` call-chain order—that prevents saving or exporting a model snapshot.
+A blocking model defect—such as a dangling ID reference, broken `M2`/`M7` 1-to-1 binding, or invalid `MU` call-chain order—that prevents confirming a Business Model or exporting a model snapshot.
 _Avoid_: Warning, lint hint
 _Shown to business users as_: 需要修正的问题 (Problems to fix)
 
@@ -100,7 +100,7 @@ A named look of the Ontology Plus workbench itself, covering both its light and 
 _Avoid_: Skin, UI theme, style, Visual Reference (which describes the generated application, not the workbench)
 
 **AI Assistant (AI 助手)**:
-The single conversational counterpart the user sees in the workbench, behind which the specialised agent for the Project Step in view does the work.
+The single conversational counterpart the user sees in the workbench, behind which the specialised agent for the Project Step, Technical Details, or secondary area in view does the work.
 _Avoid_: Agent, 智能体, copilot, or any agent kind name in user-facing copy
 
 **Project Step (步骤)**:
@@ -116,12 +116,16 @@ The user's explicit approval of a Project Step's result, which makes that result
 _Avoid_: Confirmation (reserved for Extraction Candidates), sign-off, publish
 
 **Outdated (待更新)**:
-The state of a Project Step's result when an earlier step's confirmation or a selected delivery input has changed since it was produced; it stays as it is until the user accepts or generates an update.
+The state of a Project Step's result when its direct upstream Step Confirmation (or a selected delivery input) has changed since it was confirmed or produced; it stays as it is until the user updates it or re-confirms it as-is.
 _Avoid_: Stale, dirty, invalid, out of sync, 输入已变化
 
 **Change Summary (变更说明)**:
-The plain-language account of what one Agent Run changed, shown when the run ends, from which that run can be undone.
+The plain-language account of what one Agent Run changed, computed from the difference before and after the run and shown when the run ends, from which the latest change can be undone.
 _Avoid_: Tool log, trace, diff
+
+**Artifact History (成果历史)**:
+The linear saved sequence of states for one mutable result (requirements document, interactive prototype, or Ontology Suite), recording whether each change came from an Agent Run or a manual edit and allowing the latest change to be undone or an earlier point to be restored without destroying later work.
+_Avoid_: Browser memory undo stack, branching history
 
 **Business View (业务视图)**:
 The default view of a Project Step's result, written in business names and organised around the things a business person recognises.

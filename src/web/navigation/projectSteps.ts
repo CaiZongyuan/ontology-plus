@@ -31,8 +31,6 @@ export type ProjectStepNumber = 1 | 2 | 3 | 4 | 5;
 
 export type ProjectStepTargetView =
   | 'app-requirements'
-  | 'app-req-explore'
-  | 'app-req-docs'
   | 'app-prototype'
   | 'app-ontology'
   | 'app-assembly-dev';

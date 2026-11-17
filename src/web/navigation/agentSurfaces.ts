@@ -88,8 +88,6 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
     },
   },
   'app-requirements': REQUIREMENTS_AGENT_SURFACE,
-  'app-req-explore': REQUIREMENTS_AGENT_SURFACE,
-  'app-req-docs': REQUIREMENTS_AGENT_SURFACE,
   'app-prototype': {
     title: AI_ASSISTANT_TITLE,
     sessionKind: 'PROTOTYPE_CO_DESIGN',
@@ -136,14 +134,6 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
     },
   },
   'app-assembly-dev': {
-    title: AI_ASSISTANT_TITLE,
-    sessionKind: 'CODING',
-    placeholder: {
-      zh: '检查当前应用的输入缺项与冲突，完善实施规格和验收条件…',
-      en: 'Inspect this application’s missing inputs and conflicts, or refine its implementation specification…',
-    },
-  },
-  'app-delivery': {
     title: AI_ASSISTANT_TITLE,
     sessionKind: 'CODING',
     placeholder: {

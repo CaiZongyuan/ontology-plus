@@ -1360,8 +1360,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     }
   }
 
-  // Idempotent seed on first startup
-  const shouldSeedProjects = options.seedProjects !== false;
+  // Idempotent seed on first startup (can be disabled via options.seedProjects=false or ONTOLOGY_SEED_PROJECTS=0)
+  const envSeedProjects =
+    typeof process !== 'undefined' ? process.env.ONTOLOGY_SEED_PROJECTS?.trim().toLowerCase() : undefined;
+  const shouldSeedProjects =
+    options.seedProjects ?? (envSeedProjects !== '0' && envSeedProjects !== 'false');
   const countRow = db.prepare(`SELECT COUNT(*) AS cnt FROM projects`).get() as { cnt: number };
   if (countRow.cnt === 0 && shouldSeedProjects) {
     const now = '2026-11-10T09:00:00.000Z';

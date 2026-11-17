@@ -19,3 +19,7 @@ The redesign is judged by how much each screen shows, whether a business person 
 - The Delivery step ends in a slot. Today it says the blueprint is ready to hand over; a runnable system is a separate capability that will fill the same place.
 - The workbench is desktop first (1280px and up). On narrower screens the conversation and the canvas alternate.
 - The presentation of ADR 0009 changes (see its amendment); its engine does not.
+
+## Amendments
+
+- **2026-11-17: layout, first-use Home, and step-indicator specifics settled in prototype review (#48).** In the project workspace (`1280px` and up), the `AI Assistant` conversation docks on the left ("speak first, inspect the result on the right") and the step canvas sits on the right; below `1280px` a segmented toggle alternates between Conversation and Canvas. A top horizontal step bar shows the four `Project Steps` and their five states (`Not started`, `In progress`, `Unconfirmed changes`, `Confirmed`, `Outdated`), with unstartable steps displaying a secondary-text explanation (`>= 12px`) and direct link to the prerequisite step rather than blocking dialogs. Secondary areas (`Capability Center`, `Data Analytics Center`, `Platform Governance`, and settings) live under the top-bar `More` menu. On first use (when no projects exist yet), Home displays three clickable starter examples below the description input that populate the prompt without auto-submitting.

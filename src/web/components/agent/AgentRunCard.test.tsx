@@ -742,8 +742,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     await useWorkbenchStore.getState().bootstrap('proj-contract');
 
     // Verify all 6 surfaces are registered in AGENT_PANEL_SURFACES
-    expect(agentPanelSurfaceFor('app-req-explore')?.sessionKind).toBe('REQUIREMENT');
-    expect(agentPanelSurfaceFor('app-req-docs')?.sessionKind).toBe('REQUIREMENT');
+    expect(agentPanelSurfaceFor('app-requirements')?.sessionKind).toBe('REQUIREMENT');
     expect(agentPanelSurfaceFor('app-ontology')?.sessionKind).toBe('COPILOT');
     expect(agentPanelSurfaceFor('app-four-layer-assets')?.sessionKind).toBe('ARCHITECTURE');
     expect(agentPanelSurfaceFor('app-assembly-dev')?.sessionKind).toBe('CODING');
@@ -762,7 +761,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     const reqPanelHtml = renderToStaticMarkup(
       <PreferencesProvider>
         <ShellAgentPanel
-          surface={agentPanelSurfaceFor('app-req-explore')!}
+          surface={agentPanelSurfaceFor('app-requirements')!}
           overlay={false}
           onClose={noop}
           onNavigate={noop}
@@ -871,7 +870,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     }
 
     expect(agentPanelSurfaceFor('overview')?.sessionKind).toBe('COPILOT');
-    expect(agentPanelSurfaceFor('app-req-explore')?.conversationPrimary).toBe(true);
+    expect(agentPanelSurfaceFor('app-requirements')?.conversationPrimary).toBe(true);
     expect(agentPanelSurfaceFor('app-publish')?.sessionKind).toBe('CODING');
     expect(agentPanelSurfaceFor('cap-agents')?.sessionKind).toBe('CAPABILITY');
     expect(agentPanelSurfaceFor('cap-agents')?.conversationPrimary).toBe(true);

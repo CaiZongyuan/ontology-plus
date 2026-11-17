@@ -14,7 +14,6 @@ import {
   GitBranch,
   Layers,
   LayoutTemplate,
-  MessageSquare,
   Network,
   PackageCheck,
   Rocket,
@@ -54,9 +53,7 @@ export type CanonicalNavViewId =
   | 'llm-center'
   | 'system-settings';
 
-export type LegacyNavViewAlias = 'app-req-explore' | 'app-req-docs' | 'app-delivery';
-
-export type NavViewId = CanonicalNavViewId | LegacyNavViewAlias;
+export type NavViewId = CanonicalNavViewId;
 
 export type NavGroupId = 'OVERVIEW' | 'APPLICATION' | 'CAPABILITY' | 'ANALYTICS' | 'PLATFORM';
 
@@ -76,21 +73,17 @@ export interface NavItemSpec {
 
 export const DEFAULT_NAV_VIEW: CanonicalNavViewId = 'overview';
 
-export const LEGACY_NAV_VIEW_ALIASES: Readonly<Record<LegacyNavViewAlias, CanonicalNavViewId>> = {
+const LEGACY_URL_MODE_ALIASES: Readonly<Record<string, CanonicalNavViewId>> = {
   'app-req-explore': 'app-requirements',
   'app-req-docs': 'app-requirements',
-  'app-delivery': 'app-assembly-dev',
 };
 
 export function normalizeNavViewAlias(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
-  if (Object.prototype.hasOwnProperty.call(LEGACY_NAV_VIEW_ALIASES, trimmed)) {
-    return LEGACY_NAV_VIEW_ALIASES[trimmed as LegacyNavViewAlias];
-  }
-  if (trimmed === 'prototype' || trimmed === 'ui-prototype') {
-    return 'app-prototype';
+  if (Object.prototype.hasOwnProperty.call(LEGACY_URL_MODE_ALIASES, trimmed)) {
+    return LEGACY_URL_MODE_ALIASES[trimmed]!;
   }
   return trimmed;
 }
@@ -250,18 +243,15 @@ export const NAV_ITEMS: NavItemSpec[] = [
   },
 ];
 
-export const NAV_ICONS: Record<NavViewId, React.ReactNode> = {
+export const NAV_ICONS: Record<CanonicalNavViewId, React.ReactNode> = {
   overview: <FolderKanban size={16} />,
   'app-requirements': <FileText size={16} />,
-  'app-req-explore': <MessageSquare size={16} />,
-  'app-req-docs': <FileText size={16} />,
   'app-prototype': <LayoutTemplate size={16} />,
   'app-ontology': <Boxes size={16} />,
   'app-model-files': <FileCode2 size={16} />,
   'app-knowledge-graph': <Network size={16} />,
   'app-four-layer-assets': <Layers size={16} />,
   'app-assembly-dev': <PackageCheck size={16} />,
-  'app-delivery': <PackageCheck size={16} />,
   'app-skills': <Blocks size={16} />,
   'app-publish': <Rocket size={16} />,
   'cap-systems': <Cpu size={16} />,
@@ -310,20 +300,8 @@ export type BusinessModelTechTab = 'editor' | 'files' | 'graph';
 
 export type DeliveryTechTab = 'assembly' | 'standards' | 'skills' | 'releases';
 
-const RETIRED_STEP_NAV_ENTRIES = new Set<NavViewId>([
-  'app-prototype',
-  'app-ontology',
-  'app-model-files',
-  'app-knowledge-graph',
-  'app-four-layer-assets',
-  'app-assembly-dev',
-  'app-skills',
-  'app-publish',
-  'app-delivery',
-]);
-
 export function isRetiredNavEntry(view: NavViewId): boolean {
-  return RETIRED_STEP_NAV_ENTRIES.has(view);
+  return getNavItemSpec(view)?.group === 'APPLICATION';
 }
 
 export function resolveLegacyBusinessModelTechTab(
@@ -343,7 +321,7 @@ export function resolveLegacyDeliveryTechTab(
   return null;
 }
 
-export function isFlushNavView(view: NavViewId): boolean {
+export function isFlushNavView(view: string | null | undefined): boolean {
   const resolved = resolveNavViewId(view);
   return (
     resolved === 'app-ontology' ||
@@ -352,28 +330,11 @@ export function isFlushNavView(view: NavViewId): boolean {
   );
 }
 
-export interface ProjectStepViewSpec {
-  readonly defaultView: CanonicalNavViewId;
-  readonly views: readonly CanonicalNavViewId[];
-}
-
-export const PROJECT_STEP_VIEWS: Readonly<Record<ProjectStepId, ProjectStepViewSpec>> = {
-  REQUIREMENTS: {
-    defaultView: 'app-requirements',
-    views: ['app-requirements'],
-  },
-  PROTOTYPE: {
-    defaultView: 'app-prototype',
-    views: ['app-prototype'],
-  },
-  BUSINESS_MODEL: {
-    defaultView: 'app-ontology',
-    views: ['app-ontology'],
-  },
-  DELIVERY: {
-    defaultView: 'app-assembly-dev',
-    views: ['app-assembly-dev'],
-  },
+export const PROJECT_STEP_VIEWS: Readonly<Record<ProjectStepId, CanonicalNavViewId>> = {
+  REQUIREMENTS: 'app-requirements',
+  PROTOTYPE: 'app-prototype',
+  BUSINESS_MODEL: 'app-ontology',
+  DELIVERY: 'app-assembly-dev',
 };
 
 export type SecondaryAreaId = 'CAPABILITY' | 'ANALYTICS' | 'GOVERNANCE';
@@ -410,19 +371,17 @@ export const SECONDARY_AREAS: readonly SecondaryAreaSpec[] = [
   },
 ];
 
-const VIEW_TO_STEP = new Map<CanonicalNavViewId, ProjectStepId>();
-for (const [stepId, spec] of Object.entries(PROJECT_STEP_VIEWS) as [ProjectStepId, ProjectStepViewSpec][]) {
-  for (const viewId of spec.views) {
-    VIEW_TO_STEP.set(viewId, stepId);
-  }
-}
-// Legacy Business Model deep-link views stay URL-compatible and route into BUSINESS_MODEL (#68).
-VIEW_TO_STEP.set('app-model-files', 'BUSINESS_MODEL');
-VIEW_TO_STEP.set('app-knowledge-graph', 'BUSINESS_MODEL');
-// Legacy Delivery deep-link views stay URL-compatible and route into DELIVERY (#73).
-VIEW_TO_STEP.set('app-four-layer-assets', 'DELIVERY');
-VIEW_TO_STEP.set('app-skills', 'DELIVERY');
-VIEW_TO_STEP.set('app-publish', 'DELIVERY');
+const VIEW_TO_STEP = new Map<CanonicalNavViewId, ProjectStepId>([
+  ['app-requirements', 'REQUIREMENTS'],
+  ['app-prototype', 'PROTOTYPE'],
+  ['app-ontology', 'BUSINESS_MODEL'],
+  ['app-model-files', 'BUSINESS_MODEL'],
+  ['app-knowledge-graph', 'BUSINESS_MODEL'],
+  ['app-four-layer-assets', 'DELIVERY'],
+  ['app-assembly-dev', 'DELIVERY'],
+  ['app-skills', 'DELIVERY'],
+  ['app-publish', 'DELIVERY'],
+]);
 
 const VIEW_TO_SECONDARY_AREA = new Map<CanonicalNavViewId, SecondaryAreaSpec>();
 for (const area of SECONDARY_AREAS) {
@@ -437,7 +396,6 @@ export type ShellRouteContext =
       readonly kind: 'project';
       readonly step: ProjectStepId;
       readonly view: CanonicalNavViewId;
-      readonly stepViews: readonly CanonicalNavViewId[];
     }
   | {
       readonly kind: 'secondary';
@@ -446,23 +404,23 @@ export type ShellRouteContext =
       readonly areaSpec: SecondaryAreaSpec;
     };
 
-export function getProjectStepForView(view: NavViewId): ProjectStepId | null {
+export function getProjectStepForView(view: string | null | undefined): ProjectStepId | null {
   const normalized = normalizeNavViewAlias(view);
   if (!isNavViewId(normalized)) return null;
   return VIEW_TO_STEP.get(normalized) ?? null;
 }
 
 export function getDefaultViewForStep(step: ProjectStepId): CanonicalNavViewId {
-  return PROJECT_STEP_VIEWS[step].defaultView;
+  return PROJECT_STEP_VIEWS[step];
 }
 
-export function getSecondaryAreaForView(view: NavViewId): SecondaryAreaSpec | null {
+export function getSecondaryAreaForView(view: string | null | undefined): SecondaryAreaSpec | null {
   const normalized = normalizeNavViewAlias(view);
   if (!isNavViewId(normalized)) return null;
   return VIEW_TO_SECONDARY_AREA.get(normalized) ?? null;
 }
 
-export function resolveShellRouteContext(view: NavViewId): ShellRouteContext {
+export function resolveShellRouteContext(view: string | null | undefined): ShellRouteContext {
   const canonical = resolveNavViewId(view);
   if (canonical === 'overview') {
     return { kind: 'home', view: 'overview' };
@@ -473,7 +431,6 @@ export function resolveShellRouteContext(view: NavViewId): ShellRouteContext {
       kind: 'project',
       step,
       view: canonical,
-      stepViews: PROJECT_STEP_VIEWS[step].views,
     };
   }
   const areaSpec = getSecondaryAreaForView(canonical) ?? SECONDARY_AREAS[0]!;

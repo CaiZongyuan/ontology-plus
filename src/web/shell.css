@@ -423,7 +423,7 @@
   background: var(--background);
 }
 
-/* Temporary Batch 3 sub-view bar & Secondary Area intra-area nav */
+/* Secondary Area intra-area nav */
 .wb-subview-bar {
   flex: none;
   display: flex;

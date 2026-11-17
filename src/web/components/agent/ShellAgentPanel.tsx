@@ -868,8 +868,8 @@ export function ShellAgentPanel({
 
   const handleJumpToArtifactTarget = (target: ArtifactJumpTarget) => {
     if (target.kind === 'REQUIREMENTS_SECTION') {
-      setActiveNav('app-req-docs');
-      onNavigate('app-req-docs');
+      setActiveNav('app-requirements');
+      onNavigate('app-requirements');
       focusRequirementSection(target.sectionHeading, target.docId);
       return;
     }
@@ -924,8 +924,8 @@ export function ShellAgentPanel({
             }}
             onOpenHistory={(kind) => {
               if (kind === 'REQUIREMENTS_DOC') {
-                setActiveNav('app-req-docs');
-                onNavigate('app-req-docs');
+                setActiveNav('app-requirements');
+                onNavigate('app-requirements');
               } else if (kind === 'ONTOLOGY_SUITE') {
                 setActiveNav('app-ontology');
                 onNavigate('app-ontology');

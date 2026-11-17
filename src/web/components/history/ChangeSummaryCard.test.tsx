@@ -175,7 +175,7 @@ describe('ChangeSummaryCard & ArtifactHistoryDrawer UI (#65)', () => {
       useWorkbenchStore.setState({
         loading: false,
         data: boot1,
-        activeNav: 'app-req-docs',
+        activeNav: 'app-requirements',
         activeSessionId: sess.id,
       });
       Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
@@ -185,7 +185,7 @@ describe('ChangeSummaryCard & ArtifactHistoryDrawer UI (#65)', () => {
         const panelHtml = renderToStaticMarkup(
           <PreferencesProvider>
             <ShellAgentPanel
-              surface={agentPanelSurfaceFor('app-req-docs')}
+              surface={agentPanelSurfaceFor('app-requirements')}
               overlay={false}
               side="left"
               closable={false}
@@ -223,7 +223,7 @@ describe('ChangeSummaryCard & ArtifactHistoryDrawer UI (#65)', () => {
       useWorkbenchStore.setState({
         loading: false,
         data: boot2,
-        activeNav: 'app-req-docs',
+        activeNav: 'app-requirements',
         activeSessionId: sess.id,
       });
       Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
@@ -232,7 +232,7 @@ describe('ChangeSummaryCard & ArtifactHistoryDrawer UI (#65)', () => {
       const panelAfterManualHtml = renderToStaticMarkup(
         <PreferencesProvider>
           <ShellAgentPanel
-            surface={agentPanelSurfaceFor('app-req-docs')}
+            surface={agentPanelSurfaceFor('app-requirements')}
             overlay={false}
             side="left"
             closable={false}

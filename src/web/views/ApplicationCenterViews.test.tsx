@@ -8,7 +8,7 @@ import * as Barrel from './ApplicationCenterViews.js';
 import { OverviewSessionsView } from './application-center/OverviewSessionsView.js';
 import {
   RequirementDocsView,
-  RequirementExploreView,
+  RequirementsStepView,
 } from './application-center/RequirementsStepViews.js';
 import {
   PrototypeStudioView,
@@ -73,19 +73,18 @@ describe('ApplicationCenterViews step module split', () => {
     expect(html).toContain(data.activeProject.name);
   });
 
-  it('renders RequirementExploreView, RequirementDocsView, and shared ViewModeHeader identically to the barrel', async () => {
+  it('renders RequirementsStepView, RequirementDocsView, and shared ViewModeHeader identically to the barrel', async () => {
     const data = await seedBootstrap();
-    expect(RequirementExploreView).toBe(Barrel.RequirementExploreView);
+    expect(RequirementsStepView).toBe(Barrel.RequirementsStepView);
     expect(RequirementDocsView).toBe(Barrel.RequirementDocsView);
 
     const noop = () => {};
-    const exploreHtml = renderToStaticMarkup(
+    const stepHtml = renderToStaticMarkup(
       <PreferencesProvider>
-        <RequirementExploreView onNavigate={noop} />
+        <RequirementsStepView onNavigate={noop} />
       </PreferencesProvider>,
     );
-    expect(exploreHtml).toContain('data-testid="requirement-board"');
-    expect(exploreHtml).toContain('data-testid="synthesize-srs-btn"');
+    expect(stepHtml).toContain('data-testid="requirements-step-canvas"');
 
     const docsHtml = renderToStaticMarkup(
       <PreferencesProvider>
@@ -181,7 +180,6 @@ describe('ApplicationCenterViews step module split', () => {
       'OverviewSessionsView',
       'PrototypeStudioView',
       'RequirementDocsView',
-      'RequirementExploreView',
       'RequirementsStepView',
       'RunnableSystemSlot',
       'fetchSavedApplicationPackage',

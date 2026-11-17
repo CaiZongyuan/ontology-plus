@@ -87,6 +87,9 @@ export function sanitizeBusinessViewCopy(
 ): string {
   if (!raw) return '';
   let out = raw;
+  if (/^>?\s*(?:来源会话|Source\s+Session)\s*[:：]/i.test(out.trim())) {
+    return '';
+  }
   out = out.replace(/[（(]\s*(?:对应|映射|关联|对齐)[^)）]*(?:M[1-7]|ME|MU|MM|MI)[^)）]*[)）]/g, '');
   out = out.replace(
     /[`'"]?\s*\/\s*[`'"]?(?:AGG|ENT|VO|DIC|DICT|ASSOC|BHV|BEH|RUL|RULE|EVT|SCN|ACT|ROL|ROLE|PERM|PGRP|FLW|FLOW|ACTV|QRY|RPT|SCR|EL|UIE|NAV|CC|MAP|INT|IF|MET|ASCN|WB)-[A-Z0-9-]+[`'"]?/g,
@@ -94,6 +97,19 @@ export function sanitizeBusinessViewCopy(
   );
   out = out.replace(ELEMENT_ID_RE, '');
   out = out.replace(MODEL_STAGE_CODE_RE, '');
+  out = out.replace(/\b(?:asess|req-sess)-[a-z0-9-]+\b/gi, '');
+  out = out.replace(
+    /createdAt\/updatedAt\s*审计字段(?:与幂等乐观锁版本号|、乐观锁版本号)?/gi,
+    locale === 'en-US' ? 'creation and update timestamps' : '创建与修改时间记录',
+  );
+  out = out.replace(
+    /createdAt\/updatedAt\s*audit\s*(?:fields|timestamps)(?:\s*(?:and|,)\s*optimistic\s*lock(?:ing)?\s*version)?/gi,
+    locale === 'en-US' ? 'creation and update timestamps' : '创建与修改时间记录',
+  );
+  out = out.replace(
+    /11\s*元模型(?:业务本体|标准)?/g,
+    locale === 'en-US' ? BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en : BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh,
+  );
   out = out.replace(PHYSICAL_TABLE_RE, locale === 'en-US' ? 'business table' : '业务数据表');
   out = out.replace(MODEL_CODE_RE, (_m, code: string) => {
     const entry = MODEL_BUSINESS_NAMES[code as ModelCode];
@@ -114,6 +130,11 @@ export function sanitizeBusinessViewCopy(
   );
   out = out
     .replace(/[`]/g, '')
+    .replace(
+      /[（(]\s*[·\-:]?\s*(?:HUMAN|SYSTEM|COMMAND|QUERY|EVENT_HANDLER|EXTERNAL_CALL|COLLABORATION|APPROVAL|PROVIDED|DEPENDENT|MASTER|DETAIL|EXT|PrimaryEntity(?:\.[A-Za-z]+)?)\s*[)）]/g,
+      '',
+    )
+    .replace(/[:：]\s*(?:→\s*)+[。.]?/g, locale === 'en-US' ? '.' : '。')
     .replace(/\(\s*\)|（\s*）/g, '')
     .replace(/^\s*[:：\-·]+\s*/, '')
     .replace(/\s{2,}/g, ' ')
@@ -1599,9 +1620,30 @@ function buildReasonFromSource(source: ArtifactHistorySource): BilingualText | u
       : source.kind === 'MANUAL'
         ? source.note
         : undefined;
-  if (!raw?.trim()) return undefined;
-  const zh = sanitizeBusinessViewCopy(raw, 'zh-CN');
-  const en = sanitizeBusinessViewCopy(raw, 'en-US');
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  if (/^【已确认设计简报|^===\s*CONFIRMED DESIGN BRIEF/i.test(trimmed)) {
+    return {
+      zh: '根据已确认的设计简报与需求文档生成首版可交互原型。',
+      en: 'Generated the initial interactive prototype from the confirmed design brief and requirements.',
+    };
+  }
+  if (/^\[PROTOTYPE_BRIEF_RESTYLE\]/i.test(trimmed)) {
+    return {
+      zh: '根据更新后的设计简报调整界面视觉风格，保留原有交互结构。',
+      en: 'Updated the visual style from the revised design brief while preserving screen structure.',
+    };
+  }
+  if (/^\[ACTION:[A-Z_]+/.test(trimmed)) {
+    const afterBracket = trimmed.replace(/^\[ACTION:[^\r\n]*\]\s*/, '').trim();
+    if (!afterBracket) return undefined;
+    const zh = sanitizeBusinessViewCopy(afterBracket, 'zh-CN');
+    const en = sanitizeBusinessViewCopy(afterBracket, 'en-US');
+    if (!zh && !en) return undefined;
+    return { zh: zh || en, en: en || zh };
+  }
+  const zh = sanitizeBusinessViewCopy(trimmed, 'zh-CN');
+  const en = sanitizeBusinessViewCopy(trimmed, 'en-US');
   if (!zh && !en) return undefined;
   return {
     zh: zh || en,

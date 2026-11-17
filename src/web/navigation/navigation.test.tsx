@@ -199,11 +199,11 @@ describe('navigation catalog and URL state', () => {
       sessionKind: 'REQUIREMENT',
       conversationPrimary: true,
     });
-    expect(agentPanelSurfaceFor('app-req-explore')).toMatchObject({
+    expect(agentPanelSurfaceFor(resolveNavViewId('app-req-explore'))).toMatchObject({
       sessionKind: 'REQUIREMENT',
       conversationPrimary: true,
     });
-    expect(agentPanelSurfaceFor('app-req-docs')).toMatchObject({
+    expect(agentPanelSurfaceFor(resolveNavViewId('app-req-docs'))).toMatchObject({
       sessionKind: 'REQUIREMENT',
     });
 
@@ -234,39 +234,26 @@ describe('navigation catalog and URL state', () => {
     ).toEqual({ view: 'app-requirements', itemId: 'doc-9' });
   });
 
-  it('collapses PROJECT_STEP_VIEWS.REQUIREMENTS to a single view (no subview bar) and maps legacy aliases cleanly', () => {
+  it('maps each ProjectStepId 1-to-1 to its canonical view (no step subview bar) and keeps legacy URL routes compatible', () => {
     expect(Object.keys(PROJECT_STEP_VIEWS)).toEqual([...PROJECT_STEP_IDS]);
     expect(getDefaultViewForStep('REQUIREMENTS')).toBe('app-requirements');
-    expect(PROJECT_STEP_VIEWS.REQUIREMENTS).toEqual({
-      defaultView: 'app-requirements',
-      views: ['app-requirements'],
-    });
+    expect(PROJECT_STEP_VIEWS.REQUIREMENTS).toBe('app-requirements');
     expect(getDefaultViewForStep('PROTOTYPE')).toBe('app-prototype');
-    expect(PROJECT_STEP_VIEWS.PROTOTYPE).toEqual({
-      defaultView: 'app-prototype',
-      views: ['app-prototype'],
-    });
+    expect(PROJECT_STEP_VIEWS.PROTOTYPE).toBe('app-prototype');
     expect(getNavItemSpec('app-prototype')).toMatchObject({
       id: 'app-prototype',
       labelZh: '原型',
       labelEn: 'Prototype',
     });
+    expect(isRetiredNavEntry('app-requirements')).toBe(true);
     expect(isRetiredNavEntry('app-prototype')).toBe(true);
     expect(readHashView({ search: '?mode=app-prototype', hash: '' })).toBe('app-prototype');
     expect(readHashView({ search: '', hash: '#/app-prototype' })).toBe('app-prototype');
-    expect(readHashView({ search: '?mode=ui-prototype', hash: '' })).toBe('app-prototype');
-    expect(readHashView({ search: '', hash: '#/prototype' })).toBe('app-prototype');
     expect(getDefaultViewForStep('BUSINESS_MODEL')).toBe('app-ontology');
     expect(getDefaultViewForStep('DELIVERY')).toBe('app-assembly-dev');
 
-    expect(PROJECT_STEP_VIEWS.BUSINESS_MODEL).toEqual({
-      defaultView: 'app-ontology',
-      views: ['app-ontology'],
-    });
-    expect(PROJECT_STEP_VIEWS.DELIVERY).toEqual({
-      defaultView: 'app-assembly-dev',
-      views: ['app-assembly-dev'],
-    });
+    expect(PROJECT_STEP_VIEWS.BUSINESS_MODEL).toBe('app-ontology');
+    expect(PROJECT_STEP_VIEWS.DELIVERY).toBe('app-assembly-dev');
     expect(isRetiredNavEntry('app-ontology')).toBe(true);
     expect(isRetiredNavEntry('app-model-files')).toBe(true);
     expect(isRetiredNavEntry('app-knowledge-graph')).toBe(true);
@@ -282,12 +269,10 @@ describe('navigation catalog and URL state', () => {
     expect(resolveLegacyDeliveryTechTab('app-skills')).toBe('skills');
     expect(resolveLegacyDeliveryTechTab('app-publish')).toBe('releases');
     expect(resolveLegacyDeliveryTechTab('app-assembly-dev')).toBeNull();
-    expect(readHashView({ search: '?mode=app-delivery', hash: '' })).toBe('app-assembly-dev');
-    expect(readHashView({ search: '', hash: '#/app-delivery' })).toBe('app-assembly-dev');
     expect(isFlushNavView('app-model-files')).toBe(true);
     expect(isFlushNavView('app-knowledge-graph')).toBe(true);
 
-    const stepAssignedViews = PROJECT_STEP_IDS.flatMap((id) => PROJECT_STEP_VIEWS[id].views);
+    const stepAssignedViews = PROJECT_STEP_IDS.map((id) => PROJECT_STEP_VIEWS[id]);
     expect(new Set(stepAssignedViews).size).toBe(4);
     expect(
       [
@@ -319,43 +304,36 @@ describe('navigation catalog and URL state', () => {
       kind: 'project',
       step: 'REQUIREMENTS',
       view: 'app-requirements',
-      stepViews: ['app-requirements'],
     });
     expect(resolveShellRouteContext('app-req-docs')).toEqual({
       kind: 'project',
       step: 'REQUIREMENTS',
       view: 'app-requirements',
-      stepViews: ['app-requirements'],
     });
     expect(resolveShellRouteContext('app-knowledge-graph')).toEqual({
       kind: 'project',
       step: 'BUSINESS_MODEL',
       view: 'app-knowledge-graph',
-      stepViews: ['app-ontology'],
     });
     expect(resolveShellRouteContext('app-model-files')).toEqual({
       kind: 'project',
       step: 'BUSINESS_MODEL',
       view: 'app-model-files',
-      stepViews: ['app-ontology'],
     });
     expect(resolveShellRouteContext('app-four-layer-assets')).toEqual({
       kind: 'project',
       step: 'DELIVERY',
       view: 'app-four-layer-assets',
-      stepViews: ['app-assembly-dev'],
     });
     expect(resolveShellRouteContext('app-skills')).toEqual({
       kind: 'project',
       step: 'DELIVERY',
       view: 'app-skills',
-      stepViews: ['app-assembly-dev'],
     });
     expect(resolveShellRouteContext('app-publish')).toEqual({
       kind: 'project',
       step: 'DELIVERY',
       view: 'app-publish',
-      stepViews: ['app-assembly-dev'],
     });
     expect(resolveShellRouteContext('cap-extraction')).toMatchObject({
       kind: 'secondary',

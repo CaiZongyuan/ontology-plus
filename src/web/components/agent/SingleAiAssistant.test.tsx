@@ -75,16 +75,12 @@ describe('Single AI Assistant — 7-specialist mapping & surface vocabulary (#62
     );
     expect(agentPanelSurfaceFor(getDefaultViewForStep('DELIVERY')).sessionKind).toBe('CODING');
 
-    // 2. Sub-views within each Project Step
-    for (const viewId of PROJECT_STEP_VIEWS.REQUIREMENTS.views) {
-      expect(agentPanelSurfaceFor(viewId).sessionKind).toBe('REQUIREMENT');
-    }
-    for (const viewId of PROJECT_STEP_VIEWS.PROTOTYPE.views) {
-      expect(agentPanelSurfaceFor(viewId).sessionKind).toBe('PROTOTYPE_CO_DESIGN');
-    }
-    for (const viewId of PROJECT_STEP_VIEWS.BUSINESS_MODEL.views) {
-      expect(agentPanelSurfaceFor(viewId).sessionKind).toBe('COPILOT');
-    }
+    // 2. Canonical views for each Project Step
+    expect(agentPanelSurfaceFor(PROJECT_STEP_VIEWS.REQUIREMENTS).sessionKind).toBe('REQUIREMENT');
+    expect(agentPanelSurfaceFor(PROJECT_STEP_VIEWS.PROTOTYPE).sessionKind).toBe(
+      'PROTOTYPE_CO_DESIGN',
+    );
+    expect(agentPanelSurfaceFor(PROJECT_STEP_VIEWS.BUSINESS_MODEL).sessionKind).toBe('COPILOT');
     // Delivery: Business View & deliverables use CODING; Technical Details (4-layer architecture standards) uses ARCHITECTURE
     expect(agentPanelSurfaceFor('app-assembly-dev').sessionKind).toBe('CODING');
     expect(agentPanelSurfaceFor('app-skills').sessionKind).toBe('CODING');
@@ -337,7 +333,7 @@ describe('Single AI Assistant — 7-specialist mapping & surface vocabulary (#62
       canCreateDelete: boolean;
     }> = [
       {
-        view: 'app-req-explore',
+        view: 'app-requirements',
         mustContain: '需求步骤专属提问：付款节点怎么定？',
         mustNotContain: ['业务模型专属提问', '交付步骤专属提问', '原型步骤专属提问', '架构规范专属提问'],
         canCreateDelete: true,
@@ -554,7 +550,7 @@ describe('Single AI Assistant — 7-specialist mapping & surface vocabulary (#62
   it('supports creating, renaming, switching, and deleting conversations via the /api/agent-sessions endpoints while remembering per-step selection', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     const app = createApiApp(store);
-    const surface = agentPanelSurfaceFor('app-req-explore');
+    const surface = agentPanelSurfaceFor('app-requirements');
 
     // 1. Create two REQUIREMENT conversations via POST /api/agent-sessions
     const createdA = await (

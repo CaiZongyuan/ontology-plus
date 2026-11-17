@@ -2,7 +2,6 @@ export { OverviewSessionsView } from './application-center/OverviewSessionsView.
 
 export {
   RequirementDocsView,
-  RequirementExploreView,
   RequirementsStepView,
   formatRequirementTextForBusinessView,
 } from './application-center/RequirementsStepViews.js';

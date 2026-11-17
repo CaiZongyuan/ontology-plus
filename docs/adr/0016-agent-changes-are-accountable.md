@@ -12,8 +12,8 @@ ADR 0007 lets agents act without asking, guarded by the validator and undo snaps
 ## Consequences
 
 - Undo is linear. One-click undo is offered on the most recent change to a result. An earlier point is reached by restoring to before a given change, which appends a new state as ADR 0010 does for prototypes, so later work is kept and the restore can itself be undone. Manual edits and agent runs share one history.
-- The state before each run is saved on the server, so undo survives a reload.
-- A difference computation is needed for the whole `Ontology Suite`; today one exists only for the UI Model.
+- The state before each run or manual save is persisted on the server (one row per entry, retaining the most recent 50 entries per artifact), so undo and restore survive a reload.
+- `ontology-core` provides a typed difference computation across the whole `Ontology Suite` alongside the UI Model diff and markdown section diff for requirements documents, powering deterministic `Change Summaries` grouped by Business Object.
 - The Business Model step gains a Step Confirmation, allowed only when there are no Consistency Errors. Only a confirmed result is the input of the next step.
-- The rule of ADR 0010 now covers every step: no result is rewritten because an earlier step changed. The assistant offers an update, and the update is an ordinary run.
+- The rule of ADR 0010 now covers every step: no result is rewritten because an earlier step changed. `Outdated` propagates one direct step at a time (re-confirming `Requirements` marks `Prototype` `Outdated`; `Business Model` becomes `Outdated` once `Prototype` is re-confirmed; `Delivery` derives `Not started`, `In progress`, `Confirmed`, and `Outdated` from the `Business Model` confirmation and `Package Snapshot`). An `Outdated` step offers both "Ask AI Assistant to update" as its primary action and "Confirm as-is without changes" as a secondary action (#48).
 - While a run is in progress the Business View shows progress in business language; tool calls, thinking, and counts sit under details. A platform problem such as an unconfigured LLM gateway is reported as "the AI service is unavailable; contact whoever set this up", and the link required by ADR 0007 is kept.

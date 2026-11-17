@@ -689,8 +689,6 @@ export function WorkbenchShell({
     [validation, hasCoreBusinessModel],
   );
 
-  const showStepSubbar =
-    routeContext.kind === 'project' && routeContext.stepViews.length > 1;
   const showBlockedBanner = Boolean(
     routeContext.kind === 'project' &&
       activeStepStatus?.blocked &&
@@ -738,7 +736,7 @@ export function WorkbenchShell({
                 /
               </span>
               <span className="wb-crumb-current">{t('项目', 'Projects')}</span>
-              {data && (
+              {data && data.projects.length > 0 && Boolean(data.activeProject.id) && (
                 <>
                   <span className="wb-crumb-sep" aria-hidden="true">
                     /
@@ -797,7 +795,7 @@ export function WorkbenchShell({
                   </span>
                 </>
               )}
-              {data && (
+              {data && data.projects.length > 0 && Boolean(data.activeProject.id) && (
                 <>
                   <span className="topbar-divider" aria-hidden="true" />
                   <ProjectSwitcherSelect
@@ -1000,50 +998,10 @@ export function WorkbenchShell({
                   data-testid="workbench-canvas"
                   style={
                     {
-                      '--subbar-h': `${(showStepSubbar ? 40 : 0) + (isCompactWorkspace ? 40 : 0)}px`,
+                      '--subbar-h': `${isCompactWorkspace ? 40 : 0}px`,
                     } as React.CSSProperties
                   }
                 >
-                  {showStepSubbar && (
-                    <nav
-                      className="wb-subview-bar"
-                      data-testid="step-subview-bar"
-                      aria-label={t('步骤子视图', 'Step views')}
-                    >
-                      {routeContext.stepViews.map((viewId) => {
-                        const spec = getNavItemSpec(viewId);
-                        if (!spec) return null;
-                        const isActive = activeView === viewId;
-                        const hasRun = activeWorkspaceRuns.some(
-                          (r) =>
-                            r.projectId === data?.activeProject.id &&
-                            r.targetNav === viewId,
-                        );
-                        return (
-                          <button
-                            key={viewId}
-                            type="button"
-                            data-testid={`nav-${viewId}`}
-                            className={`wb-subview-tab ${isActive ? 'is-active' : ''}`}
-                            aria-current={isActive ? 'page' : undefined}
-                            onClick={() => setActiveView(viewId)}
-                          >
-                            <span className="wb-subview-icon" aria-hidden="true">
-                              {NAV_ICONS[viewId]}
-                            </span>
-                            <span>{t(spec.labelZh, spec.labelEn)}</span>
-                            {hasRun && (
-                              <span
-                                className="nav-task-dot is-running"
-                                aria-hidden="true"
-                              />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </nav>
-                  )}
-
                   {showBlockedBanner && activeStepStatus && (
                     <StepCannotStartBanner
                       step={activeStepStatus}
