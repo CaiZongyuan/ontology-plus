@@ -1,0 +1,89 @@
+import { THEME_TOKENS, cssVarName } from './contract.js';
+import { BUILT_IN_THEMES, DEFAULT_THEME_ID } from './themes.js';
+import type { ThemeMode, WorkbenchTheme } from './types.js';
+
+const SPEC_BY_NAME = new Map(THEME_TOKENS.map((spec) => [spec.name, spec]));
+
+/**
+ * The value of every contract token for one mode. A token the theme leaves
+ * unset takes the value of the token it follows; one with nothing to follow
+ * is absent from the result.
+ */
+export function resolveThemeTokens(theme: WorkbenchTheme, mode: ThemeMode): Record<string, string> {
+  const table = theme[mode];
+  const resolved: Record<string, string> = {};
+  const lookup = (name: string, seen: readonly string[]): string | undefined => {
+    const own = table[name]?.trim();
+    if (own) return own;
+    const fallback = SPEC_BY_NAME.get(name)?.fallback;
+    if (!fallback || seen.includes(fallback)) return undefined;
+    return lookup(fallback, [...seen, name]);
+  };
+  for (const spec of THEME_TOKENS) {
+    const value = lookup(spec.name, []);
+    if (value !== undefined) resolved[spec.name] = value;
+  }
+  return resolved;
+}
+
+function block(selector: string, declarations: readonly string[], indent = ''): string {
+  if (declarations.length === 0) return '';
+  const body = declarations.map((line) => `${indent}  ${line}`).join('\n');
+  return `${indent}${selector.split('\n').join(`\n${indent}`)} {\n${body}\n${indent}}\n`;
+}
+
+export interface CompileThemeOptions {
+  /**
+   * The default theme is written on bare `:root`, so the page is styled before
+   * any attribute is set. Every other theme is scoped to its
+   * `data-workbench-theme` attribute.
+   */
+  isDefault?: boolean;
+}
+
+/**
+ * A theme as CSS custom properties: every token for light, then only the
+ * tokens that differ for dark, under both the system-preference query and the
+ * explicit `data-theme="dark"` choice.
+ */
+export function compileThemeCss(theme: WorkbenchTheme, options: CompileThemeOptions = {}): string {
+  const light = resolveThemeTokens(theme, 'light');
+  const dark = resolveThemeTokens(theme, 'dark');
+  const declare = (tokens: Record<string, string>, only?: (name: string) => boolean) =>
+    THEME_TOKENS.filter((spec) => spec.name in tokens && (!only || only(spec.name))).map(
+      (spec) => `${cssVarName(spec.name)}: ${tokens[spec.name]};`,
+    );
+  const darkOnly = declare(dark, (name) => dark[name] !== light[name]);
+
+  const root = options.isDefault ? ':root' : `:root[data-workbench-theme="${theme.id}"]`;
+  const explicitDark = options.isDefault
+    ? ':root:has(> head > meta[name="color-scheme"][content="dark"]),\n[data-theme="dark"]'
+    : [
+        `${root}:has(> head > meta[name="color-scheme"][content="dark"])`,
+        `${root}[data-theme="dark"]`,
+        `[data-workbench-theme="${theme.id}"] [data-theme="dark"]`,
+      ].join(',\n');
+  const systemDark = block(`${root}:not([data-theme="light"])`, darkOnly, '  ');
+
+  return [
+    `/* ${theme.name.en} (${theme.id}) */\n`,
+    block(root, declare(light)),
+    systemDark ? `@media (prefers-color-scheme: dark) {\n${systemDark}}\n` : '',
+    block(explicitDark, darkOnly),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** The stylesheet for every built-in theme, default first. */
+export function compileBuiltInThemesCss(): string {
+  const header = [
+    '/* Generated from src/packages/workbench-theme by `pnpm themes:generate`. Do not edit by hand:',
+    '   change the theme tables or the contract and regenerate. */',
+    '',
+  ].join('\n');
+  const themes = BUILT_IN_THEMES.map((theme) =>
+    compileThemeCss(theme, { isDefault: theme.id === DEFAULT_THEME_ID }),
+  );
+  return `${header}\n${themes.join('\n')}`;
+}

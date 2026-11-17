@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { DEFAULT_THEME_ID } from '../packages/workbench-theme/index.js';
 
 export type Locale = 'zh-CN' | 'en-US';
 export type ThemePreference = 'system' | 'light' | 'dark';
@@ -291,6 +292,11 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
       // Ignore storage write errors in restricted contexts
     }
   }, [themePreference, resolvedTheme]);
+
+  // Mark the root with the active Workbench Theme (ADR 0012).
+  useEffect(() => {
+    document.documentElement.dataset.workbenchTheme = DEFAULT_THEME_ID;
+  }, []);
 
   useEffect(() => {
     document.documentElement.lang = locale;

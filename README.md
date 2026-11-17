@@ -84,6 +84,7 @@ Each package under `src/packages/` is a **deep module**: one public entry point,
 | `agent-runtime` | Persistent multi-turn agent sessions on `pi-durable`: SSE streaming, thinking traces, multi-step tool execution with validator self-repair, scoped HITL `ask_user`, fork & compact |
 | `package-compiler` | Compiles ontologies into development packages, MCP servers, and progressive-disclosure agent artifacts (`SKILL.md`, development guides) |
 | `workspace-store` | SQLite-everywhere persistence: projects, sessions, snapshots, undo — one dialect across Node, D1, and DO |
+| `workbench-theme` | The Workbench Theme contract: the appearance tokens components may read, the built-in themes as light and dark tables, their CSS, and the completeness and contrast check |
 
 ## 🖥 The workbench
 
@@ -149,6 +150,7 @@ src/
     agent-runtime/
     package-compiler/
     workspace-store/
+    workbench-theme/
   server/              # Hono app: REST + SSE, Workers & Node entry points
   web/                 # React workbench: views, components, design tokens
 docs/

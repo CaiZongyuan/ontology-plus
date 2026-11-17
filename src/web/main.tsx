@@ -1,5 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import './workbench-themes.generated.css';
 import './tokens.css';
 import './shell.css';
 import { App } from './App.js';

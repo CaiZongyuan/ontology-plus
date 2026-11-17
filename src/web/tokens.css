@@ -91,42 +91,46 @@
   src: url("/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
 }
 
-/* ─── Root Color-Scheme & Spatial-Sync Warm Paper (Light) / Film Grain (Dark) ─── */
+/* ─── Root Colour-Scheme & Workbench Theme Token Aliases ───
+   Colours, fonts, radii, shadows and the background texture come from the active
+   Workbench Theme: see workbench-themes.generated.css and ADR 0012. The names in the
+   first block are the pre-contract token names, kept as aliases until their callers
+   have moved to the contract names. */
+:root,
+[data-theme] {
+  --ground: var(--background);
+  --ground-2: var(--canvas);
+  --surface: var(--card);
+  --surface-2: var(--contract-muted);
+  --line: var(--border);
+  --line-2: var(--border-subtle);
+  --ghost: var(--contract-accent);
+
+  --ink: var(--foreground);
+  --ink-2: var(--foreground-soft);
+  --muted: var(--muted-foreground);
+  --faint: var(--faint-foreground);
+
+  --accent: var(--primary);
+  --accent-ink: var(--primary-foreground);
+  --accent-soft: var(--primary-soft);
+  --ok: var(--success);
+  --ok-soft: var(--success-soft);
+  --warn: var(--warning);
+  --warn-soft: var(--warning-soft);
+  --bad: var(--destructive);
+  --bad-soft: var(--destructive-soft);
+
+  --serif: var(--font-title);
+  --sans: var(--font-sans);
+  --mono: var(--font-mono);
+
+  --paper-grain-url: var(--backdrop-image);
+  --paper-grain-size: var(--backdrop-size);
+}
+
 :root {
   color-scheme: light dark;
-
-  --ground: #f3f2ee;
-  --ground-2: #eae8e2;
-  --surface: #fdfdfb;
-  --surface-2: #f6f5f1;
-  --line: #d5d3cb;
-  --line-2: #e3e1da;
-  --ghost: rgba(26, 26, 24, 0.045);
-
-  --ink: #1a1a18;
-  --ink-2: #2e2e2a;
-  --muted: #5a5953;
-  --faint: #73716a;
-
-  --accent: #4c50c4;
-  --accent-ink: #ffffff;
-  --accent-soft: rgba(76, 80, 196, 0.1);
-  --ok: #287452;
-  --ok-soft: rgba(40, 116, 82, 0.12);
-  --warn: #a86416;
-  --warn-soft: rgba(168, 100, 22, 0.12);
-  --bad: #b83a32;
-  --bad-soft: rgba(184, 58, 50, 0.12);
-
-  --serif: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
-  --sans: "IBM Plex Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  --paper-grain-url:
-    url("/textures/paper/warm-grain.png"),
-    url("/textures/paper/white-grain.png"),
-    url("/textures/paper/cloud.png");
-  --paper-grain-size: 260px 260px, 260px 260px, 900px 900px;
 
   /* ─── Type & Spacing Scale (use these instead of ad-hoc px values) ─── */
   --text-2xs: 10.5px; /* table headers, overlines */
@@ -146,17 +150,8 @@
   --control-h-sm: 28px;
   --control-h-md: 32px;
 
-  /* ─── Shape, Elevation & Motion Scale ─── */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  /* ─── Shape & Motion Scale (radii and shadows come from the theme) ─── */
   --radius-pill: 999px;
-
-  --shadow-xs: 0 1px 0 rgba(26, 26, 24, 0.04);
-  --shadow-sm: 0 1px 2px rgba(26, 26, 24, 0.06), 0 1px 1px rgba(26, 26, 24, 0.03);
-  --shadow-md: 0 4px 14px rgba(26, 26, 24, 0.08), 0 1px 3px rgba(26, 26, 24, 0.05);
-  --shadow-lg: 0 18px 48px rgba(26, 26, 24, 0.16), 0 4px 12px rgba(26, 26, 24, 0.08);
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -168,8 +163,6 @@
   --sidebar-w-collapsed: 56px;
 
   --scrollbar-track: transparent;
-  /* >= 3:1 non-text contrast against --surface (#fdfdfb) & --ground (#f3f2ee) */
-  --scrollbar-thumb: #868379;
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   accent-color: var(--accent);
@@ -180,76 +173,9 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --ground: #121211;
-    --ground-2: #0d0d0c;
-    --surface: #1a1a18;
-    --surface-2: #222220;
-    --line: #33332e;
-    --line-2: #292925;
-    --ghost: rgba(236, 234, 227, 0.055);
-
-    --ink: #eceae3;
-    --ink-2: #d2d0c8;
-    --muted: #98968e;
-    --faint: #7c7a72;
-
-    --accent: #9ca4ff;
-    --accent-ink: #0f1026;
-    --accent-soft: rgba(156, 164, 255, 0.15);
-    --ok: #4ca97c;
-    --ok-soft: rgba(76, 169, 124, 0.16);
-    --warn: #df9a42;
-    --warn-soft: rgba(223, 154, 66, 0.16);
-    --bad: #e06159;
-    --bad-soft: rgba(224, 97, 89, 0.16);
-
-    --paper-grain-url: none;
-    --scrollbar-track: transparent;
-    /* >= 3:1 non-text contrast against dark --surface (#1a1a18) & --surface-2 (#222220) */
-    --scrollbar-thumb: #737169;
-    --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
-    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
-  }
-}
-
-/* ─── Explicit Dark Mode Override (Spatial-Sync Film Grain) ─── */
 :root:has(> head > meta[name="color-scheme"][content="dark"]),
 [data-theme="dark"] {
   color-scheme: dark;
-  --ground: #121211;
-  --ground-2: #0d0d0c;
-  --surface: #1a1a18;
-  --surface-2: #222220;
-  --line: #33332e;
-  --line-2: #292925;
-  --ghost: rgba(236, 234, 227, 0.055);
-
-  --ink: #eceae3;
-  --ink-2: #d2d0c8;
-  --muted: #98968e;
-  --faint: #7c7a72;
-
-  --accent: #9ca4ff;
-  --accent-ink: #0f1026;
-  --accent-soft: rgba(156, 164, 255, 0.15);
-  --ok: #4ca97c;
-  --ok-soft: rgba(76, 169, 124, 0.16);
-  --warn: #df9a42;
-  --warn-soft: rgba(223, 154, 66, 0.16);
-  --bad: #e06159;
-  --bad-soft: rgba(224, 97, 89, 0.16);
-
-  --paper-grain-url: none;
-  --scrollbar-track: transparent;
-  --scrollbar-thumb: #737169;
-  --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 *,
@@ -884,7 +810,6 @@ progress.loading-spinner:indeterminate {
 /* ─── BeautifulUI & Tailwind v4 Spatial-Sync Token Bridge ─── */
 :root {
   --page: var(--ground);
-  --canvas: var(--ground-2);
   --inset: var(--surface-2);
   --hover: var(--ghost);
   --hover-2: color-mix(in srgb, var(--ink) 8%, transparent);
@@ -958,10 +883,10 @@ progress.loading-spinner:indeterminate {
   --font-mono: var(--mono);
   --font-serif: var(--serif);
 
-  --radius-chip: 6px;
-  --radius-control: 8px;
-  --radius-card: 10px;
-  --radius-window: 14px;
+  --radius-chip: var(--radius-sm);
+  --radius-control: var(--radius-md);
+  --radius-card: var(--radius-card);
+  --radius-window: var(--radius-window);
 
   --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);

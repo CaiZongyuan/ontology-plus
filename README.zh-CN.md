@@ -84,6 +84,7 @@
 | `agent-runtime` | 基于 `pi-durable` 的持久多轮智能体会话：SSE 流式输出、思考轨迹、多步工具执行与校验器自我修复、作用域受限的 HITL `ask_user`、fork 与 compact |
 | `package-compiler` | 将本体编译为开发包、MCP 服务，以及渐进式披露的智能体产物（`SKILL.md`、开发指导书） |
 | `workspace-store` | SQLite 无处不在的持久化：工程、会话、快照与撤销 —— Node / D1 / DO 共用一套方言 |
+| `workbench-theme` | 工作台主题契约：组件可读取的外观 token、以浅色和深色取值表表示的内置主题、主题样式的生成，以及完整性与对比度检查 |
 
 ## 🖥 工作台
 
@@ -149,6 +150,7 @@ src/
     agent-runtime/
     package-compiler/
     workspace-store/
+    workbench-theme/
   server/              # Hono 应用：REST + SSE，Workers 与 Node 双入口
   web/                 # React 工作台：视图、组件、设计令牌
 docs/
