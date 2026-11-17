@@ -3,11 +3,12 @@ export {
   type WorkspaceStoreOptions,
 } from './lib/store.js';
 
-export { doesProviderSupportVision } from './lib/types.js';
+export { doesProviderSupportVision, resolveCurrentProjectStep } from './lib/types.js';
 export { PrototypeConfirmedDeleteError } from './lib/prototype-revisions.js';
 export { DEFAULT_TECHNOLOGY_PROFILE_ID } from '../architecture-assets/index.js';
 
 export type {
+  CreateProjectInput,
   ProjectSummary,
   ProjectDetail,
   ProjectSnapshot,
