@@ -19,6 +19,10 @@ const BUNDLED_ASSETS = [uiAsset, foundationAsset, architectureAsset];
 const BUNDLED_PROFILES = [nodeProfile];
 const SAFE_ID = /^[a-z0-9][a-z0-9-]{0,119}$/;
 
+export function isArchitectureAssetCompatible(profile: TechnologyProfile, asset: ArchitectureAsset): boolean {
+  return profile.compatibleAssetIds.includes(asset.id) || asset.technologyProfileId === profile.id;
+}
+
 function assertId(id: string): void {
   if (typeof id !== 'string' || !SAFE_ID.test(id)) {
     throw new Error('Architecture asset ID must contain 1–120 lowercase letters, digits, or hyphens.');

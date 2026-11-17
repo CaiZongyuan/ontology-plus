@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createArchitectureAssetCatalog, DEFAULT_TECHNOLOGY_PROFILE_ID } from '../index.js';
+import { createArchitectureAssetCatalog, DEFAULT_TECHNOLOGY_PROFILE_ID, isArchitectureAssetCompatible } from '../index.js';
 
 const directories: string[] = [];
 function fixture() {
@@ -24,6 +24,8 @@ describe('repository architecture catalog', () => {
     expect(assets.every((asset) => asset.specMarkdown.length > 3000 && asset.sourceRevision?.startsWith('sha256:'))).toBe(true);
     expect(assets.find((asset) => asset.layer === 'UI_UE')!.specMarkdown).toContain('does not impose Ontology Plus');
     expect(assets.find((asset) => asset.layer === 'TECH_FOUNDATION')!.specMarkdown).toContain('migration');
+    expect(isArchitectureAssetCompatible(profile, { ...assets[0]!, id: 'asset-team-standard' })).toBe(true);
+    expect(isArchitectureAssetCompatible(profile, { ...assets[0]!, id: 'asset-foreign', technologyProfileId: 'another-profile' })).toBe(false);
   });
 
   it('reads changed source immediately and writes edits back to the same bounded source file', () => {
