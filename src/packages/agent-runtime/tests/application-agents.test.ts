@@ -121,6 +121,34 @@ describe('architecture authoring and application specification agents', () => {
     expect(legacy.reply).not.toContain('Generated executable');
   });
 
+  it('persists explicit contradictions and preserves them during ordinary specification edits', async () => {
+    const { store } = fixture();
+    const application = store.listAssembledApplications().find((app) => app.id === 'app-contract-clm')!;
+    const session = store.createAgentSession({ projectId: application.projectId, agentKind: 'CODING', targetId: application.id });
+    const save = (args: Record<string, unknown>, currentSession = session) => executeDomainRunToolCall(
+      store, currentSession, 'save-blockers', 'save_application_instructions', args, 'en-US',
+    );
+    const conflict = 'The selected UI standard contradicts the confirmed prototype navigation.';
+    const first = await save({ developmentInstructions: '# Implementation\n\nResolve the UI contradiction.', developmentBlockers: [conflict] });
+    expect(first?.isError).toBe(false);
+    expect(JSON.parse(first!.toolResultContent).application.developmentBlockers).toEqual([conflict]);
+    await save({ developmentInstructions: '# Implementation\n\nKeep the existing UI decision pending.' });
+    expect(store.listAssembledApplications().find((app) => app.id === application.id)).toMatchObject({ developmentBlockers: [conflict] });
+    const read = await executeDomainRunToolCall(store, session, 'read-blockers', 'read_application_inputs', {}, 'en-US');
+    expect(JSON.parse(read!.toolResultContent).application.developmentBlockers).toEqual([conflict]);
+    const malformed = await save({ developmentInstructions: '# Invalid blocker edit', developmentBlockers: [' '] });
+    expect(malformed?.isError).toBe(true);
+    expect(store.listAssembledApplications().find((app) => app.id === application.id)).toMatchObject({ developmentBlockers: [conflict] });
+    const confirmedSession = store.saveAgentSession({ ...session, messages: [{
+      id: 'resolved-choice', role: 'user', timestamp: new Date().toISOString(),
+      content: 'Keep the confirmed prototype navigation. We have updated the selected standard to match it; clear the resolved contradiction.',
+    }] });
+    const resolved = await save({ developmentInstructions: '# Implementation\n\nThe selected UI standard now matches the confirmed prototype.', developmentBlockers: [] }, confirmedSession);
+    expect(resolved?.isError).toBe(false);
+    expect(JSON.parse(resolved!.toolResultContent).application.developmentBlockers).toEqual([]);
+    expect(store.listDevelopmentPackageSnapshots(application.id)).toHaveLength(0);
+  });
+
   it('advertises distinct tools and context to the provider and refuses an out-of-scope model tool call', async () => {
     const { store } = fixture();
     const requests: Array<{ tools: Array<{ function: { name: string } }>; messages: Array<{ role: string; content?: string }> }> = [];

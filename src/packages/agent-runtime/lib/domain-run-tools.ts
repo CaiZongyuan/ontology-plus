@@ -1839,6 +1839,11 @@ export const DOMAIN_RUN_OPENAI_TOOLS: OpenAiFunctionTool[] = [
         properties: {
           applicationId: { type: 'string' },
           developmentInstructions: { type: 'string', description: 'Complete revised application-specific implementation instructions in Markdown' },
+          developmentBlockers: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Unresolved explicit contradictions that must block formal package generation. Omit to preserve existing blockers; send [] only after resolving them with the user.',
+          },
         },
         required: ['developmentInstructions'],
       },
@@ -2654,11 +2659,18 @@ export async function executeDomainRunToolCall(
     }
     const developmentInstructions = typeof args.developmentInstructions === 'string' ? args.developmentInstructions.trim() : '';
     if (!developmentInstructions) return failure('developmentInstructions must contain the application-specific Markdown specification.');
-    const app = store.saveAssembledApplication({ ...resolved.application, ...{ developmentInstructions } });
+    if (args.developmentBlockers !== undefined && (!Array.isArray(args.developmentBlockers)
+      || args.developmentBlockers.some((blocker) => typeof blocker !== 'string' || !blocker.trim()))) {
+      return failure('developmentBlockers must be an array of non-empty contradiction descriptions; omit it to preserve existing blockers.');
+    }
+    const blockerUpdate = Array.isArray(args.developmentBlockers)
+      ? { developmentBlockers: [...new Set(args.developmentBlockers.map((blocker: string) => blocker.trim()))] }
+      : {};
+    const app = store.saveAssembledApplication({ ...resolved.application, developmentInstructions, ...blockerUpdate });
     const output = pickLocaleText(locale, `已保存应用「${app.name}」的开发规格指令。`, `Saved implementation instructions for "${app.name}".`);
     return {
-      trace: { id: toolCallId, toolName, arguments: { applicationId: app.id, developmentInstructions }, output, isError: false, durationMs: Date.now() - started },
-      toolResultContent: JSON.stringify({ applicationId: app.id, developmentInstructions }),
+      trace: { id: toolCallId, toolName, arguments: { applicationId: app.id, developmentInstructions, ...blockerUpdate }, output, isError: false, durationMs: Date.now() - started },
+      toolResultContent: JSON.stringify({ applicationId: app.id, developmentInstructions, application: app }),
       isError: false,
     };
   }
