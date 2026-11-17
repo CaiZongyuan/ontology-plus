@@ -37,9 +37,12 @@ import type {
   ProjectSnapshot,
   ProjectSummary,
   RequirementDoc,
+  PrototypeRevision,
+  TechnologyProfile,
 } from '../../packages/workspace-store/index.js';
 import {
   apiCloneProject,
+  apiConfirmPrototypeRevision,
   apiCompileDevPackage,
   apiCreateProjectSnapshot,
   apiDeleteProject,
@@ -69,6 +72,7 @@ import {
 } from '../components/prototype/PrototypeCanvasStage.js';
 import { decideDesignBriefForMe } from '../components/prototype/DesignBriefAndStyleTile.js';
 import { PrototypeCoDesignStudio } from '../components/prototype/PrototypeCoDesignStudio.js';
+import { ConfirmRevisionMuDiffModal } from '../components/prototype/PrototypeRevisionHistory.js';
 import {
   toRefinementSelections,
   type PrototypeSelectionTarget,
@@ -3152,13 +3156,15 @@ export function FourLayerAssetsView() {
     summary: string;
     tagsText: string;
     specMarkdown: string;
+    technologyProfileId?: string;
+    sourcePath?: string;
   } | null>(null);
   const [savingAsset, setSavingAsset] = useState(false);
   const [deletingAsset, setDeletingAsset] = useState<FourLayerAsset | null>(null);
 
-  const [archName, setArchName] = useState('云原生 DDD 四层技术架构规范');
+  const [archName, setArchName] = useState('');
   const [archStackTags, setArchStackTags] = useState(
-    'TypeScript, Hono, React 19, Drizzle SQLite/D1',
+    'React, Vite, TanStack Router, Zustand, shadcn/ui Base UI, Hono, Drizzle ORM, SQLite, Node.js',
   );
   const [archPrompt, setArchPrompt] = useState('');
   const [startingArch, setStartingArch] = useState(false);
@@ -3175,7 +3181,7 @@ export function FourLayerAssetsView() {
   const codingRunning = (data.agentSessions ?? []).some(
     (s) =>
       s.projectId === data.activeProject.id &&
-      s.agentKind === 'CODING' &&
+      String(s.agentKind) === 'ARCHITECTURE' &&
       (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
   );
   const generatingArch = startingArch || codingRunning;
@@ -3188,13 +3194,14 @@ export function FourLayerAssetsView() {
     const defaultLayer: FourLayerAsset['layer'] =
       filterLayer === 'ALL' ? 'TECH_ARCH' : filterLayer;
     setEditingAsset({
-      id: `asset-${defaultLayer.toLowerCase()}-${Date.now()}`,
+      id: `asset-${defaultLayer.toLowerCase().replaceAll('_', '-')}-${Date.now()}`,
       layer: defaultLayer,
       name: '',
       version: 'v1.0',
       summary: '',
       tagsText: 'Standard, Reusable',
       specMarkdown: '# 架构资产规范说明\n\n## 1. 核心约束\n- 严格遵循 Deep Modules 边界规范\n',
+      technologyProfileId: 'profile-react-hono-sqlite-node',
     });
   };
 
@@ -3207,6 +3214,8 @@ export function FourLayerAssetsView() {
       summary: asset.summary,
       tagsText: asset.tags.join(', '),
       specMarkdown: asset.specMarkdown,
+      technologyProfileId: asset.technologyProfileId,
+      sourcePath: asset.sourcePath,
     });
   };
 
@@ -3229,10 +3238,13 @@ export function FourLayerAssetsView() {
         summary: editingAsset.summary.trim() || editingAsset.name.trim(),
         tags,
         specMarkdown: editingAsset.specMarkdown,
+        technologyProfileId: editingAsset.technologyProfileId,
       });
       patchData({ fourLayerAssets: json.fourLayerAssets });
       setEditingAsset(null);
-      showToast(t(`已保存四层架构资产「${json.asset.name}」`, `Saved asset "${json.asset.name}"`));
+      showToast(t(`已将「${json.asset.name}」保存到仓库源文件`, `Saved "${json.asset.name}" to repository source`));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
     } finally {
       setSavingAsset(false);
     }
@@ -3250,6 +3262,7 @@ export function FourLayerAssetsView() {
       summary: asset.summary,
       tags: asset.tags,
       specMarkdown: asset.specMarkdown,
+      technologyProfileId: asset.technologyProfileId,
     });
     patchData({ fourLayerAssets: json.fourLayerAssets });
     showToast(t(`已克隆架构资产「${asset.name}」`, `Cloned asset "${asset.name}"`));
@@ -3286,6 +3299,8 @@ export function FourLayerAssetsView() {
         stackTags,
         ...(archPrompt.trim() ? { prompt: archPrompt.trim() } : {}),
       });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
     } finally {
       setStartingArch(false);
     }
@@ -3305,14 +3320,14 @@ export function FourLayerAssetsView() {
           <div>
             <h3 className="card-title">
               {t(
-                '四层软件架构可复用资产库 (UI/UE · 技术底座 · 技术架构)',
-                'Four-Layer Architecture Reusable Asset Library',
+                '仓库开发规范库',
+                'Repository development standards',
               )}
             </h3>
             <div className="text-[12.5px] text-muted-foreground">
               {t(
-                '与业务本体自由组合装配，支持 Tiptap 富文本编辑规范文档与引用保护删除',
-                'Freely assemble with any Ontology Suite, edit specs via Tiptap, or synthesize from tech stack',
+                '规范源文件随平台代码维护。编辑后写回仓库，已生成的开发包保留原快照。',
+                'Standards live with the platform source. Saving writes to repository files; generated packages keep their saved snapshots.',
               )}
             </div>
           </div>
@@ -3339,10 +3354,7 @@ export function FourLayerAssetsView() {
         <div className="card-header" style={{ marginBottom: 8 }}>
           <div>
             <h4 className="card-title">
-              {t(
-                'AI 技术栈一键生成《技术架构设计文档》(TECH_ARCH)',
-                'AI Tech-Stack-to-Architecture Document Generator',
-              )}
+              {t('请架构资产智能体协助编写规范', 'Author standards with the Architecture Asset Agent')}
             </h4>
           </div>
           <Button
@@ -3354,14 +3366,15 @@ export function FourLayerAssetsView() {
           >
             {generatingArch
               ? t('正在生成架构文档...', 'Generating Tech Arch...')
-              : t('AI 技术栈生成《技术架构设计文档》', 'Generate Tech Architecture Doc')}
+              : t('开始规范编写对话', 'Start standards authoring')}
           </Button>
         </div>
 
         <div className="form-grid-3">
           <div className="form-field">
-            <label className="form-label">{t('架构资产名称', 'Architecture Asset Name')}</label>
+              <label className="form-label" htmlFor="architecture-standard-name">{t('架构资产名称', 'Architecture Asset Name')}</label>
             <input
+                id="architecture-standard-name"
               className="input"
               value={archName}
               onChange={(e) => setArchName(e.target.value)}
@@ -3388,9 +3401,9 @@ export function FourLayerAssetsView() {
       </div>
 
       {/* Asset Cards Grid with Rendered Markdown Preview */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         {list.map((asset) => (
-          <div key={asset.id} className="card flex flex-col gap-2">
+          <div key={asset.id} className="card min-w-0 flex flex-col gap-2" data-testid={`architecture-asset-${asset.id}`}>
             <div className="card-header" style={{ marginBottom: 0 }}>
               <div>
                 <span className="badge badge-accent mr-2">
@@ -3403,6 +3416,7 @@ export function FourLayerAssetsView() {
                 <Button
                   type="button"
                   variant="secondary" size="sm"
+                  aria-label={t(`克隆 ${asset.name}`, `Clone ${asset.name}`)}
                   onClick={() => openEditAssetModal(asset)}
                 >
                   {t('编辑规范', 'Edit')}
@@ -3418,6 +3432,7 @@ export function FourLayerAssetsView() {
                 <Button
                   type="button"
                   variant="danger" size="sm"
+                  aria-label={t(`删除 ${asset.name}`, `Delete ${asset.name}`)}
                   onClick={() => setDeletingAsset(asset)}
                   title={t('删除资产', 'Delete')}
                 >
@@ -3427,6 +3442,11 @@ export function FourLayerAssetsView() {
             </div>
 
             <div className="text-[12.5px] text-muted-foreground">{asset.summary}</div>
+            <div className="rounded-control border border-line bg-inset p-2 text-[11px] text-ink-3" data-testid={`asset-source-${asset.id}`}>
+              <div className="break-all font-mono">{asset.sourcePath || t('工作区历史资料 · 保存后写入仓库', 'Legacy workspace material · save to write repository source')}</div>
+              {asset.sourceRevision && <div className="break-all font-mono mt-1">{asset.sourceRevision}</div>}
+              {asset.technologyProfileId && <div className="mt-1">{t('技术方案', 'Technology profile')}: {asset.technologyProfileId}</div>}
+            </div>
 
             {asset.tags.length > 0 && (
               <div className="flex flex-wrap gap-1">
@@ -3447,30 +3467,17 @@ export function FourLayerAssetsView() {
 
       {/* Tiptap Asset Editor Modal */}
       {editingAsset && (
-        <div className="modal-backdrop" onClick={() => setEditingAsset(null)}>
-          <div
-            className="modal-panel"
-            style={{ maxWidth: 880 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="card-header">
-              <h3 className="card-title">
-                {t('编辑四层架构资产规范 (Tiptap Markdown)', 'Edit 4-Layer Architecture Asset')}
-              </h3>
-              <Button
-                type="button"
-                variant="secondary" size="sm"
-                onClick={() => setEditingAsset(null)}
-              >
-                ✕
-              </Button>
-            </div>
-
+        <ConfirmDialog open title={t('编辑仓库开发规范', 'Edit repository development standard')}
+          size="wide" busy={savingAsset} confirmDisabled={!editingAsset.name.trim() || !editingAsset.specMarkdown.trim()}
+          confirmLabel={t('保存到仓库源文件', 'Save to repository source')}
+          onConfirm={() => void handleSaveAsset()} onClose={() => setEditingAsset(null)} testId="architecture-standard-editor">
             <div className="flex flex-col gap-2.5">
+              <p className="m-0 break-all font-mono text-[11px] text-ink-3">{editingAsset.sourcePath ?? `src/packages/architecture-assets/lib/catalog/assets/${editingAsset.id}.json`}</p>
               <div className="form-grid-3">
                 <div className="form-field">
-                  <label className="form-label">{t('所属架构层', 'Layer')}</label>
+                  <label className="form-label" htmlFor="architecture-standard-layer">{t('所属架构层', 'Layer')}</label>
                   <select
+                    id="architecture-standard-layer"
                     className="select"
                     value={editingAsset.layer}
                     onChange={(e) =>
@@ -3486,8 +3493,9 @@ export function FourLayerAssetsView() {
                   </select>
                 </div>
                 <div className="form-field">
-                  <label className="form-label">{t('资产名称', 'Asset Name')}</label>
+                  <label className="form-label" htmlFor="architecture-standard-edit-name">{t('资产名称', 'Asset Name')}</label>
                   <input
+                    id="architecture-standard-edit-name"
                     className="input"
                     value={editingAsset.name}
                     onChange={(e) =>
@@ -3506,6 +3514,15 @@ export function FourLayerAssetsView() {
                   />
                 </div>
               </div>
+
+              <label className="form-field" htmlFor="architecture-standard-profile">
+                <span className="form-label">{t('兼容技术方案', 'Compatible Technology Profile')}</span>
+                <select id="architecture-standard-profile" className="select" value={editingAsset.technologyProfileId ?? ''}
+                  onChange={(event) => setEditingAsset({ ...editingAsset, technologyProfileId: event.target.value || undefined })}>
+                  <option value="">{t('由方案目录明确列出兼容性', 'Compatibility declared in profile catalog')}</option>
+                  {((data as typeof data & { technologyProfiles?: TechnologyProfile[] }).technologyProfiles ?? []).map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                </select>
+              </label>
 
               <div className="form-grid-2">
                 <div className="form-field">
@@ -3539,8 +3556,7 @@ export function FourLayerAssetsView() {
                 minHeight={300}
               />
             </div>
-          </div>
-        </div>
+        </ConfirmDialog>
       )}
 
       <ConfirmDialog
@@ -3563,772 +3579,424 @@ export function FourLayerAssetsView() {
 }
 
 // ─── 7. Application Assembly & Dev Package Compiler (应用开发) ───────────────
+export async function fetchSavedApplicationPackage(appId: string, signal?: AbortSignal): Promise<{
+  compiledPackage: CompiledDevelopmentPackage | null;
+  stale: boolean;
+}> {
+  const response = await fetch(`/api/applications/${encodeURIComponent(appId)}/package`, { signal });
+  const body = await response.json();
+  if (response.status === 409 && body.code === 'PACKAGE_NOT_GENERATED') return { compiledPackage: null, stale: false };
+  if (!response.ok) throw new Error(body.error || 'Could not load the saved Development Package.');
+  if (body.compiledPackage && body.compiledPackage.appId !== appId) throw new Error('Saved package belongs to a different application.');
+  return { compiledPackage: body.compiledPackage ?? null, stale: Boolean(body.stale) };
+}
+
 export function ApplicationAssemblyDevView({
   onNavigate,
 }: {
   onNavigate?: (view: NavViewId) => void;
 } = {}) {
   const { t } = usePreferences();
-  const {
-    data,
-    liveSessionDrafts,
-    ensureProjectAgentSession,
-    patchData,
-    setActiveItemId,
-    setActiveSessionId,
-    showToast,
-    startSessionAgentRun,
-    switchProject,
-  } = useWorkbenchStore();
+  const { data, activeItemId, liveSessionDrafts, ensureProjectAgentSession, patchData, setActiveItemId,
+    setActiveSessionId, showToast, startSessionAgentRun, switchProject } = useWorkbenchStore();
   const [pageMode, setPageMode] = useState<'WORKSPACE' | 'REGISTRY'>('WORKSPACE');
-  const [selectedAppId, setSelectedAppId] = useState<string>('');
+  const [selectedAppId, setSelectedAppId] = useState('');
   const [compiledPkg, setCompiledPkg] = useState<CompiledDevelopmentPackage | null>(null);
-  const [selectedFilePath, setSelectedFilePath] = useState<string>('开发指导书.md');
+  const [packageStale, setPackageStale] = useState(false);
+  const [loadingPackage, setLoadingPackage] = useState(false);
+  const [packageLoadError, setPackageLoadError] = useState('');
+  const [packageReload, setPackageReload] = useState(0);
+  const [selectedFilePath, setSelectedFilePath] = useState('AGENTS.md');
   const [pkgPreviewRaw, setPkgPreviewRaw] = useState(false);
-
+  const [generating, setGenerating] = useState(false);
+  const [downloadingZip, setDownloadingZip] = useState(false);
+  const [savingInputs, setSavingInputs] = useState(false);
+  const [instructionsDraft, setInstructionsDraft] = useState('');
+  const [operationError, setOperationError] = useState('');
+  const [previewRevisionId, setPreviewRevisionId] = useState('');
+  const [pendingRevision, setPendingRevision] = useState<PrototypeRevision | null>(null);
+  const [confirmingRevision, setConfirmingRevision] = useState(false);
   const [newAppOpen, setNewAppOpen] = useState(false);
   const [newAppName, setNewAppName] = useState('');
-  const [selProjectId, setSelProjectId] = useState('');
-  const [selUiAssetId, setSelUiAssetId] = useState('');
-  const [selFoundationId, setSelFoundationId] = useState('');
-  const [selArchId, setSelArchId] = useState('');
+  const [newProfileId, setNewProfileId] = useState('profile-react-hono-sqlite-node');
+  const [creatingApp, setCreatingApp] = useState(false);
   const [deletingApp, setDeletingApp] = useState<AssembledApplication | null>(null);
-  const [downloadingZip, setDownloadingZip] = useState(false);
 
   const allApps = data?.assembledApplications ?? [];
-  const projectApps = allApps.filter((a) => a.projectId === data?.activeProject.id);
-  const app = projectApps.find((a) => a.id === selectedAppId) ?? projectApps[0];
+  const projectApps = allApps.filter((item) => item.projectId === data?.activeProject.id);
+  const app = projectApps.find((item) => item.id === selectedAppId) ?? projectApps.find((item) => item.id === activeItemId) ?? projectApps[0];
+  const currentAppId = useRef<string | undefined>(app?.id);
+  currentAppId.current = app?.id;
+  const profiles = (data as (typeof data & { technologyProfiles?: TechnologyProfile[] }))?.technologyProfiles ?? [];
+  const profileId = app?.technologyProfileId ?? 'profile-react-hono-sqlite-node';
+  const profile = profiles.find((item) => item.id === profileId);
+  const sourceKey = JSON.stringify({
+    assets: data?.fourLayerAssets.map((asset) => [asset.id, asset.sourceRevision, asset.updatedAt]),
+    profiles: profiles.map((item) => [item.id, item.sourceRevision]),
+    requirements: data?.requirementDocs.map((doc) => [doc.id, doc.updatedAt]),
+    project: data?.activeProject.updatedAt,
+    confirmed: data?.confirmedPrototypeRevision?.revisionId,
+  });
 
   useEffect(() => {
-    if (!data) return;
-    const scoped = data.assembledApplications.filter((a) => a.projectId === data.activeProject.id);
-    if (scoped.length === 0) {
-      setSelectedAppId('');
-      setCompiledPkg(null);
-    } else if (!scoped.some((a) => a.id === selectedAppId)) {
-      setSelectedAppId(scoped[0]!.id);
-      setCompiledPkg(null);
-    }
-    const uiAssets = data.fourLayerAssets.filter((a) => a.layer === 'UI_UE');
-    const fnAssets = data.fourLayerAssets.filter((a) => a.layer === 'TECH_FOUNDATION');
-    const arAssets = data.fourLayerAssets.filter((a) => a.layer === 'TECH_ARCH');
-    setSelProjectId(data.activeProject.id);
-    if (!selUiAssetId && uiAssets[0]) setSelUiAssetId(uiAssets[0].id);
-    if (!selFoundationId && fnAssets[0]) setSelFoundationId(fnAssets[0].id);
-    if (!selArchId && arAssets[0]) setSelArchId(arAssets[0].id);
-  }, [data?.activeProject.id, data?.assembledApplications.length, data?.fourLayerAssets.length]);
+    setInstructionsDraft(app?.developmentInstructions ?? '');
+    setOperationError('');
+  }, [app?.id, app?.developmentInstructions]);
 
   useEffect(() => {
-    if (app?.id) {
-      setActiveItemId(app.id);
+    setPreviewRevisionId(app?.prototypeRevisionId ?? data?.confirmedPrototypeRevision?.revisionId ?? '');
+    setPendingRevision(null);
+    if (app) setActiveItemId(app.id);
+  }, [app?.id, app?.prototypeRevisionId, data?.confirmedPrototypeRevision?.revisionId, setActiveItemId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setPackageLoadError('');
+    if (!app) {
+      setCompiledPkg(null);
+      setPackageStale(false);
+      setLoadingPackage(false);
+      return () => controller.abort();
     }
-  }, [app?.id, setActiveItemId]);
+    setLoadingPackage(true);
+    if (compiledPkg?.appId !== app.id) setCompiledPkg(null);
+    void fetchSavedApplicationPackage(app.id, controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
+      setCompiledPkg(result.compiledPackage);
+      setPackageStale(result.stale);
+      setSelectedFilePath((selected) => result.compiledPackage?.files.some((file) => file.relativePath === selected)
+        ? selected : 'AGENTS.md');
+    }).catch((error) => {
+      if (!controller.signal.aborted) setPackageLoadError(error instanceof Error ? error.message : String(error));
+    }).finally(() => { if (!controller.signal.aborted) setLoadingPackage(false); });
+    return () => controller.abort();
+  }, [app?.id, app?.updatedAt, app?.latestPackageSnapshotId, sourceKey, packageReload]);
 
   if (!data) return null;
-  const lifecycle = getProjectLifecycleState(data);
+  const project = data.activeProject;
+  const confirmed = data.confirmedPrototypeRevision;
+  const prototype = data.prototypes.find((item) => item.revisions.some((revision) => revision.id === previewRevisionId));
+  const previewRevision = prototype?.revisions.find((revision) => revision.id === previewRevisionId);
+  const revisions = data.prototypes.flatMap((item) => item.revisions.map((revision) => ({ prototype: item, revision })));
+  const boundRevisionId = app?.prototypeRevisionId ?? confirmed?.revisionId;
+  const selectedAssets = app ? [app.uiUeAssetId, app.techFoundationAssetId, app.techArchAssetId]
+    .map((id) => data.fourLayerAssets.find((asset) => asset.id === id)) : [];
+  const compatible = (asset: FourLayerAsset) => Boolean(profile &&
+    (profile.compatibleAssetIds.includes(asset.id) || asset.technologyProfileId === profile.id));
+  const notesDirty = instructionsDraft !== (app?.developmentInstructions ?? '');
+  const diagnostics = [
+    ...(data.requirementDocs.length === 0 ? [t('请先保存需求文档。', 'Save a requirements document first.')] : []),
+    ...(!confirmed ? [t('请确认一个原型修订并同步 MU。', 'Confirm a prototype revision and sync MU.')] : []),
+    ...(confirmed && boundRevisionId && boundRevisionId !== confirmed.revisionId
+      ? [t('应用绑定的原型修订尚未确认为工程 UI 来源。', 'The application revision is not the project’s confirmed UI source.')] : []),
+    ...(previewRevision && previewRevision.id !== confirmed?.revisionId
+      ? [t('当前预览是未确认修订，请确认或返回已确认修订。', 'The preview is unconfirmed. Confirm it or return to the confirmed revision.')] : []),
+    ...(project.validation.presentModels.length === 0 ? [t('请先建立本体套件。', 'Create the Ontology Suite first.')] : []),
+    ...(!project.validation.valid ? [t('请先修复本体一致性错误。', 'Resolve ontology Consistency Errors.')] : []),
+    ...(app && !profile ? [t(`找不到技术方案 ${profileId}。`, `Technology Profile ${profileId} is missing.`)] : []),
+    ...(app ? selectedAssets.flatMap((asset, index) => !asset
+      ? [t(`第 ${index + 1} 项开发规范不存在，请重新选择。`, `Selected standard ${index + 1} is missing. Select it explicitly.`)]
+      : !compatible(asset) ? [t(`规范「${asset.name}」与当前技术方案不兼容。`, `Standard "${asset.name}" is incompatible with this profile.`)] : []) : []),
+    ...(notesDirty ? [t('请先保存应用补充说明。', 'Save application instructions first.')] : []),
+  ];
 
-  const uiAssets = data.fourLayerAssets.filter((a) => a.layer === 'UI_UE');
-  const foundationAssets = data.fourLayerAssets.filter((a) => a.layer === 'TECH_FOUNDATION');
-  const archAssets = data.fourLayerAssets.filter((a) => a.layer === 'TECH_ARCH');
-
-  const handleUpdateLayerBinding = async (
-    patch: Partial<{
-      projectId: string;
-      uiUeAssetId: string;
-      techFoundationAssetId: string;
-      techArchAssetId: string;
-    }>,
-  ) => {
+  const saveInputs = async (patch: Partial<AssembledApplication>) => {
     if (!app) return;
-    const json = await apiPostJson<{ assembledApplications: AssembledApplication[] }>(
-      '/api/applications',
-      {
-        ...app,
-        ...patch,
-      },
-    );
-    patchData({ assembledApplications: json.assembledApplications });
-    showToast(t('已更新四层架构装配绑定', 'Updated 4-layer assembly binding'));
-  };
-
-  const handleCreateApplication = async () => {
-    const targetProject =
-      data.projects.find((p) => p.id === (selProjectId || data.activeProject.id)) ??
-      data.activeProject;
-    const name = newAppName.trim() || `${targetProject.name} 四层装配应用`;
-    const json = await apiPostJson<{
-      application: AssembledApplication;
-      assembledApplications: AssembledApplication[];
-    }>('/api/applications', {
-      id: `app-${Date.now()}`,
-      name,
-      projectId: targetProject.id,
-      uiUeAssetId: selUiAssetId || uiAssets[0]?.id || '',
-      techFoundationAssetId: selFoundationId || foundationAssets[0]?.id || '',
-      techArchAssetId: selArchId || archAssets[0]?.id || '',
-      status: 'ASSEMBLED',
-      publishedVersion: 'v1.0.0',
-      publishedEndpoint: `/apps/${targetProject.code.toLowerCase()}`,
-      agentDevLogs: [
-        {
-          timestamp: new Date().toISOString(),
-          phase: 'FOUR_LAYER_ASSEMBLED',
-          detail: `完成 [${targetProject.name}] 与四层架构资产组装`,
-        },
-      ],
-    });
-    patchData({ assembledApplications: json.assembledApplications });
-    setSelectedAppId(json.application.id);
-    setNewAppName('');
-    setNewAppOpen(false);
-    setPageMode('WORKSPACE');
-    showToast(t(`已创建装配应用「${name}」`, `Created assembled application "${name}"`));
-  };
-
-  const handleConfirmDeleteApp = async () => {
-    if (!deletingApp) return;
-    const res = await apiDeleteResource<{ assembledApplications: AssembledApplication[] }>(
-      `/api/applications/${deletingApp.id}`,
-    );
-    patchData({ assembledApplications: res.assembledApplications });
-    setDeletingApp(null);
-    showToast(t('已删除四层装配应用', 'Deleted assembled application'));
-  };
-
-  const handleCompilePackage = async () => {
-    if (!app) return;
+    setSavingInputs(true);
+    setOperationError('');
     try {
-      const res = await apiCompileDevPackage(app.id);
-      setCompiledPkg(res.compiledPackage);
-      setSelectedFilePath('开发指导书.md');
-      patchData({ assembledApplications: res.assembledApplications });
-      showToast(
-        `已成功编译渐进式《开发资料包》（共 ${res.compiledPackage.files.length} 个文件，已写入 ${res.compiledPackage.outputDir}）`,
-      );
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
-    }
+      const result = await apiPostJson<{ application: AssembledApplication; assembledApplications: AssembledApplication[] }>(
+        '/api/applications', { ...app, ...patch });
+      patchData({ assembledApplications: result.assembledApplications });
+      if (compiledPkg) setPackageStale(true);
+      return result.application;
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : String(error));
+    } finally { setSavingInputs(false); }
   };
 
-  const handleDownloadPackageZip = async () => {
-    if (!app || downloadingZip) return;
+  const createApplication = async () => {
+    const selectedProfile = profiles.find((item) => item.id === newProfileId);
+    if (!selectedProfile || creatingApp) return;
+    setCreatingApp(true);
+    setOperationError('');
+    try {
+      const result = await apiPostJson<{ application: AssembledApplication; assembledApplications: AssembledApplication[] }>(
+        '/api/applications', {
+          id: `app-${Date.now().toString(36)}`, name: newAppName.trim() || `${project.name} Application`,
+          projectId: project.id, technologyProfileId: selectedProfile.id,
+          ...selectedProfile.defaultAssetIds,
+          ...(confirmed ? { prototypeRevisionId: confirmed.revisionId } : {}),
+          developmentInstructions: '', status: 'ASSEMBLED', agentDevLogs: [],
+        });
+      patchData({ assembledApplications: result.assembledApplications });
+      setSelectedAppId(result.application.id);
+      setPageMode('WORKSPACE');
+      setNewAppOpen(false);
+      setNewAppName('');
+      showToast(t('已创建应用开发规格', 'Created application specification'));
+    } catch (error) { setOperationError(error instanceof Error ? error.message : String(error)); }
+    finally { setCreatingApp(false); }
+  };
+
+  const chooseRevision = (revisionId: string) => {
+    setPreviewRevisionId(revisionId);
+    const revision = revisions.find((item) => item.revision.id === revisionId)?.revision;
+    if (!revision) return;
+    if (revision.id !== confirmed?.revisionId) setPendingRevision(revision);
+    else if (app && revision.id !== app.prototypeRevisionId) void saveInputs({ prototypeRevisionId: revision.id });
+  };
+
+  const confirmRevision = async (revisionId: string) => {
+    setConfirmingRevision(true);
+    setOperationError('');
+    try {
+      const result = await apiConfirmPrototypeRevision(project.id, revisionId);
+      patchData({ activeProject: result.project, prototypes: result.prototypes, confirmedPrototypeRevision: result.confirmedRevision });
+      setPendingRevision(null);
+      if (app) await saveInputs({ prototypeRevisionId: result.confirmedRevision.revisionId });
+      showToast(t('已确认修订并同步 MU', 'Confirmed revision and synchronized MU'));
+    } catch (error) { setOperationError(error instanceof Error ? error.message : String(error)); }
+    finally { setConfirmingRevision(false); }
+  };
+
+  const generatePackage = async () => {
+    if (!app || generating || diagnostics.length > 0) return;
+    setGenerating(true);
+    setOperationError('');
+    try {
+      const result = await apiCompileDevPackage(app.id);
+      if (currentAppId.current === app.id) {
+        setCompiledPkg(result.compiledPackage);
+        setPackageStale(false);
+        setSelectedFilePath('AGENTS.md');
+      }
+      patchData({ assembledApplications: result.assembledApplications });
+      showToast(t(`已生成包含 ${result.compiledPackage.files.length} 个文件的开发包快照`, `Generated a package snapshot with ${result.compiledPackage.files.length} files`));
+    } catch (error) { setOperationError(error instanceof Error ? error.message : String(error)); }
+    finally { setGenerating(false); }
+  };
+
+  const downloadPackage = async () => {
+    if (!app || !compiledPkg || downloadingZip) return;
     setDownloadingZip(true);
     try {
-      const res = await fetch(`/api/applications/${app.id}/package.zip`);
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({ error: 'ZIP export failed' }));
-        showToast(errJson.error || 'ZIP export failed');
-        return;
-      }
-      const disposition = res.headers.get('Content-Disposition') || '';
-      const nameMatch = disposition.match(/filename="?([^";]+)"?/i);
-      const fileName = nameMatch?.[1] || `${app.id}-dev-package.zip`;
-      const blob = await res.blob();
-      triggerBrowserDownload(fileName, blob, 'application/zip');
-      showToast(t(`已下载开发资料包 ${fileName}`, `Downloaded ${fileName}`));
-    } finally {
-      setDownloadingZip(false);
-    }
+      const response = await fetch(`/api/applications/${encodeURIComponent(app.id)}/package.zip`);
+      if (!response.ok) { const error = await response.json(); throw new Error(error.error || 'ZIP download failed'); }
+      triggerBrowserDownload(`${app.id}-development-package.zip`, await response.blob(), 'application/zip');
+    } catch (error) { setOperationError(error instanceof Error ? error.message : String(error)); }
+    finally { setDownloadingZip(false); }
   };
 
-  const activeFile = compiledPkg?.files.find((f) => f.relativePath === selectedFilePath);
-  const isMarkdownArtifact = Boolean(activeFile?.relativePath.endsWith('.md'));
-  const boundProject =
-    data.projects.find((p) => p.id === app?.projectId) ?? data.activeProject;
+  const openApplicationAgent = async (prompt?: string) => {
+    if (!app) return;
+    setActiveItemId(app.id);
+    useAgentPanelStore.getState().revealPanel();
+    try {
+      const session = await ensureProjectAgentSession(project.id, 'CODING', {
+        targetId: app.id, title: `${app.name} · ${t('应用开发智能体', 'Application Development Agent')}`,
+      });
+      setActiveSessionId(session.id);
+      if (prompt) await startSessionAgentRun({ sessionId: session.id, prompt });
+    } catch (error) { setOperationError(error instanceof Error ? error.message : String(error)); }
+  };
+
+  const appAgentRunning = Boolean(app && data.agentSessions.some((session) =>
+    session.projectId === project.id && session.agentKind === 'CODING' && session.targetId === app.id &&
+    (session.status === 'RUNNING' || liveSessionDrafts[session.id])));
+  const activeFile = compiledPkg?.files.find((file) => file.relativePath === selectedFilePath) ??
+    compiledPkg?.files.find((file) => file.relativePath === 'AGENTS.md');
+  const snapshotId = String(compiledPkg?.manifestJson.snapshotId ?? app?.latestPackageSnapshotId ?? '');
 
   return (
-    <div className="flex flex-col gap-3.5">
-      <ViewModeHeader
-        mode={pageMode}
-        onChange={setPageMode}
-        workspaceLabel={t('当前工程四层装配台', 'Project Assembly Workspace')}
-        registryLabel={t('全部装配应用注册表', 'All Assembled Apps')}
-        count={allApps.length}
-        testIdPrefix="app-assembly"
-        rightActions={
-          <>
-            <Button
-              type="button"
-              variant="secondary" size="sm"
-              disabled={!lifecycle.hasOntology}
-              onClick={() => setNewAppOpen(true)}
-            >
-              + {t('新建四层装配应用', 'New Assembled App')}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary" size="sm"
-              data-testid="download-package-zip-btn"
-              disabled={!app || downloadingZip}
-              onClick={handleDownloadPackageZip}
-            >
-              {downloadingZip
-                ? t('正在打包...', 'Packaging...')
-                : t('下载 .zip 开发资料包', 'Download .zip Dev Package')}
-            </Button>
-            <Button
-              type="button"
-              variant="accent" size="sm"
-              data-testid="compile-dev-package-btn"
-              disabled={!app}
-              onClick={handleCompilePackage}
-            >
-              {t('一键编译生成《开发资料包》', 'Compile Development Package')}
-            </Button>
-          </>
-        }
-      />
-
-      {pageMode === 'REGISTRY' ? (
-        <RegistryTable<AssembledApplication>
-          testId="assembled-app-registry"
-          title={t('四层架构装配应用注册表', '4-Layer Assembled Application Registry')}
-          subtitle={t(
-            '管理【业务本体 + UI/UE + 技术底座 + 技术架构】四层组装实例、编译状态与发布路由',
-            'Manage 4-layer assembled application instances, compilation status, and release endpoints',
-          )}
-          rows={allApps}
-          getRowKey={(a) => a.id}
-          activeRowKey={app?.id}
-          matchesSearch={(a, q) =>
-            a.name.toLowerCase().includes(q) ||
-            (a.publishedEndpoint || '').toLowerCase().includes(q)
-          }
-          statusFilters={[
-            { value: 'ALL', label: t('全部', 'All') },
-            { value: 'ASSEMBLED', label: 'ASSEMBLED' },
-            { value: 'COMPILED', label: 'COMPILED' },
-            { value: 'PUBLISHED', label: 'PUBLISHED' },
-          ]}
-          getRowStatus={(a) => a.status}
-          primaryActionLabel={t('新建四层装配应用', 'New Assembled App')}
-          onPrimaryAction={() => setNewAppOpen(true)}
-          onRowClick={async (a) => {
-            if (a.projectId !== data.activeProject.id) {
-              await switchProject(a.projectId);
-            }
-            setSelectedAppId(a.id);
-            setPageMode('WORKSPACE');
-          }}
-          columns={[
-            {
-              key: 'name',
-              header: t('应用名称', 'Application Name'),
-              render: (a) => (
-                <div>
-                  <div className="font-semibold text-ink">{a.name}</div>
-                  <div className="font-mono text-[11.5px] text-ink-3">
-                    {a.publishedEndpoint || `/apps/${a.id}`}
-                  </div>
-                </div>
-              ),
-            },
-            {
-              key: 'project',
-              header: t('绑定业务本体', 'Ontology Project'),
-              render: (a) => {
-                const p = data.projects.find((pr) => pr.id === a.projectId);
-                return <span className="badge badge-accent">{p?.name || a.projectId}</span>;
-              },
-            },
-            {
-              key: 'status',
-              header: t('状态 / 版本', 'Status'),
-              width: '150px',
-              render: (a) => (
-                <span className="badge badge-ok">
-                  {a.status} · {a.publishedVersion || 'v1.0.0'}
-                </span>
-              ),
-            },
-            {
-              key: 'actions',
-              header: t('操作', 'Actions'),
-              align: 'right',
-              render: (a) => (
-                <div
-                  className="inline-flex items-center gap-1.5"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    onClick={async () => {
-                      if (a.projectId !== data.activeProject.id) {
-                        await switchProject(a.projectId);
-                      }
-                      setSelectedAppId(a.id);
-                      setPageMode('WORKSPACE');
-                    }}
-                  >
-                    {t('打开研发台', 'Workspace')}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="text-red"
-                    onClick={() => setDeletingApp(a)}
-                  >
-                    <Trash2 size={12} />
-                  </Button>
-                </div>
-              ),
-            },
-          ]}
-        />
-      ) : !app ? (
-        <div
-          className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-4"
-          data-testid="assembly-stage-pending"
-        >
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-accent">
-            <Layers size={20} />
-          </div>
-          <span className={`badge ${lifecycle.hasOntology ? 'badge-ok' : 'badge-warn'}`}>
-            {lifecycle.hasOntology
-              ? t('第 5 步 · 本体已就绪，可组装应用', 'Step 5 · Ready to Assemble')
-              : t('第 5 步 · 尚未到达此阶段', 'Step 5 · Stage Not Reached Yet')}
-          </span>
-          <h3 className="font-serif text-[18px] font-semibold text-ink m-0">
-            {t(
-              `「${data.activeProject.name}」尚未创建四层装配应用`,
-              `"${data.activeProject.name}" has no assembled application yet`,
-            )}
-          </h3>
-          <p className="text-[13px] text-ink-3 max-w-[540px] leading-relaxed m-0">
-            {lifecycle.hasOntology
-              ? t(
-                  '当前工程的业务本体已准备就绪。点击下方按钮将「业务本体 + UI/UE 规范 + 技术底座 + 技术架构」四层资产组装为一个应用，即可一键编译导出《开发指导书.md》与代码开发包。',
-                  'Your ontology is ready. Assemble the 4 architectural layers into an application to compile development guides and ZIP packages.',
-                )
-              : t(
-                  '四层应用开发需要将第 4 步生成的「业务本体」与架构资产绑定编译。由于当前工程仍在推进前置阶段，此处不展示其他示例工程的应用以免混淆。',
-                  'Application assembly binds your Step 4 Business Ontology with architectural assets. Complete upstream stages first.',
-                )}
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
-            {lifecycle.hasOntology ? (
-              <Button
-                type="button"
-                variant="accent"
-                size="md"
-                onClick={() => setNewAppOpen(true)}
-              >
-                <Plus size={14} />
-                {t('为当前工程创建四层装配应用', 'Create 4-Layer App for Project')}
-              </Button>
-            ) : (
-              onNavigate && (
-                <Button
-                  type="button"
-                  variant="accent"
-                  size="md"
-                  onClick={() => onNavigate(lifecycle.nextStep.targetView)}
-                >
-                  {t(lifecycle.nextStep.labelZh, lifecycle.nextStep.labelEn)}
-                  <ArrowRight size={14} />
-                </Button>
-              )
-            )}
-          </div>
+    <div className="flex min-w-0 flex-col gap-3.5" data-testid="application-development-workflow">
+      <div className="card flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="card-title">{t('应用开发 · 准备可执行的开发规格', 'Application development · Prepare the implementation specification')}</h3>
+          <p className="mt-1 mb-0 max-w-[780px] text-[12.5px] leading-relaxed text-ink-3">{t(
+            '确认业务与界面来源，选择工程规范，将完整规格交给编码智能体实施。',
+            'Confirm business and UI sources, select engineering standards, and prepare the complete handoff for a coding agent.')}</p>
         </div>
-      ) : (
-        <>
-          <div className="card">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <div className="flex items-center gap-2">
-                <strong className="text-[13px]">
-                  {t('当前装配应用：', 'Active Application: ')}
-                </strong>
-                {projectApps.length > 0 && (
-                  <select
-                    className="select"
-                    style={{ width: 260 }}
-                    value={app?.id ?? ''}
-                    onChange={(e) => {
-                      setSelectedAppId(e.target.value);
-                      setCompiledPkg(null);
-                    }}
-                  >
-                    {projectApps.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} ({item.status})
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              {app && <span className="badge badge-ok">{app.status}</span>}
-            </div>
+        <Button onClick={() => setNewAppOpen(true)} disabled={generating || profiles.length === 0} data-testid="create-application-btn">
+          <Plus data-icon="inline-start" />{t('新建应用', 'New application')}
+        </Button>
+      </div>
+      <ViewModeHeader mode={pageMode} onChange={setPageMode}
+        workspaceLabel={t('当前工程开发流程', 'Project development workflow')}
+        registryLabel={t('高级：应用注册表', 'Advanced: application registry')}
+        count={allApps.length} testIdPrefix="app-assembly" />
+      {operationError && <div role="alert" className="rounded-card border border-red/30 bg-red-tint p-3 text-[12.5px] text-red" data-testid="application-operation-error">{operationError}</div>}
+      {pageMode === 'REGISTRY' ? (
+        <RegistryTable<AssembledApplication> testId="assembled-app-registry" title={t('应用规格注册表', 'Application specifications')}
+          rows={allApps} getRowKey={(item) => item.id} activeRowKey={app?.id}
+          matchesSearch={(item, query) => item.name.toLowerCase().includes(query)}
+          onRowClick={(item) => { void (async () => { if (item.projectId !== project.id) await switchProject(item.projectId); setSelectedAppId(item.id); setPageMode('WORKSPACE'); })(); }}
+          columns={[
+            { key: 'name', header: t('应用', 'Application'), render: (item) => <strong>{item.name}</strong> },
+            { key: 'project', header: t('本体工程', 'Ontology Project'), render: (item) => data.projects.find((entry) => entry.id === item.projectId)?.name ?? item.projectId },
+            { key: 'profile', header: t('技术方案', 'Technology Profile'), render: (item) => item.technologyProfileId ?? t('沿用默认方案', 'Default profile') },
+            { key: 'snapshot', header: t('开发包快照', 'Package Snapshot'), render: (item) => item.latestPackageSnapshotId ?? t('尚未生成', 'Not generated') },
+            { key: 'actions', header: t('操作', 'Actions'), align: 'right', render: (item) => <Button variant="danger" size="xs" aria-label={t(`删除 ${item.name}`, `Delete ${item.name}`)} onClick={(event) => { event.stopPropagation(); setDeletingApp(item); }}><Trash2 data-icon="inline-start" /></Button> },
+          ]} />
+      ) : (<>
+        <div className="card flex flex-wrap items-center justify-between gap-3">
+          <label className="flex flex-wrap items-center gap-2 text-[13px] font-semibold" htmlFor="development-application-select">
+            {t('当前应用', 'Current application')}
+            <select id="development-application-select" className="select max-w-full" value={app?.id ?? ''} disabled={generating || savingInputs} onChange={(event) => setSelectedAppId(event.target.value)} data-testid="development-application-select">
+              {!app && <option value="">{t('尚未创建应用', 'No application yet')}</option>}
+              {projectApps.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+          {!app && <Button variant="accent" onClick={() => setNewAppOpen(true)} disabled={profiles.length === 0}>{t('为当前工程创建应用', 'Create application for this project')}</Button>}
+        </div>
 
-            {app && (
-              <div className="grid grid-cols-4 gap-2.5"
-              >
-                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
-                  <div className="text-[11.5px] text-muted-foreground">
-                    1. {t('业务本体层', 'Ontology Layer')}
-                  </div>
-                  <select
-                    className="select"
-                    value={app.projectId}
-                    onChange={(e) => handleUpdateLayerBinding({ projectId: e.target.value })}
-                  >
-                    {data.projects.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.code})
-                      </option>
-                    ))}
-                  </select>
-                  <span className="badge badge-ok">
-                    {boundProject.currentStage}/11 Models · 0 Errors
-                  </span>
-                </div>
-
-                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
-                  <div className="text-[11.5px] text-muted-foreground">
-                    2. {t('UI/UE 设计规范层', 'UI/UE Design Layer')}
-                  </div>
-                  <select
-                    className="select"
-                    value={app.uiUeAssetId}
-                    onChange={(e) => handleUpdateLayerBinding({ uiUeAssetId: e.target.value })}
-                  >
-                    {uiAssets.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
-                  <div className="text-[11.5px] text-muted-foreground">
-                    3. {t('技术底座层', 'Tech Foundation Layer')}
-                  </div>
-                  <select
-                    className="select"
-                    value={app.techFoundationAssetId}
-                    onChange={(e) =>
-                      handleUpdateLayerBinding({ techFoundationAssetId: e.target.value })
-                    }
-                  >
-                    {foundationAssets.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
-                  <div className="text-[11.5px] text-muted-foreground">
-                    4. {t('技术架构层', 'Tech Architecture Layer')}
-                  </div>
-                  <select
-                    className="select"
-                    value={app.techArchAssetId}
-                    onChange={(e) => handleUpdateLayerBinding({ techArchAssetId: e.target.value })}
-                  >
-                    {archAssets.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
+        <section className="card flex min-w-0 flex-col gap-3" data-testid="development-step-confirm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="card-title">1 · {t('确认原型与本体套件', 'Confirm prototype and Ontology Suite')}</h4>
+            <span className={`badge ${project.validation.valid && confirmed ? 'badge-ok' : 'badge-warn'}`}>
+              {project.validation.presentModels.length}/11 {t('模型', 'models')} · {project.validation.errorCount} {t('错误', 'errors')} · {project.validation.warningCount} {t('阶段提示', 'Stage Warnings')}
+            </span>
           </div>
-
-          {/* Compiled Progressive-Disclosure Development Package Inspector */}
-          {compiledPkg && (
-            <div className="grid grid-cols-[330px_minmax(0,1fr)] gap-3"
-              data-testid="compiled-package-inspector"
-            >
-              <div className="card" style={{ maxHeight: 540, overflowY: 'auto' }}>
-                <div className="card-header">
-                  <h4 className="card-title">
-                    {t('开发资料包目录树', 'Package File Tree')} ({compiledPkg.files.length})
-                  </h4>
-                </div>
-                <div className="flex flex-col gap-0.75">
-                  {compiledPkg.files.map((file) => (
-                    <button
-                      key={file.relativePath}
-                      type="button"
-                      className={`nav-item ${selectedFilePath === file.relativePath ? 'active' : ''}`}
-                      onClick={() => setSelectedFilePath(file.relativePath)}
-                    >
-                      <span
-                        className="nav-item-left font-mono text-[11.5px]"
-                      >
-                        {file.relativePath}
-                      </span>
-                      <span className="badge">{file.category}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="card" style={{ maxHeight: 540, overflowY: 'auto' }}>
-                <div className="card-header">
-                  <strong className="font-mono">
-                    {activeFile?.relativePath}
-                  </strong>
-                  <div className="flex gap-2 items-center">
-                    {isMarkdownArtifact && (
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => setPkgPreviewRaw((v) => !v)}
-                      >
-                        {pkgPreviewRaw ? <Eye size={12} /> : <FileCode size={12} />}
-                        {pkgPreviewRaw ? t('富排版预览', 'Rendered') : t('查看源码', 'Raw')}
-                      </Button>
-                    )}
-                    <span className="badge badge-ok">{activeFile?.sizeBytes} bytes</span>
-                    {activeFile && (
-                      <Button
-                        type="button"
-                        variant="secondary" size="sm"
-                        onClick={() =>
-                          triggerBrowserDownload(
-                            activeFile.relativePath.split('/').pop() || 'artifact.md',
-                            activeFile.content,
-                          )
-                        }
-                      >
-                        {t('下载单文件', 'Download File')}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                {activeFile &&
-                  (isMarkdownArtifact && !pkgPreviewRaw ? (
-                    <div className="p-2">
-                      <MarkdownRenderer content={activeFile.content} />
-                    </div>
-                  ) : (
-                    <CodeBlock
-                      code={activeFile.content}
-                      language={activeFile.relativePath.split('.').pop() || 'text'}
-                      filename={activeFile.relativePath}
-                      maxHeight={440}
-                    />
-                  ))}
-              </div>
-            </div>
-          )}
-
-          {/* Unified AI Coding Agent Quick Actions (Runs in Right Agent Panel) + Real-Time Logs */}
-          {app && (
-            <div className="grid grid-cols-[minmax(0,1fr)_340px] gap-3">
-              <div className="card flex flex-col justify-between gap-3" data-testid="coding-agent-context-card">
-                <div className="space-y-2.5">
-                  <div className="card-header" style={{ marginBottom: 0 }}>
-                    <div>
-                      <h4 className="card-title inline-flex items-center gap-1.5">
-                        <Code2 size={15} className="text-accent" />
-                        {t('四层架构 AI 研发智能体', '4-Layer AI Coding Agent')}
-                      </h4>
-                      <div className="text-[12px] text-muted-foreground mt-0.5">
-                        {t(
-                          '基于渐进式《开发资料包》执行代码骨架生成、包编译与门禁校验（已在右侧 Agent 面板就绪）',
-                          'Generates domain repositories, routes, UI components & compiles dev packages in the unified Agent Panel',
-                        )}
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="accent"
-                      size="sm"
-                      onClick={() => {
-                        setActiveItemId(app.id);
-                        useAgentPanelStore.getState().revealPanel();
-                      }}
-                    >
-                      {t('打开右侧研发 Agent →', 'Open Coding Agent →')}
-                    </Button>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-1.5 pt-1">
-                    {[
-                      t(
-                        '基于当前四层装配生成 M1/M3 领域聚合仓储与门禁校验代码骨架',
-                        'Generate M1/M3 domain repository and rule guard code scaffolding',
-                      ),
-                      t(
-                        '编译渐进式《开发资料包》并核验完成度门禁清单',
-                        'Compile progressive Development Package and verify completion gates',
-                      ),
-                    ].map((starter, idx) => {
-                      const codingRunning = (data.agentSessions ?? []).some(
-                        (s) =>
-                          s.projectId === data.activeProject.id &&
-                          s.agentKind === 'CODING' &&
-                          s.targetId === app.id &&
-                          (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
-                      );
-                      return (
-                        <button
-                          key={idx}
-                          type="button"
-                          disabled={codingRunning}
-                          onClick={() => {
-                            setActiveItemId(app.id);
-                            useAgentPanelStore.getState().revealPanel();
-                            void (async () => {
-                              const codingSess = await ensureProjectAgentSession(
-                                data.activeProject.id,
-                                'CODING',
-                                {
-                                  targetId: app.id,
-                                  title: `${app.name} · ${t('四层架构 AI 研发智能体', '4-Layer AI Coding Agent')}`,
-                                },
-                              );
-                              setActiveSessionId(codingSess.id);
-                              await startSessionAgentRun({
-                                sessionId: codingSess.id,
-                                prompt: starter,
-                              });
-                            })();
-                          }}
-                          className="flex items-center justify-between gap-2 rounded-control border border-line bg-surface-2 px-3 py-2 text-left text-[12.5px] text-ink transition-colors hover:border-accent hover:bg-accent-soft cursor-pointer disabled:opacity-50"
-                        >
-                          <span>{starter}</span>
-                          <ArrowRight size={13} className="shrink-0 text-accent" />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="rounded-control border border-line bg-inset/45 p-2.5 text-[11.5px] text-ink-3">
-                  {t(
-                    `装配应用：${app.name} (${app.status} · ${app.publishedVersion || 'v1.0.0'})`,
-                    `Application: ${app.name} (${app.status} · ${app.publishedVersion || 'v1.0.0'})`,
-                  )}
-                </div>
-              </div>
-
-              <div className="card" style={{ maxHeight: 480, overflowY: 'auto' }}>
-                <div className="card-header">
-                  <h4 className="card-title">
-                    {t('构建与发布流水日志', 'Build & Release Logs')} ({app.agentDevLogs.length})
-                  </h4>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  {[...app.agentDevLogs].reverse().map((log, i) => (
-                    <div
-                      key={i} className="p-[6px_10px] bg-inset rounded-[4px] font-mono text-[11.5px]"
-                    >
-                      [{log.timestamp.slice(0, 19)}] <strong>{log.phase}</strong>: {log.detail}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* New Assembled App Dialog */}
-      <ConfirmDialog
-        open={newAppOpen}
-        title={t('新建四层架构装配应用', 'Create 4-Layer Assembled Application')}
-        confirmLabel={t('确认组装应用', 'Create Application')}
-        onClose={() => setNewAppOpen(false)}
-        onConfirm={() => void handleCreateApplication()}
-      >
-        <div className="space-y-3">
-          <div className="form-field">
-            <label className="form-label">{t('应用名称', 'Application Name')}</label>
-            <input
-              className="input"
-              value={newAppName}
-              onChange={(e) => setNewAppName(e.target.value)}
-              placeholder={t('例如：合同履约管理微服务应用', 'e.g. Contract Management App')}
-            />
-          </div>
-          <div className="form-grid-2">
-            <div className="form-field">
-              <label className="form-label">1. {t('业务本体工程', 'Ontology Project')}</label>
-              <select
-                className="select"
-                value={selProjectId}
-                onChange={(e) => setSelProjectId(e.target.value)}
-              >
-                {data.projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.code})
-                  </option>
-                ))}
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="form-field flex-1 min-w-[220px]">
+              <label className="form-label" htmlFor="development-prototype-revision">{t('工程原型与历史修订', 'Project prototype and revision')}</label>
+              <select id="development-prototype-revision" className="select" value={previewRevisionId} disabled={savingInputs || confirmingRevision || generating} onChange={(event) => chooseRevision(event.target.value)} data-testid="development-prototype-revision">
+                <option value="">{t('选择原型修订', 'Select a prototype revision')}</option>
+                {revisions.map(({ prototype: entry, revision }) => <option key={revision.id} value={revision.id}>{entry.name} · #{revision.revisionNumber} {revision.title}{revision.id === confirmed?.revisionId ? t(' · 已确认', ' · Confirmed') : ''}</option>)}
               </select>
             </div>
-            <div className="form-field">
-              <label className="form-label">2. {t('UI/UE 设计资产', 'UI/UE Asset')}</label>
-              <select
-                className="select"
-                value={selUiAssetId}
-                onChange={(e) => setSelUiAssetId(e.target.value)}
-              >
-                {uiAssets.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
+            {previewRevision && previewRevision.id !== confirmed?.revisionId && <Button variant="accent" onClick={() => setPendingRevision(previewRevision)} data-testid="development-confirm-revision-btn">{t('查看 MU 变更并确认', 'Review MU changes and confirm')}</Button>}
+            {onNavigate && <Button onClick={() => onNavigate('app-ontology')}>{t('检查本体套件', 'Inspect Ontology Suite')}</Button>}
+          </div>
+          <p className="m-0 text-[12px] text-ink-3">{confirmed
+            ? t(`工程已确认：${confirmed.prototype.name} #${confirmed.revision.revisionNumber}。确认其他修订将先展示 MU 变更。`, `Confirmed source: ${confirmed.prototype.name} #${confirmed.revision.revisionNumber}. A different revision requires reviewing its MU changes.`)
+            : t('选择修订后先检查 MU 变更；确认后才成为开发包的 UI 来源。', 'Review MU changes before confirmation. Only a confirmed revision becomes a package UI source.')}</p>
+          {previewRevision ? <iframe title={t('应用原型修订预览', 'Application prototype revision preview')} srcDoc={previewRevision.htmlContent} sandbox="allow-scripts" className="h-[340px] w-full rounded-card border border-line bg-surface" data-testid="development-prototype-preview" />
+            : <div className="rounded-card border border-dashed border-line p-6 text-center text-[12.5px] text-ink-3">{t('选择一个原型修订进行预览。', 'Select a prototype revision to preview.')}{onNavigate && <Button className="ml-2" onClick={() => onNavigate('app-prototype')}>{t('前往界面原型', 'Open prototypes')}</Button>}</div>}
+        </section>
+
+        <section className="card flex flex-col gap-3" data-testid="development-step-standards">
+          <h4 className="card-title">2 · {t('选择技术方案与开发规范', 'Choose a Technology Profile and standards')}</h4>
+          {!app ? <p className="m-0 text-[12.5px] text-ink-3">{t('创建应用后选择技术方案及其兼容规范。', 'Create an application to select its profile and compatible standards.')}</p> : <>
+            <label className="form-field" htmlFor="development-profile-select"><span className="form-label">{t('技术方案', 'Technology Profile')}</span>
+              <select id="development-profile-select" className="select" value={profileId} disabled={savingInputs || generating} data-testid="development-profile-select" onChange={(event) => {
+                const next = profiles.find((item) => item.id === event.target.value);
+                if (next) void saveInputs({ technologyProfileId: next.id, ...next.defaultAssetIds });
+              }}>
+                {!profile && <option value={profileId}>{t(`缺失：${profileId}`, `Missing: ${profileId}`)}</option>}
+                {profiles.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.version}</option>)}
               </select>
+            </label>
+            {profile && <div className="rounded-card border border-line bg-inset/45 p-3 text-[12px] leading-relaxed text-ink-2">
+              <p className="mt-0 mb-2">{profile.summary}</p>
+              <div>{profile.frontend.join(' · ')}</div><div>{profile.backend.join(' · ')} · {profile.persistence.join(' · ')}</div><div>{profile.deployment.join(' · ')}</div>
+              <p className="mt-2 mb-0 text-ink-3">{t('以已确认原型的视觉设计为准。选择不同方案会改用该方案明确指定的默认规范。', 'The confirmed prototype governs visual design. Changing profiles selects that profile’s explicit default standards.')}</p>
+            </div>}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              {([
+                { key: 'uiUeAssetId', layer: 'UI_UE', zh: 'UI 实现规范', en: 'UI implementation standard' },
+                { key: 'techFoundationAssetId', layer: 'TECH_FOUNDATION', zh: '技术底座规范', en: 'Engineering foundation' },
+                { key: 'techArchAssetId', layer: 'TECH_ARCH', zh: '技术架构规范', en: 'Architecture standard' },
+              ] as const).map((field) => {
+                const available = data.fourLayerAssets.filter((asset) => asset.layer === field.layer && compatible(asset));
+                return <label key={field.key} className="form-field" htmlFor={`development-${field.key}`}><span className="form-label">{t(field.zh, field.en)}</span>
+                  <select id={`development-${field.key}`} className="select" value={app[field.key]} disabled={savingInputs || generating} onChange={(event) => void saveInputs({ [field.key]: event.target.value })} data-testid={`development-${field.key}`}>
+                    {!available.some((asset) => asset.id === app[field.key]) && <option value={app[field.key]}>{t('当前规范缺失或不兼容，请选择', 'Current standard is missing or incompatible')}</option>}
+                    {available.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} · {asset.version}</option>)}
+                  </select>
+                </label>;
+              })}
+            </div>
+          </>}
+        </section>
+
+        <section className="card flex min-w-0 flex-col gap-3" data-testid="development-step-origins">
+          <h4 className="card-title">3 · {t('检查输入来源与应用说明', 'Inspect input origins and application instructions')}</h4>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 text-[12px]">
+            <div className="rounded-card border border-line bg-inset/35 p-3"><strong>{t('业务来源', 'Business sources')}</strong>
+              <div className="mt-1">{project.name} · {project.code}</div>
+              {data.requirementDocs.map((doc) => <div key={doc.id} className="mt-1 text-ink-3">{doc.title} · {doc.updatedAt}</div>)}
+              <div className="mt-1 font-mono text-ink-3">{t('本体套件', 'Ontology Suite')}: {project.id} · {project.updatedAt}</div>
+              <div className="mt-1 break-all font-mono text-ink-3">{t('已绑定 UI 修订', 'Bound UI revision')}: {boundRevisionId ?? t('尚未确认', 'Not confirmed')}</div>
+            </div>
+            <div className="rounded-card border border-line bg-inset/35 p-3"><strong>{t('技术方案来源', 'Technology Profile source')}</strong>
+              <div className="mt-1">{profile?.name ?? t('尚未选择', 'Not selected')}</div>
+              <div className="mt-1 break-all font-mono text-ink-3">{profile?.sourcePath}</div><div className="mt-1 break-all font-mono text-ink-3">{profile?.sourceRevision}</div>
             </div>
           </div>
-          <div className="form-grid-2">
-            <div className="form-field">
-              <label className="form-label">3. {t('技术底座资产', 'Tech Foundation')}</label>
-              <select
-                className="select"
-                value={selFoundationId}
-                onChange={(e) => setSelFoundationId(e.target.value)}
-              >
-                {foundationAssets.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-field">
-              <label className="form-label">4. {t('技术架构资产', 'Tech Architecture')}</label>
-              <select
-                className="select"
-                value={selArchId}
-                onChange={(e) => setSelArchId(e.target.value)}
-              >
-                {archAssets.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
+          {selectedAssets.map((asset, index) => asset && <details key={asset.id} className="rounded-card border border-line p-3" data-testid={`development-standard-origin-${index}`}>
+            <summary className="cursor-pointer text-[12.5px] font-medium">{asset.name} · {asset.version}</summary>
+            <div className="my-2 break-all font-mono text-[11px] text-ink-3">{asset.sourcePath ?? t('工作区历史资料；请在规范库保存为仓库规范。', 'Legacy workspace material; save it to repository source in the standards library.')}<br />{asset.sourceRevision}</div>
+            <MarkdownRenderer content={asset.specMarkdown} />
+          </details>)}
+          {app && <div className="form-field">
+            <label className="form-label" htmlFor="application-development-instructions">{t('当前应用的补充实施说明', 'Application-specific implementation instructions')}</label>
+            <textarea id="application-development-instructions" className="textarea min-h-[100px]" value={instructionsDraft} disabled={savingInputs || generating} onChange={(event) => setInstructionsDraft(event.target.value)} data-testid="application-development-instructions" placeholder={t('记录当前应用的范围、约束或需要编码智能体关注的决策。', 'Record application scope, constraints, and decisions for the coding agent.')} />
+            <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-[11.5px] text-ink-3">{t('应用说明进入下一份开发包；共享规范在架构资产库维护。', 'Instructions enter the next package. Maintain shared standards in the architecture library.')}</span>
+              <Button disabled={!notesDirty || savingInputs || generating} onClick={() => void saveInputs({ developmentInstructions: instructionsDraft })} data-testid="save-application-instructions-btn">{savingInputs ? t('正在保存…', 'Saving…') : t('保存应用说明', 'Save instructions')}</Button></div>
+          </div>}
+        </section>
+
+        <section className="card flex min-w-0 flex-col gap-3" data-testid="development-step-generate">
+          <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="card-title">4 · {t('生成开发资料包', 'Generate the Development Package')}</h4>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button data-testid="download-package-zip-btn" disabled={!compiledPkg || compiledPkg.appId !== app?.id || downloadingZip || loadingPackage} onClick={() => void downloadPackage()}>{downloadingZip ? t('正在下载…', 'Downloading…') : t('下载已保存快照 .zip', 'Download saved snapshot .zip')}</Button>
+              <Button variant="accent" data-testid="compile-dev-package-btn" disabled={!app || diagnostics.length > 0 || generating || savingInputs || confirmingRevision} onClick={() => void generatePackage()}>{generating ? t('正在生成…', 'Generating…') : compiledPkg ? t('重新生成开发包', 'Regenerate package') : t('生成开发包', 'Generate package')}</Button>
             </div>
           </div>
+          <p className="m-0 text-[12px] text-ink-3">{t('生成会校验并固定当前输入，产出 AGENTS.md、实施顺序、验收条件和原始参考资料。', 'Generation validates and fixes the inputs into AGENTS.md, implementation order, acceptance criteria, and original references.')}</p>
+          {diagnostics.length > 0 && <ul className="m-0 list-disc pl-5 text-[12px] leading-relaxed text-ink-3" data-testid="development-input-diagnostics">{diagnostics.map((message) => <li key={message}>{message}</li>)}</ul>}
+          {loadingPackage && <div role="status" className="text-[12px] text-ink-3">{t('正在读取已保存的开发包…', 'Loading the saved package…')}</div>}
+          {packageLoadError && <div role="alert" className="flex flex-wrap items-center gap-2 text-[12px] text-red">{packageLoadError}<Button size="xs" onClick={() => setPackageReload((value) => value + 1)}>{t('重试', 'Retry')}</Button></div>}
+          {compiledPkg && <>
+            <div className="flex flex-wrap items-center gap-2 text-[11.5px]" data-testid="saved-package-snapshot">
+              <span className={`badge ${packageStale || notesDirty ? 'badge-warn' : 'badge-ok'}`} data-testid="package-stale-indicator">{packageStale || notesDirty ? t('输入已变化，等待重新生成', 'Inputs changed · regenerate to update') : t('已保存开发包快照', 'Saved package snapshot')}</span>
+              <span className="break-all font-mono text-ink-3">{snapshotId} · {compiledPkg.compiledAt}</span>
+            </div>
+            {(packageStale || notesDirty) && <p className="m-0 text-[12px] text-ink-3">{t('下方预览与下载仍使用同一份已保存快照。重新生成后才会包含输入更新。', 'Preview and download use the same saved snapshot. Generate again to include input changes.')}</p>}
+            <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-3" data-testid="compiled-package-inspector">
+              <nav aria-label={t('开发包文件', 'Development Package files')} className="flex max-h-[520px] flex-col gap-1 overflow-auto rounded-card border border-line p-2">
+                {compiledPkg.files.map((file) => <button type="button" key={file.relativePath} className={cn('nav-item text-left', activeFile?.relativePath === file.relativePath && 'active')} aria-current={activeFile?.relativePath === file.relativePath ? 'page' : undefined} onClick={() => setSelectedFilePath(file.relativePath)}><span className="break-all font-mono text-[11.5px]">{file.relativePath}</span></button>)}
+              </nav>
+              <div className="min-w-0 rounded-card border border-line p-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><strong className="font-mono text-[12px]" data-testid="package-preview-path">{activeFile?.relativePath}</strong>
+                  {activeFile?.relativePath.endsWith('.md') && <Button variant="ghost" size="xs" onClick={() => setPkgPreviewRaw((value) => !value)}>{pkgPreviewRaw ? t('排版预览', 'Rendered preview') : t('查看源码', 'View source')}</Button>}</div>
+                <div className="max-h-[520px] overflow-auto" data-testid="package-file-preview">{activeFile && (activeFile.relativePath.endsWith('.md') && !pkgPreviewRaw
+                  ? <MarkdownRenderer content={activeFile.content} />
+                  : <CodeBlock code={activeFile.content} language={activeFile.relativePath.split('.').pop() ?? 'text'} filename={activeFile.relativePath} maxHeight={500} />)}</div>
+              </div>
+            </div>
+          </>}
+        </section>
+        {app && <section className="card flex flex-col gap-3" data-testid="coding-agent-context-card">
+          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="card-title">{t('应用开发智能体', 'Application Development Agent')}</h4><Button onClick={() => void openApplicationAgent()}>{t('打开智能体面板', 'Open Agent Panel')}</Button></div>
+          <p className="m-0 text-[12px] text-ink-3">{t('检查当前应用的输入、指出缺失或冲突，并完善实施规格。', 'Inspect this application’s inputs, identify gaps or conflicts, and refine its implementation specification.')}</p>
+          <div className="flex flex-wrap gap-2">{[
+            t('检查当前应用的输入来源，列出缺失内容和明确冲突。', 'Review this application’s input sources and identify missing information or explicit contradictions.'),
+            t('结合已确认原型与本体套件，完善当前应用的实施顺序和验收说明。', 'Refine this application’s implementation order and acceptance instructions using its confirmed prototype and Ontology Suite.'),
+          ].map((prompt) => <Button key={prompt} disabled={appAgentRunning} onClick={() => void openApplicationAgent(prompt)} className="h-auto whitespace-normal py-2 text-left">{prompt}</Button>)}</div>
+        </section>}
+      </>)}
+      <ConfirmDialog open={newAppOpen} title={t('创建应用开发规格', 'Create an application specification')}
+        confirmLabel={t('创建应用', 'Create application')} busy={creatingApp} confirmDisabled={!profiles.some((item) => item.id === newProfileId)}
+        onClose={() => setNewAppOpen(false)} onConfirm={() => void createApplication()} testId="create-application-dialog">
+        <div className="flex flex-col gap-3">
+          <div className="text-[12px] text-ink-3">{project.name} · {t('使用当前工程的需求、已确认原型和本体套件。', 'Uses this project’s requirements, confirmed prototype, and Ontology Suite.')}</div>
+          <label className="form-field" htmlFor="new-application-name"><span className="form-label">{t('应用名称', 'Application name')}</span><input id="new-application-name" className="input" value={newAppName} onChange={(event) => setNewAppName(event.target.value)} /></label>
+          <label className="form-field" htmlFor="new-application-profile"><span className="form-label">{t('技术方案', 'Technology Profile')}</span><select id="new-application-profile" className="select" value={newProfileId} onChange={(event) => setNewProfileId(event.target.value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          {operationError && <div role="alert" className="text-[12px] text-red">{operationError}</div>}
         </div>
       </ConfirmDialog>
-
-      <ConfirmDialog
-        open={Boolean(deletingApp)}
-        danger
-        title={t('删除四层装配应用', 'Delete Assembled Application')}
-        description={
-          deletingApp
-            ? t(`确认删除应用「${deletingApp.name}」吗？`, `Delete "${deletingApp.name}"?`)
-            : ''
-        }
-        onClose={() => setDeletingApp(null)}
-        onConfirm={() => void handleConfirmDeleteApp()}
-      />
+      <ConfirmRevisionMuDiffModal open={Boolean(pendingRevision)} revision={pendingRevision} prototypeName={data.prototypes.find((item) => item.id === pendingRevision?.prototypeId)?.name}
+        suite={project.suite} confirmedRevision={confirmed} domain={project.domain} busy={confirmingRevision}
+        onClose={() => setPendingRevision(null)} onConfirm={confirmRevision} />
+      <ConfirmDialog open={Boolean(deletingApp)} danger title={t('删除应用规格', 'Delete application specification')}
+        description={deletingApp ? t(`确认删除「${deletingApp.name}」？`, `Delete "${deletingApp.name}"?`) : ''}
+        onClose={() => setDeletingApp(null)} onConfirm={() => { if (!deletingApp) return; void apiDeleteResource<{ assembledApplications: AssembledApplication[] }>(`/api/applications/${encodeURIComponent(deletingApp.id)}`).then((result) => { patchData({ assembledApplications: result.assembledApplications }); setDeletingApp(null); }).catch((error) => setOperationError(error instanceof Error ? error.message : String(error))); }} />
     </div>
   );
 }
+
 
 // ─── 8. Skills & Application Publish Views ───────────────────────────────────
 export function OntologySkillsView({
@@ -4640,157 +4308,68 @@ export function OntologySkillsView({
   );
 }
 
-export function AppPublishView({
-  onNavigate,
-}: {
+function ApplicationPackageDeliveryCard({ app, sourceKey, onNavigate }: {
+  app: AssembledApplication;
+  sourceKey: string;
   onNavigate?: (view: NavViewId) => void;
-} = {}) {
+}) {
   const { t } = usePreferences();
-  const { data, patchData, showToast } = useWorkbenchStore();
-  const [publishingId, setPublishingId] = useState<string | null>(null);
-  const [versionInputs, setVersionInputs] = useState<Record<string, string>>({});
-  const [endpointInputs, setEndpointInputs] = useState<Record<string, string>>({});
-
-  if (!data) return null;
-  const lifecycle = getProjectLifecycleState(data);
-  const projectApps = lifecycle.projectApps;
-
-  const handlePublishApp = async (appId: string) => {
-    if (publishingId) return;
-    setPublishingId(appId);
+  const { setActiveItemId } = useWorkbenchStore();
+  const [saved, setSaved] = useState<{ compiledPackage: CompiledDevelopmentPackage | null; stale: boolean } | null>(null);
+  const [error, setError] = useState('');
+  const [downloading, setDownloading] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    setError('');
+    void fetchSavedApplicationPackage(app.id, controller.signal).then((result) => {
+      if (!controller.signal.aborted) setSaved(result);
+    }).catch((reason) => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason)); });
+    return () => controller.abort();
+  }, [app.id, app.latestPackageSnapshotId, app.updatedAt, sourceKey]);
+  const download = async () => {
+    setDownloading(true);
+    setError('');
     try {
-      const customVersion = versionInputs[appId]?.trim() || undefined;
-      const customEndpoint = endpointInputs[appId]?.trim() || undefined;
-      const res = await fetch(`/api/applications/${appId}/publish`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          version: customVersion,
-          endpoint: customEndpoint,
-        }),
-      });
-      const json = await res.json();
-      patchData({ assembledApplications: json.assembledApplications });
-      setVersionInputs((prev) => ({ ...prev, [appId]: '' }));
-      showToast(
-        t(
-          `已完成 4A V-Model 门禁核验并发布新版本 ${json.application.publishedVersion} (${json.application.publishedEndpoint})`,
-          `Passed 4A gate & published ${json.application.publishedVersion} at ${json.application.publishedEndpoint}`,
-        ),
-      );
-    } finally {
-      setPublishingId(null);
-    }
+      const response = await fetch(`/api/applications/${encodeURIComponent(app.id)}/package.zip`);
+      if (!response.ok) { const body = await response.json(); throw new Error(body.error || 'ZIP download failed'); }
+      triggerBrowserDownload(`${app.id}-development-package.zip`, await response.blob(), 'application/zip');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setDownloading(false); }
   };
-
-  if (projectApps.length === 0) {
-    return (
-      <div className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-4">
-        <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-accent">
-          <Boxes size={20} />
-        </div>
-        <span className="badge badge-warn">
-          {t('尚未到达此阶段 · 暂无待发布应用', 'Stage Not Reached · No App to Release')}
-        </span>
-        <h3 className="font-serif text-[18px] font-semibold text-ink m-0">
-          {t(
-            `「${data.activeProject.name}」暂无可发布的装配应用`,
-            `"${data.activeProject.name}" has no assembled application to release yet`,
-          )}
-        </h3>
-        <p className="text-[13px] text-ink-3 max-w-[540px] leading-relaxed m-0">
-          {t(
-            '应用发布处于研发流水线末端，需要对当前工程在「应用开发」阶段组装的应用执行 4A 门禁核验与版本发布。请先按顺序推进前置阶段。',
-            'App Release runs 4A gate verification on assembled applications of this project. Complete upstream stages first.',
-          )}
-        </p>
-        {onNavigate && (
-          <Button
-            type="button"
-            variant="accent"
-            size="md"
-            onClick={() =>
-              onNavigate(lifecycle.hasOntology ? 'app-assembly-dev' : lifecycle.nextStep.targetView)
-            }
-          >
-            {lifecycle.hasOntology
-              ? t('前往应用开发组装当前工程应用', 'Go to App Assembly')
-              : t(lifecycle.nextStep.labelZh, lifecycle.nextStep.labelEn)}
-            <ArrowRight size={14} />
-          </Button>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      {projectApps.map((app) => (
-        <div key={app.id} className="card flex flex-col gap-2.5">
-          <div className="card-header" style={{ marginBottom: 0, flexWrap: 'wrap' }}>
-            <div>
-              <h3 className="card-title">{app.name}</h3>
-              <div className="font-mono text-[12.5px] text-muted-foreground">
-                {app.publishedEndpoint || `/apps/${app.id}`} ·{' '}
-                {app.packageOutputDir || `.onto-cs/packages/${app.id}`}
-              </div>
-            </div>
-            <div className="flex gap-1.5 items-center flex-wrap">
-              <span className="badge badge-accent">4A Gate: BA · DA · AA · TA</span>
-              <span className="badge badge-ok">
-                {app.status} · {app.publishedVersion || 'v1.0.0'}
-              </span>
-            </div>
-          </div>
-
-          <div className="p-[10px_12px] rounded-[6px] bg-inset border border-line flex items-center gap-2 flex-wrap"
-          >
-            <input
-              className="input"
-              style={{ width: 150, fontFamily: 'var(--mono)' }}
-              placeholder={t('新版本号 (可选)', 'Next Version')}
-              value={versionInputs[app.id] ?? ''}
-              onChange={(e) =>
-                setVersionInputs((prev) => ({ ...prev, [app.id]: e.target.value }))
-              }
-            />
-            <input
-              className="input"
-              style={{ flex: 1, minWidth: 200, fontFamily: 'var(--mono)' }}
-              placeholder={app.publishedEndpoint || `/apps/${app.id}`}
-              value={endpointInputs[app.id] ?? ''}
-              onChange={(e) =>
-                setEndpointInputs((prev) => ({ ...prev, [app.id]: e.target.value }))
-              }
-            />
-            <Button
-              type="button"
-              variant="accent" size="md"
-              disabled={publishingId === app.id}
-              onClick={() => handlePublishApp(app.id)}
-            >
-              {publishingId === app.id
-                ? t('正在执行 4A 核验...', 'Running 4A Gate...')
-                : t('执行 4A 门禁核验并发布新版本', 'Run 4A Gate & Publish Release')}
-            </Button>
-          </div>
-
-          <div>
-            <div className="text-[12.5px] font-semibold mb-1.5">
-              {t('Agent 研发与发布流水日志', 'Agent Build & Release Logs')}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              {app.agentDevLogs.map((log, i) => (
-                <div
-                  key={i} className="p-[6px_10px] bg-inset rounded-[4px] font-mono text-[11.5px]"
-                >
-                  [{log.timestamp.slice(0, 19)}] <strong>{log.phase}</strong>: {log.detail}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      ))}
+  return <div className="card flex flex-col gap-3" data-testid={`package-delivery-${app.id}`}>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="card-title">{app.name}</h4>
+      <span className={`badge ${saved?.stale ? 'badge-warn' : saved?.compiledPackage ? 'badge-ok' : 'badge-warn'}`}>
+        {saved?.stale ? t('输入已变化', 'Inputs changed') : saved?.compiledPackage ? t('开发包已保存', 'Package saved') : t('等待生成开发包', 'Awaiting package generation')}
+      </span>
     </div>
-  );
+    {saved?.compiledPackage ? <div className="break-all font-mono text-[11.5px] text-ink-3">{String(saved.compiledPackage.manifestJson.snapshotId ?? app.latestPackageSnapshotId ?? '')} · {saved.compiledPackage.compiledAt} · {saved.compiledPackage.files.length} {t('个文件', 'files')}</div>
+      : <p className="m-0 text-[12.5px] text-ink-3">{t('在应用开发中确认输入并生成开发资料包。', 'Confirm the inputs and generate a Development Package in application development.')}</p>}
+    {saved?.stale && <p className="m-0 text-[12px] text-ink-3">{t('下载保留已保存快照。请在应用开发中重新生成以包含最新输入。', 'Download keeps the saved snapshot. Regenerate in application development to include current inputs.')}</p>}
+    {error && <div role="alert" className="text-[12px] text-red">{error}</div>}
+    <div className="flex flex-wrap gap-2">
+      {onNavigate && <Button onClick={() => { setActiveItemId(app.id); onNavigate('app-assembly-dev'); }}>{t('检查开发规格', 'Review implementation specification')}</Button>}
+      <Button variant="accent" disabled={!saved?.compiledPackage || downloading} onClick={() => void download()}>{downloading ? t('正在下载…', 'Downloading…') : t('下载已保存开发包', 'Download saved package')}</Button>
+    </div>
+  </div>;
+}
+
+export function AppPublishView({ onNavigate }: { onNavigate?: (view: NavViewId) => void } = {}) {
+  const { t } = usePreferences();
+  const { data } = useWorkbenchStore();
+  if (!data) return null;
+  const apps = data.assembledApplications.filter((app) => app.projectId === data.activeProject.id);
+  const sourceKey = JSON.stringify({
+    assets: data.fourLayerAssets.map((asset) => [asset.id, asset.sourceRevision, asset.updatedAt]),
+    project: data.activeProject.updatedAt,
+    requirements: data.requirementDocs.map((doc) => [doc.id, doc.updatedAt]),
+    confirmed: data.confirmedPrototypeRevision?.revisionId,
+  });
+  return <div className="flex flex-col gap-3" data-testid="development-package-delivery">
+    <div className="card"><h3 className="card-title">{t('开发包交付', 'Development Package handoff')}</h3>
+      <p className="mt-1 mb-0 text-[12.5px] text-ink-3">{t('将已审阅的实施规格、原型、本体与规范交给编码智能体。', 'Hand the reviewed implementation specification, prototype, ontology, and standards to a coding agent.')}</p>
+    </div>
+    {apps.length === 0 ? <div className="card flex flex-col items-start gap-3"><p className="m-0 text-[13px] text-ink-3">{t('当前工程尚未创建应用开发规格。', 'This project has no application specification yet.')}</p>
+      {onNavigate && <Button variant="accent" onClick={() => onNavigate('app-assembly-dev')}>{t('前往应用开发', 'Open application development')}</Button>}
+    </div> : apps.map((app) => <ApplicationPackageDeliveryCard key={app.id} app={app} sourceKey={sourceKey} onNavigate={onNavigate} />)}
+  </div>;
 }
