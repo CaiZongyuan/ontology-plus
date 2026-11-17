@@ -27,6 +27,7 @@
   --input: #e6e7ea;
   --ring: #266df0;
   --scrollbar-thumb: #898a8d;
+  --overlay: #101112;
   --success: #007d53;
   --success-soft: #e0fced;
   --warning: #874d00;
@@ -74,6 +75,7 @@
     --border-subtle: #1b1c1f;
     --input: #212224;
     --scrollbar-thumb: #77797c;
+    --overlay: #0b0c0d;
     --success: #4ad99a;
     --success-soft: #1d4034;
     --warning: #f5a300;
@@ -111,6 +113,7 @@
   --border-subtle: #1b1c1f;
   --input: #212224;
   --scrollbar-thumb: #77797c;
+  --overlay: #0b0c0d;
   --success: #4ad99a;
   --success-soft: #1d4034;
   --warning: #f5a300;

@@ -80,6 +80,8 @@ export const DEFAULT_NEUTRAL: WorkbenchTheme = {
     'border-subtle': '#eeeff1',
     ring: '#266df0',
     'scrollbar-thumb': '#898a8d',
+    // Derived, not measured: the scrim is the theme's darkest neutral.
+    overlay: '#101112',
     // Status colours
     success: '#007d53',
     'success-soft': '#e0fced',
@@ -118,6 +120,8 @@ export const DEFAULT_NEUTRAL: WorkbenchTheme = {
     'border-subtle': '#1b1c1f',
     ring: '#266df0',
     'scrollbar-thumb': '#77797c',
+    // Derived, not measured: the scrim is the theme's darkest neutral.
+    overlay: '#0b0c0d',
     // Status colours
     success: '#4ad99a',
     'success-soft': '#1d4034',
