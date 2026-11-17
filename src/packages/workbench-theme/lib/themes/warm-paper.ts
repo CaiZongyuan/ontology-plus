@@ -17,8 +17,8 @@ const type = {
 };
 
 /**
- * The knowledge graph tells the eleven models apart by hue. They keep one value in both
- * modes, and the model code on a badge is white in both.
+ * The knowledge graph tells the eleven models apart by hue. The model code on a badge is
+ * white in both modes.
  */
 const models = {
   'model-m1': '#4c50c4',
@@ -33,6 +33,20 @@ const models = {
   'model-mm': '#4b5563',
   'model-mi': '#0369a1',
   'model-foreground': '#ffffff',
+};
+
+/**
+ * In dark, five hues sit below 3:1 as marks on the dark card. Each is lightened (same hue
+ * and saturation) by the smallest step that reaches 3:1 there; white stays above 4.5:1 on
+ * all of them.
+ */
+const darkModels = {
+  ...models,
+  'model-m1': '#5559c7',
+  'model-me': '#903dc1',
+  'model-mu': '#c3195f',
+  'model-mm': '#5b6778',
+  'model-mi': '#036ba4',
 };
 
 const shape = {
@@ -85,7 +99,7 @@ export const WARM_PAPER: WorkbenchTheme = {
   dark: {
     ...type,
     ...shape,
-    ...models,
+    ...darkModels,
     background: '#121211',
     canvas: '#0d0d0c',
     foreground: '#eceae3',

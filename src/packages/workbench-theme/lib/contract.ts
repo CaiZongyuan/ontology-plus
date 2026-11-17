@@ -41,6 +41,21 @@ function group(name: ThemeTokenGroup, entries: readonly Entry[]): ThemeTokenSpec
   }));
 }
 
+/** The knowledge graph's per-model colours, in the order of the ontology stages. */
+const MODEL_COLOUR_TOKENS = [
+  'model-m1',
+  'model-m2',
+  'model-m3',
+  'model-me',
+  'model-m4',
+  'model-m5',
+  'model-m6',
+  'model-m7',
+  'model-mu',
+  'model-mm',
+  'model-mi',
+] as const;
+
 export const THEME_TOKENS: readonly ThemeTokenSpec[] = [
   ...group('color', [
     ['background', 'The page ground everything sits on.'],
@@ -78,17 +93,15 @@ export const THEME_TOKENS: readonly ThemeTokenSpec[] = [
     ['destructive-soft', 'Tinted fill behind an error badge; may be translucent.'],
   ]),
   ...group('model', [
-    ['model-m1', 'Marks model M1 in the knowledge graph: lanes, nodes, chips, and the minimap.'],
-    ['model-m2', 'Marks model M2 in the knowledge graph.'],
-    ['model-m3', 'Marks model M3 in the knowledge graph.'],
-    ['model-me', 'Marks model ME in the knowledge graph.'],
-    ['model-m4', 'Marks model M4 in the knowledge graph.'],
-    ['model-m5', 'Marks model M5 in the knowledge graph.'],
-    ['model-m6', 'Marks model M6 in the knowledge graph.'],
-    ['model-m7', 'Marks model M7 in the knowledge graph.'],
-    ['model-mu', 'Marks model MU in the knowledge graph.'],
-    ['model-mm', 'Marks model MM in the knowledge graph.'],
-    ['model-mi', 'Marks model MI in the knowledge graph.'],
+    ...MODEL_COLOUR_TOKENS.map((token, index): Entry => {
+      const model = token.slice('model-'.length).toUpperCase();
+      return [
+        token,
+        index === 0
+          ? `Marks model ${model} in the knowledge graph: lanes, nodes, chips, and the minimap.`
+          : `Marks model ${model} in the knowledge graph.`,
+      ];
+    }),
     ['model-foreground', 'Text on a model colour, such as the model code on a badge.'],
   ]),
   ...group('font', [
@@ -224,19 +237,9 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
   ...pairs('warning', TEXT, ['card', ['warning-soft', 'card']]),
   ...pairs('destructive', TEXT, ['card', ['destructive-soft', 'card']]),
   ...pairs('destructive-foreground', TEXT, ['destructive']),
-  ...pairs('model-foreground', TEXT, [
-    'model-m1',
-    'model-m2',
-    'model-m3',
-    'model-me',
-    'model-m4',
-    'model-m5',
-    'model-m6',
-    'model-m7',
-    'model-mu',
-    'model-mm',
-    'model-mi',
-  ]),
+  ...pairs('model-foreground', TEXT, MODEL_COLOUR_TOKENS),
+  // Model colours are marks too: lane markers and node stripes on cards, filter dots on the page.
+  ...MODEL_COLOUR_TOKENS.flatMap((token) => pairs(token, MARK, ['card', 'background'])),
   ...pairs('ring', MARK, ['background', 'card']),
   ...pairs('scrollbar-thumb', MARK, ['background', 'card']),
 ];

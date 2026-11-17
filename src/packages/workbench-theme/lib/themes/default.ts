@@ -14,16 +14,17 @@ import type { WorkbenchTheme } from '../types.js';
  *   only.
  * Values marked "derived" in the #39 table have no direct Attio counterpart.
  *
- * Three values differ from the measurement, each by the smallest step that
- * passes `checkTheme`:
+ * Four values differ from the measurement. Three move by the smallest step
+ * that passes `checkTheme`:
  * - `primary` light #266df0 -> #2466de: the measured blue is 4.07:1 on its own
  *   10% tint. The focus ring keeps #266df0.
  * - `faint-foreground` light rgba(0,0,0,0.502) -> rgba(0,0,0,0.55) (the value
- *   the attio.com mock-up uses for nav labels); dark rgba(255,255,255,0.451)
- *   -> rgba(255,255,255,0.46). Both measured values sit just under 4.5:1.
- * In dark, Attio keeps the #266df0 fill with white text; that blue is 4.07:1
- * on the dark ground, so dark `primary` uses Attio's dark link blue #4e8cfc
- * with dark text on it.
+ *   the attio.com mock-up uses for nav labels).
+ * - `faint-foreground` dark rgba(255,255,255,0.451) -> rgba(255,255,255,0.46).
+ *   Both measured `faint-foreground` values sit just under 4.5:1.
+ * The fourth is `primary` dark: Attio keeps the #266df0 fill with white text,
+ * but that blue is 4.07:1 on the dark ground, so dark `primary` uses Attio's
+ * dark link blue #4e8cfc with dark text on it.
  *
  * Fonts: Inter (variable, with the optical-size axis, so titles get the
  * display cut by size) and JetBrains Mono, both OFL-1.1 and self-hosted under
@@ -51,8 +52,7 @@ const shape = {
 
 /**
  * The knowledge graph's per-model colours: the 暖纸 hues, except M1, which takes this
- * theme's primary blue in place of indigo. One value in both modes; the model code on a
- * badge is white on each.
+ * theme's primary blue in place of indigo. The model code on a badge is white on each.
  */
 const models = {
   'model-m1': '#2466de',
@@ -67,6 +67,12 @@ const models = {
   'model-mm': '#4b5563',
   'model-mi': '#0369a1',
   'model-foreground': '#ffffff',
+};
+
+/** In dark, MM's slate is 2.50:1 on the card; it is lightened by the smallest step that reaches 3:1. */
+const darkModels = {
+  ...models,
+  'model-mm': '#556171',
 };
 
 const flat = {
@@ -123,7 +129,7 @@ export const DEFAULT_NEUTRAL: WorkbenchTheme = {
     ...type,
     ...shape,
     ...flat,
-    ...models,
+    ...darkModels,
     // Colours and surfaces
     background: '#101112',
     canvas: '#0b0c0d',

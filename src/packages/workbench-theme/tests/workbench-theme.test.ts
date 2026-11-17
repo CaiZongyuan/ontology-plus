@@ -163,6 +163,15 @@ describe('the theme check', () => {
     expect(low[0]!.message).toMatch(/below 4\.5:1/);
   });
 
+  it('reports a model colour that does not reach 3:1 as a mark on the card it is drawn on', () => {
+    // #2f2f2f is about 1.4:1 on the dark card, yet white text on it is well above 4.5:1.
+    const problems = checkTheme(variant('dim-model', { dark: { 'model-mm': '#2f2f2f' } }));
+    expect(problems).toContainEqual(
+      expect.objectContaining({ kind: 'low-contrast', mode: 'dark', token: 'model-mm', message: expect.stringMatching(/on card \(dark\).*below 3:1/) }),
+    );
+    expect(problems.some((problem) => problem.mode === 'light')).toBe(false);
+  });
+
   it('measures text on a translucent fill as painted over the surface beneath it', () => {
     // Opaque, this fill would fail against dark text; at 10% over a light card it passes.
     const translucent = variant('tint', { light: { 'primary-soft': 'rgba(76, 80, 196, 0.1)' } });
