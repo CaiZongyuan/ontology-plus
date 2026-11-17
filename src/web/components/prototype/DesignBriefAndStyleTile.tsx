@@ -1136,7 +1136,7 @@ export function DesignBriefCard({
             {decidingForMe ? (
               <Loader2 size={12.5} className="animate-spin" />
             ) : (
-              <Wand2 size={12.5} className="text-accent" />
+              <Wand2 size={12.5} className="text-primary" />
             )}
             {t('帮我定', 'Decide for me')}
           </Button>
@@ -1217,7 +1217,7 @@ export function DesignBriefCard({
           {assistingBrief ? (
             <Loader2 size={12} className="animate-spin" />
           ) : (
-            <Sparkles size={12} className="text-accent" />
+            <Sparkles size={12} className="text-primary" />
           )}
           {t('一句话改写', 'Rewrite')}
         </Button>
@@ -1439,7 +1439,7 @@ export function StyleTileCard({
     >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
         <div className="flex items-center gap-2">
-          <Palette size={15} className="text-accent" />
+          <Palette size={15} className="text-primary" />
           <h3 className="m-0 font-serif text-[15.5px] font-semibold text-ink">
             {t('实时风格样张', 'Live Style Tile')}
           </h3>

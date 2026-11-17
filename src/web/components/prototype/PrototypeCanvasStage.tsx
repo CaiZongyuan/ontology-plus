@@ -805,7 +805,7 @@ export function PrototypeCanvasStage({
                   {t('含已确认', 'Confirmed')}
                 </span>
               )}
-              <ChevronDown size={13} className="text-muted shrink-0" aria-hidden="true" />
+              <ChevronDown size={13} className="text-muted-foreground shrink-0" aria-hidden="true" />
             </Button>
 
             {switcherOpen && (
@@ -815,7 +815,7 @@ export function PrototypeCanvasStage({
                 data-testid="prototype-switcher-menu"
                 className="absolute top-[calc(100%+6px)] left-0 z-50 flex w-[min(360px,92vw)] flex-col gap-1.5 rounded-card border border-line bg-surface p-2 shadow-lg"
               >
-                <div className="px-2 py-1 text-[11px] font-medium text-muted">
+                <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground">
                   {t(
                     `当前工程原型方向 (${prototypes.length})`,
                     `Project Prototypes (${prototypes.length})`,
@@ -844,7 +844,7 @@ export function PrototypeCanvasStage({
                         className={cn(
                           'flex w-full cursor-pointer items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] transition-colors',
                           isSelected
-                            ? 'bg-accent-tint/60 font-medium text-ink'
+                            ? 'bg-primary-soft/60 font-medium text-ink'
                             : 'text-ink-2 hover:bg-hover hover:text-ink',
                         )}
                       >
@@ -856,7 +856,7 @@ export function PrototypeCanvasStage({
                             </span>
                           )}
                         </div>
-                        <span className="shrink-0 font-mono text-[11px] text-muted">
+                        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
                           {t(`${item.revisions.length} 修订`, `${item.revisions.length} rev`)}
                         </span>
                       </button>
@@ -880,7 +880,7 @@ export function PrototypeCanvasStage({
                     }}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink"
                   >
-                    <Upload size={13} className="text-muted" aria-hidden="true" />
+                    <Upload size={13} className="text-muted-foreground" aria-hidden="true" />
                     <span>{t('导入 HTML…', 'Import HTML…')}</span>
                   </button>
 
@@ -965,7 +965,7 @@ export function PrototypeCanvasStage({
                     }}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink"
                   >
-                    <Copy size={13} className="text-muted" aria-hidden="true" />
+                    <Copy size={13} className="text-muted-foreground" aria-hidden="true" />
                     <span>{t('另存为新原型…', 'Save as New Prototype…')}</span>
                   </button>
 
@@ -1021,7 +1021,7 @@ export function PrototypeCanvasStage({
                     }}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink"
                   >
-                    <ArrowLeft size={13} className="text-muted" aria-hidden="true" />
+                    <ArrowLeft size={13} className="text-muted-foreground" aria-hidden="true" />
                     <span>{t('返回设计简报', 'Edit Design Brief')}</span>
                   </button>
 
@@ -1057,7 +1057,7 @@ export function PrototypeCanvasStage({
                       }}
                       className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <Sparkles size={13} className="text-accent" aria-hidden="true" />
+                      <Sparkles size={13} className="text-primary" aria-hidden="true" />
                       <span>
                         {synthesizingOntology
                           ? t('正在后台合成 11 模型…', 'Synthesizing 11 Models…')

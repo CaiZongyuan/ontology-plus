@@ -383,7 +383,7 @@ export function MuDiffSummaryPanel({
                               {el.elementType}
                             </span>
                             {el.dataBinding && (
-                              <span className="font-mono text-[11px] text-accent">
+                              <span className="font-mono text-[11px] text-primary">
                                 ↳ {el.dataBinding}
                               </span>
                             )}
@@ -950,7 +950,7 @@ export function PrototypeRevisionHistoryDrawer({
     >
       <header className="proto-rev-drawer-header">
         <div className="flex items-center gap-2 min-w-0">
-          <History size={15} className="text-accent shrink-0" aria-hidden="true" />
+          <History size={15} className="text-primary shrink-0" aria-hidden="true" />
           <h3 className="m-0 text-[13.5px] font-semibold text-ink truncate">
             {t('修订历史', 'Revision History')}
           </h3>
@@ -1022,7 +1022,7 @@ export function PrototypeRevisionHistoryDrawer({
 
       {previewingRevision && previewingRevision.id !== prototype.currentRevisionId && (
         <div
-          className="flex items-center justify-between gap-2 border-b border-line bg-accent-tint px-3.5 py-2 text-[12px] text-ink"
+          className="flex items-center justify-between gap-2 border-b border-line bg-primary-soft px-3.5 py-2 text-[12px] text-ink"
           role="status"
           data-testid="revision-preview-banner"
         >
@@ -1411,7 +1411,7 @@ export function ConfirmRevisionMuDiffModal({
       <div className="flex flex-col">
         <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 bg-surface-2">
           <div className="flex items-center gap-2 min-w-0">
-            <CheckCircle2 size={16} className="text-accent shrink-0" aria-hidden="true" />
+            <CheckCircle2 size={16} className="text-primary shrink-0" aria-hidden="true" />
             <h3 id={titleId} className="m-0 text-[14px] font-semibold text-ink truncate">
               {t(
                 `确认原型修订 #${revision.revisionNumber} 并同步 MU 模型`,
@@ -1457,11 +1457,11 @@ export function ConfirmRevisionMuDiffModal({
 
           {resolvedHasNonMu && (
             <div
-              className="flex items-start gap-2 rounded-[8px] border border-accent/30 bg-accent-tint px-3 py-2 text-[12px] text-ink"
+              className="flex items-start gap-2 rounded-[8px] border border-primary/30 bg-primary-soft px-3 py-2 text-[12px] text-ink"
               role="note"
               data-testid="confirm-mu-only-safeguard"
             >
-              <ShieldCheck size={15} className="text-accent shrink-0 mt-0.5" aria-hidden="true" />
+              <ShieldCheck size={15} className="text-primary shrink-0 mt-0.5" aria-hidden="true" />
               <span>
                 {t(
                   '仅重新提取并更新 MU（UI 模型），不会重新合成或覆盖已有的 M1–M7、ME、MM、MI 业务本体模型。',

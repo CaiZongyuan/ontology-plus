@@ -1359,7 +1359,7 @@ export function CapabilityMcpView() {
                         borderRadius: 5,
                         cursor: 'pointer',
                         background:
-                          selectedTool === tool.name ? 'var(--accent-soft)' : 'var(--surface-2)',
+                          selectedTool === tool.name ? 'var(--primary-soft)' : 'var(--surface-2)',
                         border: '1px solid var(--line)',
                       }}
                     >
@@ -1400,7 +1400,7 @@ export function CapabilityMcpView() {
                         cursor: 'pointer',
                         background:
                           selectedResourceUri === resItem.uri
-                            ? 'var(--accent-soft)'
+                            ? 'var(--primary-soft)'
                             : 'var(--surface-2)',
                         border: '1px solid var(--line)',
                         color: 'var(--ink)',
@@ -1744,14 +1744,14 @@ export function CapabilityAgentsView() {
                   padding: 10,
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: selected ? 'var(--accent-soft)' : 'var(--surface-2)',
-                  border: `1px solid ${selected ? 'var(--accent)' : 'var(--line)'}`,
+                  background: selected ? 'var(--primary-soft)' : 'var(--surface-2)',
+                  border: `1px solid ${selected ? 'var(--primary)' : 'var(--line)'}`,
                 }}
               >
                 <div className="flex justify-between items-center gap-1.5"
                 >
                   <strong className="inline-flex items-center gap-1.5">
-                    <Bot size={13} className="text-accent" />
+                    <Bot size={13} className="text-primary" />
                     {ag.name}
                   </strong>
                   <div
@@ -1795,7 +1795,7 @@ export function CapabilityAgentsView() {
         <div className="card-header">
           <div>
             <h3 className="card-title inline-flex items-center gap-1.5">
-              <Sparkles size={15} className="text-accent" />
+              <Sparkles size={15} className="text-primary" />
               {activeAgent
                 ? activeAgent.name
                 : t('能力中心智能体上下文', 'Capability Agent Context')}
@@ -1876,10 +1876,10 @@ export function CapabilityAgentsView() {
                     type="button"
                     disabled={isRunningCapSession}
                     onClick={() => handleQuickPrompt(promptText)}
-                    className="flex items-center justify-between gap-2 rounded-[6px] border border-line bg-surface px-3 py-2 text-left text-[12.5px] text-ink transition-colors hover:border-accent hover:bg-accent-soft cursor-pointer disabled:opacity-50"
+                    className="flex items-center justify-between gap-2 rounded-[6px] border border-line bg-surface px-3 py-2 text-left text-[12.5px] text-ink transition-colors hover:border-primary hover:bg-primary-soft cursor-pointer disabled:opacity-50"
                   >
                     <span>{promptText}</span>
-                    <Play size={12} className="shrink-0 text-accent" />
+                    <Play size={12} className="shrink-0 text-primary" />
                   </button>
                 ))}
               </div>
@@ -2095,7 +2095,7 @@ export function CapabilityCrossFlowsView() {
     <div className="flex flex-col gap-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
         <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
-          <Workflow size={15} className="text-accent" />
+          <Workflow size={15} className="text-primary" />
           {t(
             '跨系统 MCP 协同编排',
             'Cross-System MCP Orchestration Flows',
@@ -2156,7 +2156,7 @@ export function CapabilityCrossFlowsView() {
                   <span className="badge badge-ok">{s.status}</span>
                 </div>
                 <div className="font-semibold text-[12.5px]">{s.systemName}</div>
-                <div className="font-mono text-[11.5px] text-accent m-[4px_0]"
+                <div className="font-mono text-[11.5px] text-primary m-[4px_0]"
                 >
                   {s.mcpToolName}
                 </div>
@@ -2477,8 +2477,8 @@ export function KnowledgeCenterView() {
                       padding: '8px 10px',
                       borderRadius: 6,
                       cursor: 'pointer',
-                      background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
-                      border: `1px solid ${active ? 'var(--accent)' : 'var(--line)'}`,
+                      background: active ? 'var(--primary-soft)' : 'var(--surface-2)',
+                      border: `1px solid ${active ? 'var(--primary)' : 'var(--line)'}`,
                     }}
                   >
                     <div className="flex items-start justify-between gap-2">

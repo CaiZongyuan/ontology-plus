@@ -485,8 +485,8 @@ export function DataResourcesView({
                     padding: '8px 10px',
                     borderRadius: 6,
                     cursor: 'pointer',
-                    background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
-                    border: `1px solid ${active ? 'var(--accent)' : 'var(--line)'}`,
+                    background: active ? 'var(--primary-soft)' : 'var(--surface-2)',
+                    border: `1px solid ${active ? 'var(--primary)' : 'var(--line)'}`,
                   }}
                 >
                   <div className="flex items-start justify-between gap-2">
@@ -1297,7 +1297,7 @@ export function DataMetricsReportsView() {
                     {insight && (
                       <div className="mt-1.5 p-2.5 rounded-[5px] bg-surface border border-line text-[12.5px] flex flex-col gap-1.5"
                       >
-                        <div className="font-semibold text-accent">
+                        <div className="font-semibold text-primary">
                           {t('AI 异动驱动因子：', 'Anomaly Drivers:')}
                         </div>
                         {insight.anomalyDrivers.map((drv, dIdx) => (
@@ -2187,7 +2187,7 @@ export function LlmCenterView() {
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-3 shadow-2xs">
         <div>
           <div className="flex items-center gap-2 text-[14px] font-semibold text-ink">
-            <Cpu size={15} className="text-accent" />
+            <Cpu size={15} className="text-primary" />
             {t('大模型网关', 'Pi AI Unified LLM Gateway Hub')}
           </div>
           <div className="text-[12.5px] text-muted-foreground">

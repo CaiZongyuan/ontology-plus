@@ -322,7 +322,7 @@ function highlightJsonText(json: string): React.ReactNode {
       );
     } else if (boolToken) {
       nodes.push(
-        <span key={k++} className="text-accent">
+        <span key={k++} className="text-primary">
           {boolToken}
         </span>,
       );
@@ -414,7 +414,7 @@ export function ToolChips({
               className={cn(
                 'group/chip inline-flex min-h-[28px] max-w-full cursor-pointer items-center gap-1.5 rounded-control border px-2 py-1 text-left text-[12px]',
                 'transition-[background-color,border-color,color,box-shadow] duration-150 ease-out-strong',
-                running && 'border-accent/40 bg-accent-tint/55 text-accent',
+                running && 'border-primary/40 bg-primary-soft/55 text-primary',
                 isError && !isExpanded && 'border-red/35 bg-red-tint/45 text-red hover:border-red/55',
                 isError && isExpanded && 'border-red/60 bg-red-tint/60 text-red shadow-xs',
                 !running &&
@@ -424,7 +424,7 @@ export function ToolChips({
                 !running &&
                   !isError &&
                   isExpanded &&
-                  'border-accent/55 bg-accent-tint/35 text-ink shadow-xs',
+                  'border-primary/55 bg-primary-soft/35 text-ink shadow-xs',
               )}
             >
               {traces.length > 1 && (
@@ -436,9 +436,9 @@ export function ToolChips({
               <span
                 className={cn(
                   'inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px]',
-                  running && 'bg-accent-tint text-accent',
+                  running && 'bg-primary-soft text-primary',
                   isError && 'bg-red-tint text-red',
-                  !running && !isError && 'bg-inset text-accent group-hover/chip:bg-accent-tint/70',
+                  !running && !isError && 'bg-inset text-primary group-hover/chip:bg-primary-soft/70',
                 )}
               >
                 {running ? (
@@ -459,7 +459,7 @@ export function ToolChips({
               </span>
 
               {trace.targetModelCode && (
-                <span className="shrink-0 rounded bg-accent-tint px-1.5 py-0.2 font-mono text-[10.5px] font-medium text-accent">
+                <span className="shrink-0 rounded bg-primary-soft px-1.5 py-0.2 font-mono text-[10.5px] font-medium text-primary">
                   {trace.targetModelCode}
                   {trace.targetElementId ? `:${trace.targetElementId}` : ''}
                 </span>
@@ -489,7 +489,7 @@ export function ToolChips({
                 size={11.5}
                 className={cn(
                   'shrink-0 text-ink-3 transition-transform duration-150 ease-out-strong',
-                  isExpanded && 'rotate-90 text-accent',
+                  isExpanded && 'rotate-90 text-primary',
                 )}
               />
             </button>
@@ -525,7 +525,7 @@ export function ToolChips({
                 <ActiveIcon
                   size={13}
                   strokeWidth={1.85}
-                  className={cn('shrink-0', isError ? 'text-red' : 'text-accent')}
+                  className={cn('shrink-0', isError ? 'text-red' : 'text-primary')}
                 />
                 <span className="font-semibold text-ink">{t(meta.zh, meta.en)}</span>
                 <code className="rounded border border-line bg-inset px-1.5 py-0.2 font-mono text-[11px] text-ink-2">
@@ -540,7 +540,7 @@ export function ToolChips({
                       : active.validatorRepair
                         ? 'bg-orange-tint text-orange'
                         : running
-                          ? 'bg-accent-tint text-accent'
+                          ? 'bg-primary-soft text-primary'
                           : 'bg-green-tint text-green',
                   )}
                 >
@@ -570,7 +570,7 @@ export function ToolChips({
                         active.targetElementId,
                       )
                     }
-                    className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-chip border border-accent/30 bg-accent-tint px-2 text-[11px] font-medium text-accent transition-opacity hover:opacity-85"
+                    className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-chip border border-primary/30 bg-primary-soft px-2 text-[11px] font-medium text-primary transition-opacity hover:opacity-85"
                   >
                     <Crosshair size={11.5} aria-hidden="true" className="shrink-0" />
                     {t('定位', 'Locate')} {active.targetModelCode}
@@ -636,7 +636,7 @@ export function ToolChips({
                   isError
                     ? 'border-red/35 bg-red-tint/35 text-ink'
                     : running
-                      ? 'border-accent/30 bg-accent-tint/25 text-ink-2'
+                      ? 'border-primary/30 bg-primary-soft/25 text-ink-2'
                       : 'border-line bg-surface text-ink',
                 )}
               >
@@ -646,7 +646,7 @@ export function ToolChips({
                     isError
                       ? 'bg-red-tint text-red'
                       : running
-                        ? 'bg-accent-tint text-accent'
+                        ? 'bg-primary-soft text-primary'
                         : 'bg-green-tint text-green',
                   )}
                 >
@@ -753,7 +753,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
                     <span
                       className={cn(
                         'inline-block rounded px-1.5 py-0.1 text-[10.5px]',
-                        val ? 'bg-accent-tint text-accent' : 'bg-inset text-ink-3',
+                        val ? 'bg-primary-soft text-primary' : 'bg-inset text-ink-3',
                       )}
                     >
                       {val ? 'true' : 'false'}
@@ -932,7 +932,7 @@ function TaggedInlineContent({ parsed }: { parsed: ParsedTaggedText }) {
         <span
           className={cn(
             'mr-1.5 inline-flex items-center rounded px-1.5 py-0.2 align-[1px] text-[10.5px] font-semibold leading-tight',
-            parsed.tagTone === 'accent' && 'bg-accent-tint text-accent',
+            parsed.tagTone === 'accent' && 'bg-primary-soft text-primary',
             parsed.tagTone === 'warn' && 'bg-orange-tint text-orange',
             parsed.tagTone === 'ok' && 'bg-green-tint text-green',
             parsed.tagTone === 'neutral' && 'bg-inset text-ink-2',
@@ -942,7 +942,7 @@ function TaggedInlineContent({ parsed }: { parsed: ParsedTaggedText }) {
         </span>
       )}
       {parsed.codePrefix && (
-        <code className="mr-1.5 rounded bg-accent-tint px-1.5 py-0.2 font-mono text-[10.5px] font-semibold text-accent">
+        <code className="mr-1.5 rounded bg-primary-soft px-1.5 py-0.2 font-mono text-[10.5px] font-semibold text-primary">
           {parsed.codePrefix}
         </code>
       )}

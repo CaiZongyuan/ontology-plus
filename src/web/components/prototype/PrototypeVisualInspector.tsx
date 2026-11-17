@@ -1600,10 +1600,10 @@ export function PrototypeVisualPreviewStage({
           data-testid="prototype-live-modifying-badge"
           role="status"
           aria-live="polite"
-          className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-accent-tint/55 px-3 py-1.5 text-[12px] text-ink shrink-0"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-primary-soft/55 px-3 py-1.5 text-[12px] text-ink shrink-0"
         >
           <div className="flex items-center gap-2 min-w-0">
-            <Loader2 size={13} className="agent-run-spin text-accent shrink-0" aria-hidden="true" />
+            <Loader2 size={13} className="agent-run-spin text-primary shrink-0" aria-hidden="true" />
             <span className="font-medium text-ink">
               {t('Agent 正在修改', 'Modifying...')}
             </span>
@@ -1613,7 +1613,7 @@ export function PrototypeVisualPreviewStage({
               </span>
             )}
           </div>
-          <span className="text-[11px] text-muted">
+          <span className="text-[11px] text-muted-foreground">
             {t('修改期间仍可自由浏览或框选下一轮目标', 'You can keep browsing or box-selecting for the next queued turn')}
           </span>
         </div>
@@ -1626,7 +1626,7 @@ export function PrototypeVisualPreviewStage({
             <span className="font-medium text-ink">
               {t('框选精修已开启', 'Visual Select Active')}
             </span>
-            <span className="text-muted">
+            <span className="text-muted-foreground">
               {t(
                 '单击点选任意控件，或按住鼠标拖拽框选一块区域；支持打多个批注点一次性交给 AI',
                 'Click any control or drag a box around a region; pin multiple spots or refine immediately',
@@ -1739,7 +1739,7 @@ export function PrototypeVisualPreviewStage({
             </button>
           </div>
 
-          <div className="truncate font-mono text-[11px] text-muted">
+          <div className="truncate font-mono text-[11px] text-muted-foreground">
             {activeSelection.label}
             {activeSelection.matchedElementsSummary &&
               activeSelection.matchedElementsSummary.length > 0 &&

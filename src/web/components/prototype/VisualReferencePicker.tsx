@@ -611,7 +611,7 @@ function VisualReferenceLightboxDialog({
                 href={item.sourceUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded-full border border-line bg-inset px-2.5 py-0.5 font-mono text-[11.5px] text-ink-2 hover:border-accent hover:text-accent"
+                className="inline-flex items-center gap-1 rounded-full border border-line bg-inset px-2.5 py-0.5 font-mono text-[11.5px] text-ink-2 hover:border-primary hover:text-primary"
               >
                 <span>{item.sourceDomain}</span>
                 <ExternalLink size={11} />
@@ -928,13 +928,13 @@ export function VisualReferencePicker({
               data-testid="inspo-attribution"
               className="inline-flex items-center gap-1 rounded-full border border-line bg-inset px-2.5 py-0.5 text-[11.5px] text-ink-2"
             >
-              <Sparkles size={11} className="text-accent" />
+              <Sparkles size={11} className="text-primary" />
               <span>{t('推荐由 Inspo 提供', 'Recommendations powered by Inspo')}</span>
               <a
                 href="https://inspomcp.dev"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-0.5 font-mono text-[11px] text-accent hover:underline"
+                className="inline-flex items-center gap-0.5 font-mono text-[11px] text-primary hover:underline"
               >
                 <span>inspo</span>
                 <ExternalLink size={10} />
@@ -978,17 +978,17 @@ export function VisualReferencePicker({
       {/* Active Primary Reference Bar — Ready Immediately with 1 Pick */}
       <div
         data-testid="primary-reference-summary"
-        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-card border border-accent/35 bg-accent-tint/30 px-3.5 py-2.5"
+        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-card border border-primary/35 bg-primary-soft/30 px-3.5 py-2.5"
       >
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-[13px]">
-          <Palette size={15} className="shrink-0 text-accent" />
+          <Palette size={15} className="shrink-0 text-primary" />
           <span className="badge badge-accent">{t('主参考', 'Primary Reference')}</span>
           <strong className="text-ink">{selection.primary.title}</strong>
           <a
             href={selection.primary.sourceUrl}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1 font-mono text-[12px] text-ink-2 hover:text-accent hover:underline"
+            className="inline-flex items-center gap-1 font-mono text-[12px] text-ink-2 hover:text-primary hover:underline"
           >
             <span>{selection.primary.sourceDomain}</span>
             <ExternalLink size={11} />
@@ -1104,7 +1104,7 @@ export function VisualReferencePicker({
                   <div
                     key={borrowed.item.slug}
                     data-testid={`borrowed-ref-card-${borrowed.item.slug}`}
-                    className="flex flex-col gap-2 rounded-control border border-accent/35 bg-surface p-3"
+                    className="flex flex-col gap-2 rounded-control border border-primary/35 bg-surface p-3"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
@@ -1116,7 +1116,7 @@ export function VisualReferencePicker({
                           href={borrowed.item.sourceUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-0.5 font-mono text-[11px] text-ink-3 hover:text-accent"
+                          className="inline-flex items-center gap-0.5 font-mono text-[11px] text-ink-3 hover:text-primary"
                         >
                           <span>{borrowed.item.sourceDomain}</span>
                           <ExternalLink size={10} />
@@ -1404,14 +1404,14 @@ export function VisualReferencePicker({
                   <Maximize2 size={12.5} />
                 </button>
                 {isPrimary && (
-                  <div className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1.5 rounded-full bg-accent px-2.5 py-1 text-[11.5px] font-semibold text-white shadow-md">
+                  <div className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[11.5px] font-semibold text-white shadow-md">
                     <Check size={12} strokeWidth={2.5} />
                     {t('当前主参考', 'Primary Reference')}
                   </div>
                 )}
                 {!isPrimary && borrowedEntry && (
-                  <div className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1.5 rounded-full border border-accent bg-surface/95 px-2.5 py-1 text-[11.5px] font-semibold text-ink shadow-sm">
-                    <Check size={12} className="text-accent" />
+                  <div className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1.5 rounded-full border border-primary bg-surface/95 px-2.5 py-1 text-[11.5px] font-semibold text-ink shadow-sm">
+                    <Check size={12} className="text-primary" />
                     {t(
                       `借鉴参考 · ${borrowedAspectMeta?.labelZh ?? ''}`,
                       `Borrowed · ${borrowedAspectMeta?.labelEn ?? ''}`,
@@ -1429,7 +1429,7 @@ export function VisualReferencePicker({
                     target="_blank"
                     rel="noreferrer"
                     onClick={(e) => e.stopPropagation()}
-                    className="inline-flex min-w-0 items-center gap-1 font-mono text-[11px] text-ink-3 hover:text-accent"
+                    className="inline-flex min-w-0 items-center gap-1 font-mono text-[11px] text-ink-3 hover:text-primary"
                   >
                     <span className="truncate">{item.sourceDomain}</span>
                     <ExternalLink size={10} className="shrink-0" />
@@ -1440,7 +1440,7 @@ export function VisualReferencePicker({
                 </div>
 
                 <div className="min-w-0">
-                  <div className="text-[12px] font-medium text-accent">
+                  <div className="text-[12px] font-medium text-primary">
                     {t(item.plainLabelZh, item.plainLabelEn)}
                   </div>
                   <p className="vrp-card-desc">{t(item.plainDescZh, item.plainDescEn)}</p>

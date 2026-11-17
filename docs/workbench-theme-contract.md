@@ -20,10 +20,10 @@ A token marked "follows" takes the value of another token when a theme leaves it
 | `card-foreground` | `--card-foreground` | Text on a card. | `foreground` |
 | `popover` | `--popover` | Raised surfaces: menus, popovers, and dialogs. | `card` |
 | `popover-foreground` | `--popover-foreground` | Text on a raised surface. | `foreground` |
-| `muted` | `--contract-muted` | Quiet fill for insets, fields, and table headers. |  |
+| `muted` | `--muted` | Quiet fill for insets, fields, and table headers. |  |
 | `muted-foreground` | `--muted-foreground` | Secondary text. |  |
 | `faint-foreground` | `--faint-foreground` | Tertiary text: captions, meta, and placeholders. |  |
-| `accent` | `--contract-accent` | Hover and pressed fill on rows and quiet controls; may be translucent. |  |
+| `accent` | `--accent` | Hover and pressed fill on rows and quiet controls; may be translucent. |  |
 | `accent-foreground` | `--accent-foreground` | Text on the hover fill. | `foreground` |
 | `primary` | `--primary` | The single primary action of a region, selection, and links. |  |
 | `primary-foreground` | `--primary-foreground` | Text on primary. |  |

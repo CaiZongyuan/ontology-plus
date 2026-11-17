@@ -63,7 +63,7 @@ export function ThinkingState({
           className={cn(
             'inline-block font-medium',
             working
-              ? 'bg-[linear-gradient(110deg,var(--muted)_35%,var(--ink)_50%,var(--muted)_65%)] bg-[length:220%_100%] bg-clip-text text-transparent animate-[shimmer-text_1.9s_linear_infinite]'
+              ? 'bg-[linear-gradient(110deg,var(--muted-foreground)_35%,var(--ink)_50%,var(--muted-foreground)_65%)] bg-[length:220%_100%] bg-clip-text text-transparent animate-[shimmer-text_1.9s_linear_infinite]'
               : 'text-ink-3 group-hover:text-ink-2',
           )}
         >

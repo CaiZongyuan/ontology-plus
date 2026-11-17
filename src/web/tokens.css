@@ -101,19 +101,15 @@
   --ground: var(--background);
   --ground-2: var(--canvas);
   --surface: var(--card);
-  --surface-2: var(--contract-muted);
+  --surface-2: var(--muted);
   --line: var(--border);
   --line-2: var(--border-subtle);
-  --ghost: var(--contract-accent);
+  --ghost: var(--accent);
 
   --ink: var(--foreground);
   --ink-2: var(--foreground-soft);
-  --muted: var(--muted-foreground);
   --faint: var(--faint-foreground);
 
-  --accent: var(--primary);
-  --accent-ink: var(--primary-foreground);
-  --accent-soft: var(--primary-soft);
   --ok: var(--success);
   --ok-soft: var(--success-soft);
   --warn: var(--warning);
@@ -152,7 +148,7 @@
 
   /* ─── Shape & Motion Scale (radii and shadows come from the theme) ─── */
   --radius-pill: 999px;
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 28%, transparent);
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --dur-fast: 120ms;
@@ -165,7 +161,7 @@
   --scrollbar-track: transparent;
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-  accent-color: var(--accent);
+  accent-color: var(--primary);
 }
 
 :root:has(> head > meta[name="color-scheme"][content="light"]),
@@ -201,11 +197,11 @@ body,
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  background: color-mix(in srgb, var(--primary) 24%, transparent);
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
@@ -385,7 +381,7 @@ body,
 }
 
 .req-tab:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: -2px;
 }
 
@@ -430,7 +426,7 @@ body,
 }
 
 .req-board-search:focus-within {
-  border-color: var(--accent);
+  border-color: var(--primary);
   box-shadow: var(--focus-ring);
 }
 
@@ -599,7 +595,7 @@ body,
   border-radius: 50%;
   border: 1px solid var(--line);
   background: var(--inset);
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .req-board-empty-title {
@@ -674,7 +670,7 @@ body,
   }
 
   .req-col-title > svg {
-    color: var(--accent);
+    color: var(--primary);
     flex-shrink: 0;
   }
 
@@ -715,7 +711,7 @@ progress.loading-spinner:indeterminate {
   --_to: calc(90deg + var(--arc-end, 158deg));
   --size: 16px;
   --thickness: 2px;
-  --spinner-color: var(--accent);
+  --spinner-color: var(--primary);
   --track-color: var(--line);
   --spinner-duration: 1.35s;
   --_used-spinner-duration: var(--spinner-duration);
@@ -811,14 +807,13 @@ progress.loading-spinner:indeterminate {
 :root {
   --page: var(--ground);
   --inset: var(--surface-2);
-  --hover: var(--ghost);
+  --hover: var(--accent);
   --hover-2: color-mix(in srgb, var(--ink) 8%, transparent);
   --ink-3: var(--faint);
-  --line-strong: color-mix(in srgb, var(--muted) 42%, var(--line));
+  --line-strong: color-mix(in srgb, var(--muted-foreground) 42%, var(--line));
   --line-soft: var(--line-2);
   --grid-line: color-mix(in srgb, var(--line) 82%, transparent);
   --field: var(--surface-2);
-  --accent-tint: var(--accent-soft);
   --green: var(--ok);
   --green-tint: var(--ok-soft);
   --orange: var(--warn);
@@ -827,7 +822,7 @@ progress.loading-spinner:indeterminate {
   --red-tint: var(--bad-soft);
   --tooltip-bg: var(--ink);
   --tooltip-fg: var(--surface);
-  --tooltip-muted: var(--muted);
+  --tooltip-muted: var(--muted-foreground);
   --tooltip-border: var(--line);
   --shadow-hairline: 0 0 0 1px var(--line);
   --shadow-btn: 0 0 0 1px var(--line-strong), var(--shadow-xs);
@@ -845,10 +840,11 @@ progress.loading-spinner:indeterminate {
   --color-foreground: var(--ink);
   --color-card: var(--surface);
   --color-card-foreground: var(--ink);
-  --color-muted: var(--surface-2);
-  --color-muted-foreground: var(--muted);
-  --color-primary: var(--accent);
-  --color-primary-foreground: var(--accent-ink);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
   --color-border: var(--line);
   --color-page: var(--page);
   --color-canvas: var(--canvas);
@@ -863,8 +859,7 @@ progress.loading-spinner:indeterminate {
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
   --color-accent: var(--accent);
-  --color-accent-ink: var(--accent-ink);
-  --color-accent-tint: var(--accent-tint);
+  --color-accent-foreground: var(--accent-foreground);
   --color-green: var(--green);
   --color-green-tint: var(--green-tint);
   --color-orange: var(--orange);
@@ -931,7 +926,7 @@ progress.loading-spinner:indeterminate {
   margin-left: 1.5px;
   translate: 0 -0.5px;
   border-radius: 1px;
-  background: var(--accent);
+  background: var(--primary);
   vertical-align: text-bottom;
   animation: caret-blink 1s step-end infinite;
 }
@@ -999,7 +994,7 @@ progress.loading-spinner:indeterminate {
 /* ─── BeautifulUI Status Pills ─── */
 .filter-status-todo {
   background: var(--inset);
-  color: var(--muted);
+  color: var(--muted-foreground);
   border: 1px solid var(--line);
 }
 
@@ -1016,9 +1011,9 @@ progress.loading-spinner:indeterminate {
 }
 
 .filter-status-accent {
-  background: var(--accent-tint);
-  color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent);
 }
 
 .filter-status-error {
@@ -1164,8 +1159,8 @@ dialog.bui-dialog::backdrop {
 .md-prose blockquote {
   margin: 0.65em 0;
   padding: 0.4em 0.9em;
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
+  border-left: 3px solid var(--primary);
+  background: var(--primary-soft);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   color: var(--ink-2);
 }
@@ -1178,7 +1173,7 @@ dialog.bui-dialog::backdrop {
   border-radius: 4px;
   background: var(--surface-2);
   border: 1px solid var(--line-2);
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .tiptap-editor-root .ProseMirror pre {
@@ -1238,8 +1233,8 @@ dialog.bui-dialog::backdrop {
   --xy-node-background-color-default: var(--surface);
   --xy-node-border-default: 1px solid var(--line);
   --xy-node-color-default: var(--ink);
-  --xy-edge-stroke-default: color-mix(in srgb, var(--muted) 58%, transparent);
-  --xy-edge-stroke-selected-default: var(--accent);
+  --xy-edge-stroke-default: color-mix(in srgb, var(--muted-foreground) 58%, transparent);
+  --xy-edge-stroke-selected-default: var(--primary);
   --xy-minimap-background-color-default: var(--surface-2);
   --xy-controls-button-background-color-default: var(--surface);
   --xy-controls-button-color-default: var(--ink);

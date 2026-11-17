@@ -52,9 +52,9 @@ export function SelectionAttachmentStrip({
         className,
       )}
     >
-      <div className="flex items-center justify-between gap-2 px-0.5 text-[11px] text-muted">
+      <div className="flex items-center justify-between gap-2 px-0.5 text-[11px] text-muted-foreground">
         <span className="inline-flex items-center gap-1.5 font-medium text-ink-2">
-          <Crosshair size={12} className="text-accent shrink-0" aria-hidden="true" />
+          <Crosshair size={12} className="text-primary shrink-0" aria-hidden="true" />
           <span>
             {t(
               `已框选目标 (${attachments.length})`,
@@ -65,7 +65,7 @@ export function SelectionAttachmentStrip({
         <button
           type="button"
           data-testid="selection-attachment-clear-all"
-          className="text-[11px] text-muted hover:text-ink transition-colors"
+          className="text-[11px] text-muted-foreground hover:text-ink transition-colors"
           onClick={() => clearAttachments(prototypeId)}
         >
           {t('清空', 'Clear')}
@@ -85,7 +85,7 @@ export function SelectionAttachmentStrip({
               onMouseLeave={() => hoverAttachment(null)}
               onFocus={() => hoverAttachment(att)}
               onBlur={() => hoverAttachment(null)}
-              className="group relative flex items-center gap-2 rounded-[6px] border border-line bg-surface p-1.5 transition-colors hover:border-accent"
+              className="group relative flex items-center gap-2 rounded-[6px] border border-line bg-surface p-1.5 transition-colors hover:border-primary"
             >
               <LocalImageThumbnail
                 attachment={att.imageRef}
@@ -95,18 +95,18 @@ export function SelectionAttachmentStrip({
 
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-accent px-1 font-mono text-[10px] font-semibold text-white shrink-0">
+                  <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 font-mono text-[10px] font-semibold text-white shrink-0">
                     {idx + 1}
                   </span>
                   {anchorBadge ? (
                     <span
-                      className="truncate font-mono text-[10.5px] font-medium text-accent"
+                      className="truncate font-mono text-[10.5px] font-medium text-primary"
                       title={anchorBadge}
                     >
                       {anchorBadge}
                     </span>
                   ) : (
-                    <span className="truncate font-mono text-[10.5px] text-muted">
+                    <span className="truncate font-mono text-[10.5px] text-muted-foreground">
                       {att.target.cssSelector}
                     </span>
                   )}
@@ -120,7 +120,7 @@ export function SelectionAttachmentStrip({
                 </div>
 
                 {att.note && (
-                  <div className="truncate text-[11px] text-muted" title={att.note}>
+                  <div className="truncate text-[11px] text-muted-foreground" title={att.note}>
                     {att.note}
                   </div>
                 )}
@@ -135,7 +135,7 @@ export function SelectionAttachmentStrip({
                 )}
                 title={t('移除此框选目标', 'Remove selection')}
                 onClick={() => removeSelectionAttachment(prototypeId, att.id)}
-                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-surface-2 hover:text-ink"
               >
                 <X size={12.5} aria-hidden="true" />
               </button>
@@ -175,12 +175,12 @@ export function PrototypePostRunBanner({
       role="region"
       aria-label={t('本轮原型修改前后对比与回退', 'Post-run Before/After comparison and revert')}
       className={cn(
-        'flex flex-wrap items-center justify-between gap-2 border-b border-line bg-accent-tint/50 px-3 py-1.5 text-[12px] text-ink shrink-0',
+        'flex flex-wrap items-center justify-between gap-2 border-b border-line bg-primary-soft/50 px-3 py-1.5 text-[12px] text-ink shrink-0',
         className,
       )}
     >
       <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-        <Sparkles size={13.5} className="text-accent shrink-0" aria-hidden="true" />
+        <Sparkles size={13.5} className="text-primary shrink-0" aria-hidden="true" />
         <span className="badge badge-accent font-mono text-[10.5px]">
           R{review.revision.revisionNumber}
         </span>
@@ -203,7 +203,7 @@ export function PrototypePostRunBanner({
               </span>
             ))}
             {anchorChips.length > 3 && (
-              <span className="font-mono text-[10.5px] text-muted">
+              <span className="font-mono text-[10.5px] text-muted-foreground">
                 +{anchorChips.length - 3}
               </span>
             )}
@@ -263,7 +263,7 @@ export function PrototypePostRunBanner({
           aria-label={t('关闭改前改后对比条', 'Dismiss Before/After bar')}
           title={t('关闭', 'Dismiss')}
           onClick={onDismiss}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-[5px] text-muted transition-colors hover:bg-surface hover:text-ink"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-[5px] text-muted-foreground transition-colors hover:bg-surface hover:text-ink"
         >
           <X size={13} aria-hidden="true" />
         </button>

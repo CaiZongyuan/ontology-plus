@@ -71,8 +71,8 @@
   width: 28px;
   height: 28px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent) 62%, #000));
-  color: var(--accent-ink);
+  background: linear-gradient(140deg, var(--primary), color-mix(in srgb, var(--primary) 62%, #000));
+  color: var(--primary-foreground);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -93,7 +93,7 @@
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--muted);
+  color: var(--muted-foreground);
   cursor: pointer;
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
   flex-shrink: 0;
@@ -123,7 +123,7 @@
 }
 
 .sidebar-search:hover {
-  border-color: var(--muted);
+  border-color: var(--muted-foreground);
   color: var(--ink-2);
 }
 
@@ -148,7 +148,7 @@
   border-bottom-width: 2px;
   border-radius: 4px;
   background: var(--surface-2);
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-family: var(--mono);
   font-size: var(--text-2xs);
   line-height: 1;
@@ -245,7 +245,7 @@
 
 .nav-item .nav-icon {
   display: inline-flex;
-  color: var(--muted);
+  color: var(--muted-foreground);
   transition: color var(--dur-fast) ease;
 }
 
@@ -267,7 +267,7 @@
 }
 
 .nav-item.active .nav-icon {
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .nav-item.active::before {
@@ -278,7 +278,7 @@
   bottom: 7px;
   width: 3px;
   border-radius: 0 3px 3px 0;
-  background: var(--accent);
+  background: var(--primary);
 }
 
 .sidebar-collapsed .nav-item {
@@ -307,8 +307,8 @@
   line-height: 16px;
   padding: 0 6px;
   border-radius: var(--radius-pill);
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--primary-soft);
+  color: var(--primary);
   flex-shrink: 0;
 }
 
@@ -411,7 +411,7 @@
   position: absolute;
   left: 9px;
   pointer-events: none;
-  color: var(--muted);
+  color: var(--muted-foreground);
   display: inline-flex;
 }
 
@@ -419,7 +419,7 @@
   position: absolute;
   right: 8px;
   pointer-events: none;
-  color: var(--muted);
+  color: var(--muted-foreground);
   display: inline-flex;
 }
 
@@ -442,12 +442,12 @@
 }
 
 .project-selector:hover {
-  border-color: var(--muted);
+  border-color: var(--muted-foreground);
 }
 
 .project-selector:focus-visible {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--primary);
   box-shadow: var(--focus-ring);
 }
 
@@ -599,9 +599,9 @@
 }
 
 .badge-accent {
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
-  color: var(--accent);
+  background: var(--primary-soft);
+  border-color: color-mix(in srgb, var(--primary) 22%, transparent);
+  color: var(--primary);
 }
 
 /* ─── Cards ─── */
@@ -635,7 +635,7 @@
 .card-subtitle {
   margin: 2px 0 0;
   font-size: var(--text-sm);
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 /* Nesting rule (ADR 0006): at most two card levels. The inner level is a flat inset
@@ -684,14 +684,14 @@
 .input:hover:not(:disabled):not(:focus),
 .select:hover:not(:disabled):not(:focus),
 .textarea:hover:not(:disabled):not(:focus) {
-  border-color: color-mix(in srgb, var(--muted) 60%, var(--line));
+  border-color: color-mix(in srgb, var(--muted-foreground) 60%, var(--line));
 }
 
 .input:focus,
 .select:focus,
 .textarea:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--primary);
   box-shadow: var(--focus-ring);
 }
 
@@ -700,7 +700,7 @@
 .textarea:disabled,
 .input[readonly] {
   background: var(--surface-2);
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .select {
@@ -744,12 +744,12 @@ input[type='checkbox'] {
 }
 
 input[type='checkbox']:hover:not(:disabled) {
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 
 input[type='checkbox']:checked {
-  border-color: var(--accent);
-  background-color: var(--accent);
+  border-color: var(--primary);
+  background-color: var(--primary);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
 }
 
@@ -847,7 +847,7 @@ input[type='checkbox']:disabled {
   top: 0;
   z-index: 1;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: var(--surface-2);
   font-size: var(--text-xs);
   letter-spacing: 0.02em;
@@ -991,8 +991,8 @@ dialog.onto-dialog[open] {
 }
 
 .tree-element-row.selected {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--primary-soft);
+  color: var(--primary);
   font-weight: 600;
 }
 
@@ -1091,7 +1091,7 @@ dialog.cmdk[open] {
   padding: 0 16px;
   height: 52px;
   border-bottom: 1px solid var(--line);
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .cmdk-input {
@@ -1142,7 +1142,7 @@ dialog.cmdk[open] {
 
 .cmdk-item .cmdk-icon {
   display: inline-flex;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .cmdk-item .cmdk-meta {
@@ -1152,12 +1152,12 @@ dialog.cmdk[open] {
 }
 
 .cmdk-item.selected {
-  background: var(--accent-soft);
+  background: var(--primary-soft);
   color: var(--ink);
 }
 
 .cmdk-item.selected .cmdk-icon {
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .cmdk-empty {
@@ -1338,8 +1338,8 @@ dialog.cmdk[open] {
 }
 
 .nav-task-dot.is-running {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
   animation: breathe 2.2s ease-out infinite;
 }
 
@@ -1350,21 +1350,21 @@ dialog.cmdk[open] {
 
 .pipeline-topbar-pill {
   cursor: pointer;
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
-  background: var(--accent-soft);
-  color: var(--accent);
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  background: var(--primary-soft);
+  color: var(--primary);
   font-weight: 600;
   min-block-size: 26px;
   transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 
 .pipeline-topbar-pill:hover {
-  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  background: color-mix(in srgb, var(--primary) 16%, var(--surface));
 }
 
 .pipeline-topbar-pill:focus-visible,
 .pipeline-tray-close:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
@@ -1381,8 +1381,8 @@ dialog.cmdk[open] {
 }
 
 .pipeline-inline-card.is-running {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-  background: color-mix(in srgb, var(--accent-soft) 35%, var(--surface));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+  background: color-mix(in srgb, var(--primary-soft) 35%, var(--surface));
 }
 
 .pipeline-inline-card.is-completed {
@@ -1417,7 +1417,7 @@ dialog.cmdk[open] {
   justify-content: center;
   margin-block-start: 2px;
   flex-shrink: 0;
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .is-completed .pipeline-status-icon {
@@ -1429,7 +1429,7 @@ dialog.cmdk[open] {
 }
 
 .is-cancelled .pipeline-status-icon {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .pipeline-inline-title {
@@ -1461,9 +1461,9 @@ dialog.cmdk[open] {
 
 .pipeline-chapter-pill {
   font-family: var(--sans);
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
-  background: var(--accent-soft);
-  color: var(--accent);
+  border-color: color-mix(in srgb, var(--primary) 32%, var(--line));
+  background: var(--primary-soft);
+  color: var(--primary);
   max-inline-size: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1507,7 +1507,7 @@ dialog.cmdk[open] {
 }
 
 .pipeline-progress-bar::-webkit-progress-value {
-  background: var(--accent);
+  background: var(--primary);
   border-radius: 999px;
   transition: inline-size 240ms var(--ease-out), width 240ms var(--ease-out);
 }
@@ -1517,7 +1517,7 @@ dialog.cmdk[open] {
 }
 
 .pipeline-progress-bar::-moz-progress-bar {
-  background: var(--accent);
+  background: var(--primary);
   border-radius: 999px;
 }
 
@@ -1548,13 +1548,13 @@ dialog.cmdk[open] {
   border: 1px solid var(--line);
   background: var(--surface);
   font-size: var(--text-xs);
-  color: var(--muted);
+  color: var(--muted-foreground);
   min-inline-size: 0;
 }
 
 .pipeline-stage-step.is-current {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+  background: var(--primary-soft);
   color: var(--ink);
   font-weight: 600;
 }
@@ -1576,11 +1576,11 @@ dialog.cmdk[open] {
   font-weight: 600;
   flex-shrink: 0;
   background: var(--surface-2);
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .pipeline-stage-step.is-current .pipeline-stage-dot {
-  background: var(--accent);
+  background: var(--primary);
   color: #fff;
 }
 
@@ -1591,7 +1591,7 @@ dialog.cmdk[open] {
 
 .pipeline-safe-nav-hint {
   font-size: var(--text-xs);
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .pipeline-error-remediation {
@@ -1625,9 +1625,9 @@ dialog.cmdk[open] {
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 500;
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
-  color: var(--accent);
+  background: var(--primary-soft);
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line));
+  color: var(--primary);
 }
 
 .pipeline-stream-drawer {
@@ -1695,7 +1695,7 @@ dialog.cmdk[open] {
 .pipeline-log-time {
   font-family: var(--mono);
   font-size: 10.5px;
-  color: var(--muted);
+  color: var(--muted-foreground);
   flex-shrink: 0;
 }
 
@@ -1710,14 +1710,14 @@ dialog.cmdk[open] {
   font-weight: 600;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  color: var(--muted);
+  color: var(--muted-foreground);
   flex-shrink: 0;
 }
 
 .pipeline-stage-log-item.is-active .pipeline-log-step {
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
-  color: var(--accent);
+  background: var(--primary-soft);
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--line));
+  color: var(--primary);
 }
 
 .pipeline-log-text {
@@ -1726,7 +1726,7 @@ dialog.cmdk[open] {
 }
 
 .pipeline-thinking-box {
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line));
   border-radius: var(--radius-sm);
   background: var(--surface);
   overflow: hidden;
@@ -1740,7 +1740,7 @@ dialog.cmdk[open] {
   gap: 8px;
   padding: 6px 10px;
   border: 0;
-  background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface-2));
+  background: color-mix(in srgb, var(--primary-soft) 55%, var(--surface-2));
   font: inherit;
   font-size: var(--text-xs);
   font-weight: 600;
@@ -1750,7 +1750,7 @@ dialog.cmdk[open] {
 }
 
 .pipeline-thinking-toggle:hover {
-  background: var(--accent-soft);
+  background: var(--primary-soft);
 }
 
 .pipeline-thinking-body {
@@ -1764,7 +1764,7 @@ dialog.cmdk[open] {
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--muted);
+  color: var(--muted-foreground);
   background: color-mix(in srgb, var(--surface-2) 60%, var(--surface));
 }
 
@@ -1775,8 +1775,8 @@ dialog.cmdk[open] {
   border-radius: 999px;
   font-size: 10.5px;
   font-weight: 600;
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--primary-soft);
+  color: var(--primary);
 }
 
 .pipeline-live-preview {
@@ -1821,13 +1821,13 @@ dialog.cmdk[open] {
   font: inherit;
   font-size: 11px;
   font-weight: 500;
-  color: var(--muted);
+  color: var(--muted-foreground);
   cursor: pointer;
 }
 
 .pipeline-mode-btn.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--primary-soft);
+  color: var(--primary);
   font-weight: 600;
 }
 
@@ -1877,13 +1877,13 @@ dialog.cmdk[open] {
   gap: 8px;
   padding: 16px 14px;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .pipeline-stream-cursor {
   display: inline-block;
   margin-inline-start: 2px;
-  color: var(--accent);
+  color: var(--primary);
   font-weight: 700;
   animation: pipeline-cursor-blink 900ms steps(2, start) infinite;
 }
@@ -1908,12 +1908,12 @@ dialog.cmdk[open] {
   gap: 4px;
   padding: 2px 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--line));
+  background: var(--primary-soft);
   font: inherit;
   font-size: 11px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--primary);
   cursor: pointer;
 }
 
@@ -1932,10 +1932,10 @@ dialog.cmdk[open] {
 }
 
 .pipeline-compact-card.is-running {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--accent-soft) 35%, var(--surface)),
+    color-mix(in srgb, var(--primary-soft) 35%, var(--surface)),
     var(--surface)
   );
 }
@@ -1949,7 +1949,7 @@ dialog.cmdk[open] {
 }
 
 .pipeline-compact-card.is-running .pipeline-status-icon {
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .pipeline-compact-card.is-completed .pipeline-status-icon {
@@ -1999,7 +1999,7 @@ dialog.cmdk[open] {
 }
 
 .pipeline-compact-progress::-webkit-progress-value {
-  background: var(--accent);
+  background: var(--primary);
   border-radius: 999px;
   transition: inline-size 260ms var(--ease-out);
 }
@@ -2009,7 +2009,7 @@ dialog.cmdk[open] {
 }
 
 .pipeline-compact-progress::-moz-progress-bar {
-  background: var(--accent);
+  background: var(--primary);
   border-radius: 999px;
 }
 
@@ -2017,7 +2017,7 @@ dialog.cmdk[open] {
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .pipeline-compact-card.is-completed .pipeline-compact-metric {
@@ -2026,7 +2026,7 @@ dialog.cmdk[open] {
 
 .pipeline-compact-msg {
   font-size: var(--text-xs);
-  color: var(--muted);
+  color: var(--muted-foreground);
   min-inline-size: 0;
   flex: 1 1 180px;
   overflow: hidden;
@@ -2081,7 +2081,7 @@ dialog.cmdk[open] {
 }
 
 .pipeline-tray-card.is-running {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
 }
 
 .pipeline-tray-card.is-completed {
@@ -2117,7 +2117,7 @@ dialog.cmdk[open] {
   gap: 5px;
   margin-block-start: 2px;
   font-size: var(--text-xs);
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .pipeline-tray-project {
@@ -2138,7 +2138,7 @@ dialog.cmdk[open] {
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--muted);
+  color: var(--muted-foreground);
   cursor: pointer;
 }
 
@@ -2191,7 +2191,7 @@ dialog.cmdk[open] {
 }
 
 .proto-inspector-stage.is-inspecting {
-  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--primary) 58%, transparent);
   outline-offset: -2px;
 }
 
@@ -2202,8 +2202,8 @@ dialog.cmdk[open] {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
-  background: color-mix(in srgb, var(--accent-soft) 72%, var(--surface-2));
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 26%, var(--line));
+  background: color-mix(in srgb, var(--primary-soft) 72%, var(--surface-2));
   font-size: var(--text-xs);
   color: var(--ink-2);
 }
@@ -2212,8 +2212,8 @@ dialog.cmdk[open] {
   width: 7px;
   height: 7px;
   border-radius: var(--radius-pill);
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
   flex-shrink: 0;
 }
 
@@ -2227,7 +2227,7 @@ dialog.cmdk[open] {
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--line));
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--surface) 96%, transparent);
   backdrop-filter: blur(10px);
@@ -2253,7 +2253,7 @@ dialog.cmdk[open] {
   max-width: 100%;
   min-block-size: 26px;
   padding: 2px 6px 2px 8px;
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--line));
   border-radius: var(--radius-pill);
   background: var(--surface);
   font-size: var(--text-xs);
@@ -2269,8 +2269,8 @@ dialog.cmdk[open] {
   height: 17px;
   padding: 0 4px;
   border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font-family: var(--mono);
   font-size: 10.5px;
   font-weight: 600;
@@ -2286,7 +2286,7 @@ dialog.cmdk[open] {
   min-block-size: 24px;
   margin: -2px -3px -2px 0;
   border-radius: var(--radius-pill);
-  color: var(--muted);
+  color: var(--muted-foreground);
   transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 
@@ -2309,8 +2309,8 @@ dialog.cmdk[open] {
 }
 
 .proto-quick-pill:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--primary);
+  background: var(--primary-soft);
   color: var(--ink);
 }
 
@@ -2561,7 +2561,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   inset-block: 0;
   inset-inline-start: 3px;
   width: 2px;
-  background: var(--accent);
+  background: var(--primary);
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-out);
 }
@@ -2608,9 +2608,9 @@ dialog.inspo-lightbox-dialog::backdrop {
   gap: 3px;
   padding: 1px 6px;
   border-radius: var(--radius-xs);
-  border: 1px solid var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
+  border: 1px solid var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
   font-size: var(--text-2xs);
   font-weight: 600;
   line-height: 1.3;
@@ -2648,7 +2648,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-panel-session-trigger:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
 
@@ -2701,7 +2701,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--accent);
+  color: var(--primary);
   font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0;
@@ -2709,7 +2709,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-session-menu-new:hover {
-  background: var(--accent-soft);
+  background: var(--primary-soft);
 }
 
 .agent-session-menu-list {
@@ -2733,7 +2733,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-session-row.is-active {
-  background: var(--accent-soft);
+  background: var(--primary-soft);
 }
 
 .agent-session-row-main {
@@ -2755,7 +2755,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 .agent-session-row-action:focus-visible,
 .agent-session-confirm-btn:focus-visible,
 .agent-session-menu-new:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: -2px;
 }
 
@@ -2766,7 +2766,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   width: 14px;
   height: 18px;
   flex-shrink: 0;
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .agent-session-row-text {
@@ -2844,7 +2844,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   width: 100%;
   height: 30px;
   padding: 0 8px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--primary);
   border-radius: var(--radius-xs);
   background: var(--surface);
   color: var(--ink);
@@ -2944,8 +2944,8 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-panel-mode-pill.is-active {
-  background: var(--accent);
-  color: var(--accent-ink, #ffffff);
+  background: var(--primary);
+  color: var(--primary-foreground, #ffffff);
 }
 
 .agent-run-hitl {
@@ -3023,7 +3023,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--primary);
   animation: agent-run-pulse 320ms var(--ease-out) infinite alternate;
 }
 
@@ -3056,7 +3056,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   border-radius: 50%;
   border: 1px solid var(--line);
   background: var(--surface);
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .agent-panel-empty-text {
@@ -3095,13 +3095,13 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-panel-starter:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--primary);
+  background: var(--primary-soft);
   color: var(--ink);
 }
 
 .agent-panel-starter:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
 
@@ -3123,12 +3123,12 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-panel-toggle:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
 .agent-panel-toggle-count {
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .agent-panel-scrim {
@@ -3196,7 +3196,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--accent);
+  color: var(--primary);
   font-size: var(--text-xs);
   font-weight: 500;
   cursor: pointer;
@@ -3220,7 +3220,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-run-card[data-run-status='RUNNING'] .agent-run-glyph {
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .agent-run-card[data-run-status='SUCCEEDED'] .agent-run-glyph {
@@ -3308,7 +3308,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-run-steps-fold > summary:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
 
@@ -3350,7 +3350,7 @@ summary.agent-run-step-row:hover,
 
 summary.agent-run-step-row:focus-visible,
 .agent-run-thinking > summary:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
 
@@ -3362,7 +3362,7 @@ summary.agent-run-step-row:focus-visible,
 }
 
 .agent-run-step[data-step-status='RUNNING'] .agent-run-step-glyph {
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .agent-run-step[data-step-status='DONE'] .agent-run-step-glyph {
@@ -3490,7 +3490,7 @@ summary.agent-run-step-row:focus-visible,
 }
 
 .agent-panel-composer-form:focus-within {
-  border-color: var(--accent);
+  border-color: var(--primary);
   box-shadow: var(--focus-ring);
 }
 
@@ -3833,7 +3833,7 @@ details[open] > summary .agent-run-chevron {
 .local-image-thumb-role {
   font-size: 10px;
   font-weight: 600;
-  color: var(--accent, var(--ink-2));
+  color: var(--primary, var(--ink-2));
 }
 
 .local-image-thumb-name {
@@ -3995,7 +3995,7 @@ details[open] > summary .agent-run-chevron {
 }
 
 .vrp-search:focus-within {
-  border-color: var(--accent);
+  border-color: var(--primary);
   box-shadow: var(--focus-ring);
 }
 
@@ -4042,17 +4042,17 @@ details[open] > summary .agent-run-chevron {
 }
 
 .vrp-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
   box-shadow: var(--shadow-sm);
 }
 
 .vrp-card.is-primary {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 30%, transparent);
 }
 
 .vrp-card.is-borrowed {
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 60%, var(--line));
 }
 
 .vrp-card-zoom {
@@ -4085,8 +4085,8 @@ details[open] > summary .agent-run-chevron {
 }
 
 .vrp-card-zoom:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .vrp-card-desc {
@@ -4142,7 +4142,7 @@ details[open] > summary .agent-run-chevron {
 }
 
 .brief-step:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: -2px;
 }
 
@@ -4168,9 +4168,9 @@ details[open] > summary .agent-run-chevron {
 }
 
 .brief-step[aria-selected='true'] .brief-step-index {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .brief-step-text {
@@ -4241,13 +4241,13 @@ button.fla-layer:hover {
 }
 
 button.fla-layer:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
 button.fla-layer[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--primary);
+  background: var(--primary-soft);
 }
 
 .fla-layer.is-ontology {
@@ -4272,9 +4272,9 @@ button.fla-layer[aria-pressed='true'] {
 }
 
 button.fla-layer[aria-pressed='true'] .fla-layer-index {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .fla-layer-text {
@@ -4361,7 +4361,7 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
 }
 
 .fla-search:focus-within {
-  border-color: var(--accent);
+  border-color: var(--primary);
   box-shadow: var(--focus-ring);
 }
 
@@ -4392,7 +4392,7 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--accent);
+  color: var(--primary);
   font-size: var(--text-2xs);
   font-weight: 500;
   cursor: pointer;
@@ -4435,7 +4435,7 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
 }
 
 .fla-row:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary);
   outline-offset: -2px;
 }
 
@@ -4482,7 +4482,7 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
 
 .fla-row-layer {
   font-size: var(--text-2xs);
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .fla-list-empty {

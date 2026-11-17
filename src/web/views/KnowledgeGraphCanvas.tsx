@@ -176,8 +176,8 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
       data-node-id={data.node.id}
       className={cn(
         'group relative flex h-[56px] w-[188px] flex-col justify-between overflow-hidden rounded-control border bg-surface px-2.5 py-1.5 transition-[opacity,box-shadow,border-color,transform] duration-150',
-        data.isSelected && 'ring-2 ring-accent border-accent shadow-raised',
-        !data.isSelected && data.isNeighbor && 'border-accent/65 shadow-card',
+        data.isSelected && 'ring-2 ring-primary border-primary shadow-raised',
+        !data.isSelected && data.isNeighbor && 'border-primary/65 shadow-card',
         !data.isSelected && !data.isNeighbor && 'border-line shadow-xs hover:border-ink-3',
         data.isSearchHit && 'ring-2 ring-orange',
         data.isDimmed && 'opacity-30',
@@ -219,7 +219,7 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
         <span
           className={cn(
             'shrink-0 rounded px-1 font-mono text-[10.5px]',
-            data.isFocal ? 'bg-accent text-accent-ink' : 'bg-inset text-ink-3',
+            data.isFocal ? 'bg-primary text-primary-foreground' : 'bg-inset text-ink-3',
           )}
         >
           d:{data.degree}
@@ -976,7 +976,7 @@ function KnowledgeGraphInner({
           labelStyle: {
             fontSize: 10.5,
             fontFamily: 'var(--mono)',
-            fill: isIncident ? 'var(--accent)' : 'var(--muted)',
+            fill: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
             fontWeight: 600,
           },
           labelBgStyle: {
@@ -987,7 +987,7 @@ function KnowledgeGraphInner({
           labelBgPadding: [5, 2],
           labelBgBorderRadius: 4,
           style: {
-            stroke: isIncident ? 'var(--accent)' : 'var(--muted)',
+            stroke: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
             strokeWidth: isIncident ? 2 : 1.25,
             opacity: isIncident ? 0.95 : 0.55,
           },
@@ -995,7 +995,7 @@ function KnowledgeGraphInner({
             type: MarkerType.ArrowClosed,
             width: 15,
             height: 15,
-            color: isIncident ? 'var(--accent)' : 'var(--muted)',
+            color: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
           },
         });
       }
@@ -1056,19 +1056,19 @@ function KnowledgeGraphInner({
         labelStyle: {
           fontSize: 10.5,
           fontFamily: 'var(--mono)',
-          fill: 'var(--accent)',
+          fill: 'var(--primary)',
           fontWeight: 600,
         },
         labelBgStyle: {
           fill: 'var(--surface)',
-          stroke: 'var(--accent)',
+          stroke: 'var(--primary)',
           fillOpacity: 0.94,
         },
         labelBgPadding: [4, 2],
         labelBgBorderRadius: 4,
         zIndex: isIncident ? 2 : 1,
         style: {
-          stroke: isIncident ? 'var(--accent)' : 'var(--muted)',
+          stroke: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
           strokeWidth: isIncident ? 2 : 1.15,
           opacity: isIncident ? 0.95 : hoveredNodeId ? 0.16 : 0.36,
         },
@@ -1076,7 +1076,7 @@ function KnowledgeGraphInner({
           type: MarkerType.ArrowClosed,
           width: 14,
           height: 14,
-          color: isIncident ? 'var(--accent)' : 'var(--muted)',
+          color: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
         },
       });
     }
@@ -1093,7 +1093,7 @@ function KnowledgeGraphInner({
         labelStyle: {
           fontSize: 10.5,
           fontFamily: 'var(--mono)',
-          fill: 'var(--muted)',
+          fill: 'var(--muted-foreground)',
           fontWeight: 600,
         },
         labelBgStyle: {
@@ -1104,7 +1104,7 @@ function KnowledgeGraphInner({
         labelBgPadding: [4, 1.5],
         labelBgBorderRadius: 999,
         style: {
-          stroke: 'var(--muted)',
+          stroke: 'var(--muted-foreground)',
           strokeDasharray: b.count > 1 ? '4 3' : undefined,
           strokeWidth: Math.min(2.4, 1 + b.count * 0.2),
           opacity: hoveredNodeId ? 0.15 : 0.35,
@@ -1113,7 +1113,7 @@ function KnowledgeGraphInner({
           type: MarkerType.ArrowClosed,
           width: 13,
           height: 13,
-          color: 'var(--muted)',
+          color: 'var(--muted-foreground)',
         },
       });
     }
@@ -1586,7 +1586,7 @@ function KnowledgeGraphInner({
                         >
                           <div className="flex justify-between items-center gap-1"
                           >
-                            <span className="text-accent font-mono text-[10.5px] font-semibold"
+                            <span className="text-primary font-mono text-[10.5px] font-semibold"
                             >
                               {isOutgoing ? '→' : '←'} {edge.relation}
                             </span>
@@ -1609,7 +1609,7 @@ function KnowledgeGraphInner({
                                     padding: '0 4px',
                                     borderRadius: 3,
                                     background:
-                                      MODEL_COLORS[neighborNode.model] || 'var(--accent)',
+                                      MODEL_COLORS[neighborNode.model] || 'var(--primary)',
                                     color: '#fff',
                                     fontSize: 10.5,
                                     flexShrink: 0,

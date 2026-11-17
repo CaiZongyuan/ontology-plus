@@ -99,20 +99,9 @@ export const THEME_TOKENS: readonly ThemeTokenSpec[] = [
   ]),
 ];
 
-/**
- * Two contract names are already taken in the stylesheets by tokens that mean
- * something else: `--accent` is the brand colour and `--muted` is secondary
- * text. Until those callers have moved to `primary` and `muted-foreground`,
- * the contract's `accent` and `muted` are emitted under these names instead.
- */
-const PENDING_CSS_VARS: Readonly<Record<string, string>> = {
-  accent: '--contract-accent',
-  muted: '--contract-muted',
-};
-
 /** The CSS custom property a contract token is emitted as. */
 export function cssVarName(token: string): string {
-  return PENDING_CSS_VARS[token] ?? `--${token}`;
+  return `--${token}`;
 }
 
 export interface ContrastPair {

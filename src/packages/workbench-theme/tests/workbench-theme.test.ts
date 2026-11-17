@@ -82,9 +82,9 @@ describe('the contract', () => {
     }
   });
 
-  it('holds back the two names the old stylesheets still use with another meaning', () => {
-    expect(cssVarName('accent')).not.toBe('--accent');
-    expect(cssVarName('muted')).not.toBe('--muted');
+  it('emits every token under its own name, including the hover fill and the quiet fill', () => {
+    expect(cssVarName('accent')).toBe('--accent');
+    expect(cssVarName('muted')).toBe('--muted');
     expect(cssVarName('primary')).toBe('--primary');
   });
 });
@@ -219,12 +219,11 @@ describe('compiling a theme to CSS', () => {
     expect(css).toContain(`--ring: ${warmPaper.light.primary};`);
   });
 
-  it('never emits the two held-back names', () => {
+  it('emits the hover fill as --accent and the quiet fill as --muted', () => {
     const css = compileBuiltInThemesCss();
-    expect(css).not.toMatch(/^\s*--accent:/m);
-    expect(css).not.toMatch(/^\s*--muted:/m);
-    expect(css).toContain(`${cssVarName('accent')}:`);
-    expect(css).toContain(`${cssVarName('muted')}:`);
+    expect(css).toContain(`--accent: ${warmPaper.light.accent};`);
+    expect(css).toContain(`--muted: ${warmPaper.light.muted};`);
+    expect(css).not.toContain('--contract-');
   });
 });
 
@@ -254,13 +253,10 @@ describe('the stylesheets that still use pre-contract names', () => {
       line: 'border',
       'line-2': 'border-subtle',
       ghost: 'accent',
+      hover: 'accent',
       ink: 'foreground',
       'ink-2': 'foreground-soft',
-      muted: 'muted-foreground',
       faint: 'faint-foreground',
-      accent: 'primary',
-      'accent-ink': 'primary-foreground',
-      'accent-soft': 'primary-soft',
       ok: 'success',
       'ok-soft': 'success-soft',
       warn: 'warning',
@@ -284,5 +280,61 @@ describe('the stylesheets that still use pre-contract names', () => {
       const literal = new RegExp(`^\\s*${cssVarName(token.name)}:(?!\\s*var\\()`, 'm');
       expect(tokensCss, `${token.name} should come from the theme`).not.toMatch(literal);
     }
+  });
+});
+
+describe('accent and muted keep their contract meaning', () => {
+  // Before the contract, `accent` was the brand colour and `muted` was secondary text.
+  // In the contract `accent` is the hover fill and `muted` the quiet fill; the old
+  // meanings are now `primary` and `muted-foreground`.
+  const webRoot = path.join(repoRoot, 'src/web');
+  const skipped = new Set([
+    // Written by `pnpm themes:generate`: the one place the contract tokens are defined.
+    'workbench-themes.generated.css',
+    // Example CSS for generated prototypes, which define their own `--accent` palette.
+    'components/prototype/motionSchematicSpecs.ts',
+  ]);
+  const sources = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return sources(full);
+      return /\.(css|tsx?)$/.test(entry.name) ? [full] : [];
+    });
+
+  const oldMeanings: ReadonlyArray<readonly [what: string, pattern: RegExp, cssOnly?: boolean]> = [
+    ['a removed brand-colour name (use primary-foreground or primary-soft)', /\baccent-(?:ink|soft|tint)\b/],
+    ['the text-muted utility, which paints text in the quiet fill (use text-muted-foreground)', /(?<![\w-])text-muted(?![\w-])/],
+    [
+      'accent as a text, border, or ring colour utility (use primary)',
+      /(?<![\w-])(?:text|border(?:-[xytrblse])?|ring|outline|decoration|fill|stroke|caret|divide|placeholder)-accent(?![\w-])/,
+    ],
+    [
+      'var(--accent) or var(--muted) as a text, border, or outline colour (use primary or muted-foreground)',
+      /(?<![\w-])(?:color|border[\w-]*|outline[\w-]*|fill|stroke|caret-color|accent-color|text-decoration[\w-]*|box-shadow)\s*:[^;{}]*?var\(--(?:accent|muted)[\s,)]/,
+      true,
+    ],
+    [
+      'var(--accent) or var(--muted) as a text, border, or outline colour in an inline style',
+      /(?<![\w-])(?:color|border\w*|outline\w*|fill|stroke|caretColor|accentColor|textDecoration\w*|boxShadow)\s*:\s*(?:[^'"`\n]*\?\s*)?['"`][^'"`]*var\(--(?:accent|muted)[\s,)]/,
+    ],
+    ['a redefinition of --accent or --muted outside the theme stylesheet', /(?<![\w-])--(?:accent|muted)\s*:/],
+  ];
+
+  it('no stylesheet, inline style, or component markup uses them with the old meaning', () => {
+    const found: string[] = [];
+    for (const file of sources(webRoot)) {
+      const relative = path.relative(webRoot, file).split(path.sep).join('/');
+      if (skipped.has(relative)) continue;
+      const isCss = file.endsWith('.css');
+      fs.readFileSync(file, 'utf8')
+        .split('\n')
+        .forEach((line, index) => {
+          for (const [what, pattern, cssOnly] of oldMeanings) {
+            if (cssOnly && !isCss) continue;
+            if (pattern.test(line)) found.push(`src/web/${relative}:${index + 1}: ${what}\n    ${line.trim()}`);
+          }
+        });
+    }
+    expect(found, found.join('\n')).toEqual([]);
   });
 });

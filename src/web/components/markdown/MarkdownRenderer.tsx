@@ -68,7 +68,7 @@ export function MarkdownRenderer({
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-medium text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+                className="font-medium text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
                 {...rest}
               >
                 {children}

@@ -23,7 +23,7 @@ function highlightLine(text: string): React.ReactNode {
       : str
         ? 'var(--green)'
         : kw
-          ? 'var(--accent)'
+          ? 'var(--primary)'
           : num
             ? 'var(--orange)'
             : undefined;

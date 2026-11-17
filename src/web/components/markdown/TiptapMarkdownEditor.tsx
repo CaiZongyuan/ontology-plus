@@ -527,7 +527,7 @@ function ToolbarBtn({
       className={cn(
         'inline-flex h-7 w-7 items-center justify-center rounded-control cursor-pointer transition-colors duration-120',
         active
-          ? 'bg-accent-tint text-accent'
+          ? 'bg-primary-soft text-primary'
           : 'text-ink-2 hover:bg-hover hover:text-ink',
       )}
     >

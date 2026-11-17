@@ -776,7 +776,7 @@ export function PrototypeCoDesignStudio({
           >
             <div className="border-b border-line pb-2.5">
               <div className="flex items-center gap-2">
-                <ImagePlus size={15} className="text-accent" />
+                <ImagePlus size={15} className="text-primary" />
                 <h3 className="m-0 text-[14.5px] font-semibold text-ink">
                   {t(
                     '上传自己的参考图与直白感受描述（选填）',

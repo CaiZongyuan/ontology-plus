@@ -35,7 +35,7 @@
 
 .proto-rev-status-pill.is-unconfirmed {
   background: var(--inset);
-  color: var(--muted);
+  color: var(--muted-foreground);
   border: 1px solid var(--line);
 }
 
@@ -90,8 +90,8 @@
 }
 
 .proto-rev-timeline-item.is-previewing {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent);
 }
 
 .proto-rev-compare-grid {

@@ -1301,7 +1301,7 @@ export function OntologyWorkbenchView({
                 data-testid="ontology-stage-pending-guide"
               >
                 <div className="flex items-start gap-3">
-                  <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-inset text-accent">
+                  <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-inset text-primary">
                     <Boxes size={18} />
                   </div>
                   <div className="space-y-1">
@@ -1612,7 +1612,7 @@ export function OntologyWorkbenchView({
                       </span>
                     </td>
                     <td style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{d.model}</td>
-                    <td style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>
+                    <td style={{ fontFamily: 'var(--mono)', color: 'var(--primary)' }}>
                       {d.elementId ?? '-'}
                     </td>
                     <td style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}>{d.code}</td>
@@ -1880,8 +1880,8 @@ function StructuredModelInspector({
     const active = Boolean(selectedElementId && ids.includes(selectedElementId));
     return active
       ? {
-          borderColor: 'var(--accent)',
-          boxShadow: '0 0 0 2px var(--accent-soft)',
+          borderColor: 'var(--primary)',
+          boxShadow: '0 0 0 2px var(--primary-soft)',
         }
       : {};
   };
@@ -3848,7 +3848,7 @@ function StructuredModelInspector({
                         />
                         <span className="badge">{el.elementType}</span>
                         {el.dataBinding && (
-                          <span className="font-mono text-[10.5px] text-accent"
+                          <span className="font-mono text-[10.5px] text-primary"
                           >
                             {el.dataBinding}
                           </span>

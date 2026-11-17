@@ -1449,7 +1449,7 @@ export function StyleTileMotionSampleStrip({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink">
-          <Sparkles size={13} className="text-accent" />
+          <Sparkles size={13} className="text-primary" />
           <span>
             {t(
               '已选 7 组动态示意（点卡片右上按钮可亲手试玩交互）',
@@ -1503,7 +1503,7 @@ export function StyleTileMotionSampleStrip({
                       type="button"
                       data-testid={`style-tile-jump-${group.key}`}
                       onClick={() => onSelectGroup(group.key)}
-                      className="cursor-pointer rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] font-medium text-ink-2 hover:border-accent hover:text-accent"
+                      className="cursor-pointer rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] font-medium text-ink-2 hover:border-primary hover:text-primary"
                     >
                       {t('调整', 'Change')}
                     </button>
@@ -1550,8 +1550,8 @@ function SchematicOptionCard({
       className={cn(
         'flex flex-col overflow-hidden rounded-card border bg-surface transition-colors',
         selected
-          ? 'border-accent ring-2 ring-accent/25 shadow-xs'
-          : 'border-line hover:border-accent/55',
+          ? 'border-primary ring-2 ring-primary/25 shadow-xs'
+          : 'border-line hover:border-primary/55',
       )}
     >
       {/* Interactive Playable Stage (has its own trigger <button>, never nested inside another <button>) */}
@@ -1572,7 +1572,7 @@ function SchematicOptionCard({
         aria-checked={selected}
         data-testid={`motion-select-${item.id}`}
         onClick={onSelect}
-        className="flex flex-1 cursor-pointer flex-col justify-between gap-1.5 p-3 text-left focus-visible:outline-2 focus-visible:outline-accent"
+        className="flex flex-1 cursor-pointer flex-col justify-between gap-1.5 p-3 text-left focus-visible:outline-2 focus-visible:outline-primary"
       >
         <div className="flex items-start justify-between gap-2">
           <div className="text-[13px] font-semibold leading-snug text-ink">
@@ -1582,7 +1582,7 @@ function SchematicOptionCard({
             className={cn(
               'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors',
               selected
-                ? 'border-accent bg-accent text-white'
+                ? 'border-primary bg-primary text-white'
                 : 'border-line bg-inset text-transparent',
             )}
           >
@@ -1608,7 +1608,7 @@ function SchematicOptionCard({
         className="border-t border-line bg-inset/40 px-3 py-1.5 text-[11px]"
       >
         <summary className="flex cursor-pointer items-center gap-1.5 font-medium text-ink-2 select-none">
-          <Code2 size={11.5} className="text-accent" />
+          <Code2 size={11.5} className="text-primary" />
           <span>{pick('查看动效硬规格与示例代码', 'Motion Spec & Example Code')}</span>
         </summary>
         <div className="mt-2 space-y-1.5 pb-1 text-ink-2">

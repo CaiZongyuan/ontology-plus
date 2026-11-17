@@ -79,10 +79,10 @@ export function ApprovalCard({
       )}
       data-testid="agent-hitl-card"
     >
-      <div className="primitive-card-bar flex items-center justify-between border-b border-line bg-accent-tint/45">
+      <div className="primitive-card-bar flex items-center justify-between border-b border-line bg-primary-soft/45">
         <div className="flex items-center gap-1.5">
-          <Sparkles size={13} className="text-accent" />
-          <span className="text-[11.5px] font-semibold text-accent">
+          <Sparkles size={13} className="text-primary" />
+          <span className="text-[11.5px] font-semibold text-primary">
             {prompt.header ||
               t('需要补充业务决策 (Scoped HITL)', 'Business Decision Required (Scoped HITL)')}
           </span>
@@ -152,7 +152,7 @@ export function ApprovalCard({
                 '或输入补充说明 / 自定义参数...',
                 'Or enter custom details / parameters...',
               )}
-              className="w-full rounded-control border border-line bg-field px-2.5 py-1.5 text-[12.5px] text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
+              className="w-full rounded-control border border-line bg-field px-2.5 py-1.5 text-[12.5px] text-ink placeholder:text-ink-3 focus:border-primary focus:outline-none"
             />
           </div>
         )}

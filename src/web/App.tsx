@@ -809,7 +809,7 @@ function ShellInner() {
               {activeView === 'app-knowledge-graph' &&
                 (!lifecycle?.hasOntology || data.activeProject.knowledgeGraph.nodes.length === 0 ? (
                   <div className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-6">
-                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-accent">
+                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-primary">
                       <Network size={20} />
                     </div>
                     <span className="badge badge-warn">

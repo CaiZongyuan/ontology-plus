@@ -528,7 +528,7 @@ export function OverviewSessionsView({
               className={cn(
                 'p-[10px_12px] rounded-[6px] border flex flex-col justify-between gap-2 transition-colors',
                 st.isNext
-                  ? 'border-accent bg-surface shadow-2xs'
+                  ? 'border-primary bg-surface shadow-2xs'
                   : st.ready
                     ? 'border-line bg-inset'
                     : 'border-line bg-inset opacity-80',
@@ -599,7 +599,7 @@ export function OverviewSessionsView({
             render: (p) => (
               <div>
                 <div className="flex items-center gap-1.5 font-semibold text-ink">
-                  <FolderKanban size={13.5} className="text-accent" />
+                  <FolderKanban size={13.5} className="text-primary" />
                   <span>{p.name}</span>
                   {p.id === active.id && (
                     <span className="filter-status-done rounded-full px-2 py-0.2 text-[10.5px] font-semibold">
@@ -2756,7 +2756,7 @@ export function ModelFilesView({
           className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-4"
           data-testid="model-files-stage-pending"
         >
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-accent">
+          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-primary">
             <Code2 size={20} />
           </div>
           <span className="badge badge-warn">
@@ -3929,7 +3929,7 @@ export function ApplicationAssemblyDevView({
           className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-4"
           data-testid="assembly-stage-pending"
         >
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-accent">
+          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-primary">
             <Layers size={20} />
           </div>
           <span className={`badge ${lifecycle.hasOntology ? 'badge-ok' : 'badge-warn'}`}>
@@ -4177,7 +4177,7 @@ export function ApplicationAssemblyDevView({
                   <div className="card-header" style={{ marginBottom: 0 }}>
                     <div>
                       <h4 className="card-title inline-flex items-center gap-1.5">
-                        <Code2 size={15} className="text-accent" />
+                        <Code2 size={15} className="text-primary" />
                         {t('四层架构 AI 研发智能体', '4-Layer AI Coding Agent')}
                       </h4>
                       <div className="text-[12px] text-muted-foreground mt-0.5">
@@ -4242,10 +4242,10 @@ export function ApplicationAssemblyDevView({
                               });
                             })();
                           }}
-                          className="flex items-center justify-between gap-2 rounded-control border border-line bg-surface-2 px-3 py-2 text-left text-[12.5px] text-ink transition-colors hover:border-accent hover:bg-accent-soft cursor-pointer disabled:opacity-50"
+                          className="flex items-center justify-between gap-2 rounded-control border border-line bg-surface-2 px-3 py-2 text-left text-[12.5px] text-ink transition-colors hover:border-primary hover:bg-primary-soft cursor-pointer disabled:opacity-50"
                         >
                           <span>{starter}</span>
-                          <ArrowRight size={13} className="shrink-0 text-accent" />
+                          <ArrowRight size={13} className="shrink-0 text-primary" />
                         </button>
                       );
                     })}
@@ -4611,7 +4611,7 @@ export function OntologySkillsView({
         </div>
       ) : (
         <div className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-4">
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-accent">
+          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-primary">
             <Sparkles size={20} />
           </div>
           <span className={`badge ${lifecycle.hasOntology ? 'badge-ok' : 'badge-warn'}`}>
@@ -4734,7 +4734,7 @@ export function AppPublishView({
   if (projectApps.length === 0) {
     return (
       <div className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-4">
-        <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-accent">
+        <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-primary">
           <Boxes size={20} />
         </div>
         <span className="badge badge-warn">

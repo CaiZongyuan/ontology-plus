@@ -230,7 +230,7 @@ export function RegistryTable<T>({
                     className={cn(
                       'transition-colors duration-120',
                       onRowClick && 'cursor-pointer hover:bg-hover',
-                      isActive && 'bg-accent-tint/55',
+                      isActive && 'bg-primary-soft/55',
                     )}
                   >
                     {columns.map((col) => (
