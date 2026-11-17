@@ -49,6 +49,26 @@ const shape = {
   'radius-window': '16px',
 };
 
+/**
+ * The knowledge graph's per-model colours: the 暖纸 hues, except M1, which takes this
+ * theme's primary blue in place of indigo. One value in both modes; the model code on a
+ * badge is white on each.
+ */
+const models = {
+  'model-m1': '#2466de',
+  'model-m2': '#287452',
+  'model-m3': '#a86416',
+  'model-me': '#8a3ab9',
+  'model-m4': '#1d70b8',
+  'model-m5': '#6e56cf',
+  'model-m6': '#0f766e',
+  'model-m7': '#b45309',
+  'model-mu': '#be185d',
+  'model-mm': '#4b5563',
+  'model-mi': '#0369a1',
+  'model-foreground': '#ffffff',
+};
+
 const flat = {
   'backdrop-image': 'none',
   'backdrop-size': 'auto',
@@ -61,6 +81,7 @@ export const DEFAULT_NEUTRAL: WorkbenchTheme = {
     ...type,
     ...shape,
     ...flat,
+    ...models,
     // Colours and surfaces
     background: '#ffffff',
     canvas: '#fbfbfb',
@@ -96,11 +117,13 @@ export const DEFAULT_NEUTRAL: WorkbenchTheme = {
       '0 0 0 1px rgba(28, 40, 64, 0.04), 0 4px 8px -4px rgba(28, 40, 64, 0.12), 0 4px 12px -2px rgba(24, 41, 75, 0.16)',
     'shadow-lg':
       '0 8px 28px -6px rgba(28, 40, 64, 0.12), 0 18px 88px -4px rgba(28, 40, 64, 0.16), 0 0 1px rgba(28, 40, 64, 0.16)',
+    'shadow-color': '#1c2840',
   },
   dark: {
     ...type,
     ...shape,
     ...flat,
+    ...models,
     // Colours and surfaces
     background: '#101112',
     canvas: '#0b0c0d',
@@ -135,5 +158,6 @@ export const DEFAULT_NEUTRAL: WorkbenchTheme = {
     'shadow-md':
       '0 0 0 1px rgba(0, 0, 0, 0.16), 0 4px 8px -4px rgba(0, 0, 0, 0.24), 0 4px 12px -2px rgba(0, 0, 0, 0.32)',
     'shadow-lg': '0 8px 28px -6px rgba(0, 0, 0, 0.48), 0 18px 88px -4px rgba(0, 0, 0, 0.64)',
+    'shadow-color': '#000000',
   },
 };

@@ -49,6 +49,23 @@ A token marked "follows" takes the value of another token when a theme leaves it
 | `destructive-foreground` | `--destructive-foreground` | Text on a destructive fill, such as a confirm-delete button. | `primary-foreground` |
 | `destructive-soft` | `--destructive-soft` | Tinted fill behind an error badge; may be translucent. |  |
 
+## Ontology model colours
+
+| Token | CSS variable | Meaning | Follows |
+| --- | --- | --- | --- |
+| `model-m1` | `--model-m1` | Marks model M1 in the knowledge graph: lanes, nodes, chips, and the minimap. |  |
+| `model-m2` | `--model-m2` | Marks model M2 in the knowledge graph. |  |
+| `model-m3` | `--model-m3` | Marks model M3 in the knowledge graph. |  |
+| `model-me` | `--model-me` | Marks model ME in the knowledge graph. |  |
+| `model-m4` | `--model-m4` | Marks model M4 in the knowledge graph. |  |
+| `model-m5` | `--model-m5` | Marks model M5 in the knowledge graph. |  |
+| `model-m6` | `--model-m6` | Marks model M6 in the knowledge graph. |  |
+| `model-m7` | `--model-m7` | Marks model M7 in the knowledge graph. |  |
+| `model-mu` | `--model-mu` | Marks model MU in the knowledge graph. |  |
+| `model-mm` | `--model-mm` | Marks model MM in the knowledge graph. |  |
+| `model-mi` | `--model-mi` | Marks model MI in the knowledge graph. |  |
+| `model-foreground` | `--model-foreground` | Text on a model colour, such as the model code on a badge. |  |
+
 ## Fonts
 
 | Token | CSS variable | Meaning | Follows |
@@ -76,6 +93,7 @@ A token marked "follows" takes the value of another token when a theme leaves it
 | `shadow-sm` | `--shadow-sm` | Cards at rest. |  |
 | `shadow-md` | `--shadow-md` | Raised surfaces: menus and popovers. |  |
 | `shadow-lg` | `--shadow-lg` | Overlays: dialogs and drawers. |  |
+| `shadow-color` | `--shadow-color` | The colour of a one-off shadow that is none of the four elevations; mixed with transparent where it is used. |  |
 
 ## Background texture
 
@@ -123,6 +141,17 @@ Every built-in theme is checked in both modes. Text must reach 4.5:1 and marks 3
 | `destructive` | `card` | 4.5:1 |
 | `destructive` | `destructive-soft` over `card` | 4.5:1 |
 | `destructive-foreground` | `destructive` | 4.5:1 |
+| `model-foreground` | `model-m1` | 4.5:1 |
+| `model-foreground` | `model-m2` | 4.5:1 |
+| `model-foreground` | `model-m3` | 4.5:1 |
+| `model-foreground` | `model-me` | 4.5:1 |
+| `model-foreground` | `model-m4` | 4.5:1 |
+| `model-foreground` | `model-m5` | 4.5:1 |
+| `model-foreground` | `model-m6` | 4.5:1 |
+| `model-foreground` | `model-m7` | 4.5:1 |
+| `model-foreground` | `model-mu` | 4.5:1 |
+| `model-foreground` | `model-mm` | 4.5:1 |
+| `model-foreground` | `model-mi` | 4.5:1 |
 | `ring` | `background` | 3:1 |
 | `ring` | `card` | 3:1 |
 | `scrollbar-thumb` | `background` | 3:1 |

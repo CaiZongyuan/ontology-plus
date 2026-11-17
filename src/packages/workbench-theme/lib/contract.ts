@@ -9,11 +9,12 @@
 
 export const THEME_CONTRACT_VERSION = 1;
 
-export type ThemeTokenGroup = 'color' | 'status' | 'font' | 'radius' | 'shadow' | 'backdrop';
+export type ThemeTokenGroup = 'color' | 'status' | 'model' | 'font' | 'radius' | 'shadow' | 'backdrop';
 
 export const THEME_TOKEN_GROUPS: Readonly<Record<ThemeTokenGroup, string>> = {
   color: 'Colours and surfaces',
   status: 'Status colours',
+  model: 'Ontology model colours',
   font: 'Fonts',
   radius: 'Corner radii',
   shadow: 'Shadows',
@@ -76,6 +77,20 @@ export const THEME_TOKENS: readonly ThemeTokenSpec[] = [
     ['destructive-foreground', 'Text on a destructive fill, such as a confirm-delete button.', 'primary-foreground'],
     ['destructive-soft', 'Tinted fill behind an error badge; may be translucent.'],
   ]),
+  ...group('model', [
+    ['model-m1', 'Marks model M1 in the knowledge graph: lanes, nodes, chips, and the minimap.'],
+    ['model-m2', 'Marks model M2 in the knowledge graph.'],
+    ['model-m3', 'Marks model M3 in the knowledge graph.'],
+    ['model-me', 'Marks model ME in the knowledge graph.'],
+    ['model-m4', 'Marks model M4 in the knowledge graph.'],
+    ['model-m5', 'Marks model M5 in the knowledge graph.'],
+    ['model-m6', 'Marks model M6 in the knowledge graph.'],
+    ['model-m7', 'Marks model M7 in the knowledge graph.'],
+    ['model-mu', 'Marks model MU in the knowledge graph.'],
+    ['model-mm', 'Marks model MM in the knowledge graph.'],
+    ['model-mi', 'Marks model MI in the knowledge graph.'],
+    ['model-foreground', 'Text on a model colour, such as the model code on a badge.'],
+  ]),
   ...group('font', [
     ['font-title', 'Page titles, card titles, and large metrics.'],
     ['font-sans', 'Everything in the interface that is not a title or an identifier.'],
@@ -94,6 +109,10 @@ export const THEME_TOKENS: readonly ThemeTokenSpec[] = [
     ['shadow-sm', 'Cards at rest.'],
     ['shadow-md', 'Raised surfaces: menus and popovers.'],
     ['shadow-lg', 'Overlays: dialogs and drawers.'],
+    [
+      'shadow-color',
+      'The colour of a one-off shadow that is none of the four elevations; mixed with transparent where it is used.',
+    ],
   ]),
   ...group('backdrop', [
     ['backdrop-image', 'Texture laid over the page ground, as a CSS background-image; `none` for a flat ground.'],
@@ -148,6 +167,19 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
   ...pairs('warning', TEXT, ['card', ['warning-soft', 'card']]),
   ...pairs('destructive', TEXT, ['card', ['destructive-soft', 'card']]),
   ...pairs('destructive-foreground', TEXT, ['destructive']),
+  ...pairs('model-foreground', TEXT, [
+    'model-m1',
+    'model-m2',
+    'model-m3',
+    'model-me',
+    'model-m4',
+    'model-m5',
+    'model-m6',
+    'model-m7',
+    'model-mu',
+    'model-mm',
+    'model-mi',
+  ]),
   ...pairs('ring', MARK, ['background', 'card']),
   ...pairs('scrollbar-thumb', MARK, ['background', 'card']),
 ];

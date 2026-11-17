@@ -35,6 +35,18 @@
   --destructive: #ba2525;
   --destructive-foreground: #ffffff;
   --destructive-soft: #ffebeb;
+  --model-m1: #2466de;
+  --model-m2: #287452;
+  --model-m3: #a86416;
+  --model-me: #8a3ab9;
+  --model-m4: #1d70b8;
+  --model-m5: #6e56cf;
+  --model-m6: #0f766e;
+  --model-m7: #b45309;
+  --model-mu: #be185d;
+  --model-mm: #4b5563;
+  --model-mi: #0369a1;
+  --model-foreground: #ffffff;
   --font-title: "Inter", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-sans: "Inter", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", monospace;
@@ -48,6 +60,7 @@
   --shadow-sm: 0 1px 2px rgba(11, 13, 24, 0.04);
   --shadow-md: 0 0 0 1px rgba(28, 40, 64, 0.04), 0 4px 8px -4px rgba(28, 40, 64, 0.12), 0 4px 12px -2px rgba(24, 41, 75, 0.16);
   --shadow-lg: 0 8px 28px -6px rgba(28, 40, 64, 0.12), 0 18px 88px -4px rgba(28, 40, 64, 0.16), 0 0 1px rgba(28, 40, 64, 0.16);
+  --shadow-color: #1c2840;
   --backdrop-image: none;
   --backdrop-size: auto;
 }
@@ -87,6 +100,7 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
     --shadow-md: 0 0 0 1px rgba(0, 0, 0, 0.16), 0 4px 8px -4px rgba(0, 0, 0, 0.24), 0 4px 12px -2px rgba(0, 0, 0, 0.32);
     --shadow-lg: 0 8px 28px -6px rgba(0, 0, 0, 0.48), 0 18px 88px -4px rgba(0, 0, 0, 0.64);
+    --shadow-color: #000000;
   }
 }
 
@@ -125,6 +139,7 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
   --shadow-md: 0 0 0 1px rgba(0, 0, 0, 0.16), 0 4px 8px -4px rgba(0, 0, 0, 0.24), 0 4px 12px -2px rgba(0, 0, 0, 0.32);
   --shadow-lg: 0 8px 28px -6px rgba(0, 0, 0, 0.48), 0 18px 88px -4px rgba(0, 0, 0, 0.64);
+  --shadow-color: #000000;
 }
 
 /* Warm Paper (warm-paper) */
@@ -161,6 +176,18 @@
   --destructive: #b83a32;
   --destructive-foreground: #ffffff;
   --destructive-soft: rgba(184, 58, 50, 0.12);
+  --model-m1: #4c50c4;
+  --model-m2: #287452;
+  --model-m3: #a86416;
+  --model-me: #8a3ab9;
+  --model-m4: #1d70b8;
+  --model-m5: #6e56cf;
+  --model-m6: #0f766e;
+  --model-m7: #b45309;
+  --model-mu: #be185d;
+  --model-mm: #4b5563;
+  --model-mi: #0369a1;
+  --model-foreground: #ffffff;
   --font-title: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
   --font-sans: "IBM Plex Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -174,6 +201,7 @@
   --shadow-sm: 0 1px 2px rgba(26, 26, 24, 0.06), 0 1px 1px rgba(26, 26, 24, 0.03);
   --shadow-md: 0 4px 14px rgba(26, 26, 24, 0.08), 0 1px 3px rgba(26, 26, 24, 0.05);
   --shadow-lg: 0 18px 48px rgba(26, 26, 24, 0.16), 0 4px 12px rgba(26, 26, 24, 0.08);
+  --shadow-color: #000000;
   --backdrop-image: url("/textures/paper/warm-grain.png"), url("/textures/paper/white-grain.png"), url("/textures/paper/cloud.png");
   --backdrop-size: 260px 260px, 260px 260px, 900px 900px;
 }
@@ -211,6 +239,18 @@
     --destructive: #e26e66;
     --destructive-foreground: #0f1026;
     --destructive-soft: rgba(224, 97, 89, 0.16);
+    --model-m1: #4c50c4;
+    --model-m2: #287452;
+    --model-m3: #a86416;
+    --model-me: #8a3ab9;
+    --model-m4: #1d70b8;
+    --model-m5: #6e56cf;
+    --model-m6: #0f766e;
+    --model-m7: #b45309;
+    --model-mu: #be185d;
+    --model-mm: #4b5563;
+    --model-mi: #0369a1;
+    --model-foreground: #ffffff;
     --font-title: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
     --font-sans: "IBM Plex Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -224,6 +264,7 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
     --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
+    --shadow-color: #000000;
     --backdrop-image: none;
     --backdrop-size: 260px 260px, 260px 260px, 900px 900px;
   }
@@ -263,6 +304,18 @@
   --destructive: #e26e66;
   --destructive-foreground: #0f1026;
   --destructive-soft: rgba(224, 97, 89, 0.16);
+  --model-m1: #4c50c4;
+  --model-m2: #287452;
+  --model-m3: #a86416;
+  --model-me: #8a3ab9;
+  --model-m4: #1d70b8;
+  --model-m5: #6e56cf;
+  --model-m6: #0f766e;
+  --model-m7: #b45309;
+  --model-mu: #be185d;
+  --model-mm: #4b5563;
+  --model-mi: #0369a1;
+  --model-foreground: #ffffff;
   --font-title: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
   --font-sans: "IBM Plex Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -276,6 +329,7 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-color: #000000;
   --backdrop-image: none;
   --backdrop-size: 260px 260px, 260px 260px, 900px 900px;
 }

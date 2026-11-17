@@ -292,6 +292,9 @@ export interface MotionPaletteTokens {
   radiusPx: number;
 }
 
+// The schematics preview motion in the palette of the app being designed. Their colours
+// (this palette, the button ink below, and the neutral greys on inactive parts) are the
+// prototype's, not workbench appearance, and stay literal whatever Workbench Theme is active.
 export const DEFAULT_MOTION_PALETTE: MotionPaletteTokens = {
   accentColor: '#2563eb',
   surfaceColor: '#f9f8f5',

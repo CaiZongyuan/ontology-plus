@@ -1359,8 +1359,8 @@ export function CapabilityMcpView() {
                         borderRadius: 5,
                         cursor: 'pointer',
                         background:
-                          selectedTool === tool.name ? 'var(--primary-soft)' : 'var(--surface-2)',
-                        border: '1px solid var(--line)',
+                          selectedTool === tool.name ? 'var(--primary-soft)' : 'var(--muted)',
+                        border: '1px solid var(--border)',
                       }}
                     >
                       <div className="flex justify-between gap-1.5">
@@ -1401,9 +1401,9 @@ export function CapabilityMcpView() {
                         background:
                           selectedResourceUri === resItem.uri
                             ? 'var(--primary-soft)'
-                            : 'var(--surface-2)',
-                        border: '1px solid var(--line)',
-                        color: 'var(--ink)',
+                            : 'var(--muted)',
+                        border: '1px solid var(--border)',
+                        color: 'var(--foreground)',
                       }}
                     >
                       <div className="flex justify-between gap-2">
@@ -1744,8 +1744,8 @@ export function CapabilityAgentsView() {
                   padding: 10,
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: selected ? 'var(--primary-soft)' : 'var(--surface-2)',
-                  border: `1px solid ${selected ? 'var(--primary)' : 'var(--line)'}`,
+                  background: selected ? 'var(--primary-soft)' : 'var(--muted)',
+                  border: `1px solid ${selected ? 'var(--primary)' : 'var(--border)'}`,
                 }}
               >
                 <div className="flex justify-between items-center gap-1.5"
@@ -2187,11 +2187,11 @@ export function CapabilityCrossFlowsView() {
               <tbody>
                 {fl.steps.map((s) => (
                   <tr key={s.stepOrder}>
-                    <td style={{ fontFamily: 'var(--mono)' }}>#{s.stepOrder}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)' }}>#{s.stepOrder}</td>
                     <td>
                       <strong>{s.systemName}</strong>
                     </td>
-                    <td style={{ fontFamily: 'var(--mono)' }}>{s.mcpToolName}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)' }}>{s.mcpToolName}</td>
                     <td>{s.description}</td>
                     <td>
                       <span className="badge badge-ok">{s.status}</span>
@@ -2477,8 +2477,8 @@ export function KnowledgeCenterView() {
                       padding: '8px 10px',
                       borderRadius: 6,
                       cursor: 'pointer',
-                      background: active ? 'var(--primary-soft)' : 'var(--surface-2)',
-                      border: `1px solid ${active ? 'var(--primary)' : 'var(--line)'}`,
+                      background: active ? 'var(--primary-soft)' : 'var(--muted)',
+                      border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
                     }}
                   >
                     <div className="flex items-start justify-between gap-2">

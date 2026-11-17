@@ -16,6 +16,25 @@ const type = {
   'font-mono': '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
 };
 
+/**
+ * The knowledge graph tells the eleven models apart by hue. They keep one value in both
+ * modes, and the model code on a badge is white in both.
+ */
+const models = {
+  'model-m1': '#4c50c4',
+  'model-m2': '#287452',
+  'model-m3': '#a86416',
+  'model-me': '#8a3ab9',
+  'model-m4': '#1d70b8',
+  'model-m5': '#6e56cf',
+  'model-m6': '#0f766e',
+  'model-m7': '#b45309',
+  'model-mu': '#be185d',
+  'model-mm': '#4b5563',
+  'model-mi': '#0369a1',
+  'model-foreground': '#ffffff',
+};
+
 const shape = {
   'radius-xs': '4px',
   'radius-sm': '6px',
@@ -31,6 +50,7 @@ export const WARM_PAPER: WorkbenchTheme = {
   light: {
     ...type,
     ...shape,
+    ...models,
     background: '#f3f2ee',
     canvas: '#eae8e2',
     foreground: '#1a1a18',
@@ -57,6 +77,7 @@ export const WARM_PAPER: WorkbenchTheme = {
     'shadow-sm': '0 1px 2px rgba(26, 26, 24, 0.06), 0 1px 1px rgba(26, 26, 24, 0.03)',
     'shadow-md': '0 4px 14px rgba(26, 26, 24, 0.08), 0 1px 3px rgba(26, 26, 24, 0.05)',
     'shadow-lg': '0 18px 48px rgba(26, 26, 24, 0.16), 0 4px 12px rgba(26, 26, 24, 0.08)',
+    'shadow-color': '#000000',
     'backdrop-image':
       'url("/textures/paper/warm-grain.png"), url("/textures/paper/white-grain.png"), url("/textures/paper/cloud.png")',
     'backdrop-size': '260px 260px, 260px 260px, 900px 900px',
@@ -64,6 +85,7 @@ export const WARM_PAPER: WorkbenchTheme = {
   dark: {
     ...type,
     ...shape,
+    ...models,
     background: '#121211',
     canvas: '#0d0d0c',
     foreground: '#eceae3',
@@ -90,6 +112,7 @@ export const WARM_PAPER: WorkbenchTheme = {
     'shadow-sm': '0 1px 2px rgba(0, 0, 0, 0.4)',
     'shadow-md': '0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35)',
     'shadow-lg': '0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4)',
+    'shadow-color': '#000000',
     'backdrop-image': 'none',
     'backdrop-size': '260px 260px, 260px 260px, 900px 900px',
   },

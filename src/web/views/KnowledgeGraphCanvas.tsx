@@ -51,18 +51,19 @@ import { Button } from '../components/beautifui/index.js';
 export type KnowledgeGraphPreset = 'GLOBAL_SWIMLANE' | 'WORKBENCH_EGO' | 'DATA_LINEAGE';
 export type KnowledgeGraphLayoutMode = 'STAGE_SWIMLANE' | 'EGO_FOCUS';
 
+// Each model's colour comes from the Workbench Theme (`--model-*` contract tokens).
 const MODEL_COLORS: Record<ModelCode, string> = {
-  M1: '#4c50c4',
-  M2: '#287452',
-  M3: '#a86416',
-  ME: '#8a3ab9',
-  M4: '#1d70b8',
-  M5: '#6e56cf',
-  M6: '#0f766e',
-  M7: '#b45309',
-  MU: '#be185d',
-  MM: '#4b5563',
-  MI: '#0369a1',
+  M1: 'var(--model-m1)',
+  M2: 'var(--model-m2)',
+  M3: 'var(--model-m3)',
+  ME: 'var(--model-me)',
+  M4: 'var(--model-m4)',
+  M5: 'var(--model-m5)',
+  M6: 'var(--model-m6)',
+  M7: 'var(--model-m7)',
+  MU: 'var(--model-mu)',
+  MM: 'var(--model-mm)',
+  MI: 'var(--model-mi)',
 };
 
 const MODEL_LABELS = new Map(MODEL_STAGE_ORDER.map((m) => [m.code, m]));
@@ -107,10 +108,10 @@ function SwimlaneGroupNode({ data }: NodeProps<Node<SwimlaneNodeData>>) {
         data.collapsed ? 'bg-card shadow-card' : 'bg-card/65',
       )}
       style={{
-        borderColor: `color-mix(in srgb, ${data.color} 34%, var(--line))`,
+        borderColor: `color-mix(in srgb, ${data.color} 34%, var(--border))`,
         background: data.collapsed
-          ? 'var(--surface)'
-          : `color-mix(in srgb, ${data.color} 5%, var(--surface))`,
+          ? 'var(--card)'
+          : `color-mix(in srgb, ${data.color} 5%, var(--card))`,
       }}
     >
       {data.collapsed && (
@@ -130,8 +131,8 @@ function SwimlaneGroupNode({ data }: NodeProps<Node<SwimlaneNodeData>>) {
       <div
         className="flex items-center justify-between gap-2 rounded-t-window border-b px-3 py-1.5"
         style={{
-          borderColor: `color-mix(in srgb, ${data.color} 22%, var(--line-2))`,
-          background: `color-mix(in srgb, ${data.color} 10%, var(--surface))`,
+          borderColor: `color-mix(in srgb, ${data.color} 22%, var(--border-subtle))`,
+          background: `color-mix(in srgb, ${data.color} 10%, var(--card))`,
         }}
       >
         <div className="flex min-w-0 items-center gap-1.5">
@@ -819,7 +820,7 @@ function KnowledgeGraphInner({
         if (spec.kind === 'swimlane') {
           const meta = MODEL_LABELS.get(spec.model);
           const title = meta ? t(meta.labelZh, meta.labelEn) : spec.model;
-          const color = MODEL_COLORS[spec.model] || '#4c50c4';
+          const color = MODEL_COLORS[spec.model] || MODEL_COLORS.M1;
 
           if (preservePositions && prev && prev.type === 'swimlaneGroup') {
             const prevData = prev.data as SwimlaneNodeData;
@@ -886,7 +887,7 @@ function KnowledgeGraphInner({
           (n.id.toLowerCase().includes(searchLower) ||
             n.label.toLowerCase().includes(searchLower));
         const degree = degreeOf(n);
-        const color = MODEL_COLORS[n.model] || '#4c50c4';
+        const color = MODEL_COLORS[n.model] || MODEL_COLORS.M1;
 
         if (preservePositions && prev && prev.type === 'ontologyEntity') {
           const prevData = prev.data as EntityNodeData;
@@ -975,13 +976,13 @@ function KnowledgeGraphInner({
           label: edge.relation,
           labelStyle: {
             fontSize: 10.5,
-            fontFamily: 'var(--mono)',
+            fontFamily: 'var(--font-mono)',
             fill: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
             fontWeight: 600,
           },
           labelBgStyle: {
-            fill: 'var(--surface)',
-            stroke: 'var(--line)',
+            fill: 'var(--card)',
+            stroke: 'var(--border)',
             fillOpacity: 0.92,
           },
           labelBgPadding: [5, 2],
@@ -1055,12 +1056,12 @@ function KnowledgeGraphInner({
         label: isIncident || filterRelation !== 'ALL' ? edge.relation : undefined,
         labelStyle: {
           fontSize: 10.5,
-          fontFamily: 'var(--mono)',
+          fontFamily: 'var(--font-mono)',
           fill: 'var(--primary)',
           fontWeight: 600,
         },
         labelBgStyle: {
-          fill: 'var(--surface)',
+          fill: 'var(--card)',
           stroke: 'var(--primary)',
           fillOpacity: 0.94,
         },
@@ -1092,13 +1093,13 @@ function KnowledgeGraphInner({
         label: b.count > 1 ? `×${b.count}` : b.sampleRel,
         labelStyle: {
           fontSize: 10.5,
-          fontFamily: 'var(--mono)',
+          fontFamily: 'var(--font-mono)',
           fill: 'var(--muted-foreground)',
           fontWeight: 600,
         },
         labelBgStyle: {
-          fill: 'var(--surface-2)',
-          stroke: 'var(--line)',
+          fill: 'var(--muted)',
+          stroke: 'var(--border)',
           fillOpacity: 0.9,
         },
         labelBgPadding: [4, 1.5],
@@ -1451,7 +1452,7 @@ function KnowledgeGraphInner({
               variant={BackgroundVariant.Dots}
               gap={18}
               size={1.15}
-              color="var(--line)"
+              color="var(--border)"
             />
             <MiniMap
               pannable
@@ -1459,18 +1460,18 @@ function KnowledgeGraphInner({
               nodeColor={(n) => {
                 if (n.type === 'swimlaneGroup') {
                   const m = (n.data as SwimlaneNodeData)?.model;
-                  return (m && MODEL_COLORS[m]) || '#6e56cf';
+                  return (m && MODEL_COLORS[m]) || MODEL_COLORS.M5;
                 }
                 const entity = (n.data as EntityNodeData)?.node;
-                return (entity && MODEL_COLORS[entity.model]) || '#4c50c4';
+                return (entity && MODEL_COLORS[entity.model]) || MODEL_COLORS.M1;
               }}
-              maskColor="color-mix(in srgb, var(--ground) 70%, transparent)"
+              maskColor="color-mix(in srgb, var(--background) 70%, transparent)"
               style={{
                 width: 148,
                 height: 96,
                 borderRadius: 8,
-                border: '1px solid var(--line)',
-                background: 'var(--surface-2)',
+                border: '1px solid var(--border)',
+                background: 'var(--muted)',
               }}
             />
           </ReactFlow>
@@ -1610,7 +1611,7 @@ function KnowledgeGraphInner({
                                     borderRadius: 3,
                                     background:
                                       MODEL_COLORS[neighborNode.model] || 'var(--primary)',
-                                    color: '#fff',
+                                    color: 'var(--model-foreground)',
                                     fontSize: 10.5,
                                     flexShrink: 0,
                                   }}
