@@ -111,6 +111,142 @@ export interface CommitSuiteOptions {
   note?: string;
   /** Pre-formatted markdown changelog block to append verbatim. */
   changelogEntry?: string;
+  /**
+   * When true, validates the candidate suite via `OntologySuiteSchema` + `validateOntologySuite`
+   * and throws `SuiteValidationRejectedError` without mutating storage if any new `Consistency Error`
+   * (`tier === 'ERROR'`) is introduced relative to the currently stored suite.
+   */
+  rejectOnNewErrors?: boolean;
+}
+
+export class SuiteValidationRejectedError extends Error {
+  readonly code = 'SUITE_VALIDATION_REJECTED' as const;
+  readonly newErrors: ValidationDiagnostic[];
+  readonly validation: ValidationReport;
+
+  constructor(
+    message: string,
+    newErrors: ValidationDiagnostic[],
+    validation: ValidationReport,
+  ) {
+    super(message);
+    this.name = 'SuiteValidationRejectedError';
+    this.newErrors = newErrors;
+    this.validation = validation;
+  }
+}
+
+export type BusinessModelInlineEditTarget =
+  | {
+      kind: 'BUSINESS_OBJECT';
+      objectId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'FIELD';
+      objectId: string;
+      fieldName: string;
+      ownerKind?: 'AGGREGATE' | 'SUB_ENTITY' | 'VALUE_OBJECT';
+      ownerName?: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'SUB_ENTITY';
+      objectId: string;
+      entityName: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'VALUE_OBJECT';
+      objectId: string;
+      valueObjectName: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'ACTION';
+      actionId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'M3_RULE';
+      ruleId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'INVARIANT';
+      objectId: string;
+      invariantName: string;
+      description?: string;
+    }
+  | {
+      kind: 'ATTRIBUTE_RULE';
+      objectId: string;
+      fieldName: string;
+      ruleName: string;
+      ownerKind?: 'AGGREGATE' | 'SUB_ENTITY' | 'VALUE_OBJECT';
+      ownerName?: string;
+      description?: string;
+    }
+  | {
+      kind: 'EVENT';
+      eventId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'AUTOMATION';
+      scenarioId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'SCREEN';
+      screenId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'INTEGRATION';
+      interfaceId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'FLOW';
+      flowId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'ROLE';
+      roleId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'QUERY_REPORT';
+      reportId: string;
+      name?: string;
+      description?: string;
+    }
+  | {
+      kind: 'DATA_DICTIONARY';
+      dictionaryId: string;
+      name?: string;
+      description?: string;
+    };
+
+export interface BusinessModelIntentSummary {
+  targetLabelZh?: string;
+  targetLabelEn?: string;
+  desiredChangeZh?: string;
+  desiredChangeEn?: string;
 }
 
 export interface SuiteCommitEvent {

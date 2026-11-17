@@ -13,6 +13,7 @@ import {
   MFT_ENTERPRISE_SUITE,
   MODEL_CODES,
   MODEL_FILE_NAMES,
+  OntologySuiteSchema,
   analyzeImpact,
   buildKnowledgeGraph,
   extractMuFromPrototypeHtml,
@@ -27,6 +28,7 @@ import {
   type ExtractionCandidate,
   type ModelCode,
   type OntologySuite,
+  type ValidationDiagnostic,
 } from '../../ontology-core/index.js';
 import { BOOTSTRAP_SQLITE_DDL } from './schema.js';
 import { sanitizeInspoCacheEntry, type InspoCacheEntry } from './inspo-cache.js';
@@ -65,6 +67,7 @@ import {
   SEED_WRITEBACK_INTERFACES,
 } from './seed-data.js';
 import {
+  SuiteValidationRejectedError,
   doesProviderSupportVision,
   resolveCurrentProjectStep,
   type AgentCheckpointRecord,
@@ -2056,8 +2059,62 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     commitSuite(projectId, suite, commitOptions: CommitSuiteOptions): ProjectDetail {
       const current = this.getProject(projectId);
       if (!current) throw new Error(`Project not found: ${projectId}`);
+
+      let effectiveSuite = suite;
+      if (commitOptions.rejectOnNewErrors) {
+        const schemaCheck = OntologySuiteSchema.safeParse(suite);
+        if (!schemaCheck.success) {
+          const schemaErrors: ValidationDiagnostic[] = schemaCheck.error.issues.map(
+            (issue, idx) => {
+              const firstSeg = String(issue.path[0] ?? 'M1');
+              const model: ModelCode = MODEL_CODES.includes(firstSeg as ModelCode)
+                ? (firstSeg as ModelCode)
+                : 'M1';
+              return {
+                id: `SCHEMA-INVALID-${idx}`,
+                tier: 'ERROR',
+                code: 'SCHEMA_INVALID',
+                model,
+                path: issue.path.join('.'),
+                messageZh: `模型结构不符合规范：${issue.message}`,
+                messageEn: `Invalid suite structure: ${issue.message}`,
+              };
+            },
+          );
+          throw new SuiteValidationRejectedError(
+            `Suite rejected: ${schemaErrors.length} schema consistency error(s).`,
+            schemaErrors,
+            {
+              valid: false,
+              errorCount: schemaErrors.length,
+              warningCount: current.validation.warningCount,
+              diagnostics: schemaErrors,
+              presentModels: current.validation.presentModels,
+              missingModels: current.validation.missingModels,
+            },
+          );
+        }
+        effectiveSuite = schemaCheck.data;
+
+        const prevValidation = current.validation;
+        const nextValidation = validateOntologySuite(effectiveSuite);
+        const prevErrorIds = new Set(
+          prevValidation.diagnostics.filter((d) => d.tier === 'ERROR').map((d) => d.id),
+        );
+        const nextErrors = nextValidation.diagnostics.filter((d) => d.tier === 'ERROR');
+        const newErrors = nextErrors.filter((d) => !prevErrorIds.has(d.id));
+        if (newErrors.length > 0 || nextValidation.errorCount > prevValidation.errorCount) {
+          const blocking = newErrors.length > 0 ? newErrors : nextErrors;
+          throw new SuiteValidationRejectedError(
+            `Suite rejected: introduced ${blocking.length} new consistency error(s).`,
+            blocking,
+            nextValidation,
+          );
+        }
+      }
+
       const now = new Date().toISOString();
-      const validation = validateOntologySuite(suite);
+      const validation = validateOntologySuite(effectiveSuite);
       let nextChangelog = current.changelog;
       if (commitOptions.changelogEntry !== undefined) {
         if (commitOptions.changelogEntry) {
@@ -2066,7 +2123,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       } else if (commitOptions.note) {
         nextChangelog = `${current.changelog}\n## [${now}] ${commitOptions.note}\n- Present Models: ${validation.presentModels.join(', ')}\n- Consistency Errors: ${validation.errorCount}, Stage Warnings: ${validation.warningCount}\n`;
       }
-      const suiteJson = JSON.stringify(suite);
+      const suiteJson = JSON.stringify(effectiveSuite);
 
       db.prepare(`
         UPDATE projects
@@ -2081,8 +2138,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         now,
         projectId,
       );
-      syncEaRelations(projectId, suite);
-      mirrorProjectFiles(projectId, current.domain, suite, nextChangelog);
+      syncEaRelations(projectId, effectiveSuite);
+      mirrorProjectFiles(projectId, current.domain, effectiveSuite, nextChangelog);
       const updated = this.getProject(projectId)!;
       options.onSuiteCommit?.({
         projectId,

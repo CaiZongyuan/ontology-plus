@@ -598,4 +598,40 @@ screens:
     expect(extractedReport.diagnostics.filter((d) => d.tier === 'ERROR')).toEqual([]);
     expect(extractedReport.valid).toBe(true);
   });
+
+  it('flags empty or colliding Business Object and Field names/aliases as Consistency Errors', () => {
+    // 1. Renaming AGG-02 alias ("签约相对方") to collide with AGG-01 alias ("合同")
+    const dupAggSuite = cloneSuite(CONTRACT_LIFECYCLE_SUITE);
+    dupAggSuite.M1!.aggregates.find((a) => a.id === 'AGG-02')!.alias = '合同';
+    const dupAggReport = validateOntologySuite(dupAggSuite);
+    expect(dupAggReport.valid).toBe(false);
+    expect(
+      dupAggReport.diagnostics.some(
+        (d) => d.tier === 'ERROR' && d.code === 'M1_DUPLICATE_AGGREGATE_NAME',
+      ),
+    ).toBe(true);
+
+    // 2. Renaming a field label on AGG-01 ("合同名称") to collide with sibling field label ("合同编号")
+    const dupFieldSuite = cloneSuite(CONTRACT_LIFECYCLE_SUITE);
+    dupFieldSuite.M1!.aggregates[0]!.attributes.find((f) => f.name === 'title')!.label = '合同编号';
+    const dupFieldReport = validateOntologySuite(dupFieldSuite);
+    expect(dupFieldReport.valid).toBe(false);
+    expect(
+      dupFieldReport.diagnostics.some(
+        (d) => d.tier === 'ERROR' && d.code === 'M1_DUPLICATE_ATTRIBUTE_NAME',
+      ),
+    ).toBe(true);
+
+    // 3. Clearing an aggregate name/alias to blank
+    const emptyNameSuite = cloneSuite(CONTRACT_LIFECYCLE_SUITE);
+    emptyNameSuite.M1!.aggregates[1]!.name = '';
+    emptyNameSuite.M1!.aggregates[1]!.alias = '';
+    const emptyNameReport = validateOntologySuite(emptyNameSuite);
+    expect(emptyNameReport.valid).toBe(false);
+    expect(
+      emptyNameReport.diagnostics.some(
+        (d) => d.tier === 'ERROR' && d.code === 'M1_EMPTY_AGGREGATE_NAME',
+      ),
+    ).toBe(true);
+  });
 });

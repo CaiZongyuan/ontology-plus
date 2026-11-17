@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -42,7 +42,11 @@ import {
   type TechnicalLocator,
   type ValidationDiagnostic,
 } from '../../packages/ontology-core/index.js';
-import { getProjectLifecycleState, useWorkbenchStore } from '../api.js';
+import {
+  getProjectLifecycleState,
+  useWorkbenchStore,
+  type BusinessModelInlineEditTarget,
+} from '../api.js';
 import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import { usePreferences, type NavViewId } from '../i18n.js';
 import {
@@ -76,6 +80,19 @@ export type BusinessModelPageId =
   | BusinessModelCrossViewId
   | 'view:other';
 
+export interface InlineEditDraftState {
+  readonly slotKey: string;
+  readonly draftValue: string;
+}
+
+export interface InlineRejectionState {
+  readonly slotKey: string;
+  readonly reasonZh: string;
+  readonly reasonEn: string;
+  readonly assistantPromptZh: string;
+  readonly assistantPromptEn: string;
+}
+
 export interface BusinessModelStepViewProps {
   readonly onNavigate?: (view: NavViewId) => void;
   readonly activePageId?: string | null;
@@ -84,6 +101,8 @@ export interface BusinessModelStepViewProps {
   readonly legacyTechTab?: BusinessModelTechTab | null;
   readonly headerActions?: React.ReactNode;
   readonly flashTarget?: { readonly anchorId: string; readonly at: number } | null;
+  readonly initialInlineEditState?: InlineEditDraftState | null;
+  readonly initialRejectionState?: InlineRejectionState | null;
 }
 
 export function resolveBusinessModelPageId(
@@ -431,6 +450,8 @@ export function BusinessModelStepView({
   legacyTechTab: legacyTechTabProp,
   headerActions,
   flashTarget,
+  initialInlineEditState = null,
+  initialRejectionState = null,
 }: BusinessModelStepViewProps = {}) {
   const { locale, t } = usePreferences();
   const businessLocale: BusinessLocale = locale === 'en-US' ? 'en-US' : 'zh-CN';
@@ -442,9 +463,18 @@ export function BusinessModelStepView({
     liveSessionDrafts,
     setActiveItemId,
     setSelectedModel,
+    applyBusinessModelEdit,
     startOntologySynthesisRun,
     startOntologyCopilotRun,
   } = useWorkbenchStore();
+
+  const [activeInlineEdit, setActiveInlineEdit] = useState<InlineEditDraftState | null>(
+    () => initialInlineEditState,
+  );
+  const [savingInlineSlotKey, setSavingInlineSlotKey] = useState<string | null>(null);
+  const [activeRejection, setActiveRejection] = useState<InlineRejectionState | null>(
+    () => initialRejectionState,
+  );
 
   const [storedMode, setStoredMode] = useStepViewMode('BUSINESS_MODEL');
   const inferredLegacyTab =
@@ -490,7 +520,9 @@ export function BusinessModelStepView({
 
   useEffect(() => {
     setInternalPageId(null);
-  }, [project?.id]);
+    setActiveInlineEdit(initialInlineEditState);
+    setActiveRejection(initialRejectionState);
+  }, [project?.id, initialInlineEditState, initialRejectionState]);
 
   const resolvedPageId: BusinessModelPageId = useMemo(() => {
     if (!projection) return 'view:flows';
@@ -500,11 +532,114 @@ export function BusinessModelStepView({
 
   const handleSelectPage = useCallback(
     (nextPageId: BusinessModelPageId) => {
+      setActiveInlineEdit(null);
+      setActiveRejection(null);
       setInternalPageId(nextPageId);
       setActiveItemId(nextPageId);
       onSelectPage?.(nextPageId);
     },
     [setActiveItemId, onSelectPage],
+  );
+
+  const handleStartInlineEdit = useCallback((slotKey: string, initialValue: string) => {
+    setActiveRejection(null);
+    setActiveInlineEdit({ slotKey, draftValue: initialValue });
+  }, []);
+
+  const handleChangeInlineDraft = useCallback((slotKey: string, nextValue: string) => {
+    setActiveInlineEdit((prev) =>
+      prev && prev.slotKey === slotKey ? { ...prev, draftValue: nextValue } : prev,
+    );
+  }, []);
+
+  const handleCancelInlineEdit = useCallback(() => {
+    setActiveInlineEdit(null);
+    setActiveRejection(null);
+  }, []);
+
+  const handleCommitInlineEdit = useCallback(
+    async (
+      slotKey: string,
+      initialValue: string,
+      buildEdit: (nextValue: string) => BusinessModelInlineEditTarget,
+    ) => {
+      const currentDraft =
+        activeInlineEdit?.slotKey === slotKey ? activeInlineEdit.draftValue : initialValue;
+      if (currentDraft.trim() === initialValue.trim() && currentDraft.trim() !== '') {
+        setActiveInlineEdit(null);
+        return;
+      }
+
+      setSavingInlineSlotKey(slotKey);
+      try {
+        const result = await applyBusinessModelEdit({
+          edit: buildEdit(currentDraft),
+        });
+        if (result.ok) {
+          setActiveInlineEdit(null);
+          setActiveRejection(null);
+        } else {
+          setActiveInlineEdit(null);
+          setActiveRejection({
+            slotKey,
+            reasonZh: result.rejection.reasonZh,
+            reasonEn: result.rejection.reasonEn,
+            assistantPromptZh: result.rejection.assistantPromptZh,
+            assistantPromptEn: result.rejection.assistantPromptEn,
+          });
+        }
+      } finally {
+        setSavingInlineSlotKey(null);
+      }
+    },
+    [activeInlineEdit, applyBusinessModelEdit],
+  );
+
+  const handleAskAssistantFromRejection = useCallback(
+    (rejection: InlineRejectionState) => {
+      const prompt =
+        businessLocale === 'en-US'
+          ? rejection.assistantPromptEn || rejection.assistantPromptZh
+          : rejection.assistantPromptZh || rejection.assistantPromptEn;
+      setActiveRejection(null);
+      setActiveInlineEdit(null);
+      const panel = useAgentPanelStore.getState();
+      panel.revealPanel();
+      if (
+        typeof window !== 'undefined' &&
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(max-width: 1279px)').matches
+      ) {
+        panel.setOverlayOpen(true);
+      }
+      if (prompt.trim()) {
+        void startOntologyCopilotRun(prompt);
+      }
+    },
+    [businessLocale, startOntologyCopilotRun],
+  );
+
+  const inlineEditCtx = useMemo<InlineEditContextValue>(
+    () => ({
+      activeEdit: activeInlineEdit,
+      savingSlotKey: savingInlineSlotKey,
+      activeRejection,
+      onStartEdit: handleStartInlineEdit,
+      onChangeDraft: handleChangeInlineDraft,
+      onCancel: handleCancelInlineEdit,
+      onCommit: handleCommitInlineEdit,
+      onAskAssistant: handleAskAssistantFromRejection,
+    }),
+    [
+      activeInlineEdit,
+      savingInlineSlotKey,
+      activeRejection,
+      handleStartInlineEdit,
+      handleChangeInlineDraft,
+      handleCancelInlineEdit,
+      handleCommitInlineEdit,
+      handleAskAssistantFromRejection,
+    ],
   );
 
   const handleOpenTechnicalDetails = useCallback(
@@ -914,51 +1049,295 @@ export function BusinessModelStepView({
           )}
         </nav>
 
-        <div className="bm-page-scroller">
-          {activeObject ? (
-            <BusinessObjectPage
-              key={activeObject.id}
-              object={activeObject}
-              businessLocale={businessLocale}
-              humanize={humanize}
-              onSelectObject={(objId) => handleSelectPage(objId)}
-              onOpenTechnicalDetails={handleOpenTechnicalDetails}
-              flashTarget={flashTarget ?? null}
-            />
-          ) : resolvedPageId === 'view:flows' ? (
-            <FlowsCrossView
-              projection={projection}
-              humanize={humanize}
-              onOpenTechnicalDetails={handleOpenTechnicalDetails}
-            />
-          ) : resolvedPageId === 'view:roles' ? (
-            <RolesCrossView
-              projection={projection}
-              humanize={humanize}
-              onOpenTechnicalDetails={handleOpenTechnicalDetails}
-            />
-          ) : resolvedPageId === 'view:reports' ? (
-            <ReportsCrossView
-              projection={projection}
-              humanize={humanize}
-              onSelectObject={(objId) => handleSelectPage(objId)}
-              onOpenTechnicalDetails={handleOpenTechnicalDetails}
-            />
-          ) : (
-            <OtherFallbackView
-              items={projection.other}
-              businessLocale={businessLocale}
-              humanize={humanize}
-              onOpenTechnicalDetails={handleOpenTechnicalDetails}
-            />
-          )}
-        </div>
+        <InlineEditContext.Provider value={inlineEditCtx}>
+          <div className="bm-page-scroller">
+            {activeObject ? (
+              <BusinessObjectPage
+                key={activeObject.id}
+                object={activeObject}
+                businessLocale={businessLocale}
+                humanize={humanize}
+                onSelectObject={(objId) => handleSelectPage(objId)}
+                onOpenTechnicalDetails={handleOpenTechnicalDetails}
+                flashTarget={flashTarget ?? null}
+              />
+            ) : resolvedPageId === 'view:flows' ? (
+              <FlowsCrossView
+                projection={projection}
+                humanize={humanize}
+                onOpenTechnicalDetails={handleOpenTechnicalDetails}
+              />
+            ) : resolvedPageId === 'view:roles' ? (
+              <RolesCrossView
+                projection={projection}
+                humanize={humanize}
+                onOpenTechnicalDetails={handleOpenTechnicalDetails}
+              />
+            ) : resolvedPageId === 'view:reports' ? (
+              <ReportsCrossView
+                projection={projection}
+                humanize={humanize}
+                onSelectObject={(objId) => handleSelectPage(objId)}
+                onOpenTechnicalDetails={handleOpenTechnicalDetails}
+              />
+            ) : (
+              <OtherFallbackView
+                items={projection.other}
+                businessLocale={businessLocale}
+                humanize={humanize}
+                onOpenTechnicalDetails={handleOpenTechnicalDetails}
+              />
+            )}
+          </div>
+        </InlineEditContext.Provider>
       </div>
     </div>
   );
 }
 
 /* ─── Shared Internal Building Blocks ─── */
+
+interface InlineEditContextValue {
+  readonly activeEdit: InlineEditDraftState | null;
+  readonly savingSlotKey: string | null;
+  readonly activeRejection: InlineRejectionState | null;
+  readonly onStartEdit: (slotKey: string, initialValue: string) => void;
+  readonly onChangeDraft: (slotKey: string, nextValue: string) => void;
+  readonly onCancel: () => void;
+  readonly onCommit: (
+    slotKey: string,
+    initialValue: string,
+    buildEdit: (nextValue: string) => BusinessModelInlineEditTarget,
+  ) => Promise<void>;
+  readonly onAskAssistant: (rejection: InlineRejectionState) => void;
+}
+
+const InlineEditContext = createContext<InlineEditContextValue>({
+  activeEdit: null,
+  savingSlotKey: null,
+  activeRejection: null,
+  onStartEdit: () => undefined,
+  onChangeDraft: () => undefined,
+  onCancel: () => undefined,
+  onCommit: async () => undefined,
+  onAskAssistant: () => undefined,
+});
+
+function InlineEditableText({
+  slotKey,
+  displayValue,
+  initialEditValue,
+  placeholder,
+  ariaLabel,
+  multiline = false,
+  isPlaceholder = false,
+  buildEdit,
+}: {
+  slotKey: string;
+  displayValue: string;
+  initialEditValue: string;
+  placeholder: string;
+  ariaLabel: string;
+  multiline?: boolean;
+  isPlaceholder?: boolean;
+  buildEdit: (nextValue: string) => BusinessModelInlineEditTarget;
+}) {
+  const { t } = usePreferences();
+  const ctx = useContext(InlineEditContext);
+  const isEditing = ctx.activeEdit?.slotKey === slotKey;
+  const isSaving = ctx.savingSlotKey === slotKey;
+
+  if (isEditing) {
+    const draft = ctx.activeEdit?.draftValue ?? initialEditValue;
+    const submit = () => {
+      void ctx.onCommit(slotKey, initialEditValue, buildEdit);
+    };
+    return (
+      <span
+        className={`bm-inline-editor${multiline ? ' is-block' : ''}`}
+        data-testid="business-inline-editor"
+      >
+        {multiline ? (
+          <textarea
+            className="bm-inline-input"
+            data-testid="business-inline-input"
+            aria-label={ariaLabel}
+            placeholder={placeholder}
+            rows={2}
+            autoFocus
+            disabled={isSaving}
+            value={draft}
+            onChange={(e) => ctx.onChangeDraft(slotKey, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                ctx.onCancel();
+              } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+          />
+        ) : (
+          <input
+            type="text"
+            className="bm-inline-input"
+            data-testid="business-inline-input"
+            aria-label={ariaLabel}
+            placeholder={placeholder}
+            autoFocus
+            disabled={isSaving}
+            value={draft}
+            onChange={(e) => ctx.onChangeDraft(slotKey, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                ctx.onCancel();
+              } else if (e.key === 'Enter') {
+                e.preventDefault();
+                submit();
+              }
+            }}
+          />
+        )}
+        <button
+          type="button"
+          className="bm-inline-save-btn"
+          data-testid="business-inline-save-btn"
+          disabled={isSaving}
+          onClick={submit}
+        >
+          <span>{t('保存', 'Save')}</span>
+        </button>
+        <button
+          type="button"
+          className="bm-inline-cancel-btn"
+          data-testid="business-inline-cancel-btn"
+          disabled={isSaving}
+          onClick={ctx.onCancel}
+        >
+          <span>{t('取消', 'Cancel')}</span>
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      className={isPlaceholder ? 'bm-editable-placeholder' : 'bm-editable'}
+      data-testid={`inline-edit-trigger-${slotKey}`}
+      aria-label={ariaLabel}
+      onClick={(e) => {
+        e.stopPropagation();
+        ctx.onStartEdit(slotKey, initialEditValue);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          ctx.onStartEdit(slotKey, initialEditValue);
+        }
+      }}
+    >
+      {displayValue}
+    </span>
+  );
+}
+
+function InlineOptionalDescription({
+  slotKey,
+  value,
+  itemTitle,
+  leadingSeparator = ' · ',
+  emptySeparator = ' ',
+  buildEdit,
+}: {
+  slotKey: string;
+  value: string;
+  itemTitle: string;
+  leadingSeparator?: string;
+  emptySeparator?: string;
+  buildEdit: (nextDesc: string) => BusinessModelInlineEditTarget;
+}) {
+  const { t } = usePreferences();
+  const placeholder = t('输入说明', 'Enter description');
+
+  if (value) {
+    return (
+      <>
+        {leadingSeparator}
+        <InlineEditableText
+          slotKey={slotKey}
+          displayValue={value}
+          initialEditValue={value}
+          placeholder={placeholder}
+          ariaLabel={t(`修改说明：${itemTitle}`, `Edit description: ${itemTitle}`)}
+          buildEdit={buildEdit}
+        />
+      </>
+    );
+  }
+
+  return (
+    <>
+      {emptySeparator}
+      <InlineEditableText
+        slotKey={slotKey}
+        displayValue={t('添加说明', 'Add description')}
+        initialEditValue=""
+        placeholder={placeholder}
+        ariaLabel={t(`添加说明：${itemTitle}`, `Add description: ${itemTitle}`)}
+        isPlaceholder
+        buildEdit={buildEdit}
+      />
+    </>
+  );
+}
+
+function InlineRejectionSlot({ slotKeys }: { slotKeys: readonly string[] }) {
+  const { locale, t } = usePreferences();
+  const ctx = useContext(InlineEditContext);
+  const rejection = ctx.activeRejection;
+  if (!rejection || !slotKeys.includes(rejection.slotKey)) {
+    return null;
+  }
+
+  const reason = locale === 'en-US' ? rejection.reasonEn : rejection.reasonZh;
+  return (
+    <div
+      className="bm-reject-banner"
+      data-testid="business-edit-rejected-banner"
+      role="status"
+      aria-live="polite"
+    >
+      <p className="bm-reject-reason">
+        <TriangleAlert size={14} aria-hidden="true" />
+        <span>{reason}</span>
+      </p>
+      <div className="bm-reject-actions">
+        <button
+          type="button"
+          className="bm-reject-assist-btn"
+          data-testid="business-edit-ask-assistant-btn"
+          onClick={() => ctx.onAskAssistant(rejection)}
+        >
+          <Sparkles size={12} aria-hidden="true" />
+          <span>{t('让 AI 助手处理', 'Let AI Assistant handle it')}</span>
+        </button>
+        <button
+          type="button"
+          className="bm-inline-cancel-btn"
+          data-testid="business-edit-cancel-btn"
+          onClick={ctx.onCancel}
+        >
+          <span>{t('取消', 'Cancel')}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function ItemTechButton({
   itemId,
@@ -1087,7 +1466,18 @@ function BusinessObjectPage({
       >
         <div className="bm-article-title-row">
           <h2 className="bm-article-title" data-testid="business-object-title">
-            {objectTitle}
+            <InlineEditableText
+              slotKey={`object-name-${object.id}`}
+              displayValue={objectTitle}
+              initialEditValue={objectTitle}
+              placeholder={t('输入业务对象名称', 'Enter business object name')}
+              ariaLabel={t(`修改业务对象名称：${objectTitle}`, `Edit business object name: ${objectTitle}`)}
+              buildEdit={(nextName) => ({
+                kind: 'BUSINESS_OBJECT',
+                objectId: object.id,
+                name: nextName,
+              })}
+            />
           </h2>
           <button
             type="button"
@@ -1104,9 +1494,24 @@ function BusinessObjectPage({
             </span>
           </button>
         </div>
-        <p className="bm-article-desc" data-testid="business-object-description">
-          {objectDesc}
-        </p>
+        <div className="bm-article-desc" data-testid="business-object-description">
+          <InlineEditableText
+            slotKey={`object-desc-${object.id}`}
+            displayValue={objectDesc}
+            initialEditValue={humanize(object.description)}
+            placeholder={t('输入业务对象的职责说明', 'Describe what this business object holds')}
+            ariaLabel={t(`修改业务对象说明：${objectTitle}`, `Edit description for ${objectTitle}`)}
+            multiline
+            buildEdit={(nextDesc) => ({
+              kind: 'BUSINESS_OBJECT',
+              objectId: object.id,
+              description: nextDesc,
+            })}
+          />
+        </div>
+        <InlineRejectionSlot
+          slotKeys={[`object-name-${object.id}`, `object-desc-${object.id}`]}
+        />
         {object.lifecycle.length > 0 && (
           <div className="bm-lifecycle-row">
             <span>{t('流转状态：', 'States:')}</span>
@@ -1143,6 +1548,7 @@ function BusinessObjectPage({
                 {object.fields.map((field) => (
                   <FieldRow
                     key={field.id}
+                    objectId={object.id}
                     field={field}
                     businessLocale={businessLocale}
                     humanize={humanize}
@@ -1153,16 +1559,46 @@ function BusinessObjectPage({
                   const subFieldNames = se.fields
                     .map((f) => humanize(f.displayName))
                     .join(listSep);
+                  const seTitle = humanize(se.displayName);
                   const seDesc = humanize(se.description);
+                  const nameSlot = `subentity-name-${object.id}-${se.name}`;
+                  const descSlot = `subentity-desc-${object.id}-${se.name}`;
                   return (
                     <tr key={se.id}>
-                      <td className="bm-cell-name">{humanize(se.displayName)}</td>
+                      <td className="bm-cell-name">
+                        <InlineEditableText
+                          slotKey={nameSlot}
+                          displayValue={seTitle}
+                          initialEditValue={seTitle}
+                          placeholder={t('输入明细列表名称', 'Enter detail list name')}
+                          ariaLabel={t(`修改名称：${seTitle}`, `Rename: ${seTitle}`)}
+                          buildEdit={(nextName) => ({
+                            kind: 'SUB_ENTITY',
+                            objectId: object.id,
+                            entityName: se.name,
+                            name: nextName,
+                          })}
+                        />
+                      </td>
                       <td className="bm-cell-kind">{t('明细列表', 'Detail items')}</td>
                       <td className="bm-cell-note">
                         {subFieldNames
                           ? t(`包含：${subFieldNames}`, `Includes: ${subFieldNames}`)
                           : ''}
-                        {seDesc ? (subFieldNames ? ` · ${seDesc}` : seDesc) : ''}
+                        <InlineOptionalDescription
+                          slotKey={descSlot}
+                          value={seDesc}
+                          itemTitle={seTitle}
+                          leadingSeparator={subFieldNames ? ' · ' : ''}
+                          emptySeparator={subFieldNames ? ' ' : ''}
+                          buildEdit={(nextDesc) => ({
+                            kind: 'SUB_ENTITY',
+                            objectId: object.id,
+                            entityName: se.name,
+                            description: nextDesc,
+                          })}
+                        />
+                        <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
                       </td>
                     </tr>
                   );
@@ -1171,14 +1607,51 @@ function BusinessObjectPage({
                   const voFieldNames = vo.fields
                     .map((f) => humanize(f.displayName))
                     .join(listSep);
+                  const voTitle = humanize(vo.displayName);
+                  const voDesc = humanize(vo.description);
+                  const nameSlot = `vo-name-${object.id}-${vo.name}`;
+                  const descSlot = `vo-desc-${object.id}-${vo.name}`;
                   return (
                     <tr key={vo.id}>
-                      <td className="bm-cell-name">{humanize(vo.displayName)}</td>
+                      <td className="bm-cell-name">
+                        <InlineEditableText
+                          slotKey={nameSlot}
+                          displayValue={voTitle}
+                          initialEditValue={voTitle}
+                          placeholder={t('输入组合信息名称', 'Enter grouped info name')}
+                          ariaLabel={t(`修改名称：${voTitle}`, `Rename: ${voTitle}`)}
+                          buildEdit={(nextName) => ({
+                            kind: 'VALUE_OBJECT',
+                            objectId: object.id,
+                            valueObjectName: vo.name,
+                            name: nextName,
+                          })}
+                        />
+                      </td>
                       <td className="bm-cell-kind">{t('组合信息', 'Grouped info')}</td>
                       <td className="bm-cell-note">
                         {voFieldNames
                           ? t(`包含：${voFieldNames}`, `Includes: ${voFieldNames}`)
-                          : humanize(vo.description)}
+                          : ''}
+                        {voDesc ? (
+                          <>
+                            {voFieldNames ? ' · ' : ''}
+                            <InlineEditableText
+                              slotKey={descSlot}
+                              displayValue={voDesc}
+                              initialEditValue={voDesc}
+                              placeholder={t('输入说明', 'Enter description')}
+                              ariaLabel={t(`修改说明：${voTitle}`, `Edit description: ${voTitle}`)}
+                              buildEdit={(nextDesc) => ({
+                                kind: 'VALUE_OBJECT',
+                                objectId: object.id,
+                                valueObjectName: vo.name,
+                                description: nextDesc,
+                              })}
+                            />
+                          </>
+                        ) : null}
+                        <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
                       </td>
                     </tr>
                   );
@@ -1215,14 +1688,41 @@ function BusinessObjectPage({
               {object.actions.map((act) => {
                 const actTitle = humanize(act.displayName);
                 const actDesc = humanize(act.description);
+                const defaultActDesc = act.isAutomatic
+                  ? t('由系统自动执行', 'Triggered automatically')
+                  : t('人工发起的业务操作', 'User-initiated action');
+                const nameSlot = `action-name-${act.id}`;
+                const descSlot = `action-desc-${act.id}`;
                 return (
                   <li key={act.id}>
-                    <span className="bm-item-name">{actTitle}</span>
+                    <span className="bm-item-name">
+                      <InlineEditableText
+                        slotKey={nameSlot}
+                        displayValue={actTitle}
+                        initialEditValue={actTitle}
+                        placeholder={t('输入业务操作名称', 'Enter action name')}
+                        ariaLabel={t(`修改业务操作名称：${actTitle}`, `Rename action: ${actTitle}`)}
+                        buildEdit={(nextName) => ({
+                          kind: 'ACTION',
+                          actionId: act.id,
+                          name: nextName,
+                        })}
+                      />
+                    </span>
                     <span className="bm-item-note">
-                      {actDesc ||
-                        (act.isAutomatic
-                          ? t('由系统自动执行', 'Triggered automatically')
-                          : t('人工发起的业务操作', 'User-initiated action'))}
+                      <InlineEditableText
+                        slotKey={descSlot}
+                        displayValue={actDesc || defaultActDesc}
+                        initialEditValue={actDesc}
+                        placeholder={t('输入业务操作说明', 'Describe what this action does')}
+                        ariaLabel={t(`修改业务操作说明：${actTitle}`, `Edit action description: ${actTitle}`)}
+                        buildEdit={(nextDesc) => ({
+                          kind: 'ACTION',
+                          actionId: act.id,
+                          description: nextDesc,
+                        })}
+                      />
+                      <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
                     </span>
                     <ItemTechButton
                       itemId={act.id}
@@ -1354,24 +1854,55 @@ function BusinessObjectPage({
         emptyText={t('暂无业务事件。', 'No business events yet.')}
       >
         <ul className="bm-list">
-          {object.events.map((ev) => (
-            <li key={ev.id}>
-              <span className="bm-item-name">{humanize(ev.displayName)}</span>
-              <span className="bm-item-note">
-                {ev.relation === 'SUBSCRIBED'
-                  ? t('响应此事件', 'Responds to this event')
-                  : ev.relation === 'BOTH'
-                    ? t('发出并响应此事件', 'Produces and responds to this event')
-                    : t('操作完成后发出', 'Emitted after action')}
-                {ev.description ? ` · ${humanize(ev.description)}` : ''}
-              </span>
-              <ItemTechButton
-                itemId={ev.id}
-                locator={ev.locator}
-                onOpenTechnicalDetails={onOpenTechnicalDetails}
-              />
-            </li>
-          ))}
+          {object.events.map((ev) => {
+            const evTitle = humanize(ev.displayName);
+            const evDesc = humanize(ev.description);
+            const nameSlot = `event-name-${ev.id}`;
+            const descSlot = `event-desc-${ev.id}`;
+            const relText =
+              ev.relation === 'SUBSCRIBED'
+                ? t('响应此事件', 'Responds to this event')
+                : ev.relation === 'BOTH'
+                  ? t('发出并响应此事件', 'Produces and responds to this event')
+                  : t('操作完成后发出', 'Emitted after action');
+            return (
+              <li key={ev.id}>
+                <span className="bm-item-name">
+                  <InlineEditableText
+                    slotKey={nameSlot}
+                    displayValue={evTitle}
+                    initialEditValue={evTitle}
+                    placeholder={t('输入业务事件名称', 'Enter business event name')}
+                    ariaLabel={t(`修改业务事件名称：${evTitle}`, `Rename business event: ${evTitle}`)}
+                    buildEdit={(nextName) => ({
+                      kind: 'EVENT',
+                      eventId: ev.id,
+                      name: nextName,
+                    })}
+                  />
+                </span>
+                <span className="bm-item-note">
+                  {relText}
+                  <InlineOptionalDescription
+                    slotKey={descSlot}
+                    value={evDesc}
+                    itemTitle={evTitle}
+                    buildEdit={(nextDesc) => ({
+                      kind: 'EVENT',
+                      eventId: ev.id,
+                      description: nextDesc,
+                    })}
+                  />
+                  <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
+                </span>
+                <ItemTechButton
+                  itemId={ev.id}
+                  locator={ev.locator}
+                  onOpenTechnicalDetails={onOpenTechnicalDetails}
+                />
+              </li>
+            );
+          })}
         </ul>
       </CollapsedSection>
 
@@ -1386,20 +1917,52 @@ function BusinessObjectPage({
         emptyText={t('暂无自动联动。', 'No automations yet.')}
       >
         <ul className="bm-list">
-          {object.automations.map((au) => (
-            <li key={au.id}>
-              <span className="bm-item-name">{humanize(au.displayName)}</span>
-              <span className="bm-item-note">
-                {humanize(au.description) ||
-                  t('跨业务对象的自动协同动作', 'Cross-object automated workflow')}
-              </span>
-              <ItemTechButton
-                itemId={au.id}
-                locator={au.locator}
-                onOpenTechnicalDetails={onOpenTechnicalDetails}
-              />
-            </li>
-          ))}
+          {object.automations.map((au) => {
+            const auTitle = humanize(au.displayName);
+            const auDesc = humanize(au.description);
+            const nameSlot = `automation-name-${au.id}`;
+            const descSlot = `automation-desc-${au.id}`;
+            return (
+              <li key={au.id}>
+                <span className="bm-item-name">
+                  <InlineEditableText
+                    slotKey={nameSlot}
+                    displayValue={auTitle}
+                    initialEditValue={auTitle}
+                    placeholder={t('输入自动联动名称', 'Enter automation name')}
+                    ariaLabel={t(`修改自动联动名称：${auTitle}`, `Rename automation: ${auTitle}`)}
+                    buildEdit={(nextName) => ({
+                      kind: 'AUTOMATION',
+                      scenarioId: au.id,
+                      name: nextName,
+                    })}
+                  />
+                </span>
+                <span className="bm-item-note">
+                  <InlineEditableText
+                    slotKey={descSlot}
+                    displayValue={
+                      auDesc || t('跨业务对象的自动协同动作', 'Cross-object automated workflow')
+                    }
+                    initialEditValue={auDesc}
+                    placeholder={t('输入自动联动说明', 'Enter automation description')}
+                    ariaLabel={t(`修改自动联动说明：${auTitle}`, `Edit automation description: ${auTitle}`)}
+                    buildEdit={(nextDesc) => ({
+                      kind: 'AUTOMATION',
+                      scenarioId: au.id,
+                      description: nextDesc,
+                    })}
+                  />
+                  <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
+                </span>
+                <ItemTechButton
+                  itemId={au.id}
+                  locator={au.locator}
+                  onOpenTechnicalDetails={onOpenTechnicalDetails}
+                />
+              </li>
+            );
+          })}
         </ul>
       </CollapsedSection>
 
@@ -1419,12 +1982,39 @@ function BusinessObjectPage({
             const typeText = typeSpec
               ? pickBusinessText(typeSpec, businessLocale)
               : t('业务界面', 'Screen');
+            const scTitle = humanize(sc.displayName);
             const desc = humanize(sc.description);
+            const nameSlot = `screen-name-${sc.id}`;
+            const descSlot = `screen-desc-${sc.id}`;
             return (
               <li key={sc.id}>
-                <span className="bm-item-name">{humanize(sc.displayName)}</span>
+                <span className="bm-item-name">
+                  <InlineEditableText
+                    slotKey={nameSlot}
+                    displayValue={scTitle}
+                    initialEditValue={scTitle}
+                    placeholder={t('输入界面名称', 'Enter screen name')}
+                    ariaLabel={t(`修改界面名称：${scTitle}`, `Rename screen: ${scTitle}`)}
+                    buildEdit={(nextName) => ({
+                      kind: 'SCREEN',
+                      screenId: sc.screenId,
+                      name: nextName,
+                    })}
+                  />
+                </span>
                 <span className="bm-item-note">
-                  {desc ? `${typeText} · ${desc}` : typeText}
+                  {typeText}
+                  <InlineOptionalDescription
+                    slotKey={descSlot}
+                    value={desc}
+                    itemTitle={scTitle}
+                    buildEdit={(nextDesc) => ({
+                      kind: 'SCREEN',
+                      screenId: sc.screenId,
+                      description: nextDesc,
+                    })}
+                  />
+                  <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
                 </span>
                 <ItemTechButton
                   itemId={sc.id}
@@ -1453,12 +2043,39 @@ function BusinessObjectPage({
               it.direction === 'DEPENDENT'
                 ? t('调用外部系统', 'Calls external system')
                 : t('对外提供能力', 'Provided to external callers');
+            const itTitle = humanize(it.displayName);
             const desc = humanize(it.description);
+            const nameSlot = `integration-name-${it.id}`;
+            const descSlot = `integration-desc-${it.id}`;
             return (
               <li key={it.id}>
-                <span className="bm-item-name">{humanize(it.displayName)}</span>
+                <span className="bm-item-name">
+                  <InlineEditableText
+                    slotKey={nameSlot}
+                    displayValue={itTitle}
+                    initialEditValue={itTitle}
+                    placeholder={t('输入对外接口名称', 'Enter integration name')}
+                    ariaLabel={t(`修改对外接口名称：${itTitle}`, `Rename integration: ${itTitle}`)}
+                    buildEdit={(nextName) => ({
+                      kind: 'INTEGRATION',
+                      interfaceId: it.interfaceId,
+                      name: nextName,
+                    })}
+                  />
+                </span>
                 <span className="bm-item-note">
-                  {desc ? `${dirLabel} · ${desc}` : dirLabel}
+                  {dirLabel}
+                  <InlineOptionalDescription
+                    slotKey={descSlot}
+                    value={desc}
+                    itemTitle={itTitle}
+                    buildEdit={(nextDesc) => ({
+                      kind: 'INTEGRATION',
+                      interfaceId: it.interfaceId,
+                      description: nextDesc,
+                    })}
+                  />
+                  <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
                 </span>
                 <ItemTechButton
                   itemId={it.id}
@@ -1505,11 +2122,13 @@ function BusinessObjectPage({
 }
 
 function FieldRow({
+  objectId,
   field,
   businessLocale,
   humanize,
   onSelectObject,
 }: {
+  objectId: string;
   field: ProjectedField;
   businessLocale: BusinessLocale;
   humanize: (raw: string | undefined) => string;
@@ -1522,32 +2141,53 @@ function FieldRow({
     businessLocale,
   );
 
-  const noteParts: string[] = [];
-  if (field.required) noteParts.push(t('必填', 'Required'));
-  if (field.unique) noteParts.push(t('唯一', 'Unique'));
+  const metaParts: string[] = [];
+  if (field.required) metaParts.push(t('必填', 'Required'));
+  if (field.unique) metaParts.push(t('唯一', 'Unique'));
   if (field.dictionary && field.dictionary.items.length > 0) {
     const opts = field.dictionary.items.map((item) => humanize(item.label)).join(listSep);
-    noteParts.push(t(`可选：${opts}`, `Options: ${opts}`));
+    metaParts.push(t(`可选：${opts}`, `Options: ${opts}`));
   } else if (field.enumValues && field.enumValues.length > 0) {
     const opts = field.enumValues
       .map((val) => formatLifecycleState(val, businessLocale))
       .join(listSep);
-    noteParts.push(t(`可选：${opts}`, `Options: ${opts}`));
+    metaParts.push(t(`可选：${opts}`, `Options: ${opts}`));
   }
   if (field.valueObject && field.valueObject.fields.length > 0) {
     const subFields = field.valueObject.fields
       .map((vf) => humanize(vf.displayName))
       .join(listSep);
-    noteParts.push(t(`包含：${subFields}`, `Includes: ${subFields}`));
+    metaParts.push(t(`包含：${subFields}`, `Includes: ${subFields}`));
   }
-  if (field.description) {
-    const cleanDesc = humanize(field.description);
-    if (cleanDesc) noteParts.push(cleanDesc);
-  }
+
+  const fieldTitle = humanize(field.displayName);
+  const cleanDesc = humanize(field.description);
+  const ownerPrefix =
+    field.ownerKind === 'AGGREGATE' ? objectId : `${objectId}-${field.ownerName}`;
+  const nameSlot = `field-name-${ownerPrefix}-${field.name}`;
+  const descSlot = `field-desc-${ownerPrefix}-${field.name}`;
+
+  const hasPrefixContent = Boolean(field.targetObject) || metaParts.length > 0;
 
   return (
     <tr>
-      <td className="bm-cell-name">{humanize(field.displayName)}</td>
+      <td className="bm-cell-name">
+        <InlineEditableText
+          slotKey={nameSlot}
+          displayValue={fieldTitle}
+          initialEditValue={fieldTitle}
+          placeholder={t('输入字段名称', 'Enter field name')}
+          ariaLabel={t(`修改字段名称：${fieldTitle}`, `Rename field: ${fieldTitle}`)}
+          buildEdit={(nextName) => ({
+            kind: 'FIELD',
+            objectId,
+            fieldName: field.name,
+            ownerKind: field.ownerKind,
+            ownerName: field.ownerName,
+            name: nextName,
+          })}
+        />
+      </td>
       <td className="bm-cell-kind">{kindLabel}</td>
       <td className="bm-cell-note">
         {field.targetObject && (
@@ -1562,10 +2202,26 @@ function FieldRow({
                 `Links to "${humanize(field.targetObject.displayName)}"`,
               )}
             </button>
-            {noteParts.length > 0 ? ' · ' : ''}
+            {metaParts.length > 0 ? ' · ' : ''}
           </>
         )}
-        {noteParts.join(' · ')}
+        {metaParts.join(' · ')}
+        <InlineOptionalDescription
+          slotKey={descSlot}
+          value={cleanDesc}
+          itemTitle={fieldTitle}
+          leadingSeparator={hasPrefixContent ? ' · ' : ''}
+          emptySeparator={hasPrefixContent ? ' ' : ''}
+          buildEdit={(nextDesc) => ({
+            kind: 'FIELD',
+            objectId,
+            fieldName: field.name,
+            ownerKind: field.ownerKind,
+            ownerName: field.ownerName,
+            description: nextDesc,
+          })}
+        />
+        <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
       </td>
     </tr>
   );
@@ -1586,29 +2242,119 @@ function BusinessRuleRow({
 }) {
   const { t } = usePreferences();
 
-  const title =
-    rule.kind === 'ATTRIBUTE_RULE'
-      ? `${humanize(rule.fieldDisplayName)}：${humanize(rule.violationMessage || rule.description)}`
-      : rule.kind === 'INVARIANT'
-        ? humanize(rule.violationMessage || rule.description)
-        : humanize(rule.displayName);
-
-  const detail =
-    rule.kind === 'M3_RULE'
-      ? humanize(rule.description || rule.violationMessage)
-      : '';
-
   const otherObjects =
     rule.kind === 'M3_RULE' && rule.isCrossObject
       ? rule.relatedObjects.filter((obj) => obj.id !== currentObjectId)
       : [];
 
+  const nameSlot = `rule-name-${rule.id}`;
+  const descSlot = `rule-desc-${rule.id}`;
+
   return (
     <li className="bm-rule-row">
       <div className="bm-rule-top">
         <div data-testid={`business-rule-text-${rule.id}`}>
-          <span className="bm-item-name">{title}</span>
-          {detail && <span className="bm-item-note"> — {detail}</span>}
+          {rule.kind === 'ATTRIBUTE_RULE' ? (
+            <span className="bm-item-name">
+              {humanize(rule.fieldDisplayName)}：
+              <InlineEditableText
+                slotKey={nameSlot}
+                displayValue={humanize(rule.violationMessage || rule.description)}
+                initialEditValue={humanize(rule.violationMessage || rule.description)}
+                placeholder={t('输入字段规则说明', 'Enter field rule text')}
+                ariaLabel={t(
+                  `修改规则说明：${humanize(rule.fieldDisplayName)}`,
+                  `Edit rule for ${humanize(rule.fieldDisplayName)}`,
+                )}
+                buildEdit={(nextText) => ({
+                  kind: 'ATTRIBUTE_RULE',
+                  objectId: currentObjectId,
+                  fieldName: rule.fieldName,
+                  ruleName: rule.name,
+                  description: nextText,
+                })}
+              />
+            </span>
+          ) : rule.kind === 'INVARIANT' ? (
+            <span className="bm-item-name">
+              <InlineEditableText
+                slotKey={nameSlot}
+                displayValue={humanize(rule.violationMessage || rule.description)}
+                initialEditValue={humanize(rule.violationMessage || rule.description)}
+                placeholder={t('输入业务规则说明', 'Enter business rule text')}
+                ariaLabel={t(
+                  `修改业务规则：${humanize(rule.violationMessage || rule.description)}`,
+                  `Edit business rule: ${humanize(rule.violationMessage || rule.description)}`,
+                )}
+                buildEdit={(nextText) => ({
+                  kind: 'INVARIANT',
+                  objectId: currentObjectId,
+                  invariantName: rule.name,
+                  description: nextText,
+                })}
+              />
+            </span>
+          ) : (
+            <>
+              <span className="bm-item-name">
+                <InlineEditableText
+                  slotKey={nameSlot}
+                  displayValue={humanize(rule.displayName)}
+                  initialEditValue={humanize(rule.displayName)}
+                  placeholder={t('输入业务规则名称', 'Enter business rule name')}
+                  ariaLabel={t(
+                    `修改业务规则名称：${humanize(rule.displayName)}`,
+                    `Rename business rule: ${humanize(rule.displayName)}`,
+                  )}
+                  buildEdit={(nextName) => ({
+                    kind: 'M3_RULE',
+                    ruleId: rule.id,
+                    name: nextName,
+                  })}
+                />
+              </span>
+              {humanize(rule.description || rule.violationMessage) ? (
+                <span className="bm-item-note">
+                  {' — '}
+                  <InlineEditableText
+                    slotKey={descSlot}
+                    displayValue={humanize(rule.description || rule.violationMessage)}
+                    initialEditValue={humanize(rule.description || rule.violationMessage)}
+                    placeholder={t('输入业务规则说明', 'Enter business rule description')}
+                    ariaLabel={t(
+                      `修改业务规则说明：${humanize(rule.displayName)}`,
+                      `Edit rule description: ${humanize(rule.displayName)}`,
+                    )}
+                    buildEdit={(nextDesc) => ({
+                      kind: 'M3_RULE',
+                      ruleId: rule.id,
+                      description: nextDesc,
+                    })}
+                  />
+                </span>
+              ) : (
+                <>
+                  {' '}
+                  <InlineEditableText
+                    slotKey={descSlot}
+                    displayValue={t('添加说明', 'Add description')}
+                    initialEditValue=""
+                    placeholder={t('输入业务规则说明', 'Enter business rule description')}
+                    ariaLabel={t(
+                      `添加业务规则说明：${humanize(rule.displayName)}`,
+                      `Add rule description: ${humanize(rule.displayName)}`,
+                    )}
+                    isPlaceholder
+                    buildEdit={(nextDesc) => ({
+                      kind: 'M3_RULE',
+                      ruleId: rule.id,
+                      description: nextDesc,
+                    })}
+                  />
+                </>
+              )}
+            </>
+          )}
         </div>
         <ItemTechButton
           itemId={rule.id}
@@ -1616,6 +2362,7 @@ function BusinessRuleRow({
           onOpenTechnicalDetails={onOpenTechnicalDetails}
         />
       </div>
+      <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
       {otherObjects.length > 0 && (
         <div className="bm-rule-shared" data-testid={`shared-rule-links-${rule.id}`}>
           <Link2 size={12} aria-hidden="true" />
@@ -1722,46 +2469,97 @@ function FlowsCrossView({
           )}
         </p>
       ) : (
-        flows.map((flow) => (
-          <section key={flow.id} className="bm-sec">
-            <div className="bm-sec-head is-static">
-              <div>
-                <span className="bm-sec-title">{humanize(flow.displayName)}</span>
-                {flow.description && (
-                  <span className="bm-item-note"> — {humanize(flow.description)}</span>
-                )}
+        flows.map((flow) => {
+          const flowTitle = humanize(flow.displayName);
+          const flowDesc = humanize(flow.description);
+          const nameSlot = `flow-name-${flow.id}`;
+          const descSlot = `flow-desc-${flow.id}`;
+          return (
+            <section key={flow.id} className="bm-sec">
+              <div className="bm-sec-head is-static">
+                <div>
+                  <span className="bm-sec-title">
+                    <InlineEditableText
+                      slotKey={nameSlot}
+                      displayValue={flowTitle}
+                      initialEditValue={flowTitle}
+                      placeholder={t('输入流程名称', 'Enter flow name')}
+                      ariaLabel={t(`修改流程名称：${flowTitle}`, `Rename flow: ${flowTitle}`)}
+                      buildEdit={(nextName) => ({
+                        kind: 'FLOW',
+                        flowId: flow.id,
+                        name: nextName,
+                      })}
+                    />
+                  </span>
+                  {flowDesc ? (
+                    <span className="bm-item-note">
+                      {' — '}
+                      <InlineEditableText
+                        slotKey={descSlot}
+                        displayValue={flowDesc}
+                        initialEditValue={flowDesc}
+                        placeholder={t('输入流程说明', 'Enter flow description')}
+                        ariaLabel={t(`修改流程说明：${flowTitle}`, `Edit flow description: ${flowTitle}`)}
+                        buildEdit={(nextDesc) => ({
+                          kind: 'FLOW',
+                          flowId: flow.id,
+                          description: nextDesc,
+                        })}
+                      />
+                    </span>
+                  ) : (
+                    <>
+                      {' '}
+                      <InlineEditableText
+                        slotKey={descSlot}
+                        displayValue={t('添加说明', 'Add description')}
+                        initialEditValue=""
+                        placeholder={t('输入流程说明', 'Enter flow description')}
+                        ariaLabel={t(`添加流程说明：${flowTitle}`, `Add flow description: ${flowTitle}`)}
+                        isPlaceholder
+                        buildEdit={(nextDesc) => ({
+                          kind: 'FLOW',
+                          flowId: flow.id,
+                          description: nextDesc,
+                        })}
+                      />
+                    </>
+                  )}
+                </div>
+                <ItemTechButton
+                  itemId={flow.id}
+                  locator={flow.locator}
+                  onOpenTechnicalDetails={onOpenTechnicalDetails}
+                />
               </div>
-              <ItemTechButton
-                itemId={flow.id}
-                locator={flow.locator}
-                onOpenTechnicalDetails={onOpenTechnicalDetails}
-              />
-            </div>
-            <ol className="bm-flow-steps">
-              {flow.activities.map((step, idx) => (
-                <li key={step.id} className="bm-flow-step">
-                  <span className="bm-flow-index">{idx + 1}</span>
-                  <span className="bm-flow-text">
-                    {humanize(step.displayName)}
-                    {step.branches.length > 0 && (
-                      <span className="bm-flow-branches">
-                        {step.branches
-                          .map((b) => humanize(b.label || b.condition))
-                          .filter(Boolean)
-                          .join('；')}
-                      </span>
-                    )}
-                  </span>
-                  <span className="bm-flow-role">
-                    {step.role
-                      ? humanize(step.role.displayName)
-                      : t('系统自动', 'System automatic')}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </section>
-        ))
+              <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
+              <ol className="bm-flow-steps">
+                {flow.activities.map((step, idx) => (
+                  <li key={step.id} className="bm-flow-step">
+                    <span className="bm-flow-index">{idx + 1}</span>
+                    <span className="bm-flow-text">
+                      {humanize(step.displayName)}
+                      {step.branches.length > 0 && (
+                        <span className="bm-flow-branches">
+                          {step.branches
+                            .map((b) => humanize(b.label || b.condition))
+                            .filter(Boolean)
+                            .join('；')}
+                        </span>
+                      )}
+                    </span>
+                    <span className="bm-flow-role">
+                      {step.role
+                        ? humanize(step.role.displayName)
+                        : t('系统自动', 'System automatic')}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          );
+        })
       )}
     </article>
   );
@@ -1813,23 +2611,70 @@ function RolesCrossView({
               </tr>
             </thead>
             <tbody>
-              {roles.map((role) => (
-                <tr key={role.id}>
-                  <th>
-                    {humanize(role.displayName)}
-                    {role.description && (
-                      <span className="bm-matrix-desc">{humanize(role.description)}</span>
-                    )}
-                  </th>
-                  {objects.map((obj) => {
-                    const grant = role.objectGrants.find((g) => g.object.id === obj.id);
-                    const actionsText = grant
-                      ? grant.actions.map((a) => humanize(a.displayName)).join(listSep)
-                      : '';
-                    return <td key={obj.id}>{actionsText || '—'}</td>;
-                  })}
-                </tr>
-              ))}
+              {roles.map((role) => {
+                const roleTitle = humanize(role.displayName);
+                const roleDesc = humanize(role.description);
+                const nameSlot = `role-name-${role.id}`;
+                const descSlot = `role-desc-${role.id}`;
+                return (
+                  <tr key={role.id}>
+                    <th>
+                      <InlineEditableText
+                        slotKey={nameSlot}
+                        displayValue={roleTitle}
+                        initialEditValue={roleTitle}
+                        placeholder={t('输入角色名称', 'Enter role name')}
+                        ariaLabel={t(`修改角色名称：${roleTitle}`, `Rename role: ${roleTitle}`)}
+                        buildEdit={(nextName) => ({
+                          kind: 'ROLE',
+                          roleId: role.id,
+                          name: nextName,
+                        })}
+                      />
+                      {roleDesc ? (
+                        <span className="bm-matrix-desc">
+                          <InlineEditableText
+                            slotKey={descSlot}
+                            displayValue={roleDesc}
+                            initialEditValue={roleDesc}
+                            placeholder={t('输入角色说明', 'Enter role description')}
+                            ariaLabel={t(`修改角色说明：${roleTitle}`, `Edit role description: ${roleTitle}`)}
+                            buildEdit={(nextDesc) => ({
+                              kind: 'ROLE',
+                              roleId: role.id,
+                              description: nextDesc,
+                            })}
+                          />
+                        </span>
+                      ) : (
+                        <span className="bm-matrix-desc">
+                          <InlineEditableText
+                            slotKey={descSlot}
+                            displayValue={t('添加说明', 'Add description')}
+                            initialEditValue=""
+                            placeholder={t('输入角色说明', 'Enter role description')}
+                            ariaLabel={t(`添加角色说明：${roleTitle}`, `Add role description: ${roleTitle}`)}
+                            isPlaceholder
+                            buildEdit={(nextDesc) => ({
+                              kind: 'ROLE',
+                              roleId: role.id,
+                              description: nextDesc,
+                            })}
+                          />
+                        </span>
+                      )}
+                      <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
+                    </th>
+                    {objects.map((obj) => {
+                      const grant = role.objectGrants.find((g) => g.object.id === obj.id);
+                      const actionsText = grant
+                        ? grant.actions.map((a) => humanize(a.displayName)).join(listSep)
+                        : '';
+                      return <td key={obj.id}>{actionsText || '—'}</td>;
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1892,38 +2737,85 @@ function ReportsCrossView({
               <p className="bm-empty-note">{t('暂无条目。', 'No items yet.')}</p>
             ) : (
               <ul className="bm-list">
-                {grp.list.map((qr) => (
-                  <li key={qr.id}>
-                    <span className="bm-item-name">{humanize(qr.displayName)}</span>
-                    <span className="bm-item-note">
-                      {humanize(qr.description)}
-                      {qr.sourceObjects.length > 0 && (
-                        <>
-                          {qr.description ? ' · ' : ''}
-                          {t('用到：', 'Uses: ')}
-                          {qr.sourceObjects.map((src) => (
-                            <button
-                              key={src.id}
-                              type="button"
-                              className="bm-inline-link"
-                              onClick={() => onSelectObject(src.id)}
-                            >
-                              {t(
-                                `「${humanize(src.displayName)}」`,
-                                `"${humanize(src.displayName)}"`,
-                              )}
-                            </button>
-                          ))}
-                        </>
-                      )}
-                    </span>
-                    <ItemTechButton
-                      itemId={qr.id}
-                      locator={qr.locator}
-                      onOpenTechnicalDetails={onOpenTechnicalDetails}
-                    />
-                  </li>
-                ))}
+                {grp.list.map((qr) => {
+                  const qrTitle = humanize(qr.displayName);
+                  const qrDesc = humanize(qr.description);
+                  const nameSlot = `report-name-${qr.id}`;
+                  const descSlot = `report-desc-${qr.id}`;
+                  return (
+                    <li key={qr.id}>
+                      <span className="bm-item-name">
+                        <InlineEditableText
+                          slotKey={nameSlot}
+                          displayValue={qrTitle}
+                          initialEditValue={qrTitle}
+                          placeholder={t('输入查询或报表名称', 'Enter query or report name')}
+                          ariaLabel={t(`修改名称：${qrTitle}`, `Rename: ${qrTitle}`)}
+                          buildEdit={(nextName) => ({
+                            kind: 'QUERY_REPORT',
+                            reportId: qr.id,
+                            name: nextName,
+                          })}
+                        />
+                      </span>
+                      <span className="bm-item-note">
+                        {qrDesc ? (
+                          <InlineEditableText
+                            slotKey={descSlot}
+                            displayValue={qrDesc}
+                            initialEditValue={qrDesc}
+                            placeholder={t('输入说明', 'Enter description')}
+                            ariaLabel={t(`修改说明：${qrTitle}`, `Edit description: ${qrTitle}`)}
+                            buildEdit={(nextDesc) => ({
+                              kind: 'QUERY_REPORT',
+                              reportId: qr.id,
+                              description: nextDesc,
+                            })}
+                          />
+                        ) : (
+                          <InlineEditableText
+                            slotKey={descSlot}
+                            displayValue={t('添加说明', 'Add description')}
+                            initialEditValue=""
+                            placeholder={t('输入说明', 'Enter description')}
+                            ariaLabel={t(`添加说明：${qrTitle}`, `Add description: ${qrTitle}`)}
+                            isPlaceholder
+                            buildEdit={(nextDesc) => ({
+                              kind: 'QUERY_REPORT',
+                              reportId: qr.id,
+                              description: nextDesc,
+                            })}
+                          />
+                        )}
+                        {qr.sourceObjects.length > 0 && (
+                          <>
+                            {qrDesc ? ' · ' : ' '}
+                            {t('用到：', 'Uses: ')}
+                            {qr.sourceObjects.map((src) => (
+                              <button
+                                key={src.id}
+                                type="button"
+                                className="bm-inline-link"
+                                onClick={() => onSelectObject(src.id)}
+                              >
+                                {t(
+                                  `「${humanize(src.displayName)}」`,
+                                  `"${humanize(src.displayName)}"`,
+                                )}
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />
+                      </span>
+                      <ItemTechButton
+                        itemId={qr.id}
+                        locator={qr.locator}
+                        onOpenTechnicalDetails={onOpenTechnicalDetails}
+                      />
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>
@@ -1977,11 +2869,51 @@ function OtherFallbackView({
                   ? t('通用数据存储记录', 'Shared data storage record')
                   : humanize(item.displayName) || kindLabel;
               const itemDesc = humanize(item.description);
+              const isEditableDict = item.kind === 'DATA_DICTIONARY';
+              const nameSlot = `other-name-${item.kind}-${item.id}`;
+              const descSlot = `other-desc-${item.kind}-${item.id}`;
               return (
                 <li key={`${item.kind}-${item.id}`}>
-                  <span className="bm-item-name">{itemTitle}</span>
+                  <span className="bm-item-name">
+                    {isEditableDict ? (
+                      <InlineEditableText
+                        slotKey={nameSlot}
+                        displayValue={itemTitle}
+                        initialEditValue={itemTitle}
+                        placeholder={t('输入名称', 'Enter name')}
+                        ariaLabel={t(`修改名称：${itemTitle}`, `Rename: ${itemTitle}`)}
+                        buildEdit={(nextName) => ({
+                          kind: 'DATA_DICTIONARY',
+                          dictionaryId: item.id,
+                          name: nextName,
+                        })}
+                      />
+                    ) : (
+                      itemTitle
+                    )}
+                  </span>
                   <span className="bm-item-note">
-                    {itemDesc ? `${kindLabel} · ${itemDesc}` : kindLabel}
+                    {kindLabel}
+                    {isEditableDict && itemDesc ? (
+                      <>
+                        {' · '}
+                        <InlineEditableText
+                          slotKey={descSlot}
+                          displayValue={itemDesc}
+                          initialEditValue={itemDesc}
+                          placeholder={t('输入说明', 'Enter description')}
+                          ariaLabel={t(`修改说明：${itemTitle}`, `Edit description: ${itemTitle}`)}
+                          buildEdit={(nextDesc) => ({
+                            kind: 'DATA_DICTIONARY',
+                            dictionaryId: item.id,
+                            description: nextDesc,
+                          })}
+                        />
+                      </>
+                    ) : itemDesc ? (
+                      ` · ${itemDesc}`
+                    ) : null}
+                    {isEditableDict && <InlineRejectionSlot slotKeys={[nameSlot, descSlot]} />}
                   </span>
                   <ItemTechButton
                     itemId={item.id}

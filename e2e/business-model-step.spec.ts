@@ -127,4 +127,112 @@ test.describe('Business Model Step (#68): Business Object Projection, Technical 
     await expect(page.getByTestId('business-model-technical-view')).toBeVisible();
     await expect(page.getByTestId('export-owl-btn')).toBeVisible();
   });
+
+  test('edits names & descriptions inline in Business View, reflects cross-object rule edits everywhere, rejects Consistency Error edits with a business-language explanation, and sends "让 AI 助手处理" into the conversation (#69)', async ({
+    page,
+    request,
+  }) => {
+    const cloneRes = await request.post('/api/projects/proj-contract/clone', {
+      data: { name: '业务视图直接改名测试项目', code: 'E2E_BM_EDIT_69' },
+    });
+    expect(cloneRes.ok()).toBe(true);
+    const { project: cloned } = (await cloneRes.json()) as { project: { id: string } };
+
+    try {
+      await page.goto(`/?projectId=${cloned.id}`);
+      await expect(page.getByTestId('business-model-business-view')).toBeVisible();
+
+      // 1. Happy-path inline rename & description edit on Business Object "合同" -> "商务合同"
+      await page.getByTestId('inline-edit-trigger-object-name-AGG-01').click();
+      await expect(page.getByTestId('business-inline-editor')).toBeVisible();
+      await page.getByTestId('business-inline-input').fill('商务合同');
+      await page.getByTestId('business-inline-save-btn').click();
+
+      await expect(page.getByTestId('business-object-title')).toHaveText('商务合同');
+      await expect(page.getByTestId('bm-nav-object-AGG-01')).toContainText('商务合同');
+
+      await page.getByTestId('inline-edit-trigger-object-desc-AGG-01').click();
+      await page
+        .getByTestId('business-inline-input')
+        .fill('覆盖企业商务合同从起草、会签到履约结算的核心信息。');
+      await page.getByTestId('business-inline-save-btn').click();
+      await expect(page.getByTestId('business-object-description')).toContainText(
+        '覆盖企业商务合同从起草、会签到履约结算的核心信息。',
+      );
+
+      // 2. Edit cross-object M3 rule (RULE-03) once -> immediately reflected on related Business Object "履约结算单"
+      await page.getByTestId('inline-edit-trigger-rule-name-RULE-03').click();
+      await page.getByTestId('business-inline-input').fill('累计结算不超商务合同总额规则');
+      await page.getByTestId('business-inline-save-btn').click();
+      await expect(page.getByTestId('business-rule-text-RULE-03')).toContainText(
+        '累计结算不超商务合同总额规则',
+      );
+
+      await page.getByTestId('bm-nav-object-AGG-03').click();
+      await expect(page.getByTestId('business-object-title')).toHaveText('履约结算单');
+      await expect(page.getByTestId('business-rule-text-RULE-03')).toContainText(
+        '累计结算不超商务合同总额规则',
+      );
+
+      // Persists across reload
+      await page.reload();
+      await expect(page.getByTestId('bm-nav-object-AGG-01')).toContainText('商务合同');
+
+      // 3. Rejected inline edit (renaming "签约相对方" -> "商务合同" causes a duplicate-name Consistency Error)
+      await page.getByTestId('bm-nav-object-AGG-02').click();
+      await expect(page.getByTestId('business-object-title')).toHaveText('签约相对方');
+
+      await page.getByTestId('inline-edit-trigger-object-name-AGG-02').click();
+      await page.getByTestId('business-inline-input').fill('商务合同');
+      await page.getByTestId('business-inline-save-btn').click();
+
+      const rejectedBanner = page.getByTestId('business-edit-rejected-banner');
+      await expect(rejectedBanner).toBeVisible();
+      await expect(rejectedBanner).toContainText('需要修正的问题');
+      await expect(rejectedBanner).not.toContainText(/AGG-0[12]|M1|M2|M3/);
+      // Stored Business Object name stays untouched
+      await expect(page.getByTestId('business-object-title')).toHaveText('签约相对方');
+
+      // Clicking "让 AI 助手处理" delivers the request into the current step's conversation
+      await page.getByTestId('business-edit-ask-assistant-btn').click();
+      await expect(rejectedBanner).toHaveCount(0);
+
+      const panel = page.getByTestId('agent-panel');
+      await expect(panel).toBeVisible();
+      await expect(panel).toContainText('签约相对方');
+      await expect(panel).toContainText('商务合同');
+      await expect(
+        panel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      ).toBeVisible({ timeout: 25_000 });
+
+      // 4. Compact (<1280px) viewport: "让 AI 助手处理" switches pane to Conversation immediately
+      await page.setViewportSize({ width: 1120, height: 820 });
+      await expect(page.getByTestId('project-workspace')).toHaveAttribute('data-compact', 'true');
+      await page.getByTestId('workspace-pane-canvas').click();
+      await expect(page.getByTestId('project-workspace')).toHaveAttribute(
+        'data-active-pane',
+        'canvas',
+      );
+
+      await page.getByTestId('inline-edit-trigger-object-name-AGG-02').click();
+      await page.getByTestId('business-inline-input').fill('商务合同');
+      await page.getByTestId('business-inline-save-btn').click();
+      await expect(page.getByTestId('business-edit-rejected-banner')).toBeVisible();
+
+      await page.getByTestId('business-edit-ask-assistant-btn').click();
+      await expect(page.getByTestId('project-workspace')).toHaveAttribute(
+        'data-active-pane',
+        'conversation',
+      );
+      await expect(page.getByTestId('agent-panel')).toBeVisible();
+      await expect(
+        page
+          .getByTestId('agent-panel')
+          .locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]')
+          .last(),
+      ).toBeVisible({ timeout: 25_000 });
+    } finally {
+      await request.delete(`/api/projects/${cloned.id}?force=true`);
+    }
+  });
 });

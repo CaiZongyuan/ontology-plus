@@ -63,6 +63,7 @@ import {
 } from '../packages/package-compiler/index.js';
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
+import { registerBusinessModelEditRoutes } from './business-model-edits.js';
 
 export interface ApiAppOptions {
   agentRunHooks?: AgentRunLifecycleHooks | readonly AgentRunLifecycleHooks[];
@@ -1064,6 +1065,7 @@ export function createApiApp(
   });
 
   registerApplicationDeliveryRoutes(app, store);
+  registerBusinessModelEditRoutes(app, store);
 
   app.post('/api/applications/:appId/publish', async (c) => {
     const appId = c.req.param('appId');

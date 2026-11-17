@@ -3,7 +3,11 @@ export {
   type WorkspaceStoreOptions,
 } from './lib/store.js';
 
-export { doesProviderSupportVision, resolveCurrentProjectStep } from './lib/types.js';
+export {
+  SuiteValidationRejectedError,
+  doesProviderSupportVision,
+  resolveCurrentProjectStep,
+} from './lib/types.js';
 export { PrototypeConfirmedDeleteError } from './lib/prototype-revisions.js';
 export { DEFAULT_TECHNOLOGY_PROFILE_ID } from '../architecture-assets/index.js';
 
@@ -15,6 +19,8 @@ export type {
   SuiteWriteSource,
   CommitSuiteOptions,
   SuiteCommitEvent,
+  BusinessModelInlineEditTarget,
+  BusinessModelIntentSummary,
   AgentSessionKind,
   PrototypeTargetAnchor,
   AgentToolCallTrace,
