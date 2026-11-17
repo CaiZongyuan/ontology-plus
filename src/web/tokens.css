@@ -61,6 +61,45 @@
     color: var(--faint-foreground);
     opacity: 1;
   }
+
+  /* Scoped preflight substitute for shadcn/ui (Base UI) primitives ([data-slot]).
+     Tailwind preflight remains off so rendered Markdown headings and lists are untouched;
+     only [data-slot] elements get neutral margins, solid var(--border) defaults, heading
+     inheritance, list resets, block SVG icons, and strict [hidden] enforcement. */
+  :where([data-slot]) {
+    box-sizing: border-box;
+    margin: 0;
+    border: 0 solid var(--border);
+  }
+  :where([data-slot]):is(h1, h2, h3, h4, h5, h6) {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  :where([data-slot]):is(ol, ul, menu) {
+    list-style: none;
+    padding: 0;
+  }
+  :where([data-slot]):is(a) {
+    color: inherit;
+    text-decoration: inherit;
+  }
+  :where([data-slot]):is(hr) {
+    height: 0;
+    color: inherit;
+  }
+  :where([data-slot]):is(button, input, select, textarea) {
+    padding: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    background-color: transparent;
+    border-radius: 0;
+  }
+  :where([data-slot]) svg {
+    display: block;
+    vertical-align: middle;
+    flex-shrink: 0;
+  }
 }
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
@@ -203,6 +242,48 @@ body,
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+/* [data-slot] overlay stacking & focus-visible suppression for popups and roving-highlight items */
+[data-slot][hidden]:where(:not([hidden="until-found"])),
+[data-slot] [hidden]:where(:not([hidden="until-found"])) {
+  display: none !important;
+}
+
+[data-slot="dialog-overlay"],
+[data-slot="drawer-overlay"] {
+  z-index: 1060;
+}
+
+[data-slot="dialog-content"],
+[data-slot="drawer-content"] {
+  z-index: 1065;
+}
+
+[data-slot="popover-positioner"],
+[data-slot="dropdown-menu-positioner"],
+[data-slot="dropdown-menu-sub-positioner"] {
+  z-index: 1075;
+}
+
+[data-slot="tooltip-positioner"] {
+  z-index: 1085;
+}
+
+:where(
+  [data-slot="dialog-content"],
+  [data-slot="drawer-content"],
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="dropdown-menu-item"],
+  [data-slot="dropdown-menu-checkbox-item"],
+  [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-sub-trigger"],
+  [data-slot="command-input"],
+  [data-slot="command-item"]
+):focus-visible {
+  outline: none;
 }
 
 /* Standard scrollbar styling on scrollable containers (modern-web-guidance: customize-scrollbar-color-and-thickness) */
