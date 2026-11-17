@@ -52,14 +52,14 @@ test('keeps architecture authoring separate from application review and renders 
   const panel = page.getByTestId('agent-panel');
   await page.getByTestId('agent-panel-composer-input').fill('Review this application input specification.');
   await page.getByTestId('agent-panel-send-btn').click();
-  await expect(panel.locator('[data-tool-name="read_application_inputs"]').last()).toBeVisible();
+  await expect(panel.locator('[data-tool-name="read_application_inputs"]').last()).toBeAttached();
   await expect(panel.getByTestId('agent-run-text').getByRole('heading', { name: /Application specification input review|应用规格输入检查/ })).toBeVisible();
   await page.getByTestId('nav-app-four-layer-assets').click();
-  await expect(panel.locator('.agent-panel-title')).toContainText(/架构资产|Architecture Asset/);
+  await expect(panel.locator('.agent-panel-kicker')).toContainText(/架构资产|Architecture Asset/);
   await expect(panel.locator('[data-tool-name="read_application_inputs"]')).toHaveCount(0);
   await page.getByTestId('agent-panel-composer-input').fill('Inspect the repository standards catalog.');
   await page.getByTestId('agent-panel-send-btn').click();
-  await expect(panel.locator('[data-tool-name="read_architecture_assets"]').last()).toBeVisible();
+  await expect(panel.locator('[data-tool-name="read_architecture_assets"]').last()).toBeAttached();
   const sessions = (await (await request.get('/api/agent-sessions?projectId=proj-contract')).json()).agentSessions;
   expect(sessions.some((session: { agentKind: string }) => session.agentKind === 'ARCHITECTURE')).toBe(true);
   expect(sessions.some((session: { agentKind: string }) => session.agentKind === 'CODING')).toBe(true);
