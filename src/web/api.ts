@@ -1,12 +1,17 @@
 import { create } from 'zustand';
-import { formatToolStepLabel as formatVocabularyToolStepLabel } from '../packages/business-vocabulary/index.js';
+import {
+  formatToolStepLabel as formatVocabularyToolStepLabel,
+  type ProjectStepId,
+  type ProjectStepStateId,
+} from '../packages/business-vocabulary/index.js';
 import type {
   ImpactAnalysisReport,
   ModelCode,
   OntologySuite,
 } from '../packages/ontology-core/index.js';
-import type {
-  AgentAskUserPrompt,
+import {
+  resolveCurrentProjectStep,
+  type AgentAskUserPrompt,
   AgentDomainArtifact,
   AgentImageAttachmentRef,
   AgentSession,
@@ -68,7 +73,9 @@ import {
 import {
   DEFAULT_NAV_VIEW,
   deriveProjectStepProgress,
+  getDefaultViewForStep,
   getProjectLifecycleState,
+  getProjectStepsFromBootstrap,
   readUrlNavState,
   writeUrlNavState,
   type ProjectLifecycleState,
@@ -331,6 +338,11 @@ interface WorkbenchStoreState {
     description?: string;
     template: 'CONTRACT' | 'MFT' | 'EMPTY';
   }) => Promise<ProjectDetail>;
+  createProjectFromDescription: (description: string) => Promise<{
+    project: ProjectDetail;
+    session: AgentSession;
+    runPromise: Promise<void>;
+  }>;
   saveSuiteWithUndo: (suite: OntologySuite, note?: string) => Promise<void>;
   pushUndoSnapshot: (prevSuite: OntologySuite) => void;
   undo: () => Promise<void>;
@@ -560,17 +572,53 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   createNewProject: async (input) => {
     const res = await fetch('/api/projects', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildJsonHeaders(),
       body: JSON.stringify(input),
     });
     const { project } = (await res.json()) as { project: ProjectDetail };
     await get().bootstrap(project.id);
     get().showToast(
       getCurrentClientLocale() === 'en-US'
-        ? `Created ontology project "${project.name}"`
-        : `已创建本体工程「${project.name}」`,
+        ? `Created project "${project.name}"`
+        : `已创建项目「${project.name}」`,
     );
     return project;
+  },
+
+  createProjectFromDescription: async (description) => {
+    const trimmed = description.trim();
+    if (!trimmed) {
+      throw new Error('Project description is required.');
+    }
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: buildJsonHeaders(),
+      body: JSON.stringify({ description: trimmed }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error || 'Create project failed');
+    }
+    const { project } = (await res.json()) as { project: ProjectDetail };
+    await get().bootstrap(project.id);
+
+    const session = await get().ensureProjectAgentSession(project.id, 'REQUIREMENT', {
+      title: project.name,
+    });
+    useAgentPanelStore
+      .getState()
+      .rememberSession(agentSessionScopeKey(project.id, 'REQUIREMENT'), session.id);
+    useAgentPanelStore.getState().revealPanel();
+
+    const targetView = getDefaultViewForStep('REQUIREMENTS');
+    get().setActiveNav(targetView, { itemId: null, sessionId: session.id });
+
+    const runPromise = get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: trimmed,
+    });
+
+    return { project, session, runPromise };
   },
 
   saveSuiteWithUndo: async (suite, note) => {
@@ -1726,46 +1774,66 @@ function buildStoreSessionStreamCallbacks(
       : [updatedSession, ...(cur.agentSessions ?? [])];
     const isSameProject =
       cur.activeProject.id === (payload.project?.id ?? updatedSession.projectId);
-    set({
-      data: {
-        ...cur,
-        agentSessions: nextSessions,
-        ...(isSameProject && payload.project
+    const nextData: BootstrapPayload = {
+      ...cur,
+      agentSessions: nextSessions,
+      ...(isSameProject && payload.project
+        ? {
+            activeProject: payload.project,
+            projects: cur.projects.map((p) =>
+              p.id === payload.project!.id
+                ? {
+                    ...p,
+                    currentStage: payload.project!.currentStage,
+                    updatedAt: payload.project!.updatedAt,
+                  }
+                : p,
+            ),
+          }
+        : {}),
+      ...(isSameProject && payload.requirementDocs
+        ? { requirementDocs: payload.requirementDocs }
+        : {}),
+      ...(isSameProject && payload.requirementSessions
+        ? { requirementSessions: payload.requirementSessions }
+        : {}),
+      ...(isSameProject && payload.prototypes ? { prototypes: payload.prototypes } : {}),
+      ...(isSameProject && payload.confirmedPrototypeRevision !== undefined
+        ? { confirmedPrototypeRevision: payload.confirmedPrototypeRevision }
+        : {}),
+      ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
+      ...(isSameProject && payload.assembledApplications
+        ? { assembledApplications: payload.assembledApplications }
+        : {}),
+      ...(payload.extractionJobs ? { extractionJobs: payload.extractionJobs } : {}),
+      ...(payload.metrics ? { metrics: payload.metrics } : {}),
+      ...(payload.analyticsReports ? { analyticsReports: payload.analyticsReports } : {}),
+      ...(isSameProject && payload.reasoningSessions
+        ? { reasoningSessions: payload.reasoningSessions }
+        : {}),
+    };
+
+    if (isSameProject && nextData.activeProject.id) {
+      const derivedSteps = getProjectStepsFromBootstrap(nextData);
+      const stepStates = Object.fromEntries(
+        derivedSteps.map((st) => [st.id, st.state]),
+      ) as Record<ProjectStepId, ProjectStepStateId>;
+      const currentStep = resolveCurrentProjectStep(stepStates);
+      const currentStepState = stepStates[currentStep];
+      nextData.projects = nextData.projects.map((p) =>
+        p.id === nextData.activeProject.id
           ? {
-              activeProject: payload.project,
-              projects: cur.projects.map((p) =>
-                p.id === payload.project!.id
-                  ? {
-                      ...p,
-                      currentStage: payload.project!.currentStage,
-                      updatedAt: payload.project!.updatedAt,
-                    }
-                  : p,
-              ),
+              ...p,
+              currentStep,
+              currentStepState,
+              stepStates,
+              updatedAt: updatedSession.updatedAt || p.updatedAt,
             }
-          : {}),
-        ...(isSameProject && payload.requirementDocs
-          ? { requirementDocs: payload.requirementDocs }
-          : {}),
-        ...(isSameProject && payload.requirementSessions
-          ? { requirementSessions: payload.requirementSessions }
-          : {}),
-        ...(isSameProject && payload.prototypes ? { prototypes: payload.prototypes } : {}),
-        ...(isSameProject && payload.confirmedPrototypeRevision !== undefined
-          ? { confirmedPrototypeRevision: payload.confirmedPrototypeRevision }
-          : {}),
-        ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
-        ...(isSameProject && payload.assembledApplications
-          ? { assembledApplications: payload.assembledApplications }
-          : {}),
-        ...(payload.extractionJobs ? { extractionJobs: payload.extractionJobs } : {}),
-        ...(payload.metrics ? { metrics: payload.metrics } : {}),
-        ...(payload.analyticsReports ? { analyticsReports: payload.analyticsReports } : {}),
-        ...(isSameProject && payload.reasoningSessions
-          ? { reasoningSessions: payload.reasoningSessions }
-          : {}),
-      },
-    });
+          : p,
+      );
+    }
+
+    set({ data: nextData });
   };
 
   return {
