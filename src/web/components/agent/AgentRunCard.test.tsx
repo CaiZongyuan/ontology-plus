@@ -1,4 +1,7 @@
 import React from 'react';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -34,6 +37,7 @@ import {
 
 const STARTED_AT = Date.UTC(2026, 10, 12, 10, 0, 0);
 const noop = () => {};
+const architectureDirectories: string[] = [];
 
 function makeRun(overrides: Partial<AgentRunView> = {}): AgentRunView {
   return {
@@ -85,6 +89,10 @@ function renderCard(props: Partial<AgentRunCardProps> & { run: AgentRunView }): 
 }
 
 afterEach(() => {
+  for (const directory of architectureDirectories.splice(0)) {
+    if (path.dirname(directory) !== os.tmpdir()) throw new Error('Unexpected test catalog directory');
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
   vi.unstubAllGlobals();
   const cleanPatch = {
     data: null,
@@ -688,7 +696,9 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
 
   it('executes SRS synthesis, 11-model ontology synthesis, copilot, tech arch, metric insight, and scenario attribution as ShellAgentPanel runs', async () => {
     vi.stubEnv('ONTO_MOCK_LLM', '1');
-    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-panel-architecture-'));
+    architectureDirectories.push(directory);
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false, architectureAssetsRoot: path.join(directory, 'catalog') });
     store.updateSystemSettings({ mockLlmMode: true });
     const app = createApiApp(store);
     vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
@@ -708,7 +718,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(agentPanelSurfaceFor('app-req-explore')?.sessionKind).toBe('REQUIREMENT');
     expect(agentPanelSurfaceFor('app-req-docs')?.sessionKind).toBe('REQUIREMENT');
     expect(agentPanelSurfaceFor('app-ontology')?.sessionKind).toBe('COPILOT');
-    expect(agentPanelSurfaceFor('app-four-layer-assets')?.sessionKind).toBe('CODING');
+    expect(agentPanelSurfaceFor('app-four-layer-assets')?.sessionKind).toBe('ARCHITECTURE');
     expect(agentPanelSurfaceFor('app-assembly-dev')?.sessionKind).toBe('CODING');
     expect(agentPanelSurfaceFor('data-metrics-reports')?.sessionKind).toBe('REASONING');
 
@@ -757,7 +767,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(copilotPanelHtml).toContain('查看 11 元模型 (11/11)');
     expect(copilotPanelHtml).toContain('查看 M3 模型变更');
 
-    // 3. Tech Arch Generation Run in CODING session
+    // 3. Tech Arch Generation Run in ARCHITECTURE session
     const assetsBefore = useWorkbenchStore.getState().data?.fourLayerAssets.length ?? 0;
     await useWorkbenchStore.getState().startTechArchGenerationRun({
       name: '合同中心云原生技术架构规范',

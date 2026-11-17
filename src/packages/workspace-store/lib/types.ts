@@ -49,6 +49,7 @@ export type AgentSessionKind =
   | 'REQUIREMENT'
   | 'PROTOTYPE_CO_DESIGN'
   | 'COPILOT'
+  | 'ARCHITECTURE'
   | 'CODING'
   | 'CAPABILITY'
   | 'REASONING';

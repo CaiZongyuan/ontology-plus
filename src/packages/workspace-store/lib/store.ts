@@ -1778,7 +1778,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         REQUIREMENT: '新建需求探索会话',
         PROTOTYPE_CO_DESIGN: '原型共创会话',
         COPILOT: '新建本体建模对话',
-        CODING: '新建四层编码任务会话',
+        ARCHITECTURE: '架构资产编写会话',
+        CODING: '应用开发规格会话',
         CAPABILITY: '新建智能体工具对话',
         REASONING: '新建数据本体推演会话',
       };

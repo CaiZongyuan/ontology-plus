@@ -33,7 +33,6 @@ import {
   type OntologySuite,
 } from '../../ontology-core/index.js';
 import {
-  compileDevelopmentPackage,
   handleOntologyMcpRequest,
   inspectOntologyMcpCapabilities,
 } from '../../package-compiler/index.js';
@@ -85,6 +84,10 @@ import {
   describeJoinWarnings,
   renderDataGrounding,
 } from './reasoning-grounding.js';
+import {
+  readApplicationSpecificationInputs,
+  resolveSessionApplication,
+} from './application-specification.js';
 import {
   ONTOLOGY_DURABLE_TOOLS,
   ONTOLOGY_TOOL_NAMES,
@@ -475,20 +478,6 @@ export const UNIFIED_AGENT_EXTRA_TOOLS: OpenAiFunctionTool[] = [
           discoveredRules: { type: 'array', items: { type: 'string' } },
           resolvedDecisions: { type: 'array', items: { type: 'string' } },
           openQuestions: { type: 'array', items: { type: 'string' } },
-        },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'compile_dev_package',
-      description:
-        'Compile the progressive-disclosure development package (SKILL.md, 开发指导书.md, 本体模型业务功能开发指导书.md, 界面原型.html, models/*.yaml) for the target AssembledApplication.',
-      parameters: {
-        type: 'object',
-        properties: {
-          applicationId: { type: 'string' },
         },
       },
     },
@@ -1146,7 +1135,7 @@ function buildFauxMockModels(
         }
       }
 
-      if (session.agentKind === 'CODING') {
+      if (session.agentKind === 'ARCHITECTURE') {
         if (
           parsedAction?.kind === 'GENERATE_TECH_ARCH' ||
           /生成技术架构|技术架构规范|generate\s+tech(?:nical)?\s+arch/i.test(userPrompt)
@@ -1166,11 +1155,6 @@ function buildFauxMockModels(
             typeof parsedAction?.params.version === 'string' && parsedAction.params.version.trim()
               ? parsedAction.params.version.trim()
               : 'v5.0';
-          const applicationId =
-            typeof parsedAction?.params.applicationId === 'string' &&
-            parsedAction.params.applicationId.trim()
-              ? parsedAction.params.applicationId.trim()
-              : undefined;
           const extraPrompt =
             (typeof parsedAction?.params.extraPrompt === 'string' &&
               parsedAction.params.extraPrompt.trim()) ||
@@ -1191,25 +1175,47 @@ function buildFauxMockModels(
                 name,
                 version,
                 stackTags,
-                specMarkdown: buildMockTechArchMarkdown(name, stackTags, extraPrompt, loc),
-                ...(applicationId ? { applicationId } : {}),
+                specMarkdown: buildMockTechArchMarkdown(name, stackTags, extraPrompt, 'en-US'),
               }),
             ],
             { stopReason: 'toolUse' },
           );
         }
 
-        const appId = session.targetId || store.listAssembledApplications()[0]?.id || 'app-01';
+        return fauxAssistantMessage(
+          [fauxToolCall('read_architecture_assets', {})],
+          { stopReason: 'toolUse' },
+        );
+      }
+
+      if (session.agentKind === 'CODING') {
+        const explicitApplicationId = /^\[Target application ID: ([^\]\r\n]+)\]/.exec(userPrompt)?.[1]
+          ?? store.listAssembledApplications().find((app) => app.projectId === session.projectId
+            && userPrompt.includes(`(${app.id})`))?.id;
+        const resolved = resolveSessionApplication(store, session, explicitApplicationId);
+        if (!resolved.application) {
+          const applications = store.listAssembledApplications().filter((app) => app.projectId === session.projectId);
+          if (!applications.length) {
+            return fauxAssistantMessage([fauxText(pickLocaleText(loc, '请先在当前工程创建并选择一个应用，再检查其开发规格。', 'Create and select an application in this project before reviewing its implementation specification.'))]);
+          }
+          return fauxAssistantMessage(
+            [fauxToolCall('ask_user', {
+              question: pickLocaleText(loc, '请选择要完善开发规格的应用。', 'Which application should the implementation specification describe?'),
+              options: applications.map((app) => `${app.name} (${app.id})`),
+            })],
+            { stopReason: 'toolUse' },
+          );
+        }
         return fauxAssistantMessage(
           [
             fauxThinking(
               pickLocaleText(
                 loc,
-                `正在读取四层架构资产与 11 模型本体快照，重编译应用「${appId}」的渐进式披露开发包。`,
-                `Reading 4-layer architecture assets and 11-model ontology snapshot to recompile progressive-disclosure dev package for "${appId}".`,
+                `正在读取应用「${resolved.application.name}」的已选输入，检查开发规格缺项与冲突。`,
+                `Reading selected inputs for "${resolved.application.name}" to inspect missing or conflicting implementation requirements.`,
               ),
             ),
-            fauxToolCall('compile_dev_package', { applicationId: appId }),
+            fauxToolCall('read_application_inputs', { applicationId: resolved.application.id }),
           ],
           { stopReason: 'toolUse' },
         );
@@ -1502,6 +1508,37 @@ function buildFauxMockModels(
           .map((c) => c.text)
           .join('\n') ?? '';
 
+      if (session.agentKind === 'ARCHITECTURE' || session.agentKind === 'CODING') {
+        const result = extractJsonObjectFromText<Record<string, unknown>>(lastResultText);
+        if (session.agentKind === 'CODING' && lastResult?.toolName === 'read_application_inputs' && !lastResult.isError) {
+          const diagnostics = Array.isArray(result?.diagnostics) ? result.diagnostics.map(String) : [];
+          const application = result?.application as { id?: string; developmentInstructions?: string } | undefined;
+          if (/完善|补充|修改|更新|保存|同步|refine|save|update|add|include/i.test(userPrompt) && application?.id) {
+            const instruction = userPrompt.replace(/^\[Target application ID: [^\]\r\n]+\]\s*/, '');
+            return fauxAssistantMessage([fauxToolCall('save_application_instructions', {
+              applicationId: application.id,
+              developmentInstructions: [
+                application.developmentInstructions || '# Application Implementation Specification',
+                '## Requested refinement', instruction,
+                ...(diagnostics.length ? ['## Open input diagnostics', ...diagnostics.map((item) => `- ${item}`)] : []),
+              ].join('\n\n'),
+            })], { stopReason: 'toolUse' });
+          }
+          return fauxAssistantMessage([fauxText([
+            pickLocaleText(loc, '### 应用规格输入检查', '### Application specification input review'),
+            ...diagnostics.map((item) => `- ${item}`),
+            application?.developmentInstructions || pickLocaleText(loc, '尚未保存应用专属开发指令。', 'No application-specific implementation instructions have been saved.'),
+          ].join('\n\n'))]);
+        }
+        return fauxAssistantMessage([fauxText(lastResult?.isError
+          ? lastResultText
+          : session.agentKind === 'ARCHITECTURE' && lastResult?.toolName !== 'read_architecture_assets'
+            ? pickLocaleText(loc, `### 已保存仓库规范\n\n${String(result?.name ?? '')}`, `### Repository standard saved\n\n${String(result?.name ?? '')}`)
+            : session.agentKind === 'CODING'
+              ? pickLocaleText(loc, '请选择当前工程的目标应用，再完善开发规格。', 'Select the target application in this project before refining its implementation specification.')
+              : pickLocaleText(loc, '### 已读取仓库规范目录\n\n请选择要完善的规范。', '### Repository standards inspected\n\nSelect a standard to refine.'))]);
+      }
+
       if (
         session.agentKind === 'PROTOTYPE_CO_DESIGN' &&
         !(lastResult?.toolName === 'rewrite_prototype_page' && !lastResult.isError)
@@ -1671,6 +1708,12 @@ function buildFauxMockModels(
         (m): m is ToolResultMessage => m.role === 'toolResult',
       );
       const lastResult = toolResults[toolResults.length - 1];
+
+      if (session.agentKind === 'CODING') {
+        return fauxAssistantMessage([fauxText(lastResult?.isError
+          ? pickLocaleText(loc, '应用规格保存失败，请查看工具诊断。', 'Application specification could not be saved; review the tool diagnostic.')
+          : pickLocaleText(loc, '### 已保存应用专属开发规格\n\n可继续检查输入与验收条件。', '### Application implementation instructions saved\n\nContinue reviewing inputs and acceptance criteria.'))]);
+      }
 
       if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
         if (lastResult?.isError && lastResult.toolName === 'edit_prototype_anchor') {
@@ -1949,12 +1992,18 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
       ];
+    case 'ARCHITECTURE':
+      return [
+        extraByName.get('read_architecture_assets')!,
+        extraByName.get('save_architecture_asset')!,
+        extraByName.get('save_tech_architecture_spec')!,
+        extraByName.get('ask_user')!,
+      ];
     case 'CODING':
       return [
-        extraByName.get('compile_dev_package')!,
-        extraByName.get('save_tech_architecture_spec')!,
+        extraByName.get('read_application_inputs')!,
+        extraByName.get('save_application_instructions')!,
         extraByName.get('inspect_ontology_model')!,
-        ...ontologyTools,
         extraByName.get('ask_user')!,
       ];
     case 'CAPABILITY':
@@ -2011,6 +2060,18 @@ function buildSystemPromptForSession(
           locale,
         )
       : '';
+  const applicationContext = session.agentKind === 'CODING'
+    ? JSON.stringify(
+        readApplicationSpecificationInputs(store, session),
+        (key, value: unknown) => ['suite', 'htmlContent', 'specMarkdown'].includes(key) ? undefined : value,
+      )
+    : '';
+  const architectureContext = session.agentKind === 'ARCHITECTURE'
+    ? JSON.stringify({
+        assets: store.listFourLayerAssets().map(({ specMarkdown: _body, ...metadata }) => metadata),
+        technologyProfiles: store.listTechnologyProfiles(),
+      })
+    : '';
 
   if (locale === 'en-US') {
     const baseHeaderEn = [
@@ -2022,7 +2083,7 @@ function buildSystemPromptForSession(
       activeModelCode ? `Currently focused model tab: ${activeModelCode}.` : '',
       session.compactedSummary ? `[Compacted Conversation Summary]\n${session.compactedSummary}` : '',
       `Execution Rules (YOLO + Scoped HITL):`,
-      `1. Execute routine modeling, read-only inspection, SQL queries, MCP calls, and dev-package compilation tools automatically (YOLO). Never ask permission before calling routine tools.`,
+      `1. Execute the routine tools provided to this specialist automatically. Never ask permission before calling routine tools.`,
       `2. ONLY call \`ask_user\` when required business parameters are missing or a Class-B business boundary ambiguity requires a human decision.`,
       `3. If an ontology mutation returns an 11-model consistency error (isError=true), read the diagnostics and self-repair in the same turn.`,
       `4. Always use the term "Ontology Extraction" — never "reverse engineering".`,
@@ -2046,8 +2107,11 @@ function buildSystemPromptForSession(
       const toolNames = caps?.tools.map((t) => `${t.name}(${t.sourceModel})`).join(', ') ?? 'none';
       return `${baseHeaderEn}\nCompiled Ontology MCP tools: ${toolNames}. Prefer calling invoke_mcp_tool to execute domain queries or behaviors; when asked to perform Ontology Extraction ([ACTION:RUN_ONTOLOGY_EXTRACTION ...] or DDL/OpenAPI/source extraction), MUST call run_ontology_extraction.`;
     }
+    if (session.agentKind === 'ARCHITECTURE') {
+      return `${baseHeaderEn}\nYou are the Architecture Asset Agent. Author and maintain reusable repository-owned UI, technical foundation and technical architecture standards. Write platform-generated development standards in English; conversation follows the user's language, and original business references retain their source language. Repository files are authoritative; use read_architecture_assets to inspect current sources and save_architecture_asset (or save_tech_architecture_spec for TECH_ARCH) to persist authored standards with the chosen technologyProfileId. Standards are shared assets; this session does not select or change a target application's inputs. Do not claim to implement code, run a build or execute tests.\nRepository standards catalog: ${architectureContext}`;
+    }
     if (session.agentKind === 'CODING') {
-      return `${baseHeaderEn}\nTarget assembled application ID: ${session.targetId ?? 'app-01'}. Call compile_dev_package to compile progressive-disclosure engineering artifacts, call save_tech_architecture_spec when asked to generate or persist a 4-layer technical architecture specification ([ACTION:GENERATE_TECH_ARCH ...]), or refine ontology elements.`;
+      return `${baseHeaderEn}\nYou are the Application Development Agent, helping refine an application implementation specification. Target application ID: ${session.targetId ?? '(unselected)'}. Read read_application_inputs before recommending changes; inspect the requirements, confirmed prototype, Ontology Suite, selected Technology Profile and standards, and existing application instructions. Ontology defines business semantics, the confirmed prototype defines UI intent, and the selected standards define engineering constraints. Diagnose missing inputs and explicit contradictions, and ask_user for unresolved choices. Preserve Stage Warnings as non-blocking. Save the complete refined application-specific Markdown with save_application_instructions. An explicit application must belong to this session project; never substitute an unrelated application or standard. Shared standards are authored in the Architecture Asset Agent. Development Package generation is an ordinary explicit action after inputs are resolved. Your tools refine specifications; do not claim code implementation, build or test execution.\nSaved target inputs (use read_application_inputs for full references): ${applicationContext}`;
     }
     if (session.agentKind === 'REQUIREMENT') {
       return `${baseHeaderEn}\nFollow Class-A/B progressive grilling: tag standard audit/engineering defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], call ask_user for unresolved Class-B decisions (or tag [Pending]), call record_requirement_insights to persist candidate aggregates and rules, and when asked to synthesize the SRS ([ACTION:SYNTHESIZE_SRS ...] or user request), MUST call save_synthesized_srs_doc with the complete 9-chapter Markdown specification (## 1. through ## 9., including ### 9.1 through ### 9.7).`;
@@ -2095,7 +2159,7 @@ function buildSystemPromptForSession(
     activeModelCode ? `当前聚焦模型标签页：${activeModelCode}。` : '',
     session.compactedSummary ? `【历史会话压缩摘要】\n${session.compactedSummary}` : '',
     `执行准则（YOLO + Scoped HITL）：`,
-    `1. 所有常规建模、只读检索、SQL 查询、MCP 调用、开发包重编译工具均直接自动调用（YOLO），严禁在调用常规工具前向用户索要权限许可。`,
+    `1. 当前专职智能体可用的常规工具均直接自动调用，严禁在调用常规工具前向用户索要权限许可。`,
     `2. 仅当缺少必填业务参数或存在 B 类业务规则分歧需要用户拍板时，才调用 \`ask_user\` 工具弹出结构化单选/多选卡片。`,
     `3. 若本体变更工具返回 11 模型一致性错误（isError=true），请仔细阅读错误诊断并在本轮自动修正参数重试。`,
     `4. 严禁使用“逆向”或“逆向工程”字眼，统一使用“本体萃取 (Ontology Extraction)”。`,
@@ -2119,8 +2183,11 @@ function buildSystemPromptForSession(
     const toolNames = caps?.tools.map((t) => `${t.name}(${t.sourceModel})`).join(', ') ?? '无';
     return `${baseHeader}\n当前工程可用 Ontology MCP 工具：${toolNames}。优先调用 invoke_mcp_tool 执行业务动作或查询；当收到本体萃取请求（如 [ACTION:RUN_ONTOLOGY_EXTRACTION ...] 或 DDL/OpenAPI/文档本体萃取）时，必须调用 run_ontology_extraction 工具。`;
   }
+  if (session.agentKind === 'ARCHITECTURE') {
+    return `${baseHeader}\n你是架构资产智能体，编写和维护仓库拥有的可复用 UI、技术底座和技术架构规范。平台生成的开发规范正文使用英文；对话跟随用户语言，原始业务参考保留来源语言。仓库文件是权威来源；先用 read_architecture_assets 读取规范与来源，再通过 save_architecture_asset 保存并声明选定的 technologyProfileId，TECH_ARCH 也可用 save_tech_architecture_spec。规范是共享资产，本会话不选择或修改目标应用的输入。不得声称已经实现代码、运行构建或执行测试。\n仓库规范目录：${architectureContext}`;
+  }
   if (session.agentKind === 'CODING') {
-    return `${baseHeader}\n目标装配应用 ID：${session.targetId ?? 'app-01'}。可调用 compile_dev_package 编译渐进式披露开发包，收到生成四层技术架构规范请求（如 [ACTION:GENERATE_TECH_ARCH ...]）时必须调用 save_tech_architecture_spec 落库资产，或微调本体元素。`;
+    return `${baseHeader}\n你是应用开发智能体，负责完善应用的实施规格。目标应用 ID：${session.targetId ?? '（未选择）'}。先通过 read_application_inputs 读取需求、已确认原型、本体套件、选定技术方案与规范、现有应用指令，再诊断缺项和明确冲突。本体定义业务语义，已确认原型定义 UI 意图，选定规范定义工程约束；存在未决选择时用 ask_user 澄清，阶段提示保持非阻断。通过 save_application_instructions 保存完整的应用专属 Markdown 实施指令。明确应用必须属于当前会话工程，不得用其他应用或规范代替缺失输入。共享规范由架构资产智能体维护。开发包在输入问题解决后由普通显式生成操作产出。你的工具负责完善规格，不得声称已经实现代码、运行构建或执行测试。\n目标已保存输入（完整引用请调用 read_application_inputs）：${applicationContext}`;
   }
   if (session.agentKind === 'REQUIREMENT') {
     return `${baseHeader}\n遵循 A/B 分级追问策略：A 类常规默认项标注 [AI自动补全]，B 类核心业务边界标注 [已确认] 或调用 ask_user 让用户选择确认，调用 record_requirement_insights 沉淀候选规则；当用户请求合成 SRS（如 [ACTION:SYNTHESIZE_SRS ...]）时，必须调用 save_synthesized_srs_doc 工具提交完整 9 章节《需求规格说明书.md》（含 ## 1. ~ ## 9. 及 ### 9.1 ~ ### 9.7）。`;
@@ -2205,6 +2272,14 @@ async function executeUnifiedToolCall(
   const started = Date.now();
   const args = (tc.arguments ?? {}) as Record<string, unknown>;
   const ontologyToolSet = new Set<string>(ONTOLOGY_TOOL_NAMES);
+  if (!getToolsForAgentKind(session.agentKind).some((tool) => tool.name === tc.name)) {
+    const message = pickLocaleText(locale, `当前智能体不提供工具 ${tc.name}。`, `Tool ${tc.name} is unavailable to this specialist.`);
+    return {
+      trace: { id: tc.id, toolName: tc.name, arguments: args, output: message, isError: true, durationMs: Date.now() - started },
+      toolResultContent: JSON.stringify({ error: message }),
+      isError: true,
+    };
+  }
 
   // 1. Scoped HITL ask_user
   if (tc.name === 'ask_user') {
@@ -2554,109 +2629,6 @@ async function executeUnifiedToolCall(
         rules: discoveredRules,
         decisions: resolvedDecisions,
         openQuestions,
-      },
-    };
-  }
-
-  // 5. Compile Dev Package
-  if (tc.name === 'compile_dev_package') {
-    const appId = String(args.applicationId || session.targetId || 'app-01');
-    const apps = store.listAssembledApplications();
-    const app = apps.find((a) => a.id === appId) ?? apps[0];
-    const project = app
-      ? store.getProject(app.projectId)
-      : resolveProjectDetail(store, session.projectId);
-    if (!app || !project) {
-      return {
-        trace: {
-          id: tc.id,
-          toolName: tc.name,
-          arguments: args,
-          output: pickLocaleText(
-            locale,
-            `未找到装配应用 ${appId}`,
-            `Assembled application not found: ${appId}`,
-          ),
-          isError: true,
-          durationMs: Date.now() - started,
-        },
-        toolResultContent: `Application not found: ${appId}`,
-        isError: true,
-      };
-    }
-    const assets = store.listFourLayerAssets();
-    const uiUeAsset =
-      assets.find((a) => a.id === app.uiUeAssetId) ??
-      assets.find((a) => a.layer === 'UI_UE') ??
-      assets[0]!;
-    const techFoundationAsset =
-      assets.find((a) => a.id === app.techFoundationAssetId) ??
-      assets.find((a) => a.layer === 'TECH_FOUNDATION') ??
-      assets[0]!;
-    const techArchAsset =
-      assets.find((a) => a.id === app.techArchAssetId) ??
-      assets.find((a) => a.layer === 'TECH_ARCH') ??
-      assets[0]!;
-    const requirementDoc = store.listRequirementDocs(project.id)[0];
-    const confirmedProto = store.getConfirmedPrototypeRevision(project.id);
-    const prototype = confirmedProto
-      ? {
-          ...confirmedProto.prototype,
-          htmlContent: confirmedProto.htmlContent,
-          extractedScreenCount: confirmedProto.revision.extractedScreenCount,
-        }
-      : undefined;
-    const pkg = compileDevelopmentPackage({
-      app,
-      project,
-      uiUeAsset,
-      techFoundationAsset,
-      techArchAsset,
-      ...(requirementDoc ? { requirementDoc } : {}),
-      ...(prototype ? { prototype } : {}),
-    });
-    const updatedApp = store.saveAssembledApplication({
-      ...app,
-      status: 'PACKAGE_READY',
-      packageOutputDir: pkg.outputDir,
-      agentDevLogs: [
-        ...app.agentDevLogs,
-        {
-          timestamp: new Date().toISOString(),
-          phase: 'PI_SESSION_COMPILE',
-          detail: pickLocaleText(
-            locale,
-            `通过统一会话编译生成 ${pkg.files.length} 份渐进式披露开发包文件`,
-            `Compiled ${pkg.files.length} progressive-disclosure dev package files via unified session`,
-          ),
-        },
-      ],
-    });
-
-    return {
-      trace: {
-        id: tc.id,
-        toolName: tc.name,
-        arguments: args,
-        output: pickLocaleText(
-          locale,
-          `已重编译应用「${updatedApp.name}」渐进式披露开发包（共 ${pkg.files.length} 个产物文件）`,
-          `Recompiled progressive-disclosure dev package for "${updatedApp.name}" (${pkg.files.length} files)`,
-        ),
-        isError: false,
-        durationMs: Date.now() - started,
-      },
-      toolResultContent: JSON.stringify({
-        applicationId: updatedApp.id,
-        filesCount: pkg.files.length,
-        paths: pkg.files.map((f) => f.relativePath),
-      }),
-      isError: false,
-      artifact: {
-        kind: 'CODING_PACKAGE',
-        appId: updatedApp.id,
-        outputDir: pkg.outputDir,
-        files: pkg.files.map((f) => f.relativePath),
       },
     };
   }
@@ -4822,7 +4794,7 @@ function buildSessionMessageEndPayload(
     base.requirementDocs = store.listRequirementDocs(session.projectId);
     base.requirementSessions = store.listRequirementSessions(session.projectId);
   }
-  if (session.agentKind === 'CODING') {
+  if (session.agentKind === 'ARCHITECTURE' || session.agentKind === 'CODING') {
     base.fourLayerAssets = store.listFourLayerAssets();
     base.assembledApplications = store.listAssembledApplications();
   }

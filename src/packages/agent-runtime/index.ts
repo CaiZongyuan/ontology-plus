@@ -106,7 +106,6 @@ export {
   testLlmGatewayConnection,
   runRequirementGrillingTurn,
   formatSelectionsForPrompt,
-  runAppCodingAgentTurn,
   runSmartOntologyExtractionJob,
   runCapabilitySmartChatTurn,
   runDataOntologyReasoning,
@@ -114,8 +113,9 @@ export {
   createSseEventStream,
   type LlmPingResult,
   type PrototypeRefinementSelection,
-  type AppCodingAgentResult,
   type CapabilitySmartChatResult,
   type SseEventType,
   type SseAgentEvent,
 } from './lib/runtime.js';
+
+export { runAppCodingAgentTurn, type AppCodingAgentResult } from './lib/application-agent.js';
