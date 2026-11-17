@@ -19,3 +19,4 @@ Sessions belong to one specialised agent within one `Ontology Project`, because 
 ## Amendments
 
 - **2026-11-13: several sessions per agent.** The original text kept exactly one session per specialised agent per project. In use that forced every topic into one ever-growing conversation, so the panel now offers session management for every agent except `Prototype Co-Design`. The reasons for per-agent sessions and for one shared panel are unchanged.
+- **2026-11-17: one `AI Assistant` in presentation (ADR 0011).** The user sees a single assistant; the specialised agent behind it follows the `Project Step` in view, and switching, renaming, and deleting sessions move into a history menu. A request that belongs to another step is answered with a `Step Hand-off`, never carried out across sessions. Sessions, their scoping to one agent, and the engine are unchanged.

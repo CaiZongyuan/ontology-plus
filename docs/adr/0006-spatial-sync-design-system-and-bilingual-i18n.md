@@ -15,3 +15,7 @@ A Hex-style replacement shell was prototyped (branch `prototype/hex-shell-varian
 - **Copy.** Titles are short and in the active locale only; English glosses belong in the `en-US` strings, not in parentheses after the Chinese.
 - **Motion.** Motion is quiet and editorial: sections settle in reading order, the nav marker draws in, dialogs rise, chat turns fade up. Only `opacity` and `transform` are animated, nothing runs longer than 320ms, and `prefers-reduced-motion` turns all of it off.
 - **Spacing.** Tailwind's spacing step is pinned to 4px (`--spacing` in `tokens.css`) because the root font size is 13px; layout uses utilities on that step, and `style={{…}}` is reserved for values computed at runtime or deliberate overrides of a shell class.
+
+## Amendments
+
+- **2026-11-17: palette and typefaces superseded by ADR 0012.** The default look is now a neutral `Workbench Theme`; warm paper remains as the built-in theme 暖纸, where the palette and typefaces above still apply. The type roles stand, but the families come from the active theme. The rules on the single button, colour carrying meaning, depth by tone, no preflight, copy, motion, bilingual i18n, and no blocking dialogs are unchanged.

@@ -7,78 +7,129 @@ An ontology-driven software modeling and application assembly workbench that tur
 **Ontology Suite (本体套件)**:
 The complete set of 11 orthogonal meta-models (`M1`–`M7`, `ME`, `MU`, `MM`, `MI`) that together define a business domain's existence, behavior, rules, events, scenarios, actors, workflows, read queries, UI call chains, persistence mapping, and external contracts.
 _Avoid_: Schema bundle, config files, YAML set
+_Shown to business users as_: 业务模型 (Business Model)
 
 **Object Model (`M1` 对象模型)**:
 The structural foundation defining domain Aggregate Roots, internal Entities, immutable Value Objects, Data Dictionaries, attribute constraints (`refRules`),aggregate invariants (`invariants`), and ID-based cross-aggregate associations.
 _Avoid_: Database schema, ER diagram, table model
+_Shown to business users as_: 业务对象 (Business Objects)
 
 **Behavior Model (`M2` 行为模型)**:
 The catalog of atomic operations (`COMMAND`, `QUERY`, `EVENT_HANDLER`, `EXTERNAL_CALL`) that each act on a single Aggregate Root with explicit preconditions, postconditions, required permissions, and emitted event references.
 _Avoid_: Controller method, API endpoint, service method
+_Shown to business users as_: 业务操作 (Actions)
 
 **Rule Model (`M3` 规则模型)**:
 Side-effect-free decision logic that spans multiple aggregates, behaviors, or events, or is reused across behaviors. Single-attribute (`refRules`) and single-aggregate (`invariants`) rules belong to `M1`, never `M3`.
 _Avoid_: Validator, constraint
+_Shown to business users as_: 业务规则 (Business Rules)
 
 **Event Model (`ME` 事件模型)**:
 The contract for past-tense business facts (`<Object>.<PastParticiple>`), declaring a single producer behavior, payload fields, delivery ordering semantics, and downstream subscribers (behaviors or event rules).
 _Avoid_: Command, webhook, message queue config
+_Shown to business users as_: 业务事件 (Business Events)
 
 **Scenario Model (`M4` 场景模型)**:
 A cross-aggregate, event-decoupled semantic chain (`BEHAVIOR_CALL` → `EVENT_EMIT` → `RULE_EVALUATE` → downstream `BEHAVIOR_CALL`) that captures reactive domain collaboration without human tasks or approval gateways.
 _Avoid_: Use case, business process, workflow
+_Shown to business users as_: 自动联动 (Automations)
 
 **Actor Model (`M5` 主体模型)**:
 The definition of human participants, internal roles (`Role`), external systems (`ExternalEntity`), permissions, and RBAC/ABAC authorization bindings to `M2` behaviors and `MU` UI elements.
 _Avoid_: User table, account list
+_Shown to business users as_: 角色与权限 (Roles & Permissions)
 
 **Flow Model (`M6` 流程模型)**:
 End-to-end business collaboration flows (`COLLABORATION`) and human approval flows (`APPROVAL`) composed of role-bound tasks (`roleRef`), gateways, behavior/scenario invocations, and acyclic sub-flow calls.
 _Avoid_: Scenario (`M4`), state machine
+_Shown to business users as_: 流程与审批 (Flows & Approvals)
 
 **Query & Report Model (`M7` 查询统计与报表模型)**:
 The read-side specification for cross-aggregate queries, statistical aggregations, and fixed business reports (`REPORT`), strictly bound 1-to-1 with an `M2` `QUERY` behavior and accompanied by a verifiable reference SQL.
 _Avoid_: BI cube, data warehouse model, ad-hoc SQL
+_Shown to business users as_: 查询与报表 (Queries & Reports)
 
 **UI Model (`MU` UI 模型)**:
 The interaction and traceability layer defining screens, data-bound elements, navigation edges, ASCII layouts, and ordered UI event call chains (`VALIDATE` → `BEHAVIOR_CALL` → `EVENT_EMIT` → `SCENARIO_CALL` → `REPORT_CALL` → `NAVIGATE`).
 _Avoid_: Visual theme, CSS spec, wireframe image
+_Shown to business users as_: 界面 (Screens)
 
 **Mapping Model (`MM` 对象-数据表映射模型)**:
 The persistence correspondence mapping `M1` aggregates, sub-entities, and value objects to physical database tables (`MASTER`, `DETAIL`, `EXT`) and columns, without physical index or migration script details.
 _Avoid_: DDL script, ORM entity class
+_Shown to business users as_: 数据存储 (Data Storage)
 
 **Interface Model (`MI` 接口模型)**:
 The system-boundary contract catalog specifying `PROVIDED` (inbound, backed by `M2` `EXTERNAL_CALL`) and `DEPENDENT` (outbound, linked to `M5` `ExternalEntity`) interfaces, their I/O field specs aligned with `M1`/`M7`, and return rules.
 _Avoid_: Gateway config, OpenAPI file
+_Shown to business users as_: 对外接口 (Integrations)
 
 ## Validation & Lifecycle
 
 **Consistency Error (一致性错误)**:
 A blocking model defect—such as a dangling ID reference, broken `M2`/`M7` 1-to-1 binding, or invalid `MU` call-chain order—that prevents saving or exporting a model snapshot.
 _Avoid_: Warning, lint hint
+_Shown to business users as_: 需要修正的问题 (Problems to fix)
 
 **Stage Warning (阶段缺失警告)**:
 A non-blocking indicator showing that a late-stage model in the 12-stage modeling sequence (such as `MM` or `MI`) has not yet been authored, permitting progressive modeling and legacy 8/9-model imports.
 _Avoid_: Validation failure, broken model
+_Shown to business users as_: 尚未完成的部分 (Not yet completed)
 
 ## Workspace & Agent Collaboration
 
 **Ontology Project (本体工程)**:
 The top-level domain workspace container that owns one evolving Ontology Suite alongside its requirement specifications, interactive prototypes, snapshots, and assembled deliverables.
 _Avoid_: Project session,工程会话, chat workspace
+_Shown to business users as_: 项目 (Project)
 
 **Agent Session (智能体会话)**:
 A persistent, multi-turn conversation thread between a user and a specialized domain agent (such as Requirement Exploration, Prototype Co-Design, Ontology Copilot, Application Coding, Capability Chat, or Data Reasoning) scoped to an Ontology Project.
 _Avoid_: Project session, stateless prompt, one-shot turn
 
 **Agent Run (智能体运行)**:
-One bounded piece of agent work inside an Agent Session, from a user turn or a triggered action through to the resulting artifact change, that the user can watch, cancel, and retry.
+One bounded piece of agent work inside an Agent Session, from a user turn or a triggered action through to the resulting artifact change, that the user can watch, cancel, retry, and undo.
 _Avoid_: Background task, pipeline task, one-shot call
 
 **Agent Panel (智能体面板)**:
 The single place in the workbench where the user talks to agents and watches every Agent Run, showing the Agent Session that belongs to the module in view.
 _Avoid_: Chat drawer, task drawer, assistant sidebar
+
+**Workbench Theme (工作台主题)**:
+A named look of the Ontology Plus workbench itself, covering both its light and dark appearance, that the user chooses independently of how any Interactive Prototype or generated application looks.
+_Avoid_: Skin, UI theme, style, Visual Reference (which describes the generated application, not the workbench)
+
+**AI Assistant (AI 助手)**:
+The single conversational counterpart the user sees in the workbench, behind which the specialised agent for the Project Step in view does the work.
+_Avoid_: Agent, 智能体, copilot, or any agent kind name in user-facing copy
+
+**Project Step (步骤)**:
+One of the four ordered parts of building a new system in an Ontology Project: Requirements, Prototype, Business Model, Delivery.
+_Avoid_: Stage, 阶段 (reserved for the 12-stage modeling sequence), phase, module, center
+
+**Step Hand-off (步骤转交)**:
+The AI Assistant's offer to carry a request that belongs to another Project Step into that step's conversation, which happens only when the user accepts it.
+_Avoid_: Routing, delegation, cross-agent call
+
+**Step Confirmation (步骤确认)**:
+The user's explicit approval of a Project Step's result, which makes that result the input of the next step.
+_Avoid_: Confirmation (reserved for Extraction Candidates), sign-off, publish
+
+**Outdated (待更新)**:
+The state of a Project Step's result when an earlier step has changed since it was produced; it stays as it is until the user accepts an update.
+_Avoid_: Stale, dirty, invalid, out of sync
+
+**Change Summary (变更说明)**:
+The plain-language account of what one Agent Run changed, shown when the run ends, from which that run can be undone.
+_Avoid_: Tool log, trace, diff
+
+**Business View (业务视图)**:
+The default view of a Project Step's result, written in business names and organised around the things a business person recognises.
+_Avoid_: Simple mode, beginner mode
+
+**Technical Details (技术细节)**:
+The view of the same result that exposes model codes, identifiers, and source files, opened on demand from the Business View.
+_Avoid_: Technical layer, 技术层 (collides with Four-Layer Application Assembly), expert mode, advanced mode
 
 ## Application Center & Delivery
 
@@ -97,6 +148,7 @@ _Avoid_: Version, clone, copy
 **Confirmed Revision (已确认修订)**:
 The single Prototype Revision in an Ontology Project that the user has approved as the source for UI Model extraction and Ontology Suite synthesis.
 _Avoid_: Latest version, active prototype
+_Shown to business users as_: 已确认的原型 (Confirmed prototype)
 
 **Visual Reference (视觉参考)**:
 A screenshot of a real production interface that the user picks or supplies to show the agent the look they want.
