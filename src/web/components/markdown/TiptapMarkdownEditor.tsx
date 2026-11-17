@@ -211,14 +211,14 @@ export function TiptapMarkdownEditor({
           {badge}
 
           {/* 3-Mode Segmented Control */}
-          <div className="inline-flex items-center rounded-[7px] border border-border bg-card p-0.5 shadow-xs">
+          <div className="inline-flex items-center rounded-md border border-border bg-card p-0.5 shadow-xs">
             {!readOnly && (
               <button
                 type="button"
                 data-testid="md-mode-rich"
                 onClick={() => handleModeSwitch('RICH')}
                 className={cn(
-                  'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                  'inline-flex h-6 items-center gap-1 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                   mode === 'RICH'
                     ? 'bg-card text-foreground shadow-hairline'
                     : 'text-faint-foreground hover:text-foreground',
@@ -234,7 +234,7 @@ export function TiptapMarkdownEditor({
                 data-testid="md-mode-source"
                 onClick={() => handleModeSwitch('SOURCE')}
                 className={cn(
-                  'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                  'inline-flex h-6 items-center gap-1 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                   mode === 'SOURCE'
                     ? 'bg-card text-foreground shadow-hairline'
                     : 'text-faint-foreground hover:text-foreground',
@@ -249,7 +249,7 @@ export function TiptapMarkdownEditor({
               data-testid="md-mode-preview"
               onClick={() => handleModeSwitch('PREVIEW')}
               className={cn(
-                'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                'inline-flex h-6 items-center gap-1 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 mode === 'PREVIEW'
                   ? 'bg-card text-foreground shadow-hairline'
                   : 'text-faint-foreground hover:text-foreground',

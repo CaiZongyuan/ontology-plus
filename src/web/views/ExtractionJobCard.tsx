@@ -97,7 +97,7 @@ export function ExtractionJobCard(props: {
 
   return (
     <div
-      className="p-2.5 rounded-[6px] bg-muted border border-border flex flex-col gap-1.5"
+      className="p-2.5 rounded-sm bg-muted border border-border flex flex-col gap-1.5"
       data-testid={`extraction-job-${job.id}`}
     >
       <div className="flex justify-between items-start gap-2">
@@ -156,7 +156,7 @@ export function ExtractionJobCard(props: {
       </div>
 
       {structureOnly && alignment.status === 'FAILED' && (
-        <div className="text-[12.5px] p-2 rounded-[6px] border border-border bg-card">
+        <div className="text-[12.5px] p-2 rounded-sm border border-border bg-card">
           <div className="font-medium">{alignmentReason}</div>
           {alignment.diagnostic && (
             <div className="text-muted-foreground">
@@ -267,7 +267,7 @@ export function ExtractionJobCard(props: {
                 return (
                   <div
                     key={cand.key}
-                    className="p-2 rounded-[6px] bg-card border border-border flex flex-col gap-1"
+                    className="p-2 rounded-sm bg-card border border-border flex flex-col gap-1"
                     data-testid={`extraction-candidate-${cand.key}`}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -370,7 +370,7 @@ export function ExtractionJobCard(props: {
                                 {` · ${formatEvidenceNote(ev, locale)}`}
                               </div>
                               {ev.excerpt && (
-                                <pre className="m-0 p-2 rounded-[6px] bg-muted border border-border font-mono text-[11.5px] whitespace-pre-wrap break-words">
+                                <pre className="m-0 p-2 rounded-sm bg-muted border border-border font-mono text-[11.5px] whitespace-pre-wrap break-words">
                                   {ev.excerpt}
                                 </pre>
                               )}
@@ -389,7 +389,7 @@ export function ExtractionJobCard(props: {
             <div className="sticky bottom-0 z-10 bg-card pt-2 pb-1 border-t border-border flex flex-col gap-1.5">
               {preview.newErrors.length > 0 ? (
                 <div
-                  className="text-[12.5px] p-2 rounded-[6px] border border-border bg-card"
+                  className="text-[12.5px] p-2 rounded-sm border border-border bg-card"
                   data-testid={`extraction-merge-blocked-${job.id}`}
                 >
                   <div className="font-medium text-destructive">

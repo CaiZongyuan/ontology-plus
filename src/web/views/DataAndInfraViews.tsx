@@ -300,7 +300,7 @@ export function DataResourcesView({
           <div className="grid grid-cols-3 gap-2.5">
             {db.tables.map((tb) => (
               <div
-                key={tb.tableName} className="p-2.5 bg-muted rounded-[5px] border border-border"
+                key={tb.tableName} className="p-2.5 bg-muted rounded-sm border border-border"
               >
                 <div className="flex justify-between items-center">
                   <strong className="font-mono">{tb.tableName}</strong>
@@ -386,7 +386,7 @@ export function DataResourcesView({
         />
 
         {sqlError && (
-          <div className="mt-2 p-[8px_10px] rounded-[5px] bg-destructive-soft text-destructive font-mono text-[12.5px]"
+          <div className="mt-2 p-[8px_10px] rounded-sm bg-destructive-soft text-destructive font-mono text-[12.5px]"
           >
             {sqlError}
           </div>
@@ -484,7 +484,7 @@ export function DataResourcesView({
                   onClick={() => setSelectedDocId(doc.id)}
                   style={{
                     padding: '8px 10px',
-                    borderRadius: 6,
+                    borderRadius: 'var(--radius-sm)',
                     cursor: 'pointer',
                     background: active ? 'var(--primary-soft)' : 'var(--muted)',
                     border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
@@ -1242,7 +1242,7 @@ export function DataMetricsReportsView() {
                 const insight = insightsByMetric[m.id];
                 return (
                   <div
-                    key={m.id} className="p-3 rounded-[6px] bg-muted border border-border flex flex-col gap-1.5"
+                    key={m.id} className="p-3 rounded-sm bg-muted border border-border flex flex-col gap-1.5"
                   >
                     <div className="flex justify-between items-center">
                       <span className="badge badge-accent">{m.code}</span>
@@ -1296,7 +1296,7 @@ export function DataMetricsReportsView() {
                     </div>
 
                     {insight && (
-                      <div className="mt-1.5 p-2.5 rounded-[5px] bg-card border border-border text-[12.5px] flex flex-col gap-1.5"
+                      <div className="mt-1.5 p-2.5 rounded-sm bg-card border border-border text-[12.5px] flex flex-col gap-1.5"
                       >
                         <div className="font-semibold text-primary">
                           {t('AI 异动驱动因子：', 'Anomaly Drivers:')}
@@ -1353,7 +1353,7 @@ export function DataMetricsReportsView() {
                 const attrRes = attributionsByScenario[sc.id];
                 return (
                   <div
-                    key={sc.id} className="p-3 rounded-[6px] bg-muted border border-border flex flex-col gap-2"
+                    key={sc.id} className="p-3 rounded-sm bg-muted border border-border flex flex-col gap-2"
                   >
                     <div className="flex justify-between items-start gap-2.5"
                     >
@@ -1423,7 +1423,7 @@ export function DataMetricsReportsView() {
                     </div>
 
                     {attrRes && (
-                      <div className="p-2.5 rounded-[5px] bg-card border border-border"
+                      <div className="p-2.5 rounded-sm bg-card border border-border"
                       >
                         <div className="flex justify-between mb-1.5">
                           <strong className="text-[12.5px]">
@@ -1438,7 +1438,7 @@ export function DataMetricsReportsView() {
                         <div className="flex flex-col gap-1">
                           {attrRes.causalBreakdown.map((item, cIdx) => (
                             <div
-                              key={cIdx} className="flex justify-between gap-2 text-[12.5px] p-[4px_6px] bg-muted rounded-[4px]"
+                              key={cIdx} className="flex justify-between gap-2 text-[12.5px] p-[4px_6px] bg-muted rounded-xs"
                             >
                               <span>
                                 <strong>{item.factor}</strong> — {item.evidence}
@@ -1758,7 +1758,7 @@ export function DataReasoningView() {
           ].map((stage) => (
             <div
               key={stage.mode}
-              className="p-3 bg-muted rounded-[6px] border border-border flex flex-col justify-between gap-2"
+              className="p-3 bg-muted rounded-sm border border-border flex flex-col justify-between gap-2"
             >
               <div>
                 <div className="flex items-center justify-between gap-1.5">
@@ -1794,7 +1794,7 @@ export function DataReasoningView() {
               ? latestPolicyArtifact.dataSummary
               : seededSession!.dataSummary
             ).map((kpi, idx) => (
-              <div key={idx} className="p-2.5 rounded-[6px] border border-border bg-card">
+              <div key={idx} className="p-2.5 rounded-sm border border-border bg-card">
                 <div className="text-[11.5px] text-muted-foreground">{kpi.label}</div>
                 <div className="flex items-baseline justify-between gap-2 mt-0.5">
                   <strong className="text-[15px] font-mono">{kpi.value}</strong>
@@ -1831,7 +1831,7 @@ export function DataReasoningView() {
           <div className="grid grid-cols-2 gap-2.5">
             {policyRecommendations.map((rec, i) => (
               <div
-                key={i} className="p-3 bg-muted rounded-[6px] border border-border flex flex-col justify-between gap-2"
+                key={i} className="p-3 bg-muted rounded-sm border border-border flex flex-col justify-between gap-2"
               >
                 <div>
                   <div className="flex justify-between gap-1.5">
@@ -2008,7 +2008,7 @@ export function DataWritebackView() {
           </div>
 
           {wb.lastExecutionResult && (
-            <div className="p-2.5 bg-success-soft text-success rounded-[5px] font-mono text-[12.5px]"
+            <div className="p-2.5 bg-success-soft text-success rounded-sm font-mono text-[12.5px]"
             >
               {wb.lastExecutionResult}
             </div>
@@ -2259,7 +2259,7 @@ export function LlmCenterView() {
 
           {p.lastTestedMessage && (
             <div
-              data-testid={idx === 0 ? 'llm-ping-result' : `llm-ping-result-${idx}`} className="p-2.5 bg-muted rounded-[5px] font-mono text-[12.5px] mb-2.5"
+              data-testid={idx === 0 ? 'llm-ping-result' : `llm-ping-result-${idx}`} className="p-2.5 bg-muted rounded-sm font-mono text-[12.5px] mb-2.5"
             >
               {p.lastTestedMessage}
             </div>
@@ -2422,7 +2422,7 @@ export function SystemSettingsView() {
             alignItems: 'center',
             gap: 12,
             padding: 12,
-            borderRadius: 8,
+            borderRadius: 'var(--radius-md)',
             background: settings.mockLlmMode ? 'var(--warning-soft)' : 'var(--muted)',
             border: '1px solid var(--border)',
           }}
@@ -2477,7 +2477,7 @@ export function SystemSettingsView() {
 
           <div
             role="group"
-            aria-label={t('工作台主题选择', 'Workbench theme')} className="inline-flex p-0.75 rounded-[6px] bg-muted border border-border gap-1"
+            aria-label={t('工作台主题选择', 'Workbench theme')} className="inline-flex p-0.75 rounded-sm bg-muted border border-border gap-1"
           >
             {BUILT_IN_THEMES.map((option) => (
               <Button
@@ -2508,7 +2508,7 @@ export function SystemSettingsView() {
 
           <div
             role="group"
-            aria-label={t('浅色与深色选择', 'Light and dark preference')} className="inline-flex p-0.75 rounded-[6px] bg-muted border border-border gap-1"
+            aria-label={t('浅色与深色选择', 'Light and dark preference')} className="inline-flex p-0.75 rounded-sm bg-muted border border-border gap-1"
           >
             <Button
               type="button"
@@ -2553,7 +2553,7 @@ export function SystemSettingsView() {
             </div>
           </div>
 
-          <div className="inline-flex p-0.75 rounded-[6px] bg-muted border border-border gap-1"
+          <div className="inline-flex p-0.75 rounded-sm bg-muted border border-border gap-1"
           >
             <Button
               type="button"

@@ -296,7 +296,7 @@ export function MuDiffSummaryPanel({
 
       {!summary.hasChanges ? (
         <div
-          className="rounded-[8px] border border-border bg-muted px-3.5 py-3 text-[12.5px] text-foreground-soft"
+          className="rounded-md border border-border bg-muted px-3.5 py-3 text-[12.5px] text-foreground-soft"
           data-testid="mu-diff-empty-state"
         >
           {nextMu.screens.length === 0
@@ -318,7 +318,7 @@ export function MuDiffSummaryPanel({
             return (
               <div
                 key={sc.screenId}
-                className="rounded-[8px] border border-border bg-card p-3 space-y-2"
+                className="rounded-md border border-border bg-card p-3 space-y-2"
                 data-testid={`mu-diff-screen-${sc.screenId}`}
                 data-diff-status={sc.status}
               >
@@ -523,7 +523,7 @@ export function PrototypeRevisionCompareView({
             <select
               value={leftRev.id}
               onChange={(e) => onSelectLeft(e.target.value)}
-              className="h-7 px-2 rounded-[6px] border border-border bg-card text-[12px] text-foreground"
+              className="h-7 px-2 rounded-sm border border-border bg-card text-[12px] text-foreground"
               data-testid="compare-left-revision-select"
             >
               {orderedAsc.map((rev) => (
@@ -554,7 +554,7 @@ export function PrototypeRevisionCompareView({
             <select
               value={rightRev.id}
               onChange={(e) => onSelectRight(e.target.value)}
-              className="h-7 px-2 rounded-[6px] border border-border bg-card text-[12px] text-foreground"
+              className="h-7 px-2 rounded-sm border border-border bg-card text-[12px] text-foreground"
               data-testid="compare-right-revision-select"
             >
               {orderedAsc.map((rev) => (
@@ -670,10 +670,10 @@ export function PrototypeRevisionCompareView({
             )}
           </div>
           <div className="proto-rev-compare-grid">
-            <pre className="m-0 max-h-[200px] overflow-auto rounded-[6px] border border-border bg-card p-2.5 font-mono text-[11px] text-foreground-soft">
+            <pre className="m-0 max-h-[200px] overflow-auto rounded-sm border border-border bg-card p-2.5 font-mono text-[11px] text-foreground-soft">
               {leftCleanHtml}
             </pre>
-            <pre className="m-0 max-h-[200px] overflow-auto rounded-[6px] border border-border bg-card p-2.5 font-mono text-[11px] text-foreground-soft">
+            <pre className="m-0 max-h-[200px] overflow-auto rounded-sm border border-border bg-card p-2.5 font-mono text-[11px] text-foreground-soft">
               {rightCleanHtml}
             </pre>
           </div>
@@ -1201,7 +1201,7 @@ export function PrototypeRevisionHistoryDrawer({
                         }
                       }}
                       aria-label={t('修订名称', 'Revision title')}
-                      className="flex-1 min-w-0 h-7 px-2 rounded-[6px] border border-border bg-muted text-[12.5px] text-foreground"
+                      className="flex-1 min-w-0 h-7 px-2 rounded-sm border border-border bg-muted text-[12.5px] text-foreground"
                       data-testid={`revision-rename-input-${rev.revisionNumber}`}
                     />
                     <Button
@@ -1432,7 +1432,7 @@ export function ConfirmRevisionMuDiffModal({
         </div>
 
         <div className="space-y-3 px-4 py-3.5 text-[13px] leading-relaxed text-foreground-soft">
-          <div className="rounded-[8px] border border-border bg-muted/55 px-3 py-2 text-[12.5px]">
+          <div className="rounded-md border border-border bg-muted/55 px-3 py-2 text-[12.5px]">
             <div className="font-medium text-foreground">
               {prototypeName ? `${prototypeName} · ` : ''}#{revision.revisionNumber}{' '}
               {revision.title}
@@ -1457,7 +1457,7 @@ export function ConfirmRevisionMuDiffModal({
 
           {resolvedHasNonMu && (
             <div
-              className="flex items-start gap-2 rounded-[8px] border border-primary/30 bg-primary-soft px-3 py-2 text-[12px] text-foreground"
+              className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary-soft px-3 py-2 text-[12px] text-foreground"
               role="note"
               data-testid="confirm-mu-only-safeguard"
             >

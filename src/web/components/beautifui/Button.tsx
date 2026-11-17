@@ -7,7 +7,7 @@ import { cn } from '../../lib/utils.js';
 // default outline; pills are reserved for status badges.
 export const buttonVariants = cva(
   [
-    'inline-flex items-center justify-center gap-1.5 rounded-[6px] border border-solid font-sans font-medium leading-none cursor-pointer select-none whitespace-nowrap',
+    'inline-flex items-center justify-center gap-1.5 rounded-sm border border-solid font-sans font-medium leading-none cursor-pointer select-none whitespace-nowrap',
     'transition-[background-color,border-color,color,box-shadow,opacity] duration-150 ease-out-strong',
     'active:translate-y-[0.5px] disabled:opacity-45 disabled:cursor-not-allowed disabled:active:translate-y-0',
     'focus-visible:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30',

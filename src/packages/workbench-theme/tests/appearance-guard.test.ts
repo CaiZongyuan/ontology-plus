@@ -98,6 +98,55 @@ describe('the appearance guard', () => {
     ]);
   });
 
+  it('fails a literal corner radius in a stylesheet and names the radius token of the same size in 暖纸', () => {
+    const sheet = css(
+      [
+        '.a {',
+        '  border-radius: 6px;',
+        '  border-radius: 10px 10px 0 0;',
+        '  border-top-left-radius: 5px;',
+        '  border-radius: 999px;',
+        '  border-radius: 50%;',
+        '  border-radius: 0;',
+        '  border-radius: var(--radius-sm, 6px);',
+        '  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;',
+        '}',
+      ].join('\n'),
+    );
+    const problems = problemsIn(sheet);
+    expect(problems.map((problem) => [problem.kind, problem.line])).toEqual([
+      ['literal-radius', 2],
+      ['literal-radius', 3],
+      ['literal-radius', 4],
+    ]);
+    expect(problems[0]!.hint).toContain('var(--radius-sm)');
+    expect(problems[1]!.hint).toContain('var(--radius-card)');
+    expect(problems[2]!.hint).toContain('RADIUS_EXCEPTIONS');
+  });
+
+  it('fails a literal corner radius in markup, as an arbitrary utility or an inline style', () => {
+    const markup = tsx(
+      '<div className="rounded-[4px] rounded-t-[14px] rounded-[5px] rounded-full rounded-[inherit]" style={{ borderRadius: 8, borderTopLeftRadius: "12px" }} />',
+    );
+    expect(problemsIn(markup).map((problem) => [problem.kind, problem.hint])).toEqual([
+      ['literal-radius', expect.stringContaining('rounded-xs')],
+      ['literal-radius', expect.stringContaining('rounded-t-window')],
+      ['literal-radius', expect.stringContaining('RADIUS_EXCEPTIONS')],
+      ['literal-radius', expect.stringContaining('var(--radius-md)')],
+      ['literal-radius', expect.stringContaining('var(--radius-lg)')],
+    ]);
+    expect(problemsIn(tsx('<div style={{ borderRadius: radius, borderRadius: "var(--radius-md)" }} />'))).toEqual([]);
+  });
+
+  it('lets a literal corner radius through where it is registered for that file', () => {
+    const path = 'src/web/components/prototype/VisualReferencePicker.tsx';
+    const phone = tsx('// Colours of the designed app: not workbench appearance.\n<div className="rounded-[22px]" />', path);
+    expect(problemsIn(phone)).toEqual([]);
+    expect(problemsIn(tsx('<div className="rounded-[22px]" />'))).toEqual([
+      expect.objectContaining({ kind: 'literal-radius' }),
+    ]);
+  });
+
   it('fails an @theme mapping that names a utility differently from the token it paints', () => {
     const sheet = css(
       '@theme inline {\n  --color-card: var(--card);\n  --color-page: var(--background);\n  --font-serif: var(--font-title);\n  --shadow-card: var(--shadow-card);\n}',

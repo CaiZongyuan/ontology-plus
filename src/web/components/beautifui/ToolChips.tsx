@@ -428,14 +428,14 @@ export function ToolChips({
               )}
             >
               {traces.length > 1 && (
-                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[4px] bg-muted px-1 font-mono text-[10px] font-semibold text-faint-foreground tabular-nums">
+                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-xs bg-muted px-1 font-mono text-[10px] font-semibold text-faint-foreground tabular-nums">
                   {index + 1}
                 </span>
               )}
 
               <span
                 className={cn(
-                  'inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px]',
+                  'inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-sm',
                   running && 'bg-primary-soft text-primary',
                   isError && 'bg-destructive-soft text-destructive',
                   !running && !isError && 'bg-muted text-primary group-hover/chip:bg-primary-soft/70',
@@ -588,7 +588,7 @@ export function ToolChips({
                     type="button"
                     onClick={() => setViewMode('structured')}
                     className={cn(
-                      'inline-flex h-[18px] cursor-pointer items-center gap-1 rounded-[4px] px-1.5 text-[10.5px] font-medium transition-colors',
+                      'inline-flex h-[18px] cursor-pointer items-center gap-1 rounded-xs px-1.5 text-[10.5px] font-medium transition-colors',
                       viewMode === 'structured'
                         ? 'bg-card text-foreground shadow-xs'
                         : 'text-faint-foreground hover:text-foreground-soft',
@@ -601,7 +601,7 @@ export function ToolChips({
                     type="button"
                     onClick={() => setViewMode('json')}
                     className={cn(
-                      'inline-flex h-[18px] cursor-pointer items-center gap-1 rounded-[4px] px-1.5 font-mono text-[10.5px] font-medium transition-colors',
+                      'inline-flex h-[18px] cursor-pointer items-center gap-1 rounded-xs px-1.5 font-mono text-[10.5px] font-medium transition-colors',
                       viewMode === 'json'
                         ? 'bg-card text-foreground shadow-xs'
                         : 'text-faint-foreground hover:text-foreground-soft',

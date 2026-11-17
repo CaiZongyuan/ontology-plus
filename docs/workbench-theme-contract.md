@@ -210,4 +210,5 @@ These are computed from contract tokens and are the same for every theme, so a t
 - writes a colour utility, `@theme` mapping, or shadow or radius utility under a name the contract does not define;
 - gives a contract token or a derived variable a value outside the generated theme stylesheet, or shares a colour computed from tokens between files without registering it;
 - paints a literal colour (hex, `rgb()`, `white`, a Tailwind palette colour such as `text-green-600`), except in files that paint the user's designed application, which are registered with the reason in `src/packages/workbench-theme/lib/guard.ts`;
+- writes a literal corner radius (`border-radius: 6px`, `rounded-[6px]`, `borderRadius: 6`) instead of a radius token, except a pill (`999px`), a circle (`50%`), and shapes registered with the reason in `RADIUS_EXCEPTIONS` in `src/packages/workbench-theme/lib/guard.ts`;
 - uses `accent` or `muted` with their pre-contract meaning (brand colour, secondary text).

@@ -732,7 +732,7 @@ export function CapabilityExtractionView() {
 
         {extractionError && (
           <div
-            className="p-2.5 mb-3 rounded-[6px] border border-border bg-card flex items-start justify-between gap-2 text-[12.5px]"
+            className="p-2.5 mb-3 rounded-sm border border-border bg-card flex items-start justify-between gap-2 text-[12.5px]"
             data-testid="extraction-error-banner"
             role="alert"
           >
@@ -758,7 +758,7 @@ export function CapabilityExtractionView() {
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2 mb-3 rounded-[6px] bg-muted border border-border"
+        <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2 mb-3 rounded-sm bg-muted border border-border"
         >
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[11.5px] font-semibold text-muted-foreground">
@@ -1356,7 +1356,7 @@ export function CapabilityMcpView() {
                       onClick={() => handleSelectTool(tool)}
                       style={{
                         padding: '8px 10px',
-                        borderRadius: 5,
+                        borderRadius: 'var(--radius-sm)',
                         cursor: 'pointer',
                         background:
                           selectedTool === tool.name ? 'var(--primary-soft)' : 'var(--muted)',
@@ -1396,7 +1396,7 @@ export function CapabilityMcpView() {
                       style={{
                         textAlign: 'left',
                         padding: '6px 10px',
-                        borderRadius: 5,
+                        borderRadius: 'var(--radius-sm)',
                         cursor: 'pointer',
                         background:
                           selectedResourceUri === resItem.uri
@@ -1464,7 +1464,7 @@ export function CapabilityMcpView() {
                 />
               )}
 
-              <div className="p-2.5 bg-muted rounded-[6px] border border-border"
+              <div className="p-2.5 bg-muted rounded-sm border border-border"
               >
                 <div className="flex justify-between items-center mb-1.5"
                 >
@@ -1742,7 +1742,7 @@ export function CapabilityAgentsView() {
                 }}
                 style={{
                   padding: 10,
-                  borderRadius: 6,
+                  borderRadius: 'var(--radius-sm)',
                   cursor: 'pointer',
                   background: selected ? 'var(--primary-soft)' : 'var(--muted)',
                   border: `1px solid ${selected ? 'var(--primary)' : 'var(--border)'}`,
@@ -1822,7 +1822,7 @@ export function CapabilityAgentsView() {
         {activeAgent && (
           <>
             <div className="grid grid-cols-2 gap-2.5">
-              <div className="rounded-[6px] border border-border bg-muted/50 p-2.5">
+              <div className="rounded-sm border border-border bg-muted/50 p-2.5">
                 <div className="text-[11px] font-semibold text-faint-foreground mb-1.5">
                   {t('已挂载本体 MCP 服务', 'Mounted Ontology MCP Servers')}
                 </div>
@@ -1838,7 +1838,7 @@ export function CapabilityAgentsView() {
                   })}
                 </div>
               </div>
-              <div className="rounded-[6px] border border-border bg-muted/50 p-2.5">
+              <div className="rounded-sm border border-border bg-muted/50 p-2.5">
                 <div className="text-[11px] font-semibold text-faint-foreground mb-1.5">
                   {t('已注入渐进式 SKILL.md 规则包', 'Injected SKILL.md Packages')}
                 </div>
@@ -1856,7 +1856,7 @@ export function CapabilityAgentsView() {
               </div>
             </div>
 
-            <div className="rounded-[6px] border border-border p-3">
+            <div className="rounded-sm border border-border p-3">
               <div className="text-[11px] font-semibold text-faint-foreground mb-1">
                 {t('智能体系统提示词契约', 'System Prompt Contract')}
               </div>
@@ -1876,7 +1876,7 @@ export function CapabilityAgentsView() {
                     type="button"
                     disabled={isRunningCapSession}
                     onClick={() => handleQuickPrompt(promptText)}
-                    className="flex items-center justify-between gap-2 rounded-[6px] border border-border bg-card px-3 py-2 text-left text-[12.5px] text-foreground transition-colors hover:border-primary hover:bg-primary-soft cursor-pointer disabled:opacity-50"
+                    className="flex items-center justify-between gap-2 rounded-sm border border-border bg-card px-3 py-2 text-left text-[12.5px] text-foreground transition-colors hover:border-primary hover:bg-primary-soft cursor-pointer disabled:opacity-50"
                   >
                     <span>{promptText}</span>
                     <Play size={12} className="shrink-0 text-primary" />
@@ -1953,7 +1953,7 @@ export function CapabilityAgentsView() {
           <div className="flex flex-wrap gap-2">
             {data.mcpServers.map((mcp) => (
               <label
-                key={mcp.id} className="inline-flex items-center gap-1.5 p-[5px_10px] rounded-[5px] bg-muted border border-border text-[12.5px] cursor-pointer"
+                key={mcp.id} className="inline-flex items-center gap-1.5 p-[5px_10px] rounded-sm bg-muted border border-border text-[12.5px] cursor-pointer"
               >
                 <input
                   type="checkbox"
@@ -1975,7 +1975,7 @@ export function CapabilityAgentsView() {
           <div className="flex flex-wrap gap-2">
             {data.generatedSkills.map((sk) => (
               <label
-                key={sk.id} className="inline-flex items-center gap-1.5 p-[5px_10px] rounded-[5px] bg-muted border border-border text-[12.5px] cursor-pointer"
+                key={sk.id} className="inline-flex items-center gap-1.5 p-[5px_10px] rounded-sm bg-muted border border-border text-[12.5px] cursor-pointer"
               >
                 <input
                   type="checkbox"
@@ -2149,7 +2149,7 @@ export function CapabilityCrossFlowsView() {
           >
             {fl.steps.map((s, stepIdx) => (
               <div
-                key={s.stepOrder} className="p-2.5 rounded-[6px] bg-muted border border-border"
+                key={s.stepOrder} className="p-2.5 rounded-sm bg-muted border border-border"
               >
                 <div className="flex justify-between mb-1">
                   <span className="badge badge-accent">Step #{s.stepOrder}</span>
@@ -2475,7 +2475,7 @@ export function KnowledgeCenterView() {
                     onClick={() => setSelectedId(kn.id)}
                     style={{
                       padding: '8px 10px',
-                      borderRadius: 6,
+                      borderRadius: 'var(--radius-sm)',
                       cursor: 'pointer',
                       background: active ? 'var(--primary-soft)' : 'var(--muted)',
                       border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,

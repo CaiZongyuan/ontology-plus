@@ -48,7 +48,7 @@ export function SelectionAttachmentStrip({
       data-testid="selection-attachment-strip"
       aria-label={t('画布框选附件列表', 'Canvas selection attachments')}
       className={cn(
-        'flex flex-col gap-1.5 rounded-[8px] border border-border p-2',
+        'flex flex-col gap-1.5 rounded-md border border-border p-2',
         className,
       )}
     >
@@ -85,7 +85,7 @@ export function SelectionAttachmentStrip({
               onMouseLeave={() => hoverAttachment(null)}
               onFocus={() => hoverAttachment(att)}
               onBlur={() => hoverAttachment(null)}
-              className="group relative flex items-center gap-2 rounded-[6px] border border-border bg-card p-1.5 transition-colors hover:border-primary"
+              className="group relative flex items-center gap-2 rounded-sm border border-border bg-card p-1.5 transition-colors hover:border-primary"
             >
               <LocalImageThumbnail
                 attachment={att.imageRef}
@@ -135,7 +135,7 @@ export function SelectionAttachmentStrip({
                 )}
                 title={t('移除此框选目标', 'Remove selection')}
                 onClick={() => removeSelectionAttachment(prototypeId, att.id)}
-                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:text-foreground"
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-muted-foreground transition-colors hover:text-foreground"
               >
                 <X size={12.5} aria-hidden="true" />
               </button>
@@ -197,7 +197,7 @@ export function PrototypePostRunBanner({
             {anchorChips.slice(0, 3).map((chip) => (
               <span
                 key={chip}
-                className="rounded-[4px] border border-border bg-card px-1.5 py-0.5 font-mono text-[10.5px] text-foreground-soft"
+                className="rounded-xs border border-border bg-card px-1.5 py-0.5 font-mono text-[10.5px] text-foreground-soft"
               >
                 {chip}
               </span>
@@ -215,7 +215,7 @@ export function PrototypePostRunBanner({
         <div
           role="group"
           aria-label={t('切换改前与改后预览', 'Toggle Before and After preview')}
-          className="inline-flex items-center gap-0.5 rounded-[6px] border border-border bg-muted/50 p-0.5"
+          className="inline-flex items-center gap-0.5 rounded-sm border border-border bg-muted/50 p-0.5"
         >
           <Button
             type="button"
@@ -263,7 +263,7 @@ export function PrototypePostRunBanner({
           aria-label={t('关闭改前改后对比条', 'Dismiss Before/After bar')}
           title={t('关闭', 'Dismiss')}
           onClick={onDismiss}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-[5px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
         >
           <X size={13} aria-hidden="true" />
         </button>

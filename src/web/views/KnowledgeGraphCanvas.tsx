@@ -137,7 +137,7 @@ function SwimlaneGroupNode({ data }: NodeProps<Node<SwimlaneNodeData>>) {
       >
         <div className="flex min-w-0 items-center gap-1.5">
           <span
-            className="inline-block h-2.5 w-2.5 shrink-0 rounded-[3px]"
+            className="inline-block h-2.5 w-2.5 shrink-0 rounded-xs"
             style={{ background: data.color }}
           />
           <span className="truncate text-[11.5px] font-semibold text-foreground">
@@ -1199,13 +1199,13 @@ function KnowledgeGraphInner({
       <div className="kg-toolbar">
         <div className="kg-chips">
           {/* Layout Mode Switcher */}
-          <div className="mr-1 inline-flex items-center rounded-[7px] border border-border bg-card p-0.5 shadow-xs">
+          <div className="mr-1 inline-flex items-center rounded-md border border-border bg-card p-0.5 shadow-xs">
             <button
               type="button"
               data-testid="kg-mode-swimlane-btn"
               onClick={() => setLayoutMode('STAGE_SWIMLANE')}
               className={cn(
-                'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                'inline-flex h-6 items-center gap-1 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 layoutMode === 'STAGE_SWIMLANE'
                   ? 'bg-card text-foreground shadow-hairline'
                   : 'text-faint-foreground hover:text-foreground',
@@ -1219,7 +1219,7 @@ function KnowledgeGraphInner({
               data-testid="kg-mode-ego-btn"
               onClick={() => setLayoutMode('EGO_FOCUS')}
               className={cn(
-                'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                'inline-flex h-6 items-center gap-1 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 layoutMode === 'EGO_FOCUS'
                   ? 'bg-card text-foreground shadow-hairline'
                   : 'text-faint-foreground hover:text-foreground',
@@ -1469,7 +1469,7 @@ function KnowledgeGraphInner({
               style={{
                 width: 148,
                 height: 96,
-                borderRadius: 8,
+                borderRadius: 'var(--radius-md)',
                 border: '1px solid var(--border)',
                 background: 'var(--muted)',
               }}
@@ -1583,7 +1583,7 @@ function KnowledgeGraphInner({
 
                       return (
                         <div
-                          key={edge.id} className="p-[6px_8px] rounded-[5px] bg-muted border border-border-subtle text-[11.5px] flex flex-col gap-1"
+                          key={edge.id} className="p-[6px_8px] rounded-sm bg-muted border border-border-subtle text-[11.5px] flex flex-col gap-1"
                         >
                           <div className="flex justify-between items-center gap-1"
                           >
@@ -1608,7 +1608,7 @@ function KnowledgeGraphInner({
                                 <span
                                   style={{
                                     padding: '0 4px',
-                                    borderRadius: 3,
+                                    borderRadius: 'var(--radius-xs)',
                                     background:
                                       MODEL_COLORS[neighborNode.model] || 'var(--primary)',
                                     color: 'var(--model-foreground)',

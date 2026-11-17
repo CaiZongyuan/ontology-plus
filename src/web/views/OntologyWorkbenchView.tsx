@@ -1375,7 +1375,7 @@ export function OntologyWorkbenchView({
                   ].map((item) => (
                     <div
                       key={item.step}
-                      className="rounded-[6px] border border-border bg-muted px-3 py-2.5 flex flex-col gap-1"
+                      className="rounded-sm border border-border bg-muted px-3 py-2.5 flex flex-col gap-1"
                     >
                       <div className="flex items-center justify-between text-[12px] font-semibold text-foreground">
                         <span>
@@ -1391,7 +1391,7 @@ export function OntologyWorkbenchView({
                 </div>
 
                 {lifecycle && (
-                  <div className="rounded-[6px] border border-border bg-muted px-3.5 py-2.5 text-[12.5px] text-foreground-soft">
+                  <div className="rounded-sm border border-border bg-muted px-3.5 py-2.5 text-[12.5px] text-foreground-soft">
                     {t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
                   </div>
                 )}
@@ -1660,7 +1660,7 @@ export function OntologyWorkbenchView({
             </div>
 
             {pendingDeleteAction && (
-              <div className="mb-3 p-[8px_10px] rounded-[6px] bg-warning-soft text-warning text-[12.5px] font-medium"
+              <div className="mb-3 p-[8px_10px] rounded-sm bg-warning-soft text-warning text-[12.5px] font-medium"
               >
                 {t(
                   `检测到「${pendingDeleteAction.label} (${pendingDeleteAction.elementId})」仍被其他元模型引用。建议先解除引用或执行级联重命名；如确认移除，可点击底部「强制删除此元素」。`,
@@ -1719,7 +1719,7 @@ export function OntologyWorkbenchView({
                   </span>
                   )
                 </div>
-                <div className="max-h-[220px] overflow-y-auto border border-border rounded-[5px]"
+                <div className="max-h-[220px] overflow-y-auto border border-border rounded-sm"
                 >
                   <table className="data-table">
                     <thead>
@@ -2454,7 +2454,7 @@ function StructuredModelInspector({
                   <div className="flex flex-wrap gap-1.5">
                     {b.inputParameters.map((p, pIdx) => (
                       <div
-                        key={`${b.id}-p-${pIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-muted border border-border-subtle"
+                        key={`${b.id}-p-${pIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-xs bg-muted border border-border-subtle"
                       >
                         <input
                           className="input"
@@ -2814,7 +2814,7 @@ function StructuredModelInspector({
                   <div className="flex flex-wrap gap-1.5">
                     {ev.payload.map((pf, pfIdx) => (
                       <div
-                        key={`${ev.id}-pf-${pfIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-muted border border-border-subtle"
+                        key={`${ev.id}-pf-${pfIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-xs bg-muted border border-border-subtle"
                       >
                         <input
                           className="input"
@@ -3348,7 +3348,7 @@ function StructuredModelInspector({
                 </div>
 
                 {/* Visual Node Sequence Strip */}
-                <div className="p-[8px_10px] mb-2.5 rounded-[5px] bg-muted border border-border-subtle flex items-center flex-wrap gap-1.5"
+                <div className="p-[8px_10px] mb-2.5 rounded-sm bg-muted border border-border-subtle flex items-center flex-wrap gap-1.5"
                 >
                   {fl.activities.map((a, idx) => (
                     <React.Fragment key={a.id}>
@@ -3830,7 +3830,7 @@ function StructuredModelInspector({
                   >
                     {sc.elements.map((el, elIdx) => (
                       <div
-                        key={el.elementId} className="inline-flex items-center gap-1.25 p-[4px_8px] rounded-[4px] bg-muted border border-border-subtle text-[11.5px]"
+                        key={el.elementId} className="inline-flex items-center gap-1.25 p-[4px_8px] rounded-xs bg-muted border border-border-subtle text-[11.5px]"
                       >
                         <span className="font-mono font-semibold">
                           [{el.elementId}]
@@ -3864,7 +3864,7 @@ function StructuredModelInspector({
                   </div>
                   {sc.events.map((ev, evIdx) => (
                     <div
-                      key={ev.eventId} className="p-[6px_10px] bg-muted rounded-[4px] mb-1.5 font-mono text-[11.5px] flex items-center justify-between gap-2 flex-wrap"
+                      key={ev.eventId} className="p-[6px_10px] bg-muted rounded-xs mb-1.5 font-mono text-[11.5px] flex items-center justify-between gap-2 flex-wrap"
                     >
                       <div>
                         <strong>{ev.eventId}</strong> (
@@ -3949,7 +3949,7 @@ function StructuredModelInspector({
                 {mp.tableMappings.map((tm, tmIdx) => (
                   <div key={`${mp.id}-tm-${tmIdx}`} className="mb-2.5">
                     <div
-                      className="form-grid-3 mb-2 p-2 rounded-[5px] bg-muted"
+                      className="form-grid-3 mb-2 p-2 rounded-sm bg-muted"
                     >
                       <div className="form-field">
                         <label className="form-label">{t('物理表名', 'Table Name')}</label>

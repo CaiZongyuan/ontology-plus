@@ -117,13 +117,13 @@ function ViewModeHeader({
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 overflow-hidden rounded-window border border-border bg-card px-3.5 py-2 shadow-xs">
-      <div className="inline-flex shrink-0 items-center rounded-[7px] border border-border bg-muted p-0.5">
+      <div className="inline-flex shrink-0 items-center rounded-md border border-border bg-muted p-0.5">
         <button
           type="button"
           data-testid={`${testIdPrefix}-mode-workspace`}
           onClick={() => onChange('WORKSPACE')}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-[5px] px-3 text-[12.5px] font-medium cursor-pointer transition-colors',
+            'inline-flex h-7 items-center gap-1.5 rounded-sm px-3 text-[12.5px] font-medium cursor-pointer transition-colors',
             mode === 'WORKSPACE' ? 'bg-card text-foreground shadow-hairline' : 'text-foreground-soft hover:text-foreground',
           )}
         >
@@ -135,7 +135,7 @@ function ViewModeHeader({
           data-testid={`${testIdPrefix}-mode-registry`}
           onClick={() => onChange('REGISTRY')}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-[5px] px-3 text-[12.5px] font-medium cursor-pointer transition-colors',
+            'inline-flex h-7 items-center gap-1.5 rounded-sm px-3 text-[12.5px] font-medium cursor-pointer transition-colors',
             mode === 'REGISTRY' ? 'bg-card text-foreground shadow-hairline' : 'text-foreground-soft hover:text-foreground',
           )}
         >
@@ -526,7 +526,7 @@ export function OverviewSessionsView({
             <div
               key={st.step}
               className={cn(
-                'p-[10px_12px] rounded-[6px] border flex flex-col justify-between gap-2 transition-colors',
+                'p-[10px_12px] rounded-sm border flex flex-col justify-between gap-2 transition-colors',
                 st.isNext
                   ? 'border-primary bg-card shadow-xs'
                   : st.ready
@@ -815,7 +815,7 @@ export function OverviewSessionsView({
               </option>
             </select>
             {newTemplate !== 'EMPTY' && (
-              <div className="mt-1.5 rounded-[5px] border border-border bg-muted px-2.5 py-2 text-[11.5px] text-foreground-soft">
+              <div className="mt-1.5 rounded-sm border border-border bg-muted px-2.5 py-2 text-[11.5px] text-foreground-soft">
                 {t(
                   '注意：您选择了【演示参考模板】，创建后会立即填入样例系统的全部本体模型与 YAML 文件。如果您正在研发自己的新业务系统（如门店、ERP、电商等），请切换回第一项「从零渐进式生成」以免产生歧义。',
                   'Note: Demo templates preload sample ontology models immediately. Choose "Progressive Clean Slate" for your own new business project to avoid sample data confusion.',
@@ -2386,7 +2386,7 @@ export function PrototypeStudioView({
   };
 
   const statusBanners = synthesisSummary ? (
-    <div className="flex items-center justify-between gap-2.5 rounded-[6px] border border-border bg-success-soft p-[8px_12px]">
+    <div className="flex items-center justify-between gap-2.5 rounded-sm border border-border bg-success-soft p-[8px_12px]">
       <div className="text-[12.5px]">
         <strong>
           {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
@@ -2774,7 +2774,7 @@ export function ModelFilesView({
               'YAML, manifest.json, and OWL files are automatically serialized once Step 4 (Business Ontology) is synthesized.',
             )}
           </p>
-          <p className="text-[12.5px] text-foreground-soft bg-muted border border-border rounded-[6px] px-3.5 py-2 m-0">
+          <p className="text-[12.5px] text-foreground-soft bg-muted border border-border rounded-sm px-3.5 py-2 m-0">
             {t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
@@ -2954,7 +2954,7 @@ export function ModelFilesView({
               </div>
             </div>
             <pre
-              data-testid="owl-xml-preview" className="p-3 bg-muted rounded-[5px] font-mono text-[11.5px] max-h-[420px] overflow-auto"
+              data-testid="owl-xml-preview" className="p-3 bg-muted rounded-sm font-mono text-[11.5px] max-h-[420px] overflow-auto"
             >
               {owlPreview}
             </pre>
@@ -4012,7 +4012,7 @@ export function ApplicationAssemblyDevView({
             {app && (
               <div className="grid grid-cols-4 gap-2.5"
               >
-                <div className="p-2.5 bg-muted rounded-[5px] flex flex-col gap-1.5">
+                <div className="p-2.5 bg-muted rounded-sm flex flex-col gap-1.5">
                   <div className="text-[11.5px] text-muted-foreground">
                     1. {t('业务本体层', 'Ontology Layer')}
                   </div>
@@ -4032,7 +4032,7 @@ export function ApplicationAssemblyDevView({
                   </span>
                 </div>
 
-                <div className="p-2.5 bg-muted rounded-[5px] flex flex-col gap-1.5">
+                <div className="p-2.5 bg-muted rounded-sm flex flex-col gap-1.5">
                   <div className="text-[11.5px] text-muted-foreground">
                     2. {t('UI/UE 设计规范层', 'UI/UE Design Layer')}
                   </div>
@@ -4049,7 +4049,7 @@ export function ApplicationAssemblyDevView({
                   </select>
                 </div>
 
-                <div className="p-2.5 bg-muted rounded-[5px] flex flex-col gap-1.5">
+                <div className="p-2.5 bg-muted rounded-sm flex flex-col gap-1.5">
                   <div className="text-[11.5px] text-muted-foreground">
                     3. {t('技术底座层', 'Tech Foundation Layer')}
                   </div>
@@ -4068,7 +4068,7 @@ export function ApplicationAssemblyDevView({
                   </select>
                 </div>
 
-                <div className="p-2.5 bg-muted rounded-[5px] flex flex-col gap-1.5">
+                <div className="p-2.5 bg-muted rounded-sm flex flex-col gap-1.5">
                   <div className="text-[11.5px] text-muted-foreground">
                     4. {t('技术架构层', 'Tech Architecture Layer')}
                   </div>
@@ -4269,7 +4269,7 @@ export function ApplicationAssemblyDevView({
                 <div className="flex flex-col gap-1.5">
                   {[...app.agentDevLogs].reverse().map((log, i) => (
                     <div
-                      key={i} className="p-[6px_10px] bg-muted rounded-[4px] font-mono text-[11.5px]"
+                      key={i} className="p-[6px_10px] bg-muted rounded-xs font-mono text-[11.5px]"
                     >
                       [{log.timestamp.slice(0, 19)}] <strong>{log.phase}</strong>: {log.detail}
                     </div>
@@ -4791,7 +4791,7 @@ export function AppPublishView({
             </div>
           </div>
 
-          <div className="p-[10px_12px] rounded-[6px] bg-muted border border-border flex items-center gap-2 flex-wrap"
+          <div className="p-[10px_12px] rounded-sm bg-muted border border-border flex items-center gap-2 flex-wrap"
           >
             <input
               className="input"
@@ -4830,7 +4830,7 @@ export function AppPublishView({
             <div className="flex flex-col gap-1.5">
               {app.agentDevLogs.map((log, i) => (
                 <div
-                  key={i} className="p-[6px_10px] bg-muted rounded-[4px] font-mono text-[11.5px]"
+                  key={i} className="p-[6px_10px] bg-muted rounded-xs font-mono text-[11.5px]"
                 >
                   [{log.timestamp.slice(0, 19)}] <strong>{log.phase}</strong>: {log.detail}
                 </div>

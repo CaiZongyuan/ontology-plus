@@ -1683,7 +1683,7 @@ export function PrototypeVisualPreviewStage({
       >
         <div
           data-testid="prototype-viewport-frame"
-          className="relative shrink-0 overflow-hidden rounded-[6px] border border-border bg-card shadow-xs"
+          className="relative shrink-0 overflow-hidden rounded-sm border border-border bg-card shadow-xs"
           style={{
             width: `${fitMetrics.scaledWidth}px`,
             height: `${visualHeight}px`,

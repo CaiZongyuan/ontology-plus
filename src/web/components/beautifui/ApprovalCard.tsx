@@ -113,7 +113,7 @@ export function ApprovalCard({
                   <span
                     className={cn(
                       'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border transition-colors duration-150',
-                      prompt.multiSelect ? 'rounded-[4px]' : 'rounded-full',
+                      prompt.multiSelect ? 'rounded-xs' : 'rounded-full',
                       isSelected ? 'border-foreground bg-foreground' : 'border-border-strong bg-card',
                     )}
                   >

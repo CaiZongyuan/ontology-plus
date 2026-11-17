@@ -840,7 +840,7 @@ function ShellInner() {
                       )}
                     </p>
                     {lifecycle && (
-                      <p className="text-[12.5px] text-foreground-soft bg-muted border border-border rounded-[6px] px-3.5 py-2 m-0">
+                      <p className="text-[12.5px] text-foreground-soft bg-muted border border-border rounded-sm px-3.5 py-2 m-0">
                         {t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
                       </p>
                     )}
