@@ -21,6 +21,7 @@ export {
   ArtifactHistoryNotFoundError,
   DEFAULT_MAX_ARTIFACT_HISTORY_ENTRIES,
   buildArtifactHistoryViews,
+  buildOntologySuiteChangeSummaryItems,
   captureRequirementDocState,
   computeRequirementDocDiff,
   sanitizeBusinessViewCopy,

@@ -192,7 +192,8 @@
 .bm-article-head[data-flash='true'],
 .bm-sec[data-flash='true'],
 .bm-list > li[data-flash='true'],
-.bm-table tr[data-flash='true'] {
+.bm-table tr[data-flash='true'],
+.bm-matrix tr[data-flash='true'] {
   background: var(--primary-soft);
 }
 

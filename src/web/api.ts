@@ -89,6 +89,7 @@ import {
   getProjectStepsFromBootstrap,
   normalizeNavViewAlias,
   readUrlNavState,
+  writeStepViewMode,
   writeUrlNavState,
   type ProjectLifecycleState,
   type ProjectStepProgressInput,
@@ -329,6 +330,37 @@ export function formatPrototypeSelectionsForPrompt(
 const activeSessionStreamAborters = new Map<string, AbortController>();
 const cancelledSessionIds = new Set<string>();
 
+export interface OntologyUndoRedoState {
+  canUndo: boolean;
+  canRedo: boolean;
+  latestEntryId: string | null;
+}
+
+export function getOntologyUndoRedoState(
+  artifactHistory?: readonly ArtifactHistoryEntryView[],
+): OntologyUndoRedoState {
+  const ontEntries = (artifactHistory ?? []).filter(
+    (entry) => entry.artifactKind === 'ONTOLOGY_SUITE',
+  );
+  if (ontEntries.length === 0) {
+    return { canUndo: false, canRedo: false, latestEntryId: null };
+  }
+  const byId = new Map(ontEntries.map((entry) => [entry.id, entry]));
+  const latest = ontEntries[0]!;
+  let undoDepth = 0;
+  let cursor: ArtifactHistoryEntryView | undefined = latest;
+  while (cursor && cursor.source.kind === 'UNDO') {
+    undoDepth += 1;
+    cursor = byId.get(cursor.source.undoneEntryId);
+  }
+  const isUndoneHead = undoDepth % 2 === 1;
+  return {
+    canUndo: !isUndoneHead,
+    canRedo: isUndoneHead,
+    latestEntryId: latest.id,
+  };
+}
+
 interface WorkbenchStoreState {
   data: BootstrapPayload | null;
   loading: boolean;
@@ -339,11 +371,10 @@ interface WorkbenchStoreState {
   activePrototypeIdByProject: Record<string, string>;
   liveSessionDrafts: Record<string, SessionLiveDraft>;
   sessionQueues: Record<string, QueuedSessionPromptItem[]>;
-  undoStack: OntologySuite[];
-  redoStack: OntologySuite[];
   selectedModel: ModelCode;
   selectedElementId: string | null;
   highlightedRequirementSection: { heading: string; docId?: string; seq: number } | null;
+  highlightedBusinessModelTarget: { pageId?: string; anchorId: string; seq: number } | null;
   historyDrawerArtifactKind: ArtifactHistorySurfaceKind | null;
   liveAnnouncement: string;
   setActiveNav: (nav: string, opts?: { itemId?: string | null; sessionId?: string | null }) => void;
@@ -353,6 +384,9 @@ interface WorkbenchStoreState {
   setSelectedModel: (code: ModelCode, elementId?: string | null) => void;
   setSelectedElementId: (elementId: string | null) => void;
   focusRequirementSection: (sectionHeading: string, docId?: string) => void;
+  focusBusinessModelTarget: (
+    target: Extract<ArtifactJumpTarget, { kind: 'BUSINESS_OBJECT' }>,
+  ) => void;
   openArtifactHistoryDrawer: (kind: ArtifactHistorySurfaceKind) => void;
   closeArtifactHistoryDrawer: () => void;
   refreshArtifactHistory: (
@@ -388,7 +422,6 @@ interface WorkbenchStoreState {
   applyBusinessModelEdit: (
     payload: PatchBusinessModelInput,
   ) => Promise<BusinessModelEditResult>;
-  pushUndoSnapshot: (prevSuite: OntologySuite) => void;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
   patchData: (patch: Partial<BootstrapPayload>) => void;
@@ -554,11 +587,10 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   activePrototypeIdByProject: {},
   liveSessionDrafts: {},
   sessionQueues: {},
-  undoStack: [],
-  redoStack: [],
   selectedModel: 'M1',
   selectedElementId: null,
   highlightedRequirementSection: null,
+  highlightedBusinessModelTarget: null,
   historyDrawerArtifactKind: null,
   liveAnnouncement: '',
 
@@ -611,6 +643,28 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       highlightedRequirementSection: {
         heading: sectionHeading,
         ...(docId ? { docId } : {}),
+        seq: nextSeq,
+      },
+    });
+  },
+
+  focusBusinessModelTarget: (target) => {
+    writeStepViewMode('BUSINESS_MODEL', 'business');
+    const targetPage = target.pageId ?? target.objectId ?? null;
+    if (target.modelCode) {
+      set({
+        selectedModel: target.modelCode,
+        selectedElementId: target.elementId ?? target.objectId ?? null,
+      });
+    } else if (target.elementId || target.objectId) {
+      set({ selectedElementId: target.elementId ?? target.objectId ?? null });
+    }
+    get().setActiveNav('app-ontology', { itemId: targetPage });
+    const nextSeq = (get().highlightedBusinessModelTarget?.seq ?? 0) + 1;
+    set({
+      highlightedBusinessModelTarget: {
+        ...(targetPage ? { pageId: targetPage } : {}),
+        anchorId: target.anchorId ?? target.elementId ?? target.objectId ?? '',
         seq: nextSeq,
       },
     });
@@ -692,13 +746,6 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     set({ data: { ...cur, ...patch } });
   },
 
-  pushUndoSnapshot: (prevSuite) => {
-    set({
-      undoStack: [...get().undoStack, JSON.parse(JSON.stringify(prevSuite)) as OntologySuite],
-      redoStack: [],
-    });
-  },
-
   bootstrap: async (projectId) => {
     set({ loading: true });
     const targetId = projectId || readUrlNavState().projectId || readLastProjectIdFromStorage();
@@ -709,10 +756,9 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     set({
       data: payload,
       loading: false,
-      undoStack: [],
-      redoStack: [],
       selectedElementId: null,
       highlightedRequirementSection: null,
+      highlightedBusinessModelTarget: null,
       historyDrawerArtifactKind: null,
     });
     writeLastProjectIdToStorage(payload.activeProject.id);
@@ -786,25 +832,27 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   saveSuiteWithUndo: async (suite, note) => {
     const cur = get().data;
     if (!cur) return;
-    const prevSuite = JSON.parse(JSON.stringify(cur.activeProject.suite)) as OntologySuite;
     const res = await fetch(`/api/projects/${cur.activeProject.id}/suite`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildJsonHeaders(),
       body: JSON.stringify({ suite, changelogNote: note }),
     });
-    const { project } = (await res.json()) as { project: ProjectDetail };
+    const { project, artifactHistory } = (await res.json()) as {
+      project: ProjectDetail;
+      artifactHistory?: ArtifactHistoryEntryView[];
+    };
+    const latest = get().data ?? cur;
     set({
       data: {
-        ...cur,
+        ...latest,
         activeProject: project,
-        projects: cur.projects.map((p) =>
+        ...(artifactHistory ? { artifactHistory } : {}),
+        projects: latest.projects.map((p) =>
           p.id === project.id
             ? { ...p, currentStage: project.currentStage, updatedAt: project.updatedAt }
             : p,
         ),
       },
-      undoStack: [...get().undoStack, prevSuite],
-      redoStack: [],
     });
   },
 
@@ -823,7 +871,6 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
         },
       };
     }
-    const prevSuite = JSON.parse(JSON.stringify(cur.activeProject.suite)) as OntologySuite;
     const result = await apiPatchBusinessModel(cur.activeProject.id, payload);
     if (!result.ok) {
       return result;
@@ -834,6 +881,7 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       data: {
         ...latest,
         activeProject: result.project,
+        ...(result.artifactHistory ? { artifactHistory: result.artifactHistory } : {}),
         projects: result.projects ?? latest.projects.map((p) =>
           p.id === result.project.id
             ? {
@@ -844,62 +892,33 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
             : p,
         ),
       },
-      undoStack: [...get().undoStack, prevSuite],
-      redoStack: [],
     });
     return result;
   },
 
   undo: async () => {
-    const { undoStack, redoStack, data } = get();
-    if (!data || undoStack.length === 0) return;
-    const previous = undoStack[undoStack.length - 1]!;
-    const current = JSON.parse(JSON.stringify(data.activeProject.suite)) as OntologySuite;
-    const res = await fetch(`/api/projects/${data.activeProject.id}/suite`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ suite: previous, changelogNote: 'Undo AST change' }),
-    });
-    const { project } = (await res.json()) as { project: ProjectDetail };
-    set({
-      data: {
-        ...data,
-        activeProject: project,
-        projects: data.projects.map((p) =>
-          p.id === project.id
-            ? { ...p, currentStage: project.currentStage, updatedAt: project.updatedAt }
-            : p,
-        ),
-      },
-      undoStack: undoStack.slice(0, -1),
-      redoStack: [...redoStack, current],
-    });
+    const cur = get().data;
+    if (!cur?.activeProject.id) return;
+    const { canUndo, latestEntryId } = getOntologyUndoRedoState(cur.artifactHistory);
+    if (!canUndo || !latestEntryId) return;
+    await get().undoArtifactChange('ONTOLOGY_SUITE', latestEntryId);
   },
 
   redo: async () => {
-    const { undoStack, redoStack, data } = get();
-    if (!data || redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1]!;
-    const current = JSON.parse(JSON.stringify(data.activeProject.suite)) as OntologySuite;
-    const res = await fetch(`/api/projects/${data.activeProject.id}/suite`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ suite: next, changelogNote: 'Redo AST change' }),
-    });
-    const { project } = (await res.json()) as { project: ProjectDetail };
-    set({
-      data: {
-        ...data,
-        activeProject: project,
-        projects: data.projects.map((p) =>
-          p.id === project.id
-            ? { ...p, currentStage: project.currentStage, updatedAt: project.updatedAt }
-            : p,
-        ),
-      },
-      undoStack: [...undoStack, current],
-      redoStack: redoStack.slice(0, -1),
-    });
+    const cur = get().data;
+    if (!cur?.activeProject.id) return;
+    const { canRedo, latestEntryId } = getOntologyUndoRedoState(cur.artifactHistory);
+    if (!canRedo || !latestEntryId) return;
+    const projectId = cur.activeProject.id;
+    const locale = getCurrentClientLocale();
+    try {
+      const res = await apiUndoArtifactChange(projectId, 'ONTOLOGY_SUITE', latestEntryId);
+      applyArtifactHistoryMutationToStore(projectId, res, set, get);
+      get().showToast(locale === 'en-US' ? 'Redid latest change' : '已重做最近一次改动');
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : String(err));
+      void get().refreshArtifactHistory(projectId, 'ONTOLOGY_SUITE').catch(() => undefined);
+    }
   },
 
   confirmRequirementsStep: async (docId) => {
@@ -2397,10 +2416,15 @@ export async function apiRenameSymbol(
   projectId: string,
   oldId: string,
   newId: string,
-): Promise<{ project: ProjectDetail; changedCount: number; changelogEntry: string }> {
+): Promise<{
+  project: ProjectDetail;
+  changedCount: number;
+  changelogEntry: string;
+  artifactHistory?: ArtifactHistoryEntryView[];
+}> {
   const res = await fetch(`/api/projects/${projectId}/rename`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildJsonHeaders(),
     body: JSON.stringify({ oldId, newId }),
   });
   return res.json();
@@ -2683,6 +2707,7 @@ export type BusinessModelEditResult =
       ok: true;
       project: ProjectDetail;
       projects?: ProjectSummary[];
+      artifactHistory?: ArtifactHistoryEntryView[];
     }
   | {
       ok: false;
@@ -2709,11 +2734,13 @@ export async function apiPatchBusinessModel(
   const data = (await res.json()) as {
     project: ProjectDetail;
     projects?: ProjectSummary[];
+    artifactHistory?: ArtifactHistoryEntryView[];
   };
   return {
     ok: true,
     project: data.project,
     ...(data.projects ? { projects: data.projects } : {}),
+    ...(data.artifactHistory ? { artifactHistory: data.artifactHistory } : {}),
   };
 }
 

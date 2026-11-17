@@ -13,6 +13,8 @@ import { createApiApp } from '../../../server/app.js';
 import { useWorkbenchStore, type BootstrapPayload } from '../../api.js';
 import { PreferencesProvider } from '../../i18n.js';
 import { RequirementsStepView } from '../../views/ApplicationCenterViews.js';
+import { BusinessModelStepView } from '../../views/BusinessModelStepView.js';
+import { OntologyWorkbenchView } from '../../views/OntologyWorkbenchView.js';
 import { ShellAgentPanel, agentPanelSurfaceFor } from '../agent/ShellAgentPanel.js';
 import { ArtifactHistoryDrawer, ChangeSummaryCard } from './index.js';
 
@@ -47,7 +49,9 @@ describe('ChangeSummaryCard & ArtifactHistoryDrawer UI (#65)', () => {
       data: initialSnapshot.data,
       loading: initialSnapshot.loading,
       activeNav: initialSnapshot.activeNav,
+      activeItemId: initialSnapshot.activeItemId,
       activeSessionId: initialSnapshot.activeSessionId,
+      highlightedBusinessModelTarget: null,
     });
     Object.assign(useWorkbenchStore.getInitialState(), initialSnapshot);
   });
@@ -276,6 +280,164 @@ describe('ChangeSummaryCard & ArtifactHistoryDrawer UI (#65)', () => {
         expect(drawerHtml.match(/data-testid="history-undo-latest-btn"/g)?.length).toBe(1);
         expect(drawerHtml.match(/data-testid="history-restore-before-btn"/g)?.length).toBe(1);
       }
+    } finally {
+      store.close();
+    }
+  });
+
+  it('wires ONTOLOGY_SUITE Change Summary, Business Object grouping, canvas flash jump, BusinessModelStepView history drawer, and server-backed Technical Details Undo/Redo with 0 Business View violations (#70)', async () => {
+    // Browser-memory undoStack / redoStack / pushUndoSnapshot are retired from useWorkbenchStore
+    const storeKeys = Object.keys(useWorkbenchStore.getState());
+    expect(storeKeys).not.toContain('undoStack');
+    expect(storeKeys).not.toContain('redoStack');
+    expect(storeKeys).not.toContain('pushUndoSnapshot');
+
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const app = createApiApp(store);
+
+    try {
+      const proj = store.createProject({
+        name: '合同审批建模工作台',
+        code: 'CONTRACT-SSR-70',
+        domain: 'contract_lifecycle',
+        template: 'CONTRACT',
+      });
+      const sess = store.createAgentSession({
+        projectId: proj.id,
+        agentKind: 'COPILOT',
+        title: '合同业务模型对话',
+      });
+
+      // Turn 1: read-only inspection turn -> NO Change Summary
+      const noopRes = await app.request(`/api/agent-sessions/${sess.id}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: '请检查当前业务模型结构', mockMode: true }),
+      });
+      await noopRes.text();
+
+      // Turn 2: mutating COPILOT turn -> adds action "提交审批" on Contract
+      const actRes = await app.request(`/api/agent-sessions/${sess.id}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: '请在合同上新增业务操作『提交审批』',
+          mockMode: true,
+        }),
+      });
+      await actRes.text();
+
+      const boot1 = (await (
+        await app.request(`/api/bootstrap?projectId=${encodeURIComponent(proj.id)}`)
+      ).json()) as BootstrapPayload;
+      useWorkbenchStore.setState({
+        loading: false,
+        data: boot1,
+        activeNav: 'app-ontology',
+        activeSessionId: sess.id,
+      });
+      Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+
+      const ontEntries = (boot1.artifactHistory ?? []).filter(
+        (e) => e.artifactKind === 'ONTOLOGY_SUITE',
+      );
+      expect(ontEntries).toHaveLength(1);
+      const jumpTarget = ontEntries[0]!.changeSummary.items[0]!.jumpTarget!;
+      expect(jumpTarget.kind).toBe('BUSINESS_OBJECT');
+
+      for (const locale of ['zh-CN', 'en-US'] as const) {
+        stubBrowserStorage({ onto_locale: locale });
+        const panelHtml = renderToStaticMarkup(
+          <PreferencesProvider>
+            <ShellAgentPanel
+              surface={agentPanelSurfaceFor('app-ontology')}
+              overlay={false}
+              side="left"
+              closable={false}
+              onClose={() => {}}
+              onNavigate={() => {}}
+            />
+          </PreferencesProvider>,
+        );
+        const panelViolations = checkBusinessViewMarkup(panelHtml);
+        expect(panelViolations, formatBusinessViewViolations(panelViolations)).toEqual([]);
+        expect(panelHtml.match(/data-testid="agent-run-card"/g)?.length).toBe(2);
+        expect(panelHtml.match(/data-testid="run-change-summary"/g)?.length).toBe(1);
+        expect(panelHtml.match(/data-testid="change-summary-undo-btn"/g)?.length).toBe(1);
+        expect(panelHtml).toContain(
+          locale === 'en-US'
+            ? 'Added Action &#x27;Submit for Approval&#x27; on &#x27;Contract&#x27;'
+            : '在『合同』上新增业务操作『提交审批』',
+        );
+
+        const bmHtml = renderToStaticMarkup(
+          <PreferencesProvider>
+            <BusinessModelStepView viewModeOverride="business" />
+          </PreferencesProvider>,
+        );
+        const bmViolations = checkBusinessViewMarkup(bmHtml);
+        expect(bmViolations, formatBusinessViewViolations(bmViolations)).toEqual([]);
+        expect(bmHtml).toContain('data-testid="business-model-history-btn"');
+
+        const drawerHtml = renderToStaticMarkup(
+          <PreferencesProvider>
+            <ArtifactHistoryDrawer
+              open
+              onOpenChange={() => {}}
+              artifactLabel={{ zh: '业务模型', en: 'Business Model' }}
+              entries={ontEntries}
+              onUndoLatest={() => {}}
+              onRestoreBefore={() => {}}
+            />
+          </PreferencesProvider>,
+        );
+        const drawerViolations = checkBusinessViewMarkup(drawerHtml);
+        expect(drawerViolations, formatBusinessViewViolations(drawerViolations)).toEqual([]);
+      }
+
+      // Jump to target flashes the added action row on BusinessModelStepView!
+      if (jumpTarget.kind === 'BUSINESS_OBJECT') {
+        useWorkbenchStore.getState().focusBusinessModelTarget(jumpTarget);
+        Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+      }
+      stubBrowserStorage({ onto_locale: 'zh-CN' });
+      const flashedHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <BusinessModelStepView viewModeOverride="business" />
+        </PreferencesProvider>,
+      );
+      expect(flashedHtml).toContain('data-flash="true"');
+      expect(flashedHtml).toContain('提交审批');
+
+      // Technical Details Undo/Redo buttons reflect server history before & after Undo!
+      const techBeforeUndoHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <OntologyWorkbenchView onNavigate={() => {}} />
+        </PreferencesProvider>,
+      );
+      expect(techBeforeUndoHtml).toMatch(/data-testid="undo-btn"(?![^>]*disabled)/);
+      expect(techBeforeUndoHtml).toMatch(/data-testid="redo-btn"[^>]*disabled/);
+
+      // Undo on server -> redo-btn becomes enabled, undo-btn disabled!
+      await app.request(`/api/projects/${proj.id}/history/ONTOLOGY_SUITE/undo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const bootAfterUndo = (await (
+        await app.request(`/api/bootstrap?projectId=${encodeURIComponent(proj.id)}`)
+      ).json()) as BootstrapPayload;
+      useWorkbenchStore.setState({ data: bootAfterUndo });
+      Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+
+      const techAfterUndoHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <OntologyWorkbenchView onNavigate={() => {}} />
+        </PreferencesProvider>,
+      );
+      expect(techAfterUndoHtml).toMatch(/data-testid="undo-btn"[^>]*disabled/);
+      expect(techAfterUndoHtml).toMatch(/data-testid="redo-btn"(?![^>]*disabled)/);
     } finally {
       store.close();
     }

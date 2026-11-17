@@ -14,6 +14,7 @@ import {
 } from '../packages/ontology-core/index.js';
 import {
   SuiteValidationRejectedError,
+  type ArtifactHistoryEntryView,
   type BusinessModelInlineEditTarget,
   type BusinessModelIntentSummary,
   type ProjectDetail,
@@ -45,6 +46,7 @@ export interface BusinessModelEditRejectedPayload {
 export interface BusinessModelEditSuccessPayload {
   project: ProjectDetail;
   projects: ProjectSummary[];
+  artifactHistory: ArtifactHistoryEntryView[];
 }
 
 class BusinessModelTargetError extends Error {
@@ -874,6 +876,7 @@ export function registerBusinessModelEditRoutes(app: Hono, store: WorkspaceStore
       const payload: BusinessModelEditSuccessPayload = {
         project,
         projects: store.listProjects(),
+        artifactHistory: store.listArtifactHistoryViews(projectId),
       };
       return c.json(payload, 200);
     } catch (err) {

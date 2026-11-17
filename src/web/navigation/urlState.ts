@@ -93,7 +93,9 @@ export function readUrlNavState(): UrlNavState {
 }
 
 export function writeUrlNavState(patch: UrlNavState): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || !window.location?.href || !window.history?.replaceState) {
+    return;
+  }
   const nextRelativeUrl = applyUrlNavState(window.location.href, patch);
   window.history.replaceState({}, '', nextRelativeUrl);
 }

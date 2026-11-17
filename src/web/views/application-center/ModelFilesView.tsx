@@ -108,9 +108,13 @@ export function ModelFilesView({
     const json = (await res.json()) as {
       project: typeof project;
       parseErrors: { model: ModelCode; message: string }[];
+      artifactHistory?: import('../../api.js').ArtifactHistoryEntryView[];
     };
 
-    patchData({ activeProject: json.project });
+    patchData({
+      activeProject: json.project,
+      ...(json.artifactHistory ? { artifactHistory: json.artifactHistory } : {}),
+    });
     setImportErrors(json.parseErrors ?? []);
 
     if (json.parseErrors && json.parseErrors.length > 0) {

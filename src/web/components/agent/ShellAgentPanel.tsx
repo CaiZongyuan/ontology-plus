@@ -363,6 +363,7 @@ export function ShellAgentPanel({
     setSelectedElementId,
     setActivePrototypeId,
     focusRequirementSection,
+    focusBusinessModelTarget,
     openArtifactHistoryDrawer,
     undoArtifactChange,
     ensureProjectAgentSession,
@@ -812,14 +813,7 @@ export function ShellAgentPanel({
       return;
     }
     if (target.kind === 'BUSINESS_OBJECT') {
-      if (target.modelCode) {
-        setSelectedModel(target.modelCode, target.elementId ?? target.objectId ?? null);
-      } else if (target.elementId || target.objectId) {
-        setSelectedElementId(target.elementId ?? target.objectId ?? null);
-      }
-      setActiveNav('app-ontology', {
-        ...(target.objectId ? { itemId: target.objectId } : {}),
-      });
+      focusBusinessModelTarget(target);
       onNavigate('app-ontology');
     }
   };

@@ -88,6 +88,12 @@ export function createArtifactHistoryRunHooks(): AgentRunLifecycleHooks {
         runId: event.runId,
         sessionId: event.sessionId,
       });
+      store.beginArtifactRunCapture({
+        projectId: event.projectId,
+        artifactKind: 'ONTOLOGY_SUITE',
+        runId: event.runId,
+        sessionId: event.sessionId,
+      });
     },
     onRunEnd: (event, store) => {
       if (!event.projectId) return;
@@ -99,6 +105,13 @@ export function createArtifactHistoryRunHooks(): AgentRunLifecycleHooks {
       store.finishArtifactRunCapture({
         projectId: event.projectId,
         artifactKind: 'REQUIREMENTS_DOC',
+        runId: event.runId,
+        sessionId: event.sessionId,
+        ...(reason ? { reason } : {}),
+      });
+      store.finishArtifactRunCapture({
+        projectId: event.projectId,
+        artifactKind: 'ONTOLOGY_SUITE',
         runId: event.runId,
         sessionId: event.sessionId,
         ...(reason ? { reason } : {}),

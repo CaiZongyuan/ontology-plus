@@ -543,6 +543,7 @@ export type ArtifactHistorySource =
     }
   | {
       kind: 'MANUAL';
+      origin?: Exclude<SuiteWriteSource['kind'], 'AGENT_RUN'>;
       note?: string;
     }
   | {
@@ -608,6 +609,8 @@ export type ArtifactJumpTarget =
   | {
       kind: 'BUSINESS_OBJECT';
       objectId?: string;
+      pageId?: string;
+      anchorId?: string;
       modelCode?: ModelCode;
       elementId?: string;
     };

@@ -522,6 +522,7 @@ export function createApiApp(
       project,
       projects: store.listProjects(),
       snapshots: store.listProjectSnapshots(projectId),
+      artifactHistory: store.listArtifactHistoryViews(projectId),
     });
   });
 
@@ -543,7 +544,10 @@ export function createApiApp(
         ? parseModelYaml(modelCode, body.yamlText)
         : (body.modelData as NonNullable<OntologySuite[typeof modelCode]>);
       const project = store.updateModel(projectId, modelCode, parsed);
-      return c.json({ project });
+      return c.json({
+        project,
+        artifactHistory: store.listArtifactHistoryViews(projectId),
+      });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
     }
@@ -556,7 +560,10 @@ export function createApiApp(
       source: { kind: 'MANUAL' },
       ...(body.changelogNote !== undefined ? { note: body.changelogNote } : {}),
     });
-    return c.json({ project });
+    return c.json({
+      project,
+      artifactHistory: store.listArtifactHistoryViews(projectId),
+    });
   });
 
   app.get('/api/projects/:id/yaml/export', (c) => {
@@ -570,7 +577,10 @@ export function createApiApp(
     const projectId = c.req.param('id');
     const body = await c.req.json<{ files: Record<string, string> }>();
     const result = store.importYamlFiles(projectId, body.files);
-    return c.json(result);
+    return c.json({
+      ...result,
+      artifactHistory: store.listArtifactHistoryViews(projectId),
+    });
   });
 
   app.get('/api/projects/:id/owl', (c) => {
@@ -591,7 +601,10 @@ export function createApiApp(
     const projectId = c.req.param('id');
     const body = await c.req.json<{ oldId: string; newId: string }>();
     const result = store.renameSymbol(projectId, body.oldId, body.newId);
-    return c.json(result);
+    return c.json({
+      ...result,
+      artifactHistory: store.listArtifactHistoryViews(projectId),
+    });
   });
 
   app.post('/api/projects/:id/generate-skill', (c) => {

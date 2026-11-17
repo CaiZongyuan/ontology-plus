@@ -14,6 +14,7 @@ import {
 import {
   apiAnalyzeImpact,
   apiRenameSymbol,
+  getOntologyUndoRedoState,
   getProjectLifecycleState,
   useWorkbenchStore,
 } from '../api.js';
@@ -220,15 +221,15 @@ export function OntologyWorkbenchView({
     liveSessionDrafts,
     setSelectedModel,
     saveSuiteWithUndo,
-    pushUndoSnapshot,
     undo,
     redo,
-    undoStack,
-    redoStack,
     patchData,
     showToast,
     startOntologySynthesisRun,
   } = useWorkbenchStore();
+  const { canUndo: canUndoOntology, canRedo: canRedoOntology } = getOntologyUndoRedoState(
+    data?.artifactHistory,
+  );
 
   const appliedFocusKeyRef = useRef<string | null>(null);
   const focusKey = focusTarget
@@ -327,8 +328,10 @@ export function OntologyWorkbenchView({
       showToast(`YAML 校验失败: ${json.error}`);
       return;
     }
-    pushUndoSnapshot(suite);
-    patchData({ activeProject: json.project });
+    patchData({
+      activeProject: json.project,
+      ...(json.artifactHistory ? { artifactHistory: json.artifactHistory } : {}),
+    });
     showToast(
       `${MODEL_FILE_NAMES[selectedModel]} 已保存并通过语法与两级一致性校验（支持撤销）`,
     );
@@ -1042,9 +1045,11 @@ export function OntologyWorkbenchView({
 
   const handleExecuteCascadeRename = async () => {
     if (!targetSymbol.trim() || !newSymbolName.trim()) return;
-    pushUndoSnapshot(suite);
     const result = await apiRenameSymbol(project.id, targetSymbol.trim(), newSymbolName.trim());
-    patchData({ activeProject: result.project });
+    patchData({
+      activeProject: result.project,
+      ...(result.artifactHistory ? { artifactHistory: result.artifactHistory } : {}),
+    });
     setPendingDeleteAction(null);
     setRenameModalOpen(false);
     showToast(
@@ -1241,7 +1246,7 @@ export function OntologyWorkbenchView({
                   type="button"
                   variant="secondary" size="sm"
                   data-testid="undo-btn"
-                  disabled={undoStack.length === 0}
+                  disabled={!canUndoOntology}
                   onClick={() => undo()}
                   title="Undo"
                 >
@@ -1251,7 +1256,7 @@ export function OntologyWorkbenchView({
                   type="button"
                   variant="secondary" size="sm"
                   data-testid="redo-btn"
-                  disabled={redoStack.length === 0}
+                  disabled={!canRedoOntology}
                   onClick={() => redo()}
                   title="Redo"
                 >

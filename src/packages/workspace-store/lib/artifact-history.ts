@@ -2,11 +2,20 @@ import {
   BUSINESS_VOCABULARY,
   MODEL_BUSINESS_NAMES,
   checkBusinessViewMarkup,
+  getModelBusinessName,
+  sanitizeBusinessText,
   type BilingualText,
   type BusinessLocale,
 } from '../../business-vocabulary/index.js';
-import type { ModelCode, OntologySuite } from '../../ontology-core/index.js';
-import { computeOntologySuiteHash, normalizeStepMarkdown } from './step-confirmations.js';
+import {
+  diffOntologySuites,
+  type AggregateRoot,
+  type ModelCode,
+  type OntologyElementDiff,
+  type OntologySuite,
+  type RelatedAggregateRef,
+} from '../../ontology-core/index.js';
+import { normalizeStepMarkdown } from './step-confirmations.js';
 import type {
   ArtifactHistoryEntry,
   ArtifactHistoryEntryView,
@@ -154,7 +163,7 @@ export function areRequirementDocStatesEqual(
 }
 
 export function areOntologySuitesEqual(before: OntologySuite, after: OntologySuite): boolean {
-  return computeOntologySuiteHash(before) === computeOntologySuiteHash(after);
+  return !diffOntologySuites(before, after).hasChanges;
 }
 
 interface ParsedMarkdownSection {
@@ -487,7 +496,7 @@ export function computeRequirementDocDiff(
   };
 }
 
-function buildEntryTitle(source: ArtifactHistorySource): BilingualText {
+function buildEntryTitle(source: ArtifactHistorySource, isRedo = false): BilingualText {
   switch (source.kind) {
     case 'AGENT_RUN':
       return {
@@ -500,16 +509,596 @@ function buildEntryTitle(source: ArtifactHistorySource): BilingualText {
         en: 'Manual edit',
       };
     case 'UNDO':
-      return {
-        zh: '撤销上一次改动',
-        en: 'Undid latest change',
-      };
+      return isRedo
+        ? {
+            zh: '重做上一次改动',
+            en: 'Redid latest change',
+          }
+        : {
+            zh: '撤销上一次改动',
+            en: 'Undid latest change',
+          };
     case 'RESTORE':
       return {
         zh: '恢复到较早状态',
         en: 'Restored earlier state',
       };
   }
+}
+
+const CJK_RE = /[\u4e00-\u9fff]/;
+
+const LOWERCASE_TITLE_WORDS = new Set([
+  'a',
+  'an',
+  'the',
+  'for',
+  'of',
+  'to',
+  'in',
+  'on',
+  'by',
+  'with',
+  'and',
+  'or',
+  'from',
+  'as',
+  'at',
+]);
+
+function humanizeCodeIdentifier(raw: string): string {
+  const spaced = raw
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!spaced) return '';
+  const words = spaced.split(' ');
+  return words
+    .map((word, idx) => {
+      if (/^[A-Z0-9]{2,}$/.test(word)) return word;
+      const lower = word.toLowerCase();
+      if (idx > 0 && idx < words.length - 1 && LOWERCASE_TITLE_WORDS.has(lower)) {
+        return lower;
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
+
+function buildSuiteElementDisplayMap(
+  beforeSuite: OntologySuite | undefined,
+  afterSuite: OntologySuite | undefined,
+  locale: BusinessLocale,
+): ReadonlyMap<string, string> {
+  const map = new Map<string, string>();
+  const reg = (id: string | undefined, label: string | undefined) => {
+    const k = id?.trim();
+    const v = label?.trim();
+    if (!k || !v) return;
+    if (checkBusinessViewMarkup(v, { plainText: true }).length === 0) {
+      map.set(k, v);
+    }
+  };
+
+  for (const suite of [beforeSuite, afterSuite]) {
+    if (!suite) continue;
+    for (const agg of suite.M1?.aggregates ?? []) {
+      reg(agg.id, locale === 'en-US' && !CJK_RE.test(agg.name) ? humanizeCodeIdentifier(agg.name) : agg.alias || agg.name);
+    }
+    for (const dict of suite.M1?.data_dictionaries ?? []) reg(dict.id, dict.name);
+    for (const beh of suite.M2?.behaviors ?? []) reg(beh.id, beh.alias || beh.name);
+    for (const rule of suite.M3?.rules ?? []) reg(rule.id, rule.alias || rule.name);
+    for (const ev of suite.ME?.events ?? []) reg(ev.id, ev.label || ev.name);
+    for (const sc of suite.M4?.event_scenarios ?? []) reg(sc.id, sc.name);
+    for (const actor of suite.M5?.actors ?? []) reg(actor.id, actor.name);
+    for (const role of suite.M5?.roles ?? []) reg(role.id, role.name);
+    for (const pg of suite.M5?.permissionGroups ?? []) reg(pg.id, pg.name);
+    for (const perm of suite.M5?.permissions ?? []) reg(perm.id, perm.name);
+    for (const flow of suite.M6?.flows ?? []) reg(flow.id, flow.name);
+    for (const qr of suite.M7?.query_reports ?? []) reg(qr.id, qr.alias || qr.name);
+    for (const scr of suite.MU?.screens ?? []) reg(scr.screenId, scr.name);
+    for (const cc of suite.MU?.cross_cutting_ui ?? []) reg(cc.id, cc.name);
+    for (const intf of suite.MI?.interfaces ?? []) reg(intf.interfaceId, intf.name);
+  }
+  return map;
+}
+
+function ensureCleanBusinessCopy(
+  raw: string,
+  locale: BusinessLocale,
+  displayMap: ReadonlyMap<string, string>,
+  fallback: string,
+): string {
+  const sanitized = sanitizeBusinessText(raw, locale, { elementDisplayMap: displayMap }).trim();
+  if (sanitized && checkBusinessViewMarkup(sanitized, { plainText: true }).length === 0) {
+    return sanitized;
+  }
+  const copied = sanitizeBusinessViewCopy(sanitized || raw, locale);
+  if (copied && checkBusinessViewMarkup(copied, { plainText: true }).length === 0) {
+    return copied;
+  }
+  return fallback;
+}
+
+function toBilingualElementName(
+  rawDisplayName: string | undefined,
+  rawName: string | undefined,
+  fallback: BilingualText,
+  displayMapZh: ReadonlyMap<string, string>,
+  displayMapEn: ReadonlyMap<string, string>,
+): BilingualText {
+  const disp = (rawDisplayName ?? '').trim();
+  const tech = (rawName ?? '').trim();
+
+  const candidateZh = disp || tech;
+  const cleanZh = ensureCleanBusinessCopy(candidateZh, 'zh-CN', displayMapZh, '');
+  const zh =
+    cleanZh && cleanZh !== '关联项'
+      ? cleanZh
+      : fallback.zh;
+
+  let candidateEn = '';
+  if (disp && !CJK_RE.test(disp) && checkBusinessViewMarkup(disp, { plainText: true }).length === 0) {
+    candidateEn = disp;
+  } else if (
+    tech &&
+    !CJK_RE.test(tech) &&
+    checkBusinessViewMarkup(tech, { plainText: true }).length === 0
+  ) {
+    candidateEn = humanizeCodeIdentifier(tech);
+  } else {
+    candidateEn = disp || tech;
+  }
+  const cleanEn = ensureCleanBusinessCopy(candidateEn, 'en-US', displayMapEn, '');
+  const en =
+    cleanEn && cleanEn !== 'related item'
+      ? cleanEn
+      : fallback.en;
+
+  return { zh, en };
+}
+
+function formatObjectListZh(objects: readonly BilingualText[]): string {
+  if (objects.length === 0) return '';
+  if (objects.length === 1) return `『${objects[0]!.zh}』`;
+  if (objects.length === 2) return `『${objects[0]!.zh}』与『${objects[1]!.zh}』`;
+  const head = objects
+    .slice(0, -1)
+    .map((o) => `『${o.zh}』`)
+    .join('、');
+  return `${head}与『${objects[objects.length - 1]!.zh}』`;
+}
+
+function formatObjectListEn(objects: readonly BilingualText[]): string {
+  if (objects.length === 0) return '';
+  if (objects.length === 1) return `'${objects[0]!.en}'`;
+  if (objects.length === 2) return `'${objects[0]!.en}' and '${objects[1]!.en}'`;
+  const head = objects
+    .slice(0, -1)
+    .map((o) => `'${o.en}'`)
+    .join(', ');
+  return `${head}, and '${objects[objects.length - 1]!.en}'`;
+}
+
+function resolveElementKindSingularTerm(diff: OntologyElementDiff): BilingualText {
+  switch (diff.elementKind) {
+    case 'data_dictionary':
+      return { zh: '业务选项字典', en: 'Option Dictionary' };
+    case 'aggregate_association':
+      return { zh: '对象关联', en: 'Object Relationship' };
+    case 'actor':
+      return { zh: '参与方', en: 'Participant' };
+    case 'role':
+      return { zh: '角色', en: 'Role' };
+    case 'permission_group':
+      return { zh: '权限组', en: 'Permission Group' };
+    case 'permission':
+      return { zh: '权限', en: 'Permission' };
+    case 'navigation_edge':
+      return { zh: '界面跳转', en: 'Screen Navigation' };
+    case 'cross_cutting_ui':
+      return { zh: '全局界面元素', en: 'Shared Screen Element' };
+    default:
+      return {
+        zh: getModelBusinessName(diff.modelCode, 'zh-CN', { singular: true }),
+        en: getModelBusinessName(diff.modelCode, 'en-US', { singular: true }),
+      };
+  }
+}
+
+function resolveFallbackRelatedAggregates(
+  diff: OntologyElementDiff,
+  beforeSuite: OntologySuite | undefined,
+  afterSuite: OntologySuite | undefined,
+  aggregatesByIdOrName: ReadonlyMap<string, RelatedAggregateRef>,
+): RelatedAggregateRef[] {
+  if (diff.relatedAggregates.length > 0) return diff.relatedAggregates;
+
+  if (diff.elementKind === 'data_dictionary') {
+    for (const suite of [afterSuite, beforeSuite]) {
+      for (const agg of suite?.M1?.aggregates ?? []) {
+        if ((agg.attributes ?? []).some((a) => a.dictionaryRef?.dictionaryId === diff.elementId)) {
+          const ref = aggregatesByIdOrName.get(agg.id);
+          if (ref) return [ref];
+        }
+      }
+    }
+  }
+
+  if (diff.elementKind === 'navigation_edge' || diff.elementKind === 'cross_cutting_ui') {
+    const screenIds = new Set<string>();
+    for (const suite of [afterSuite, beforeSuite]) {
+      if (diff.elementKind === 'navigation_edge') {
+        const edge = (suite?.MU?.navigation_edges ?? []).find((e) => e.id === diff.elementId);
+        if (edge?.fromScreen) screenIds.add(edge.fromScreen);
+        if (edge?.toScreen) screenIds.add(edge.toScreen);
+      } else {
+        const cc = (suite?.MU?.cross_cutting_ui ?? []).find((c) => c.id === diff.elementId);
+        for (const sId of cc?.scopeScreens ?? []) screenIds.add(sId);
+      }
+    }
+    if (screenIds.size > 0) {
+      for (const suite of [afterSuite, beforeSuite]) {
+        for (const agg of suite?.M1?.aggregates ?? []) {
+          if ((agg.uiBindings ?? []).some((b) => screenIds.has(b))) {
+            const ref = aggregatesByIdOrName.get(agg.id);
+            if (ref) return [ref];
+          }
+        }
+      }
+    }
+  }
+
+  return [];
+}
+
+function extractModifiedAggregateFieldLabels(
+  diff: OntologyElementDiff,
+  beforeAgg: AggregateRoot | undefined,
+  afterAgg: AggregateRoot | undefined,
+  displayMapZh: ReadonlyMap<string, string>,
+  displayMapEn: ReadonlyMap<string, string>,
+): BilingualText[] {
+  const attrNames: string[] = [];
+  const seen = new Set<string>();
+  for (const fc of diff.changedFields) {
+    const match = /^attributes\[([^\]]+)\]/.exec(fc.field);
+    if (match?.[1] && !seen.has(match[1])) {
+      seen.add(match[1]);
+      attrNames.push(match[1]);
+    }
+  }
+  const labels: BilingualText[] = [];
+  for (const attrName of attrNames) {
+    const attr =
+      afterAgg?.attributes.find((a) => a.name === attrName) ??
+      beforeAgg?.attributes.find((a) => a.name === attrName);
+    labels.push(
+      toBilingualElementName(
+        attr?.label || attr?.name || attrName,
+        attr?.name || attrName,
+        { zh: '字段', en: 'Field' },
+        displayMapZh,
+        displayMapEn,
+      ),
+    );
+  }
+  return labels;
+}
+
+/**
+ * Renders `diffOntologySuites(beforeSuite, afterSuite)` into Business-Object-grouped,
+ * Business View-safe `ChangeSummaryItemView[]` with canvas jump targets (#70).
+ */
+export function buildOntologySuiteChangeSummaryItems(
+  beforeSuite: OntologySuite | undefined,
+  afterSuite: OntologySuite | undefined,
+  entryId = 'suite',
+): ChangeSummaryItemView[] {
+  const suiteDiff = diffOntologySuites(beforeSuite, afterSuite);
+  if (!suiteDiff.hasChanges) return [];
+
+  const displayMapZh = buildSuiteElementDisplayMap(beforeSuite, afterSuite, 'zh-CN');
+  const displayMapEn = buildSuiteElementDisplayMap(beforeSuite, afterSuite, 'en-US');
+
+  const aggregatesByIdOrName = new Map<string, RelatedAggregateRef>();
+  const aggregateByIdBefore = new Map<string, AggregateRoot>();
+  const aggregateByIdAfter = new Map<string, AggregateRoot>();
+  const aggregateOrder = new Map<string, number>();
+  let orderIdx = 0;
+
+  for (const agg of afterSuite?.M1?.aggregates ?? []) {
+    aggregateByIdAfter.set(agg.id, agg);
+    const ref: RelatedAggregateRef = {
+      aggregateId: agg.id,
+      name: agg.name,
+      displayName: agg.alias || agg.name,
+    };
+    aggregatesByIdOrName.set(agg.id, ref);
+    aggregatesByIdOrName.set(agg.name, ref);
+    aggregateOrder.set(agg.id, orderIdx++);
+  }
+  for (const agg of beforeSuite?.M1?.aggregates ?? []) {
+    aggregateByIdBefore.set(agg.id, agg);
+    if (!aggregatesByIdOrName.has(agg.id)) {
+      const ref: RelatedAggregateRef = {
+        aggregateId: agg.id,
+        name: agg.name,
+        displayName: agg.alias || agg.name,
+      };
+      aggregatesByIdOrName.set(agg.id, ref);
+      aggregatesByIdOrName.set(agg.name, ref);
+      aggregateOrder.set(agg.id, orderIdx++);
+    }
+  }
+
+  const firstActiveAggId = afterSuite?.M1?.aggregates[0]?.id;
+
+  interface RankedItem {
+    groupOrder: number;
+    seq: number;
+    item: ChangeSummaryItemView;
+  }
+  const ranked: RankedItem[] = [];
+
+  const formatStandaloneChangeLabel = (
+    status: OntologyElementDiff['status'],
+    kindTerm: BilingualText,
+    elName: BilingualText,
+  ): BilingualText => {
+    if (status === 'ADDED') {
+      return {
+        zh: `新增${kindTerm.zh}『${elName.zh}』`,
+        en: `Added ${kindTerm.en} '${elName.en}'`,
+      };
+    }
+    if (status === 'REMOVED') {
+      return {
+        zh: `移除${kindTerm.zh}『${elName.zh}』`,
+        en: `Removed ${kindTerm.en} '${elName.en}'`,
+      };
+    }
+    return {
+      zh: `更新${kindTerm.zh}『${elName.zh}』`,
+      en: `Updated ${kindTerm.en} '${elName.en}'`,
+    };
+  };
+
+  suiteDiff.changes.forEach((diff, idx) => {
+    const pushRankedItem = (
+      groupOrder: number,
+      groupLabel: BilingualText,
+      pageId: string,
+      labelRaw: BilingualText,
+    ) => {
+      ranked.push({
+        groupOrder,
+        seq: idx,
+        item: {
+          id: `${entryId}-${diff.modelCode}-${diff.elementId}-${idx}`,
+          changeType: diff.status,
+          groupLabel,
+          label: {
+            zh: ensureCleanBusinessCopy(labelRaw.zh, 'zh-CN', displayMapZh, groupLabel.zh),
+            en: ensureCleanBusinessCopy(labelRaw.en, 'en-US', displayMapEn, groupLabel.en),
+          },
+          jumpTarget: {
+            kind: 'BUSINESS_OBJECT',
+            objectId: pageId,
+            pageId,
+            anchorId: diff.elementId,
+            modelCode: diff.modelCode,
+            elementId: diff.elementId,
+          },
+        },
+      });
+    };
+
+    const kindTerm = resolveElementKindSingularTerm(diff);
+    const elName = toBilingualElementName(
+      diff.displayName,
+      diff.name,
+      kindTerm,
+      displayMapZh,
+      displayMapEn,
+    );
+
+    const resolveAggName = (ref: RelatedAggregateRef): BilingualText => {
+      const canonical = aggregatesByIdOrName.get(ref.aggregateId) ?? ref;
+      return toBilingualElementName(
+        canonical.displayName,
+        canonical.name,
+        {
+          zh: MODEL_BUSINESS_NAMES.M1.singularZh,
+          en: MODEL_BUSINESS_NAMES.M1.singularEn,
+        },
+        displayMapZh,
+        displayMapEn,
+      );
+    };
+
+    // 1. Cross-object models (M6 Flows, M5 Roles & Permissions, M7 Queries & Reports)
+    if (diff.modelCode === 'M6' || diff.modelCode === 'M5' || diff.modelCode === 'M7') {
+      const crossPageId =
+        diff.modelCode === 'M6'
+          ? 'view:flows'
+          : diff.modelCode === 'M5'
+            ? 'view:roles'
+            : 'view:reports';
+      const groupOrder =
+        diff.modelCode === 'M6' ? 1000 : diff.modelCode === 'M5' ? 1001 : 1002;
+      const groupLabel: BilingualText = {
+        zh: MODEL_BUSINESS_NAMES[diff.modelCode].zh,
+        en: MODEL_BUSINESS_NAMES[diff.modelCode].en,
+      };
+      const labelRaw: BilingualText =
+        diff.elementKind === 'model_metadata'
+          ? { zh: `更新${groupLabel.zh}`, en: `Updated ${groupLabel.en}` }
+          : formatStandaloneChangeLabel(diff.status, kindTerm, elName);
+
+      pushRankedItem(groupOrder, groupLabel, crossPageId, labelRaw);
+      return;
+    }
+
+    // 2. Object-scoped models (M1, M2, M3, ME, M4, MU, MM, MI)
+    const aggRefs = resolveFallbackRelatedAggregates(
+      diff,
+      beforeSuite,
+      afterSuite,
+      aggregatesByIdOrName,
+    );
+    const aggNames = aggRefs.map(resolveAggName);
+
+    if (aggRefs.length > 0) {
+      const primaryAgg = aggRefs[0]!;
+      const primaryObjName = aggNames[0]!;
+      const groupOrder = aggregateOrder.get(primaryAgg.aggregateId) ?? 500;
+      const targetPageId = aggregateByIdAfter.has(primaryAgg.aggregateId)
+        ? primaryAgg.aggregateId
+        : (firstActiveAggId ?? 'view:flows');
+
+      let labelRaw: BilingualText;
+
+      if (diff.elementKind === 'aggregate') {
+        if (diff.status !== 'MODIFIED') {
+          labelRaw = formatStandaloneChangeLabel(diff.status, kindTerm, elName);
+        } else {
+          const hasFieldChange = diff.changedFields.some(
+            (f) =>
+              f.field === 'attributes' ||
+              f.field.startsWith('attributes[') ||
+              f.field.startsWith('attributes.') ||
+              f.field === 'entities' ||
+              f.field.startsWith('entities[') ||
+              f.field === 'valueObjects' ||
+              f.field.startsWith('valueObjects['),
+          );
+          const hasInvariantChange = diff.changedFields.some(
+            (f) => f.field === 'invariants' || f.field.startsWith('invariants['),
+          );
+          if (hasFieldChange) {
+            const fieldLabels = extractModifiedAggregateFieldLabels(
+              diff,
+              aggregateByIdBefore.get(diff.elementId),
+              aggregateByIdAfter.get(diff.elementId),
+              displayMapZh,
+              displayMapEn,
+            );
+            if (fieldLabels.length > 0) {
+              const shownZh = fieldLabels
+                .slice(0, 2)
+                .map((f) => `『${f.zh}』`)
+                .join('、');
+              const shownEn = fieldLabels
+                .slice(0, 2)
+                .map((f) => `'${f.en}'`)
+                .join(', ');
+              const moreZh = fieldLabels.length > 2 ? `等 ${fieldLabels.length} 项` : '';
+              const moreEn = fieldLabels.length > 2 ? ` (+${fieldLabels.length - 2} more)` : '';
+              labelRaw = {
+                zh: `修改业务对象『${elName.zh}』的字段${shownZh}${moreZh}`,
+                en: `Updated fields of Business Object '${elName.en}' (${shownEn}${moreEn})`,
+              };
+            } else {
+              labelRaw = {
+                zh: `修改业务对象『${elName.zh}』的字段`,
+                en: `Updated fields of Business Object '${elName.en}'`,
+              };
+            }
+          } else if (hasInvariantChange) {
+            labelRaw = {
+              zh: `修改业务对象『${elName.zh}』的业务规则`,
+              en: `Updated rules on Business Object '${elName.en}'`,
+            };
+          } else if (diff.previousDisplayName && diff.previousDisplayName !== diff.displayName) {
+            const prevName = toBilingualElementName(
+              diff.previousDisplayName,
+              diff.previousName ?? diff.name,
+              kindTerm,
+              displayMapZh,
+              displayMapEn,
+            );
+            labelRaw = {
+              zh: `将业务对象『${prevName.zh}』重命名为『${elName.zh}』`,
+              en: `Renamed Business Object '${prevName.en}' to '${elName.en}'`,
+            };
+          } else {
+            labelRaw = {
+              zh: `修改业务对象『${elName.zh}』的说明与属性`,
+              en: `Updated Business Object '${elName.en}'`,
+            };
+          }
+        }
+      } else if (diff.elementKind === 'aggregate_association') {
+        const objsZh = formatObjectListZh(aggNames);
+        const objsEn = formatObjectListEn(aggNames);
+        labelRaw =
+          diff.status === 'ADDED'
+            ? { zh: `新增${objsZh}的对象关联`, en: `Added relationship between ${objsEn}` }
+            : diff.status === 'REMOVED'
+              ? { zh: `移除${objsZh}的对象关联`, en: `Removed relationship between ${objsEn}` }
+              : { zh: `更新${objsZh}的对象关联`, en: `Updated relationship between ${objsEn}` };
+      } else if (diff.elementKind === 'mapping') {
+        labelRaw =
+          diff.status === 'ADDED'
+            ? {
+                zh: `在『${primaryObjName.zh}』上新增数据存储配置`,
+                en: `Added Data Storage on '${primaryObjName.en}'`,
+              }
+            : diff.status === 'REMOVED'
+              ? {
+                  zh: `从『${primaryObjName.zh}』移除数据存储配置`,
+                  en: `Removed Data Storage from '${primaryObjName.en}'`,
+                }
+              : {
+                  zh: `更新『${primaryObjName.zh}』的数据存储配置`,
+                  en: `Updated Data Storage on '${primaryObjName.en}'`,
+                };
+      } else {
+        const objsZh = formatObjectListZh(aggNames);
+        const objsEn = formatObjectListEn(aggNames);
+        labelRaw =
+          diff.status === 'ADDED'
+            ? {
+                zh: `在${objsZh}上新增${kindTerm.zh}『${elName.zh}』`,
+                en: `Added ${kindTerm.en} '${elName.en}' on ${objsEn}`,
+              }
+            : diff.status === 'REMOVED'
+              ? {
+                  zh: `从${objsZh}移除${kindTerm.zh}『${elName.zh}』`,
+                  en: `Removed ${kindTerm.en} '${elName.en}' from ${objsEn}`,
+                }
+              : {
+                  zh: `在${objsZh}上更新${kindTerm.zh}『${elName.zh}』`,
+                  en: `Updated ${kindTerm.en} '${elName.en}' on ${objsEn}`,
+                };
+      }
+
+      pushRankedItem(groupOrder, primaryObjName, targetPageId, labelRaw);
+      return;
+    }
+
+    // 3. Global / unbound element fallback ("其他" / "Other")
+    const otherGroup: BilingualText = { zh: '其他', en: 'Other' };
+    const fallbackPageId =
+      (afterSuite && Object.keys(afterSuite).length > 0 ? 'view:other' : firstActiveAggId) ??
+      'view:flows';
+    const labelRaw: BilingualText =
+      diff.elementKind === 'model_metadata'
+        ? {
+            zh: `更新${getModelBusinessName(diff.modelCode, 'zh-CN')}`,
+            en: `Updated ${getModelBusinessName(diff.modelCode, 'en-US')}`,
+          }
+        : formatStandaloneChangeLabel(diff.status, kindTerm, elName);
+
+    pushRankedItem(1003, otherGroup, fallbackPageId, labelRaw);
+  });
+
+  ranked.sort((a, b) => a.groupOrder - b.groupOrder || a.seq - b.seq);
+  return ranked.map((r) => r.item);
 }
 
 function buildReasonFromSource(source: ArtifactHistorySource): BilingualText | undefined {
@@ -537,15 +1126,22 @@ export function buildArtifactHistoryViews(
   const byId = new Map<string, ArtifactHistoryEntry>();
   const activelyUndoneIds = new Set<string>();
 
+  const undoDepthById = new Map<string, number>();
+
   for (const entry of chronologicalEntries) {
     byId.set(entry.id, entry);
     latestByKind.set(entry.artifactKind, entry.id);
     if (entry.source.kind === 'UNDO') {
+      const parentDepth = undoDepthById.get(entry.source.undoneEntryId) ?? 0;
+      const depth = parentDepth + 1;
+      undoDepthById.set(entry.id, depth);
       activelyUndoneIds.add(entry.source.undoneEntryId);
       const target = byId.get(entry.source.undoneEntryId);
       if (target?.source.kind === 'UNDO') {
         activelyUndoneIds.delete(target.source.undoneEntryId);
       }
+    } else {
+      undoDepthById.set(entry.id, 0);
     }
   }
 
@@ -554,8 +1150,10 @@ export function buildArtifactHistoryViews(
     const entry = chronologicalEntries[i]!;
     const canUndo = latestByKind.get(entry.artifactKind) === entry.id;
     const isUndone = activelyUndoneIds.has(entry.id);
+    const undoDepth = undoDepthById.get(entry.id) ?? 0;
+    const isRedo = entry.source.kind === 'UNDO' && undoDepth > 0 && undoDepth % 2 === 0;
     const reason = buildReasonFromSource(entry.source);
-    const title = buildEntryTitle(entry.source);
+    const title = buildEntryTitle(entry.source, isRedo);
 
     if (entry.artifactKind === 'REQUIREMENTS_DOC') {
       const diff = computeRequirementDocDiff(entry.beforeState.doc, entry.afterState.doc);
@@ -619,22 +1217,17 @@ export function buildArtifactHistoryViews(
       continue;
     }
 
-    // ONTOLOGY_SUITE envelope ready for #70 typed suite diff integration
+    const suiteItems = buildOntologySuiteChangeSummaryItems(
+      entry.beforeState,
+      entry.afterState,
+      entry.id,
+    );
     const changeSummary: ChangeSummaryView = {
       entryId: entry.id,
       artifactKind: 'ONTOLOGY_SUITE',
       targetId: entry.targetId,
       ...(reason ? { reason } : {}),
-      items: [
-        {
-          id: `${entry.id}-suite`,
-          changeType: 'MODIFIED',
-          label: {
-            zh: `更新了${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh}`,
-            en: `Updated ${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en}`,
-          },
-        },
-      ],
+      items: suiteItems,
       canUndo,
       ...(isUndone ? { isUndone: true } : {}),
     };

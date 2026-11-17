@@ -8,6 +8,7 @@ import {
   CircleDot,
   Code2,
   FileCode2,
+  History,
   Info,
   Link2,
   Network,
@@ -49,9 +50,12 @@ import {
 import {
   getProjectLifecycleState,
   useWorkbenchStore,
+  type ArtifactHistoryEntryView,
+  type ArtifactJumpTarget,
   type BusinessModelInlineEditTarget,
 } from '../api.js';
 import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
+import { ArtifactHistoryDrawer } from '../components/history/index.js';
 import { usePreferences, type NavViewId } from '../i18n.js';
 import {
   resolveLegacyBusinessModelTechTab,
@@ -452,12 +456,21 @@ export function BusinessModelStepView({
     activeNav,
     activeItemId,
     liveSessionDrafts,
+    highlightedBusinessModelTarget,
+    historyDrawerArtifactKind,
     setActiveItemId,
     setSelectedModel,
+    openArtifactHistoryDrawer,
+    closeArtifactHistoryDrawer,
+    undoArtifactChange,
+    restoreArtifactBeforeChange,
+    focusBusinessModelTarget,
     applyBusinessModelEdit,
     startOntologySynthesisRun,
     startOntologyCopilotRun,
   } = useWorkbenchStore();
+
+  const [historyBusyEntryId, setHistoryBusyEntryId] = useState<string | null>(null);
 
   const [activeInlineEdit, setActiveInlineEdit] = useState<InlineEditDraftState | null>(
     () => initialInlineEditState,
@@ -668,6 +681,80 @@ export function BusinessModelStepView({
 
   const lifecycle = getProjectLifecycleState(data);
   const validation = project.validation;
+  const effectiveFlashTarget =
+    flashTarget ??
+    (highlightedBusinessModelTarget
+      ? {
+          anchorId: highlightedBusinessModelTarget.anchorId,
+          at: highlightedBusinessModelTarget.seq,
+        }
+      : null);
+
+  const ontHistoryEntries = (data.artifactHistory ?? []).filter(
+    (entry) => entry.artifactKind === 'ONTOLOGY_SUITE',
+  );
+  const historyDrawerOpen = historyDrawerArtifactKind === 'ONTOLOGY_SUITE';
+
+  const handleHistoryDrawerOpenChange = (open: boolean) => {
+    if (open) {
+      openArtifactHistoryDrawer('ONTOLOGY_SUITE');
+    } else {
+      closeArtifactHistoryDrawer();
+    }
+  };
+
+  const handleUndoLatestFromDrawer = async (entry: ArtifactHistoryEntryView) => {
+    setHistoryBusyEntryId(entry.id);
+    try {
+      await undoArtifactChange('ONTOLOGY_SUITE', entry.id);
+    } finally {
+      setHistoryBusyEntryId(null);
+    }
+  };
+
+  const handleRestoreBeforeFromDrawer = async (entry: ArtifactHistoryEntryView) => {
+    setHistoryBusyEntryId(entry.id);
+    try {
+      await restoreArtifactBeforeChange('ONTOLOGY_SUITE', entry.id);
+    } finally {
+      setHistoryBusyEntryId(null);
+    }
+  };
+
+  const handleJumpFromDrawer = (target: ArtifactJumpTarget) => {
+    if (target.kind === 'BUSINESS_OBJECT') {
+      focusBusinessModelTarget(target);
+      if (target.pageId || target.objectId) {
+        handleSelectPage((target.pageId ?? target.objectId)!);
+      }
+    }
+  };
+
+  const historyDrawerNode = (
+    <ArtifactHistoryDrawer
+      open={historyDrawerOpen}
+      onOpenChange={handleHistoryDrawerOpenChange}
+      artifactLabel={BUSINESS_VOCABULARY.ONTOLOGY_SUITE}
+      entries={ontHistoryEntries}
+      busyEntryId={historyBusyEntryId}
+      onUndoLatest={handleUndoLatestFromDrawer}
+      onRestoreBefore={handleRestoreBeforeFromDrawer}
+      onJumpToTarget={handleJumpFromDrawer}
+    />
+  );
+
+  const historyTriggerButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      data-testid="business-model-history-btn"
+      onClick={() => openArtifactHistoryDrawer('ONTOLOGY_SUITE')}
+    >
+      <History size={13} aria-hidden="true" />
+      <span>{t('历史与恢复', 'History')}</span>
+    </Button>
+  );
 
   const isCopilotBusy = (data.agentSessions ?? []).some(
     (s) =>
@@ -722,20 +809,23 @@ export function BusinessModelStepView({
             </button>
           </div>
 
-          <button
-            type="button"
-            className="bm-ghost-btn"
-            data-testid="back-to-business-view-btn"
-            onClick={handleBackToBusinessView}
-          >
-            <ArrowLeft size={14} aria-hidden="true" />
-            <span>
-              {t(
-                `返回${BUSINESS_VOCABULARY.BUSINESS_VIEW.zh}`,
-                `Back to ${BUSINESS_VOCABULARY.BUSINESS_VIEW.en}`,
-              )}
-            </span>
-          </button>
+          <div className="flex items-center gap-2">
+            {historyTriggerButton}
+            <button
+              type="button"
+              className="bm-ghost-btn"
+              data-testid="back-to-business-view-btn"
+              onClick={handleBackToBusinessView}
+            >
+              <ArrowLeft size={14} aria-hidden="true" />
+              <span>
+                {t(
+                  `返回${BUSINESS_VOCABULARY.BUSINESS_VIEW.zh}`,
+                  `Back to ${BUSINESS_VOCABULARY.BUSINESS_VIEW.en}`,
+                )}
+              </span>
+            </button>
+          </div>
         </div>
 
         <div className="bm-tech-body">
@@ -761,6 +851,7 @@ export function BusinessModelStepView({
             </div>
           )}
         </div>
+        {historyDrawerNode}
       </div>
     );
   }
@@ -813,6 +904,7 @@ export function BusinessModelStepView({
                   <span>{t('整理业务模型', 'Organize Business Model')}</span>
                 </Button>
               )}
+              {ontHistoryEntries.length > 0 && historyTriggerButton}
               <button
                 type="button"
                 className="bm-ghost-btn"
@@ -830,6 +922,7 @@ export function BusinessModelStepView({
             </div>
           </div>
         </div>
+        {historyDrawerNode}
       </div>
     );
   }
@@ -908,7 +1001,10 @@ export function BusinessModelStepView({
               BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en,
             )}
           </h1>
-          <div className="bm-head-actions">{headerActions ?? defaultPrimaryAction}</div>
+          <div className="bm-head-actions">
+            {historyTriggerButton}
+            {headerActions ?? defaultPrimaryAction}
+          </div>
         </div>
 
         <p
@@ -1058,7 +1154,7 @@ export function BusinessModelStepView({
                 humanize={humanize}
                 onSelectObject={(objId) => handleSelectPage(objId)}
                 onOpenTechnicalDetails={handleOpenTechnicalDetails}
-                flashTarget={flashTarget ?? null}
+                flashTarget={effectiveFlashTarget}
                 {...(defaultExpandedSections ? { defaultExpandedSections } : {})}
               />
             ) : resolvedPageId === 'view:flows' ? (
@@ -1066,6 +1162,7 @@ export function BusinessModelStepView({
                 projection={projection}
                 humanize={humanize}
                 onOpenTechnicalDetails={handleOpenTechnicalDetails}
+                flashTarget={effectiveFlashTarget}
               />
             ) : resolvedPageId === 'view:roles' ? (
               <RolesCrossView
@@ -1074,6 +1171,7 @@ export function BusinessModelStepView({
                 humanize={humanize}
                 onSelectObject={(objId) => handleSelectPage(objId)}
                 onOpenTechnicalDetails={handleOpenTechnicalDetails}
+                flashTarget={effectiveFlashTarget}
               />
             ) : resolvedPageId === 'view:reports' ? (
               <ReportsCrossView
@@ -1081,6 +1179,7 @@ export function BusinessModelStepView({
                 humanize={humanize}
                 onSelectObject={(objId) => handleSelectPage(objId)}
                 onOpenTechnicalDetails={handleOpenTechnicalDetails}
+                flashTarget={effectiveFlashTarget}
               />
             ) : (
               <OtherFallbackView
@@ -1088,11 +1187,13 @@ export function BusinessModelStepView({
                 businessLocale={businessLocale}
                 humanize={humanize}
                 onOpenTechnicalDetails={handleOpenTechnicalDetails}
+                flashTarget={effectiveFlashTarget}
               />
             )}
           </div>
         </InlineEditContext.Provider>
       </div>
+      {historyDrawerNode}
     </div>
   );
 }
@@ -1407,6 +1508,34 @@ function CrossViewHeader({
 
 /* ─── Business Object Page (`M1` Aggregate-Centered Projection) ─── */
 
+function findSectionForFlashAnchor(
+  object: BusinessObjectProjection,
+  anchorId: string | undefined,
+): DefaultExpandedObjectSection | DefaultCollapsedObjectSection | null {
+  if (!anchorId) return null;
+  if (object.actions.some((a) => a.id === anchorId)) return 'actions';
+  if (object.businessRules.some((r) => r.id === anchorId)) return 'businessRules';
+  if (object.associations.some((a) => a.id === anchorId)) return 'fields';
+  if (object.events.some((e) => e.id === anchorId)) return 'events';
+  if (object.automations.some((a) => a.id === anchorId)) return 'automations';
+  if (
+    object.screens.some(
+      (s) =>
+        s.id === anchorId ||
+        s.screenId === anchorId ||
+        s.navigationEdges.some((e) => e.id === anchorId) ||
+        s.crossCuttingUi.some((c) => c.id === anchorId),
+    )
+  ) {
+    return 'screens';
+  }
+  if (object.integrations.some((i) => i.id === anchorId || i.interfaceId === anchorId)) {
+    return 'integrations';
+  }
+  if (object.dataStorage.some((d) => d.id === anchorId)) return 'dataStorage';
+  return null;
+}
+
 function BusinessObjectPage({
   object,
   businessLocale,
@@ -1437,8 +1566,24 @@ function BusinessObjectPage({
     for (const sec of DEFAULT_EXPANDED_OBJECT_SECTIONS) initial[sec] = true;
     for (const sec of DEFAULT_COLLAPSED_OBJECT_SECTIONS) initial[sec] = false;
     for (const sec of defaultExpandedSections ?? []) initial[sec] = true;
+    const flashedSec = findSectionForFlashAnchor(object, flashTarget?.anchorId);
+    if (flashedSec) initial[flashedSec] = true;
     return initial;
   });
+
+  useEffect(() => {
+    if (!flashTarget?.anchorId) return;
+    const flashedSec = findSectionForFlashAnchor(object, flashTarget.anchorId);
+    if (flashedSec) {
+      setExpandedMap((prev) => (prev[flashedSec] ? prev : { ...prev, [flashedSec]: true }));
+    }
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLElement>('[data-flash="true"]');
+        el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      });
+    }
+  }, [object, flashTarget?.anchorId, flashTarget?.at]);
 
   const isExpanded = (
     sec: DefaultExpandedObjectSection | DefaultCollapsedObjectSection,
@@ -1784,7 +1929,10 @@ function BusinessObjectPage({
                 const nameSlot = `action-name-${act.id}`;
                 const descSlot = `action-desc-${act.id}`;
                 return (
-                  <li key={act.id}>
+                  <li
+                    key={act.id}
+                    data-flash={flashTarget?.anchorId === act.id ? 'true' : undefined}
+                  >
                     <span className="bm-item-name">
                       <InlineEditableText
                         slotKey={nameSlot}
@@ -1857,6 +2005,7 @@ function BusinessObjectPage({
                   key={rule.id}
                   rule={rule}
                   currentObjectId={object.id}
+                  flashed={flashTarget?.anchorId === rule.id}
                   humanize={humanize}
                   onSelectObject={onSelectObject}
                   onOpenTechnicalDetails={onOpenTechnicalDetails}
@@ -1956,7 +2105,10 @@ function BusinessObjectPage({
                   ? t('发出并响应此事件', 'Produces and responds to this event')
                   : t('操作完成后发出', 'Emitted after action');
             return (
-              <li key={ev.id}>
+              <li
+                key={ev.id}
+                data-flash={flashTarget?.anchorId === ev.id ? 'true' : undefined}
+              >
                 <span className="bm-item-name">
                   <InlineEditableText
                     slotKey={nameSlot}
@@ -2013,7 +2165,10 @@ function BusinessObjectPage({
             const nameSlot = `automation-name-${au.id}`;
             const descSlot = `automation-desc-${au.id}`;
             return (
-              <li key={au.id}>
+              <li
+                key={au.id}
+                data-flash={flashTarget?.anchorId === au.id ? 'true' : undefined}
+              >
                 <span className="bm-item-name">
                   <InlineEditableText
                     slotKey={nameSlot}
@@ -2077,7 +2232,14 @@ function BusinessObjectPage({
             const nameSlot = `screen-name-${sc.id}`;
             const descSlot = `screen-desc-${sc.id}`;
             return (
-              <li key={sc.id}>
+              <li
+                key={sc.id}
+                data-flash={
+                  flashTarget?.anchorId === sc.id || flashTarget?.anchorId === sc.screenId
+                    ? 'true'
+                    : undefined
+                }
+              >
                 <span className="bm-item-name">
                   <InlineEditableText
                     slotKey={nameSlot}
@@ -2269,7 +2431,14 @@ function BusinessObjectPage({
             const nameSlot = `integration-name-${it.id}`;
             const descSlot = `integration-desc-${it.id}`;
             return (
-              <li key={it.id}>
+              <li
+                key={it.id}
+                data-flash={
+                  flashTarget?.anchorId === it.id || flashTarget?.anchorId === it.interfaceId
+                    ? 'true'
+                    : undefined
+                }
+              >
                 <span className="bm-item-name">
                   <InlineEditableText
                     slotKey={nameSlot}
@@ -2325,7 +2494,10 @@ function BusinessObjectPage({
           {object.dataStorage.map((ds) => {
             const summary = formatDataStorageSummary(ds, objectTitle, businessLocale);
             return (
-              <li key={ds.id}>
+              <li
+                key={ds.id}
+                data-flash={flashTarget?.anchorId === ds.id ? 'true' : undefined}
+              >
                 <span className="bm-item-name">{summary.title}</span>
                 <span className="bm-item-note">{summary.note}</span>
                 <ItemTechButton
@@ -2451,12 +2623,14 @@ function FieldRow({
 function BusinessRuleRow({
   rule,
   currentObjectId,
+  flashed = false,
   humanize,
   onSelectObject,
   onOpenTechnicalDetails,
 }: {
   rule: ProjectedBusinessRule;
   currentObjectId: string;
+  flashed?: boolean;
   humanize: (raw: string | undefined) => string;
   onSelectObject: (objectId: string) => void;
   onOpenTechnicalDetails: (locator: TechnicalLocator) => void;
@@ -2472,7 +2646,7 @@ function BusinessRuleRow({
   const descSlot = `rule-desc-${rule.id}`;
 
   return (
-    <li className="bm-rule-row">
+    <li className="bm-rule-row" data-flash={flashed ? 'true' : undefined}>
       <div className="bm-rule-top">
         <div data-testid={`business-rule-text-${rule.id}`}>
           {rule.kind === 'ATTRIBUTE_RULE' ? (
@@ -2658,10 +2832,12 @@ function FlowsCrossView({
   projection,
   humanize,
   onOpenTechnicalDetails,
+  flashTarget,
 }: {
   projection: BusinessModelProjection;
   humanize: (raw: string | undefined) => string;
   onOpenTechnicalDetails: (locator: TechnicalLocator) => void;
+  flashTarget?: { readonly anchorId: string; readonly at: number } | null;
 }) {
   const { t } = usePreferences();
   const flows = projection.flowsAndApprovals.flows;
@@ -2696,7 +2872,11 @@ function FlowsCrossView({
           const nameSlot = `flow-name-${flow.id}`;
           const descSlot = `flow-desc-${flow.id}`;
           return (
-            <section key={flow.id} className="bm-sec">
+            <section
+              key={flow.id}
+              className="bm-sec"
+              data-flash={flashTarget?.anchorId === flow.id ? 'true' : undefined}
+            >
               <div className="bm-sec-head is-static">
                 <div>
                   <span className="bm-sec-title">
@@ -2792,12 +2972,14 @@ function RolesCrossView({
   humanize,
   onSelectObject,
   onOpenTechnicalDetails,
+  flashTarget,
 }: {
   projection: BusinessModelProjection;
   businessLocale: BusinessLocale;
   humanize: (raw: string | undefined) => string;
   onSelectObject: (objectId: string) => void;
   onOpenTechnicalDetails: (locator: TechnicalLocator) => void;
+  flashTarget?: { readonly anchorId: string; readonly at: number } | null;
 }) {
   const { locale, t } = usePreferences();
   const listSep = locale === 'en-US' ? ', ' : '、';
@@ -2866,7 +3048,10 @@ function RolesCrossView({
                     const nameSlot = `role-name-${role.id}`;
                     const descSlot = `role-desc-${role.id}`;
                     return (
-                      <tr key={role.id}>
+                      <tr
+                        key={role.id}
+                        data-flash={flashTarget?.anchorId === role.id ? 'true' : undefined}
+                      >
                         <th>
                           <InlineEditableText
                             slotKey={nameSlot}
@@ -3143,11 +3328,13 @@ function ReportsCrossView({
   humanize,
   onSelectObject,
   onOpenTechnicalDetails,
+  flashTarget,
 }: {
   projection: BusinessModelProjection;
   humanize: (raw: string | undefined) => string;
   onSelectObject: (objectId: string) => void;
   onOpenTechnicalDetails: (locator: TechnicalLocator) => void;
+  flashTarget?: { readonly anchorId: string; readonly at: number } | null;
 }) {
   const { t } = usePreferences();
   const { queries, reports, items } = projection.queriesAndReports;
@@ -3198,7 +3385,10 @@ function ReportsCrossView({
                   const nameSlot = `report-name-${qr.id}`;
                   const descSlot = `report-desc-${qr.id}`;
                   return (
-                    <li key={qr.id}>
+                    <li
+                      key={qr.id}
+                      data-flash={flashTarget?.anchorId === qr.id ? 'true' : undefined}
+                    >
                       <span className="bm-item-name">
                         <InlineEditableText
                           slotKey={nameSlot}
@@ -3285,11 +3475,13 @@ function OtherFallbackView({
   businessLocale,
   humanize,
   onOpenTechnicalDetails,
+  flashTarget,
 }: {
   items: ProjectedOtherItem[];
   businessLocale: BusinessLocale;
   humanize: (raw: string | undefined) => string;
   onOpenTechnicalDetails: (locator: TechnicalLocator) => void;
+  flashTarget?: { readonly anchorId: string; readonly at: number } | null;
 }) {
   const { t } = usePreferences();
   const headerLocator: TechnicalLocator = items[0]?.locator ?? {
@@ -3328,7 +3520,10 @@ function OtherFallbackView({
               const nameSlot = `other-name-${item.kind}-${item.id}`;
               const descSlot = `other-desc-${item.kind}-${item.id}`;
               return (
-                <li key={`${item.kind}-${item.id}`}>
+                <li
+                  key={`${item.kind}-${item.id}`}
+                  data-flash={flashTarget?.anchorId === item.id ? 'true' : undefined}
+                >
                   <span className="bm-item-name">
                     {isEditableDict ? (
                       <InlineEditableText

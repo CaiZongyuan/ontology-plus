@@ -1800,6 +1800,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       };
 
   const activeRunCaptures = new Map<string, ActiveArtifactRunCapture>();
+  let suppressSuiteHistoryDepth = 0;
 
   function runCaptureKey(
     projectId: string,
@@ -2373,6 +2374,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       }
       const suiteJson = JSON.stringify(effectiveSuite);
 
+      const shouldRecordHistory =
+        suppressSuiteHistoryDepth === 0 &&
+        !hasActiveArtifactRunCapture(projectId, 'ONTOLOGY_SUITE');
+      const beforeSuiteForHistory = shouldRecordHistory
+        ? structuredClone(current.suite)
+        : undefined;
+
       db.prepare(`
         UPDATE projects
         SET suite_json = ?, current_stage = ?, changelog = ?, updated_at = ?
@@ -2389,6 +2397,31 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       syncEaRelations(projectId, effectiveSuite);
       mirrorProjectFiles(projectId, current.domain, effectiveSuite, nextChangelog);
       const updated = this.getProject(projectId)!;
+
+      if (beforeSuiteForHistory && !areOntologySuitesEqual(beforeSuiteForHistory, updated.suite)) {
+        const historySource: ArtifactHistorySource =
+          commitOptions.source.kind === 'AGENT_RUN'
+            ? {
+                kind: 'AGENT_RUN',
+                runId: commitOptions.source.runId,
+                ...(commitOptions.source.sessionId
+                  ? { sessionId: commitOptions.source.sessionId }
+                  : {}),
+              }
+            : {
+                kind: 'MANUAL',
+                origin: commitOptions.source.kind,
+              };
+        appendArtifactHistoryEntry({
+          projectId,
+          artifactKind: 'ONTOLOGY_SUITE',
+          targetId: projectId,
+          source: historySource,
+          beforeState: beforeSuiteForHistory,
+          afterState: structuredClone(updated.suite),
+        });
+      }
+
       options.onSuiteCommit?.({
         projectId,
         previousSuite: current.suite,
@@ -3120,10 +3153,15 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       } else {
         const currentSuite = structuredClone(currentProject.suite);
         const restoredSuite = structuredClone(latest.beforeState);
-        this.commitSuite(projectId, restoredSuite, {
-          source: { kind: 'MANUAL' },
-          note: `Undid change ${latest.id}`,
-        });
+        suppressSuiteHistoryDepth += 1;
+        try {
+          this.commitSuite(projectId, restoredSuite, {
+            source: { kind: 'MANUAL' },
+            note: `Undid change ${latest.id}`,
+          });
+        } finally {
+          suppressSuiteHistoryDepth -= 1;
+        }
         appended = appendArtifactHistoryEntry({
           projectId,
           artifactKind: 'ONTOLOGY_SUITE',
@@ -3171,10 +3209,15 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       } else {
         const currentSuite = structuredClone(currentProject.suite);
         const restoredSuite = structuredClone(target.beforeState);
-        this.commitSuite(projectId, restoredSuite, {
-          source: { kind: 'MANUAL' },
-          note: `Restored suite to before ${target.id}`,
-        });
+        suppressSuiteHistoryDepth += 1;
+        try {
+          this.commitSuite(projectId, restoredSuite, {
+            source: { kind: 'MANUAL' },
+            note: `Restored suite to before ${target.id}`,
+          });
+        } finally {
+          suppressSuiteHistoryDepth -= 1;
+        }
         appended = appendArtifactHistoryEntry({
           projectId,
           artifactKind: 'ONTOLOGY_SUITE',

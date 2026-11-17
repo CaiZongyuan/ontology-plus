@@ -1496,6 +1496,51 @@ function buildFauxMockModels(
           userPrompt.includes('规则') ||
           userPrompt.includes('校验') ||
           lower.includes('rule');
+        const explicitlyBehavior =
+          !explicitlyRule &&
+          (userPrompt.includes('业务操作') ||
+            userPrompt.includes('操作') ||
+            userPrompt.includes('行为') ||
+            lower.includes('behavior') ||
+            lower.includes('action') ||
+            activeModelCode === 'M2');
+
+        if (explicitlyBehavior) {
+          const nextBehIdx = (project?.suite.M2?.behaviors.length ?? 4) + 1;
+          const targetOwner = project?.suite.M1?.aggregates[0]?.name ?? 'Contract';
+          const bracketMatch = /[『「"']([^』」"']+)[』」"']/.exec(userPrompt)?.[1]?.trim();
+          const afterKeywordMatch = /(?:业务操作|操作|行为|action|behavior)\s*[:：]?\s*([^\s，,。.!！;；]+)/i
+            .exec(userPrompt)?.[1]
+            ?.trim();
+          const behAlias =
+            bracketMatch ||
+            afterKeywordMatch ||
+            pickLocaleText(loc, '提交审批', 'Submit for Approval');
+          const behName =
+            behAlias === '提交审批' || /submit\s+for\s+approval/i.test(behAlias)
+              ? 'SubmitForApproval'
+              : `BusinessAction0${nextBehIdx}`;
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `解析到业务操作建模意图，调用 upsert_behavior 写入结构化操作并执行一致性校验。`,
+                  `Parsed action modeling intent; calling upsert_behavior and validating suite consistency.`,
+                ),
+              ),
+              fauxToolCall('upsert_behavior', {
+                id: `BHV-0${nextBehIdx}`,
+                name: behName,
+                alias: behAlias,
+                ownerEntity: targetOwner,
+                behaviorType: 'COMMAND',
+                triggerType: 'USER_ACTION',
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
 
         if (
           !explicitlyRule &&
@@ -1811,6 +1856,40 @@ function buildFauxMockModels(
       }
 
       const freshProject = resolveProjectDetail(store, session.projectId) ?? project;
+      if (session.agentKind === 'COPILOT') {
+        const isInspectionOnly =
+          toolResults.length > 0 &&
+          toolResults.every((tr) => tr.toolName === 'inspect_ontology_model');
+        return fauxAssistantMessage([
+          fauxThinking(
+            pickLocaleText(
+              loc,
+              `工具执行与一致性校验已完成，正在汇总业务模型说明。`,
+              `Tool execution and consistency validation finished; summarizing business model update.`,
+            ),
+          ),
+          fauxText(
+            isInspectionOnly
+              ? pickLocaleText(
+                  loc,
+                  `已检查当前业务模型的结构与状态，目前共有 ${freshProject?.validation.errorCount ?? 0} 个需要修正的问题。`,
+                  `Reviewed the current business model; ${freshProject?.validation.errorCount ?? 0} problems to fix.`,
+                )
+              : lastResult?.isError
+                ? pickLocaleText(
+                    loc,
+                    `由于与其他业务对象或规则存在关联约束，本次改动未生效，请确认关联影响后再试。`,
+                    `This change could not be applied because other business objects or rules depend on it.`,
+                  )
+                : pickLocaleText(
+                    loc,
+                    `已按你的说明更新业务模型，具体调整已列在下方变更说明中，点击任意条目即可定位到对应业务对象。`,
+                    `Updated the business model according to your request; review the change summary below or click any item to locate it on the canvas.`,
+                  ),
+          ),
+        ]);
+      }
+
       const summaryLines = toolResults.slice(-3).map((tr) => {
         const txt = tr.content
           .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
