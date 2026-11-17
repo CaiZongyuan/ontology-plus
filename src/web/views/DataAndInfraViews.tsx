@@ -40,6 +40,7 @@ import {
   type RegistryColumn,
 } from '../components/beautifui/index.js';
 import { MarkdownRenderer, TiptapMarkdownEditor } from '../components/markdown/index.js';
+import { BUILT_IN_THEMES } from '../../packages/workbench-theme/index.js';
 import {
   usePreferences,
   type NavViewId,
@@ -2381,7 +2382,8 @@ export function LlmCenterView() {
 }
 
 export function SystemSettingsView() {
-  const { t, locale, setLocale, theme, themePreference, setTheme } = usePreferences();
+  const { t, locale, setLocale, theme, themePreference, setTheme, workbenchTheme, setWorkbenchTheme } =
+    usePreferences();
   const { data, patchData, showToast } = useWorkbenchStore();
   if (!data) return null;
 
@@ -2460,22 +2462,53 @@ export function SystemSettingsView() {
           </label>
         </div>
 
-        {/* 3-State Segmented Theme Control */}
+        {/* Workbench Theme (ADR 0012): kept on this device only, independent of light and dark */}
         <div className="flex flex-wrap justify-between items-center gap-3 pb-3.5 border-b border-line"
         >
           <div>
-            <strong>{t('界面主题', 'Appearance Theme')}</strong>
+            <strong>{t('工作台主题', 'Workbench Theme')}</strong>
             <div className="text-[12.5px] text-muted-foreground">
               {t(
-                '支持跟随操作系统色温，或显式锁定暖纸亮色 (Warm Paper) / 胶片颗粒暗色 (Film Grain)',
-                'Follow OS preference or pin Warm Paper Light / Film Grain Dark scheme',
+                '整个工作台的配色、字体、圆角与阴影；与浅色、深色互相独立，只保存在本设备',
+                'Colours, fonts, corners, and shadows across the workbench; independent of light and dark, saved on this device only',
               )}
             </div>
           </div>
 
           <div
             role="group"
-            aria-label={t('界面外观主题选择', 'Appearance theme preference')} className="inline-flex p-0.75 rounded-[6px] bg-inset border border-line gap-1"
+            aria-label={t('工作台主题选择', 'Workbench theme')} className="inline-flex p-0.75 rounded-[6px] bg-inset border border-line gap-1"
+          >
+            {BUILT_IN_THEMES.map((option) => (
+              <Button
+                key={option.id}
+                type="button"
+                data-testid={`workbench-theme-${option.id}`}
+                variant="toggle" size="sm" aria-pressed={workbenchTheme === option.id}
+                onClick={() => setWorkbenchTheme(option.id)}
+              >
+                {t(option.name.zh, option.name.en)}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {/* 3-State Segmented Light / Dark Control */}
+        <div className="flex flex-wrap justify-between items-center gap-3 pb-3.5 border-b border-line"
+        >
+          <div>
+            <strong>{t('浅色与深色', 'Light & Dark')}</strong>
+            <div className="text-[12.5px] text-muted-foreground">
+              {t(
+                '跟随操作系统，或固定为浅色、深色；每个工作台主题都有两种',
+                'Follow the operating system, or always use light or dark; every workbench theme has both',
+              )}
+            </div>
+          </div>
+
+          <div
+            role="group"
+            aria-label={t('浅色与深色选择', 'Light and dark preference')} className="inline-flex p-0.75 rounded-[6px] bg-inset border border-line gap-1"
           >
             <Button
               type="button"
@@ -2494,7 +2527,7 @@ export function SystemSettingsView() {
               variant="toggle" size="sm" aria-pressed={themePreference === 'light'}
               onClick={() => handleSelectTheme('light')}
             >
-              ☀ {t('亮色暖纸', 'Light')}
+              ☀ {t('浅色', 'Light')}
             </Button>
             <Button
               type="button"
@@ -2502,7 +2535,7 @@ export function SystemSettingsView() {
               variant="toggle" size="sm" aria-pressed={themePreference === 'dark'}
               onClick={() => handleSelectTheme('dark')}
             >
-              ☾ {t('暗色胶片', 'Dark')}
+              ☾ {t('深色', 'Dark')}
             </Button>
           </div>
         </div>

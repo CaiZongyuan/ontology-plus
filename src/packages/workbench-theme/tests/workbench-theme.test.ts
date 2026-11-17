@@ -106,8 +106,26 @@ describe('built-in themes', () => {
     },
   );
 
+  it('give a device that has not chosen the neutral 默认 theme, with 暖纸 still selectable', () => {
+    expect(DEFAULT_THEME_ID).toBe('default');
+    expect(BUILT_IN_THEMES.map((theme) => theme.id)).toEqual(['default', 'warm-paper']);
+    expect(findTheme('default')!.name).toEqual({ zh: '默认', en: 'Default' });
+  });
+
+  it('give 默认 the same sans-serif family for titles and interface, and no background texture', () => {
+    const theme = findTheme('default')!;
+    for (const mode of ['light', 'dark'] as const) {
+      const tokens = resolveThemeTokens(theme, mode);
+      expect(tokens['font-title']).toBe(tokens['font-sans']);
+      expect(tokens['font-title']).toMatch(/^"Inter", .*, sans-serif$/);
+      expect(tokens['font-title']).not.toMatch(/Serif|Georgia/);
+      expect(tokens['backdrop-image']).toBe('none');
+    }
+  });
+
   it('fall back to the default for an unknown, missing, or malformed stored id', () => {
     expect(findTheme(DEFAULT_THEME_ID)).toBeDefined();
+    expect(resolveThemeId('default')).toBe('default');
     expect(resolveThemeId('warm-paper')).toBe('warm-paper');
     expect(resolveThemeId('no-such-theme')).toBe(DEFAULT_THEME_ID);
     expect(resolveThemeId(null)).toBe(DEFAULT_THEME_ID);
@@ -200,7 +218,21 @@ describe('compiling a theme to CSS', () => {
     expect(css).not.toMatch(/^:root \{$/m);
   });
 
-  it('repeats in the dark blocks only the tokens whose value differs from light', () => {
+  it('states every token in the dark blocks of any other theme, so no dark value of the default shows through', () => {
+    // The default's explicit-dark selector outranks another theme's plain light block,
+    // so a token that theme keeps the same in both modes must still be restated for dark.
+    const css = compileThemeCss(warmPaper);
+    const [lightBlock, ...darkBlocks] = css.split(/\n(?=@media|:root\[data-workbench-theme="warm-paper"\]:has)/);
+    expect(darkBlocks).toHaveLength(2);
+    const declared = (block: string) => block.match(/^\s*--[\w-]+:/gm)?.length ?? 0;
+    for (const dark of darkBlocks) {
+      expect(dark).toContain(`--font-sans: ${warmPaper.light['font-sans']};`);
+      expect(dark).toContain('--radius-card:');
+      expect(declared(dark)).toBe(declared(lightBlock!));
+    }
+  });
+
+  it('repeats in the dark blocks of the default theme only the tokens whose value differs from light', () => {
     const css = compileThemeCss(warmPaper, { isDefault: true });
     const [lightBlock, ...darkBlocks] = css.split(/\n(?=@media|:root:has)/);
     expect(lightBlock).toContain('--font-sans:');

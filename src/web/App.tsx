@@ -32,6 +32,7 @@ import {
   Sparkles,
   Sun,
   Moon,
+  Palette,
   Workflow,
   BarChart3,
 } from 'lucide-react';
@@ -49,6 +50,7 @@ import {
   type NavItemSpec,
   type NavViewId,
 } from './i18n.js';
+import { BUILT_IN_THEMES } from '../packages/workbench-theme/index.js';
 import {
   AppPublishView,
   ApplicationAssemblyDevView,
@@ -305,7 +307,7 @@ function LoadingState() {
 }
 
 function ShellInner() {
-  const { locale, toggleLocale, theme, toggleTheme, t } = usePreferences();
+  const { locale, toggleLocale, theme, toggleTheme, workbenchTheme, setWorkbenchTheme, t } = usePreferences();
   const {
     data,
     loading,
@@ -496,6 +498,16 @@ function ShellInner() {
         keywords: 'theme dark light 主题 深色 浅色',
         run: toggleTheme,
       },
+      ...BUILT_IN_THEMES.filter((option) => option.id !== workbenchTheme).map(
+        (option): CommandEntry => ({
+          key: `pref:workbench-theme:${option.id}`,
+          section: t('偏好', 'Preferences'),
+          label: t(`切换到工作台主题：${option.name.zh}`, `Switch to workbench theme: ${option.name.en}`),
+          icon: <Palette size={15} />,
+          keywords: `workbench theme 工作台主题 主题 ${option.id} ${option.name.zh} ${option.name.en}`.toLowerCase(),
+          run: () => setWorkbenchTheme(option.id),
+        }),
+      ),
       {
         key: 'pref:locale',
         section: t('偏好', 'Preferences'),
@@ -507,7 +519,7 @@ function ShellInner() {
     ];
     return [...pageEntries, ...projectEntries, ...prefEntries];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, locale, theme]);
+  }, [data, locale, theme, workbenchTheme]);
 
   const validation = data?.activeProject.validation;
   const hasErrors = (validation?.errorCount ?? 0) > 0;

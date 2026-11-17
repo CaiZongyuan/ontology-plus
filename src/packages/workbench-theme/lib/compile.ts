@@ -42,9 +42,9 @@ export interface CompileThemeOptions {
 }
 
 /**
- * A theme as CSS custom properties: every token for light, then only the
- * tokens that differ for dark, under both the system-preference query and the
- * explicit `data-theme="dark"` choice.
+ * A theme as CSS custom properties: every token for light, then the dark
+ * values (for the default theme only those that differ from light) under both
+ * the system-preference query and the explicit `data-theme="dark"` choice.
  */
 export function compileThemeCss(theme: WorkbenchTheme, options: CompileThemeOptions = {}): string {
   const light = resolveThemeTokens(theme, 'light');
@@ -53,7 +53,10 @@ export function compileThemeCss(theme: WorkbenchTheme, options: CompileThemeOpti
     THEME_TOKENS.filter((spec) => spec.name in tokens && (!only || only(spec.name))).map(
       (spec) => `${cssVarName(spec.name)}: ${tokens[spec.name]};`,
     );
-  const darkOnly = declare(dark, (name) => dark[name] !== light[name]);
+  // The default theme's explicit-dark selector outranks another theme's light
+  // block, so any other theme restates its whole dark table; otherwise a token
+  // it keeps the same in both modes would show the default's dark value.
+  const darkOnly = options.isDefault ? declare(dark, (name) => dark[name] !== light[name]) : declare(dark);
 
   const root = options.isDefault ? ':root' : `:root[data-workbench-theme="${theme.id}"]`;
   const explicitDark = options.isDefault

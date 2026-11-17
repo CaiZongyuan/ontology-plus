@@ -16,6 +16,12 @@
           var sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
           document.documentElement.dataset.theme = sysDark ? 'dark' : 'light';
         }
+        // Workbench Theme (ADR 0012): the default theme styles bare :root, so only a stored
+        // choice is written; an unknown id matches no theme rule and so renders as the default.
+        var workbenchTheme = localStorage.getItem('onto_workbench_theme');
+        if (workbenchTheme && /^[a-z0-9][a-z0-9-]{0,39}$/.test(workbenchTheme)) {
+          document.documentElement.dataset.workbenchTheme = workbenchTheme;
+        }
       } catch (_) {}
     </script>
     <title>Ontology Plus · 本体驱动研发工作台</title>
