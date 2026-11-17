@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { formatToolStepLabel as formatVocabularyToolStepLabel } from '../packages/business-vocabulary/index.js';
 import type {
   ImpactAnalysisReport,
   ModelCode,
@@ -212,68 +213,17 @@ export function formatAnchorBadgeLabel(anchor: PrototypeTargetAnchor | undefined
   return anchor.elementId || anchor.screenId || anchor.cssSelector || anchor.label || '';
 }
 
-export function formatToolStepLabel(toolName: string): { zh: string; en: string } {
-  switch (toolName) {
-    case 'list_prototype_anchors':
-      return { zh: '盘点原型屏幕与锚点清单', en: 'List prototype screens & anchors' };
-    case 'read_prototype_anchor':
-      return { zh: '读取锚点片段', en: 'Read anchor fragment' };
-    case 'edit_prototype_anchor':
-      return { zh: '局部修改锚点片段', en: 'Edit anchor fragment' };
-    case 'rewrite_prototype_page':
-      return { zh: '重写整页原型结构', en: 'Rewrite full prototype page' };
-    case 'inspect_ontology_model':
-      return { zh: '检视业务本体模型', en: 'Inspect ontology model' };
-    case 'ask_user':
-      return { zh: '请求确认业务决策', en: 'Ask user decision' };
-    case 'save_synthesized_srs_doc':
-      return { zh: '写入九章节 SRS 需求规格书', en: 'Save 9-chapter SRS document' };
-    case 'synthesize_ontology_suite':
-      return { zh: '校验并持久化 11 模型本体套件', en: 'Validate & save 11-model ontology suite' };
-    case 'save_tech_architecture_spec':
-      return { zh: '持久化技术架构规格资产', en: 'Save technical architecture spec' };
-    case 'read_architecture_assets':
-      return { zh: '读取仓库架构规范', en: 'Read repository architecture standards' };
-    case 'save_architecture_asset':
-      return { zh: '保存仓库架构规范', en: 'Save repository architecture standard' };
-    case 'read_application_inputs':
-      return { zh: '检查应用开发规格输入', en: 'Inspect application specification inputs' };
-    case 'save_application_instructions':
-      return { zh: '保存应用专属开发规格', en: 'Save application implementation instructions' };
-    case 'save_metric_insight':
-      return { zh: '生成并保存指标波动解读', en: 'Generate & save metric insight' };
-    case 'save_scenario_attribution_report':
-      return { zh: '生成并保存多维场景归因报告', en: 'Generate & save scenario attribution report' };
-    case 'record_requirement_insights':
-      return { zh: '沉淀结构化需求追问洞察', en: 'Record requirement insights' };
-    case 'compile_dev_package':
-      return { zh: '编译本体驱动研发指导包', en: 'Compile development package' };
-    case 'run_readonly_sql':
-      return { zh: '执行只读 SQL 数据探查', en: 'Execute read-only SQL query' };
-    case 'propose_policy_writeback':
-      return { zh: '拟定策略回写动作草案', en: 'Propose policy writeback action' };
-    case 'invoke_mcp_tool':
-      return { zh: '调用本体 MCP 工具', en: 'Invoke ontology MCP tool' };
-    case 'run_ontology_extraction':
-    case 'extract_ontology_candidates':
-      return { zh: '解析源码契约并萃取本体候选', en: 'Extract ontology candidates from source' };
-    case 'upsert_term':
-    case 'upsert_aggregate':
-    case 'upsert_process':
-    case 'upsert_command':
-    case 'upsert_rule':
-    case 'upsert_agent':
-    case 'upsert_event':
-    case 'upsert_external_mapping':
-    case 'upsert_ui_screen':
-    case 'upsert_metadata_entry':
-    case 'upsert_ai_binding':
-      return { zh: `更新本体元素 (${toolName.replace('upsert_', '')})`, en: `Upsert ontology element (${toolName.replace('upsert_', '')})` };
-    case 'delete_element':
-      return { zh: '移除本体元素并校验一致性', en: 'Delete ontology element & validate' };
-    default:
-      return { zh: `执行工具 ${toolName}`, en: `Run ${toolName}` };
-  }
+export function formatToolStepLabel(
+  toolName: string,
+  args?: Record<string, unknown>,
+  targetAnchor?: PrototypeTargetAnchor,
+): { zh: string; en: string } {
+  const { zh, en } = formatVocabularyToolStepLabel(
+    toolName,
+    args,
+    targetAnchor?.label ? { targetLabel: targetAnchor.label } : undefined,
+  );
+  return { zh, en };
 }
 
 export function formatPrototypeSelectionsForPrompt(
@@ -1840,7 +1790,7 @@ function buildStoreSessionStreamCallbacks(
     },
     onToolCall: (call) => {
       const anchorText = formatAnchorBadgeLabel(call.targetAnchor);
-      const stepLabel = formatToolStepLabel(call.toolName);
+      const stepLabel = formatToolStepLabel(call.toolName, call.arguments, call.targetAnchor);
       patchDraft((cur) => {
         const existingIdx = cur.steps.findIndex((s) => s.id === call.id);
         const nextStep: SessionLiveStep = {
@@ -1885,7 +1835,7 @@ function buildStoreSessionStreamCallbacks(
         const existingIdx = cur.steps.findIndex((s) => s.id === trace.id);
         const updatedStep: SessionLiveStep = {
           id: trace.id,
-          label: formatToolStepLabel(trace.toolName),
+          label: formatToolStepLabel(trace.toolName, trace.arguments, trace.targetAnchor),
           status: stepStatus,
           toolName: trace.toolName,
           ...(trace.targetAnchor

@@ -257,7 +257,7 @@ function mapToolTraceToStep(trace: AgentToolCallTrace, parentCancelled?: boolean
   const detail = formatToolTraceDetail(trace);
   return {
     id: trace.id,
-    label: formatToolStepLabel(trace.toolName),
+    label: formatToolStepLabel(trace.toolName, trace.arguments, trace.targetAnchor),
     status,
     toolName: trace.toolName,
     ...(trace.targetAnchor ? { targetAnchor: trace.targetAnchor } : {}),

@@ -23,6 +23,11 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { ModelCode } from '../../../packages/ontology-core/index.js';
+import {
+  formatToolStepLabel,
+  resolveToolProgressSpec,
+  type ToolProgressIconKind,
+} from '../../../packages/business-vocabulary/index.js';
 import type { AgentToolCallTrace } from '../../../packages/workspace-store/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
@@ -40,108 +45,38 @@ interface ToolMeta {
   icon: LucideIcon;
 }
 
-const TOOL_CATALOG: Record<string, ToolMeta> = {
-  record_requirement_insights: {
-    zh: '沉淀需求洞察',
-    en: 'Record Insights',
-    icon: FileText,
-  },
-  inspect_ontology_model: {
-    zh: '检视本体模型',
-    en: 'Inspect Ontology',
-    icon: Search,
-  },
-  ask_user: {
-    zh: '征询业务决策',
-    en: 'Ask User Decision',
-    icon: Sparkles,
-  },
-  compile_dev_package: {
-    zh: '编译四层研发包',
-    en: 'Compile Dev Package',
-    icon: FileCode2,
-  },
-  read_architecture_assets: { zh: '读取仓库架构规范', en: 'Read Architecture Standards', icon: Search },
-  save_architecture_asset: { zh: '保存仓库架构规范', en: 'Save Architecture Standard', icon: FileText },
-  save_tech_architecture_spec: { zh: '保存技术架构规范', en: 'Save Technical Architecture', icon: FileText },
-  read_application_inputs: { zh: '检查应用规格输入', en: 'Inspect Application Inputs', icon: Search },
-  save_application_instructions: { zh: '保存应用专属规格', en: 'Save Application Specification', icon: FileText },
-  invoke_mcp_tool: {
-    zh: '调用 MCP 工具',
-    en: 'Invoke MCP Tool',
-    icon: Cpu,
-  },
-  run_readonly_sql: {
-    zh: '只读 SQL 穿透查询',
-    en: 'Read-Only SQL Query',
-    icon: Database,
-  },
-  propose_policy_writeback: {
-    zh: '生成策略回写方案',
-    en: 'Propose Writeback',
-    icon: Workflow,
-  },
-  upsert_aggregate: {
-    zh: '维护领域聚合根',
-    en: 'Upsert Aggregate',
-    icon: Boxes,
-  },
-  upsert_behavior: {
-    zh: '维护领域行为',
-    en: 'Upsert Behavior',
-    icon: Workflow,
-  },
-  upsert_rule: {
-    zh: '维护业务规则',
-    en: 'Upsert Business Rule',
-    icon: GitBranch,
-  },
-  upsert_event: {
-    zh: '维护领域事件',
-    en: 'Upsert Domain Event',
-    icon: Sparkles,
-  },
-  upsert_scenario: {
-    zh: '维护跨聚合场景',
-    en: 'Upsert Scenario',
-    icon: GitBranch,
-  },
-  upsert_actor_role: {
-    zh: '维护参与者与角色',
-    en: 'Upsert Actor & Role',
-    icon: Boxes,
-  },
-  upsert_flow: {
-    zh: '维护业务流程',
-    en: 'Upsert Flow',
-    icon: GitBranch,
-  },
-  upsert_query_report: {
-    zh: '维护查询与报表',
-    en: 'Upsert Query/Report',
-    icon: Database,
-  },
-  upsert_screen: {
-    zh: '维护界面屏幕',
-    en: 'Upsert UI Screen',
-    icon: LayoutTemplate,
-  },
-  upsert_mapping: {
-    zh: '维护持久化映射',
-    en: 'Upsert DB Mapping',
-    icon: Database,
-  },
-  upsert_interface: {
-    zh: '维护服务接口',
-    en: 'Upsert Interface',
-    icon: Cpu,
-  },
-  delete_element: {
-    zh: '移除本体要素',
-    en: 'Delete Element',
-    icon: Trash2,
-  },
+const ICON_BY_KIND: Readonly<Record<ToolProgressIconKind, LucideIcon>> = {
+  object: Boxes,
+  action: Workflow,
+  rule: GitBranch,
+  event: Sparkles,
+  automation: GitBranch,
+  role: Boxes,
+  flow: GitBranch,
+  report: Database,
+  screen: LayoutTemplate,
+  storage: Database,
+  integration: Cpu,
+  delete: Trash2,
+  inspect: Search,
+  question: Sparkles,
+  document: FileText,
+  package: FileCode2,
+  query: Database,
+  capability: Cpu,
+  handoff: Workflow,
+  general: Wrench,
 };
+
+function resolveToolMeta(name: string, args?: Record<string, unknown>): ToolMeta {
+  const spec = resolveToolProgressSpec(name);
+  const label = formatToolStepLabel(name, args);
+  return {
+    zh: label.zh,
+    en: label.en,
+    icon: ICON_BY_KIND[spec.iconKind] ?? Wrench,
+  };
+}
 
 const ARG_LABELS: Record<string, { zh: string; en: string }> = {
   discoveredAggregates: { zh: '识别领域聚合', en: 'Discovered Aggregates' },
@@ -196,21 +131,6 @@ const ARG_LABELS: Record<string, { zh: string; en: string }> = {
   multiSelect: { zh: '允许复选', en: 'Multi-Select' },
   allowFreeform: { zh: '允许自由补充', en: 'Allow Freeform' },
 };
-
-function resolveToolMeta(name: string): ToolMeta {
-  const direct = TOOL_CATALOG[name];
-  if (direct) return direct;
-  if (name.includes('sql') || name.includes('db') || name.includes('query')) {
-    return { zh: '数据查询工具', en: 'Data Query Tool', icon: Database };
-  }
-  if (name.includes('rule') || name.includes('scenario') || name.includes('element')) {
-    return { zh: '本体建模工具', en: 'Ontology Tool', icon: GitBranch };
-  }
-  if (name.includes('compile') || name.includes('package') || name.includes('skill')) {
-    return { zh: '工程编译工具', en: 'Compiler Tool', icon: FileCode2 };
-  }
-  return { zh: '调用领域工具', en: 'Domain Tool', icon: Wrench };
-}
 
 function formatDuration(ms: number | undefined): string | null {
   if (typeof ms !== 'number' || Number.isNaN(ms)) return null;
@@ -402,7 +322,7 @@ export function ToolChips({
       {/* ─── Compact Interactive Tool Trigger Strip ─── */}
       <div className="flex flex-wrap items-center gap-1.5">
         {traces.map((trace, index) => {
-          const meta = resolveToolMeta(trace.toolName);
+          const meta = resolveToolMeta(trace.toolName, trace.arguments);
           const Icon = meta.icon;
           const running = trace.durationMs === undefined && !trace.output;
           const isError = Boolean(trace.isError);
@@ -510,7 +430,7 @@ export function ToolChips({
 
       {/* ─── Expanded Structured Tool Inspector Panel ─── */}
       {active && (() => {
-        const meta = resolveToolMeta(active.toolName);
+        const meta = resolveToolMeta(active.toolName, active.arguments);
         const ActiveIcon = meta.icon;
         const running = active.durationMs === undefined && !active.output;
         const isError = Boolean(active.isError);
