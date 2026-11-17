@@ -116,15 +116,15 @@ function ViewModeHeader({
   rightActions?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 overflow-hidden rounded-window border border-line bg-surface px-3.5 py-2 shadow-2xs">
-      <div className="inline-flex shrink-0 items-center rounded-[7px] border border-line bg-inset p-0.5">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 overflow-hidden rounded-window border border-border bg-card px-3.5 py-2 shadow-2xs">
+      <div className="inline-flex shrink-0 items-center rounded-[7px] border border-border bg-muted p-0.5">
         <button
           type="button"
           data-testid={`${testIdPrefix}-mode-workspace`}
           onClick={() => onChange('WORKSPACE')}
           className={cn(
             'inline-flex h-7 items-center gap-1.5 rounded-[5px] px-3 text-[12.5px] font-medium cursor-pointer transition-colors',
-            mode === 'WORKSPACE' ? 'bg-surface text-ink shadow-hairline' : 'text-ink-2 hover:text-ink',
+            mode === 'WORKSPACE' ? 'bg-card text-foreground shadow-hairline' : 'text-foreground-soft hover:text-foreground',
           )}
         >
           <Edit3 size={12.5} />
@@ -136,7 +136,7 @@ function ViewModeHeader({
           onClick={() => onChange('REGISTRY')}
           className={cn(
             'inline-flex h-7 items-center gap-1.5 rounded-[5px] px-3 text-[12.5px] font-medium cursor-pointer transition-colors',
-            mode === 'REGISTRY' ? 'bg-surface text-ink shadow-hairline' : 'text-ink-2 hover:text-ink',
+            mode === 'REGISTRY' ? 'bg-card text-foreground shadow-hairline' : 'text-foreground-soft hover:text-foreground',
           )}
         >
           <LayoutList size={12.5} />
@@ -144,7 +144,7 @@ function ViewModeHeader({
           <span
             className={cn(
               'rounded-full px-1.5 font-mono text-[10.5px] tabular-nums',
-              mode === 'REGISTRY' ? 'bg-white/20 text-surface' : 'bg-surface text-ink-3',
+              mode === 'REGISTRY' ? 'bg-white/20 text-card' : 'bg-card text-faint-foreground',
             )}
           >
             {count}
@@ -155,7 +155,7 @@ function ViewModeHeader({
         <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{rightActions}</div>
       )}
       {centerSlot && (
-        <div className="-mx-3.5 -mb-2 flex min-w-0 basis-[calc(100%+1.75rem)] flex-wrap items-center gap-2 border-t border-line-soft bg-inset/40 px-3.5 py-2">
+        <div className="-mx-3.5 -mb-2 flex min-w-0 basis-[calc(100%+1.75rem)] flex-wrap items-center gap-2 border-t border-line-soft bg-muted/40 px-3.5 py-2">
           {centerSlot}
         </div>
       )}
@@ -528,10 +528,10 @@ export function OverviewSessionsView({
               className={cn(
                 'p-[10px_12px] rounded-[6px] border flex flex-col justify-between gap-2 transition-colors',
                 st.isNext
-                  ? 'border-primary bg-surface shadow-2xs'
+                  ? 'border-primary bg-card shadow-2xs'
                   : st.ready
-                    ? 'border-line bg-inset'
-                    : 'border-line bg-inset opacity-80',
+                    ? 'border-border bg-muted'
+                    : 'border-border bg-muted opacity-80',
               )}
             >
               <div className="flex justify-between items-center">
@@ -590,7 +590,7 @@ export function OverviewSessionsView({
             header: t('工程编码', 'Code'),
             width: '130px',
             render: (p) => (
-              <span className="font-mono text-[12.5px] font-semibold text-ink">{p.code}</span>
+              <span className="font-mono text-[12.5px] font-semibold text-foreground">{p.code}</span>
             ),
           },
           {
@@ -598,7 +598,7 @@ export function OverviewSessionsView({
             header: t('工程名称与说明', 'Project Name'),
             render: (p) => (
               <div>
-                <div className="flex items-center gap-1.5 font-semibold text-ink">
+                <div className="flex items-center gap-1.5 font-semibold text-foreground">
                   <FolderKanban size={13.5} className="text-primary" />
                   <span>{p.name}</span>
                   {p.id === active.id && (
@@ -607,7 +607,7 @@ export function OverviewSessionsView({
                     </span>
                   )}
                 </div>
-                <div className="mt-0.5 text-[11.5px] text-ink-3">{p.description}</div>
+                <div className="mt-0.5 text-[11.5px] text-faint-foreground">{p.description}</div>
               </div>
             ),
           },
@@ -617,7 +617,7 @@ export function OverviewSessionsView({
             width: '180px',
             render: (p) => (
               <div className="space-y-1">
-                <div className="text-[12.5px] text-ink">{p.domain}</div>
+                <div className="text-[12.5px] text-foreground">{p.domain}</div>
                 <span className="filter-status-accent inline-block rounded-full px-2 py-0.2 font-mono text-[10.5px]">
                   {p.center}
                 </span>
@@ -691,7 +691,7 @@ export function OverviewSessionsView({
                   <Button
                     variant="ghost"
                     size="xs"
-                    className="text-red hover:bg-red-tint hover:text-red"
+                    className="text-destructive hover:bg-destructive-soft hover:text-destructive"
                     onClick={() => setDeletingProj({ proj: p, needsForce: false })}
                     title={t('删除工程', 'Delete Project')}
                   >
@@ -815,7 +815,7 @@ export function OverviewSessionsView({
               </option>
             </select>
             {newTemplate !== 'EMPTY' && (
-              <div className="mt-1.5 rounded-[5px] border border-line bg-inset px-2.5 py-2 text-[11.5px] text-ink-2">
+              <div className="mt-1.5 rounded-[5px] border border-border bg-muted px-2.5 py-2 text-[11.5px] text-foreground-soft">
                 {t(
                   '注意：您选择了【演示参考模板】，创建后会立即填入样例系统的全部本体模型与 YAML 文件。如果您正在研发自己的新业务系统（如门店、ERP、电商等），请切换回第一项「从零渐进式生成」以免产生歧义。',
                   'Note: Demo templates preload sample ontology models immediately. Choose "Progressive Clean Slate" for your own new business project to avoid sample data confusion.',
@@ -895,8 +895,8 @@ export function OverviewSessionsView({
       >
         {snapshotProj && (
           <div className="space-y-3">
-            <div className="rounded-card border border-line bg-inset/50 p-3 space-y-2">
-              <div className="text-[12.5px] font-semibold text-ink">
+            <div className="rounded-card border border-border bg-muted/50 p-3 space-y-2">
+              <div className="text-[12.5px] font-semibold text-foreground">
                 {t('创建当前 11 模型快照', 'Create New Milestone Snapshot')}
               </div>
               <div className="flex gap-2">
@@ -926,23 +926,23 @@ export function OverviewSessionsView({
 
             <div className="max-h-60 space-y-2 overflow-y-auto">
               {snapshotsForModal.length === 0 ? (
-                <div className="py-4 text-center text-[12.5px] text-ink-3">
+                <div className="py-4 text-center text-[12.5px] text-faint-foreground">
                   {t('当前工程暂无历史快照', 'No snapshots yet for this project')}
                 </div>
               ) : (
                 snapshotsForModal.map((snap) => (
                   <div
                     key={snap.id}
-                    className="flex items-center justify-between gap-2 rounded-control border border-line bg-surface p-2.5"
+                    className="flex items-center justify-between gap-2 rounded-control border border-border bg-card p-2.5"
                   >
                     <div className="min-w-0">
-                      <div className="font-semibold text-ink">{snap.label}</div>
-                      <div className="text-[11.5px] text-ink-3">
+                      <div className="font-semibold text-foreground">{snap.label}</div>
+                      <div className="text-[11.5px] text-faint-foreground">
                         {snap.presentModels.length}/11 Models · {snap.errorCount} Errors ·{' '}
                         {snap.createdAt.slice(0, 19).replace('T', ' ')}
                       </div>
                       {snap.note && (
-                        <div className="text-[11.5px] text-ink-2">{snap.note}</div>
+                        <div className="text-[11.5px] text-foreground-soft">{snap.note}</div>
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
@@ -957,7 +957,7 @@ export function OverviewSessionsView({
                       <Button
                         variant="ghost"
                         size="xs"
-                        className="text-red"
+                        className="text-destructive"
                         onClick={async () => {
                           const res = await apiDeleteProjectSnapshot(
                             snapshotProj.id,
@@ -1916,8 +1916,8 @@ export function RequirementDocsView({
               header: t('文档标题', 'Title'),
               render: (d) => (
                 <div>
-                  <div className="font-semibold text-ink">{d.title}</div>
-                  <div className="font-mono text-[11.5px] text-ink-3">{d.id}</div>
+                  <div className="font-semibold text-foreground">{d.title}</div>
+                  <div className="font-mono text-[11.5px] text-faint-foreground">{d.id}</div>
                 </div>
               ),
             },
@@ -1938,7 +1938,7 @@ export function RequirementDocsView({
               header: t('更新时间', 'Updated'),
               width: '170px',
               render: (d) => (
-                <span className="font-mono text-[11.5px] text-ink-3">
+                <span className="font-mono text-[11.5px] text-faint-foreground">
                   {d.updatedAt.slice(0, 19).replace('T', ' ')}
                 </span>
               ),
@@ -1973,7 +1973,7 @@ export function RequirementDocsView({
                   <Button
                     variant="ghost"
                     size="xs"
-                    className="text-red"
+                    className="text-destructive"
                     onClick={() => setDeletingDoc(d)}
                     title={t('删除', 'Delete')}
                   >
@@ -2386,7 +2386,7 @@ export function PrototypeStudioView({
   };
 
   const statusBanners = synthesisSummary ? (
-    <div className="flex items-center justify-between gap-2.5 rounded-[6px] border border-line bg-green-tint p-[8px_12px]">
+    <div className="flex items-center justify-between gap-2.5 rounded-[6px] border border-border bg-success-soft p-[8px_12px]">
       <div className="text-[12.5px]">
         <strong>
           {t('11 元模型本体已就绪：', '11-Model Ontology Synthesized: ')}
@@ -2719,7 +2719,7 @@ export function ModelFilesView({
           className="card flex flex-wrap items-center justify-between gap-3"
           style={{ borderColor: 'var(--warn)', background: 'var(--warn-soft, var(--inset))' }}
         >
-          <div className="text-[12.5px] text-ink max-w-[680px]">
+          <div className="text-[12.5px] text-foreground max-w-[680px]">
             <strong>
               {t(
                 `提示：当前模型文件来自预置的「${lifecycle.foreignTemplateNameZh}」示例模板`,
@@ -2756,25 +2756,25 @@ export function ModelFilesView({
           className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-4"
           data-testid="model-files-stage-pending"
         >
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-primary">
+          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-muted text-primary">
             <Code2 size={20} />
           </div>
           <span className="badge badge-warn">
             {t('尚未到达此阶段 · 暂无模型文件', 'Stage Not Reached · No Model Files Yet')}
           </span>
-          <h3 className="font-serif text-[18px] font-semibold text-ink m-0">
+          <h3 className="font-serif text-[18px] font-semibold text-foreground m-0">
             {t(
               `「${project.name}」暂未生成 YAML / OWL 模型文件`,
               `"${project.name}" has no generated YAML / OWL model files yet`,
             )}
           </h3>
-          <p className="text-[13px] text-ink-3 max-w-[540px] leading-relaxed m-0">
+          <p className="text-[13px] text-faint-foreground max-w-[540px] leading-relaxed m-0">
             {t(
               '这里的 m1~mi.yaml、manifest.json 与 OWL 本体文件并不是需要您提前看懂或手写的配置，而是在完成第 4 步「业务本体」后由系统自动序列化导出的标准工程文件。',
               'YAML, manifest.json, and OWL files are automatically serialized once Step 4 (Business Ontology) is synthesized.',
             )}
           </p>
-          <p className="text-[12.5px] text-ink-2 bg-inset border border-line rounded-[6px] px-3.5 py-2 m-0">
+          <p className="text-[12.5px] text-foreground-soft bg-muted border border-border rounded-[6px] px-3.5 py-2 m-0">
             {t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
@@ -2954,7 +2954,7 @@ export function ModelFilesView({
               </div>
             </div>
             <pre
-              data-testid="owl-xml-preview" className="p-3 bg-inset rounded-[5px] font-mono text-[11.5px] max-h-[420px] overflow-auto"
+              data-testid="owl-xml-preview" className="p-3 bg-muted rounded-[5px] font-mono text-[11.5px] max-h-[420px] overflow-auto"
             >
               {owlPreview}
             </pre>
@@ -3370,7 +3370,7 @@ export function FourLayerAssetsView() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="text-red"
+                    className="text-destructive"
                     onClick={() => setDeletingAsset(selectedAsset)}
                     title={
                       usedByApps.length > 0
@@ -3416,7 +3416,7 @@ export function FourLayerAssetsView() {
             <div className="card-header">
               <div>
                 <h3 className="card-title">{t('AI 生成技术架构文档', 'Generate Tech Architecture with AI')}</h3>
-                <p className="m-0 mt-1 text-[12.5px] leading-relaxed text-ink-3">
+                <p className="m-0 mt-1 text-[12.5px] leading-relaxed text-faint-foreground">
                   {t(
                     '给出技术栈，智能体会结合当前工程的业务本体写出四层技术架构规范，并存入「技术架构」。',
                     'Name the stack; the agent combines it with this project\'s ontology and files the spec under Tech Architecture.',
@@ -3864,8 +3864,8 @@ export function ApplicationAssemblyDevView({
               header: t('应用名称', 'Application Name'),
               render: (a) => (
                 <div>
-                  <div className="font-semibold text-ink">{a.name}</div>
-                  <div className="font-mono text-[11.5px] text-ink-3">
+                  <div className="font-semibold text-foreground">{a.name}</div>
+                  <div className="font-mono text-[11.5px] text-faint-foreground">
                     {a.publishedEndpoint || `/apps/${a.id}`}
                   </div>
                 </div>
@@ -3914,7 +3914,7 @@ export function ApplicationAssemblyDevView({
                   <Button
                     variant="ghost"
                     size="xs"
-                    className="text-red"
+                    className="text-destructive"
                     onClick={() => setDeletingApp(a)}
                   >
                     <Trash2 size={12} />
@@ -3929,7 +3929,7 @@ export function ApplicationAssemblyDevView({
           className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-4"
           data-testid="assembly-stage-pending"
         >
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-primary">
+          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-muted text-primary">
             <Layers size={20} />
           </div>
           <span className={`badge ${lifecycle.hasOntology ? 'badge-ok' : 'badge-warn'}`}>
@@ -3937,13 +3937,13 @@ export function ApplicationAssemblyDevView({
               ? t('第 5 步 · 本体已就绪，可组装应用', 'Step 5 · Ready to Assemble')
               : t('第 5 步 · 尚未到达此阶段', 'Step 5 · Stage Not Reached Yet')}
           </span>
-          <h3 className="font-serif text-[18px] font-semibold text-ink m-0">
+          <h3 className="font-serif text-[18px] font-semibold text-foreground m-0">
             {t(
               `「${data.activeProject.name}」尚未创建四层装配应用`,
               `"${data.activeProject.name}" has no assembled application yet`,
             )}
           </h3>
-          <p className="text-[13px] text-ink-3 max-w-[540px] leading-relaxed m-0">
+          <p className="text-[13px] text-faint-foreground max-w-[540px] leading-relaxed m-0">
             {lifecycle.hasOntology
               ? t(
                   '当前工程的业务本体已准备就绪。点击下方按钮将「业务本体 + UI/UE 规范 + 技术底座 + 技术架构」四层资产组装为一个应用，即可一键编译导出《开发指导书.md》与代码开发包。',
@@ -4012,7 +4012,7 @@ export function ApplicationAssemblyDevView({
             {app && (
               <div className="grid grid-cols-4 gap-2.5"
               >
-                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
+                <div className="p-2.5 bg-muted rounded-[5px] flex flex-col gap-1.5">
                   <div className="text-[11.5px] text-muted-foreground">
                     1. {t('业务本体层', 'Ontology Layer')}
                   </div>
@@ -4032,7 +4032,7 @@ export function ApplicationAssemblyDevView({
                   </span>
                 </div>
 
-                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
+                <div className="p-2.5 bg-muted rounded-[5px] flex flex-col gap-1.5">
                   <div className="text-[11.5px] text-muted-foreground">
                     2. {t('UI/UE 设计规范层', 'UI/UE Design Layer')}
                   </div>
@@ -4049,7 +4049,7 @@ export function ApplicationAssemblyDevView({
                   </select>
                 </div>
 
-                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
+                <div className="p-2.5 bg-muted rounded-[5px] flex flex-col gap-1.5">
                   <div className="text-[11.5px] text-muted-foreground">
                     3. {t('技术底座层', 'Tech Foundation Layer')}
                   </div>
@@ -4068,7 +4068,7 @@ export function ApplicationAssemblyDevView({
                   </select>
                 </div>
 
-                <div className="p-2.5 bg-inset rounded-[5px] flex flex-col gap-1.5">
+                <div className="p-2.5 bg-muted rounded-[5px] flex flex-col gap-1.5">
                   <div className="text-[11.5px] text-muted-foreground">
                     4. {t('技术架构层', 'Tech Architecture Layer')}
                   </div>
@@ -4242,7 +4242,7 @@ export function ApplicationAssemblyDevView({
                               });
                             })();
                           }}
-                          className="flex items-center justify-between gap-2 rounded-control border border-line bg-surface-2 px-3 py-2 text-left text-[12.5px] text-ink transition-colors hover:border-primary hover:bg-primary-soft cursor-pointer disabled:opacity-50"
+                          className="flex items-center justify-between gap-2 rounded-control border border-border bg-surface-2 px-3 py-2 text-left text-[12.5px] text-foreground transition-colors hover:border-primary hover:bg-primary-soft cursor-pointer disabled:opacity-50"
                         >
                           <span>{starter}</span>
                           <ArrowRight size={13} className="shrink-0 text-primary" />
@@ -4252,7 +4252,7 @@ export function ApplicationAssemblyDevView({
                   </div>
                 </div>
 
-                <div className="rounded-control border border-line bg-inset/45 p-2.5 text-[11.5px] text-ink-3">
+                <div className="rounded-control border border-border bg-muted/45 p-2.5 text-[11.5px] text-faint-foreground">
                   {t(
                     `装配应用：${app.name} (${app.status} · ${app.publishedVersion || 'v1.0.0'})`,
                     `Application: ${app.name} (${app.status} · ${app.publishedVersion || 'v1.0.0'})`,
@@ -4269,7 +4269,7 @@ export function ApplicationAssemblyDevView({
                 <div className="flex flex-col gap-1.5">
                   {[...app.agentDevLogs].reverse().map((log, i) => (
                     <div
-                      key={i} className="p-[6px_10px] bg-inset rounded-[4px] font-mono text-[11.5px]"
+                      key={i} className="p-[6px_10px] bg-muted rounded-[4px] font-mono text-[11.5px]"
                     >
                       [{log.timestamp.slice(0, 19)}] <strong>{log.phase}</strong>: {log.detail}
                     </div>
@@ -4517,7 +4517,7 @@ export function OntologySkillsView({
               header: t('技能名称 / Slug', 'Skill Name'),
               render: (s) => (
                 <div>
-                  <div className="flex items-center gap-1.5 font-semibold text-ink">
+                  <div className="flex items-center gap-1.5 font-semibold text-foreground">
                     <span>{s.name}</span>
                     {s.isCustomRefined && (
                       <span className="filter-status-progress rounded-full px-2 py-0.2 text-[10.5px]">
@@ -4525,7 +4525,7 @@ export function OntologySkillsView({
                       </span>
                     )}
                   </div>
-                  <div className="font-mono text-[11.5px] text-ink-3">{s.slug}</div>
+                  <div className="font-mono text-[11.5px] text-faint-foreground">{s.slug}</div>
                 </div>
               ),
             },
@@ -4560,7 +4560,7 @@ export function OntologySkillsView({
                   <Button
                     variant="ghost"
                     size="xs"
-                    className="text-red"
+                    className="text-destructive"
                     onClick={() => setDeletingSkill(s)}
                   >
                     <Trash2 size={12} />
@@ -4596,7 +4596,7 @@ export function OntologySkillsView({
                 </span>
               )}
             </div>
-            <div className="text-[12.5px] text-ink-3">{activeSkill.description}</div>
+            <div className="text-[12.5px] text-faint-foreground">{activeSkill.description}</div>
           </div>
 
           <TiptapMarkdownEditor
@@ -4611,7 +4611,7 @@ export function OntologySkillsView({
         </div>
       ) : (
         <div className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-4">
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-primary">
+          <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-muted text-primary">
             <Sparkles size={20} />
           </div>
           <span className={`badge ${lifecycle.hasOntology ? 'badge-ok' : 'badge-warn'}`}>
@@ -4619,13 +4619,13 @@ export function OntologySkillsView({
               ? t('本体已就绪 · 可编译技能包', 'Ontology Ready · Ready to Compile')
               : t('尚未到达此阶段 · 暂无本体技能', 'Stage Not Reached · No Skill Yet')}
           </span>
-          <h3 className="font-serif text-[18px] font-semibold text-ink m-0">
+          <h3 className="font-serif text-[18px] font-semibold text-foreground m-0">
             {t(
               `「${data.activeProject.name}」尚未生成 SKILL.md 技能包`,
               `"${data.activeProject.name}" has no compiled SKILL.md yet`,
             )}
           </h3>
-          <p className="text-[13px] text-ink-3 max-w-[540px] leading-relaxed m-0">
+          <p className="text-[13px] text-faint-foreground max-w-[540px] leading-relaxed m-0">
             {lifecycle.hasOntology
               ? t(
                   '点击下方按钮，系统将根据当前工程的 11 元模型自动编译生成供智能体调用的渐进式 SKILL.md 技能包。',
@@ -4734,19 +4734,19 @@ export function AppPublishView({
   if (projectApps.length === 0) {
     return (
       <div className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-4">
-        <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-primary">
+        <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-muted text-primary">
           <Boxes size={20} />
         </div>
         <span className="badge badge-warn">
           {t('尚未到达此阶段 · 暂无待发布应用', 'Stage Not Reached · No App to Release')}
         </span>
-        <h3 className="font-serif text-[18px] font-semibold text-ink m-0">
+        <h3 className="font-serif text-[18px] font-semibold text-foreground m-0">
           {t(
             `「${data.activeProject.name}」暂无可发布的装配应用`,
             `"${data.activeProject.name}" has no assembled application to release yet`,
           )}
         </h3>
-        <p className="text-[13px] text-ink-3 max-w-[540px] leading-relaxed m-0">
+        <p className="text-[13px] text-faint-foreground max-w-[540px] leading-relaxed m-0">
           {t(
             '应用发布处于研发流水线末端，需要对当前工程在「应用开发」阶段组装的应用执行 4A 门禁核验与版本发布。请先按顺序推进前置阶段。',
             'App Release runs 4A gate verification on assembled applications of this project. Complete upstream stages first.',
@@ -4791,7 +4791,7 @@ export function AppPublishView({
             </div>
           </div>
 
-          <div className="p-[10px_12px] rounded-[6px] bg-inset border border-line flex items-center gap-2 flex-wrap"
+          <div className="p-[10px_12px] rounded-[6px] bg-muted border border-border flex items-center gap-2 flex-wrap"
           >
             <input
               className="input"
@@ -4830,7 +4830,7 @@ export function AppPublishView({
             <div className="flex flex-col gap-1.5">
               {app.agentDevLogs.map((log, i) => (
                 <div
-                  key={i} className="p-[6px_10px] bg-inset rounded-[4px] font-mono text-[11.5px]"
+                  key={i} className="p-[6px_10px] bg-muted rounded-[4px] font-mono text-[11.5px]"
                 >
                   [{log.timestamp.slice(0, 19)}] <strong>{log.phase}</strong>: {log.detail}
                 </div>

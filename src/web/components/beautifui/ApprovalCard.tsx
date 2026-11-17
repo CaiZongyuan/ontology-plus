@@ -33,17 +33,17 @@ export function ApprovalCard({
     return (
       <div
         className={cn(
-          'primitive-card-bar inline-flex flex-wrap items-center gap-2 rounded-card bg-surface shadow-card text-[12.5px] animate-[fade-in_200ms_var(--ease-out-strong)_both]',
+          'primitive-card-bar inline-flex flex-wrap items-center gap-2 rounded-card bg-card shadow-card text-[12.5px] animate-[fade-in_200ms_var(--ease-out-strong)_both]',
           className,
         )}
       >
-        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-green-tint text-green">
+        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-success-soft text-success">
           <Check size={10} strokeWidth={2.75} />
         </span>
-        <span className="font-medium text-ink">
+        <span className="font-medium text-foreground">
           {prompt.header || t('已确认业务决策', 'Decision Confirmed')}
         </span>
-        <span className="text-ink-3">
+        <span className="text-faint-foreground">
           {(prompt.selectedAnswers ?? []).join(' · ') || t('已提交', 'Submitted')}
         </span>
       </div>
@@ -74,12 +74,12 @@ export function ApprovalCard({
   return (
     <div
       className={cn(
-        'w-full overflow-hidden rounded-card bg-surface shadow-card text-[13px] animate-[fade-up_220ms_var(--ease-out-strong)_both]',
+        'w-full overflow-hidden rounded-card bg-card shadow-card text-[13px] animate-[fade-up_220ms_var(--ease-out-strong)_both]',
         className,
       )}
       data-testid="agent-hitl-card"
     >
-      <div className="primitive-card-bar flex items-center justify-between border-b border-line bg-primary-soft/45">
+      <div className="primitive-card-bar flex items-center justify-between border-b border-border bg-primary-soft/45">
         <div className="flex items-center gap-1.5">
           <Sparkles size={13} className="text-primary" />
           <span className="text-[11.5px] font-semibold text-primary">
@@ -87,13 +87,13 @@ export function ApprovalCard({
               t('需要补充业务决策 (Scoped HITL)', 'Business Decision Required (Scoped HITL)')}
           </span>
         </div>
-        <span className="font-mono text-[11.5px] text-ink-3">
+        <span className="font-mono text-[11.5px] text-faint-foreground">
           {prompt.multiSelect ? t('可多选', 'Multi-select') : t('单选', 'Single-select')}
         </span>
       </div>
 
       <div className="primitive-card-pad">
-        <div className="mb-2.5 text-[13px] font-medium leading-snug text-ink">
+        <div className="mb-2.5 text-[13px] font-medium leading-snug text-foreground">
           {prompt.question}
         </div>
 
@@ -114,18 +114,18 @@ export function ApprovalCard({
                     className={cn(
                       'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border transition-colors duration-150',
                       prompt.multiSelect ? 'rounded-[4px]' : 'rounded-full',
-                      isSelected ? 'border-ink bg-ink' : 'border-line-strong bg-surface',
+                      isSelected ? 'border-foreground bg-foreground' : 'border-line-strong bg-card',
                     )}
                   >
                     <span
                       className={cn(
-                        'h-1.5 w-1.5 rounded-full bg-surface transition-transform duration-180 ease-out-strong',
+                        'h-1.5 w-1.5 rounded-full bg-card transition-transform duration-180 ease-out-strong',
                         isSelected ? 'scale-100' : 'scale-0',
                       )}
                     />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[12.5px] font-medium text-ink">
+                    <span className="block text-[12.5px] font-medium text-foreground">
                       {optLabel}
                     </span>
                   </span>
@@ -152,13 +152,13 @@ export function ApprovalCard({
                 '或输入补充说明 / 自定义参数...',
                 'Or enter custom details / parameters...',
               )}
-              className="w-full rounded-control border border-line bg-field px-2.5 py-1.5 text-[12.5px] text-ink placeholder:text-ink-3 focus:border-primary focus:outline-none"
+              className="w-full rounded-control border border-border bg-muted px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-faint-foreground focus:border-primary focus:outline-none"
             />
           </div>
         )}
       </div>
 
-      <div className="primitive-card-footer flex items-center justify-end gap-2 border-t border-line bg-inset/40">
+      <div className="primitive-card-footer flex items-center justify-end gap-2 border-t border-border bg-muted/40">
         <Button
           variant="accent"
           size="xs"
