@@ -3582,13 +3582,15 @@ export function FourLayerAssetsView() {
 export async function fetchSavedApplicationPackage(appId: string, signal?: AbortSignal): Promise<{
   compiledPackage: CompiledDevelopmentPackage | null;
   stale: boolean;
+  inputIssue?: string;
 }> {
   const response = await fetch(`/api/applications/${encodeURIComponent(appId)}/package`, { signal });
   const body = await response.json();
   if (response.status === 409 && body.code === 'PACKAGE_NOT_GENERATED') return { compiledPackage: null, stale: false };
   if (!response.ok) throw new Error(body.error || 'Could not load the saved Development Package.');
   if (body.compiledPackage && body.compiledPackage.appId !== appId) throw new Error('Saved package belongs to a different application.');
-  return { compiledPackage: body.compiledPackage ?? null, stale: Boolean(body.stale) };
+  return { compiledPackage: body.compiledPackage ?? null, stale: Boolean(body.stale),
+    ...(typeof body.inputIssue === 'string' && body.inputIssue ? { inputIssue: body.inputIssue } : {}) };
 }
 
 export function ApplicationAssemblyDevView({
@@ -3605,6 +3607,7 @@ export function ApplicationAssemblyDevView({
   const [packageStale, setPackageStale] = useState(false);
   const [loadingPackage, setLoadingPackage] = useState(false);
   const [packageLoadError, setPackageLoadError] = useState('');
+  const [packageInputIssue, setPackageInputIssue] = useState('');
   const [packageReload, setPackageReload] = useState(0);
   const [selectedFilePath, setSelectedFilePath] = useState('AGENTS.md');
   const [pkgPreviewRaw, setPkgPreviewRaw] = useState(false);
@@ -3652,6 +3655,7 @@ export function ApplicationAssemblyDevView({
   useEffect(() => {
     const controller = new AbortController();
     setPackageLoadError('');
+    setPackageInputIssue('');
     if (!app) {
       setCompiledPkg(null);
       setPackageStale(false);
@@ -3664,6 +3668,7 @@ export function ApplicationAssemblyDevView({
       if (controller.signal.aborted) return;
       setCompiledPkg(result.compiledPackage);
       setPackageStale(result.stale);
+      setPackageInputIssue(result.inputIssue ?? '');
       setSelectedFilePath((selected) => result.compiledPackage?.files.some((file) => file.relativePath === selected)
         ? selected : 'AGENTS.md');
     }).catch((error) => {
@@ -3684,7 +3689,9 @@ export function ApplicationAssemblyDevView({
   const compatible = (asset: FourLayerAsset) => Boolean(profile &&
     (profile.compatibleAssetIds.includes(asset.id) || asset.technologyProfileId === profile.id));
   const notesDirty = instructionsDraft !== (app?.developmentInstructions ?? '');
+  const recordedBlockers = (app as (AssembledApplication & { developmentBlockers?: string[] }) | undefined)?.developmentBlockers ?? [];
   const diagnostics = [
+    ...recordedBlockers.map((blocker) => t(`请解决已记录的冲突：${blocker}`, `Resolve the recorded contradiction: ${blocker}`)),
     ...(data.requirementDocs.length === 0 ? [t('请先保存需求文档。', 'Save a requirements document first.')] : []),
     ...(!confirmed ? [t('请确认一个原型修订并同步 MU。', 'Confirm a prototype revision and sync MU.')] : []),
     ...(confirmed && boundRevisionId && boundRevisionId !== confirmed.revisionId
@@ -3769,6 +3776,7 @@ export function ApplicationAssemblyDevView({
       if (currentAppId.current === app.id) {
         setCompiledPkg(result.compiledPackage);
         setPackageStale(false);
+        setPackageInputIssue('');
         setSelectedFilePath('AGENTS.md');
       }
       patchData({ assembledApplications: result.assembledApplications });
@@ -3781,7 +3789,9 @@ export function ApplicationAssemblyDevView({
     if (!app || !compiledPkg || downloadingZip) return;
     setDownloadingZip(true);
     try {
-      const response = await fetch(`/api/applications/${encodeURIComponent(app.id)}/package.zip`);
+      const id = String(compiledPkg.manifestJson.snapshotId ?? app.latestPackageSnapshotId ?? '');
+      if (!id) throw new Error(t('已保存开发包缺少快照标识，请重新生成。', 'The saved package has no snapshot identity. Generate it again.'));
+      const response = await fetch(`/api/applications/${encodeURIComponent(app.id)}/package.zip?snapshotId=${encodeURIComponent(id)}`);
       if (!response.ok) { const error = await response.json(); throw new Error(error.error || 'ZIP download failed'); }
       triggerBrowserDownload(`${app.id}-development-package.zip`, await response.blob(), 'application/zip');
     } catch (error) { setOperationError(error instanceof Error ? error.message : String(error)); }
@@ -3912,6 +3922,10 @@ export function ApplicationAssemblyDevView({
 
         <section className="card flex min-w-0 flex-col gap-3" data-testid="development-step-origins">
           <h4 className="card-title">3 · {t('检查输入来源与应用说明', 'Inspect input origins and application instructions')}</h4>
+          {recordedBlockers.length > 0 && <div role="alert" className="rounded-card border border-red/30 bg-red-tint p-3 text-[12px] text-red" data-testid="application-recorded-blockers">
+            <strong>{t('需要解决的输入冲突', 'Input contradictions to resolve')}</strong>
+            <ul className="mb-0 mt-1 list-disc pl-4">{recordedBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>
+          </div>}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 text-[12px]">
             <div className="rounded-card border border-line bg-inset/35 p-3"><strong>{t('业务来源', 'Business sources')}</strong>
               <div className="mt-1">{project.name} · {project.code}</div>
@@ -3948,6 +3962,7 @@ export function ApplicationAssemblyDevView({
           {diagnostics.length > 0 && <ul className="m-0 list-disc pl-5 text-[12px] leading-relaxed text-ink-3" data-testid="development-input-diagnostics">{diagnostics.map((message) => <li key={message}>{message}</li>)}</ul>}
           {loadingPackage && <div role="status" className="text-[12px] text-ink-3">{t('正在读取已保存的开发包…', 'Loading the saved package…')}</div>}
           {packageLoadError && <div role="alert" className="flex flex-wrap items-center gap-2 text-[12px] text-red">{packageLoadError}<Button size="xs" onClick={() => setPackageReload((value) => value + 1)}>{t('重试', 'Retry')}</Button></div>}
+          {packageInputIssue && <div role="alert" className="text-[12px] text-red" data-testid="saved-package-input-issue">{packageInputIssue}</div>}
           {compiledPkg && <>
             <div className="flex flex-wrap items-center gap-2 text-[11.5px]" data-testid="saved-package-snapshot">
               <span className={`badge ${packageStale || notesDirty ? 'badge-warn' : 'badge-ok'}`} data-testid="package-stale-indicator">{packageStale || notesDirty ? t('输入已变化，等待重新生成', 'Inputs changed · regenerate to update') : t('已保存开发包快照', 'Saved package snapshot')}</span>
@@ -4315,7 +4330,7 @@ function ApplicationPackageDeliveryCard({ app, sourceKey, onNavigate }: {
 }) {
   const { t } = usePreferences();
   const { setActiveItemId } = useWorkbenchStore();
-  const [saved, setSaved] = useState<{ compiledPackage: CompiledDevelopmentPackage | null; stale: boolean } | null>(null);
+  const [saved, setSaved] = useState<{ compiledPackage: CompiledDevelopmentPackage | null; stale: boolean; inputIssue?: string } | null>(null);
   const [error, setError] = useState('');
   const [downloading, setDownloading] = useState(false);
   useEffect(() => {
@@ -4330,7 +4345,9 @@ function ApplicationPackageDeliveryCard({ app, sourceKey, onNavigate }: {
     setDownloading(true);
     setError('');
     try {
-      const response = await fetch(`/api/applications/${encodeURIComponent(app.id)}/package.zip`);
+      const id = String(saved?.compiledPackage?.manifestJson.snapshotId ?? app.latestPackageSnapshotId ?? '');
+      if (!id) throw new Error(t('已保存开发包缺少快照标识，请重新生成。', 'The saved package has no snapshot identity. Generate it again.'));
+      const response = await fetch(`/api/applications/${encodeURIComponent(app.id)}/package.zip?snapshotId=${encodeURIComponent(id)}`);
       if (!response.ok) { const body = await response.json(); throw new Error(body.error || 'ZIP download failed'); }
       triggerBrowserDownload(`${app.id}-development-package.zip`, await response.blob(), 'application/zip');
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
@@ -4346,6 +4363,7 @@ function ApplicationPackageDeliveryCard({ app, sourceKey, onNavigate }: {
       : <p className="m-0 text-[12.5px] text-ink-3">{t('在应用开发中确认输入并生成开发资料包。', 'Confirm the inputs and generate a Development Package in application development.')}</p>}
     {saved?.stale && <p className="m-0 text-[12px] text-ink-3">{t('下载保留已保存快照。请在应用开发中重新生成以包含最新输入。', 'Download keeps the saved snapshot. Regenerate in application development to include current inputs.')}</p>}
     {error && <div role="alert" className="text-[12px] text-red">{error}</div>}
+    {saved?.inputIssue && <div role="alert" className="text-[12px] text-red">{saved.inputIssue}</div>}
     <div className="flex flex-wrap gap-2">
       {onNavigate && <Button onClick={() => { setActiveItemId(app.id); onNavigate('app-assembly-dev'); }}>{t('检查开发规格', 'Review implementation specification')}</Button>}
       <Button variant="accent" disabled={!saved?.compiledPackage || downloading} onClick={() => void download()}>{downloading ? t('正在下载…', 'Downloading…') : t('下载已保存开发包', 'Download saved package')}</Button>

@@ -52,6 +52,15 @@ describe('application development handoff UI', () => {
     expect(html).toMatch(/data-testid="compile-dev-package-btn" disabled=""/);
   });
 
+  it('surfaces explicitly recorded contradictions in review and blocks generation', async () => {
+    const data = await fixture();
+    Object.assign(data.assembledApplications[0]!, { developmentBlockers: ['The selected UI standard contradicts the confirmed navigation design.'] });
+    const html = renderToStaticMarkup(<PreferencesProvider><ApplicationAssemblyDevView /></PreferencesProvider>);
+    expect(html).toContain('data-testid="application-recorded-blockers"');
+    expect(html).toContain('Resolve the recorded contradiction: The selected UI standard contradicts');
+    expect(html).toMatch(/data-testid="compile-dev-package-btn" disabled=""/);
+  });
+
   it('exposes repository origins and a distinct authoring agent, and presents delivery as a package handoff', async () => {
     await fixture();
     const library = renderToStaticMarkup(<PreferencesProvider><FourLayerAssetsView /></PreferencesProvider>);
@@ -77,10 +86,10 @@ describe('saved package browser consumer', () => {
   it('retains saved snapshot content and stale status, passes cancellation and rejects a mismatched application', async () => {
     const controller = new AbortController();
     const compiledPackage = { appId: 'app-a', files: [{ relativePath: 'AGENTS.md', content: 'Saved snapshot instructions' }] };
-    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ compiledPackage, stale: true })))
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ compiledPackage, stale: true, inputIssue: 'Selected profile is missing.' })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ compiledPackage: { ...compiledPackage, appId: 'app-b' }, stale: false })));
     vi.stubGlobal('fetch', fetch);
-    expect(await fetchSavedApplicationPackage('app-a', controller.signal)).toEqual({ compiledPackage, stale: true });
+    expect(await fetchSavedApplicationPackage('app-a', controller.signal)).toEqual({ compiledPackage, stale: true, inputIssue: 'Selected profile is missing.' });
     expect(fetch).toHaveBeenCalledWith('/api/applications/app-a/package', { signal: controller.signal });
     await expect(fetchSavedApplicationPackage('app-a')).rejects.toThrow('different application');
   });
