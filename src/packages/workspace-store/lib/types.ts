@@ -1,6 +1,7 @@
 import {
   PROJECT_STEP_IDS,
   type BilingualText,
+  type BusinessLocale,
   type ProjectStepId,
   type ProjectStepStateId,
 } from '../../business-vocabulary/index.js';
@@ -506,6 +507,7 @@ export interface AgentSession {
   providerId?: string;
   modelOverride?: string;
   reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+  designBrief?: DesignBrief;
   compactedSummary?: string;
   tokenUsage?: {
     inputTokens: number;
@@ -601,6 +603,7 @@ export interface RequirementSectionChange {
   addedLines: number;
   removedLines: number;
   excerpt?: string;
+  excerptBilingual?: BilingualText;
   summary: BilingualText;
 }
 
@@ -1435,7 +1438,11 @@ export interface WorkspaceStore {
   ): ArtifactHistoryEntry[];
   listArtifactHistoryViews(
     projectId: string,
-    filter?: { artifactKind?: ArtifactHistorySurfaceKind; prototypeId?: string },
+    filter?: {
+      artifactKind?: ArtifactHistorySurfaceKind;
+      prototypeId?: string;
+      locale?: BusinessLocale;
+    },
   ): ArtifactHistoryEntryView[];
   undoLatestArtifactChange(
     projectId: string,

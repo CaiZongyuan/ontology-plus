@@ -50,6 +50,14 @@ module.exports = {
       to: { path: `^${R}/[^/]+/tests/` },
     },
     {
+      name: "no-server-importing-web",
+      comment:
+        "Server code may import packages and server modules, never browser UI modules under src/web/.",
+      severity: "error",
+      from: { path: "^src/server/" },
+      to: { path: "^src/web/" },
+    },
+    {
       name: "no-circular",
       comment: "No dependency cycles.",
       severity: "error",

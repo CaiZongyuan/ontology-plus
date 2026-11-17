@@ -11,7 +11,6 @@ import {
   apiDeleteAgentSession,
   apiPatchAgentSession,
   apiPostJson,
-  getCurrentClientLocale,
   useWorkbenchStore,
   type BootstrapPayload,
   type SessionLiveDraft,
@@ -28,7 +27,6 @@ import {
 } from '../../navigation/index.js';
 import { Button } from '../beautifui/index.js';
 import { ChangeSummaryCard } from '../history/index.js';
-import { decideDesignBriefForMe } from '../prototype/DesignBriefAndStyleTile.js';
 import { formatPrototypeLabelForBusinessView } from '../prototype/PrototypeRevisionHistory.js';
 import { SelectionAttachmentStrip } from '../prototype/SelectionAttachmentStrip.js';
 import {
@@ -375,7 +373,6 @@ export function ShellAgentPanel({
     openArtifactHistoryDrawer,
     undoArtifactChange,
     ensureProjectAgentSession,
-    startPrototypeBriefGenerationRun,
     startSessionAgentRun,
     cancelSessionAgentRun,
     retrySessionAgentRun,
@@ -451,9 +448,9 @@ export function ShellAgentPanel({
     () =>
       queuedItems.map((q) => {
         const title = summarizeUserPromptTitle(q.prompt, q.displayTitle);
-        return { id: q.id, label: title.zh };
+        return { id: q.id, label: t(title.zh, title.en) };
       }),
-    [queuedItems],
+    [queuedItems, t],
   );
 
   const visionState = useMemo(
@@ -745,23 +742,15 @@ export function ShellAgentPanel({
           instruction: prompt,
           visionSupported: visionState?.visionSupported ?? true,
         });
-      } else if (activeSession) {
-        await startSessionAgentRun({
-          sessionId: activeSession.id,
-          prompt,
-        });
       } else {
-        const locale = getCurrentClientLocale();
-        const decided = await decideDesignBriefForMe({
-          project: data.activeProject,
-          ...(data.requirementDocs[0] ? { doc: data.requirementDocs[0] } : {}),
-          userFeelNote: prompt,
-          locale,
-        });
-        await startPrototypeBriefGenerationRun({
-          projectId: activeProjectId,
+        const targetSession =
+          activeSession ??
+          (await ensureProjectAgentSession(activeProjectId, 'PROTOTYPE_CO_DESIGN'));
+        setActiveSessionId(targetSession.id);
+        autoTitleSession(targetSession, prompt);
+        await startSessionAgentRun({
+          sessionId: targetSession.id,
           prompt,
-          designBrief: decided.brief,
         });
       }
       return;

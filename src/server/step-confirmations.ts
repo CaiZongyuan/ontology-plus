@@ -2,14 +2,12 @@ import type { Hono } from 'hono';
 import {
   BusinessModelConfirmError,
   RequirementsConfirmError,
+  deriveProjectSteps,
   type DevelopmentPackageSnapshot,
+  type ProjectStepStatusView,
   type WorkspaceStore,
 } from '../packages/workspace-store/index.js';
 import { normalizeAgentLocale, type AgentLocale } from '../packages/agent-runtime/index.js';
-import {
-  deriveProjectSteps,
-  type ProjectStepStatusView,
-} from '../web/navigation/projectSteps.js';
 
 export function listProjectPackageSnapshots(
   store: WorkspaceStore,

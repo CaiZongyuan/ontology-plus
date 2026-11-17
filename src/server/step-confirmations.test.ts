@@ -3,10 +3,10 @@ import { checkBusinessViewMarkup } from '../packages/business-vocabulary/index.j
 import {
   createWorkspaceStore,
   type ProjectStepConfirmations,
+  type ProjectStepStatusView,
   type RequirementDoc,
   type RequirementsStepConfirmationRecord,
 } from '../packages/workspace-store/index.js';
-import type { ProjectStepStatusView } from '../web/navigation/projectSteps.js';
 import { createApiApp } from './app.js';
 
 describe('server HTTP: step confirmations, confirmed-requirements prototype gate, and cascading OUTDATED (#64)', () => {

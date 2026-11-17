@@ -6,12 +6,13 @@ import {
   startUnifiedAgentSessionTurn,
   type AgentLocale,
 } from '../packages/agent-runtime/index.js';
-import type {
-  AgentSession,
-  StepHandoffProposal,
-  WorkspaceStore,
+import {
+  getDefaultStepTargetView,
+  type AgentSession,
+  type ProjectStepTargetView,
+  type StepHandoffProposal,
+  type WorkspaceStore,
 } from '../packages/workspace-store/index.js';
-import type { CanonicalNavViewId } from '../web/navigation/catalog.js';
 import { deriveProjectStepsForStoreProject } from './step-confirmations.js';
 
 export interface AcceptStepHandoffRequestBody {
@@ -75,9 +76,10 @@ function resolveTargetSessionForStep(
   },
 ): {
   session: AgentSession;
-  targetNavView: CanonicalNavViewId;
+  targetNavView: ProjectStepTargetView;
   targetItemId?: string;
 } {
+  const targetNavView = getDefaultStepTargetView(targetStep);
   const allProjectSessions = store
     .listAgentSessions({ projectId })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -97,7 +99,7 @@ function resolveTargetSessionForStep(
         });
       return {
         session,
-        targetNavView: 'app-requirements',
+        targetNavView,
       };
     }
 
@@ -115,7 +117,7 @@ function resolveTargetSessionForStep(
         const session = ensurePrototypeCoDesignSession(store, projectId, targetProto.id);
         return {
           session,
-          targetNavView: 'app-prototype',
+          targetNavView,
           targetItemId: targetProto.id,
         };
       }
@@ -137,7 +139,7 @@ function resolveTargetSessionForStep(
         });
       return {
         session,
-        targetNavView: 'app-prototype',
+        targetNavView,
       };
     }
 
@@ -155,7 +157,7 @@ function resolveTargetSessionForStep(
         });
       return {
         session,
-        targetNavView: 'app-ontology',
+        targetNavView,
       };
     }
 
@@ -183,7 +185,7 @@ function resolveTargetSessionForStep(
         });
       return {
         session,
-        targetNavView: 'app-assembly-dev',
+        targetNavView,
         ...(targetApp ? { targetItemId: targetApp.id } : {}),
       };
     }

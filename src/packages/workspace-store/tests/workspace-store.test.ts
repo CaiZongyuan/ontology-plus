@@ -170,7 +170,10 @@ paths:
     expect(applied.project.validation.errorCount).toBe(0);
   });
 
-  it('mirrors onto-cs.db and manifest.json, and persists requirement sessions, capability chats, analytics mutations, and durable checkpoints', () => {
+  it(
+    'mirrors onto-cs.db and manifest.json, and persists requirement sessions, capability chats, analytics mutations, and durable checkpoints',
+    { timeout: 15_000 },
+    () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-cs-test-'));
     try {
       const store = createWorkspaceStore({

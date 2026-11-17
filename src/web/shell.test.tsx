@@ -570,5 +570,42 @@ describe('WorkbenchShell (#60)', () => {
     await Promise.resolve();
     expect(switchedIds).toEqual(['proj-mft', 'proj-contract']);
     expect(navigatedViews).toEqual(['app-ontology', 'app-requirements']);
+
+    // If onSwitchProject refreshes store.data with a newer currentStep than the pre-switch summary,
+    // Command Palette navigates to the fresh post-switch step rather than the stale pre-switch step!
+    const freshNavViews: string[] = [];
+    const stalePreSwitchPayload: BootstrapPayload = {
+      ...payload,
+      projects: payload.projects.map((p) =>
+        p.id === 'proj-mft' ? { ...p, currentStep: 'REQUIREMENTS' as const } : p,
+      ),
+    };
+    const entriesWithStaleSummary = buildCommandPaletteEntries({
+      data: stalePreSwitchPayload,
+      activeView: 'overview',
+      locale: 'zh-CN',
+      theme: 'light',
+      workbenchTheme: 'default',
+      t: (zh) => zh,
+      onSelectStep: () => undefined,
+      onSelectView: (view) => freshNavViews.push(view),
+      onSwitchProject: async (id) => {
+        useWorkbenchStore.setState({
+          data: {
+            ...stalePreSwitchPayload,
+            projects: stalePreSwitchPayload.projects.map((p) =>
+              p.id === id ? { ...p, currentStep: 'DELIVERY' as const } : p,
+            ),
+          },
+        });
+      },
+      onToggleTheme: () => undefined,
+      onSelectWorkbenchTheme: () => undefined,
+      onToggleLocale: () => undefined,
+    });
+    entriesWithStaleSummary.find((e) => e.key === 'project:proj-mft')!.run();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(freshNavViews).toEqual(['app-assembly-dev']);
   });
 });

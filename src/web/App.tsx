@@ -19,9 +19,11 @@ import {
   PROJECT_STEP_IDS,
   PROJECT_STEP_NAMES,
   type ProjectStepId,
+  type ProjectStepStateId,
 } from '../packages/business-vocabulary/index.js';
 import { projectByBusinessObject } from '../packages/ontology-core/index.js';
 import { BUILT_IN_THEMES } from '../packages/workbench-theme/index.js';
+import { resolveCurrentProjectStep } from '../packages/workspace-store/index.js';
 import { useWorkbenchStore, type BootstrapPayload } from './api.js';
 import {
   ShellAgentPanel,
@@ -204,10 +206,24 @@ export function buildCommandPaletteEntries({
         const currentView = activeView ?? resolveNavViewId(useWorkbenchStore.getState().activeNav);
         const routeKind = resolveShellRouteContext(currentView).kind;
         const shouldEnterProject = routeKind === 'home' || routeKind === 'secondary';
-        const targetView = getDefaultViewForStep(p.currentStep ?? 'REQUIREMENTS');
         void Promise.resolve(onSwitchProject(p.id)).then(() => {
           if (shouldEnterProject) {
-            onSelectView(targetView);
+            const latestData = useWorkbenchStore.getState().data;
+            const latestSummary = latestData?.projects.find((proj) => proj.id === p.id);
+            const derivedActiveStep =
+              latestData?.activeProject.id === p.id
+                ? resolveCurrentProjectStep(
+                    Object.fromEntries(
+                      getProjectStepsFromBootstrap(latestData).map((st) => [st.id, st.state]),
+                    ) as Record<ProjectStepId, ProjectStepStateId>,
+                  )
+                : undefined;
+            const latestStep =
+              latestSummary?.currentStep ??
+              derivedActiveStep ??
+              p.currentStep ??
+              'REQUIREMENTS';
+            onSelectView(getDefaultViewForStep(latestStep));
           }
         });
       },

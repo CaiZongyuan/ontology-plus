@@ -12,7 +12,12 @@ import {
   ConfirmRevisionMuDiffModal,
   PrototypeRevisionHistoryDrawer,
   createInitialRevisionHistoryViewState,
+  formatPrototypeLabelForBusinessView,
 } from '../components/prototype/PrototypeRevisionHistory.js';
+import * as DesignBriefModule from '../components/prototype/DesignBriefAndStyleTile.js';
+import * as AgentPanelModule from '../components/agent/AgentPanel.js';
+import { ShellAgentPanel } from '../components/agent/ShellAgentPanel.js';
+import { agentPanelSurfaceFor } from '../navigation/index.js';
 import { PreferencesProvider } from '../i18n.js';
 import { PrototypeStudioView } from './ApplicationCenterViews.js';
 
@@ -407,5 +412,100 @@ describe('PrototypeStepView Business View, Screen Changes dialog, OUTDATED banne
     } finally {
       store.close();
     }
+  });
+
+  it('routes Prototype left composer turns through an ordinary PROTOTYPE_CO_DESIGN conversation turn when no prototype exists yet, never reading draft requirementDocs[0] or generating R1 when Requirements are unconfirmed', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const app = createApiApp(store);
+    try {
+      stubBrowserStorage({ onto_locale: 'zh-CN' });
+      vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        const fullUrl = urlStr.startsWith('http') ? urlStr : `http://localhost${urlStr}`;
+        return app.request(fullUrl, init);
+      });
+
+      const proj = store.createProject({
+        name: '冷链车辆调度系统',
+        code: 'COLD-CHAIN-GATE',
+        domain: '冷链物流调度',
+        template: 'EMPTY',
+      });
+      // Save an UNCONFIRMED draft RequirementDoc (must NEVER be read by Prototype composer!)
+      store.saveRequirementDoc({
+        id: 'rdoc-unconfirmed-draft',
+        projectId: proj.id,
+        title: '未确认草稿需求',
+        version: 'v0.1',
+        status: 'DRAFT',
+        content: '# 未确认草稿\n\n## 1. 草稿机密对象\n- SECRET_DRAFT_ONLY_ENTITY_991',
+      });
+
+      const decideSpy = vi.spyOn(DesignBriefModule, 'decideDesignBriefForMe');
+      const briefGenSpy = vi.spyOn(
+        useWorkbenchStore.getState(),
+        'startPrototypeBriefGenerationRun',
+      );
+      let capturedOnSubmit: ((prompt: string) => void | Promise<void>) | undefined;
+      const origAgentPanel = AgentPanelModule.AgentPanel;
+      vi.spyOn(AgentPanelModule, 'AgentPanel').mockImplementation((props) => {
+        capturedOnSubmit = props.onSubmitPrompt;
+        return origAgentPanel(props);
+      });
+
+      await useWorkbenchStore.getState().bootstrap(proj.id);
+      Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+
+      const surface = agentPanelSurfaceFor('app-prototype')!;
+      renderToStaticMarkup(
+        <PreferencesProvider>
+          <ShellAgentPanel surface={surface} overlay={false} onClose={() => {}} onNavigate={() => {}} />
+        </PreferencesProvider>,
+      );
+
+      expect(capturedOnSubmit).toBeTypeOf('function');
+      await capturedOnSubmit!('先帮我看看原型应该怎么布局');
+
+      expect(decideSpy).not.toHaveBeenCalled();
+      expect(briefGenSpy).not.toHaveBeenCalled();
+      expect(store.listPrototypes(proj.id)).toEqual([]);
+
+      const sessions = store.listAgentSessions({
+        projectId: proj.id,
+        agentKind: 'PROTOTYPE_CO_DESIGN',
+      });
+      expect(sessions).toHaveLength(1);
+      const assistantReply =
+        sessions[0]!.messages.find((m) => m.role === 'assistant')?.content ?? '';
+      expect(assistantReply).not.toContain('SECRET_DRAFT_ONLY_ENTITY_991');
+      expect(assistantReply.length).toBeGreaterThan(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('preserves English words containing me/mi/mm in formatPrototypeLabelForBusinessView and uses bilingual fallback without 原型版本', () => {
+    expect(formatPrototypeLabelForBusinessView('Decide for me', undefined, 'en-US')).toBe(
+      'Decide for me',
+    );
+    expect(
+      formatPrototypeLabelForBusinessView('Minimum order summary', undefined, 'en-US'),
+    ).toBe('Minimum order summary');
+    expect(
+      formatPrototypeLabelForBusinessView('M1 采购合同原型 (界面原型.html)', undefined, 'zh-CN'),
+    ).toBe('采购合同原型');
+    expect(formatPrototypeLabelForBusinessView('M1.html', undefined, 'en-US')).toBe(
+      'Interactive Prototype',
+    );
+    expect(formatPrototypeLabelForBusinessView('M1.html', undefined, 'zh-CN')).toBe(
+      '界面原型',
+    );
+    expect(formatPrototypeLabelForBusinessView('', undefined, 'zh-CN')).not.toBe('原型版本');
   });
 });

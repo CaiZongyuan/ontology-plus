@@ -207,17 +207,25 @@ describe('HTTP Prototype Unified History, Business Screen Change Summary, Undo &
         };
         expect(histAfterR1.entries).toHaveLength(1);
         r1EntryId = histAfterR1.entries[0]!.id;
-        expect(histAfterR1.entries[0]!.changeSummary.canUndo).toBe(false);
+        // Unconfirmed initial AGENT_RUN R1 supports 1-click Undo back to Briefing stage
+        expect(histAfterR1.entries[0]!.changeSummary.canUndo).toBe(true);
 
-        // Undo on R1-only prototype cleanly returns 409 NOTHING_TO_UNDO with Business View-safe copy
-        const r1UndoRes = await api1.request(
-          `/api/projects/${projectId}/history/PROTOTYPE/undo`,
-          jsonInit('POST', { expectedEntryId: r1EntryId }),
+        // Seeded baseline prototype (proj-contract) has canUndo=false / 0 history entries and returns 409 NOTHING_TO_UNDO
+        const seededHistRes = await api1.request(
+          '/api/projects/proj-contract/history?kind=PROTOTYPE',
         );
-        expect(r1UndoRes.status).toBe(409);
-        const r1UndoErr = (await r1UndoRes.json()) as { code: string; error: string };
-        expect(r1UndoErr.code).toBe('NOTHING_TO_UNDO');
-        expect(checkBusinessViewMarkup(r1UndoErr.error, { plainText: true })).toEqual([]);
+        expect(seededHistRes.status).toBe(200);
+        expect(
+          ((await seededHistRes.json()) as { entries: ArtifactHistoryEntryView[] }).entries,
+        ).toEqual([]);
+        const seededUndoRes = await api1.request(
+          '/api/projects/proj-contract/history/PROTOTYPE/undo',
+          jsonInit('POST', {}),
+        );
+        expect(seededUndoRes.status).toBe(409);
+        const seededUndoErr = (await seededUndoRes.json()) as { code: string; error: string };
+        expect(seededUndoErr.code).toBe('NOTHING_TO_UNDO');
+        expect(checkBusinessViewMarkup(seededUndoErr.error, { plainText: true })).toEqual([]);
 
         // 3. Read-only inspection PROTOTYPE_CO_DESIGN run on existing prototype -> produces NO new revision & NO ChangeSummaryView!
         for (const p of store1.listLlmProviders()) {
@@ -461,6 +469,196 @@ describe('HTTP Prototype Unified History, Business Screen Change Summary, Undo &
       } finally {
         store2.close();
         fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    'supports 1-click Undo of an initial unconfirmed R1 generation run back to pre-R1 Briefing stage while preserving designBrief & coDesignSession, blocks Undo on confirmed/cloned/migrated baselines, and keeps English history reasons & excerpts free of Chinese nouns',
+    { timeout: 20_000 },
+    async () => {
+      const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+      store.updateSystemSettings({ mockLlmMode: true });
+      const api = createApiApp(store);
+
+      try {
+        const createProjRes = await api.request(
+          '/api/projects',
+          jsonInit(
+            'POST',
+            {
+              name: 'Vendor Portal',
+              code: 'VENDOR_R1_UNDO',
+              domain: 'Vendor Onboarding',
+              template: 'EMPTY',
+            },
+            'en-US',
+          ),
+        );
+        expect(createProjRes.status).toBe(200);
+        const { project } = (await createProjRes.json()) as { project: { id: string } };
+        const projectId = project.id;
+
+        // Save English requirements doc with technical tokens to verify English excerpt & reason sanitization
+        store.beginArtifactRunCapture({
+          projectId,
+          artifactKind: 'REQUIREMENTS_DOC',
+          runId: 'run-en-req-1',
+        });
+        store.saveRequirementDoc({
+          id: 'rdoc-vendor-en',
+          projectId,
+          title: 'Vendor Onboarding Specification',
+          version: 'v1.0',
+          status: 'DRAFT',
+          content: [
+            '# Vendor Onboarding Specification',
+            '',
+            '## 1. Core Scope',
+            '- Supports REST webhook notifications and M1 vendor profile validation.',
+          ].join('\n'),
+        });
+        store.finishArtifactRunCapture({
+          projectId,
+          artifactKind: 'REQUIREMENTS_DOC',
+          runId: 'run-en-req-1',
+          reason: 'Updated M1 vendor scope and JSON export rules.',
+        });
+        store.confirmRequirementsStep(projectId, { docId: 'rdoc-vendor-en' });
+
+        // GET /api/projects/:id/history with x-onto-locale: en-US never injects Chinese nouns into English reasons or excerpts
+        const enReqHistRes = await api.request(
+          `/api/projects/${projectId}/history?kind=REQUIREMENTS_DOC`,
+          { headers: { 'X-Onto-Locale': 'en-US' } },
+        );
+        expect(enReqHistRes.status).toBe(200);
+        const enReqHist = (await enReqHistRes.json()) as {
+          entries: ArtifactHistoryEntryView[];
+        };
+        expect(enReqHist.entries).toHaveLength(1);
+        const reqSummary = enReqHist.entries[0]!.changeSummary;
+        expect(reqSummary.reason?.en).toContain('Business Objects');
+        expect(reqSummary.reason?.en).not.toMatch(/[\u4e00-\u9fff]/);
+        expect(reqSummary.reason?.zh).not.toMatch(/[\u4e00-\u9fff]/);
+        expect(reqSummary.items[0]?.detail?.en).toContain('integration');
+        expect(reqSummary.items[0]?.detail?.en).not.toMatch(/[\u4e00-\u9fff]/);
+        expect(enReqHist.entries[0]!.requirementsDiff?.sections[0]?.excerpt).not.toMatch(
+          /[\u4e00-\u9fff]/,
+        );
+
+        // Create unbound PROTOTYPE_CO_DESIGN session & generate initial R1 with DesignBrief
+        const sessRes = await api.request(
+          '/api/agent-sessions',
+          jsonInit('POST', { projectId, agentKind: 'PROTOTYPE_CO_DESIGN' }, 'en-US'),
+        );
+        const { session } = (await sessRes.json()) as { session: { id: string } };
+
+        const r1Brief = {
+          primaryReferenceId: 'linear-app',
+          borrowedReferences: [],
+          motionSchematicIds: [],
+          userFeelNote: 'Crisp minimalist operational table',
+          items: [],
+          updatedAt: '2026-11-18T00:00:00.000Z',
+        };
+        const r1StreamRes = await api.request(
+          `/api/agent-sessions/${session.id}/stream`,
+          jsonInit(
+            'POST',
+            {
+              prompt: 'Generate initial interactive prototype for Vendor Onboarding',
+              designBrief: r1Brief,
+              mockMode: true,
+            },
+            'en-US',
+          ),
+        );
+        expect(r1StreamRes.status).toBe(200);
+        expect(await r1StreamRes.text()).toContain('event: message_end');
+
+        const protosAfterR1 = store.listPrototypes(projectId);
+        expect(protosAfterR1).toHaveLength(1);
+        const r1Hist = (await (
+          await api.request(`/api/projects/${projectId}/history?kind=PROTOTYPE`, {
+            headers: { 'X-Onto-Locale': 'en-US' },
+          })
+        ).json()) as { entries: ArtifactHistoryEntryView[] };
+        expect(r1Hist.entries).toHaveLength(1);
+        expect(r1Hist.entries[0]!.changeSummary.canUndo).toBe(true);
+
+        // 1-click Undo of initial R1 reverts back to pre-R1 Briefing stage while preserving coDesignSession & designBrief
+        const undoR1Res = await api.request(
+          `/api/projects/${projectId}/history/PROTOTYPE/undo`,
+          jsonInit('POST', { expectedEntryId: r1Hist.entries[0]!.id }, 'en-US'),
+        );
+        expect(undoR1Res.status).toBe(200);
+        const undoR1Json = (await undoR1Res.json()) as {
+          undoneEntryId: string;
+          prototypes: InteractivePrototype[];
+          entries: ArtifactHistoryEntryView[];
+          steps: Array<{ id: string; state: string }>;
+        };
+        expect(undoR1Json.undoneEntryId).toBe(r1Hist.entries[0]!.id);
+        expect(undoR1Json.prototypes).toEqual([]);
+        expect(undoR1Json.entries).toEqual([]);
+        expect(undoR1Json.steps.find((s) => s.id === 'PROTOTYPE')?.state).toBe('NOT_STARTED');
+
+        const preservedSession = store.getAgentSession(session.id)!;
+        expect(preservedSession.targetId).toBeUndefined();
+        expect(preservedSession.messages.length).toBeGreaterThanOrEqual(2);
+        expect(preservedSession.designBrief?.userFeelNote).toBe(
+          'Crisp minimalist operational table',
+        );
+
+        // Re-generate R1 in the same preserved session, then confirm R1 -> canUndo becomes false & /undo returns 409 NOTHING_TO_UNDO
+        const regenRes = await api.request(
+          `/api/agent-sessions/${session.id}/stream`,
+          jsonInit(
+            'POST',
+            {
+              prompt: 'Regenerate initial Vendor Onboarding prototype',
+              mockMode: true,
+            },
+            'en-US',
+          ),
+        );
+        expect(regenRes.status).toBe(200);
+        expect(await regenRes.text()).toContain('event: message_end');
+
+        const regenProto = store.listPrototypes(projectId)[0]!;
+        expect(regenProto.designBrief?.userFeelNote).toBe('Crisp minimalist operational table');
+        store.confirmPrototypeRevision(projectId, regenProto.currentRevisionId);
+
+        const confirmedHist = (await (
+          await api.request(`/api/projects/${projectId}/history?kind=PROTOTYPE`, {
+            headers: { 'X-Onto-Locale': 'en-US' },
+          })
+        ).json()) as { entries: ArtifactHistoryEntryView[] };
+        expect(confirmedHist.entries).toHaveLength(1);
+        expect(confirmedHist.entries[0]!.changeSummary.canUndo).toBe(false);
+
+        const confirmedUndoRes = await api.request(
+          `/api/projects/${projectId}/history/PROTOTYPE/undo`,
+          jsonInit('POST', { expectedEntryId: confirmedHist.entries[0]!.id }, 'en-US'),
+        );
+        expect(confirmedUndoRes.status).toBe(409);
+        const confirmedUndoErr = (await confirmedUndoRes.json()) as { code: string };
+        expect(confirmedUndoErr.code).toBe('NOTHING_TO_UNDO');
+
+        // Cloned 1-revision baseline also has 0 history entries and returns 409 NOTHING_TO_UNDO
+        const cloned = store.clonePrototype(regenProto.id, { name: 'Vendor Portal Copy' });
+        const clonedHist = store.listArtifactHistoryViews(projectId, {
+          artifactKind: 'PROTOTYPE',
+          prototypeId: cloned.id,
+        });
+        expect(clonedHist).toEqual([]);
+        const clonedUndoRes = await api.request(
+          `/api/projects/${projectId}/history/PROTOTYPE/undo`,
+          jsonInit('POST', { prototypeId: cloned.id }, 'en-US'),
+        );
+        expect(clonedUndoRes.status).toBe(409);
+      } finally {
+        store.close();
       }
     },
   );

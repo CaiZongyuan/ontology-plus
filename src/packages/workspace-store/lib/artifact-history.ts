@@ -77,15 +77,22 @@ const PHYSICAL_TABLE_RE = /(?<![A-Za-z0-9_])t_[a-z][a-z0-9_]+(?![A-Za-z0-9_])/g;
 
 const MODEL_CODE_RE = /(?<![A-Za-z0-9_])(M[1-7]|ME|MU|MM|MI)(?![A-Za-z0-9_])/g;
 
+const CJK_RE = /[\u4e00-\u9fff]/;
+
+export function inferBusinessLocaleFromText(raw: string): BusinessLocale {
+  return CJK_RE.test(raw) ? 'zh-CN' : 'en-US';
+}
+
 /**
  * Sanitizes section headings, excerpts, and assistant notes so Business View surfaces
  * never leak model codes (`M1`–`MI`), element IDs (`AGG-01`), file extensions, or protocol names.
  */
 export function sanitizeBusinessViewCopy(
   raw: string,
-  locale: BusinessLocale = 'zh-CN',
+  locale?: BusinessLocale,
 ): string {
   if (!raw) return '';
+  const effectiveLocale: BusinessLocale = locale ?? inferBusinessLocaleFromText(raw);
   let out = raw;
   if (/^>?\s*(?:来源会话|Source\s+Session)\s*[:：]/i.test(out.trim())) {
     return '';
@@ -100,33 +107,40 @@ export function sanitizeBusinessViewCopy(
   out = out.replace(/\b(?:asess|req-sess)-[a-z0-9-]+\b/gi, '');
   out = out.replace(
     /createdAt\/updatedAt\s*审计字段(?:与幂等乐观锁版本号|、乐观锁版本号)?/gi,
-    locale === 'en-US' ? 'creation and update timestamps' : '创建与修改时间记录',
+    effectiveLocale === 'en-US' ? 'creation and update timestamps' : '创建与修改时间记录',
   );
   out = out.replace(
     /createdAt\/updatedAt\s*audit\s*(?:fields|timestamps)(?:\s*(?:and|,)\s*optimistic\s*lock(?:ing)?\s*version)?/gi,
-    locale === 'en-US' ? 'creation and update timestamps' : '创建与修改时间记录',
+    effectiveLocale === 'en-US' ? 'creation and update timestamps' : '创建与修改时间记录',
   );
   out = out.replace(
     /11\s*元模型(?:业务本体|标准)?/g,
-    locale === 'en-US' ? BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en : BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh,
+    effectiveLocale === 'en-US'
+      ? BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en
+      : BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh,
   );
-  out = out.replace(PHYSICAL_TABLE_RE, locale === 'en-US' ? 'business table' : '业务数据表');
+  out = out.replace(
+    PHYSICAL_TABLE_RE,
+    effectiveLocale === 'en-US' ? 'business table' : '业务数据表',
+  );
   out = out.replace(MODEL_CODE_RE, (_m, code: string) => {
     const entry = MODEL_BUSINESS_NAMES[code as ModelCode];
-    return entry ? (locale === 'en-US' ? entry.en : entry.zh) : '';
+    return entry ? (effectiveLocale === 'en-US' ? entry.en : entry.zh) : '';
   });
   out = out.replace(/\.(?:yaml|yml|json|owl|ddl|sql|md|html|css|zip)(?![A-Za-z0-9_])/gi, '');
   out = out.replace(
     /(?<![A-Za-z0-9_])(?:YAML|YML|JSON|OWL|DDL|SQLite|SQL|Markdown|HTML5?|CSS|ZIP)(?![A-Za-z0-9_])/gi,
-    locale === 'en-US' ? 'document' : '规格',
+    effectiveLocale === 'en-US' ? 'document' : '规格',
   );
   out = out.replace(
     /(?<![A-Za-z0-9_])(?:gRPC|RPC|MCP|SSE|REST|HTTPS?|RESTful|GraphQL|OpenAPI)(?![A-Za-z0-9_])/gi,
-    locale === 'en-US' ? 'integration' : '接口',
+    effectiveLocale === 'en-US' ? 'integration' : '接口',
   );
   out = out.replace(
     /(?<![A-Za-z0-9_])(?:Agent\s+Sessions?|Agent\s+Runs?|Agent\s+Panels?|Architecture\s+Asset\s+Agent|Application\s+Development\s+Agent|Application\s+Coding\s+Agent|Copilot|PROTOTYPE_CO_DESIGN)(?![A-Za-z0-9_])|智能体会话|智能体运行|智能体面板|Agent\s*面板|Agent\s*运行|架构资产智能体|应用开发智能体/gi,
-    locale === 'en-US' ? BUSINESS_VOCABULARY.AI_ASSISTANT.en : BUSINESS_VOCABULARY.AI_ASSISTANT.zh,
+    effectiveLocale === 'en-US'
+      ? BUSINESS_VOCABULARY.AI_ASSISTANT.en
+      : BUSINESS_VOCABULARY.AI_ASSISTANT.zh,
   );
   out = out
     .replace(/[`]/g, '')
@@ -134,7 +148,7 @@ export function sanitizeBusinessViewCopy(
       /[（(]\s*[·\-:]?\s*(?:HUMAN|SYSTEM|COMMAND|QUERY|EVENT_HANDLER|EXTERNAL_CALL|COLLABORATION|APPROVAL|PROVIDED|DEPENDENT|MASTER|DETAIL|EXT|PrimaryEntity(?:\.[A-Za-z]+)?)\s*[)）]/g,
       '',
     )
-    .replace(/[:：]\s*(?:→\s*)+[。.]?/g, locale === 'en-US' ? '.' : '。')
+    .replace(/[:：]\s*(?:→\s*)+[。.]?/g, effectiveLocale === 'en-US' ? '.' : '。')
     .replace(/\(\s*\)|（\s*）/g, '')
     .replace(/^\s*[:：\-·]+\s*/, '')
     .replace(/\s{2,}/g, ' ')
@@ -322,7 +336,10 @@ function computeLineMultisetDelta(
   };
 }
 
-function cleanExcerptLine(rawLine: string | undefined): string | undefined {
+function cleanExcerptLine(
+  rawLine: string | undefined,
+  locale?: BusinessLocale,
+): string | undefined {
   if (!rawLine) return undefined;
   const stripped = rawLine
     .replace(/^#{1,6}\s+/, '')
@@ -330,9 +347,21 @@ function cleanExcerptLine(rawLine: string | undefined): string | undefined {
     .replace(/^\d+\.\s+/, '')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .trim();
-  const safe = sanitizeBusinessViewCopy(stripped, 'zh-CN');
+  if (!stripped) return undefined;
+  const effectiveLocale: BusinessLocale = !CJK_RE.test(stripped)
+    ? 'en-US'
+    : (locale ?? 'zh-CN');
+  const safe = sanitizeBusinessViewCopy(stripped, effectiveLocale);
   if (!safe) return undefined;
   return safe.length > 72 ? `${safe.slice(0, 71)}…` : safe;
+}
+
+function cleanBilingualExcerpt(rawLine: string | undefined): BilingualText | undefined {
+  if (!rawLine) return undefined;
+  const zh = cleanExcerptLine(rawLine, 'zh-CN');
+  const en = cleanExcerptLine(rawLine, 'en-US');
+  if (!zh && !en) return undefined;
+  return { zh: zh || en!, en: en || zh! };
 }
 
 function formatLineDeltaDetailZh(added: number, removed: number): string {
@@ -356,6 +385,7 @@ function formatLineDeltaDetailEn(added: number, removed: number): string {
 export function computeRequirementDocDiff(
   before: Pick<RequirementDocSnapshot, 'title' | 'content'> | null | undefined,
   after: Pick<RequirementDocSnapshot, 'title' | 'content'> | null | undefined,
+  options?: { locale?: BusinessLocale },
 ): RequirementDocDiff {
   const beforeContent = normalizeStepMarkdown(before?.content ?? '');
   const afterContent = normalizeStepMarkdown(after?.content ?? '');
@@ -415,23 +445,30 @@ export function computeRequirementDocDiff(
 
   parsedAfter.sections.forEach((afterSec, aIdx) => {
     const matchedIdx = afterToBefore.get(aIdx);
+    const headingLocale = options?.locale ?? inferBusinessLocaleFromText(afterSec.heading);
     const titleZh =
-      sanitizeBusinessViewCopy(afterSec.heading, 'zh-CN') || `第 ${aIdx + 1} 部分`;
+      sanitizeBusinessViewCopy(
+        afterSec.heading,
+        CJK_RE.test(afterSec.heading) ? 'zh-CN' : 'en-US',
+      ) || `第 ${aIdx + 1} 部分`;
     const titleEn =
       sanitizeBusinessViewCopy(afterSec.heading, 'en-US') || `Section ${aIdx + 1}`;
+    const sectionTitle = headingLocale === 'en-US' ? titleEn : titleZh;
 
     if (matchedIdx === undefined) {
       const addedLines = Math.max(1, afterSec.bodyLines.length);
-      const excerpt = cleanExcerptLine(afterSec.bodyLines[0]);
+      const excerpt = cleanExcerptLine(afterSec.bodyLines[0], options?.locale);
+      const excerptBilingual = cleanBilingualExcerpt(afterSec.bodyLines[0]);
       addedCount += 1;
       sections.push({
         id: `sec-add-${aIdx}`,
         changeType: 'ADDED',
         sectionHeading: afterSec.heading,
-        sectionTitle: titleZh,
+        sectionTitle,
         addedLines,
         removedLines: 0,
         ...(excerpt ? { excerpt } : {}),
+        ...(excerptBilingual ? { excerptBilingual } : {}),
         summary: {
           zh: `新增章节「${titleZh}」（${addedLines} 行）`,
           en: `Added section "${titleEn}" (${addedLines} lines)`,
@@ -449,16 +486,19 @@ export function computeRequirementDocDiff(
     }
 
     const delta = computeLineMultisetDelta(beforeSec.bodyLines, afterSec.bodyLines);
-    const excerpt = cleanExcerptLine(delta.firstAdded ?? delta.firstRemoved);
+    const rawExcerptLine = delta.firstAdded ?? delta.firstRemoved;
+    const excerpt = cleanExcerptLine(rawExcerptLine, options?.locale);
+    const excerptBilingual = cleanBilingualExcerpt(rawExcerptLine);
     modifiedCount += 1;
     sections.push({
       id: `sec-mod-${aIdx}`,
       changeType: 'MODIFIED',
       sectionHeading: afterSec.heading,
-      sectionTitle: titleZh,
+      sectionTitle,
       addedLines: delta.addedLines,
       removedLines: delta.removedLines,
       ...(excerpt ? { excerpt } : {}),
+      ...(excerptBilingual ? { excerptBilingual } : {}),
       summary: {
         zh: `修改章节「${titleZh}」（${formatLineDeltaDetailZh(delta.addedLines, delta.removedLines)}）`,
         en: `Updated section "${titleEn}" (${formatLineDeltaDetailEn(delta.addedLines, delta.removedLines)})`,
@@ -468,21 +508,28 @@ export function computeRequirementDocDiff(
 
   parsedBefore.sections.forEach((beforeSec, bIdx) => {
     if (matchedBeforeIndexes.has(bIdx)) return;
+    const headingLocale = options?.locale ?? inferBusinessLocaleFromText(beforeSec.heading);
     const titleZh =
-      sanitizeBusinessViewCopy(beforeSec.heading, 'zh-CN') || `原第 ${bIdx + 1} 部分`;
+      sanitizeBusinessViewCopy(
+        beforeSec.heading,
+        CJK_RE.test(beforeSec.heading) ? 'zh-CN' : 'en-US',
+      ) || `原第 ${bIdx + 1} 部分`;
     const titleEn =
       sanitizeBusinessViewCopy(beforeSec.heading, 'en-US') || `Previous section ${bIdx + 1}`;
+    const sectionTitle = headingLocale === 'en-US' ? titleEn : titleZh;
     const removedLines = Math.max(1, beforeSec.bodyLines.length);
-    const excerpt = cleanExcerptLine(beforeSec.bodyLines[0]);
+    const excerpt = cleanExcerptLine(beforeSec.bodyLines[0], options?.locale);
+    const excerptBilingual = cleanBilingualExcerpt(beforeSec.bodyLines[0]);
     removedCount += 1;
     sections.push({
       id: `sec-rem-${bIdx}`,
       changeType: 'REMOVED',
       sectionHeading: beforeSec.heading,
-      sectionTitle: titleZh,
+      sectionTitle,
       addedLines: 0,
       removedLines,
       ...(excerpt ? { excerpt } : {}),
+      ...(excerptBilingual ? { excerptBilingual } : {}),
       summary: {
         zh: `移除章节「${titleZh}」`,
         en: `Removed section "${titleEn}"`,
@@ -491,17 +538,22 @@ export function computeRequirementDocDiff(
   });
 
   if (sections.length === 0 && (titleChanged || parsedBefore.documentHeading !== parsedAfter.documentHeading)) {
+    const rawAfterHeading = afterTitle || parsedAfter.documentHeading;
+    const headingLocale = options?.locale ?? inferBusinessLocaleFromText(rawAfterHeading);
     const cleanAfterTitleZh =
-      sanitizeBusinessViewCopy(afterTitle || parsedAfter.documentHeading, 'zh-CN') || '需求文档';
+      sanitizeBusinessViewCopy(
+        rawAfterHeading,
+        CJK_RE.test(rawAfterHeading) ? 'zh-CN' : 'en-US',
+      ) || '需求文档';
     const cleanAfterTitleEn =
-      sanitizeBusinessViewCopy(afterTitle || parsedAfter.documentHeading, 'en-US') ||
+      sanitizeBusinessViewCopy(rawAfterHeading, 'en-US') ||
       'Requirements Document';
     modifiedCount += 1;
     sections.push({
       id: 'sec-title',
       changeType: 'MODIFIED',
       sectionHeading: '',
-      sectionTitle: cleanAfterTitleZh,
+      sectionTitle: headingLocale === 'en-US' ? cleanAfterTitleEn : cleanAfterTitleZh,
       addedLines: 0,
       removedLines: 0,
       summary: {
@@ -545,15 +597,13 @@ function buildEntryTitle(source: ArtifactHistorySource, isRedo = false): Bilingu
             zh: '撤销上一次改动',
             en: 'Undid latest change',
           };
-    case 'RESTORE':
+    default:
       return {
         zh: '恢复到较早状态',
         en: 'Restored earlier state',
       };
   }
 }
-
-const CJK_RE = /[\u4e00-\u9fff]/;
 
 const LOWERCASE_TITLE_WORDS = new Set([
   'a',
@@ -1472,6 +1522,12 @@ export function isPreExistingPrototypeBaselineRevision(rev: PrototypeRevision): 
   );
 }
 
+export function isInitialGeneratedPrototypeRevision(rev: PrototypeRevision): boolean {
+  if (rev.revisionNumber !== 1) return false;
+  if (isPreExistingPrototypeBaselineRevision(rev)) return false;
+  return rev.source === 'AGENT_RUN' || rev.source === 'GENERATED';
+}
+
 /**
  * Projects a prototype's linear `PrototypeRevision[]` onto `ArtifactHistoryEntryView[]`
  * without duplicating HTML in storage (#67).
@@ -1480,10 +1536,13 @@ export function buildPrototypeArtifactHistoryViews(
   prototype: Pick<
     InteractivePrototype,
     'id' | 'projectId' | 'name' | 'revisions' | 'coDesignSessionId'
-  >,
+  > &
+    Partial<Pick<InteractivePrototype, 'isConfirmed' | 'confirmedRevisionId'>>,
   options?: {
     domain?: string;
     maxEntries?: number;
+    confirmedRevisionId?: string;
+    locale?: BusinessLocale;
   },
 ): ArtifactHistoryEntryView[] {
   if (prototype.revisions.length === 0) return [];
@@ -1508,6 +1567,11 @@ export function buildPrototypeArtifactHistoryViews(
     }
   }
 
+  const confirmedRevId =
+    options?.confirmedRevisionId ??
+    (prototype.isConfirmed ? prototype.confirmedRevisionId : undefined) ??
+    prototype.confirmedRevisionId;
+
   const maxEntries = options?.maxEntries ?? DEFAULT_MAX_ARTIFACT_HISTORY_ENTRIES;
   const viewsNewestFirst: ArtifactHistoryEntryView[] = [];
 
@@ -1521,7 +1585,12 @@ export function buildPrototypeArtifactHistoryViews(
     const prevRev = i > 0 ? ordered[i - 1] : undefined;
     const hasPriorRevision = Boolean(prevRev);
     const isLatest = i === ordered.length - 1;
-    const canUndo = isLatest && hasPriorRevision;
+    const isUndoableInitialR1 =
+      !hasPriorRevision &&
+      ordered.length === 1 &&
+      isInitialGeneratedPrototypeRevision(rev) &&
+      confirmedRevId !== rev.id;
+    const canUndo = isLatest && (hasPriorRevision || isUndoableInitialR1);
     const canRestoreBefore = hasPriorRevision;
     const isUndone = activelyUndoneIds.has(rev.id);
     const undoDepth = undoDepthById.get(rev.id) ?? 0;
@@ -1563,7 +1632,7 @@ export function buildPrototypeArtifactHistoryViews(
     }
 
     const title = buildEntryTitle(source, isRedo);
-    const reason = buildReasonFromSource(source);
+    const reason = buildReasonFromSource(source, options?.locale);
     const items = buildPrototypeChangeSummaryItems({
       ...(prevRev ? { previousHtml: prevRev.htmlContent, previousRevisionId: prevRev.id } : {}),
       nextHtml: rev.htmlContent,
@@ -1613,7 +1682,10 @@ export function buildPrototypeArtifactHistoryViews(
   return viewsNewestFirst;
 }
 
-function buildReasonFromSource(source: ArtifactHistorySource): BilingualText | undefined {
+function buildReasonFromSource(
+  source: ArtifactHistorySource,
+  locale?: BusinessLocale,
+): BilingualText | undefined {
   const raw =
     source.kind === 'AGENT_RUN'
       ? source.reason
@@ -1634,25 +1706,31 @@ function buildReasonFromSource(source: ArtifactHistorySource): BilingualText | u
       en: 'Updated the visual style from the revised design brief while preserving screen structure.',
     };
   }
+  const sanitizeBilingualReason = (text: string): BilingualText | undefined => {
+    if (!CJK_RE.test(text)) {
+      const en = sanitizeBusinessViewCopy(text, 'en-US');
+      if (!en) return undefined;
+      return { zh: en, en };
+    }
+    const zh =
+      locale === 'en-US'
+        ? sanitizeBusinessViewCopy(text, 'zh-CN')
+        : sanitizeBusinessViewCopy(text, 'zh-CN');
+    const en = sanitizeBusinessViewCopy(text, 'en-US');
+    if (!zh && !en) return undefined;
+    return { zh: zh || en, en: en || zh };
+  };
   if (/^\[ACTION:[A-Z_]+/.test(trimmed)) {
     const afterBracket = trimmed.replace(/^\[ACTION:[^\r\n]*\]\s*/, '').trim();
     if (!afterBracket) return undefined;
-    const zh = sanitizeBusinessViewCopy(afterBracket, 'zh-CN');
-    const en = sanitizeBusinessViewCopy(afterBracket, 'en-US');
-    if (!zh && !en) return undefined;
-    return { zh: zh || en, en: en || zh };
+    return sanitizeBilingualReason(afterBracket);
   }
-  const zh = sanitizeBusinessViewCopy(trimmed, 'zh-CN');
-  const en = sanitizeBusinessViewCopy(trimmed, 'en-US');
-  if (!zh && !en) return undefined;
-  return {
-    zh: zh || en,
-    en: en || zh,
-  };
+  return sanitizeBilingualReason(trimmed);
 }
 
 export function buildArtifactHistoryViews(
   chronologicalEntries: readonly ArtifactHistoryEntry[],
+  options?: { locale?: BusinessLocale },
 ): ArtifactHistoryEntryView[] {
   if (chronologicalEntries.length === 0) return [];
   const latestByKind = new Map<PersistedArtifactHistoryKind, string>();
@@ -1685,24 +1763,30 @@ export function buildArtifactHistoryViews(
     const isUndone = activelyUndoneIds.has(entry.id);
     const undoDepth = undoDepthById.get(entry.id) ?? 0;
     const isRedo = entry.source.kind === 'UNDO' && undoDepth > 0 && undoDepth % 2 === 0;
-    const reason = buildReasonFromSource(entry.source);
+    const reason = buildReasonFromSource(entry.source, options?.locale);
     const title = buildEntryTitle(entry.source, isRedo);
 
     if (entry.artifactKind === 'REQUIREMENTS_DOC') {
-      const diff = computeRequirementDocDiff(entry.beforeState.doc, entry.afterState.doc);
+      const diff = computeRequirementDocDiff(
+        entry.beforeState.doc,
+        entry.afterState.doc,
+        options?.locale ? { locale: options.locale } : undefined,
+      );
       const activeDocId = entry.afterState.doc?.id ?? entry.beforeState.doc?.id ?? entry.targetId;
       const items: ChangeSummaryItemView[] = diff.sections.map((sec) => ({
         id: `${entry.id}-${sec.id}`,
         changeType: sec.changeType,
         label: sec.summary,
-        ...(sec.excerpt
-          ? {
-              detail: {
-                zh: sec.excerpt,
-                en: sec.excerpt,
-              },
-            }
-          : {}),
+        ...(sec.excerptBilingual
+          ? { detail: sec.excerptBilingual }
+          : sec.excerpt
+            ? {
+                detail: {
+                  zh: sec.excerpt,
+                  en: sec.excerpt,
+                },
+              }
+            : {}),
         ...(sec.changeType !== 'REMOVED' && sec.sectionHeading
           ? {
               jumpTarget: {

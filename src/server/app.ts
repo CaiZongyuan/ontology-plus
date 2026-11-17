@@ -199,7 +199,13 @@ export function createApiApp(
         ? store.getProjectStepConfirmations(activeProject.id)
         : { requirements: null, prototype: null, businessModel: null },
       artifactHistory: activeProject.id
-        ? store.listArtifactHistoryViews(activeProject.id)
+        ? store.listArtifactHistoryViews(
+            activeProject.id,
+            (() => {
+              const bootLocale = normalizeAgentLocale(c.req.header('x-onto-locale') ?? undefined);
+              return bootLocale ? { locale: bootLocale } : undefined;
+            })(),
+          )
         : [],
       fourLayerAssets: store.listFourLayerAssets(),
       technologyProfiles: store.listTechnologyProfiles(),

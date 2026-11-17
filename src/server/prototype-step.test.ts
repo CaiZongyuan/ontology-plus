@@ -5,9 +5,9 @@ import {
   type ConfirmedPrototypeRevision,
   type InteractivePrototype,
   type ProjectStepConfirmations,
+  type ProjectStepStatusView,
   type PrototypeStepConfirmationRecord,
 } from '../packages/workspace-store/index.js';
-import type { ProjectStepStatusView } from '../web/navigation/projectSteps.js';
 import { createApiApp } from './app.js';
 
 describe('server HTTP: Prototype step confirmations, OUTDATED preservation, confirm-as-is, and AI Assistant update (#66)', () => {

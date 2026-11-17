@@ -417,7 +417,7 @@ export function RequirementDocsView({
               render: (d) => (
                 <div>
                   <div className="font-semibold text-foreground">{d.title}</div>
-                  <div className="font-mono text-[11.5px] text-faint-foreground">{d.id}</div>
+                  <div className="font-mono text-xs text-faint-foreground">{d.id}</div>
                 </div>
               ),
             },
@@ -438,7 +438,7 @@ export function RequirementDocsView({
               header: t('更新时间', 'Updated'),
               width: '170px',
               render: (d) => (
-                <span className="font-mono text-[11.5px] text-faint-foreground">
+                <span className="font-mono text-xs text-faint-foreground">
                   {d.updatedAt.slice(0, 19).replace('T', ' ')}
                 </span>
               ),

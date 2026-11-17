@@ -33,7 +33,10 @@ function resolveRouteLocale(c: {
   return normalizeAgentLocale(c.req.header('x-onto-locale') ?? undefined) ?? 'zh-CN';
 }
 
-function extractConciseFirstSentence(raw: string): string | undefined {
+function extractConciseFirstSentence(
+  raw: string,
+  locale?: AgentLocale,
+): string | undefined {
   const cleaned = raw.trim();
   if (!cleaned) return undefined;
   const firstProseLine = cleaned
@@ -50,7 +53,7 @@ function extractConciseFirstSentence(raw: string): string | undefined {
   if (!firstProseLine) return undefined;
   const sentenceMatch = /^(.+?[。！？.!?])(?:\s|$)/.exec(firstProseLine);
   const sentence = (sentenceMatch ? sentenceMatch[1]! : firstProseLine).trim();
-  const safe = sanitizeBusinessViewCopy(sentence, 'zh-CN');
+  const safe = sanitizeBusinessViewCopy(sentence, locale);
   if (!safe) return undefined;
   return safe.length > 120 ? `${safe.slice(0, 119)}…` : safe;
 }
@@ -151,15 +154,17 @@ export function registerArtifactHistoryRoutes(app: Hono, store: WorkspaceStore):
     }
     const artifactKind = rawKind ? (rawKind as ArtifactHistorySurfaceKind) : undefined;
     const prototypeId = c.req.query('prototypeId')?.trim() || undefined;
+    const headerLocale = normalizeAgentLocale(c.req.header('x-onto-locale') ?? undefined);
     const includeStates =
       c.req.query('includeStates') === '1' || c.req.query('includeStates') === 'true';
 
     const entries = store.listArtifactHistoryViews(
       projectId,
-      artifactKind || prototypeId
+      artifactKind || prototypeId || headerLocale
         ? {
             ...(artifactKind ? { artifactKind } : {}),
             ...(prototypeId ? { prototypeId } : {}),
+            ...(headerLocale ? { locale: headerLocale } : {}),
           }
         : undefined,
     );
@@ -224,13 +229,15 @@ export function registerArtifactHistoryRoutes(app: Hono, store: WorkspaceStore):
         undoneEntryId: result.undoneEntryId,
         entries: store.listArtifactHistoryViews(projectId, {
           artifactKind: rawKind,
+          locale,
           ...(rawKind === 'PROTOTYPE' && scopedProtoId ? { prototypeId: scopedProtoId } : {}),
         }),
-        artifactHistory: store.listArtifactHistoryViews(projectId),
+        artifactHistory: store.listArtifactHistoryViews(projectId, { locale }),
         project: store.getProject(projectId)!,
         requirementDocs: store.listRequirementDocs(projectId),
         prototypes: store.listPrototypes(projectId),
         confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+        agentSessions: store.listAgentSessions(),
         stepConfirmations: store.getProjectStepConfirmations(projectId),
         steps: deriveProjectStepsForStoreProject(store, projectId),
       });
@@ -276,13 +283,15 @@ export function registerArtifactHistoryRoutes(app: Hono, store: WorkspaceStore):
         restoredBeforeEntryId: result.restoredBeforeEntryId,
         entries: store.listArtifactHistoryViews(projectId, {
           artifactKind: rawKind,
+          locale,
           ...(rawKind === 'PROTOTYPE' && scopedProtoId ? { prototypeId: scopedProtoId } : {}),
         }),
-        artifactHistory: store.listArtifactHistoryViews(projectId),
+        artifactHistory: store.listArtifactHistoryViews(projectId, { locale }),
         project: store.getProject(projectId)!,
         requirementDocs: store.listRequirementDocs(projectId),
         prototypes: store.listPrototypes(projectId),
         confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+        agentSessions: store.listAgentSessions(),
         stepConfirmations: store.getProjectStepConfirmations(projectId),
         steps: deriveProjectStepsForStoreProject(store, projectId),
       });

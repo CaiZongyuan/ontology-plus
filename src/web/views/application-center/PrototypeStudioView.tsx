@@ -285,12 +285,12 @@ export function PrototypeStudioView({
       setStageOverride('CANVAS');
       return;
     }
-    const targetDoc = data.requirementDocs.find((d) => d.id === activeItemId);
+    const targetDoc = docs.find((d) => d.id === activeItemId);
     if (targetDoc) {
       setSelectedDocId(targetDoc.id);
       setStageOverride('BRIEFING');
     }
-  }, [activeItemId, data?.prototypes, data?.requirementDocs]);
+  }, [activeItemId, data?.prototypes, docs]);
 
   useEffect(() => {
     if (!data || !highlightedPrototypeTarget) return;
@@ -724,6 +724,14 @@ export function PrototypeStudioView({
       );
     }
 
+    const unboundBrief =
+      prototypes.length === 0
+        ? (data.agentSessions ?? [])
+            .filter((s) => s.projectId === project.id && s.agentKind === 'PROTOTYPE_CO_DESIGN')
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+            .find((s) => s.designBrief)?.designBrief
+        : undefined;
+
     return (
       <PrototypeCoDesignStudio
         project={project}
@@ -732,6 +740,7 @@ export function PrototypeStudioView({
         onSelectDocId={setSelectedDocId}
         prototypes={prototypes}
         {...(prototypes.length > 0 && proto ? { activePrototype: proto } : {})}
+        {...(unboundBrief ? { initialDesignBrief: unboundBrief } : {})}
         visionSupported={visionCapability.visionSupported}
         {...(visionCapability.providerLabel
           ? { visionProviderLabel: visionCapability.providerLabel }

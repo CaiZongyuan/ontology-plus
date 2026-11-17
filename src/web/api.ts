@@ -592,6 +592,31 @@ interface WorkbenchStoreState {
 
 const initialUrl = readUrlNavState();
 
+function syncActiveProjectSummaryInBootstrap(nextData: BootstrapPayload): BootstrapPayload {
+  const projectId = nextData.activeProject?.id;
+  if (!projectId) return nextData;
+  const derivedSteps = getProjectStepsFromBootstrap(nextData);
+  const stepStates = Object.fromEntries(
+    derivedSteps.map((st) => [st.id, st.state]),
+  ) as Record<ProjectStepId, ProjectStepStateId>;
+  const currentStep = resolveCurrentProjectStep(stepStates);
+  return {
+    ...nextData,
+    projects: nextData.projects.map((p) =>
+      p.id === projectId
+        ? {
+            ...p,
+            currentStage: nextData.activeProject.currentStage,
+            currentStep,
+            currentStepState: stepStates[currentStep],
+            stepStates,
+            updatedAt: nextData.activeProject.updatedAt,
+          }
+        : p,
+    ),
+  };
+}
+
 function applyArtifactHistoryMutationToStore(
   projectId: string,
   res: ArtifactHistoryMutationResponse,
@@ -600,7 +625,7 @@ function applyArtifactHistoryMutationToStore(
 ): void {
   const latest = get().data;
   if (!latest || latest.activeProject.id !== projectId) return;
-  const nextData: BootstrapPayload = {
+  const nextData = syncActiveProjectSummaryInBootstrap({
     ...latest,
     activeProject: res.project,
     requirementDocs: res.requirementDocs,
@@ -608,27 +633,23 @@ function applyArtifactHistoryMutationToStore(
     ...(res.confirmedPrototypeRevision !== undefined
       ? { confirmedPrototypeRevision: res.confirmedPrototypeRevision }
       : {}),
+    ...(res.agentSessions !== undefined ? { agentSessions: res.agentSessions } : {}),
     stepConfirmations: res.stepConfirmations,
     artifactHistory: res.artifactHistory,
-  };
-  const derivedSteps = getProjectStepsFromBootstrap(nextData);
-  const stepStates = Object.fromEntries(
-    derivedSteps.map((st) => [st.id, st.state]),
-  ) as Record<ProjectStepId, ProjectStepStateId>;
-  const currentStep = resolveCurrentProjectStep(stepStates);
-  nextData.projects = latest.projects.map((p) =>
-    p.id === projectId
-      ? {
-          ...p,
-          currentStage: res.project.currentStage,
-          currentStep,
-          currentStepState: stepStates[currentStep],
-          stepStates,
-          updatedAt: res.project.updatedAt,
-        }
-      : p,
+  });
+  const activeProtoId = get().activePrototypeIdByProject[projectId];
+  const shouldClearActiveProto = Boolean(
+    activeProtoId &&
+      res.prototypes !== undefined &&
+      !res.prototypes.some((p) => p.id === activeProtoId),
   );
-  set({ data: nextData });
+  if (shouldClearActiveProto) {
+    const nextProtoMap = { ...get().activePrototypeIdByProject };
+    delete nextProtoMap[projectId];
+    set({ data: nextData, activePrototypeIdByProject: nextProtoMap });
+  } else {
+    set({ data: nextData });
+  }
 }
 
 export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
@@ -845,14 +866,28 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   patchData: (patch) => {
     const cur = get().data;
     if (!cur) return;
-    set({ data: { ...cur, ...patch } });
+    const merged: BootstrapPayload = { ...cur, ...patch };
+    const shouldSyncSummary =
+      patch.projects === undefined &&
+      ('stepConfirmations' in patch ||
+        'confirmedPrototypeRevision' in patch ||
+        'prototypes' in patch ||
+        'requirementDocs' in patch ||
+        'activeProject' in patch ||
+        'assembledApplications' in patch ||
+        'packageSnapshots' in patch);
+    set({
+      data: shouldSyncSummary ? syncActiveProjectSummaryInBootstrap(merged) : merged,
+    });
   },
 
   bootstrap: async (projectId) => {
     set({ loading: true });
     const targetId = projectId || readUrlNavState().projectId || readLastProjectIdFromStorage();
     const qs = targetId ? `?projectId=${encodeURIComponent(targetId)}` : '';
-    const res = await fetch(`/api/bootstrap${qs}`);
+    const res = await fetch(`/api/bootstrap${qs}`, {
+      headers: buildLocaleHeaders(),
+    });
     const payload = (await res.json()) as BootstrapPayload;
 
     set({
@@ -1041,11 +1076,11 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     const latest = get().data;
     if (latest && latest.activeProject.id === projectId) {
       set({
-        data: {
+        data: syncActiveProjectSummaryInBootstrap({
           ...latest,
           requirementDocs: res.docs,
           stepConfirmations: res.stepConfirmations,
-        },
+        }),
       });
     }
     return res.confirmation;
@@ -1063,11 +1098,11 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     const latest = get().data;
     if (latest && latest.activeProject.id === projectId) {
       set({
-        data: {
+        data: syncActiveProjectSummaryInBootstrap({
           ...latest,
           activeProject: res.project,
           stepConfirmations: res.stepConfirmations,
-        },
+        }),
       });
     }
     return res.confirmation;
@@ -2800,8 +2835,14 @@ export async function apiConfirmPrototypeRevision(
     revisionId,
   });
   const cur = useWorkbenchStore.getState().data;
-  if (cur && cur.activeProject.id === projectId && res.stepConfirmations) {
-    useWorkbenchStore.getState().patchData({ stepConfirmations: res.stepConfirmations });
+  if (cur && cur.activeProject.id === projectId) {
+    useWorkbenchStore.getState().patchData({
+      activeProject: res.project,
+      prototypes: res.prototypes,
+      confirmedPrototypeRevision: res.confirmedRevision,
+      ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
+      ...(res.stepConfirmations ? { stepConfirmations: res.stepConfirmations } : {}),
+    });
   }
   return res;
 }
@@ -2883,6 +2924,7 @@ export interface ArtifactHistoryMutationResponse {
   requirementDocs: RequirementDoc[];
   prototypes?: InteractivePrototype[];
   confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
+  agentSessions?: AgentSession[];
   stepConfirmations: ProjectStepConfirmations;
 }
 

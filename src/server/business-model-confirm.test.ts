@@ -5,8 +5,8 @@ import {
   createWorkspaceStore,
   type BusinessModelStepConfirmationRecord,
   type ProjectStepConfirmations,
+  type ProjectStepStatusView,
 } from '../packages/workspace-store/index.js';
-import type { ProjectStepStatusView } from '../web/navigation/projectSteps.js';
 import { createApiApp } from './app.js';
 
 describe('server HTTP: Business Model confirmation gate, suiteSnapshot immutability, OUTDATED cascade, and ADR 0010 synthesis (#71)', () => {

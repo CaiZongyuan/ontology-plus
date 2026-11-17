@@ -100,8 +100,8 @@ export const NAV_ITEMS: NavItemSpec[] = [
   {
     id: 'overview',
     group: 'OVERVIEW',
-    labelZh: '项目会话管理',
-    labelEn: 'Project Sessions',
+    labelZh: '首页',
+    labelEn: 'Home',
   },
   // Application Center
   {

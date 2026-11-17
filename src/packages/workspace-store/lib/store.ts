@@ -146,6 +146,7 @@ import {
   buildArtifactHistoryViews,
   buildPrototypeArtifactHistoryViews,
   captureRequirementDocState,
+  isInitialGeneratedPrototypeRevision,
   isPreExistingPrototypeBaselineRevision,
 } from './artifact-history.js';
 import {
@@ -3144,6 +3145,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     listArtifactHistoryViews(projectId, filter) {
       const project = this.getProject(projectId);
       const domain = project?.domain;
+      const locale = filter?.locale;
 
       if (filter?.artifactKind === 'PROTOTYPE') {
         const protos = this.listPrototypes(projectId);
@@ -3153,6 +3155,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
           return target
             ? buildPrototypeArtifactHistoryViews(target, {
                 ...(domain ? { domain } : {}),
+                ...(locale ? { locale } : {}),
                 maxEntries: maxHistoryEntries,
               })
             : [];
@@ -3169,6 +3172,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
           protos[0]!;
         return buildPrototypeArtifactHistoryViews(activeProto, {
           ...(domain ? { domain } : {}),
+          ...(locale ? { locale } : {}),
           maxEntries: maxHistoryEntries,
         });
       }
@@ -3178,11 +3182,15 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         filter?.artifactKind === 'ONTOLOGY_SUITE'
       ) {
         const chronological = listChronologicalArtifactHistory(projectId, filter.artifactKind);
-        return buildArtifactHistoryViews(chronological);
+        return buildArtifactHistoryViews(
+          chronological,
+          locale ? { locale } : undefined,
+        );
       }
 
       const persistedViews = buildArtifactHistoryViews(
         listChronologicalArtifactHistory(projectId),
+        locale ? { locale } : undefined,
       );
       const protos = this.listPrototypes(projectId);
       if (protos.length === 0) {
@@ -3191,6 +3199,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const protoViews = protos.flatMap((proto) =>
         buildPrototypeArtifactHistoryViews(proto, {
           ...(domain ? { domain } : {}),
+          ...(locale ? { locale } : {}),
           maxEntries: maxHistoryEntries,
         }),
       );
@@ -3220,6 +3229,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
             messageEn: 'There is no prototype change to undo yet.',
           });
         }
+
+        const confirmedRecord = getItem<ConfirmedPrototypeRevisionRecord>(
+          'prototype_confirmations',
+          projectId,
+        );
 
         let targetStored: StoredInteractivePrototype | undefined;
         if (undoOptions?.prototypeId) {
@@ -3251,13 +3265,18 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
             );
           }
         } else {
-          const confirmed = getItem<ConfirmedPrototypeRevisionRecord>(
-            'prototype_confirmations',
-            projectId,
-          );
           targetStored =
             storedList.find((p) => p.revisions.length >= 2) ??
-            (confirmed ? storedList.find((p) => p.id === confirmed.prototypeId) : undefined) ??
+            storedList.find(
+              (p) =>
+                p.revisions.length === 1 &&
+                p.revisions[0] &&
+                isInitialGeneratedPrototypeRevision(p.revisions[0]) &&
+                confirmedRecord?.revisionId !== p.revisions[0].id,
+            ) ??
+            (confirmedRecord
+              ? storedList.find((p) => p.id === confirmedRecord.prototypeId)
+              : undefined) ??
             storedList[0];
         }
 
@@ -3292,12 +3311,101 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         }
 
         if (ordered.length < 2) {
-          throw new ArtifactHistoryConflictError({
-            code: 'NOTHING_TO_UNDO',
-            messageZh: '当前原型处于首版状态，之前没有更早的原型版本可撤销退回。',
-            messageEn:
-              'This prototype is on its initial version; there is no earlier prototype revision to revert to.',
-          });
+          const isConfirmedLatest = Boolean(
+            confirmedRecord &&
+              confirmedRecord.prototypeId === targetStored.id &&
+              confirmedRecord.revisionId === latestRev.id,
+          );
+          if (!isInitialGeneratedPrototypeRevision(latestRev) || isConfirmedLatest) {
+            throw new ArtifactHistoryConflictError({
+              code: 'NOTHING_TO_UNDO',
+              messageZh: '当前原型处于首版状态，之前没有更早的原型版本可撤销退回。',
+              messageEn:
+                'This prototype is on its initial version; there is no earlier prototype revision to revert to.',
+            });
+          }
+
+          // Initial AI-generated R1 that has not been confirmed yet:
+          // remove the unconfirmed 1-revision prototype back to the pre-R1 Briefing stage
+          // while preserving its coDesignSession (unlinked) and designBrief cleanly.
+          const preservedBrief = targetStored.designBrief
+            ? structuredClone(targetStored.designBrief)
+            : undefined;
+          const projectSessions = this.listAgentSessions({ projectId });
+          const linkedSessions = projectSessions.filter(
+            (s) =>
+              s.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+              (s.id === targetStored.coDesignSessionId || s.targetId === targetStored.id),
+          );
+          if (linkedSessions.length > 0) {
+            for (const sess of linkedSessions) {
+              const { targetId: _removedTargetId, ...restSess } = sess;
+              this.saveAgentSession({
+                ...restSess,
+                ...(preservedBrief ? { designBrief: preservedBrief } : {}),
+              });
+            }
+          } else if (preservedBrief) {
+            const unbound = projectSessions.find(
+              (s) => s.agentKind === 'PROTOTYPE_CO_DESIGN' && !s.targetId,
+            );
+            if (unbound) {
+              this.saveAgentSession({
+                ...unbound,
+                designBrief: preservedBrief,
+              });
+            } else {
+              const createdSess = this.createAgentSession({
+                projectId,
+                agentKind: 'PROTOTYPE_CO_DESIGN',
+                title: '原型共创对话',
+              });
+              this.saveAgentSession({
+                ...createdSess,
+                designBrief: preservedBrief,
+              });
+            }
+          }
+
+          deleteItem('prototypes', targetStored.id);
+
+          const now = new Date().toISOString();
+          const undoEntryId = nextUniqueId('prev-undo');
+          const entryView: ArtifactHistoryEntryView = {
+            id: undoEntryId,
+            projectId,
+            artifactKind: 'PROTOTYPE',
+            targetId: targetStored.id,
+            sequence: latestRev.revisionNumber + 1,
+            createdAt: now,
+            source: { kind: 'UNDO', undoneEntryId: latestRev.id },
+            title: {
+              zh: '撤销上一次改动',
+              en: 'Undid latest change',
+            },
+            changeSummary: {
+              entryId: undoEntryId,
+              artifactKind: 'PROTOTYPE',
+              targetId: targetStored.id,
+              items: [
+                {
+                  id: `${undoEntryId}-proto-r1-reverted`,
+                  changeType: 'REMOVED',
+                  label: {
+                    zh: '撤回首版界面原型，回到生成前的设计简报阶段',
+                    en: 'Reverted the initial prototype back to the pre-generation design brief stage',
+                  },
+                },
+              ],
+              canUndo: false,
+            },
+            canRestoreBefore: false,
+          };
+
+          return {
+            entryView,
+            undoneEntryId: latestRev.id,
+          } as never;
         }
 
         const priorRev = ordered[ordered.length - 2]!;

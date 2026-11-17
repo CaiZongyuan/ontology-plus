@@ -154,6 +154,7 @@ export interface PrototypeCoDesignStudioProps {
   ) => Promise<void>;
   viewMode?: StepViewMode;
   defaultBriefStep?: BriefStep;
+  initialDesignBrief?: DesignBrief;
 }
 
 export function PrototypeCoDesignStudio({
@@ -174,6 +175,7 @@ export function PrototypeCoDesignStudio({
   isBusyProto,
   viewMode = 'technical',
   defaultBriefStep = 'REFERENCES',
+  initialDesignBrief,
 }: PrototypeCoDesignStudioProps) {
   const { locale, t } = usePreferences();
   const patchData = useWorkbenchStore((s) => s.patchData);
@@ -182,12 +184,13 @@ export function PrototypeCoDesignStudio({
   const schematicsAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const activeDoc = docs.find((d) => d.id === selectedDocId) ?? docs[0];
+  const seedBrief = activePrototype?.designBrief ?? initialDesignBrief;
 
   const initialHydration = useMemo(() => {
     const baseAlignment = inferDefaultAlignmentFromSrs(activeDoc?.content, project);
-    if (activePrototype?.designBrief) {
+    if (seedBrief) {
       const hydrated = hydrateBriefingStateFromDesignBrief(
-        activePrototype.designBrief,
+        seedBrief,
         CURATED_INSPO_CATALOG,
         baseAlignment,
       );
@@ -196,10 +199,7 @@ export function PrototypeCoDesignStudio({
         alignment: hydrated.alignment,
         userFeelNote: hydrated.userFeelNote,
         userImageRefs: hydrated.userImageRefs,
-        manualBriefItems:
-          activePrototype.designBrief.items.length > 0
-            ? activePrototype.designBrief.items
-            : null,
+        manualBriefItems: seedBrief.items.length > 0 ? seedBrief.items : null,
         alignmentTouched: true,
       };
     }
@@ -256,21 +256,19 @@ export function PrototypeCoDesignStudio({
     setAlignmentState(updater);
   };
 
-  // Re-hydrate when returning from Canvas Stage with an activePrototype carrying a saved DesignBrief
+  // Re-hydrate when returning from Canvas Stage with an activePrototype or preserved initialDesignBrief
   const hydratedProtoKeyRef = useRef<string>(
-    activePrototype?.designBrief
-      ? `${activePrototype.id}:${activePrototype.designBrief.updatedAt}`
-      : '',
+    seedBrief ? `${activePrototype?.id ?? 'unbound'}:${seedBrief.updatedAt}` : '',
   );
   useEffect(() => {
-    const nextKey = activePrototype?.designBrief
-      ? `${activePrototype.id}:${activePrototype.designBrief.updatedAt}`
+    const nextKey = seedBrief
+      ? `${activePrototype?.id ?? 'unbound'}:${seedBrief.updatedAt}`
       : '';
     if (!nextKey || nextKey === hydratedProtoKeyRef.current) return;
     hydratedProtoKeyRef.current = nextKey;
     const baseAlignment = inferDefaultAlignmentFromSrs(activeDoc?.content, project);
     const hydrated = hydrateBriefingStateFromDesignBrief(
-      activePrototype!.designBrief!,
+      seedBrief!,
       CURATED_INSPO_CATALOG,
       baseAlignment,
     );
@@ -279,23 +277,19 @@ export function PrototypeCoDesignStudio({
     setAlignmentTouched(true);
     setUserFeelNote(hydrated.userFeelNote);
     setLocalAttachments(hydrated.userImageRefs);
-    setManualBriefItems(
-      activePrototype!.designBrief!.items.length > 0
-        ? activePrototype!.designBrief!.items
-        : null,
-    );
-  }, [activePrototype?.id, activePrototype?.designBrief?.updatedAt, activeDoc?.content, project]);
+    setManualBriefItems(seedBrief!.items.length > 0 ? seedBrief!.items : null);
+  }, [activePrototype?.id, seedBrief, activeDoc?.content, project]);
 
   useEffect(() => {
-    if (!alignmentTouched && !activePrototype?.designBrief) {
+    if (!alignmentTouched && !seedBrief) {
       setAlignmentState(inferDefaultAlignmentFromSrs(activeDoc?.content, project));
     }
-  }, [activeDoc?.id, activeDoc?.content, project, alignmentTouched, activePrototype?.designBrief]);
+  }, [activeDoc?.id, activeDoc?.content, project, alignmentTouched, seedBrief]);
 
   // Initial agent-backed briefing synthesis when projectId is provided and no saved brief exists yet
   const initialAssistProjectRef = useRef<string>('');
   useEffect(() => {
-    if (activePrototype?.designBrief || !project.id) return;
+    if (seedBrief || !project.id) return;
     if (initialAssistProjectRef.current === project.id) return;
     initialAssistProjectRef.current = project.id;
     let cancelled = false;

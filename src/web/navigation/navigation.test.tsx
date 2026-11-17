@@ -91,6 +91,11 @@ describe('navigation catalog and URL state', () => {
       expect(isNavViewId(viewId)).toBe(true);
     }
 
+    expect(getNavItemSpec('overview')).toMatchObject({
+      id: 'overview',
+      labelZh: '首页',
+      labelEn: 'Home',
+    });
     expect(getNavItemsByGroup('APPLICATION')).toHaveLength(9);
     expect(getNavItemsByGroup('CAPABILITY')).toHaveLength(6);
     expect(getNavItemsByGroup('ANALYTICS')).toHaveLength(5);

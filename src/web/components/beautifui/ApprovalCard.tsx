@@ -109,11 +109,11 @@ export function ApprovalCard({
       <div className="primitive-card-bar flex items-center justify-between border-b border-border bg-primary-soft/45">
         <div className="flex items-center gap-1.5">
           <Sparkles size={13} className="text-primary" />
-          <span className="text-[11.5px] font-semibold text-primary">
+          <span className="text-xs font-semibold text-primary">
             {formatQuestionHeader(prompt.header, t)}
           </span>
         </div>
-        <span className="text-[11.5px] text-faint-foreground">
+        <span className="text-xs text-faint-foreground">
           {prompt.multiSelect ? t('可多选', 'Multi-select') : t('点选一项', 'Pick one')}
         </span>
       </div>

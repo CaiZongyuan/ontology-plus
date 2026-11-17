@@ -19,6 +19,24 @@ export {
   type BusinessModelConfirmErrorCode,
 } from './lib/step-confirmations.js';
 export {
+  deriveProjectHealthSummary,
+  deriveProjectStepProgress,
+  deriveProjectSteps,
+  formatProjectHealthStatus,
+  getDefaultStepTargetView,
+  getProjectLifecycleState,
+  getProjectStepsFromBootstrap,
+  type ProjectHealthSummary,
+  type ProjectLifecycleBootstrapSlice,
+  type ProjectLifecycleState,
+  type ProjectNextStep,
+  type ProjectStepBlockedInfo,
+  type ProjectStepNumber,
+  type ProjectStepProgressInput,
+  type ProjectStepStatusView,
+  type ProjectStepTargetView,
+} from './lib/project-steps.js';
+export {
   ArtifactHistoryConflictError,
   ArtifactHistoryNotFoundError,
   DEFAULT_MAX_ARTIFACT_HISTORY_ENTRIES,
@@ -28,6 +46,8 @@ export {
   buildPrototypeChangeSummaryItems,
   captureRequirementDocState,
   computeRequirementDocDiff,
+  inferBusinessLocaleFromText,
+  isInitialGeneratedPrototypeRevision,
   sanitizeBusinessViewCopy,
   toRequirementDocSnapshot,
   type BuildPrototypeChangeSummaryOptions,

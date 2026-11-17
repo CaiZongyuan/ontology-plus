@@ -21,6 +21,8 @@ import {
   BUSINESS_VOCABULARY,
   MODEL_BUSINESS_NAMES,
   checkBusinessViewMarkup,
+  sanitizeBusinessText,
+  type BusinessLocale,
 } from '../../../packages/business-vocabulary/index.js';
 import {
   computeMuDiff,
@@ -42,6 +44,7 @@ import {
   apiConfirmPrototypeRevision,
   apiRestorePrototypeRevision,
   apiUpdatePrototypeRevisionMeta,
+  getCurrentClientLocale,
 } from '../../api.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
@@ -52,17 +55,25 @@ import './prototype-revision-history.css';
 
 export function formatPrototypeLabelForBusinessView(
   raw: string | undefined,
-  fallback = '',
+  fallback?: string,
+  locale?: BusinessLocale,
 ): string {
+  const effectiveLocale = locale ?? getCurrentClientLocale();
+  const defaultFallback = effectiveLocale === 'en-US' ? 'Interactive Prototype' : '界面原型';
+  const resolvedFallback = fallback !== undefined ? fallback : defaultFallback;
   const source = (raw ?? '').trim();
-  if (!source) return fallback;
+  if (!source) return resolvedFallback;
   let cleaned = source
     .replace(
       /\s*[（(][^()（）]*\.(?:yaml|yml|json|owl|ddl|sql|md|html?|css|zip)[^()（）]*[)）]/gi,
       '',
     )
     .replace(/\.(?:yaml|yml|json|owl|ddl|sql|md|html?|css|zip)(?![A-Za-z0-9_])/gi, '')
-    .replace(/(?<![A-Za-z0-9_])(?:M[1-7]|ME|MU|MM|MI|HTML5?|CSS|YAML|JSON|OWL|DDL|SQLite|SQL|Markdown)(?![A-Za-z0-9_])/gi, '')
+    .replace(/(?<![A-Za-z0-9_])(?:M[1-7]|ME|MU|MM|MI)(?![A-Za-z0-9_])/g, '')
+    .replace(
+      /(?<![A-Za-z0-9_])(?:HTML5?|CSS|YAML|YML|JSON|OWL|DDL|SQLite|SQL|Markdown|ZIP)(?![A-Za-z0-9_])/gi,
+      '',
+    )
     .replace(
       /(?<![A-Za-z0-9_-])(?:AGG|ENT|VO|DIC|DICT|ASSOC|BHV|BEH|RUL|RULE|EVT|SCN|ACT|ROL|ROLE|PERM|PGRP|FLW|FLOW|ACTV|QRY|RPT|SCR|EL|UIE|NAV|CC|MAP|INT|IF|MET|ASCN|WB)-[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Za-z0-9_-])/g,
       '',
@@ -71,8 +82,11 @@ export function formatPrototypeLabelForBusinessView(
     .replace(/[（(]\s*[)）]/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
+  if (cleaned && checkBusinessViewMarkup(cleaned, { plainText: true }).length > 0) {
+    cleaned = sanitizeBusinessText(cleaned, effectiveLocale).trim();
+  }
   if (!cleaned || checkBusinessViewMarkup(cleaned, { plainText: true }).length > 0) {
-    cleaned = fallback || '原型版本';
+    cleaned = fallback !== undefined ? fallback : defaultFallback;
   }
   return cleaned;
 }

@@ -514,7 +514,7 @@ function humanizeConsistencyProblem(
     case 'M2_DANGLING_QUERY_REPORT_REF':
     case 'M2_M7_ONE_TO_ONE_MISMATCH':
       return locale === 'en-US'
-        ? `${subject} and its paired query or report are out of sync.`
+        ? `${subject} and its paired query or report do not match.`
         : `${subject}与配对的查询报表未保持一致，请同步对齐。`;
     case 'M3_DANGLING_OBJECT_REF':
       return locale === 'en-US'

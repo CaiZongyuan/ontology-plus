@@ -4445,7 +4445,11 @@ async function executeUnifiedTurnCore(
             }
           : {
               prototypeName: fallbackProtoName,
-              ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+              ...(input.designBrief
+                ? { designBrief: input.designBrief }
+                : sessionState.designBrief
+                  ? { designBrief: sessionState.designBrief }
+                  : {}),
               baselineHtml: '',
               workingHtml: '',
               modifiedAnchors: [],
