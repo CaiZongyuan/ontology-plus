@@ -866,6 +866,15 @@ progress.loading-spinner:indeterminate {
   --color-orange-tint: var(--orange-tint);
   --color-red: var(--red);
   --color-red-tint: var(--red-tint);
+  /* Contract names for the text and status utilities markup now uses (#44). */
+  --color-foreground-soft: var(--foreground-soft);
+  --color-faint-foreground: var(--faint-foreground);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
 
   --shadow-hairline: var(--shadow-hairline);
   --shadow-btn: var(--shadow-btn);

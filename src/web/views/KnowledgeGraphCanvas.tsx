@@ -104,7 +104,7 @@ function SwimlaneGroupNode({ data }: NodeProps<Node<SwimlaneNodeData>>) {
       data-model={data.model}
       className={cn(
         'h-full w-full rounded-window border transition-colors',
-        data.collapsed ? 'bg-surface shadow-card' : 'bg-surface/65',
+        data.collapsed ? 'bg-card shadow-card' : 'bg-card/65',
       )}
       style={{
         borderColor: `color-mix(in srgb, ${data.color} 34%, var(--line))`,
@@ -139,12 +139,12 @@ function SwimlaneGroupNode({ data }: NodeProps<Node<SwimlaneNodeData>>) {
             className="inline-block h-2.5 w-2.5 shrink-0 rounded-[3px]"
             style={{ background: data.color }}
           />
-          <span className="truncate text-[11.5px] font-semibold text-ink">
+          <span className="truncate text-[11.5px] font-semibold text-foreground">
             {data.title}
           </span>
         </div>
         <div className="flex items-center gap-1">
-          <span className="rounded-full bg-surface/90 px-1.5 py-0.2 font-mono text-[10.5px] text-ink-3 shadow-hairline">
+          <span className="rounded-full bg-card/90 px-1.5 py-0.2 font-mono text-[10.5px] text-faint-foreground shadow-hairline">
             {data.count}
           </span>
           <button
@@ -154,14 +154,14 @@ function SwimlaneGroupNode({ data }: NodeProps<Node<SwimlaneNodeData>>) {
               data.onToggleCollapse(data.model);
             }}
             title={data.collapsed ? '展开模型泳道' : '折叠模型泳道'}
-            className="nodrag nopan inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-ink-3 hover:bg-hover hover:text-ink"
+            className="nodrag nopan inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-faint-foreground hover:bg-accent hover:text-foreground"
           >
             {data.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
           </button>
         </div>
       </div>
       {data.collapsed && (
-        <div className="px-3 py-2 text-[11.5px] text-ink-3">
+        <div className="px-3 py-2 text-[11.5px] text-faint-foreground">
           已折叠 {data.count} 个实体节点（点击展开明细）
         </div>
       )}
@@ -175,11 +175,11 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
       data-testid="kg-node"
       data-node-id={data.node.id}
       className={cn(
-        'group relative flex h-[56px] w-[188px] flex-col justify-between overflow-hidden rounded-control border bg-surface px-2.5 py-1.5 transition-[opacity,box-shadow,border-color,transform] duration-150',
+        'group relative flex h-[56px] w-[188px] flex-col justify-between overflow-hidden rounded-control border bg-card px-2.5 py-1.5 transition-[opacity,box-shadow,border-color,transform] duration-150',
         data.isSelected && 'ring-2 ring-primary border-primary shadow-raised',
         !data.isSelected && data.isNeighbor && 'border-primary/65 shadow-card',
-        !data.isSelected && !data.isNeighbor && 'border-line shadow-xs hover:border-ink-3',
-        data.isSearchHit && 'ring-2 ring-orange',
+        !data.isSelected && !data.isNeighbor && 'border-border shadow-xs hover:border-faint-foreground',
+        data.isSearchHit && 'ring-2 ring-warning',
         data.isDimmed && 'opacity-30',
       )}
     >
@@ -213,13 +213,13 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
       />
 
       <div className="flex items-center justify-between gap-1.5 pl-1">
-        <span className="truncate font-mono text-[10.5px] font-semibold text-ink-2">
+        <span className="truncate font-mono text-[10.5px] font-semibold text-foreground-soft">
           {data.node.id}
         </span>
         <span
           className={cn(
             'shrink-0 rounded px-1 font-mono text-[10.5px]',
-            data.isFocal ? 'bg-primary text-primary-foreground' : 'bg-inset text-ink-3',
+            data.isFocal ? 'bg-primary text-primary-foreground' : 'bg-muted text-faint-foreground',
           )}
         >
           d:{data.degree}
@@ -228,12 +228,12 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
 
       <div className="flex items-center justify-between gap-1 pl-1">
         <span
-          className="truncate text-[12.5px] font-medium text-ink"
+          className="truncate text-[12.5px] font-medium text-foreground"
           title={data.node.label}
         >
           {data.node.label || data.node.id}
         </span>
-        <span className="shrink-0 font-mono text-[10.5px] text-ink-3">
+        <span className="shrink-0 font-mono text-[10.5px] text-faint-foreground">
           {data.node.model}
         </span>
       </div>
@@ -1198,7 +1198,7 @@ function KnowledgeGraphInner({
       <div className="kg-toolbar">
         <div className="kg-chips">
           {/* Layout Mode Switcher */}
-          <div className="mr-1 inline-flex items-center rounded-[7px] border border-line bg-surface p-0.5 shadow-2xs">
+          <div className="mr-1 inline-flex items-center rounded-[7px] border border-border bg-card p-0.5 shadow-2xs">
             <button
               type="button"
               data-testid="kg-mode-swimlane-btn"
@@ -1206,8 +1206,8 @@ function KnowledgeGraphInner({
               className={cn(
                 'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 layoutMode === 'STAGE_SWIMLANE'
-                  ? 'bg-surface text-ink shadow-hairline'
-                  : 'text-ink-3 hover:text-ink',
+                  ? 'bg-card text-foreground shadow-hairline'
+                  : 'text-faint-foreground hover:text-foreground',
               )}
             >
               <Layers size={11.5} />
@@ -1220,8 +1220,8 @@ function KnowledgeGraphInner({
               className={cn(
                 'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 layoutMode === 'EGO_FOCUS'
-                  ? 'bg-surface text-ink shadow-hairline'
-                  : 'text-ink-3 hover:text-ink',
+                  ? 'bg-card text-foreground shadow-hairline'
+                  : 'text-faint-foreground hover:text-foreground',
               )}
             >
               <LocateFixed size={11.5} />
@@ -1563,7 +1563,7 @@ function KnowledgeGraphInner({
                 )}
               </div>
 
-              <div className="border-t border-line pt-2">
+              <div className="border-t border-border pt-2">
                 <div className="text-[11.5px] font-semibold mb-1.5">
                   {t('跨模型关联边 (点击多跳追踪)', 'Cross-Model Edges')} (
                   {relatedEdges.length})
@@ -1582,7 +1582,7 @@ function KnowledgeGraphInner({
 
                       return (
                         <div
-                          key={edge.id} className="p-[6px_8px] rounded-[5px] bg-inset border border-[var(--line-2)] text-[11.5px] flex flex-col gap-1"
+                          key={edge.id} className="p-[6px_8px] rounded-[5px] bg-muted border border-[var(--line-2)] text-[11.5px] flex flex-col gap-1"
                         >
                           <div className="flex justify-between items-center gap-1"
                           >

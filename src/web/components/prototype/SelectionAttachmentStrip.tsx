@@ -48,12 +48,12 @@ export function SelectionAttachmentStrip({
       data-testid="selection-attachment-strip"
       aria-label={t('画布框选附件列表', 'Canvas selection attachments')}
       className={cn(
-        'flex flex-col gap-1.5 rounded-[8px] border border-line bg-surface-2/80 p-2',
+        'flex flex-col gap-1.5 rounded-[8px] border border-border bg-surface-2/80 p-2',
         className,
       )}
     >
       <div className="flex items-center justify-between gap-2 px-0.5 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5 font-medium text-ink-2">
+        <span className="inline-flex items-center gap-1.5 font-medium text-foreground-soft">
           <Crosshair size={12} className="text-primary shrink-0" aria-hidden="true" />
           <span>
             {t(
@@ -65,7 +65,7 @@ export function SelectionAttachmentStrip({
         <button
           type="button"
           data-testid="selection-attachment-clear-all"
-          className="text-[11px] text-muted-foreground hover:text-ink transition-colors"
+          className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
           onClick={() => clearAttachments(prototypeId)}
         >
           {t('清空', 'Clear')}
@@ -85,7 +85,7 @@ export function SelectionAttachmentStrip({
               onMouseLeave={() => hoverAttachment(null)}
               onFocus={() => hoverAttachment(att)}
               onBlur={() => hoverAttachment(null)}
-              className="group relative flex items-center gap-2 rounded-[6px] border border-line bg-surface p-1.5 transition-colors hover:border-primary"
+              className="group relative flex items-center gap-2 rounded-[6px] border border-border bg-card p-1.5 transition-colors hover:border-primary"
             >
               <LocalImageThumbnail
                 attachment={att.imageRef}
@@ -113,7 +113,7 @@ export function SelectionAttachmentStrip({
                 </div>
 
                 <div
-                  className="truncate text-[11.5px] font-medium text-ink"
+                  className="truncate text-[11.5px] font-medium text-foreground"
                   title={att.target.label}
                 >
                   {att.target.label}
@@ -135,7 +135,7 @@ export function SelectionAttachmentStrip({
                 )}
                 title={t('移除此框选目标', 'Remove selection')}
                 onClick={() => removeSelectionAttachment(prototypeId, att.id)}
-                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-surface-2 hover:text-ink"
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
               >
                 <X size={12.5} aria-hidden="true" />
               </button>
@@ -175,7 +175,7 @@ export function PrototypePostRunBanner({
       role="region"
       aria-label={t('本轮原型修改前后对比与回退', 'Post-run Before/After comparison and revert')}
       className={cn(
-        'flex flex-wrap items-center justify-between gap-2 border-b border-line bg-primary-soft/50 px-3 py-1.5 text-[12px] text-ink shrink-0',
+        'flex flex-wrap items-center justify-between gap-2 border-b border-border bg-primary-soft/50 px-3 py-1.5 text-[12px] text-foreground shrink-0',
         className,
       )}
     >
@@ -184,7 +184,7 @@ export function PrototypePostRunBanner({
         <span className="badge badge-accent font-mono text-[10.5px]">
           R{review.revision.revisionNumber}
         </span>
-        <span className="font-medium text-ink">
+        <span className="font-medium text-foreground">
           {mode === 'BEFORE'
             ? t(
                 `正在对比改前版本 R${review.previousRevision.revisionNumber}`,
@@ -197,7 +197,7 @@ export function PrototypePostRunBanner({
             {anchorChips.slice(0, 3).map((chip) => (
               <span
                 key={chip}
-                className="rounded-[4px] border border-line bg-surface px-1.5 py-0.5 font-mono text-[10.5px] text-ink-2"
+                className="rounded-[4px] border border-border bg-card px-1.5 py-0.5 font-mono text-[10.5px] text-foreground-soft"
               >
                 {chip}
               </span>
@@ -215,7 +215,7 @@ export function PrototypePostRunBanner({
         <div
           role="group"
           aria-label={t('切换改前与改后预览', 'Toggle Before and After preview')}
-          className="inline-flex items-center gap-0.5 rounded-[6px] border border-line bg-inset/50 p-0.5"
+          className="inline-flex items-center gap-0.5 rounded-[6px] border border-border bg-muted/50 p-0.5"
         >
           <Button
             type="button"
@@ -263,7 +263,7 @@ export function PrototypePostRunBanner({
           aria-label={t('关闭改前改后对比条', 'Dismiss Before/After bar')}
           title={t('关闭', 'Dismiss')}
           onClick={onDismiss}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-[5px] text-muted-foreground transition-colors hover:bg-surface hover:text-ink"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-[5px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
         >
           <X size={13} aria-hidden="true" />
         </button>

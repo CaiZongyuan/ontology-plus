@@ -290,7 +290,7 @@ export function DataResourcesView({
               </Button>
               {data.databaseResources.length > 1 && (
                 <Button variant="ghost" size="xs" onClick={() => setDeleteDbTarget(db)}>
-                  <Trash2 size={12} className="text-red" />
+                  <Trash2 size={12} className="text-destructive" />
                 </Button>
               )}
             </div>
@@ -299,7 +299,7 @@ export function DataResourcesView({
           <div className="grid grid-cols-3 gap-2.5">
             {db.tables.map((tb) => (
               <div
-                key={tb.tableName} className="p-2.5 bg-inset rounded-[5px] border border-line"
+                key={tb.tableName} className="p-2.5 bg-muted rounded-[5px] border border-border"
               >
                 <div className="flex justify-between items-center">
                   <strong className="font-mono">{tb.tableName}</strong>
@@ -385,7 +385,7 @@ export function DataResourcesView({
         />
 
         {sqlError && (
-          <div className="mt-2 p-[8px_10px] rounded-[5px] bg-red-tint text-red font-mono text-[12.5px]"
+          <div className="mt-2 p-[8px_10px] rounded-[5px] bg-destructive-soft text-destructive font-mono text-[12.5px]"
           >
             {sqlError}
           </div>
@@ -404,7 +404,7 @@ export function DataResourcesView({
               </span>
             </div>
             <div
-              className="responsive-table-region rounded border border-line"
+              className="responsive-table-region rounded border border-border"
               role="region"
               aria-label="SQL Sandbox Preview Results"
               tabIndex={0}
@@ -499,7 +499,7 @@ export function DataResourcesView({
                         setDeleteDocTarget(doc);
                       }}
                     >
-                      <Trash2 size={11} className="text-red" />
+                      <Trash2 size={11} className="text-destructive" />
                     </Button>
                   </div>
                   <div className="mt-1">
@@ -523,7 +523,7 @@ export function DataResourcesView({
               testId="data-doc-markdown-editor"
             />
           ) : (
-            <div className="p-6 text-ink-3">{t('暂无数据文档', 'No data documents')}</div>
+            <div className="p-6 text-faint-foreground">{t('暂无数据文档', 'No data documents')}</div>
           )}
         </div>
       </div>
@@ -691,7 +691,7 @@ export function DataMappingsView() {
     {
       key: 'attr',
       header: t('本体属性', 'Ontology Attribute'),
-      render: (m) => <span className="font-mono font-semibold text-ink">{m.ontologyAttribute}</span>,
+      render: (m) => <span className="font-mono font-semibold text-foreground">{m.ontologyAttribute}</span>,
     },
     {
       key: 'physical',
@@ -705,12 +705,12 @@ export function DataMappingsView() {
     {
       key: 'transform',
       header: t('清洗转换表达式', 'Transform Expression'),
-      render: (m) => <span className="font-mono text-[11.5px] text-ink-2">{m.transformExpr}</span>,
+      render: (m) => <span className="font-mono text-[11.5px] text-foreground-soft">{m.transformExpr}</span>,
     },
     {
       key: 'quality',
       header: t('数据质量门禁规则', 'Data Quality Rule'),
-      render: (m) => <span className="font-mono text-[11.5px] text-ink-3">{m.qualityRule}</span>,
+      render: (m) => <span className="font-mono text-[11.5px] text-faint-foreground">{m.qualityRule}</span>,
     },
     {
       key: 'actions',
@@ -723,7 +723,7 @@ export function DataMappingsView() {
             {t('编辑', 'Edit')}
           </Button>
           <Button variant="ghost" size="xs" onClick={() => setDeleteTarget(m)}>
-            <Trash2 size={11.5} className="text-red" />
+            <Trash2 size={11.5} className="text-destructive" />
           </Button>
         </div>
       ),
@@ -1100,8 +1100,8 @@ export function DataMetricsReportsView() {
       header: t('分析报告标题', 'Report Title'),
       render: (rp) => (
         <div>
-          <div className="font-semibold text-ink">{rp.title}</div>
-          <div className="text-[11.5px] text-ink-3">{rp.summary}</div>
+          <div className="font-semibold text-foreground">{rp.title}</div>
+          <div className="text-[11.5px] text-faint-foreground">{rp.summary}</div>
         </div>
       ),
     },
@@ -1141,7 +1141,7 @@ export function DataMetricsReportsView() {
             <Download size={11.5} />
           </Button>
           <Button variant="ghost" size="xs" onClick={() => setDeleteReportTarget(rp)}>
-            <Trash2 size={11.5} className="text-red" />
+            <Trash2 size={11.5} className="text-destructive" />
           </Button>
         </div>
       ),
@@ -1151,8 +1151,8 @@ export function DataMetricsReportsView() {
   return (
     <div className="flex flex-col gap-4">
       {/* Top Mode Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
-        <div className="inline-flex items-center gap-1 rounded-control bg-inset p-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-2xs">
+        <div className="inline-flex items-center gap-1 rounded-control bg-muted p-1">
           <Button
             type="button"
             variant="toggle" size="sm" aria-pressed={viewMode === 'DASHBOARD'}
@@ -1241,7 +1241,7 @@ export function DataMetricsReportsView() {
                 const insight = insightsByMetric[m.id];
                 return (
                   <div
-                    key={m.id} className="p-3 rounded-[6px] bg-inset border border-line flex flex-col gap-1.5"
+                    key={m.id} className="p-3 rounded-[6px] bg-muted border border-border flex flex-col gap-1.5"
                   >
                     <div className="flex justify-between items-center">
                       <span className="badge badge-accent">{m.code}</span>
@@ -1263,7 +1263,7 @@ export function DataMetricsReportsView() {
                             size="xs"
                             onClick={() => setDeleteMetricTarget(m)}
                           >
-                            <Trash2 size={11} className="text-red" />
+                            <Trash2 size={11} className="text-destructive" />
                           </Button>
                         )}
                       </div>
@@ -1295,7 +1295,7 @@ export function DataMetricsReportsView() {
                     </div>
 
                     {insight && (
-                      <div className="mt-1.5 p-2.5 rounded-[5px] bg-surface border border-line text-[12.5px] flex flex-col gap-1.5"
+                      <div className="mt-1.5 p-2.5 rounded-[5px] bg-card border border-border text-[12.5px] flex flex-col gap-1.5"
                       >
                         <div className="font-semibold text-primary">
                           {t('AI 异动驱动因子：', 'Anomaly Drivers:')}
@@ -1352,7 +1352,7 @@ export function DataMetricsReportsView() {
                 const attrRes = attributionsByScenario[sc.id];
                 return (
                   <div
-                    key={sc.id} className="p-3 rounded-[6px] bg-inset border border-line flex flex-col gap-2"
+                    key={sc.id} className="p-3 rounded-[6px] bg-muted border border-border flex flex-col gap-2"
                   >
                     <div className="flex justify-between items-start gap-2.5"
                     >
@@ -1390,7 +1390,7 @@ export function DataMetricsReportsView() {
                             size="xs"
                             onClick={() => setDeleteScenarioTarget(sc)}
                           >
-                            <Trash2 size={12} className="text-red" />
+                            <Trash2 size={12} className="text-destructive" />
                           </Button>
                         )}
                       </div>
@@ -1422,7 +1422,7 @@ export function DataMetricsReportsView() {
                     </div>
 
                     {attrRes && (
-                      <div className="p-2.5 rounded-[5px] bg-surface border border-line"
+                      <div className="p-2.5 rounded-[5px] bg-card border border-border"
                       >
                         <div className="flex justify-between mb-1.5">
                           <strong className="text-[12.5px]">
@@ -1437,7 +1437,7 @@ export function DataMetricsReportsView() {
                         <div className="flex flex-col gap-1">
                           {attrRes.causalBreakdown.map((item, cIdx) => (
                             <div
-                              key={cIdx} className="flex justify-between gap-2 text-[12.5px] p-[4px_6px] bg-inset rounded-[4px]"
+                              key={cIdx} className="flex justify-between gap-2 text-[12.5px] p-[4px_6px] bg-muted rounded-[4px]"
                             >
                               <span>
                                 <strong>{item.factor}</strong> — {item.evidence}
@@ -1494,7 +1494,7 @@ export function DataMetricsReportsView() {
                     </Button>
                   </div>
                 </div>
-                <div className="rounded-card border border-line bg-surface-2 p-3.5">
+                <div className="rounded-card border border-border bg-surface-2 p-3.5">
                   <MarkdownRenderer content={rp.markdownContent} />
                 </div>
               </div>
@@ -1757,7 +1757,7 @@ export function DataReasoningView() {
           ].map((stage) => (
             <div
               key={stage.mode}
-              className="p-3 bg-inset rounded-[6px] border border-line flex flex-col justify-between gap-2"
+              className="p-3 bg-muted rounded-[6px] border border-border flex flex-col justify-between gap-2"
             >
               <div>
                 <div className="flex items-center justify-between gap-1.5">
@@ -1793,7 +1793,7 @@ export function DataReasoningView() {
               ? latestPolicyArtifact.dataSummary
               : seededSession!.dataSummary
             ).map((kpi, idx) => (
-              <div key={idx} className="p-2.5 rounded-[6px] border border-line bg-surface">
+              <div key={idx} className="p-2.5 rounded-[6px] border border-border bg-card">
                 <div className="text-[11.5px] text-muted-foreground">{kpi.label}</div>
                 <div className="flex items-baseline justify-between gap-2 mt-0.5">
                   <strong className="text-[15px] font-mono">{kpi.value}</strong>
@@ -1830,7 +1830,7 @@ export function DataReasoningView() {
           <div className="grid grid-cols-2 gap-2.5">
             {policyRecommendations.map((rec, i) => (
               <div
-                key={i} className="p-3 bg-inset rounded-[6px] border border-line flex flex-col justify-between gap-2"
+                key={i} className="p-3 bg-muted rounded-[6px] border border-border flex flex-col justify-between gap-2"
               >
                 <div>
                   <div className="flex justify-between gap-1.5">
@@ -1946,8 +1946,8 @@ export function DataWritebackView() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
-        <div className="text-[13px] font-semibold text-ink">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-2xs">
+        <div className="text-[13px] font-semibold text-foreground">
           {t('受治理业务系统闭环回写接口注册表', 'Governed Write-Back Interfaces')} (
           {data.writebackInterfaces.length})
         </div>
@@ -1983,7 +1983,7 @@ export function DataWritebackView() {
               </Button>
               {data.writebackInterfaces.length > 1 && (
                 <Button variant="ghost" size="xs" onClick={() => setDeleteTarget(wb)}>
-                  <Trash2 size={12} className="text-red" />
+                  <Trash2 size={12} className="text-destructive" />
                 </Button>
               )}
             </div>
@@ -2000,14 +2000,14 @@ export function DataWritebackView() {
               onChange={(e) => setPayloadDrafts((prev) => ({ ...prev, [wb.id]: e.target.value }))}
             />
             {jsonErrors[wb.id] && (
-              <div className="text-[11.5px] text-red font-mono">
+              <div className="text-[11.5px] text-destructive font-mono">
                 {jsonErrors[wb.id]}
               </div>
             )}
           </div>
 
           {wb.lastExecutionResult && (
-            <div className="p-2.5 bg-green-tint text-green rounded-[5px] font-mono text-[12.5px]"
+            <div className="p-2.5 bg-success-soft text-success rounded-[5px] font-mono text-[12.5px]"
             >
               {wb.lastExecutionResult}
             </div>
@@ -2184,9 +2184,9 @@ export function LlmCenterView() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-3 shadow-2xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-3 shadow-2xs">
         <div>
-          <div className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+          <div className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
             <Cpu size={15} className="text-primary" />
             {t('大模型网关', 'Pi AI Unified LLM Gateway Hub')}
           </div>
@@ -2239,7 +2239,7 @@ export function LlmCenterView() {
               </Button>
               {data.llmProviders.length > 1 && (
                 <Button variant="ghost" size="xs" onClick={() => setDeleteTarget(p)}>
-                  <Trash2 size={11.5} className="text-red" />
+                  <Trash2 size={11.5} className="text-destructive" />
                 </Button>
               )}
               <Button
@@ -2258,7 +2258,7 @@ export function LlmCenterView() {
 
           {p.lastTestedMessage && (
             <div
-              data-testid={idx === 0 ? 'llm-ping-result' : `llm-ping-result-${idx}`} className="p-2.5 bg-inset rounded-[5px] font-mono text-[12.5px] mb-2.5"
+              data-testid={idx === 0 ? 'llm-ping-result' : `llm-ping-result-${idx}`} className="p-2.5 bg-muted rounded-[5px] font-mono text-[12.5px] mb-2.5"
             >
               {p.lastTestedMessage}
             </div>
@@ -2343,7 +2343,7 @@ export function LlmCenterView() {
             />
           </div>
         </div>
-        <div className="mt-2 rounded-control border border-line bg-inset px-3 py-2.5">
+        <div className="mt-2 rounded-control border border-border bg-muted px-3 py-2.5">
           <label className="inline-flex cursor-pointer items-start gap-2">
             <input
               type="checkbox"
@@ -2353,7 +2353,7 @@ export function LlmCenterView() {
               onChange={(e) => setSupportsVision(e.target.checked)}
             />
             <span className="flex flex-col gap-0.5">
-              <strong className="text-[13px] text-ink">
+              <strong className="text-[13px] text-foreground">
                 {t('支持看图', 'Vision Input')}
               </strong>
               <span className="text-[12px] text-muted-foreground">
@@ -2461,7 +2461,7 @@ export function SystemSettingsView() {
         </div>
 
         {/* 3-State Segmented Theme Control */}
-        <div className="flex flex-wrap justify-between items-center gap-3 pb-3.5 border-b border-line"
+        <div className="flex flex-wrap justify-between items-center gap-3 pb-3.5 border-b border-border"
         >
           <div>
             <strong>{t('界面主题', 'Appearance Theme')}</strong>
@@ -2475,7 +2475,7 @@ export function SystemSettingsView() {
 
           <div
             role="group"
-            aria-label={t('界面外观主题选择', 'Appearance theme preference')} className="inline-flex p-0.75 rounded-[6px] bg-inset border border-line gap-1"
+            aria-label={t('界面外观主题选择', 'Appearance theme preference')} className="inline-flex p-0.75 rounded-[6px] bg-muted border border-border gap-1"
           >
             <Button
               type="button"
@@ -2508,7 +2508,7 @@ export function SystemSettingsView() {
         </div>
 
         {/* Bilingual Language Toggle */}
-        <div className="flex flex-wrap justify-between items-center gap-3 pb-3.5 border-b border-line"
+        <div className="flex flex-wrap justify-between items-center gap-3 pb-3.5 border-b border-border"
         >
           <div>
             <strong>{t('界面语言', 'Interface Language')}</strong>
@@ -2520,7 +2520,7 @@ export function SystemSettingsView() {
             </div>
           </div>
 
-          <div className="inline-flex p-0.75 rounded-[6px] bg-inset border border-line gap-1"
+          <div className="inline-flex p-0.75 rounded-[6px] bg-muted border border-border gap-1"
           >
             <Button
               type="button"
@@ -2540,7 +2540,7 @@ export function SystemSettingsView() {
         </div>
 
         {/* Strict Validation Gate Switch */}
-        <div className="flex justify-between items-center gap-3 pb-3.5 border-b border-line"
+        <div className="flex justify-between items-center gap-3 pb-3.5 border-b border-border"
         >
           <div>
             <strong>
@@ -2574,7 +2574,7 @@ export function SystemSettingsView() {
         </div>
 
         {/* Auto Mirror YAML & Auto Sync MU Switches */}
-        <div className="flex justify-between items-center gap-3 pb-3.5 border-b border-line"
+        <div className="flex justify-between items-center gap-3 pb-3.5 border-b border-border"
         >
           <div>
             <strong>

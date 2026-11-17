@@ -20,7 +20,7 @@ export function MarkdownRenderer({
 }: MarkdownRendererProps) {
   return (
     <div
-      className={cn('md-prose text-[13px] leading-[1.65] text-ink break-words', className)}
+      className={cn('md-prose text-[13px] leading-[1.65] text-foreground break-words', className)}
       data-testid={testId}
     >
       <ReactMarkdown
@@ -29,7 +29,7 @@ export function MarkdownRenderer({
           table({ children }) {
             return (
               <div
-                className="responsive-table-region my-2 rounded-card border border-line"
+                className="responsive-table-region my-2 rounded-card border border-border"
                 role="region"
                 aria-label="Markdown data table"
                 tabIndex={0}

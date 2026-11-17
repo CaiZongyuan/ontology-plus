@@ -809,26 +809,26 @@ function ShellInner() {
               {activeView === 'app-knowledge-graph' &&
                 (!lifecycle?.hasOntology || data.activeProject.knowledgeGraph.nodes.length === 0 ? (
                   <div className="card py-12 px-6 flex flex-col items-center text-center gap-3 max-w-[680px] mx-auto my-6">
-                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-line bg-inset text-primary">
+                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border bg-muted text-primary">
                       <Network size={20} />
                     </div>
                     <span className="badge badge-warn">
                       {t('尚未到达此阶段 · 暂无图谱节点', 'Stage Not Yet Reached · No Graph Nodes')}
                     </span>
-                    <h3 className="font-serif text-[18px] font-semibold text-ink m-0">
+                    <h3 className="font-serif text-[18px] font-semibold text-foreground m-0">
                       {t(
                         `「${data.activeProject.name}」尚未生成业务本体`,
                         `"${data.activeProject.name}" has not synthesized its ontology yet`,
                       )}
                     </h3>
-                    <p className="text-[13px] text-ink-3 max-w-[520px] leading-relaxed m-0">
+                    <p className="text-[13px] text-faint-foreground max-w-[520px] leading-relaxed m-0">
                       {t(
                         '知识图谱会根据第 4 步「业务本体」中的对象、行为、规则、事件与界面引用关系自动绘制，无需手工连线。当前工程仍在推进前置阶段，保持空白可避免示例模板干扰。',
                         'The Knowledge Graph is automatically rendered from your project ontology once Step 4 (Business Ontology) is generated.',
                       )}
                     </p>
                     {lifecycle && (
-                      <p className="text-[12.5px] text-ink-2 bg-inset border border-line rounded-[6px] px-3.5 py-2 m-0">
+                      <p className="text-[12.5px] text-foreground-soft bg-muted border border-border rounded-[6px] px-3.5 py-2 m-0">
                         {t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
                       </p>
                     )}
@@ -861,7 +861,7 @@ function ShellInner() {
                         className="card flex flex-wrap items-center justify-between gap-3"
                         style={{ borderColor: 'var(--warn)', background: 'var(--warn-soft, var(--inset))' }}
                       >
-                        <div className="text-[12.5px] text-ink">
+                        <div className="text-[12.5px] text-foreground">
                           <strong>{t('提示：当前图谱来自创建工程时的示例模板', 'Notice: Graph shows preloaded demo template')}</strong>
                           {' — '}
                           {t(
