@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleSlash,
+  CornerDownRight,
   Database,
   Loader2,
   RotateCcw,
@@ -12,11 +13,16 @@ import {
   Settings2,
   Square,
 } from 'lucide-react';
-import { checkBusinessViewMarkup } from '../../../packages/business-vocabulary/index.js';
+import {
+  PROJECT_STEP_NAMES,
+  checkBusinessViewMarkup,
+  type ProjectStepId,
+} from '../../../packages/business-vocabulary/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { ApprovalCard, Button } from '../beautifui/index.js';
 import { MarkdownRenderer } from '../markdown/index.js';
+import { StepHandoffCard } from './StepHandoffCard.js';
 import { LocalImageThumbnail } from './VisionAttachmentControls.js';
 import {
   PLATFORM_UNAVAILABLE_COPY,
@@ -41,6 +47,10 @@ export interface AgentRunCardProps {
   onOpenLlmCenter?: () => void;
   onHoverAnchor?: (anchor: PrototypeTargetAnchor | null) => void;
   onAnswerAskUser?: (promptId: string, selectedAnswers: string[], freeformText?: string) => void;
+  onAcceptStepHandoff?: (handoffId: string) => void | Promise<void>;
+  onDeclineStepHandoff?: (handoffId: string) => void | Promise<void>;
+  onOpenHandoffTargetStep?: (targetStep: ProjectStepId, targetSessionId?: string) => void;
+  handoffBusyAction?: 'accept' | 'decline' | null;
   onTriggerWriteback?: (writebackInterfaceId: string, actionTitle: string) => void;
   /** Hook slot for #65/#67/#70 computed Change Summary & run-level Undo footer. */
   changeSummarySlot?: React.ReactNode;
@@ -115,6 +125,10 @@ export function AgentRunCard({
   onOpenLlmCenter,
   onHoverAnchor,
   onAnswerAskUser,
+  onAcceptStepHandoff,
+  onDeclineStepHandoff,
+  onOpenHandoffTargetStep,
+  handoffBusyAction,
   onTriggerWriteback,
   changeSummarySlot,
   defaultDetailsOpen = false,
@@ -172,6 +186,22 @@ export function AgentRunCard({
     >
       {run.userPrompt ? (
         <div className="agent-turn-user" data-testid="agent-turn-user">
+          {run.handoffFrom && (
+            <div
+              className="mb-1 inline-flex items-center gap-1 text-xs text-muted-foreground"
+              data-testid="agent-turn-handoff-origin"
+            >
+              <CornerDownRight size={12} aria-hidden="true" />
+              <span>
+                {run.handoffFrom.sourceStep
+                  ? t(
+                      `来自「${PROJECT_STEP_NAMES[run.handoffFrom.sourceStep].zh}」步骤的转交请求`,
+                      `Handed off from ${PROJECT_STEP_NAMES[run.handoffFrom.sourceStep].en}`,
+                    )
+                  : t('跨步骤转交请求', 'Handed-off request')}
+              </span>
+            </div>
+          )}
           {run.images && run.images.length > 0 && (
             <div
               className="vision-attachment-strip agent-run-images"
@@ -489,6 +519,19 @@ export function AgentRunCard({
                     onAnswerAskUser(run.askUser!.id, selectedOptions, customNote),
                 }
               : {})}
+          />
+        </div>
+      )}
+
+      {run.stepHandoff && (
+        <div className="agent-run-hitl">
+          <StepHandoffCard
+            handoff={run.stepHandoff}
+            disabled={running}
+            {...(handoffBusyAction !== undefined ? { busyAction: handoffBusyAction } : {})}
+            {...(onAcceptStepHandoff ? { onAccept: onAcceptStepHandoff } : {})}
+            {...(onDeclineStepHandoff ? { onDecline: onDeclineStepHandoff } : {})}
+            {...(onOpenHandoffTargetStep ? { onOpenTargetStep: onOpenHandoffTargetStep } : {})}
           />
         </div>
       )}

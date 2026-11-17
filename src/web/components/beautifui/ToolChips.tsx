@@ -130,6 +130,9 @@ const ARG_LABELS: Record<string, { zh: string; en: string }> = {
   options: { zh: '可选方案', en: 'Options' },
   multiSelect: { zh: '允许复选', en: 'Multi-Select' },
   allowFreeform: { zh: '允许自由补充', en: 'Allow Freeform' },
+  targetStep: { zh: '目标步骤', en: 'Target Step' },
+  request: { zh: '转交请求内容', en: 'Request' },
+  reason: { zh: '转交原因说明', en: 'Reason' },
 };
 
 function formatDuration(ms: number | undefined): string | null {

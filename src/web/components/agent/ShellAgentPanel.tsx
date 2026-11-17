@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import type { ProjectStepId } from '../../../packages/business-vocabulary/index.js';
 import type {
   AgentSession,
   AgentSessionKind,
@@ -21,6 +22,7 @@ import {
   AGENT_PANEL_SURFACES,
   agentPanelSurfaceFor,
   defaultNavForSessionKind,
+  getDefaultViewForStep,
   resolveArtifactNavTarget,
   type AgentPanelSurface,
   type NavViewId,
@@ -371,6 +373,8 @@ export function ShellAgentPanel({
     startSessionAgentRun,
     cancelSessionAgentRun,
     retrySessionAgentRun,
+    acceptStepHandoff,
+    declineStepHandoff,
     removeQueuedSessionPrompt,
   } = useWorkbenchStore();
   const width = useAgentPanelStore((s) => s.width);
@@ -386,6 +390,7 @@ export function ShellAgentPanel({
     'ASK_POLICY',
   );
   const [undoingEntryId, setUndoingEntryId] = useState<string | null>(null);
+  const [handoffBusyById, setHandoffBusyById] = useState<Record<string, 'accept' | 'decline'>>({});
 
   const {
     session: activeSession,
@@ -647,6 +652,50 @@ export function ShellAgentPanel({
     });
   };
 
+  const runHandoffAction = async (
+    runId: string,
+    handoffId: string,
+    action: 'accept' | 'decline',
+    task: (sessionId: string) => Promise<void>,
+  ) => {
+    const target = runs.find((r) => r.id === runId);
+    const sessionId = target?.sourceSessionId ?? activeSession?.id;
+    if (!sessionId) return;
+    setHandoffBusyById((prev) => ({ ...prev, [handoffId]: action }));
+    try {
+      await task(sessionId);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHandoffBusyById((prev) => {
+        const next = { ...prev };
+        delete next[handoffId];
+        return next;
+      });
+    }
+  };
+
+  const handleAcceptStepHandoff = (runId: string, handoffId: string) =>
+    runHandoffAction(runId, handoffId, 'accept', async (sessionId) => {
+      const res = await acceptStepHandoff(sessionId, handoffId);
+      if (res) {
+        onNavigate(res.targetNavView);
+      }
+    });
+
+  const handleDeclineStepHandoff = (runId: string, handoffId: string) =>
+    runHandoffAction(runId, handoffId, 'decline', async (sessionId) => {
+      await declineStepHandoff(sessionId, handoffId);
+    });
+
+  const handleOpenHandoffTargetStep = (targetStep: ProjectStepId, targetSessionId?: string) => {
+    const targetView = getDefaultViewForStep(targetStep);
+    setActiveNav(targetView, {
+      ...(targetSessionId ? { sessionId: targetSessionId } : {}),
+    });
+    onNavigate(targetView);
+  };
+
   const handleTriggerWriteback = async (writebackInterfaceId: string, actionTitle: string) => {
     try {
       const res = await apiPostJson<{
@@ -893,6 +942,10 @@ export function ShellAgentPanel({
       onAnswerAskUser={(runId, promptId, selectedAnswers, freeformText) =>
         void handleAnswerAskUser(runId, promptId, selectedAnswers, freeformText)
       }
+      onAcceptStepHandoff={(runId, handoffId) => void handleAcceptStepHandoff(runId, handoffId)}
+      onDeclineStepHandoff={(runId, handoffId) => void handleDeclineStepHandoff(runId, handoffId)}
+      onOpenHandoffTargetStep={handleOpenHandoffTargetStep}
+      handoffBusyById={handoffBusyById}
       onTriggerWriteback={(writebackId, actionTitle) =>
         void handleTriggerWriteback(writebackId, actionTitle)
       }

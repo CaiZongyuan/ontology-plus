@@ -14,7 +14,10 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { BUSINESS_VOCABULARY } from '../../../packages/business-vocabulary/index.js';
+import {
+  BUSINESS_VOCABULARY,
+  type ProjectStepId,
+} from '../../../packages/business-vocabulary/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { Button } from '../beautifui/index.js';
@@ -88,6 +91,10 @@ export interface AgentPanelProps {
     selectedAnswers: string[],
     freeformText?: string,
   ) => void;
+  onAcceptStepHandoff?: (runId: string, handoffId: string) => void | Promise<void>;
+  onDeclineStepHandoff?: (runId: string, handoffId: string) => void | Promise<void>;
+  onOpenHandoffTargetStep?: (targetStep: ProjectStepId, targetSessionId?: string) => void;
+  handoffBusyById?: Readonly<Record<string, 'accept' | 'decline'>>;
   onTriggerWriteback?: (writebackInterfaceId: string, actionTitle: string) => void;
   /** Optional hook slot for #65/#67/#70 computed Change Summary & run-level Undo footer per run. */
   renderRunFooter?: (run: AgentRunView) => React.ReactNode;
@@ -152,6 +159,10 @@ export function AgentPanel({
   onOpenLlmCenter,
   onHoverAnchor,
   onAnswerAskUser,
+  onAcceptStepHandoff,
+  onDeclineStepHandoff,
+  onOpenHandoffTargetStep,
+  handoffBusyById,
   onTriggerWriteback,
   renderRunFooter,
   sessions,
@@ -498,6 +509,21 @@ export function AgentPanel({
                       onAnswerAskUser: (promptId, selectedAnswers, freeformText) =>
                         onAnswerAskUser(run.id, promptId, selectedAnswers, freeformText),
                     }
+                  : {})}
+                {...(onAcceptStepHandoff
+                  ? {
+                      onAcceptStepHandoff: (handoffId) => onAcceptStepHandoff(run.id, handoffId),
+                    }
+                  : {})}
+                {...(onDeclineStepHandoff
+                  ? {
+                      onDeclineStepHandoff: (handoffId) =>
+                        onDeclineStepHandoff(run.id, handoffId),
+                    }
+                  : {})}
+                {...(onOpenHandoffTargetStep ? { onOpenHandoffTargetStep } : {})}
+                {...(run.stepHandoff && handoffBusyById?.[run.stepHandoff.id]
+                  ? { handoffBusyAction: handoffBusyById[run.stepHandoff.id] }
                   : {})}
                 {...(onTriggerWriteback ? { onTriggerWriteback } : {})}
                 {...(renderRunFooter ? { changeSummarySlot: renderRunFooter(run) } : {})}

@@ -20,6 +20,8 @@ import type {
   AgentSessionMessage,
   AgentToolCallTrace,
   PrototypeTargetAnchor,
+  StepHandoffOrigin,
+  StepHandoffProposal,
 } from '../../../packages/workspace-store/index.js';
 import {
   formatAnchorBadgeLabel,
@@ -128,6 +130,10 @@ export interface AgentRunView {
   images?: AgentImageAttachmentRef[];
   /** Structured Scoped HITL question emitted by `ask_user` during this run. */
   askUser?: AgentAskUserPrompt;
+  /** Structured cross-step hand-off proposal emitted by `propose_step_handoff` during this run. */
+  stepHandoff?: StepHandoffProposal;
+  /** Provenance when this turn's user message was delivered via an accepted Step Hand-off. */
+  handoffFrom?: StepHandoffOrigin;
   /** Semantic anchors modified during this run (for canvas highlighting). */
   modifiedAnchors?: PrototypeTargetAnchor[];
   /** Immutable prototype revision created at the end of this run, when HTML changed. */
@@ -882,7 +888,9 @@ function buildCompletedSessionRun(
     sourceAssistantMessageId: aMsg.id,
     retryPrompt: uMsg.content,
     ...(uMsg.images && uMsg.images.length > 0 ? { images: uMsg.images } : {}),
+    ...(uMsg.handoffFrom ? { handoffFrom: uMsg.handoffFrom } : {}),
     ...(aMsg.askUser ? { askUser: aMsg.askUser } : {}),
+    ...(aMsg.stepHandoff ? { stepHandoff: aMsg.stepHandoff } : {}),
     ...(modifiedAnchors.length > 0 ? { modifiedAnchors } : {}),
     ...(revArtifact
       ? {
@@ -982,7 +990,9 @@ function buildRunFromLiveDraft(
     ...(uMsg ? { sourceUserMessageId: uMsg.id } : {}),
     retryPrompt: uMsg?.content ?? draft.userPrompt,
     ...(images ? { images } : {}),
+    ...(uMsg?.handoffFrom ? { handoffFrom: uMsg.handoffFrom } : {}),
     ...(draft.askUser ? { askUser: draft.askUser } : {}),
+    ...(draft.stepHandoff ? { stepHandoff: draft.stepHandoff } : {}),
     ...(draft.activeAnchor ? { modifiedAnchors: [draft.activeAnchor] } : {}),
     ...(revArtifact
       ? {
@@ -1068,6 +1078,7 @@ export function agentRunsFromSession(
       sourceSessionId: session.id,
       sourceUserMessageId: msg.id,
       retryPrompt: msg.content,
+      ...(msg.handoffFrom ? { handoffFrom: msg.handoffFrom } : {}),
       ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
     });
   }
