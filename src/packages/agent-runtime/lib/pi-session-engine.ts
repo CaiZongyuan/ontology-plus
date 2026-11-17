@@ -98,6 +98,18 @@ import {
   type OntologyToolName,
   type OpenAiFunctionTool,
 } from './tools.js';
+import {
+  allocateTurnRunIdentity,
+  deriveProjectStepForSessionKind,
+  invokeAgentRunEndHooks,
+  invokeAgentRunStartHooks,
+  nextAgentMessageId,
+  type AgentRunContext,
+  type AgentRunFailureInfo,
+  type AgentRunLifecycleHooks,
+  type AgentRunOutcome,
+  type AllocatedTurnRunIdentity,
+} from './run-lifecycle.js';
 
 // ─── Gateway Error & Explicit Mock Boundary (ADR-0007) ───────────────────────
 
@@ -710,10 +722,10 @@ export function abortActiveAgentSession(
 export async function abortActiveAgentSessionAsync(
   store: WorkspaceStore,
   sessionId: string,
-): Promise<{ aborted: boolean; session: AgentSession | undefined }> {
+): Promise<{ aborted: boolean; runId?: string; session: AgentSession | undefined }> {
   const slot = getSessionSlot(store, sessionId);
-  const runningPromise =
-    slot?.activeRun && !slot.activeRun.done ? slot.activeRun.completionPromise : undefined;
+  const activeRun = slot?.activeRun && !slot.activeRun.done ? slot.activeRun : undefined;
+  const runningPromise = activeRun?.completionPromise;
   const aborted = abortActiveAgentSession(sessionId, 'USER_ABORT', store);
   if (runningPromise) {
     await Promise.race([runningPromise, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
@@ -727,7 +739,11 @@ export async function abortActiveAgentSessionAsync(
           updatedAt: new Date().toISOString(),
         })
       : cur;
-  return { aborted, session };
+  return {
+    aborted,
+    ...(activeRun ? { runId: activeRun.runId } : {}),
+    session,
+  };
 }
 
 // ─── SSE Event Protocol ──────────────────────────────────────────────────────
@@ -3375,6 +3391,7 @@ export interface UnifiedAgentStreamInput {
   signal?: AbortSignal;
   idleTimeoutMs?: number;
   stepTimeoutMs?: number;
+  hooks?: AgentRunLifecycleHooks;
 }
 
 function toPersistedImageRef(
@@ -3507,6 +3524,7 @@ async function executeUnifiedTurnCore(
   input: Omit<UnifiedAgentStreamInput, 'signal'>,
   emit: (ev: UnifiedAgentSseEvent) => void,
   controller: AbortController,
+  preallocatedIdentity?: AllocatedTurnRunIdentity,
 ): Promise<void> {
   const existing = store.getAgentSession(input.sessionId);
   if (!existing) {
@@ -3582,7 +3600,13 @@ async function executeUnifiedTurnCore(
       ...input.askUserAnswer.selectedAnswers,
       ...(input.askUserAnswer.freeformText ? [input.askUserAnswer.freeformText] : []),
     ].filter(Boolean);
+    const answerSummary = pickLocaleText(
+      effectiveLocale,
+      `[用户已确认选择] ${combinedAnswers.join('；') || input.askUserAnswer.promptId}`,
+      `[User Confirmed Choice] ${combinedAnswers.join('; ') || input.askUserAnswer.promptId}`,
+    );
 
+    let matchedAskUser = false;
     for (let i = workingMessages.length - 1; i >= 0; i -= 1) {
       const msg = workingMessages[i]!;
       if (msg.askUser && msg.askUser.id === input.askUserAnswer.promptId) {
@@ -3594,16 +3618,14 @@ async function executeUnifiedTurnCore(
             selectedAnswers: combinedAnswers,
           },
         };
-        const answerSummary = pickLocaleText(
-          effectiveLocale,
-          `[用户已确认选择] ${combinedAnswers.join('；')}`,
-          `[User Confirmed Choice] ${combinedAnswers.join('; ')}`,
-        );
-        synthesizedPrompt = synthesizedPrompt
-          ? `${answerSummary}\n${synthesizedPrompt}`
-          : answerSummary;
+        matchedAskUser = true;
         break;
       }
+    }
+    if (matchedAskUser || !synthesizedPrompt) {
+      synthesizedPrompt = synthesizedPrompt
+        ? `${answerSummary}\n${synthesizedPrompt}`
+        : answerSummary;
     }
   }
 
@@ -3620,16 +3642,27 @@ async function executeUnifiedTurnCore(
     );
   }
 
+  const turnIdentity = preallocatedIdentity ?? allocateTurnRunIdentity(existing, input);
   let currentTurnUserMsgId: string | undefined;
   if (synthesizedPrompt) {
-    currentTurnUserMsgId = `amsg-${Date.now().toString(36)}-u`;
+    currentTurnUserMsgId = turnIdentity.allocatedUserMessageId ?? nextAgentMessageId('u');
     workingMessages.push({
       id: currentTurnUserMsgId,
+      runId: turnIdentity.runId,
       role: 'user',
       content: synthesizedPrompt,
       ...(turnAttachmentRefs.length > 0 ? { images: turnAttachmentRefs } : {}),
       timestamp: nowIso,
     });
+  } else if (workingMessages.at(-1)?.role === 'user') {
+    const trailingIdx = workingMessages.length - 1;
+    const trailingUser = workingMessages[trailingIdx]!;
+    if (!trailingUser.runId) {
+      workingMessages[trailingIdx] = {
+        ...trailingUser,
+        runId: turnIdentity.runId,
+      };
+    }
   }
 
   const structuredTurnAction = resolveEffectiveStructuredAction(
@@ -3657,15 +3690,16 @@ async function executeUnifiedTurnCore(
     updatedAt: nowIso,
   });
 
+  const turnStartMs = Date.now();
+  const assistantMsgId = nextAgentMessageId('a');
+  const turnRunId = turnIdentity.runId;
+
   saveSessionCheckpointSafe(store, sessionState, {
     phase: 'TURN_STARTED',
+    runId: turnRunId,
     messageCount: sessionState.messages.length,
     toolCallsCount: 0,
   });
-
-  const turnStartMs = Date.now();
-  const assistantMsgId = `amsg-${Date.now().toString(36)}-a`;
-  const turnRunId = resolveAgentTurnRunId(workingMessages, currentTurnUserMsgId, assistantMsgId);
   let built: ReturnType<typeof buildPiModelsForStore> | undefined;
   let accumulatedThinking = '';
   let accumulatedText = '';
@@ -3676,41 +3710,95 @@ async function executeUnifiedTurnCore(
   let totalOutputTokens = 0;
   let hadValidatorError = false;
 
+  const turnUserMessageId =
+    currentTurnUserMsgId ??
+    (workingMessages.at(-1)?.role === 'user' ? workingMessages.at(-1)!.id : undefined);
+
+  const buildRunContext = (curSession: AgentSession): AgentRunContext => ({
+    runId: turnRunId,
+    sessionId: curSession.id,
+    projectId: curSession.projectId?.trim() ? curSession.projectId : null,
+    sessionKind: curSession.agentKind,
+    projectStep: deriveProjectStepForSessionKind(curSession.agentKind),
+    ...(curSession.targetId ? { targetId: curSession.targetId } : {}),
+    ...(turnUserMessageId ? { userMessageId: turnUserMessageId } : {}),
+    startedAt: nowIso,
+  });
+
+  let didInvokeRunStart = false;
+  let runEndInvoked = false;
+  const invokeRunEndOnce = async (params: {
+    outcome: AgentRunOutcome;
+    assistantMessageId: string;
+    endedAt: string;
+    error?: AgentRunFailureInfo;
+  }): Promise<void> => {
+    if (!didInvokeRunStart || runEndInvoked) return;
+    runEndInvoked = true;
+    await invokeAgentRunEndHooks(
+      store,
+      {
+        ...buildRunContext(sessionState),
+        outcome: params.outcome,
+        assistantMessageId: params.assistantMessageId,
+        endedAt: params.endedAt,
+        durationMs: Math.max(0, Date.now() - turnStartMs),
+        ...(params.error ? { error: params.error } : {}),
+      },
+      input.hooks,
+    );
+  };
+
   let usedVisionFallback = false;
   let activeVisionFallbackNotice: string | undefined;
 
-  const initialTargetProto =
-    sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
-      ? resolveTargetPrototypeForSession(store, sessionState)
-      : undefined;
-  const fallbackProtoName =
-    input.prototypeName?.trim() ||
-    pickLocaleText(
-      effectiveLocale,
-      `${resolveProjectDetail(store, sessionState.projectId)?.name ?? '业务'}交互原型`,
-      `${resolveProjectDetail(store, sessionState.projectId)?.name ?? 'Interactive'} Prototype`,
-    );
-  const prototypeTurnDraft: PrototypeTurnDraft | undefined =
-    sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
-      ? initialTargetProto
-        ? {
-            prototypeId: initialTargetProto.id,
-            prototypeName: initialTargetProto.name,
-            ...(input.designBrief ? { designBrief: input.designBrief } : {}),
-            baselineHtml: initialTargetProto.htmlContent,
-            workingHtml: initialTargetProto.htmlContent,
-            modifiedAnchors: [],
-          }
-        : {
-            prototypeName: fallbackProtoName,
-            ...(input.designBrief ? { designBrief: input.designBrief } : {}),
-            baselineHtml: '',
-            workingHtml: '',
-            modifiedAnchors: [],
-          }
-      : undefined;
-
   try {
+    didInvokeRunStart = true;
+    await invokeAgentRunStartHooks(
+      store,
+      {
+        ...buildRunContext(sessionState),
+        prompt: synthesizedPrompt,
+        mode: input.mode ?? 'PROMPT',
+      },
+      input.hooks,
+    );
+
+    const initialTargetProto =
+      sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
+        ? resolveTargetPrototypeForSession(store, sessionState)
+        : undefined;
+    const fallbackProtoName =
+      input.prototypeName?.trim() ||
+      pickLocaleText(
+        effectiveLocale,
+        `${resolveProjectDetail(store, sessionState.projectId)?.name ?? '业务'}交互原型`,
+        `${resolveProjectDetail(store, sessionState.projectId)?.name ?? 'Interactive'} Prototype`,
+      );
+    const prototypeTurnDraft: PrototypeTurnDraft | undefined =
+      sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
+        ? initialTargetProto
+          ? {
+              prototypeId: initialTargetProto.id,
+              prototypeName: initialTargetProto.name,
+              ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+              baselineHtml: initialTargetProto.htmlContent,
+              workingHtml: initialTargetProto.htmlContent,
+              modifiedAnchors: [],
+            }
+          : {
+              prototypeName: fallbackProtoName,
+              ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+              baselineHtml: '',
+              workingHtml: '',
+              modifiedAnchors: [],
+            }
+        : undefined;
+
+    if (controller.signal.aborted) {
+      throw toAbortedError();
+    }
+
     built = buildPiModelsForStore(store, sessionState, {
       ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
       ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
@@ -3732,6 +3820,7 @@ async function executeUnifiedTurnCore(
       id: nextEventId(),
       event: 'session_meta',
       data: {
+        runId: turnRunId,
         sessionId: sessionState.id,
         title: sessionState.title,
         provider: built.providerLabel,
@@ -4106,7 +4195,7 @@ async function executeUnifiedTurnCore(
             content: accumulatedText,
           },
           effectiveLocale,
-          { isMock: false, actionParams: structuredTurnAction.params },
+          { isMock: false, runId: turnRunId, actionParams: structuredTurnAction.params },
         );
         if (autoSrs) {
           allToolTraces.push(autoSrs.trace);
@@ -4175,7 +4264,7 @@ async function executeUnifiedTurnCore(
             content: accumulatedText,
           },
           effectiveLocale,
-          { isMock: false, actionParams: structuredTurnAction.params },
+          { isMock: false, runId: turnRunId, actionParams: structuredTurnAction.params },
         );
         if (autoArch) {
           allToolTraces.push(autoArch.trace);
@@ -4260,7 +4349,7 @@ async function executeUnifiedTurnCore(
           ...(prototypeTurnDraft.designBrief
             ? { designBrief: prototypeTurnDraft.designBrief }
             : {}),
-          agentRunId: assistantMsgId,
+          agentRunId: turnRunId,
         });
         sessionState = {
           ...sessionState,
@@ -4294,7 +4383,7 @@ async function executeUnifiedTurnCore(
             instruction: cleanRevisionNote,
             htmlContent: prototypeTurnDraft.workingHtml,
             source: 'AGENT_RUN',
-            agentRunId: assistantMsgId,
+            agentRunId: turnRunId,
           });
           const revisionArtifact: AgentDomainArtifact = {
             kind: 'PROTOTYPE_REVISION',
@@ -4327,6 +4416,7 @@ async function executeUnifiedTurnCore(
 
     const assistantRecord: AgentSessionMessage = {
       id: assistantMsgId,
+      runId: turnRunId,
       role: 'assistant',
       content: accumulatedText,
       ...(accumulatedThinking
@@ -4384,9 +4474,16 @@ async function executeUnifiedTurnCore(
     sessionState = store.saveAgentSession(completedSession);
 
     saveSessionCheckpointSafe(store, sessionState, {
-      phase: 'COMPLETED',
+      phase: pendingAskUser ? 'AWAITING_USER' : 'COMPLETED',
+      runId: turnRunId,
       messageCount: sessionState.messages.length,
       toolCallsCount: allToolTraces.length,
+    });
+
+    await invokeRunEndOnce({
+      outcome: pendingAskUser ? 'AWAITING_USER' : 'COMPLETED',
+      assistantMessageId: assistantRecord.id,
+      endedAt: assistantRecord.timestamp,
     });
 
     emit({
@@ -4402,7 +4499,7 @@ async function executeUnifiedTurnCore(
     emit({
       id: nextEventId(),
       event: 'message_end',
-      data: buildSessionMessageEndPayload(store, sessionState),
+      data: buildSessionMessageEndPayload(store, sessionState, { runId: turnRunId }),
     });
   } catch (err) {
     const currentActive = activeSessionAbortControllers.get(existing.id);
@@ -4411,12 +4508,18 @@ async function executeUnifiedTurnCore(
       supersededByNewTurn ||
       (err instanceof SessionStreamAbortedError && err.kind === 'STEER_SUPERSEDED')
     ) {
+      await invokeRunEndOnce({
+        outcome: 'ABORTED',
+        assistantMessageId: assistantMsgId,
+        endedAt: new Date().toISOString(),
+      });
       return;
     }
 
     if (err instanceof SessionStreamAbortedError && err.kind === 'USER_ABORT') {
       const cancelledAssistantMsg: AgentSessionMessage = {
         id: assistantMsgId,
+        runId: turnRunId,
         role: 'assistant',
         content: accumulatedText,
         cancelled: true,
@@ -4447,14 +4550,24 @@ async function executeUnifiedTurnCore(
 
       saveSessionCheckpointSafe(store, sessionState, {
         phase: 'CANCELLED',
+        runId: turnRunId,
         messageCount: sessionState.messages.length,
         toolCallsCount: allToolTraces.length,
+      });
+
+      await invokeRunEndOnce({
+        outcome: 'ABORTED',
+        assistantMessageId: cancelledAssistantMsg.id,
+        endedAt: cancelledAssistantMsg.timestamp,
       });
 
       emit({
         id: nextEventId(),
         event: 'message_end',
-        data: buildSessionMessageEndPayload(store, sessionState, { cancelled: true }),
+        data: buildSessionMessageEndPayload(store, sessionState, {
+          cancelled: true,
+          runId: turnRunId,
+        }),
       });
       return;
     }
@@ -4531,7 +4644,8 @@ async function executeUnifiedTurnCore(
     }
 
     const errorAssistantMsg: AgentSessionMessage = {
-      id: `amsg-${Date.now().toString(36)}-err`,
+      id: nextAgentMessageId('err'),
+      runId: turnRunId,
       role: 'assistant',
       content: accumulatedText,
       ...(accumulatedThinking
@@ -4556,14 +4670,23 @@ async function executeUnifiedTurnCore(
 
     saveSessionCheckpointSafe(store, sessionState, {
       phase: 'FAILED',
+      runId: turnRunId,
       messageCount: sessionState.messages.length,
       errorCode: diagnostic.code,
+    });
+
+    await invokeRunEndOnce({
+      outcome: 'FAILED',
+      assistantMessageId: errorAssistantMsg.id,
+      endedAt: errorAssistantMsg.timestamp,
+      error: diagnostic,
     });
 
     emit({
       id: nextEventId(),
       event: 'run_error',
       data: {
+        runId: turnRunId,
         diagnostic: errorAssistantMsg.errorDiagnostic,
         session: sessionState,
         ...(sessionState.agentKind === 'REQUIREMENT'
@@ -4577,6 +4700,17 @@ async function executeUnifiedTurnCore(
     }
     if (activeSessionAbortControllers.get(existing.id) === controller) {
       activeSessionAbortControllers.delete(existing.id);
+    }
+    if (didInvokeRunStart && !runEndInvoked) {
+      await invokeRunEndOnce({
+        outcome: 'FAILED',
+        assistantMessageId: assistantMsgId,
+        endedAt: new Date().toISOString(),
+        error: {
+          code: 'AGENT_RUNTIME_ERROR',
+          message: 'Agent run terminated unexpectedly before recording completion.',
+        },
+      }).catch(() => {});
     }
   }
 }
@@ -4594,8 +4728,10 @@ function launchActiveRunInSlot(
   turnInput: Omit<UnifiedAgentStreamInput, 'signal'>,
 ): ActiveBackgroundSessionRun {
   const controller = new AbortController();
+  const existingSession = store.getAgentSession(sessionId);
+  const turnIdentity = allocateTurnRunIdentity(existingSession, turnInput);
   const run: ActiveBackgroundSessionRun = {
-    runId: `srun-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    runId: turnIdentity.runId,
     sessionId,
     controller,
     bufferedEvents: [],
@@ -4611,7 +4747,13 @@ function launchActiveRunInSlot(
     notifyRunSubscribers(run);
   };
 
-  run.completionPromise = executeUnifiedTurnCore(store, turnInput, emit, controller)
+  run.completionPromise = executeUnifiedTurnCore(
+    store,
+    turnInput,
+    emit,
+    controller,
+    turnIdentity,
+  )
     .catch((err) => {
       emit({
         id: `${sessionId}-evt-fatal-${Date.now().toString(36)}`,
@@ -4721,7 +4863,12 @@ export async function* runUnifiedAgentSessionStream(
   const slot = getOrCreateSessionSlot(store, input.sessionId);
 
   if (input.mode === 'STEER' && slot.activeRun && !slot.activeRun.done) {
+    const priorCompletion = slot.activeRun.completionPromise;
     abortActiveAgentSession(input.sessionId, 'STEER_SUPERSEDED', store);
+    await Promise.race([
+      priorCompletion,
+      new Promise<void>((resolve) => setTimeout(resolve, 500)),
+    ]);
     const steerRun = launchActiveRunInSlot(store, slot, input.sessionId, turnInput);
     yield* subscribeToBackgroundRun(steerRun, clientSignal);
     return;
@@ -4793,9 +4940,10 @@ function resolveEffectiveStructuredAction(
 function buildSessionMessageEndPayload(
   store: WorkspaceStore,
   session: AgentSession,
-  extra?: { cancelled?: boolean },
+  extra?: { cancelled?: boolean; runId?: string },
 ): Record<string, unknown> {
   const base: Record<string, unknown> = {
+    ...(extra?.runId ? { runId: extra.runId } : {}),
     session,
     ...(extra?.cancelled ? { cancelled: true } : {}),
     project: store.getProject(session.projectId),
@@ -4853,12 +5001,14 @@ function markOrphanedRunningSessionInterrupted(
     lastMsg?.role === 'assistant' && lastMsg.errorDiagnostic?.code === 'AGENT_RUN_INTERRUPTED';
 
   const nowIso = new Date().toISOString();
+  const interruptedRunId = lastUserMsg ? lastUserMsg.runId || lastUserMsg.id : undefined;
   const nextMessages = alreadyMarked
     ? session.messages
     : [
         ...session.messages,
         {
-          id: `amsg-${Date.now().toString(36)}-interrupted`,
+          id: nextAgentMessageId('interrupted'),
+          ...(interruptedRunId ? { runId: interruptedRunId } : {}),
           role: 'assistant' as const,
           content: '',
           errorDiagnostic: diagnostic,

@@ -255,6 +255,8 @@ export interface AgentImageAttachmentRef {
 
 export interface AgentSessionMessage {
   id: string;
+  /** Persistent Agent Run identifier shared by the turn's user message and its resulting assistant message. */
+  runId?: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   thinking?: string;

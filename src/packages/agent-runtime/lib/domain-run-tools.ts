@@ -2209,13 +2209,14 @@ export interface DomainToolExecutionOptions {
 }
 
 export function resolveAgentTurnRunId(
-  messages: readonly { id: string; role: string }[],
+  messages: readonly { id: string; role: string; runId?: string }[],
   explicitRunId: string | undefined,
   fallbackId: string,
 ): string {
   if (explicitRunId) return explicitRunId;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
-    if (messages[i]?.role === 'user') return messages[i]!.id;
+    const msg = messages[i];
+    if (msg?.role === 'user') return msg.runId || msg.id;
   }
   return fallbackId;
 }

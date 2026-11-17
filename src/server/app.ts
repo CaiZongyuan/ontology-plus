@@ -38,11 +38,13 @@ import {
   ensurePrototypeCoDesignSession,
   getLiveAgentSessionStatus,
   normalizeAgentLocale,
+  registerAgentRunLifecycleHooks,
   runDataOntologyReasoning,
   runSmartOntologyExtractionJob,
   runUnifiedAgentSessionStream,
   testLlmGatewayConnection,
   type AgentLocale,
+  type AgentRunLifecycleHooks,
   type AssistProjectDesignBriefInput,
   type DesignBriefAssistMode,
   type TransientTurnImageInput,
@@ -59,8 +61,23 @@ import {
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
 
-export function createApiApp(customStore?: WorkspaceStore): Hono {
+export interface ApiAppOptions {
+  agentRunHooks?: AgentRunLifecycleHooks | readonly AgentRunLifecycleHooks[];
+}
+
+export function createApiApp(
+  customStore?: WorkspaceStore,
+  options?: ApiAppOptions,
+): Hono {
   const store = customStore ?? createWorkspaceStore();
+  if (options?.agentRunHooks) {
+    const hookList = Array.isArray(options.agentRunHooks)
+      ? options.agentRunHooks
+      : [options.agentRunHooks];
+    for (const hook of hookList) {
+      registerAgentRunLifecycleHooks(store, hook);
+    }
+  }
   const app = new Hono();
 
   // Baseline security headers (nosniff, clickjacking & referrer protection)
@@ -250,9 +267,10 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
 
   app.post('/api/agent-sessions/:id/abort', async (c) => {
     const id = c.req.param('id');
-    const { aborted, session } = await abortActiveAgentSessionAsync(store, id);
+    const { aborted, runId, session } = await abortActiveAgentSessionAsync(store, id);
     return c.json({
       aborted,
+      ...(runId ? { runId } : {}),
       session,
       agentSessions: store.listAgentSessions(),
     });

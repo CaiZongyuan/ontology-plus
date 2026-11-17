@@ -118,4 +118,19 @@ export {
   type SseAgentEvent,
 } from './lib/runtime.js';
 
+export {
+  deriveProjectStepForSessionKind,
+  registerAgentRunLifecycleHooks,
+  listSessionAgentRuns,
+  findSessionAgentRun,
+  type ProjectStep,
+  type AgentRunOutcome,
+  type AgentRunContext,
+  type AgentRunStartEvent,
+  type AgentRunFailureInfo,
+  type AgentRunEndEvent,
+  type AgentRunLifecycleHooks,
+  type StoredSessionAgentRun,
+} from './lib/run-lifecycle.js';
+
 export { runAppCodingAgentTurn, type AppCodingAgentResult } from './lib/application-agent.js';
