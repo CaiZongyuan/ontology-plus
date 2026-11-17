@@ -2,10 +2,12 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { checkBusinessViewMarkup } from '../packages/business-vocabulary/index.js';
+import { CONTRACT_LIFECYCLE_SUITE } from '../packages/ontology-core/index.js';
 import type { AssembledApplication, GeneratedSkill } from '../packages/workspace-store/index.js';
-import { WorkbenchShell } from './App.js';
+import { WorkbenchShell, buildCommandPaletteEntries } from './App.js';
 import { useWorkbenchStore, type BootstrapPayload } from './api.js';
 import { PreferencesProvider } from './i18n.js';
+import { readStepViewMode, writeStepViewMode } from './navigation/index.js';
 
 function makeBootstrap(overrides: Partial<BootstrapPayload> = {}): BootstrapPayload {
   const base: Partial<BootstrapPayload> = {
@@ -346,11 +348,22 @@ describe('WorkbenchShell (#60)', () => {
     expect(agentIdx).toBeGreaterThan(-1);
     expect(canvasIdx).toBeGreaterThan(agentIdx);
     expect(desktopHtml).toContain('data-side="left"');
-    expect(desktopHtml).toContain('data-testid="step-subview-bar"');
-    expect(desktopHtml).toContain('data-testid="nav-app-ontology"');
-    expect(desktopHtml).toContain('data-testid="nav-app-model-files"');
-    expect(desktopHtml).toContain('data-testid="nav-app-knowledge-graph"');
+    // BUSINESS_MODEL is now a single-view step (#68): no legacy 3-button subview bar
+    expect(desktopHtml).not.toContain('data-testid="step-subview-bar"');
+    expect(desktopHtml).not.toContain('data-testid="nav-app-ontology"');
+    expect(desktopHtml).not.toContain('data-testid="nav-app-model-files"');
+    expect(desktopHtml).not.toContain('data-testid="nav-app-knowledge-graph"');
     expect(desktopHtml).not.toContain('data-testid="workspace-pane-toggle"');
+
+    // Multi-view step not yet collapsed (REQUIREMENTS) still renders its temporary sub-view switcher bar
+    seedStore({ activeNav: 'app-req-explore' });
+    const reqHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <WorkbenchShell />
+      </PreferencesProvider>,
+    );
+    expect(reqHtml).toContain('data-testid="step-subview-bar"');
+    expect(reqHtml).toContain('data-testid="nav-app-req-explore"');
 
     // Single-view step (PROTOTYPE) omits the temporary sub-view switcher bar
     seedStore({ activeNav: 'app-prototype' });
@@ -412,5 +425,79 @@ describe('WorkbenchShell (#60)', () => {
     expect(settingsHtml).toContain('data-testid="secondary-area-nav"');
     expect(settingsHtml).toContain('data-testid="nav-llm-center"');
     expect(settingsHtml).toContain('data-testid="nav-system-settings"');
+  });
+
+  it('builds Command Palette entries for Projects, Project Steps, and Business Objects while retiring legacy ontology nav items (#68)', () => {
+    const storeMap = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => storeMap.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        storeMap.set(k, v);
+      },
+      removeItem: (k: string) => {
+        storeMap.delete(k);
+      },
+    };
+    vi.stubGlobal('localStorage', storage);
+    vi.stubGlobal('window', {
+      localStorage: storage,
+      location: new URL('http://127.0.0.1:4352/?projectId=proj-contract'),
+      history: { replaceState: () => undefined },
+    });
+
+    const base = makeBootstrap();
+    const payload = makeBootstrap({
+      activeProject: {
+        ...base.activeProject,
+        suite: CONTRACT_LIFECYCLE_SUITE,
+      },
+    });
+    seedStore({
+      loading: false,
+      activeNav: 'app-req-explore',
+      data: payload,
+    });
+
+    const entries = buildCommandPaletteEntries({
+      data: payload,
+      locale: 'zh-CN',
+      theme: 'light',
+      workbenchTheme: 'default',
+      t: (zh) => zh,
+      onSelectStep: (step) => useWorkbenchStore.getState().setActiveNav(step),
+      onSelectView: (view) => useWorkbenchStore.getState().setActiveNav(view),
+      onSwitchProject: () => undefined,
+      onToggleTheme: () => undefined,
+      onSelectWorkbenchTheme: () => undefined,
+      onToggleLocale: () => undefined,
+    });
+
+    const keys = entries.map((e) => e.key);
+    // 4 steps
+    expect(keys).toContain('step:REQUIREMENTS');
+    expect(keys).toContain('step:PROTOTYPE');
+    expect(keys).toContain('step:BUSINESS_MODEL');
+    expect(keys).toContain('step:DELIVERY');
+    // Projects
+    expect(keys).toContain('project:proj-contract');
+    expect(keys).toContain('project:proj-mft');
+    // Business Objects from CONTRACT_LIFECYCLE_SUITE
+    expect(keys).toContain('object:AGG-01');
+    expect(keys).toContain('object:AGG-02');
+    expect(keys).toContain('object:AGG-03');
+    // Legacy entries retired from Command Palette
+    expect(keys).not.toContain('nav:app-ontology');
+    expect(keys).not.toContain('nav:app-model-files');
+    expect(keys).not.toContain('nav:app-knowledge-graph');
+
+    const counterpartyEntry = entries.find((e) => e.key === 'object:AGG-02');
+    expect(counterpartyEntry?.label).toBe('签约相对方');
+    expect(counterpartyEntry?.section).toBe('业务对象');
+
+    writeStepViewMode('BUSINESS_MODEL', 'technical');
+    counterpartyEntry!.run();
+    expect(readStepViewMode('BUSINESS_MODEL')).toBe('business');
+    expect(useWorkbenchStore.getState().activeNav).toBe('app-ontology');
+    expect(useWorkbenchStore.getState().activeItemId).toBe('AGG-02');
   });
 });

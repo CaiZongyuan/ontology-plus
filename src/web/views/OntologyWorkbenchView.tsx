@@ -199,16 +199,24 @@ function LifecycleFlow({ states, label }: { states: string[]; label: string }) {
   );
 }
 
+export interface OntologyWorkbenchFocusTarget {
+  readonly model: ModelCode;
+  readonly elementId?: string | null;
+  readonly nonce?: number;
+}
+
 export function OntologyWorkbenchView({
   onNavigate,
+  focusTarget,
 }: {
   onNavigate?: (view: NavViewId) => void;
+  focusTarget?: OntologyWorkbenchFocusTarget | null;
 } = {}) {
   const { t } = usePreferences();
   const {
     data,
-    selectedModel,
-    selectedElementId,
+    selectedModel: storeSelectedModel,
+    selectedElementId: storeSelectedElementId,
     liveSessionDrafts,
     setSelectedModel,
     saveSuiteWithUndo,
@@ -221,6 +229,16 @@ export function OntologyWorkbenchView({
     showToast,
     startOntologySynthesisRun,
   } = useWorkbenchStore();
+
+  const appliedFocusKeyRef = useRef<string | null>(null);
+  const focusKey = focusTarget
+    ? `${focusTarget.model}:${focusTarget.elementId ?? ''}:${focusTarget.nonce ?? 0}`
+    : null;
+  const hasPendingFocus = focusKey !== null && appliedFocusKeyRef.current !== focusKey;
+  const selectedModel: ModelCode =
+    hasPendingFocus && focusTarget ? focusTarget.model : storeSelectedModel;
+  const selectedElementId: string | null =
+    hasPendingFocus && focusTarget ? (focusTarget.elementId ?? null) : storeSelectedElementId;
 
   const [activeTab, setActiveTab] = useState<'STRUCTURED' | 'GRAPH' | 'YAML'>('STRUCTURED');
   const [treeSearch, setTreeSearch] = useState('');
@@ -245,6 +263,15 @@ export function OntologyWorkbenchView({
   useEffect(() => {
     setManualAuthoringMode(false);
   }, [project?.id]);
+
+  useEffect(() => {
+    if (!focusTarget || !focusKey) return;
+    if (appliedFocusKeyRef.current === focusKey) return;
+    appliedFocusKeyRef.current = focusKey;
+    setSelectedModel(focusTarget.model, focusTarget.elementId ?? null);
+    setActiveTab('STRUCTURED');
+    setTreeSearch('');
+  }, [focusTarget, focusKey, setSelectedModel]);
 
   useEffect(() => {
     if (!project) return;

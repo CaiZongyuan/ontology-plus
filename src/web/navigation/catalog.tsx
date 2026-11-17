@@ -110,8 +110,8 @@ export const NAV_ITEMS: NavItemSpec[] = [
   {
     id: 'app-ontology',
     group: 'APPLICATION',
-    labelZh: '业务本体',
-    labelEn: '11-Model Ontology',
+    labelZh: '业务模型',
+    labelEn: 'Business Model',
   },
   {
     id: 'app-model-files',
@@ -284,8 +284,32 @@ export function getNavItemsByGroup(group: NavGroupId): NavItemSpec[] {
   return NAV_ITEMS.filter((item) => item.group === group);
 }
 
+export type BusinessModelTechTab = 'editor' | 'files' | 'graph';
+
+const RETIRED_BUSINESS_MODEL_NAV_ENTRIES = new Set<NavViewId>([
+  'app-ontology',
+  'app-model-files',
+  'app-knowledge-graph',
+]);
+
+export function isRetiredNavEntry(view: NavViewId): boolean {
+  return RETIRED_BUSINESS_MODEL_NAV_ENTRIES.has(view);
+}
+
+export function resolveLegacyBusinessModelTechTab(
+  rawNav: string | null | undefined,
+): BusinessModelTechTab | null {
+  if (rawNav === 'app-model-files') return 'files';
+  if (rawNav === 'app-knowledge-graph') return 'graph';
+  return null;
+}
+
 export function isFlushNavView(view: NavViewId): boolean {
-  return view === 'app-ontology';
+  return (
+    view === 'app-ontology' ||
+    view === 'app-model-files' ||
+    view === 'app-knowledge-graph'
+  );
 }
 
 export interface ProjectStepViewSpec {
@@ -304,7 +328,7 @@ export const PROJECT_STEP_VIEWS: Readonly<Record<ProjectStepId, ProjectStepViewS
   },
   BUSINESS_MODEL: {
     defaultView: 'app-ontology',
-    views: ['app-ontology', 'app-model-files', 'app-knowledge-graph'],
+    views: ['app-ontology'],
   },
   DELIVERY: {
     defaultView: 'app-assembly-dev',
@@ -352,6 +376,9 @@ for (const [stepId, spec] of Object.entries(PROJECT_STEP_VIEWS) as [ProjectStepI
     VIEW_TO_STEP.set(viewId, stepId);
   }
 }
+// Legacy Business Model deep-link views stay URL-compatible and route into BUSINESS_MODEL (#68).
+VIEW_TO_STEP.set('app-model-files', 'BUSINESS_MODEL');
+VIEW_TO_STEP.set('app-knowledge-graph', 'BUSINESS_MODEL');
 
 const VIEW_TO_SECONDARY_AREA = new Map<NavViewId, SecondaryAreaSpec>();
 for (const area of SECONDARY_AREAS) {
