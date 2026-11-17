@@ -23,6 +23,7 @@ import {
   Sparkles,
   Workflow,
 } from 'lucide-react';
+import type { BilingualText, ProjectStepId } from '../../packages/business-vocabulary/index.js';
 
 export type NavViewId =
   | 'overview'
@@ -285,4 +286,164 @@ export function getNavItemsByGroup(group: NavGroupId): NavItemSpec[] {
 
 export function isFlushNavView(view: NavViewId): boolean {
   return view === 'app-ontology';
+}
+
+export interface ProjectStepViewSpec {
+  readonly defaultView: NavViewId;
+  readonly views: readonly NavViewId[];
+}
+
+export const PROJECT_STEP_VIEWS: Readonly<Record<ProjectStepId, ProjectStepViewSpec>> = {
+  REQUIREMENTS: {
+    defaultView: 'app-req-explore',
+    views: ['app-req-explore', 'app-req-docs'],
+  },
+  PROTOTYPE: {
+    defaultView: 'app-prototype',
+    views: ['app-prototype'],
+  },
+  BUSINESS_MODEL: {
+    defaultView: 'app-ontology',
+    views: ['app-ontology', 'app-model-files', 'app-knowledge-graph'],
+  },
+  DELIVERY: {
+    defaultView: 'app-assembly-dev',
+    views: ['app-four-layer-assets', 'app-assembly-dev', 'app-skills', 'app-publish'],
+  },
+};
+
+export type SecondaryAreaId = 'CAPABILITY' | 'ANALYTICS' | 'GOVERNANCE';
+
+export interface SecondaryAreaSpec {
+  readonly id: SecondaryAreaId;
+  readonly label: BilingualText;
+  readonly hint: BilingualText;
+  readonly defaultView: NavViewId;
+  readonly views: readonly NavViewId[];
+}
+
+export const SECONDARY_AREAS: readonly SecondaryAreaSpec[] = [
+  {
+    id: 'CAPABILITY',
+    label: { zh: '能力中心', en: 'Capability Center' },
+    hint: { zh: '把已有系统的能力整理成技能', en: 'Turn existing system capabilities into skills' },
+    defaultView: 'cap-systems',
+    views: ['cap-systems', 'cap-extraction', 'cap-mcp', 'cap-agents', 'cap-cross-flows', 'cap-knowledge'],
+  },
+  {
+    id: 'ANALYTICS',
+    label: { zh: '数据分析中心', en: 'Data Analytics Center' },
+    hint: { zh: '用业务模型分析数据', en: 'Analyze data with your business model' },
+    defaultView: 'data-resources',
+    views: ['data-resources', 'data-mappings', 'data-metrics-reports', 'data-reasoning', 'data-writeback'],
+  },
+  {
+    id: 'GOVERNANCE',
+    label: { zh: '平台治理', en: 'Platform Governance' },
+    hint: { zh: 'AI 服务与工作台设置', en: 'AI services and workbench settings' },
+    defaultView: 'llm-center',
+    views: ['llm-center', 'system-settings'],
+  },
+];
+
+const VIEW_TO_STEP = new Map<NavViewId, ProjectStepId>();
+for (const [stepId, spec] of Object.entries(PROJECT_STEP_VIEWS) as [ProjectStepId, ProjectStepViewSpec][]) {
+  for (const viewId of spec.views) {
+    VIEW_TO_STEP.set(viewId, stepId);
+  }
+}
+
+const VIEW_TO_SECONDARY_AREA = new Map<NavViewId, SecondaryAreaSpec>();
+for (const area of SECONDARY_AREAS) {
+  for (const viewId of area.views) {
+    VIEW_TO_SECONDARY_AREA.set(viewId, area);
+  }
+}
+
+export type ShellRouteContext =
+  | { readonly kind: 'home'; readonly view: 'overview' }
+  | {
+      readonly kind: 'project';
+      readonly step: ProjectStepId;
+      readonly view: NavViewId;
+      readonly stepViews: readonly NavViewId[];
+    }
+  | {
+      readonly kind: 'secondary';
+      readonly area: SecondaryAreaId;
+      readonly view: NavViewId;
+      readonly areaSpec: SecondaryAreaSpec;
+    };
+
+export function getProjectStepForView(view: NavViewId): ProjectStepId | null {
+  return VIEW_TO_STEP.get(view) ?? null;
+}
+
+export function getDefaultViewForStep(step: ProjectStepId): NavViewId {
+  return PROJECT_STEP_VIEWS[step].defaultView;
+}
+
+export function getSecondaryAreaForView(view: NavViewId): SecondaryAreaSpec | null {
+  return VIEW_TO_SECONDARY_AREA.get(view) ?? null;
+}
+
+export function resolveShellRouteContext(view: NavViewId): ShellRouteContext {
+  if (view === 'overview') {
+    return { kind: 'home', view: 'overview' };
+  }
+  const step = getProjectStepForView(view);
+  if (step) {
+    return {
+      kind: 'project',
+      step,
+      view,
+      stepViews: PROJECT_STEP_VIEWS[step].views,
+    };
+  }
+  const areaSpec = getSecondaryAreaForView(view) ?? SECONDARY_AREAS[0]!;
+  return {
+    kind: 'secondary',
+    area: areaSpec.id,
+    view,
+    areaSpec,
+  };
+}
+
+export function resolveStepParamToId(raw: string | null | undefined): ProjectStepId | null {
+  if (!raw) return null;
+  const normalized = raw.trim().toLowerCase().replace(/-/g, '_');
+  switch (normalized) {
+    case 'requirements':
+    case 'requirement':
+      return 'REQUIREMENTS';
+    case 'prototype':
+      return 'PROTOTYPE';
+    case 'business_model':
+    case 'model':
+      return 'BUSINESS_MODEL';
+    case 'delivery':
+      return 'DELIVERY';
+    default:
+      return null;
+  }
+}
+
+export function resolveAreaParamToView(raw: string | null | undefined): NavViewId | null {
+  if (!raw) return null;
+  const normalized = raw.trim().toLowerCase();
+  switch (normalized) {
+    case 'capability':
+      return 'cap-systems';
+    case 'analytics':
+      return 'data-resources';
+    case 'governance':
+    case 'platform':
+      return 'llm-center';
+    case 'settings':
+      return 'system-settings';
+    case 'home':
+      return 'overview';
+    default:
+      return null;
+  }
 }

@@ -316,6 +316,9 @@ export function useAgentPanelOverlayMode(): boolean {
 export interface ShellAgentPanelProps {
   surface: AgentPanelSurface;
   overlay: boolean;
+  side?: 'left' | 'right';
+  closable?: boolean;
+  resizable?: boolean;
   onClose: () => void;
   onNavigate: (view: NavViewId) => void;
   composerHeaderSlot?: React.ReactNode;
@@ -325,6 +328,9 @@ export interface ShellAgentPanelProps {
 export function ShellAgentPanel({
   surface,
   overlay,
+  side = 'right',
+  closable = true,
+  resizable,
   onClose,
   onNavigate,
   composerHeaderSlot,
@@ -764,6 +770,9 @@ export function ShellAgentPanel({
       wideMode={wideMode}
       onToggleWideMode={toggleWideMode}
       overlay={overlay}
+      side={side}
+      closable={closable}
+      {...(resizable !== undefined ? { resizable } : {})}
       onClose={onClose}
       onResize={(next, opts) => setWidth(next, opts)}
       onCancelRun={handleCancelRun}

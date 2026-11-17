@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { checkBusinessViewMarkup } from '../../packages/business-vocabulary/index.js';
 import type { OntologySuite } from '../../packages/ontology-core/index.js';
 import type {
   AssembledApplication,
   GeneratedSkill,
 } from '../../packages/workspace-store/index.js';
 import {
+  deriveProjectHealthSummary,
   deriveProjectStepProgress,
+  deriveProjectSteps,
+  formatProjectHealthStatus,
   getProjectLifecycleState,
   type ProjectStepProgressInput,
 } from './index.js';
@@ -237,5 +241,186 @@ describe('deriveProjectStepProgress and getProjectLifecycleState', () => {
     expect(foreignMft.hasForeignDemoTemplate).toBe(true);
     expect(foreignMft.foreignTemplateNameZh).toBe('企业文件安全传输系统 (MFT)');
     expect(foreignMft.foreignTemplateNameEn).toBe('Enterprise MFT Security');
+  });
+
+  it('derives the 4 ordered Project Steps, blocked reasons, unconfirmed changes, and legacy project overrides cleanly', () => {
+    // 1. Brand-new empty project: Step 1 open, Steps 2–4 blocked pointing to immediate upstream
+    const emptySteps = deriveProjectSteps(makeBaseInput());
+    expect(emptySteps.map((s) => s.id)).toEqual([
+      'REQUIREMENTS',
+      'PROTOTYPE',
+      'BUSINESS_MODEL',
+      'DELIVERY',
+    ]);
+    expect(emptySteps[0]).toMatchObject({
+      id: 'REQUIREMENTS',
+      state: 'NOT_STARTED',
+      hasContent: false,
+    });
+    expect(emptySteps[0]!.blocked).toBeUndefined();
+
+    expect(emptySteps[1]).toMatchObject({
+      id: 'PROTOTYPE',
+      state: 'NOT_STARTED',
+      hasContent: false,
+      blocked: {
+        reason: { zh: '需先确认需求', en: 'Needs requirements first' },
+        upstreamStep: 'REQUIREMENTS',
+      },
+    });
+    expect(emptySteps[2]).toMatchObject({
+      id: 'BUSINESS_MODEL',
+      state: 'NOT_STARTED',
+      hasContent: false,
+      blocked: {
+        reason: { zh: '需先确认原型', en: 'Needs prototype first' },
+        upstreamStep: 'PROTOTYPE',
+      },
+    });
+    expect(emptySteps[3]).toMatchObject({
+      id: 'DELIVERY',
+      state: 'NOT_STARTED',
+      hasContent: false,
+      blocked: {
+        reason: { zh: '需先确认业务模型', en: 'Needs business model first' },
+        upstreamStep: 'BUSINESS_MODEL',
+      },
+    });
+
+    for (const step of emptySteps) {
+      expect(checkBusinessViewMarkup(step.name.zh, { plainText: true })).toEqual([]);
+      expect(checkBusinessViewMarkup(step.name.en, { plainText: true })).toEqual([]);
+      expect(checkBusinessViewMarkup(step.stateLabel.zh, { plainText: true })).toEqual([]);
+      expect(checkBusinessViewMarkup(step.stateLabel.en, { plainText: true })).toEqual([]);
+      if (step.blocked) {
+        expect(checkBusinessViewMarkup(step.blocked.reason.zh, { plainText: true })).toEqual([]);
+        expect(checkBusinessViewMarkup(step.blocked.reason.en, { plainText: true })).toEqual([]);
+        expect(checkBusinessViewMarkup(step.blocked.detail.zh, { plainText: true })).toEqual([]);
+        expect(checkBusinessViewMarkup(step.blocked.detail.en, { plainText: true })).toEqual([]);
+        expect(checkBusinessViewMarkup(step.blocked.actionLabel.zh, { plainText: true })).toEqual(
+          [],
+        );
+        expect(checkBusinessViewMarkup(step.blocked.actionLabel.en, { plainText: true })).toEqual(
+          [],
+        );
+      }
+    }
+
+    // 2. Draft requirement doc keeps Requirements IN_PROGRESS and Prototype blocked
+    const draftReqSteps = deriveProjectSteps(
+      makeBaseInput({
+        requirementDocs: [{ id: 'doc-draft', status: 'DRAFT' }],
+      }),
+    );
+    expect(draftReqSteps[0]!.state).toBe('IN_PROGRESS');
+    expect(draftReqSteps[1]!.blocked?.upstreamStep).toBe('REQUIREMENTS');
+
+    // 3. Confirmed requirement + unconfirmed prototype revision v2 over confirmed v1
+    const unconfirmedProtoSteps = deriveProjectSteps(
+      makeBaseInput({
+        requirementDocs: [{ id: 'doc-1', status: 'CONFIRMED' }],
+        prototypes: [{ id: 'proto-1', currentRevisionId: 'rev-2' }],
+        confirmedPrototypeRevision: { prototypeId: 'proto-1', revisionId: 'rev-1' },
+      }),
+    );
+    expect(unconfirmedProtoSteps[0]!.state).toBe('CONFIRMED');
+    expect(unconfirmedProtoSteps[1]!.state).toBe('UNCONFIRMED_CHANGES');
+    expect(unconfirmedProtoSteps[1]!.blocked).toBeUndefined();
+    expect(unconfirmedProtoSteps[2]!.state).toBe('NOT_STARTED');
+    expect(unconfirmedProtoSteps[2]!.blocked).toBeUndefined();
+
+    // 4. Full 11-model suite + compiled package snapshot -> Business Model & Delivery CONFIRMED
+    const fullSteps = deriveProjectSteps(
+      makeBaseInput({
+        project: {
+          id: 'proj-custom',
+          domain: '合同管理',
+          suite: {},
+          validation: {
+            presentModels: ['M1', 'M2', 'M3', 'ME', 'M4', 'M5', 'M6', 'M7', 'MU', 'MM', 'MI'],
+            errorCount: 0,
+          },
+        },
+        requirementDocs: [{ id: 'doc-1', status: 'CONFIRMED' }],
+        prototypes: [{ id: 'proto-1', currentRevisionId: 'rev-1' }],
+        confirmedPrototypeRevision: { prototypeId: 'proto-1', revisionId: 'rev-1' },
+        assembledApplications: [
+          {
+            id: 'app-1',
+            projectId: 'proj-custom',
+            name: 'CLM App',
+            latestPackageSnapshotId: 'snap-1',
+          } as AssembledApplication,
+        ],
+      }),
+    );
+    expect(fullSteps.map((s) => s.state)).toEqual([
+      'CONFIRMED',
+      'CONFIRMED',
+      'CONFIRMED',
+      'CONFIRMED',
+    ]);
+
+    // 5. Legacy imported project (like proj-mft): 5 models + generated skill, no req docs or prototypes
+    const legacySteps = deriveProjectSteps(
+      makeBaseInput({
+        project: {
+          id: 'proj-mft',
+          domain: 'MFT',
+          suite: {},
+          validation: {
+            presentModels: ['M1', 'M2', 'M3', 'ME', 'M5'],
+            errorCount: 0,
+          },
+        },
+        generatedSkills: [{ id: 'sk-1', projectId: 'proj-mft' } as GeneratedSkill],
+      }),
+    );
+    expect(legacySteps[1]!.blocked?.upstreamStep).toBe('REQUIREMENTS');
+    expect(legacySteps[2]!.blocked).toBeUndefined();
+    expect(legacySteps[2]!.hasContent).toBe(true);
+    expect(legacySteps[2]!.state).toBe('IN_PROGRESS');
+    expect(legacySteps[3]!.blocked).toBeUndefined();
+    expect(legacySteps[3]!.state).toBe('IN_PROGRESS');
+  });
+
+  it('formats project health status purely in business vocabulary with zero technical violations', () => {
+    expect(deriveProjectHealthSummary({ errorCount: 3, warningCount: 2 })).toEqual({
+      tone: 'error',
+      errorCount: 3,
+      warningCount: 2,
+      text: { zh: '3 个需要修正的问题', en: '3 problems to fix' },
+    });
+    expect(formatProjectHealthStatus({ errorCount: 1, warningCount: 4 }, 'en-US')).toBe(
+      '1 problem to fix',
+    );
+    expect(formatProjectHealthStatus({ errorCount: 0, warningCount: 2 }, 'zh-CN')).toBe(
+      '2 处尚未完成的部分',
+    );
+    expect(formatProjectHealthStatus({ errorCount: 0, warningCount: 2 }, 'en-US')).toBe(
+      '2 parts not yet completed',
+    );
+    expect(formatProjectHealthStatus({ errorCount: 0, warningCount: 1 }, 'en-US')).toBe(
+      '1 part not yet completed',
+    );
+    expect(formatProjectHealthStatus({ errorCount: 0, warningCount: 0 }, 'zh-CN')).toBe(
+      '没有需要修正的问题',
+    );
+    expect(formatProjectHealthStatus({ errorCount: 0, warningCount: 0 }, 'en-US')).toBe(
+      'No problems to fix',
+    );
+
+    for (const sample of [
+      { errorCount: 3, warningCount: 2 },
+      { errorCount: 0, warningCount: 2 },
+      { errorCount: 0, warningCount: 0 },
+    ]) {
+      expect(
+        checkBusinessViewMarkup(formatProjectHealthStatus(sample, 'zh-CN'), { plainText: true }),
+      ).toEqual([]);
+      expect(
+        checkBusinessViewMarkup(formatProjectHealthStatus(sample, 'en-US'), { plainText: true }),
+      ).toEqual([]);
+    }
   });
 });

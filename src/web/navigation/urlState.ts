@@ -1,4 +1,11 @@
-import { DEFAULT_NAV_VIEW, resolveNavViewId, type NavViewId } from './catalog.js';
+import {
+  DEFAULT_NAV_VIEW,
+  getDefaultViewForStep,
+  resolveAreaParamToView,
+  resolveNavViewId,
+  resolveStepParamToId,
+  type NavViewId,
+} from './catalog.js';
 
 export interface UrlNavState {
   projectId?: string;
@@ -7,11 +14,40 @@ export interface UrlNavState {
   sessionId?: string;
 }
 
+function parseHashRoute(rawHash: string): { projectId?: string; nav?: string } {
+  const cleaned = rawHash.replace(/^#\/?/, '').trim();
+  if (!cleaned) return {};
+  const parts = cleaned.split('/').filter(Boolean);
+  if (parts[0] === 'p' && parts[1]) {
+    const step = resolveStepParamToId(parts[2] ?? 'requirements');
+    return {
+      projectId: parts[1],
+      nav: step ? getDefaultViewForStep(step) : 'app-req-explore',
+    };
+  }
+  if (parts[0] === 'area' && parts[1]) {
+    const areaView = resolveAreaParamToView(parts[1]);
+    return areaView ? { nav: areaView } : { nav: cleaned };
+  }
+  if (parts.length === 1) {
+    const aliasView = resolveAreaParamToView(parts[0]);
+    if (aliasView) return { nav: aliasView };
+  }
+  return { nav: cleaned };
+}
+
 export function parseUrlNavState(location: { search: string; hash: string }): UrlNavState {
   const params = new URLSearchParams(location.search);
-  const hashNav = location.hash.replace(/^#\/?/, '').trim();
-  const projectId = params.get('projectId') || undefined;
-  const nav = params.get('mode') || hashNav || undefined;
+  const hashRoute = parseHashRoute(location.hash);
+  const projectId = params.get('projectId') || hashRoute.projectId || undefined;
+  const stepId = resolveStepParamToId(params.get('step'));
+  const areaNav = resolveAreaParamToView(params.get('area'));
+  const nav =
+    params.get('mode') ||
+    (stepId ? getDefaultViewForStep(stepId) : undefined) ||
+    areaNav ||
+    hashRoute.nav ||
+    undefined;
   const itemId = params.get('itemId') || undefined;
   const sessionId = params.get('sessionId') || undefined;
   return {

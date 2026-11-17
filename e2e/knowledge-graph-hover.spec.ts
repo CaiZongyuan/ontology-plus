@@ -5,6 +5,7 @@ test.describe('Knowledge Graph hover stability', () => {
     page,
   }) => {
     await page.goto('/');
+    await page.getByTestId('step-tab-BUSINESS_MODEL').click();
     await page.getByTestId('nav-app-knowledge-graph').click();
 
     // Ensure a project with ontology graph nodes is active
@@ -30,6 +31,7 @@ test.describe('Knowledge Graph hover stability', () => {
       });
       expect(switched).toBe(true);
       await page.reload();
+      await page.getByTestId('step-tab-BUSINESS_MODEL').click();
       await page.getByTestId('nav-app-knowledge-graph').click();
     }
 

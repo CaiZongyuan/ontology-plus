@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  PROJECT_STEP_IDS,
+  checkBusinessViewMarkup,
+} from '../../packages/business-vocabulary/index.js';
 import type { AgentSessionKind } from '../../packages/workspace-store/index.js';
 import {
   AGENT_PANEL_SURFACES,
@@ -6,12 +10,17 @@ import {
   NAV_GROUPS,
   NAV_ICONS,
   NAV_ITEMS,
+  PROJECT_STEP_VIEWS,
+  SECONDARY_AREAS,
   agentPanelSurfaceFor,
   applyUrlNavState,
   defaultNavForSessionKind,
+  getDefaultViewForStep,
   getNavGroupSpec,
   getNavItemSpec,
   getNavItemsByGroup,
+  getProjectStepForView,
+  getSecondaryAreaForView,
   isFlushNavView,
   isNavViewId,
   parseUrlNavState,
@@ -19,6 +28,7 @@ import {
   readUrlNavState,
   resolveArtifactNavTarget,
   resolveNavViewId,
+  resolveShellRouteContext,
   writeUrlNavState,
   type NavGroupId,
   type NavViewId,
@@ -265,5 +275,108 @@ describe('navigation catalog and URL state', () => {
         openQuestions: [],
       }),
     ).toBeNull();
+  });
+
+  it('partitions all 24 views across Home, the 4 Project Steps, and the Secondary Areas with business-clean area labels', () => {
+    expect(Object.keys(PROJECT_STEP_VIEWS)).toEqual([...PROJECT_STEP_IDS]);
+    expect(getDefaultViewForStep('REQUIREMENTS')).toBe('app-req-explore');
+    expect(getDefaultViewForStep('PROTOTYPE')).toBe('app-prototype');
+    expect(getDefaultViewForStep('BUSINESS_MODEL')).toBe('app-ontology');
+    expect(getDefaultViewForStep('DELIVERY')).toBe('app-assembly-dev');
+
+    const stepAssignedViews = PROJECT_STEP_IDS.flatMap((id) => PROJECT_STEP_VIEWS[id].views);
+    expect(new Set(stepAssignedViews).size).toBe(10);
+    expect([...stepAssignedViews].sort()).toEqual(
+      getNavItemsByGroup('APPLICATION')
+        .map((item) => item.id)
+        .sort(),
+    );
+
+    const secondaryAssignedViews = SECONDARY_AREAS.flatMap((area) => area.views);
+    expect(new Set(secondaryAssignedViews).size).toBe(13);
+
+    for (const area of SECONDARY_AREAS) {
+      expect(checkBusinessViewMarkup(area.label.zh, { plainText: true })).toEqual([]);
+      expect(checkBusinessViewMarkup(area.label.en, { plainText: true })).toEqual([]);
+      expect(checkBusinessViewMarkup(area.hint.zh, { plainText: true })).toEqual([]);
+      expect(checkBusinessViewMarkup(area.hint.en, { plainText: true })).toEqual([]);
+      for (const v of area.views) {
+        expect(getSecondaryAreaForView(v)?.id).toBe(area.id);
+        expect(getProjectStepForView(v)).toBeNull();
+      }
+    }
+
+    expect(resolveShellRouteContext('overview')).toEqual({ kind: 'home', view: 'overview' });
+    expect(resolveShellRouteContext('app-req-docs')).toEqual({
+      kind: 'project',
+      step: 'REQUIREMENTS',
+      view: 'app-req-docs',
+      stepViews: ['app-req-explore', 'app-req-docs'],
+    });
+    expect(resolveShellRouteContext('app-knowledge-graph')).toMatchObject({
+      kind: 'project',
+      step: 'BUSINESS_MODEL',
+      view: 'app-knowledge-graph',
+    });
+    expect(resolveShellRouteContext('cap-extraction')).toMatchObject({
+      kind: 'secondary',
+      area: 'CAPABILITY',
+      view: 'cap-extraction',
+    });
+    expect(resolveShellRouteContext('system-settings')).toMatchObject({
+      kind: 'secondary',
+      area: 'GOVERNANCE',
+      view: 'system-settings',
+    });
+  });
+
+  it('resolves both legacy ?mode=/#/... URLs and step/area URL routes cleanly', () => {
+    // Legacy query & hash routes
+    expect(readHashView({ search: '?mode=app-ontology', hash: '' })).toBe('app-ontology');
+    expect(readHashView({ search: '?mode=app-assembly-dev', hash: '' })).toBe('app-assembly-dev');
+    expect(readHashView({ search: '', hash: '#/app-prototype' })).toBe('app-prototype');
+    expect(readHashView({ search: '?mode=cap-extraction', hash: '' })).toBe('cap-extraction');
+    expect(readHashView({ search: '?mode=system-settings', hash: '' })).toBe('system-settings');
+
+    // Step query parameters & hash routes
+    expect(parseUrlNavState({ search: '?projectId=proj-mft&step=REQUIREMENTS', hash: '' })).toEqual(
+      {
+        projectId: 'proj-mft',
+        nav: 'app-req-explore',
+      },
+    );
+    expect(parseUrlNavState({ search: '?step=prototype', hash: '' })).toEqual({
+      nav: 'app-prototype',
+    });
+    expect(parseUrlNavState({ search: '?step=business-model', hash: '' })).toEqual({
+      nav: 'app-ontology',
+    });
+    expect(parseUrlNavState({ search: '?step=delivery', hash: '' })).toEqual({
+      nav: 'app-assembly-dev',
+    });
+    expect(parseUrlNavState({ search: '', hash: '#/p/proj-mft/prototype' })).toEqual({
+      projectId: 'proj-mft',
+      nav: 'app-prototype',
+    });
+
+    // Secondary area query parameters & hash routes
+    expect(parseUrlNavState({ search: '?area=capability', hash: '' })).toEqual({
+      nav: 'cap-systems',
+    });
+    expect(parseUrlNavState({ search: '?area=analytics', hash: '' })).toEqual({
+      nav: 'data-resources',
+    });
+    expect(parseUrlNavState({ search: '?area=governance', hash: '' })).toEqual({
+      nav: 'llm-center',
+    });
+    expect(parseUrlNavState({ search: '?area=settings', hash: '' })).toEqual({
+      nav: 'system-settings',
+    });
+    expect(parseUrlNavState({ search: '', hash: '#/area/analytics' })).toEqual({
+      nav: 'data-resources',
+    });
+    expect(parseUrlNavState({ search: '', hash: '#/settings' })).toEqual({
+      nav: 'system-settings',
+    });
   });
 });

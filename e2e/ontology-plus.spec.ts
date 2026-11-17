@@ -13,11 +13,17 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
   }) => {
     await page.goto('/');
 
-    // 1. Verify initial light theme, validation status, and Unified ShellAgentPanel docked column
+    // 1. Verify initial light theme, business-language health status, and Conversation-left + Canvas-right layout
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect(page.getByTestId('shell-health-status')).toContainText('没有需要修正的问题');
     await expect(page.getByTestId('validation-error-badge')).toContainText('0 Errors');
     const agentPanel = page.getByTestId('agent-panel');
+    const canvas = page.getByTestId('workbench-canvas');
     await expect(agentPanel).toBeVisible();
+    await expect(canvas).toBeVisible();
+    const agentBox = await agentPanel.boundingBox();
+    const canvasBox = await canvas.boundingBox();
+    expect(agentBox!.x).toBeLessThan(canvasBox!.x);
     await expect(agentPanel).toHaveAttribute('data-wide-mode', 'false');
 
     // Toggle Wide Mode on and off in AgentPanel
@@ -34,8 +40,11 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
 
     // 3. Toggle Bilingual Locale (zh-CN <-> en-US)
     await page.getByTestId('locale-toggle-btn').click();
+    await expect(page.getByTestId('step-tab-BUSINESS_MODEL')).toContainText('Business Model');
+    await expect(page.getByTestId('shell-health-status')).toContainText('No problems to fix');
     await expect(page.getByTestId('nav-app-ontology')).toContainText('11-Model Ontology');
     await page.getByTestId('locale-toggle-btn').click();
+    await expect(page.getByTestId('step-tab-BUSINESS_MODEL')).toContainText('业务模型');
     await expect(page.getByTestId('nav-app-ontology')).toContainText('业务本体');
 
     // 4. Navigate across M1, M2, MU in the 11-model workbench & Quick-Add with Undo/Redo
@@ -71,7 +80,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     const agentPanel = page.getByTestId('agent-panel');
 
     // 1. Requirement Exploration (auto Wide Mode) -> Live Requirement turn + One-click 9-part SRS synthesis
-    await page.getByTestId('nav-app-req-explore').click();
+    await page.getByTestId('step-tab-REQUIREMENTS').click();
     await expect(agentPanel).toBeVisible();
     await expect(agentPanel).toHaveAttribute('data-wide-mode', 'true');
 
@@ -90,7 +99,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await expect(agentPanel).toContainText(/需求规格书|SRS/, { timeout: 25_000 });
 
     // 2. Prototype Co-Design Studio -> Briefing/Canvas toggle, localized refinement in ShellAgentPanel & Confirm This Revision -> MU sync
-    await page.getByTestId('nav-app-prototype').click();
+    await page.getByTestId('step-tab-PROTOTYPE').click();
     await expect(page.getByTestId('prototype-canvas-stage')).toBeVisible();
     await expect(agentPanel).toBeVisible();
 
@@ -116,7 +125,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await expect(page.getByTestId('toast-banner')).toContainText('MU');
 
     // 3. AI Ontology Copilot via Unified ShellAgentPanel -> Execute tool mutation
-    await page.getByTestId('nav-app-ontology').click();
+    await page.getByTestId('step-tab-BUSINESS_MODEL').click();
     await expect(agentPanel).toBeVisible();
     await page
       .getByTestId('agent-panel-composer-input')
@@ -137,7 +146,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.getByTestId('publish-mcp-btn').click();
 
     // 5. 4-Layer Application Assembly -> Coding Agent context + Compile Development Package & verify ZIP endpoint
-    await page.getByTestId('nav-app-assembly-dev').click();
+    await page.getByTestId('step-tab-DELIVERY').click();
     await expect(page.getByTestId('coding-agent-context-card')).toBeVisible();
     await expect(agentPanel).toBeVisible();
     const currentSources = await (await page.request.get('/api/bootstrap?projectId=proj-contract')).json();
@@ -158,7 +167,9 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
 
     const agentPanel = page.getByTestId('agent-panel');
 
-    // 1. Capability Center: Ontology Extraction via Unified ShellAgentPanel (verify "本体萃取" and zero "逆向")
+    // 1. Capability Center (opened via "更多" menu): Ontology Extraction via Unified ShellAgentPanel (verify "本体萃取" and zero "逆向")
+    await page.getByTestId('more-menu-btn').click();
+    await page.getByTestId('more-menu-capability').click();
     await page.getByTestId('nav-cap-extraction').click();
     await expect(page.getByTestId('run-extraction-btn')).toBeVisible();
     const bodyText = await page.locator('.platform-content').innerText();
@@ -194,7 +205,9 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
       agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
     ).toBeVisible({ timeout: 25_000 });
 
-    // 4. Data Analytics Center: Live Read-Only SQL Sandbox Preview
+    // 4. Data Analytics Center (opened via "更多" menu): Live Read-Only SQL Sandbox Preview
+    await page.getByTestId('more-menu-btn').click();
+    await page.getByTestId('more-menu-analytics').click();
     await page.getByTestId('nav-data-resources').click();
     await page.getByTestId('run-sql-preview-btn').click();
     await expect(page.getByTestId('sql-preview-table')).toBeVisible();
@@ -214,8 +227,9 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await agentPanel.getByTestId('trigger-policy-writeback-btn').first().click();
     await expect(page.getByTestId('toast-banner')).toContainText('WB-01');
 
-    // 6. System Settings 3-state theme control & LLM Center Local Pi Gateway test
-    await page.getByTestId('nav-system-settings').click();
+    // 6. System Settings (opened via "更多" menu) 3-state theme control & LLM Center Local Pi Gateway test
+    await page.getByTestId('more-menu-btn').click();
+    await page.getByTestId('more-menu-settings').click();
     await expect(page.getByTestId('theme-pref-system')).toBeVisible();
 
     await page.getByTestId('nav-llm-center').click();
@@ -241,6 +255,8 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await expect(openDialog).toBeHidden();
 
     // 2. SRS Tiptap Bidirectional Markdown Editor (RICH <-> SOURCE <-> PREVIEW) & Registry switcher
+    await page.getByTestId('enter-active-project-btn').click();
+    await page.getByTestId('step-tab-REQUIREMENTS').click();
     await page.getByTestId('nav-app-req-docs').click();
     await page.getByTestId('md-mode-source').click();
     await expect(page.getByTestId('md-source-textarea')).toBeVisible();
@@ -251,6 +267,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await expect(page.locator('table').first()).toBeVisible();
 
     // 3. Ontology SKILL.md Custom Refinement + Overwrite Protection ConfirmDialog
+    await page.getByTestId('step-tab-DELIVERY').click();
     await page.getByTestId('nav-app-skills').click();
     const compileBtn = page
       .getByRole('button', {
@@ -272,28 +289,36 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.locator('dialog[open]').getByRole('button', { name: 'Close dialog' }).click();
 
     // 4. React Flow v12 + ELK Swimlane + d3-force Ego Focus Knowledge Graph & Data Lineage preset
+    await page.getByTestId('step-tab-BUSINESS_MODEL').click();
     await page.getByTestId('nav-app-knowledge-graph').click();
     await expect(page.getByTestId('kg-root')).toBeVisible();
     await expect(page.locator('.react-flow').first()).toBeVisible();
     await page.getByTestId('kg-mode-ego-btn').click();
     await page.getByTestId('kg-mode-swimlane-btn').click();
 
+    await page.getByTestId('more-menu-btn').click();
+    await page.getByTestId('more-menu-analytics').click();
     await page.getByTestId('nav-data-mappings').click();
     await expect(page.locator('.react-flow').first()).toBeVisible();
 
     // 5. Capability & Analytics Registry Tables + Markdown Editors
+    await page.getByTestId('more-menu-btn').click();
+    await page.getByTestId('more-menu-capability').click();
     await page.getByTestId('nav-cap-knowledge').click();
     await expect(page.getByTestId('knowledge-markdown-editor')).toBeVisible();
     await page.getByTestId('knowledge-mode-registry-btn').click();
     await expect(page.getByTestId('knowledge-registry-table')).toBeVisible();
 
+    await page.getByTestId('more-menu-btn').click();
+    await page.getByTestId('more-menu-analytics').click();
     await page.getByTestId('nav-data-metrics-reports').click();
     await page.getByTestId('reports-mode-editor-btn').click();
     await expect(page.getByTestId('analytics-reports-registry')).toBeVisible();
     await expect(page.getByTestId('analytics-report-markdown-editor')).toBeVisible();
 
     // 6. Prototype Switcher "另存为新原型" (Save as New Prototype): creates a new InteractivePrototype with its own forked PROTOTYPE_CO_DESIGN session & persists across reload
-    await page.getByTestId('nav-app-prototype').click();
+    await page.getByTestId('back-to-project-btn').click();
+    await page.getByTestId('step-tab-PROTOTYPE').click();
     await expect(page.getByTestId('prototype-canvas-stage')).toBeVisible();
     const agentPanel = page.getByTestId('agent-panel');
     await expect(agentPanel).toBeVisible();
@@ -313,7 +338,76 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
 
     // Reload page and verify cloned prototype + forked multi-prototype session selector persist in SQLite
     await page.reload();
-    await page.getByTestId('nav-app-prototype').click();
+    await expect(page.getByTestId('prototype-canvas-stage')).toBeVisible();
     await expect(page.getByTestId('agent-panel').getByTestId('agent-panel-session-select')).toBeVisible();
+  });
+
+  test('5. New Workbench Shell (#60): 4-step bar & blocked step (>=12px secondary color), More secondary menu, legacy ?mode= URL recovery, and tablet (<1280px) Conversation <-> Canvas toggle', async ({
+    page,
+  }) => {
+    // 1. Legacy URL compatibility on direct navigation & reload recovery
+    await page.goto('/?projectId=proj-mft&mode=app-ontology');
+    await expect(page.getByTestId('project-selector')).toHaveValue('proj-mft');
+    await expect(page.getByTestId('shell-health-status')).toContainText('6 处尚未完成的部分');
+
+    // 2. Blocked step ("还不能开始"): Prototype on proj-mft has no requirements yet -> >= 12px & secondary text color
+    const blockedStatus = page.getByTestId('step-status-PROTOTYPE');
+    await expect(blockedStatus).toContainText('需先确认需求');
+    const styleMetrics = await blockedStatus.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--muted-foreground)';
+      document.body.appendChild(probe);
+      const mutedColor = getComputedStyle(probe).color;
+      probe.style.color = 'var(--faint-foreground)';
+      const faintColor = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        fontSizePx: Number.parseFloat(cs.fontSize),
+        color: cs.color,
+        mutedColor,
+        faintColor,
+      };
+    });
+    expect(styleMetrics.fontSizePx).toBeGreaterThanOrEqual(12);
+    expect(styleMetrics.color).toBe(styleMetrics.mutedColor);
+    expect(styleMetrics.color).not.toBe(styleMetrics.faintColor);
+
+    // Clicking the blocked step never triggers a modal; renders inline banner & jumps to upstream step
+    await page.getByTestId('step-tab-PROTOTYPE').click();
+    await expect(page.getByTestId('step-cannot-start-banner')).toBeVisible();
+    await page.getByTestId('step-cannot-start-action').click();
+    await expect(page.getByTestId('step-tab-REQUIREMENTS')).toHaveAttribute('aria-current', 'step');
+
+    // Switch back to proj-contract and verify "更多" menu opens Governance -> LLM Center
+    await page.getByTestId('project-selector').selectOption('proj-contract');
+    await page.getByTestId('more-menu-btn').click();
+    await page.getByTestId('more-menu-governance').click();
+    await expect(page.getByTestId('secondary-area-nav')).toBeVisible();
+    await expect(page.getByTestId('ping-llm-gateway-btn').first()).toBeVisible();
+
+    // Verify legacy secondary and step URLs restore cleanly across reload
+    await page.goto('/?mode=cap-extraction');
+    await expect(page.getByTestId('run-extraction-btn')).toBeVisible();
+    await page.reload();
+    await expect(page.getByTestId('run-extraction-btn')).toBeVisible();
+
+    await page.goto('/?projectId=proj-contract&mode=app-assembly-dev');
+    await expect(page.getByTestId('application-development-workflow')).toBeVisible();
+
+    // 3. Tablet viewport (1024x768 < 1280px): Conversation <-> Canvas segmented toggle
+    await page.setViewportSize({ width: 1024, height: 768 });
+    const paneToggle = page.getByTestId('workspace-pane-toggle');
+    await expect(paneToggle).toBeVisible();
+    await expect(page.getByTestId('workbench-canvas')).toBeVisible();
+    await expect(page.getByTestId('agent-panel')).toBeHidden();
+
+    await page.getByTestId('workspace-pane-conversation').click();
+    await expect(page.getByTestId('agent-panel')).toBeVisible();
+    await expect(page.getByTestId('workbench-canvas')).toBeHidden();
+
+    await page.getByTestId('workspace-pane-canvas').click();
+    await expect(page.getByTestId('workbench-canvas')).toBeVisible();
+    await expect(page.getByTestId('agent-panel')).toBeHidden();
   });
 });

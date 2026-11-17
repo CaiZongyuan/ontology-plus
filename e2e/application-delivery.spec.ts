@@ -9,7 +9,7 @@ test('confirms a selected prototype revision, previews a fixed English package a
     data: { htmlContent: `${confirmed.htmlContent}\n<!-- APPLICATION_PACKAGE_REVISION -->`, title: 'Application package review candidate' },
   })).json();
   await page.goto('/');
-  await page.getByTestId('nav-app-assembly-dev').click();
+  await page.getByTestId('step-tab-DELIVERY').click();
   await expect(page.getByTestId('application-development-workflow')).toBeVisible();
   await page.getByTestId('development-prototype-revision').selectOption(appended.revision.id);
   await expect(page.getByTestId('confirm-revision-mu-diff-modal')).toBeVisible();
@@ -39,7 +39,7 @@ test('confirms a selected prototype revision, previews a fixed English package a
   await download.saveAs(downloadPath);
   expect(fs.readFileSync(downloadPath)).toEqual(originalBytes);
   await page.reload();
-  await page.getByTestId('nav-app-assembly-dev').click();
+  await page.getByTestId('step-tab-DELIVERY').click();
   await expect(page.getByTestId('saved-package-snapshot')).toContainText(first.compiledPackage.snapshotId);
   await page.getByTestId('compile-dev-package-btn').click();
   await expect.poll(async () => (await (await request.get(`/api/applications/${applicationId}/package`)).json()).compiledPackage.snapshotId)
@@ -48,7 +48,7 @@ test('confirms a selected prototype revision, previews a fixed English package a
 
 test('keeps architecture authoring separate from application review and renders assistant Markdown', async ({ page, request }) => {
   await page.goto('/');
-  await page.getByTestId('nav-app-assembly-dev').click();
+  await page.getByTestId('step-tab-DELIVERY').click();
   const panel = page.getByTestId('agent-panel');
   await page.getByTestId('agent-panel-composer-input').fill('Review this application input specification.');
   await page.getByTestId('agent-panel-send-btn').click();

@@ -169,13 +169,13 @@
   color-scheme: light dark;
 
   /* ─── Type & Spacing Scale (use these instead of ad-hoc px values) ─── */
-  --text-2xs: 10.5px; /* table headers, overlines */
-  --text-xs: 11.5px; /* badges, captions, meta */
-  --text-sm: 12.5px; /* secondary text, compact controls */
-  --text-base: 13px; /* body, controls */
+  --text-2xs: 12px; /* table headers, overlines (minimum 12px per #48) */
+  --text-xs: 12px; /* badges, captions, meta */
+  --text-sm: 13px; /* secondary text, compact controls */
+  --text-base: 14px; /* body, controls (base 14px per #48) */
   --text-md: 14px; /* section titles (sans) */
-  --text-lg: 16px; /* card titles (serif) */
-  --text-xl: 20px; /* metrics (serif) */
+  --text-lg: 16px; /* card titles */
+  --text-xl: 20px; /* metrics */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -193,9 +193,7 @@
   --dur-fast: 120ms;
   --dur-med: 200ms;
 
-  --topbar-h: 52px;
-  --sidebar-w: 240px;
-  --sidebar-w-collapsed: 56px;
+  --topbar-h: 56px;
 
   --scrollbar-track: transparent;
   scrollbar-width: thin;
@@ -229,8 +227,9 @@ body,
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }

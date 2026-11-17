@@ -3,16 +3,28 @@ export {
   NAV_GROUPS,
   NAV_ICONS,
   NAV_ITEMS,
+  PROJECT_STEP_VIEWS,
+  SECONDARY_AREAS,
+  getDefaultViewForStep,
   getNavGroupSpec,
   getNavItemSpec,
   getNavItemsByGroup,
+  getProjectStepForView,
+  getSecondaryAreaForView,
   isFlushNavView,
   isNavViewId,
+  resolveAreaParamToView,
   resolveNavViewId,
+  resolveShellRouteContext,
+  resolveStepParamToId,
   type NavGroupId,
   type NavGroupSpec,
   type NavItemSpec,
   type NavViewId,
+  type ProjectStepViewSpec,
+  type SecondaryAreaId,
+  type SecondaryAreaSpec,
+  type ShellRouteContext,
 } from './catalog.js';
 
 export {
@@ -35,12 +47,19 @@ export {
 } from './agentSurfaces.js';
 
 export {
+  deriveProjectHealthSummary,
   deriveProjectStepProgress,
+  deriveProjectSteps,
+  formatProjectHealthStatus,
   getProjectLifecycleState,
+  getProjectStepsFromBootstrap,
+  type ProjectHealthSummary,
   type ProjectLifecycleBootstrapSlice,
   type ProjectLifecycleState,
   type ProjectNextStep,
+  type ProjectStepBlockedInfo,
   type ProjectStepNumber,
   type ProjectStepProgressInput,
+  type ProjectStepStatusView,
   type ProjectStepTargetView,
 } from './projectSteps.js';

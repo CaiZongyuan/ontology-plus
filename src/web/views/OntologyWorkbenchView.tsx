@@ -1028,7 +1028,7 @@ export function OntologyWorkbenchView({
   const searchKeyword = treeSearch.trim().toLowerCase();
 
   return (
-    <div className="flex flex-col h-[calc(100vh_-_var(--topbar-h,48px))]">
+    <div className="flex flex-col h-[calc(100vh_-_var(--topbar-h,56px)_-_var(--subbar-h,0px))]">
       <div className="ontology-workbench">
         {/* ─── Left Pane: Hierarchical 11-Model Progressive Navigator + Searchable Tree ─── */}
         <div className="workbench-left">

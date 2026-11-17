@@ -64,6 +64,12 @@ export interface AgentPanelProps {
   onToggleWideMode?: () => void;
   /** Overlay presentation for narrow viewports. */
   overlay?: boolean;
+  /** Which side of the workspace this panel is docked on (default: 'right'). */
+  side?: 'left' | 'right';
+  /** Whether the user can collapse this panel away (false when permanently docked as the left conversation pane). */
+  closable?: boolean;
+  /** Whether drag/keyboard width resizing is enabled (defaults to !overlay). */
+  resizable?: boolean;
   onClose: () => void;
   onResize: (width: number, opts: { commit: boolean }) => void;
   onCancelRun?: (runId: string) => void;
@@ -120,6 +126,9 @@ export function AgentPanel({
   wideMode = false,
   onToggleWideMode,
   overlay = false,
+  side = 'right',
+  closable = true,
+  resizable,
   onClose,
   onResize,
   onCancelRun,
@@ -221,7 +230,13 @@ export function AgentPanel({
 
   useEffect(() => () => document.body.classList.remove(RESIZING_BODY_CLASS), []);
 
-  const widthFromPointer = (clientX: number) => window.innerWidth - clientX;
+  const widthFromPointer = (clientX: number) => {
+    if (side === 'left') {
+      const leftEdge = panelRef.current?.getBoundingClientRect().left ?? 0;
+      return clientX - leftEdge;
+    }
+    return window.innerWidth - clientX;
+  };
 
   const onResizerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -241,14 +256,17 @@ export function AgentPanel({
     onResize(widthFromPointer(e.clientX), { commit: true });
   };
   const onResizerKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    // The panel sits on the right, so moving the divider left makes it wider.
-    if (e.key === 'ArrowLeft') onResize(width + KEYBOARD_RESIZE_STEP, { commit: true });
-    else if (e.key === 'ArrowRight') onResize(width - KEYBOARD_RESIZE_STEP, { commit: true });
+    const widenKey = side === 'left' ? 'ArrowRight' : 'ArrowLeft';
+    const narrowKey = side === 'left' ? 'ArrowLeft' : 'ArrowRight';
+    if (e.key === widenKey) onResize(width + KEYBOARD_RESIZE_STEP, { commit: true });
+    else if (e.key === narrowKey) onResize(width - KEYBOARD_RESIZE_STEP, { commit: true });
     else if (e.key === 'Home') onResize(AGENT_PANEL_MAX_WIDTH, { commit: true });
     else if (e.key === 'End') onResize(AGENT_PANEL_MIN_WIDTH, { commit: true });
     else return;
     e.preventDefault();
   };
+
+  const showResizer = resizable ?? !overlay;
 
   return (
     <>
@@ -263,19 +281,25 @@ export function AgentPanel({
       <aside
         ref={panelRef}
         id="agent-panel"
-        className={cn('agent-panel', overlay && 'is-overlay', wideMode && 'is-wide')}
+        className={cn(
+          'agent-panel',
+          side === 'left' && 'is-left',
+          overlay && 'is-overlay',
+          wideMode && 'is-wide',
+        )}
         data-testid="agent-panel"
+        data-side={side}
         data-wide-mode={wideMode ? 'true' : 'false'}
-        aria-label={t('智能体面板', 'Agent Panel')}
+        aria-label={t('AI 助手', 'AI Assistant')}
         tabIndex={-1}
       >
-        {!overlay && (
+        {showResizer && (
           <div
             className="agent-panel-resizer"
             data-testid="agent-panel-resizer"
             role="separator"
             aria-orientation="vertical"
-            aria-label={t('调整智能体面板宽度', 'Resize Agent Panel')}
+            aria-label={t('调整对话栏宽度', 'Resize conversation pane')}
             aria-valuemin={AGENT_PANEL_MIN_WIDTH}
             aria-valuemax={AGENT_PANEL_MAX_WIDTH}
             aria-valuenow={width}
@@ -307,7 +331,7 @@ export function AgentPanel({
                 data-testid="agent-panel-session-select"
                 aria-haspopup="listbox"
                 aria-expanded={sessionMenuOpen}
-                aria-label={t('切换智能体会话', 'Switch Agent Session')}
+                aria-label={t('切换对话', 'Switch conversation')}
                 title={activeSessionOption.title}
                 onClick={() => setSessionMenuOpen((v) => !v)}
               >
@@ -359,7 +383,7 @@ export function AgentPanel({
                 <MessageSquarePlus size={14} aria-hidden="true" />
               </Button>
             )}
-            {!overlay && onToggleWideMode && (
+            {!overlay && resizable !== false && onToggleWideMode && (
               <Button
                 variant="ghost"
                 size="xs"
@@ -384,16 +408,18 @@ export function AgentPanel({
                 )}
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="xs"
-              data-testid="agent-panel-close-btn"
-              aria-label={t('收起智能体面板', 'Collapse Agent Panel')}
-              title={t('收起智能体面板', 'Collapse Agent Panel')}
-              onClick={onClose}
-            >
-              <PanelRightClose size={14} aria-hidden="true" />
-            </Button>
+            {closable && (
+              <Button
+                variant="ghost"
+                size="xs"
+                data-testid="agent-panel-close-btn"
+                aria-label={t('收起对话栏', 'Collapse conversation pane')}
+                title={t('收起对话栏', 'Collapse conversation pane')}
+                onClick={onClose}
+              >
+                <PanelRightClose size={14} aria-hidden="true" />
+              </Button>
+            )}
           </div>
         </header>
 
@@ -599,7 +625,7 @@ function AgentSessionMenu({
       className="agent-session-menu"
       data-testid="agent-session-menu"
       role="listbox"
-      aria-label={t('智能体会话', 'Agent Sessions')}
+      aria-label={t('历史对话', 'Conversation history')}
     >
       <div className="agent-session-menu-head">
         <span>{t(`会话 · ${sessions.length}`, `Sessions · ${sessions.length}`)}</span>
