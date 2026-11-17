@@ -283,6 +283,41 @@ describe('the stylesheets that still use pre-contract names', () => {
   });
 });
 
+describe('the shell stylesheet and the base stylesheet', () => {
+  // The pre-contract names live on as aliases in one block of tokens.css until every
+  // caller has moved (#45). These two stylesheets are already migrated (#42).
+  const tokensCss = readRepoFile('src/web/tokens.css');
+  const aliasBlock = /^:root,\n\[data-theme\] \{\n[\s\S]*?^\}\n/m.exec(tokensCss)?.[0] ?? '';
+  const oldNames = [...aliasBlock.matchAll(/^\s*--([\w-]+):\s*var\(--[\w-]+\);/gm)].map((match) => match[1]!);
+  const stylesheets = {
+    'src/web/shell.css': readRepoFile('src/web/shell.css'),
+    'src/web/tokens.css': tokensCss.replace(aliasBlock, ''),
+  };
+
+  const offending = (pattern: RegExp) =>
+    Object.entries(stylesheets).flatMap(([file, css]) =>
+      css.split('\n').flatMap((line, index) => (pattern.test(line) ? [`${file}:${index + 1}: ${line.trim()}`] : [])),
+    );
+
+  it('keep the pre-contract names only in the alias block', () => {
+    expect(oldNames).toEqual(expect.arrayContaining(['ground', 'ink', 'ink-3', 'line', 'surface-2', 'inset', 'red-tint']));
+    const used = new RegExp(`var\\(--(?:${oldNames.join('|')})[\\s,)]`);
+    const found = offending(used);
+    expect(found, found.join('\n')).toEqual([]);
+  });
+
+  it('take every colour, including shadow and scrim colours, from contract tokens', () => {
+    // Masks only use the alpha channel, so the colour they name is not appearance.
+    const literal = /#[\da-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(\s*[\d.]|\b(?:white|black)\b/i;
+    const found = Object.entries(stylesheets).flatMap(([file, css]) =>
+      [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([\w-]+)\s*:\s*([^;{}]+);/g)]
+        .filter(([, property, value]) => !/^(?:-webkit-)?mask/.test(property!) && literal.test(value!))
+        .map(([declaration]) => `${file}: ${declaration.replace(/\s+/g, ' ')}`),
+    );
+    expect(found, found.join('\n')).toEqual([]);
+  });
+});
+
 describe('accent and muted keep their contract meaning', () => {
   // Before the contract, `accent` was the brand colour and `muted` was secondary text.
   // In the contract `accent` is the hover fill and `muted` the quiet fill; the old

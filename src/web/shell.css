@@ -6,9 +6,9 @@
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  background-color: var(--ground);
-  background-image: var(--paper-grain-url);
-  background-size: var(--paper-grain-size, auto);
+  background-color: var(--background);
+  background-image: var(--backdrop-image);
+  background-size: var(--backdrop-size, auto);
   transition: grid-template-columns var(--dur-med) var(--ease-out);
 }
 
@@ -22,8 +22,8 @@
   flex-direction: column;
   height: 100vh;
   min-width: 0;
-  background: var(--ground-2);
-  border-right: 1px solid var(--line);
+  background: var(--canvas);
+  border-right: 1px solid var(--border);
   user-select: none;
   overflow: hidden;
 }
@@ -47,11 +47,11 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  font-family: var(--serif);
+  font-family: var(--font-title);
   font-weight: 600;
   font-size: 15px;
   letter-spacing: 0.01em;
-  color: var(--ink);
+  color: var(--foreground);
   white-space: nowrap;
   overflow: hidden;
   min-width: 0;
@@ -59,10 +59,10 @@
 
 .brand-title small {
   display: block;
-  font-family: var(--sans);
+  font-family: var(--font-sans);
   font-size: var(--text-2xs);
   font-weight: 500;
-  color: var(--faint);
+  color: var(--faint-foreground);
   letter-spacing: 0.02em;
   line-height: 1.2;
 }
@@ -71,16 +71,28 @@
   width: 28px;
   height: 28px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(140deg, var(--primary), color-mix(in srgb, var(--primary) 62%, #000));
+  background: var(--primary);
   color: var(--primary-foreground);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
   font-weight: 600;
   flex-shrink: 0;
   box-shadow: var(--shadow-sm);
+}
+
+/* Primary into primary shaded to 62% of each channel (the same as mixing it with black).
+   Gated, because a value with var() that the browser cannot compute is dropped, not skipped. */
+@supports (color: rgb(from red r g b)) {
+  .brand-mark {
+    background: linear-gradient(
+      140deg,
+      var(--primary),
+      rgb(from var(--primary) calc(r * 0.62) calc(g * 0.62) calc(b * 0.62))
+    );
+  }
 }
 
 .icon-btn {
@@ -100,8 +112,8 @@
 }
 
 .icon-btn:hover {
-  background: var(--ghost);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 .sidebar-search {
@@ -111,11 +123,11 @@
   gap: 8px;
   height: 32px;
   padding: 0 8px 0 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--faint);
-  font-family: var(--sans);
+  background: var(--card);
+  color: var(--faint-foreground);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
   cursor: pointer;
   flex-shrink: 0;
@@ -124,7 +136,7 @@
 
 .sidebar-search:hover {
   border-color: var(--muted-foreground);
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .sidebar-search .kbd {
@@ -144,12 +156,12 @@
   gap: 2px;
   height: 18px;
   padding: 0 5px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-bottom-width: 2px;
   border-radius: 4px;
-  background: var(--surface-2);
+  background: var(--muted);
   color: var(--muted-foreground);
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: 1;
 }
@@ -178,18 +190,18 @@
   padding: 6px 8px 4px;
   border: 0;
   background: transparent;
-  font-family: var(--sans);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--faint);
+  color: var(--faint-foreground);
   white-space: nowrap;
   cursor: pointer;
   border-radius: var(--radius-xs);
 }
 
 .nav-group-label:hover {
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .nav-group-label .chev {
@@ -204,10 +216,10 @@
 .nav-group-count {
   margin-left: auto;
   margin-right: 4px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
   font-weight: 500;
-  color: var(--faint);
+  color: var(--faint-foreground);
   opacity: 0;
   transition: opacity var(--dur-fast) ease;
 }
@@ -219,7 +231,7 @@
 .nav-group-divider {
   height: 1px;
   margin: 6px 10px;
-  background: var(--line);
+  background: var(--border);
 }
 
 .nav-item {
@@ -234,10 +246,10 @@
   margin: 1px 0;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-family: var(--sans);
+  font-family: var(--font-sans);
   font-size: var(--text-base);
   text-align: left;
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
@@ -250,18 +262,18 @@
 }
 
 .nav-item:hover {
-  background: var(--ghost);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 .nav-item:hover .nav-icon {
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .nav-item.active {
-  background: var(--surface);
-  border-color: var(--line);
-  color: var(--ink);
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--foreground);
   font-weight: 600;
   box-shadow: var(--shadow-xs);
 }
@@ -302,7 +314,7 @@
 }
 
 .nav-badge {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: 16px;
   padding: 0 6px;
@@ -313,7 +325,7 @@
 }
 
 .sidebar-footer {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border);
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
@@ -347,8 +359,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
   backdrop-filter: saturate(1.2) blur(6px);
   gap: 16px;
   flex-shrink: 0;
@@ -375,20 +387,20 @@
 }
 
 .breadcrumb-group {
-  color: var(--faint);
+  color: var(--faint-foreground);
   font-size: var(--text-sm);
 }
 
 .breadcrumb-sep {
-  color: var(--line);
+  color: var(--border);
   display: inline-flex;
 }
 
 .breadcrumb-page {
-  font-family: var(--serif);
+  font-family: var(--font-title);
   font-size: var(--text-lg);
   font-weight: 600;
-  color: var(--ink);
+  color: var(--foreground);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -396,7 +408,7 @@
 .topbar-divider {
   width: 1px;
   height: 20px;
-  background: var(--line);
+  background: var(--border);
   flex-shrink: 0;
 }
 
@@ -430,10 +442,10 @@
   max-width: 360px;
   padding: 0 28px 0 30px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink);
-  font-family: var(--sans);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
@@ -447,7 +459,7 @@
 
 .project-selector:focus-visible {
   outline: none;
-  border-color: var(--primary);
+  border-color: var(--ring);
   box-shadow: var(--focus-ring);
 }
 
@@ -458,10 +470,10 @@
   height: 28px;
   padding: 0 10px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid var(--border);
+  background: var(--card);
   font-size: var(--text-sm);
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   white-space: nowrap;
 }
 
@@ -469,17 +481,17 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-soft);
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
 }
 
 .status-pill.bad .dot {
-  background: var(--bad);
-  box-shadow: 0 0 0 3px var(--bad-soft);
+  background: var(--destructive);
+  box-shadow: 0 0 0 3px var(--destructive-soft);
 }
 
 .status-pill strong {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-weight: 500;
 }
 
@@ -563,39 +575,39 @@
   height: 22px;
   padding: 0 8px;
   border-radius: var(--radius-pill);
-  font-family: var(--sans);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--ink-2);
+  border: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--foreground-soft);
   font-variant-numeric: tabular-nums;
 }
 
 .badge.mono,
 .badge-mono {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
 
 .badge-ok {
-  background: var(--ok-soft);
-  border-color: color-mix(in srgb, var(--ok) 22%, transparent);
-  color: var(--ok);
+  background: var(--success-soft);
+  border-color: color-mix(in srgb, var(--success) 22%, transparent);
+  color: var(--success);
 }
 
 .badge-warn {
-  background: var(--warn-soft);
-  border-color: color-mix(in srgb, var(--warn) 22%, transparent);
-  color: var(--warn);
+  background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 22%, transparent);
+  color: var(--warning);
 }
 
 .badge-bad {
-  background: var(--bad-soft);
-  border-color: color-mix(in srgb, var(--bad) 22%, transparent);
-  color: var(--bad);
+  background: var(--destructive-soft);
+  border-color: color-mix(in srgb, var(--destructive) 22%, transparent);
+  color: var(--destructive);
 }
 
 .badge-accent {
@@ -606,8 +618,8 @@
 
 /* ─── Cards ─── */
 .card {
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 18px;
   box-shadow: var(--shadow-sm);
@@ -624,11 +636,11 @@
 }
 
 .card-title {
-  font-family: var(--serif);
+  font-family: var(--font-title);
   font-size: var(--text-lg);
   font-weight: 600;
   line-height: 1.35;
-  color: var(--ink);
+  color: var(--foreground);
   margin: 0;
 }
 
@@ -641,8 +653,8 @@
 /* Nesting rule (ADR 0006): at most two card levels. The inner level is a flat inset
    panel: no shadow, softer line, recessed fill. */
 .card .card {
-  background: var(--surface-2);
-  border-color: var(--line-2);
+  background: var(--muted);
+  border-color: var(--border-subtle);
   box-shadow: none;
   padding: 14px;
 }
@@ -661,10 +673,10 @@
   min-height: 32px;
   padding: 6px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink);
-  font-family: var(--sans);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: 1.4;
   transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background var(--dur-fast) ease;
@@ -677,21 +689,21 @@
 
 .input::placeholder,
 .textarea::placeholder {
-  color: var(--faint);
+  color: var(--faint-foreground);
   opacity: 0.85;
 }
 
 .input:hover:not(:disabled):not(:focus),
 .select:hover:not(:disabled):not(:focus),
 .textarea:hover:not(:disabled):not(:focus) {
-  border-color: color-mix(in srgb, var(--muted-foreground) 60%, var(--line));
+  border-color: color-mix(in srgb, var(--muted-foreground) 60%, var(--border));
 }
 
 .input:focus,
 .select:focus,
 .textarea:focus {
   outline: none;
-  border-color: var(--primary);
+  border-color: var(--ring);
   box-shadow: var(--focus-ring);
 }
 
@@ -699,7 +711,7 @@
 .select:disabled,
 .textarea:disabled,
 .input[readonly] {
-  background: var(--surface-2);
+  background: var(--muted);
   color: var(--muted-foreground);
 }
 
@@ -717,7 +729,7 @@
 
 .textarea.mono,
 .code-editor {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
   line-height: 1.6;
 }
@@ -737,7 +749,7 @@ input[type='checkbox'] {
   margin: 0;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
-  background: var(--surface) center / 11px 11px no-repeat;
+  background: var(--card) center / 11px 11px no-repeat;
   cursor: pointer;
   vertical-align: -2px;
   transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
@@ -777,15 +789,15 @@ input[type='checkbox']:disabled {
 }
 
 .workbench-left {
-  border-right: 1px solid var(--line);
-  background: var(--surface-2);
+  border-right: 1px solid var(--border);
+  background: var(--muted);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
 }
 
 .workbench-center {
-  background: var(--surface);
+  background: var(--card);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -793,8 +805,8 @@ input[type='checkbox']:disabled {
 }
 
 .workbench-right {
-  border-left: 1px solid var(--line);
-  background: var(--surface-2);
+  border-left: 1px solid var(--border);
+  background: var(--muted);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -803,8 +815,8 @@ input[type='checkbox']:disabled {
 
 .workbench-statusbar {
   height: 34px;
-  border-top: 1px solid var(--line);
-  background: var(--ground-2);
+  border-top: 1px solid var(--border);
+  background: var(--canvas);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -838,7 +850,7 @@ input[type='checkbox']:disabled {
 .data-table td {
   text-align: left;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--border-subtle);
   vertical-align: middle;
 }
 
@@ -848,11 +860,11 @@ input[type='checkbox']:disabled {
   z-index: 1;
   font-weight: 600;
   color: var(--muted-foreground);
-  background: var(--surface-2);
+  background: var(--muted);
   font-size: var(--text-xs);
   letter-spacing: 0.02em;
   white-space: nowrap;
-  border-bottom-color: var(--line);
+  border-bottom-color: var(--border);
 }
 
 .data-table th:first-child {
@@ -868,7 +880,7 @@ input[type='checkbox']:disabled {
 }
 
 .data-table tbody tr:hover {
-  background: var(--ghost);
+  background: var(--accent);
 }
 
 .data-table tbody tr:last-child td {
@@ -883,7 +895,7 @@ dialog:modal {
 dialog::backdrop {
   overflow: hidden;
   overscroll-behavior: contain;
-  background: rgba(15, 15, 14, 0.42);
+  background: color-mix(in srgb, var(--overlay) 42%, transparent);
   backdrop-filter: blur(2px);
 }
 
@@ -891,9 +903,9 @@ dialog.onto-dialog[open] {
   width: min(680px, calc(100vw - 32px));
   max-height: 86vh;
   overflow-y: auto;
-  background: var(--surface);
-  color: var(--ink);
-  border: 1px solid var(--line);
+  background: var(--popover);
+  color: var(--foreground);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 20px;
   box-shadow: var(--shadow-lg);
@@ -903,7 +915,7 @@ dialog.onto-dialog[open] {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 15, 14, 0.42);
+  background: color-mix(in srgb, var(--overlay) 42%, transparent);
   backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
@@ -918,8 +930,8 @@ dialog.onto-dialog[open] {
   max-width: 680px;
   max-height: 85vh;
   overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 20px;
   box-shadow: var(--shadow-lg);
@@ -962,14 +974,14 @@ dialog.onto-dialog[open] {
 .form-label {
   font-size: var(--text-sm);
   font-weight: 600;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
 .form-label .req-star {
-  color: var(--bad);
+  color: var(--destructive);
 }
 
 .tree-element-row {
@@ -981,13 +993,13 @@ dialog.onto-dialog[open] {
   font-size: var(--text-sm);
   border-radius: var(--radius-xs);
   cursor: pointer;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 
 .tree-element-row:hover {
-  background: var(--ghost);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 .tree-element-row.selected {
@@ -1002,7 +1014,7 @@ dialog.onto-dialog[open] {
 }
 
 .diag-row-clickable:hover {
-  background: var(--ghost);
+  background: var(--accent);
 }
 
 .toast-banner {
@@ -1014,8 +1026,8 @@ dialog.onto-dialog[open] {
   align-items: center;
   gap: 10px;
   max-width: min(440px, calc(100vw - 48px));
-  background: var(--ink);
-  color: var(--surface);
+  background: var(--foreground);
+  color: var(--card);
   padding: 10px 14px 10px 12px;
   border-radius: var(--radius-md);
   font-size: var(--text-base);
@@ -1026,7 +1038,7 @@ dialog.onto-dialog[open] {
 
 .toast-banner .toast-icon {
   display: inline-flex;
-  color: var(--ok);
+  color: var(--success);
   flex-shrink: 0;
 }
 
@@ -1042,9 +1054,9 @@ dialog.onto-dialog[open] {
   border-radius: var(--radius-sm);
   background: linear-gradient(
     90deg,
-    var(--surface-2) 0%,
-    color-mix(in srgb, var(--surface-2) 60%, var(--line)) 50%,
-    var(--surface-2) 100%
+    var(--muted) 0%,
+    color-mix(in srgb, var(--muted) 60%, var(--border)) 50%,
+    var(--muted) 100%
   );
   background-size: 200% 100%;
   animation: shimmer 1.4s ease-in-out infinite;
@@ -1076,9 +1088,9 @@ dialog.cmdk[open] {
   margin: 12vh auto auto;
   padding: 0;
   overflow: hidden;
-  background: var(--surface);
-  color: var(--ink);
-  border: 1px solid var(--line);
+  background: var(--popover);
+  color: var(--foreground);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   animation: pop-in var(--dur-med) var(--ease-out);
@@ -1090,7 +1102,7 @@ dialog.cmdk[open] {
   gap: 10px;
   padding: 0 16px;
   height: 52px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border);
   color: var(--muted-foreground);
 }
 
@@ -1100,13 +1112,13 @@ dialog.cmdk[open] {
   border: 0;
   outline: none;
   background: transparent;
-  color: var(--ink);
-  font-family: var(--sans);
+  color: var(--foreground);
+  font-family: var(--font-sans);
   font-size: 15px;
 }
 
 .cmdk-input::placeholder {
-  color: var(--faint);
+  color: var(--faint-foreground);
 }
 
 .cmdk-list {
@@ -1120,7 +1132,7 @@ dialog.cmdk[open] {
   font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--faint);
+  color: var(--faint-foreground);
 }
 
 .cmdk-item {
@@ -1133,8 +1145,8 @@ dialog.cmdk[open] {
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--ink-2);
-  font-family: var(--sans);
+  color: var(--foreground-soft);
+  font-family: var(--font-sans);
   font-size: var(--text-base);
   text-align: left;
   cursor: pointer;
@@ -1148,12 +1160,12 @@ dialog.cmdk[open] {
 .cmdk-item .cmdk-meta {
   margin-left: auto;
   font-size: var(--text-xs);
-  color: var(--faint);
+  color: var(--faint-foreground);
 }
 
 .cmdk-item.selected {
   background: var(--primary-soft);
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .cmdk-item.selected .cmdk-icon {
@@ -1163,7 +1175,7 @@ dialog.cmdk[open] {
 .cmdk-empty {
   padding: 28px 16px;
   text-align: center;
-  color: var(--faint);
+  color: var(--faint-foreground);
 }
 
 .cmdk-footer {
@@ -1171,10 +1183,10 @@ dialog.cmdk[open] {
   align-items: center;
   gap: 14px;
   padding: 8px 14px;
-  border-top: 1px solid var(--line);
-  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  background: var(--muted);
   font-size: var(--text-xs);
-  color: var(--faint);
+  color: var(--faint-foreground);
 }
 
 .cmdk-footer span {
@@ -1344,13 +1356,13 @@ dialog.cmdk[open] {
 }
 
 .nav-task-dot.is-done {
-  background: var(--ok);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent);
 }
 
 .pipeline-topbar-pill {
   cursor: pointer;
-  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
   background: var(--primary-soft);
   color: var(--primary);
   font-weight: 600;
@@ -1359,12 +1371,12 @@ dialog.cmdk[open] {
 }
 
 .pipeline-topbar-pill:hover {
-  background: color-mix(in srgb, var(--primary) 16%, var(--surface));
+  background: color-mix(in srgb, var(--primary) 16%, var(--card));
 }
 
 .pipeline-topbar-pill:focus-visible,
 .pipeline-tray-close:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -1374,25 +1386,25 @@ dialog.cmdk[open] {
   gap: 10px;
   padding: 12px 16px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid var(--border);
+  background: var(--card);
   box-shadow: var(--shadow-xs);
   animation: settle-in 220ms var(--ease-out) both;
 }
 
 .pipeline-inline-card.is-running {
-  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
-  background: color-mix(in srgb, var(--primary-soft) 35%, var(--surface));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  background: color-mix(in srgb, var(--primary-soft) 35%, var(--card));
 }
 
 .pipeline-inline-card.is-completed {
-  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
-  background: color-mix(in srgb, var(--ok) 6%, var(--surface));
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  background: color-mix(in srgb, var(--success) 6%, var(--card));
 }
 
 .pipeline-inline-card.is-error {
-  border-color: color-mix(in srgb, var(--bad) 50%, var(--line));
-  background: color-mix(in srgb, var(--bad) 6%, var(--surface));
+  border-color: color-mix(in srgb, var(--destructive) 50%, var(--border));
+  background: color-mix(in srgb, var(--destructive) 6%, var(--card));
 }
 
 .pipeline-inline-head {
@@ -1421,11 +1433,11 @@ dialog.cmdk[open] {
 }
 
 .is-completed .pipeline-status-icon {
-  color: var(--ok);
+  color: var(--success);
 }
 
 .is-error .pipeline-status-icon {
-  color: var(--bad);
+  color: var(--destructive);
 }
 
 .is-cancelled .pipeline-status-icon {
@@ -1439,7 +1451,7 @@ dialog.cmdk[open] {
   gap: 8px;
   font-size: var(--text-base);
   font-weight: 600;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .pipeline-elapsed-pill,
@@ -1450,18 +1462,18 @@ dialog.cmdk[open] {
   gap: 4px;
   padding: 1px 8px;
   border-radius: 999px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink-2);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground-soft);
 }
 
 .pipeline-chapter-pill {
-  font-family: var(--sans);
-  border-color: color-mix(in srgb, var(--primary) 32%, var(--line));
+  font-family: var(--font-sans);
+  border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
   background: var(--primary-soft);
   color: var(--primary);
   max-inline-size: 320px;
@@ -1474,7 +1486,7 @@ dialog.cmdk[open] {
   margin: 3px 0 0;
   font-size: var(--text-sm);
   line-height: 1.45;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .pipeline-inline-actions {
@@ -1498,11 +1510,11 @@ dialog.cmdk[open] {
   border: 0;
   border-radius: 999px;
   overflow: hidden;
-  background: var(--surface-2);
+  background: var(--muted);
 }
 
 .pipeline-progress-bar::-webkit-progress-bar {
-  background: var(--surface-2);
+  background: var(--muted);
   border-radius: 999px;
 }
 
@@ -1513,7 +1525,7 @@ dialog.cmdk[open] {
 }
 
 .is-completed .pipeline-progress-bar::-webkit-progress-value {
-  background: var(--ok);
+  background: var(--success);
 }
 
 .pipeline-progress-bar::-moz-progress-bar {
@@ -1545,23 +1557,23 @@ dialog.cmdk[open] {
   gap: 6px;
   padding: 5px 8px;
   border-radius: var(--radius-xs);
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid var(--border);
+  background: var(--card);
   font-size: var(--text-xs);
   color: var(--muted-foreground);
   min-inline-size: 0;
 }
 
 .pipeline-stage-step.is-current {
-  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
   background: var(--primary-soft);
-  color: var(--ink);
+  color: var(--foreground);
   font-weight: 600;
 }
 
 .pipeline-stage-step.is-done {
-  border-color: color-mix(in srgb, var(--ok) 35%, var(--line));
-  color: var(--ink-2);
+  border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+  color: var(--foreground-soft);
 }
 
 .pipeline-stage-dot {
@@ -1571,22 +1583,22 @@ dialog.cmdk[open] {
   inline-size: 16px;
   block-size: 16px;
   border-radius: 999px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
   flex-shrink: 0;
-  background: var(--surface-2);
+  background: var(--muted);
   color: var(--muted-foreground);
 }
 
 .pipeline-stage-step.is-current .pipeline-stage-dot {
   background: var(--primary);
-  color: #fff;
+  color: var(--primary-foreground);
 }
 
 .pipeline-stage-step.is-done .pipeline-stage-dot {
-  background: color-mix(in srgb, var(--ok) 18%, var(--surface));
-  color: var(--ok);
+  background: color-mix(in srgb, var(--success) 18%, var(--card));
+  color: var(--success);
 }
 
 .pipeline-safe-nav-hint {
@@ -1601,19 +1613,19 @@ dialog.cmdk[open] {
   gap: 8px;
   padding: 8px 10px;
   border-radius: var(--radius-xs);
-  background: var(--surface);
-  border: 1px solid color-mix(in srgb, var(--bad) 28%, var(--line));
+  background: var(--card);
+  border: 1px solid color-mix(in srgb, var(--destructive) 28%, var(--border));
   font-size: var(--text-xs);
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .pipeline-error-code {
   padding: 1px 6px;
   border-radius: 4px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
-  background: color-mix(in srgb, var(--bad) 12%, var(--surface));
-  color: var(--bad);
+  background: color-mix(in srgb, var(--destructive) 12%, var(--card));
+  color: var(--destructive);
 }
 
 .pipeline-thinking-pill {
@@ -1622,11 +1634,11 @@ dialog.cmdk[open] {
   gap: 4px;
   padding: 1px 7px;
   border-radius: 999px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
   background: var(--primary-soft);
-  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
   color: var(--primary);
 }
 
@@ -1636,7 +1648,7 @@ dialog.cmdk[open] {
   gap: 10px;
   margin-block-start: 4px;
   padding-block-start: 10px;
-  border-top: 1px dashed var(--line);
+  border-top: 1px dashed var(--border);
 }
 
 .pipeline-drawer-subhead {
@@ -1645,17 +1657,17 @@ dialog.cmdk[open] {
   justify-content: space-between;
   gap: 8px;
   padding: 5px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
   font-size: var(--text-xs);
   font-weight: 600;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .pipeline-stage-logs {
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--card);
   overflow: hidden;
 }
 
@@ -1676,24 +1688,24 @@ dialog.cmdk[open] {
   gap: 7px;
   font-size: 11.5px;
   line-height: 1.45;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .pipeline-stage-log-item.is-active {
-  color: var(--ink);
+  color: var(--foreground);
   font-weight: 600;
 }
 
 .pipeline-stage-log-item.is-done {
-  color: var(--ok);
+  color: var(--success);
 }
 
 .pipeline-stage-log-item.is-error {
-  color: var(--bad);
+  color: var(--destructive);
 }
 
 .pipeline-log-time {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--muted-foreground);
   flex-shrink: 0;
@@ -1705,18 +1717,18 @@ dialog.cmdk[open] {
   justify-content: center;
   padding: 0 5px;
   border-radius: 4px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--muted);
+  border: 1px solid var(--border);
   color: var(--muted-foreground);
   flex-shrink: 0;
 }
 
 .pipeline-stage-log-item.is-active .pipeline-log-step {
   background: var(--primary-soft);
-  border-color: color-mix(in srgb, var(--primary) 40%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
   color: var(--primary);
 }
 
@@ -1726,9 +1738,9 @@ dialog.cmdk[open] {
 }
 
 .pipeline-thinking-box {
-  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--card);
   overflow: hidden;
 }
 
@@ -1740,11 +1752,11 @@ dialog.cmdk[open] {
   gap: 8px;
   padding: 6px 10px;
   border: 0;
-  background: color-mix(in srgb, var(--primary-soft) 55%, var(--surface-2));
+  background: color-mix(in srgb, var(--primary-soft) 55%, var(--muted));
   font: inherit;
   font-size: var(--text-xs);
   font-weight: 600;
-  color: var(--ink);
+  color: var(--foreground);
   cursor: pointer;
   text-align: start;
 }
@@ -1758,14 +1770,14 @@ dialog.cmdk[open] {
   padding: 8px 12px;
   max-block-size: 180px;
   overflow-y: auto;
-  border-top: 1px solid var(--line);
-  font-family: var(--mono);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--muted-foreground);
-  background: color-mix(in srgb, var(--surface-2) 60%, var(--surface));
+  background: color-mix(in srgb, var(--muted) 60%, var(--card));
 }
 
 .pipeline-live-badge {
@@ -1781,9 +1793,9 @@ dialog.cmdk[open] {
 
 .pipeline-live-preview {
   position: relative;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--card);
   overflow: hidden;
 }
 
@@ -1794,11 +1806,11 @@ dialog.cmdk[open] {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
   font-size: var(--text-xs);
   font-weight: 600;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .pipeline-stream-mode-switch {
@@ -1806,8 +1818,8 @@ dialog.cmdk[open] {
   align-items: center;
   padding: 1px;
   border-radius: 6px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid var(--border);
+  background: var(--card);
 }
 
 .pipeline-mode-btn {
@@ -1837,17 +1849,17 @@ dialog.cmdk[open] {
   gap: 4px;
   padding: 2px 8px;
   border-radius: 6px;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid var(--border);
+  background: var(--card);
   font: inherit;
   font-size: 11px;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   cursor: pointer;
 }
 
 .pipeline-copy-btn:hover {
-  background: var(--ghost);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 .pipeline-stream-viewport {
@@ -1858,12 +1870,12 @@ dialog.cmdk[open] {
 .pipeline-live-preview-body {
   margin: 0;
   padding: 10px 12px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11.5px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .pipeline-stream-markdown {
@@ -1898,8 +1910,8 @@ dialog.cmdk[open] {
   display: flex;
   justify-content: center;
   padding: 5px 10px;
-  border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface-2) 85%, var(--surface));
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 85%, var(--card));
 }
 
 .pipeline-follow-btn {
@@ -1908,7 +1920,7 @@ dialog.cmdk[open] {
   gap: 4px;
   padding: 2px 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
   background: var(--primary-soft);
   font: inherit;
   font-size: 11px;
@@ -1926,26 +1938,26 @@ dialog.cmdk[open] {
   gap: 10px 14px;
   padding: 9px 14px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid var(--border);
+  background: var(--card);
   box-shadow: var(--shadow-sm);
 }
 
 .pipeline-compact-card.is-running {
-  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--primary-soft) 35%, var(--surface)),
-    var(--surface)
+    color-mix(in srgb, var(--primary-soft) 35%, var(--card)),
+    var(--card)
   );
 }
 
 .pipeline-compact-card.is-completed {
-  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
 }
 
 .pipeline-compact-card.is-error {
-  border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--destructive) 45%, var(--border));
 }
 
 .pipeline-compact-card.is-running .pipeline-status-icon {
@@ -1953,11 +1965,11 @@ dialog.cmdk[open] {
 }
 
 .pipeline-compact-card.is-completed .pipeline-status-icon {
-  color: var(--ok);
+  color: var(--success);
 }
 
 .pipeline-compact-card.is-error .pipeline-status-icon {
-  color: var(--bad);
+  color: var(--destructive);
 }
 
 .pipeline-compact-main {
@@ -1972,7 +1984,7 @@ dialog.cmdk[open] {
 .pipeline-compact-title {
   font-size: var(--text-xs);
   font-weight: 600;
-  color: var(--ink);
+  color: var(--foreground);
   white-space: nowrap;
 }
 
@@ -1990,11 +2002,11 @@ dialog.cmdk[open] {
   border: 0;
   border-radius: 999px;
   overflow: hidden;
-  background: var(--surface-2);
+  background: var(--muted);
 }
 
 .pipeline-compact-progress::-webkit-progress-bar {
-  background: var(--surface-2);
+  background: var(--muted);
   border-radius: 999px;
 }
 
@@ -2005,7 +2017,7 @@ dialog.cmdk[open] {
 }
 
 .pipeline-compact-card.is-completed .pipeline-compact-progress::-webkit-progress-value {
-  background: var(--ok);
+  background: var(--success);
 }
 
 .pipeline-compact-progress::-moz-progress-bar {
@@ -2014,14 +2026,14 @@ dialog.cmdk[open] {
 }
 
 .pipeline-compact-metric {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
   color: var(--primary);
 }
 
 .pipeline-compact-card.is-completed .pipeline-compact-metric {
-  color: var(--ok);
+  color: var(--success);
 }
 
 .pipeline-compact-msg {
@@ -2073,23 +2085,23 @@ dialog.cmdk[open] {
   gap: 8px;
   padding: 12px 14px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
   box-shadow: var(--shadow-lg);
   animation: toast-in 240ms var(--ease-out);
 }
 
 .pipeline-tray-card.is-running {
-  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
 }
 
 .pipeline-tray-card.is-completed {
-  border-color: color-mix(in srgb, var(--ok) 50%, var(--line));
+  border-color: color-mix(in srgb, var(--success) 50%, var(--border));
 }
 
 .pipeline-tray-card.is-error {
-  border-color: color-mix(in srgb, var(--bad) 50%, var(--line));
+  border-color: color-mix(in srgb, var(--destructive) 50%, var(--border));
 }
 
 .pipeline-tray-top {
@@ -2108,7 +2120,7 @@ dialog.cmdk[open] {
 .pipeline-tray-title {
   font-size: var(--text-sm);
   font-weight: 600;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .pipeline-tray-sub {
@@ -2143,15 +2155,15 @@ dialog.cmdk[open] {
 }
 
 .pipeline-tray-close:hover {
-  background: var(--ghost);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 .pipeline-tray-msg {
   margin: 0;
   font-size: var(--text-xs);
   line-height: 1.45;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -2187,7 +2199,7 @@ dialog.cmdk[open] {
   display: flex;
   flex-direction: column;
   width: 100%;
-  background: var(--surface);
+  background: var(--card);
 }
 
 .proto-inspector-stage.is-inspecting {
@@ -2202,10 +2214,10 @@ dialog.cmdk[open] {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--primary) 26%, var(--line));
-  background: color-mix(in srgb, var(--primary-soft) 72%, var(--surface-2));
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 26%, var(--border));
+  background: color-mix(in srgb, var(--primary-soft) 72%, var(--muted));
   font-size: var(--text-xs);
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .proto-inspector-dot {
@@ -2227,9 +2239,9 @@ dialog.cmdk[open] {
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border));
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  background: color-mix(in srgb, var(--popover) 96%, transparent);
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow-lg);
   animation: proto-pop-in var(--dur-fast) var(--ease-out);
@@ -2253,11 +2265,11 @@ dialog.cmdk[open] {
   max-width: 100%;
   min-block-size: 26px;
   padding: 2px 6px 2px 8px;
-  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--border));
   border-radius: var(--radius-pill);
-  background: var(--surface);
+  background: var(--card);
   font-size: var(--text-xs);
-  color: var(--ink);
+  color: var(--foreground);
   box-shadow: var(--shadow-xs);
 }
 
@@ -2271,7 +2283,7 @@ dialog.cmdk[open] {
   border-radius: var(--radius-pill);
   background: var(--primary);
   color: var(--primary-foreground);
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 600;
   line-height: 1;
@@ -2291,8 +2303,8 @@ dialog.cmdk[open] {
 }
 
 .proto-pin-remove:hover {
-  background: var(--ghost);
-  color: var(--bad);
+  background: var(--accent);
+  color: var(--destructive);
 }
 
 .proto-quick-pill {
@@ -2300,10 +2312,10 @@ dialog.cmdk[open] {
   align-items: center;
   min-block-size: 24px;
   padding: 0 8px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-pill);
-  background: var(--surface-2);
-  color: var(--ink-2);
+  background: var(--muted);
+  color: var(--foreground-soft);
   font-size: 11px;
   transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
@@ -2311,17 +2323,17 @@ dialog.cmdk[open] {
 .proto-quick-pill:hover {
   border-color: var(--primary);
   background: var(--primary-soft);
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 /* ─── Inspo Full-Viewport Native <dialog> Lightbox ─── */
 dialog.inspo-lightbox-dialog {
   margin: auto;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--surface);
-  color: var(--ink);
+  background: var(--popover);
+  color: var(--foreground);
   inline-size: min(1360px, 94dvw);
   max-block-size: 92dvh;
   box-shadow: var(--shadow-lg);
@@ -2340,20 +2352,11 @@ dialog.inspo-lightbox-dialog:modal {
 dialog.inspo-lightbox-dialog::backdrop {
   overflow: hidden;
   overscroll-behavior: contain;
-  background: rgba(10, 12, 18, 0.72);
+  background: color-mix(in srgb, var(--overlay) 72%, transparent);
   backdrop-filter: blur(4px);
 }
 
 /* ─── Motion-Prompt Visual Schematic Stages (Stage 2 Alignment) ─── */
-.mp-stage-frame {
-  position: relative;
-  inline-size: 100%;
-  aspect-ratio: 16 / 10;
-  background: #0f1830;
-  overflow: clip;
-  border-bottom: 1px solid var(--line);
-}
-
 .mp-stage-svg {
   display: block;
   inline-size: 100%;
@@ -2540,8 +2543,8 @@ dialog.inspo-lightbox-dialog::backdrop {
   flex-direction: column;
   height: 100vh;
   min-width: 0;
-  background: var(--ground-2);
-  border-left: 1px solid var(--line);
+  background: var(--canvas);
+  border-left: 1px solid var(--border);
   outline: none;
 }
 
@@ -2582,7 +2585,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   gap: 10px;
   height: var(--topbar-h);
   padding: 0 10px 0 16px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -2636,19 +2639,19 @@ dialog.inspo-lightbox-dialog::backdrop {
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-out);
 }
 
 .agent-panel-session-trigger:hover,
 .agent-panel-session-trigger[aria-expanded='true'] {
-  background: var(--hover);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 .agent-panel-session-trigger:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 
@@ -2665,8 +2668,8 @@ dialog.inspo-lightbox-dialog::backdrop {
   display: flex;
   flex-direction: column;
   max-height: min(420px, 60vh);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--popover);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   overflow: hidden;
@@ -2688,8 +2691,8 @@ dialog.inspo-lightbox-dialog::backdrop {
   padding: 8px 8px 6px 12px;
   font-size: var(--text-2xs);
   letter-spacing: 0.04em;
-  color: var(--ink-3);
-  border-bottom: 1px solid var(--line-soft);
+  color: var(--faint-foreground);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
@@ -2729,7 +2732,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 
 .agent-session-row:hover,
 .agent-session-row:focus-within {
-  background: var(--hover);
+  background: var(--accent);
 }
 
 .agent-session-row.is-active {
@@ -2745,7 +2748,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   padding: 7px 8px;
   border: none;
   background: transparent;
-  color: var(--ink);
+  color: var(--foreground);
   text-align: start;
   cursor: pointer;
   border-radius: var(--radius-sm);
@@ -2755,7 +2758,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 .agent-session-row-action:focus-visible,
 .agent-session-confirm-btn:focus-visible,
 .agent-session-menu-new:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 
@@ -2791,7 +2794,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 
 .agent-session-row-meta {
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2823,17 +2826,17 @@ dialog.inspo-lightbox-dialog::backdrop {
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   cursor: pointer;
 }
 
 .agent-session-row-action:hover {
-  background: var(--surface);
-  color: var(--ink);
+  background: var(--card);
+  color: var(--foreground);
 }
 
 .agent-session-row-action.is-danger:hover {
-  color: var(--bad);
+  color: var(--destructive);
 }
 
 .agent-session-row.is-editing {
@@ -2846,8 +2849,8 @@ dialog.inspo-lightbox-dialog::backdrop {
   padding: 0 8px;
   border: 1px solid var(--primary);
   border-radius: var(--radius-xs);
-  background: var(--surface);
-  color: var(--ink);
+  background: var(--card);
+  color: var(--foreground);
   font: inherit;
   font-size: var(--text-sm);
   outline: none;
@@ -2859,13 +2862,13 @@ dialog.inspo-lightbox-dialog::backdrop {
   align-items: stretch;
   gap: 6px;
   padding: 8px 10px;
-  background: var(--bad-soft);
+  background: var(--destructive-soft);
 }
 
 .agent-session-confirm-text {
   font-size: var(--text-xs);
   line-height: 1.45;
-  color: var(--ink);
+  color: var(--foreground);
   overflow-wrap: anywhere;
 }
 
@@ -2877,19 +2880,19 @@ dialog.inspo-lightbox-dialog::backdrop {
 
 .agent-session-confirm-btn {
   padding: 3px 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-xs);
-  background: var(--surface);
-  color: var(--ink-2);
+  background: var(--card);
+  color: var(--foreground-soft);
   font-size: var(--text-xs);
   font-weight: 500;
   cursor: pointer;
 }
 
 .agent-session-confirm-btn.is-danger {
-  border-color: var(--bad);
-  background: var(--bad);
-  color: #fff;
+  border-color: var(--destructive);
+  background: var(--destructive);
+  color: var(--destructive-foreground);
 }
 
 .agent-panel-subhead {
@@ -2898,8 +2901,8 @@ dialog.inspo-lightbox-dialog::backdrop {
   align-items: center;
   gap: 8px;
   padding: 7px 12px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
   flex-shrink: 0;
 }
 
@@ -2909,9 +2912,9 @@ dialog.inspo-lightbox-dialog::backdrop {
   height: 28px;
   padding: 0 8px;
   border-radius: var(--radius-xs);
-  border: 1px solid var(--line);
-  background: var(--ground-2);
-  color: var(--ink);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--foreground);
   font-size: var(--text-xs);
 }
 
@@ -2921,14 +2924,14 @@ dialog.inspo-lightbox-dialog::backdrop {
   gap: 4px;
   padding: 2px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--ground-2);
+  border: 1px solid var(--border);
+  background: var(--canvas);
 }
 
 .agent-panel-mode-pill {
   border: none;
   background: transparent;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   font-size: var(--text-2xs);
   font-weight: 500;
   padding: 3px 8px;
@@ -2940,12 +2943,12 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-panel-mode-pill:hover {
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .agent-panel-mode-pill.is-active {
   background: var(--primary);
-  color: var(--primary-foreground, #ffffff);
+  color: var(--primary-foreground);
 }
 
 .agent-run-hitl {
@@ -2958,7 +2961,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   gap: 6px;
   margin-top: 6px;
   padding-top: 6px;
-  border-top: 1px dashed var(--line);
+  border-top: 1px dashed var(--border);
 }
 
 .agent-run-policy-item {
@@ -2968,8 +2971,8 @@ dialog.inspo-lightbox-dialog::backdrop {
   gap: 8px;
   padding: 6px 8px;
   border-radius: var(--radius-xs);
-  border: 1px solid var(--line);
-  background: var(--inset);
+  border: 1px solid var(--border);
+  background: var(--muted);
 }
 
 .agent-run-policy-info {
@@ -2981,19 +2984,19 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-run-policy-info strong {
-  color: var(--ink);
+  color: var(--foreground);
   font-weight: 600;
 }
 
 .agent-run-policy-info span {
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   font-size: var(--text-2xs);
 }
 
 .agent-panel-kicker {
   font-size: var(--text-2xs);
   letter-spacing: 0.02em;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3004,7 +3007,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   font-size: var(--text-md);
   font-weight: 600;
   line-height: 1.25;
-  color: var(--ink);
+  color: var(--foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3015,7 +3018,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   align-items: center;
   gap: 6px;
   font-size: var(--text-xs);
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   white-space: nowrap;
 }
 
@@ -3054,8 +3057,8 @@ dialog.inspo-lightbox-dialog::backdrop {
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--surface);
+  border: 1px solid var(--border);
+  background: var(--card);
   color: var(--primary);
 }
 
@@ -3065,7 +3068,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   text-align: center;
   font-size: var(--text-sm);
   line-height: 1.6;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   text-wrap: balance;
 }
 
@@ -3080,10 +3083,10 @@ dialog.inspo-lightbox-dialog::backdrop {
 
 .agent-panel-starter {
   padding: 9px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--ink-2);
+  background: var(--card);
+  color: var(--foreground-soft);
   font: inherit;
   font-size: var(--text-sm);
   line-height: 1.45;
@@ -3097,11 +3100,11 @@ dialog.inspo-lightbox-dialog::backdrop {
 .agent-panel-starter:hover:not(:disabled) {
   border-color: var(--primary);
   background: var(--primary-soft);
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .agent-panel-starter:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 
@@ -3119,11 +3122,11 @@ dialog.inspo-lightbox-dialog::backdrop {
 
 .agent-panel-toggle:hover {
   border-color: var(--line-strong);
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .agent-panel-toggle:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -3135,7 +3138,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   position: fixed;
   inset: 0;
   z-index: 1040;
-  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  background: color-mix(in srgb, var(--foreground) 28%, transparent);
   animation: agent-panel-fade var(--dur-med) var(--ease-out);
 }
 
@@ -3170,8 +3173,8 @@ dialog.inspo-lightbox-dialog::backdrop {
   max-width: 88%;
   padding: 8px 12px;
   border-radius: 14px 14px 4px 14px;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--card);
+  border: 1px solid var(--border);
   box-shadow: var(--shadow-xs);
 }
 
@@ -3179,7 +3182,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   margin: 0;
   font-size: var(--text-base);
   line-height: 1.55;
-  color: var(--ink);
+  color: var(--foreground);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -3216,7 +3219,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 .agent-run-glyph {
   display: inline-flex;
   flex-shrink: 0;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .agent-run-card[data-run-status='RUNNING'] .agent-run-glyph {
@@ -3224,11 +3227,11 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-run-card[data-run-status='SUCCEEDED'] .agent-run-glyph {
-  color: var(--green);
+  color: var(--success);
 }
 
 .agent-run-card[data-run-status='FAILED'] .agent-run-glyph {
-  color: var(--red);
+  color: var(--destructive);
 }
 
 .agent-run-title {
@@ -3238,7 +3241,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   font-size: var(--text-sm);
   font-weight: 600;
   line-height: 1.3;
-  color: var(--ink);
+  color: var(--foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3250,7 +3253,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   gap: 6px;
   flex-shrink: 0;
   font-size: var(--text-xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 /* Without a visible title the status line leads, and Cancel sits at the far edge. */
@@ -3261,7 +3264,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 .agent-run-elapsed,
 .agent-run-step-clock,
 .agent-run-model {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3269,7 +3272,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   margin: 0;
   font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -3280,7 +3283,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   list-style: none;
   margin: 0;
   padding: 2px 0 2px 10px;
-  border-inline-start: 2px solid var(--line-soft);
+  border-inline-start: 2px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -3293,7 +3296,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   padding: 3px 6px 3px 4px;
   border-radius: var(--radius-xs);
   font-size: var(--text-xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   list-style: none;
   cursor: pointer;
 }
@@ -3303,12 +3306,12 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-run-steps-fold > summary:hover {
-  background: var(--hover);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 .agent-run-steps-fold > summary:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 
@@ -3317,7 +3320,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-run-steps-fold-bad {
-  color: var(--bad);
+  color: var(--destructive);
 }
 
 .agent-run-step-row {
@@ -3328,7 +3331,7 @@ dialog.inspo-lightbox-dialog::backdrop {
   border-radius: var(--radius-xs);
   font-size: var(--text-xs);
   line-height: 1.5;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   list-style: none;
 }
 
@@ -3344,13 +3347,13 @@ summary.agent-run-step-row,
 
 summary.agent-run-step-row:hover,
 .agent-run-thinking > summary:hover {
-  background: var(--hover);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 summary.agent-run-step-row:focus-visible,
 .agent-run-thinking > summary:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 
@@ -3358,7 +3361,7 @@ summary.agent-run-step-row:focus-visible,
   display: inline-flex;
   align-self: center;
   flex-shrink: 0;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .agent-run-step[data-step-status='RUNNING'] .agent-run-step-glyph {
@@ -3366,15 +3369,15 @@ summary.agent-run-step-row:focus-visible,
 }
 
 .agent-run-step[data-step-status='DONE'] .agent-run-step-glyph {
-  color: var(--green);
+  color: var(--success);
 }
 
 .agent-run-step[data-step-status='FAILED'] .agent-run-step-glyph {
-  color: var(--red);
+  color: var(--destructive);
 }
 
 .agent-run-step[data-step-status='RUNNING'] .agent-run-step-label {
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .agent-run-step-label {
@@ -3389,12 +3392,12 @@ summary.agent-run-step-row:focus-visible,
   max-width: 170px;
   padding: 1px 6px;
   border-radius: var(--radius-xs);
-  border: 1px solid var(--line);
-  background: var(--inset);
-  font-family: var(--mono);
+  border: 1px solid var(--border);
+  background: var(--muted);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: 1.35;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3406,8 +3409,8 @@ summary.agent-run-step-row:focus-visible,
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px 12px;
-  border-top: 1px solid var(--line);
-  background: var(--surface);
+  border-top: 1px solid var(--border);
+  background: var(--card);
   flex-shrink: 0;
 }
 
@@ -3422,9 +3425,9 @@ summary.agent-run-step-row:focus-visible,
   flex-direction: column;
   gap: 4px;
   padding: 7px 8px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  background: var(--inset);
+  background: var(--muted);
 }
 
 .agent-panel-queue-head {
@@ -3433,7 +3436,7 @@ summary.agent-run-step-row:focus-visible,
   gap: 5px;
   font-size: var(--text-2xs);
   font-weight: 600;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .agent-panel-queue-list {
@@ -3450,7 +3453,7 @@ summary.agent-run-step-row:focus-visible,
   align-items: center;
   gap: 6px;
   font-size: var(--text-xs);
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .agent-panel-queue-label {
@@ -3469,28 +3472,28 @@ summary.agent-run-step-row:focus-visible,
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   cursor: pointer;
 }
 
 .agent-panel-queue-remove:hover {
-  background: var(--hover);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 .agent-panel-composer-form {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--ground);
+  background: var(--background);
   transition:
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out);
 }
 
 .agent-panel-composer-form:focus-within {
-  border-color: var(--primary);
+  border-color: var(--ring);
   box-shadow: var(--focus-ring);
 }
 
@@ -3504,7 +3507,7 @@ summary.agent-run-step-row:focus-visible,
   border: none;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background: transparent;
-  color: var(--ink);
+  color: var(--foreground);
   font-family: inherit;
   font-size: var(--text-base);
   line-height: 1.55;
@@ -3524,7 +3527,7 @@ summary.agent-run-step-row:focus-visible,
 
 .agent-panel-composer-hint {
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3533,13 +3536,13 @@ summary.agent-run-step-row:focus-visible,
 .agent-run-step-clock {
   flex-shrink: 0;
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .agent-run-chevron {
   align-self: center;
   flex-shrink: 0;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   transition: transform var(--dur-fast) var(--ease-out);
 }
 
@@ -3554,7 +3557,7 @@ details[open] > summary .agent-run-chevron {
   padding: 3px 4px;
   border-radius: var(--radius-xs);
   font-size: var(--text-xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   list-style: none;
 }
 
@@ -3563,12 +3566,12 @@ details[open] > summary .agent-run-chevron {
   padding: 8px 10px;
   max-height: 180px;
   overflow: auto;
-  background: var(--inset);
+  background: var(--muted);
   border-radius: var(--radius-sm);
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: 1.55;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -3588,7 +3591,7 @@ details[open] > summary .agent-run-chevron {
   min-width: 0;
   font-size: var(--text-base);
   line-height: 1.65;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .agent-run-reply > :first-child {
@@ -3602,7 +3605,7 @@ details[open] > summary .agent-run-chevron {
 .agent-run-reply h1,
 .agent-run-reply h2,
 .agent-run-reply h3 {
-  font-family: var(--sans);
+  font-family: var(--font-sans);
   font-size: var(--text-md);
   font-weight: 600;
   line-height: 1.4;
@@ -3634,13 +3637,13 @@ details[open] > summary .agent-run-chevron {
 .agent-run-card[data-run-status='CANCELLED'] .agent-run-outcome {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--line-soft);
-  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  background: var(--card);
 }
 
 .agent-run-card[data-run-status='FAILED'] .agent-run-outcome {
-  border-color: color-mix(in srgb, var(--bad) 35%, var(--line));
-  background: var(--bad-soft);
+  border-color: color-mix(in srgb, var(--destructive) 35%, var(--border));
+  background: var(--destructive-soft);
 }
 
 .agent-run-outcome-text,
@@ -3648,17 +3651,17 @@ details[open] > summary .agent-run-chevron {
   margin: 0;
   font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--ink);
+  color: var(--foreground);
   overflow-wrap: anywhere;
 }
 
 .agent-run-card[data-run-status='FAILED'] .agent-run-outcome-text {
-  color: var(--red);
+  color: var(--destructive);
 }
 
 .agent-run-card[data-run-status='CANCELLED'] .agent-run-outcome-text,
 .agent-run-remediation {
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .agent-run-actions {
@@ -3670,7 +3673,7 @@ details[open] > summary .agent-run-chevron {
 .agent-run-model {
   margin: 0;
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .agent-run-spin {
@@ -3722,11 +3725,11 @@ details[open] > summary .agent-run-chevron {
   gap: 8px;
   padding: 8px 10px;
   border-radius: var(--radius-sm, 6px);
-  border: 1px solid color-mix(in srgb, var(--warn) 34%, var(--line));
-  background: color-mix(in srgb, var(--warn) 8%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--border));
+  background: color-mix(in srgb, var(--warning) 8%, var(--muted));
   font-size: var(--text-xs);
   line-height: 1.45;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .agent-panel-vision-banner {
@@ -3743,7 +3746,7 @@ details[open] > summary .agent-run-chevron {
 
 .vision-capability-banner-icon {
   flex-shrink: 0;
-  color: var(--warn);
+  color: var(--warning);
 }
 
 .vision-capability-banner-copy {
@@ -3756,12 +3759,12 @@ details[open] > summary .agent-run-chevron {
 
 .vision-capability-banner-text {
   font-weight: 500;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .vision-capability-banner-meta {
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .vision-attachment-controls {
@@ -3779,13 +3782,13 @@ details[open] > summary .agent-run-chevron {
 
 .vision-attachment-hint {
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .vision-attachment-error {
   margin: 0;
   font-size: var(--text-xs);
-  color: var(--red);
+  color: var(--destructive);
 }
 
 .vision-attachment-strip {
@@ -3801,8 +3804,8 @@ details[open] > summary .agent-run-chevron {
   flex-direction: column;
   width: 148px;
   border-radius: var(--radius-sm, 6px);
-  border: 1px solid var(--line);
-  background: var(--surface-2);
+  border: 1px solid var(--border);
+  background: var(--muted);
   overflow: hidden;
 }
 
@@ -3815,7 +3818,7 @@ details[open] > summary .agent-run-chevron {
   width: 100%;
   height: 84px;
   object-fit: cover;
-  background: var(--surface);
+  background: var(--card);
 }
 
 .local-image-thumb.is-compact .local-image-thumb-img {
@@ -3827,18 +3830,18 @@ details[open] > summary .agent-run-chevron {
   flex-direction: column;
   gap: 2px;
   padding: 5px 7px;
-  border-top: 1px solid var(--line-soft);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .local-image-thumb-role {
   font-size: 10px;
   font-weight: 600;
-  color: var(--primary, var(--ink-2));
+  color: var(--primary, var(--foreground-soft));
 }
 
 .local-image-thumb-name {
   font-size: var(--text-2xs);
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3854,14 +3857,14 @@ details[open] > summary .agent-run-chevron {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  color: var(--ink-2);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  color: var(--foreground-soft);
 }
 
 .local-image-thumb-remove:hover {
-  color: var(--ink);
-  background: var(--surface);
+  color: var(--foreground);
+  background: var(--card);
 }
 
 .local-image-missing {
@@ -3872,14 +3875,14 @@ details[open] > summary .agent-run-chevron {
   padding: 7px 10px;
   max-width: 220px;
   border-radius: var(--radius-sm, 6px);
-  border: 1px dashed var(--line);
-  background: var(--surface-2);
-  color: var(--ink-2);
+  border: 1px dashed var(--border);
+  background: var(--muted);
+  color: var(--foreground-soft);
 }
 
 .local-image-missing-icon {
   flex-shrink: 0;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .local-image-missing-copy {
@@ -3892,12 +3895,12 @@ details[open] > summary .agent-run-chevron {
 .local-image-missing-title {
   font-size: var(--text-xs);
   font-weight: 500;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .local-image-missing-name {
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3919,16 +3922,16 @@ details[open] > summary .agent-run-chevron {
   align-items: center;
   gap: 1px;
   padding: 2px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--inset);
+  background: var(--muted);
 }
 
 .pcs-divider {
   width: 1px;
   height: 18px;
   margin-inline: 3px;
-  background: var(--line);
+  background: var(--border);
   flex-shrink: 0;
 }
 
@@ -3966,16 +3969,16 @@ details[open] > summary .agent-run-chevron {
   align-items: center;
   gap: 2px;
   padding: 2px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--inset);
+  background: var(--muted);
 }
 
 .vrp-vibe-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--ink) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent);
   flex-shrink: 0;
 }
 
@@ -3989,13 +3992,13 @@ details[open] > summary .agent-run-chevron {
   height: 32px;
   margin-inline-start: auto;
   padding: 0 4px 0 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--card);
 }
 
 .vrp-search:focus-within {
-  border-color: var(--primary);
+  border-color: var(--ring);
   box-shadow: var(--focus-ring);
 }
 
@@ -4005,7 +4008,7 @@ details[open] > summary .agent-run-chevron {
   border: none;
   outline: none;
   background: transparent;
-  color: var(--ink);
+  color: var(--foreground);
   font: inherit;
   font-size: var(--text-sm);
 }
@@ -4033,16 +4036,16 @@ details[open] > summary .agent-run-chevron {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--surface);
+  background: var(--card);
   transition:
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out);
 }
 
 .vrp-card:hover {
-  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
   box-shadow: var(--shadow-sm);
 }
 
@@ -4052,7 +4055,7 @@ details[open] > summary .agent-run-chevron {
 }
 
 .vrp-card.is-borrowed {
-  border-color: color-mix(in srgb, var(--primary) 60%, var(--line));
+  border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
 }
 
 .vrp-card-zoom {
@@ -4064,10 +4067,10 @@ details[open] > summary .agent-run-chevron {
   justify-content: center;
   width: 26px;
   height: 26px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  color: var(--ink-2);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  color: var(--foreground-soft);
   cursor: pointer;
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-out);
@@ -4093,7 +4096,7 @@ details[open] > summary .agent-run-chevron {
   margin: 2px 0 0;
   font-size: var(--text-xs);
   line-height: 1.5;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -4107,7 +4110,7 @@ details[open] > summary .agent-run-chevron {
   justify-content: space-between;
   gap: 8px 12px;
   padding-top: 12px;
-  border-top: 1px solid var(--line-soft);
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* ─── Design Brief steps (界面原型 · 简报) ─── */
@@ -4116,9 +4119,9 @@ details[open] > summary .agent-run-chevron {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--inset);
+  background: var(--muted);
 }
 
 .brief-step {
@@ -4130,7 +4133,7 @@ details[open] > summary .agent-run-chevron {
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   font: inherit;
   text-align: start;
   cursor: pointer;
@@ -4138,18 +4141,18 @@ details[open] > summary .agent-run-chevron {
 }
 
 .brief-step:hover {
-  background: var(--hover);
+  background: var(--accent);
 }
 
 .brief-step:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 
 .brief-step[aria-selected='true'] {
-  background: var(--surface);
+  background: var(--card);
   box-shadow: var(--shadow-btn);
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .brief-step-index {
@@ -4159,11 +4162,11 @@ details[open] > summary .agent-run-chevron {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  font-family: var(--mono);
+  border: 1px solid var(--border);
+  background: var(--card);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   flex-shrink: 0;
 }
 
@@ -4191,7 +4194,7 @@ details[open] > summary .agent-run-chevron {
 .brief-step-status {
   font-size: var(--text-2xs);
   line-height: 1.35;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4220,10 +4223,10 @@ details[open] > summary .agent-run-chevron {
   gap: 10px;
   min-width: 0;
   padding: 10px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--surface);
-  color: var(--ink);
+  background: var(--card);
+  color: var(--foreground);
   font: inherit;
   text-align: start;
   box-shadow: var(--shadow-xs);
@@ -4241,7 +4244,7 @@ button.fla-layer:hover {
 }
 
 button.fla-layer:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -4263,11 +4266,11 @@ button.fla-layer[aria-pressed='true'] {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--inset);
-  font-family: var(--mono);
+  border: 1px solid var(--border);
+  background: var(--muted);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   flex-shrink: 0;
 }
 
@@ -4293,18 +4296,18 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
 .fla-layer-hint {
   font-size: var(--text-2xs);
   line-height: 1.4;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .fla-layer-count {
-  font-family: var(--serif);
+  font-family: var(--font-title);
   font-size: var(--text-xl);
   line-height: 1;
   font-variant-numeric: tabular-nums;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
   flex-shrink: 0;
 }
 
@@ -4314,7 +4317,7 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   min-height: 0;
   display: flex;
   border-radius: var(--radius-window, var(--radius-lg));
-  background: var(--surface);
+  background: var(--card);
   box-shadow: var(--shadow-card);
   overflow: hidden;
 }
@@ -4334,8 +4337,8 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   min-width: 0;
   min-height: 0;
   max-height: 260px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--inset) 50%, var(--surface));
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 50%, var(--card));
 }
 
 .fla-list-head {
@@ -4354,14 +4357,14 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   min-width: 0;
   height: 30px;
   padding: 0 9px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--ink-3);
+  background: var(--card);
+  color: var(--faint-foreground);
 }
 
 .fla-search:focus-within {
-  border-color: var(--primary);
+  border-color: var(--ring);
   box-shadow: var(--focus-ring);
 }
 
@@ -4371,7 +4374,7 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   border: none;
   outline: none;
   background: transparent;
-  color: var(--ink);
+  color: var(--foreground);
   font: inherit;
   font-size: var(--text-sm);
 }
@@ -4384,7 +4387,7 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   padding: 2px 12px 6px;
   font-size: var(--text-2xs);
   letter-spacing: 0.03em;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   flex-shrink: 0;
 }
 
@@ -4424,23 +4427,23 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--ink);
+  color: var(--foreground);
   font: inherit;
   text-align: start;
   cursor: pointer;
 }
 
 .fla-row:hover {
-  background: var(--hover);
+  background: var(--accent);
 }
 
 .fla-row:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 
 .fla-row[aria-current='true'] {
-  background: var(--surface);
+  background: var(--card);
   box-shadow: var(--shadow-btn);
 }
 
@@ -4464,16 +4467,16 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
 }
 
 .fla-row-version {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   flex-shrink: 0;
 }
 
 .fla-row-summary {
   font-size: var(--text-xs);
   line-height: 1.45;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -4491,13 +4494,13 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   text-align: center;
   font-size: var(--text-sm);
   line-height: 1.6;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   text-wrap: balance;
 }
 
 .fla-list-foot {
   padding: 8px 10px 10px;
-  border-top: 1px solid var(--line-soft);
+  border-top: 1px solid var(--border-subtle);
   margin-top: auto;
   flex-shrink: 0;
 }
@@ -4516,7 +4519,7 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   justify-content: space-between;
   gap: 10px 16px;
   padding: 16px 20px 14px;
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
@@ -4534,16 +4537,16 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
 
 .fla-detail-usage {
   font-size: var(--text-xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .fla-detail-name {
   margin: 8px 0 0;
-  font-family: var(--serif);
+  font-family: var(--font-title);
   font-size: 18px;
   font-weight: 600;
   line-height: 1.35;
-  color: var(--ink);
+  color: var(--foreground);
   text-wrap: balance;
 }
 
@@ -4552,7 +4555,7 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   max-width: 70ch;
   font-size: var(--text-sm);
   line-height: 1.55;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .fla-detail-tags {
@@ -4589,7 +4592,7 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   max-width: 320px;
   padding: 40px 20px;
   text-align: center;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   font-size: var(--text-sm);
   line-height: 1.6;
 }
@@ -4607,6 +4610,6 @@ button.fla-layer[aria-pressed='true'] .fla-layer-index {
   .fla-list {
     max-height: none;
     border-bottom: none;
-    border-inline-end: 1px solid var(--line);
+    border-inline-end: 1px solid var(--border);
   }
 }

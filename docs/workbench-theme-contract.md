@@ -35,6 +35,7 @@ A token marked "follows" takes the value of another token when a theme leaves it
 | `input` | `--input` | The outline of inputs. | `border` |
 | `ring` | `--ring` | Focus ring colour. | `primary` |
 | `scrollbar-thumb` | `--scrollbar-thumb` | The scrollbar thumb; a mark, not text. |  |
+| `overlay` | `--overlay` | The scrim behind modal dialogs and lightboxes, as an opaque colour; each caller sets its opacity. |  |
 
 ## Status colours
 
@@ -45,6 +46,7 @@ A token marked "follows" takes the value of another token when a theme leaves it
 | `warning` | `--warning` | Warning, as text or a mark. |  |
 | `warning-soft` | `--warning-soft` | Tinted fill behind a warning badge; may be translucent. |  |
 | `destructive` | `--destructive` | Errors and destructive actions, as text or a mark. |  |
+| `destructive-foreground` | `--destructive-foreground` | Text on a destructive fill, such as a confirm-delete button. | `primary-foreground` |
 | `destructive-soft` | `--destructive-soft` | Tinted fill behind an error badge; may be translucent. |  |
 
 ## Fonts
@@ -120,6 +122,7 @@ Every built-in theme is checked in both modes. Text must reach 4.5:1 and marks 3
 | `warning` | `warning-soft` over `card` | 4.5:1 |
 | `destructive` | `card` | 4.5:1 |
 | `destructive` | `destructive-soft` over `card` | 4.5:1 |
+| `destructive-foreground` | `destructive` | 4.5:1 |
 | `ring` | `background` | 3:1 |
 | `ring` | `card` | 3:1 |
 | `scrollbar-thumb` | `background` | 3:1 |

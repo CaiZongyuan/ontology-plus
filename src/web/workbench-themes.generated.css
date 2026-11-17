@@ -27,11 +27,13 @@
   --input: #d5d3cb;
   --ring: #4c50c4;
   --scrollbar-thumb: #868379;
+  --overlay: #0f0f0e;
   --success: #287452;
   --success-soft: rgba(40, 116, 82, 0.12);
   --warning: #9b5c14;
   --warning-soft: rgba(168, 100, 22, 0.12);
   --destructive: #b83a32;
+  --destructive-foreground: #ffffff;
   --destructive-soft: rgba(184, 58, 50, 0.12);
   --font-title: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
   --font-sans: "IBM Plex Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -80,6 +82,7 @@
     --warning: #df9a42;
     --warning-soft: rgba(223, 154, 66, 0.16);
     --destructive: #e26e66;
+    --destructive-foreground: #0f1026;
     --destructive-soft: rgba(224, 97, 89, 0.16);
     --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -119,6 +122,7 @@
   --warning: #df9a42;
   --warning-soft: rgba(223, 154, 66, 0.16);
   --destructive: #e26e66;
+  --destructive-foreground: #0f1026;
   --destructive-soft: rgba(224, 97, 89, 0.16);
   --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);

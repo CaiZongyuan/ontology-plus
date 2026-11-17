@@ -34,7 +34,7 @@
     color: inherit;
   }
   button {
-    border: 0 solid var(--line);
+    border: 0 solid var(--border);
     background: transparent;
     padding: 0;
     cursor: pointer;
@@ -45,13 +45,13 @@
   input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='color']),
   select,
   textarea {
-    border: 0 solid var(--line);
+    border: 0 solid var(--border);
     background: transparent;
   }
   input::placeholder,
   textarea::placeholder {
-    font-family: var(--sans);
-    color: var(--faint);
+    font-family: var(--font-sans);
+    color: var(--faint-foreground);
     opacity: 1;
   }
 }
@@ -93,29 +93,42 @@
 
 /* ─── Root Colour-Scheme & Workbench Theme Token Aliases ───
    Colours, fonts, radii, shadows and the background texture come from the active
-   Workbench Theme: see workbench-themes.generated.css and ADR 0012. The names in the
-   first block are the pre-contract token names, kept as aliases until their callers
-   have moved to the contract names. */
+   Workbench Theme: see workbench-themes.generated.css and ADR 0012. The block below
+   holds the pre-contract token names, kept as aliases of contract tokens until their
+   last callers have moved to the contract names (#45). Nothing outside this block in
+   tokens.css or shell.css reads them. */
 :root,
 [data-theme] {
   --ground: var(--background);
+  --page: var(--background);
   --ground-2: var(--canvas);
   --surface: var(--card);
   --surface-2: var(--muted);
+  --inset: var(--muted);
+  --field: var(--muted);
   --line: var(--border);
   --line-2: var(--border-subtle);
+  --line-soft: var(--border-subtle);
   --ghost: var(--accent);
+  --hover: var(--accent);
 
   --ink: var(--foreground);
   --ink-2: var(--foreground-soft);
   --faint: var(--faint-foreground);
+  --ink-3: var(--faint-foreground);
 
   --ok: var(--success);
+  --green: var(--success);
   --ok-soft: var(--success-soft);
+  --green-tint: var(--success-soft);
   --warn: var(--warning);
+  --orange: var(--warning);
   --warn-soft: var(--warning-soft);
+  --orange-tint: var(--warning-soft);
   --bad: var(--destructive);
+  --red: var(--destructive);
   --bad-soft: var(--destructive-soft);
+  --red-tint: var(--destructive-soft);
 
   --serif: var(--font-title);
   --sans: var(--font-sans);
@@ -148,7 +161,7 @@
 
   /* ─── Shape & Motion Scale (radii and shadows come from the theme) ─── */
   --radius-pill: 999px;
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 28%, transparent);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--ring) 28%, transparent);
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --dur-fast: 120ms;
@@ -187,9 +200,9 @@ body,
   padding: 0;
   width: 100%;
   height: 100%;
-  background: var(--ground);
-  color: var(--ink);
-  font-family: var(--sans);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
   font-size: 13px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
@@ -201,7 +214,7 @@ body,
 }
 
 :focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -312,7 +325,7 @@ body,
   max-width: 64ch;
   font-size: var(--text-sm);
   line-height: 1.55;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   text-wrap: pretty;
 }
 
@@ -335,7 +348,7 @@ body,
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-window, var(--radius-lg));
-  background: var(--surface);
+  background: var(--card);
   box-shadow: var(--shadow-card);
   overflow: hidden;
 }
@@ -346,8 +359,8 @@ body,
   align-items: center;
   gap: 8px 12px;
   padding: 8px 12px 8px 14px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--inset) 55%, transparent);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
   flex-shrink: 0;
 }
 
@@ -367,7 +380,7 @@ body,
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   font: inherit;
   font-size: var(--text-sm);
   font-weight: 500;
@@ -376,27 +389,27 @@ body,
 }
 
 .req-tab:hover {
-  color: var(--ink);
-  background: var(--hover);
+  color: var(--foreground);
+  background: var(--accent);
 }
 
 .req-tab:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 
 .req-tab[aria-selected="true"] {
-  color: var(--ink);
-  background: var(--surface);
+  color: var(--foreground);
+  background: var(--card);
   box-shadow: var(--shadow-btn);
 }
 
 .req-tab-count,
 .req-col-count {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .req-board-summary {
@@ -407,7 +420,7 @@ body,
 
 .req-board-summary-text {
   font-size: var(--text-xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   font-variant-numeric: tabular-nums;
 }
 
@@ -419,14 +432,14 @@ body,
   flex: 0 1 190px;
   min-width: 110px;
   padding: 0 9px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--ink-3);
+  background: var(--card);
+  color: var(--faint-foreground);
 }
 
 .req-board-search:focus-within {
-  border-color: var(--primary);
+  border-color: var(--ring);
   box-shadow: var(--focus-ring);
 }
 
@@ -436,7 +449,7 @@ body,
   border: none;
   outline: none;
   background: transparent;
-  color: var(--ink);
+  color: var(--foreground);
   font: inherit;
   font-size: var(--text-sm);
 }
@@ -489,7 +502,7 @@ body,
   text-align: center;
   font-size: var(--text-sm);
   line-height: 1.6;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   text-wrap: balance;
 }
 
@@ -498,14 +511,14 @@ body,
   flex-direction: column;
   gap: 4px;
   padding: 9px 11px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--card);
 }
 
 .req-item.is-pending {
-  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
-  background: color-mix(in srgb, var(--warn-soft) 55%, var(--surface));
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--warning-soft) 55%, var(--card));
 }
 
 .req-item.is-numbered {
@@ -524,23 +537,23 @@ body,
 
 .req-item-kind {
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .req-item-title {
   font-size: var(--text-base);
   font-weight: 600;
-  color: var(--ink);
+  color: var(--foreground);
   overflow-wrap: anywhere;
 }
 
 .req-item-code {
   padding: 1px 6px;
   border-radius: var(--radius-xs);
-  background: var(--inset);
-  font-family: var(--mono);
+  background: var(--muted);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .req-item-body {
@@ -549,23 +562,23 @@ body,
   min-width: 0;
   font-size: var(--text-sm);
   line-height: 1.55;
-  color: var(--ink);
+  color: var(--foreground);
   overflow-wrap: anywhere;
 }
 
 .req-item-body.is-muted {
-  color: var(--ink-3);
+  color: var(--faint-foreground);
 }
 
 .req-item-index {
   flex-shrink: 0;
   min-width: 18px;
   margin-top: 1px;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: 1.8;
   font-variant-numeric: tabular-nums;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   text-align: end;
 }
 
@@ -593,24 +606,24 @@ body,
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--inset);
+  border: 1px solid var(--border);
+  background: var(--muted);
   color: var(--primary);
 }
 
 .req-board-empty-title {
   margin: 0;
-  font-family: var(--serif);
+  font-family: var(--font-title);
   font-size: var(--text-lg);
   font-weight: 600;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .req-board-empty-text {
   margin: 0 0 6px;
   font-size: var(--text-sm);
   line-height: 1.65;
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   text-wrap: pretty;
 }
 
@@ -621,10 +634,10 @@ body,
   justify-content: space-between;
   gap: 8px 12px;
   padding: 8px 12px 8px 14px;
-  border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--inset) 55%, transparent);
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
   font-size: var(--text-xs);
-  color: var(--ink-3);
+  color: var(--faint-foreground);
   flex-shrink: 0;
 }
 
@@ -648,7 +661,7 @@ body,
   }
 
   .req-col + .req-col {
-    border-inline-start: 1px solid var(--line-soft);
+    border-inline-start: 1px solid var(--border-subtle);
   }
 
   .req-col-head {
@@ -666,7 +679,7 @@ body,
     gap: 6px;
     font-size: var(--text-base);
     font-weight: 600;
-    color: var(--ink);
+    color: var(--foreground);
   }
 
   .req-col-title > svg {
@@ -677,7 +690,7 @@ body,
   .req-col-hint {
     flex-basis: 100%;
     font-size: var(--text-2xs);
-    color: var(--ink-3);
+    color: var(--faint-foreground);
   }
 }
 
@@ -712,7 +725,7 @@ progress.loading-spinner:indeterminate {
   --size: 16px;
   --thickness: 2px;
   --spinner-color: var(--primary);
-  --track-color: var(--line);
+  --track-color: var(--border);
   --spinner-duration: 1.35s;
   --_used-spinner-duration: var(--spinner-duration);
 
@@ -803,80 +816,91 @@ progress.loading-spinner:indeterminate {
   }
 }
 
-/* ─── BeautifulUI & Tailwind v4 Spatial-Sync Token Bridge ─── */
-:root {
-  --page: var(--ground);
-  --inset: var(--surface-2);
-  --hover: var(--accent);
-  --hover-2: color-mix(in srgb, var(--ink) 8%, transparent);
-  --ink-3: var(--faint);
-  --line-strong: color-mix(in srgb, var(--muted-foreground) 42%, var(--line));
-  --line-soft: var(--line-2);
-  --grid-line: color-mix(in srgb, var(--line) 82%, transparent);
-  --field: var(--surface-2);
-  --green: var(--ok);
-  --green-tint: var(--ok-soft);
-  --orange: var(--warn);
-  --orange-tint: var(--warn-soft);
-  --red: var(--bad);
-  --red-tint: var(--bad-soft);
-  --tooltip-bg: var(--ink);
-  --tooltip-fg: var(--surface);
-  --tooltip-muted: var(--muted-foreground);
-  --tooltip-border: var(--line);
-  --shadow-hairline: 0 0 0 1px var(--line);
+/* ─── Shared Derived Variables ───
+   Computed from contract tokens and the same for every Workbench Theme: a theme sets
+   the tokens they are made of, not these. */
+:root,
+[data-theme] {
+  /* A stronger hover fill, for controls that already sit on the quiet fill. */
+  --hover-2: color-mix(in srgb, var(--foreground) 8%, transparent);
+  /* A stronger outline: control outlines and hovered borders. */
+  --line-strong: color-mix(in srgb, var(--muted-foreground) 42%, var(--border));
+  /* Contract shadows with a hairline outline, so surfaces read on any ground. */
+  --shadow-hairline: 0 0 0 1px var(--border);
   --shadow-btn: 0 0 0 1px var(--line-strong), var(--shadow-xs);
-  --shadow-card: 0 0 0 1px var(--line), var(--shadow-sm);
-  --shadow-raised: 0 0 0 1px var(--line), var(--shadow-md);
-  --shadow-overlay: 0 0 0 1px var(--line), var(--shadow-lg);
-  --shadow-inset-field: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-card: 0 0 0 1px var(--border), var(--shadow-sm);
+  --shadow-raised: 0 0 0 1px var(--border), var(--shadow-md);
+  --shadow-overlay: 0 0 0 1px var(--border), var(--shadow-lg);
 }
 
 @theme inline {
   /* The root font size is 13px, so Tailwind's default rem-based step (0.25rem) would be
      3.25px. Pin it to 4px so `gap-2` is 8px and utilities line up with --space-*. */
   --spacing: 4px;
-  --color-background: var(--ground);
-  --color-foreground: var(--ink);
-  --color-card: var(--surface);
-  --color-card-foreground: var(--ink);
+
+  /* Colour utilities under the contract names (`bg-card`, `text-faint-foreground`). */
+  --color-background: var(--background);
+  --color-canvas: var(--canvas);
+  --color-foreground: var(--foreground);
+  --color-foreground-soft: var(--foreground-soft);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-faint-foreground: var(--faint-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary-soft: var(--primary-soft);
-  --color-border: var(--line);
-  --color-page: var(--page);
-  --color-canvas: var(--canvas);
-  --color-surface: var(--surface);
-  --color-inset: var(--inset);
-  --color-ink: var(--ink);
-  --color-ink-2: var(--ink-2);
-  --color-ink-3: var(--ink-3);
-  --color-hover: var(--hover);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-overlay: var(--overlay);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  /* Shared derived colours (see above). */
   --color-hover-2: var(--hover-2);
-  --color-field: var(--field);
-  --color-line: var(--line);
   --color-line-strong: var(--line-strong);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-green: var(--green);
-  --color-green-tint: var(--green-tint);
-  --color-orange: var(--orange);
-  --color-orange-tint: var(--orange-tint);
-  --color-red: var(--red);
-  --color-red-tint: var(--red-tint);
+
+  /* Pre-contract utility names, read from contract tokens until markup has moved (#44, #45). */
+  --color-page: var(--background);
+  --color-surface: var(--card);
+  --color-inset: var(--muted);
+  --color-field: var(--muted);
+  --color-ink: var(--foreground);
+  --color-ink-2: var(--foreground-soft);
+  --color-ink-3: var(--faint-foreground);
+  --color-hover: var(--accent);
+  --color-line: var(--border);
+  --color-green: var(--success);
+  --color-green-tint: var(--success-soft);
+  --color-orange: var(--warning);
+  --color-orange-tint: var(--warning-soft);
+  --color-red: var(--destructive);
+  --color-red-tint: var(--destructive-soft);
 
   --shadow-hairline: var(--shadow-hairline);
   --shadow-btn: var(--shadow-btn);
-  --shadow-inset-field: var(--shadow-inset-field);
   --shadow-card: var(--shadow-card);
   --shadow-raised: var(--shadow-raised);
   --shadow-overlay: var(--shadow-overlay);
 
-  --font-sans: var(--sans);
-  --font-mono: var(--mono);
-  --font-serif: var(--serif);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-title: var(--font-title);
+  --font-serif: var(--font-title);
 
   --radius-chip: var(--radius-sm);
   --radius-control: var(--radius-md);
@@ -993,21 +1017,21 @@ progress.loading-spinner:indeterminate {
 
 /* ─── BeautifulUI Status Pills ─── */
 .filter-status-todo {
-  background: var(--inset);
+  background: var(--muted);
   color: var(--muted-foreground);
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
 }
 
 .filter-status-progress {
-  background: var(--orange-tint);
-  color: var(--orange);
-  border: 1px solid color-mix(in srgb, var(--orange) 28%, transparent);
+  background: var(--warning-soft);
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
 }
 
 .filter-status-done {
-  background: var(--green-tint);
-  color: var(--green);
-  border: 1px solid color-mix(in srgb, var(--green) 28%, transparent);
+  background: var(--success-soft);
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 28%, transparent);
 }
 
 .filter-status-accent {
@@ -1017,9 +1041,9 @@ progress.loading-spinner:indeterminate {
 }
 
 .filter-status-error {
-  background: var(--red-tint);
-  color: var(--red);
-  border: 1px solid color-mix(in srgb, var(--red) 28%, transparent);
+  background: var(--destructive-soft);
+  color: var(--destructive);
+  border: 1px solid color-mix(in srgb, var(--destructive) 28%, transparent);
 }
 
 /* ─── Accessible Light-Dismiss Dialog (<dialog closedby="any">) ─── */
@@ -1035,10 +1059,10 @@ dialog::backdrop {
 dialog.bui-dialog {
   margin: auto;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-window);
-  background: var(--surface);
-  color: var(--ink);
+  background: var(--popover);
+  color: var(--foreground);
   box-shadow: var(--shadow-overlay);
   max-width: min(520px, calc(100vw - 32px));
   width: 100%;
@@ -1049,7 +1073,7 @@ dialog.bui-dialog.bui-dialog-wide {
 }
 
 dialog.bui-dialog::backdrop {
-  background: rgba(15, 15, 14, 0.46);
+  background: color-mix(in srgb, var(--overlay) 46%, transparent);
   backdrop-filter: blur(2px);
 }
 
@@ -1071,8 +1095,8 @@ dialog.bui-dialog::backdrop {
   min-height: 280px;
   padding: 16px 20px;
   outline: none;
-  color: var(--ink);
-  font-family: var(--sans);
+  color: var(--foreground);
+  font-family: var(--font-sans);
   font-size: 13.5px;
   line-height: 1.68;
 }
@@ -1080,7 +1104,7 @@ dialog.bui-dialog::backdrop {
 .tiptap-editor-root .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
-  color: var(--faint);
+  color: var(--faint-foreground);
   pointer-events: none;
   height: 0;
 }
@@ -1092,8 +1116,8 @@ dialog.bui-dialog::backdrop {
   line-height: 1.3;
   margin: 1.1em 0 0.45em;
   padding-bottom: 0.28em;
-  border-bottom: 1px solid var(--line-2);
-  color: var(--ink);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--foreground);
 }
 
 .tiptap-editor-root .ProseMirror h2,
@@ -1102,7 +1126,7 @@ dialog.bui-dialog::backdrop {
   font-weight: 600;
   line-height: 1.35;
   margin: 1em 0 0.4em;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .tiptap-editor-root .ProseMirror h3,
@@ -1111,7 +1135,7 @@ dialog.bui-dialog::backdrop {
   font-weight: 600;
   line-height: 1.4;
   margin: 0.9em 0 0.35em;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .tiptap-editor-root .ProseMirror p,
@@ -1162,17 +1186,17 @@ dialog.bui-dialog::backdrop {
   border-left: 3px solid var(--primary);
   background: var(--primary-soft);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .tiptap-editor-root .ProseMirror code,
 .md-prose :not(pre) > code {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 0.88em;
   padding: 1px 5px;
   border-radius: 4px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-2);
+  background: var(--muted);
+  border: 1px solid var(--border-subtle);
   color: var(--primary);
 }
 
@@ -1180,9 +1204,9 @@ dialog.bui-dialog::backdrop {
   margin: 0.7em 0;
   padding: 12px 14px;
   border-radius: var(--radius-md);
-  background: var(--ground-2);
-  border: 1px solid var(--line);
-  font-family: var(--mono);
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
   overflow-x: auto;
@@ -1192,7 +1216,7 @@ dialog.bui-dialog::backdrop {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .tiptap-editor-root .ProseMirror table,
@@ -1207,7 +1231,7 @@ dialog.bui-dialog::backdrop {
 .tiptap-editor-root .ProseMirror td,
 .md-prose th,
 .md-prose td {
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   padding: 7px 10px;
   text-align: left;
   vertical-align: top;
@@ -1215,28 +1239,28 @@ dialog.bui-dialog::backdrop {
 
 .tiptap-editor-root .ProseMirror th,
 .md-prose th {
-  background: var(--surface-2);
+  background: var(--muted);
   font-weight: 600;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .tiptap-editor-root .ProseMirror hr,
 .md-prose hr {
   border: 0;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border);
   margin: 1em 0;
 }
 
 /* ─── React Flow Spatial-Sync Theme Bridge ─── */
 .react-flow {
-  --xy-background-color-default: var(--surface);
-  --xy-node-background-color-default: var(--surface);
-  --xy-node-border-default: 1px solid var(--line);
-  --xy-node-color-default: var(--ink);
+  --xy-background-color-default: var(--card);
+  --xy-node-background-color-default: var(--card);
+  --xy-node-border-default: 1px solid var(--border);
+  --xy-node-color-default: var(--foreground);
   --xy-edge-stroke-default: color-mix(in srgb, var(--muted-foreground) 58%, transparent);
   --xy-edge-stroke-selected-default: var(--primary);
-  --xy-minimap-background-color-default: var(--surface-2);
-  --xy-controls-button-background-color-default: var(--surface);
-  --xy-controls-button-color-default: var(--ink);
-  --xy-controls-button-border-color-default: var(--line);
+  --xy-minimap-background-color-default: var(--muted);
+  --xy-controls-button-background-color-default: var(--card);
+  --xy-controls-button-color-default: var(--foreground);
+  --xy-controls-button-border-color-default: var(--border);
 }

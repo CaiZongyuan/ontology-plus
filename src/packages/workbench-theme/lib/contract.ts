@@ -65,6 +65,7 @@ export const THEME_TOKENS: readonly ThemeTokenSpec[] = [
     ['input', 'The outline of inputs.', 'border'],
     ['ring', 'Focus ring colour.', 'primary'],
     ['scrollbar-thumb', 'The scrollbar thumb; a mark, not text.'],
+    ['overlay', 'The scrim behind modal dialogs and lightboxes, as an opaque colour; each caller sets its opacity.'],
   ]),
   ...group('status', [
     ['success', 'Pass and success, as text or a mark.'],
@@ -72,6 +73,7 @@ export const THEME_TOKENS: readonly ThemeTokenSpec[] = [
     ['warning', 'Warning, as text or a mark.'],
     ['warning-soft', 'Tinted fill behind a warning badge; may be translucent.'],
     ['destructive', 'Errors and destructive actions, as text or a mark.'],
+    ['destructive-foreground', 'Text on a destructive fill, such as a confirm-delete button.', 'primary-foreground'],
     ['destructive-soft', 'Tinted fill behind an error badge; may be translucent.'],
   ]),
   ...group('font', [
@@ -145,6 +147,7 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
   ...pairs('success', TEXT, ['card', ['success-soft', 'card']]),
   ...pairs('warning', TEXT, ['card', ['warning-soft', 'card']]),
   ...pairs('destructive', TEXT, ['card', ['destructive-soft', 'card']]),
+  ...pairs('destructive-foreground', TEXT, ['destructive']),
   ...pairs('ring', MARK, ['background', 'card']),
   ...pairs('scrollbar-thumb', MARK, ['background', 'card']),
 ];
