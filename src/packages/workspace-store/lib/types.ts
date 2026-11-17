@@ -414,12 +414,35 @@ export interface AssembledApplication {
   uiUeAssetId: string;
   techFoundationAssetId: string;
   techArchAssetId: string;
+  technologyProfileId?: string;
+  prototypeRevisionId?: string;
+  developmentInstructions?: string;
+  latestPackageSnapshotId?: string;
   status: 'ASSEMBLED' | 'DEVELOPING' | 'PACKAGE_READY' | 'PUBLISHED';
   packageOutputDir?: string;
   publishedEndpoint?: string;
   publishedVersion?: string;
   agentDevLogs: { timestamp: string; phase: string; detail: string }[];
   updatedAt: string;
+}
+
+export interface DevelopmentPackageFile {
+  relativePath: string;
+  category: 'GUIDE' | 'MANIFEST' | 'REFERENCE' | 'ONTOLOGY_YAML' | 'FOUNDATION' | 'SOURCE';
+  sizeBytes: number;
+  content: string;
+}
+
+export interface DevelopmentPackageSnapshot {
+  snapshotId: string;
+  inputFingerprint: string;
+  appId: string;
+  appName: string;
+  projectId: string;
+  outputDir: string;
+  compiledAt: string;
+  files: DevelopmentPackageFile[];
+  manifestJson: Record<string, unknown>;
 }
 
 export interface GeneratedSkill {
@@ -894,6 +917,9 @@ export interface WorkspaceStore {
   ): AssembledApplication;
   cloneAssembledApplication(appId: string): AssembledApplication;
   deleteAssembledApplication(appId: string): void;
+  saveDevelopmentPackageSnapshot(snapshot: DevelopmentPackageSnapshot): DevelopmentPackageSnapshot;
+  getDevelopmentPackageSnapshot(snapshotId: string): DevelopmentPackageSnapshot | undefined;
+  listDevelopmentPackageSnapshots(appId: string): DevelopmentPackageSnapshot[];
   listGeneratedSkills(projectId?: string): GeneratedSkill[];
   saveGeneratedSkill(skill: Omit<GeneratedSkill, 'updatedAt'>): GeneratedSkill;
   deleteGeneratedSkill(skillId: string, force?: boolean): void;

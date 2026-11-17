@@ -35,6 +35,8 @@ export type {
   AppendPrototypeRevisionInput,
   FourLayerAsset,
   AssembledApplication,
+  DevelopmentPackageFile,
+  DevelopmentPackageSnapshot,
   GeneratedSkill,
   LegacySystemConfig,
   ExtractionJob,

@@ -79,6 +79,7 @@ import {
   DataMappingRule,
   DatabaseResource,
   DesignBrief,
+  DevelopmentPackageSnapshot,
   ExtractionJob,
   FourLayerAsset,
   GeneratedSkill,
@@ -2230,6 +2231,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     saveAssembledApplication(app) {
       const existing = getItem<AssembledApplication>('assembled_apps', app.id);
       const full: AssembledApplication = {
+        ...existing,
         ...app,
         agentDevLogs: app.agentDevLogs ?? existing?.agentDevLogs ?? [],
         updatedAt: new Date().toISOString(),
@@ -2246,6 +2248,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         name: `${existing.name} (副本)`,
         status: 'ASSEMBLED',
         packageOutputDir: undefined,
+        latestPackageSnapshotId: undefined,
         publishedEndpoint: undefined,
         publishedVersion: undefined,
         agentDevLogs: [],
@@ -2253,7 +2256,58 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     deleteAssembledApplication(appId) {
+      for (const snapshot of this.listDevelopmentPackageSnapshots(appId)) {
+        deleteItem('development_package_snapshots', snapshot.snapshotId);
+      }
       deleteItem('assembled_apps', appId);
+    },
+
+    saveDevelopmentPackageSnapshot(snapshot) {
+      const application = getItem<AssembledApplication>('assembled_apps', snapshot.appId);
+      if (!application) throw new Error(`Assembled application not found: ${snapshot.appId}`);
+      if (application.projectId !== snapshot.projectId) {
+        throw new Error('Development package project must match its application project.');
+      }
+      if (!snapshot.snapshotId || !snapshot.inputFingerprint) {
+        throw new Error('Development package snapshot and input revision are required.');
+      }
+      if (getItem<DevelopmentPackageSnapshot>('development_package_snapshots', snapshot.snapshotId)) {
+        throw new Error(`Development package snapshot is immutable: ${snapshot.snapshotId}`);
+      }
+      const payloadJson = JSON.stringify(snapshot);
+      const now = new Date().toISOString();
+      db.exec('SAVEPOINT development_package_generation');
+      try {
+        db.prepare(`INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at)
+          VALUES (?, ?, ?, ?, ?)`).run(
+          'development_package_snapshots', snapshot.snapshotId, snapshot.projectId, payloadJson, now,
+        );
+        this.saveAssembledApplication({
+          ...application,
+          latestPackageSnapshotId: snapshot.snapshotId,
+          packageOutputDir: snapshot.outputDir,
+          status: application.status === 'PUBLISHED' ? 'PUBLISHED' : 'PACKAGE_READY',
+        });
+        db.exec('RELEASE SAVEPOINT development_package_generation');
+      } catch (error) {
+        db.exec('ROLLBACK TO SAVEPOINT development_package_generation');
+        db.exec('RELEASE SAVEPOINT development_package_generation');
+        throw error;
+      }
+      replicateToD1(
+        'INSERT INTO workspace_entities (collection, item_id, project_id, payload_json, updated_at) VALUES (?, ?, ?, ?, ?)',
+        'development_package_snapshots', snapshot.snapshotId, snapshot.projectId, payloadJson, now,
+      );
+      return JSON.parse(payloadJson) as DevelopmentPackageSnapshot;
+    },
+
+    getDevelopmentPackageSnapshot(snapshotId) {
+      return getItem<DevelopmentPackageSnapshot>('development_package_snapshots', snapshotId);
+    },
+
+    listDevelopmentPackageSnapshots(appId) {
+      return listItems<DevelopmentPackageSnapshot>('development_package_snapshots')
+        .filter((snapshot) => snapshot.appId === appId);
     },
 
     listGeneratedSkills(projectId) {
