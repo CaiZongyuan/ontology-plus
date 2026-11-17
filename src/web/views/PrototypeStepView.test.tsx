@@ -8,7 +8,11 @@ import {
 import { createWorkspaceStore } from '../../packages/workspace-store/index.js';
 import { createApiApp } from '../../server/app.js';
 import { useWorkbenchStore, type BootstrapPayload } from '../api.js';
-import { ConfirmRevisionMuDiffModal } from '../components/prototype/PrototypeRevisionHistory.js';
+import {
+  ConfirmRevisionMuDiffModal,
+  PrototypeRevisionHistoryDrawer,
+  createInitialRevisionHistoryViewState,
+} from '../components/prototype/PrototypeRevisionHistory.js';
 import { PreferencesProvider } from '../i18n.js';
 import { PrototypeStudioView } from './ApplicationCenterViews.js';
 
@@ -327,6 +331,78 @@ describe('PrototypeStepView Business View, Screen Changes dialog, OUTDATED banne
         expect(modalHtml).toContain('旧版打印页');
         expect(modalHtml).toContain('报销单号');
         expect(modalHtml).toContain('提交财务审批');
+      }
+    } finally {
+      store.close();
+    }
+  });
+
+  it('harmonizes PrototypeRevisionHistoryDrawer side-by-side compare & 1-click Undo and PrototypeStudioView ArtifactHistoryDrawer with zero Business View violations in zh-CN & en-US (#67)', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    try {
+      const proto = store.listPrototypes('proj-contract')[0]!;
+      const r1Id = proto.currentRevisionId;
+      const r2 = store.appendPrototypeRevision(proto.id, {
+        htmlContent: `${proto.htmlContent}\n<section data-screen-id="SCR-ARCHIVE" data-screen-name="合同归档登记页" data-screen-type="FORM"><button data-element-id="EL-ARCHIVE-BTN" data-element-type="BUTTON" data-element-label="确认归档">确认归档</button></section>`,
+        title: '增加合同归档登记页 (界面原型.html)',
+        source: 'AGENT_RUN',
+        agentRunId: 'run-proto-67',
+      });
+
+      const boot = await fetchBootstrap(store, 'proj-contract');
+      useWorkbenchStore.setState({
+        loading: false,
+        data: boot,
+        historyDrawerArtifactKind: 'PROTOTYPE',
+      });
+      Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+
+      const compareState = createInitialRevisionHistoryViewState(r2.prototype, {
+        comparePair: { leftRevisionId: r1Id, rightRevisionId: r2.revision.id },
+      });
+
+      for (const locale of ['zh-CN', 'en-US'] as const) {
+        stubBrowserStorage({ onto_locale: locale });
+
+        const studioHtml = renderToStaticMarkup(
+          <PreferencesProvider>
+            <PrototypeStudioView onNavigate={() => {}} defaultHistoryOpen />
+          </PreferencesProvider>,
+        );
+        assertZeroBusinessViolations(
+          studioHtml,
+          `PrototypeStudioView + History drawers (${locale})`,
+        );
+        expect(countPrimaryAccentButtons(studioHtml)).toBe(1);
+        expect(studioHtml).toContain('data-testid="artifact-history-drawer"');
+        expect(studioHtml).toContain('data-testid="revision-undo-latest-btn"');
+
+        const compareDrawerHtml = renderToStaticMarkup(
+          <PreferencesProvider>
+            <PrototypeRevisionHistoryDrawer
+              open
+              prototype={r2.prototype}
+              confirmedRevision={boot.confirmedPrototypeRevision}
+              domain={boot.activeProject.domain}
+              viewMode="business"
+              viewState={compareState}
+              onSelectPreviewRevision={() => {}}
+              onRestoreRevision={() => {}}
+              onUndoLatestRevision={() => {}}
+              onRenameRevision={() => {}}
+              onToggleStarRevision={() => {}}
+              onRequestConfirmRevision={() => {}}
+            />
+          </PreferencesProvider>,
+        );
+        assertZeroBusinessViolations(
+          compareDrawerHtml,
+          `PrototypeRevisionHistoryDrawer + Side-by-Side Compare (${locale})`,
+        );
+        expect(compareDrawerHtml).toContain('data-testid="revision-side-by-side-compare"');
+        expect(compareDrawerHtml).toContain('data-testid="compare-mu-diff-section"');
+        expect(compareDrawerHtml).not.toContain('data-testid="compare-tab-html-btn"');
+        expect(compareDrawerHtml).toContain('合同归档登记页');
       }
     } finally {
       store.close();

@@ -19,6 +19,7 @@ import {
 import { useAgentPanelStore } from '../../components/agent/agentPanelStore.js';
 import { resolveActiveVisionCapability } from '../../components/agent/VisionAttachmentControls.js';
 import { Button } from '../../components/beautifui/index.js';
+import { ArtifactHistoryDrawer } from '../../components/history/index.js';
 import {
   PrototypeCanvasStage,
   runImportPrototypeHtml,
@@ -85,10 +86,17 @@ export function PrototypeStudioView({
     activeItemId,
     activePrototypeIdByProject,
     liveSessionDrafts,
+    historyDrawerArtifactKind,
+    highlightedPrototypeTarget,
+    highlightedPrototypeComparePair,
     patchData,
     showToast,
     setActivePrototypeId,
     setActiveSessionId,
+    closeArtifactHistoryDrawer,
+    undoArtifactChange,
+    restoreArtifactBeforeChange,
+    focusPrototypeTarget,
     ensurePrototypeCoDesignSession,
     startSessionAgentRun,
     startPrototypeBriefGenerationRun,
@@ -108,6 +116,7 @@ export function PrototypeStudioView({
   const [inspectMode, setInspectMode] = useState(false);
   const [visualAnnotations, setVisualAnnotations] = useState<PrototypeVisualAnnotation[]>([]);
   const [canvasFocusMode, setCanvasFocusMode] = useState(false);
+  const [historyBusyEntryId, setHistoryBusyEntryId] = useState<string | null>(null);
   const [synthesisSummary, setSynthesisSummary] = useState<{
     modelCount: number;
     errorCount: number;
@@ -284,6 +293,22 @@ export function PrototypeStudioView({
   }, [activeItemId, data?.prototypes, data?.requirementDocs]);
 
   useEffect(() => {
+    if (!data || !highlightedPrototypeTarget) return;
+    if (data.prototypes.some((p) => p.id === highlightedPrototypeTarget.prototypeId)) {
+      setSelectedProtoId(highlightedPrototypeTarget.prototypeId);
+      setStageOverride('CANVAS');
+    }
+  }, [highlightedPrototypeTarget?.seq, data?.prototypes]);
+
+  useEffect(() => {
+    if (!data || !highlightedPrototypeComparePair) return;
+    if (data.prototypes.some((p) => p.id === highlightedPrototypeComparePair.prototypeId)) {
+      setSelectedProtoId(highlightedPrototypeComparePair.prototypeId);
+      setStageOverride('CANVAS');
+    }
+  }, [highlightedPrototypeComparePair?.seq, data?.prototypes]);
+
+  useEffect(() => {
     if (!data) return;
     const list = data.prototypes;
     if (list.length === 0) {
@@ -349,6 +374,7 @@ export function PrototypeStudioView({
       activeProject: res.project,
       prototypes: res.prototypes,
       confirmedPrototypeRevision: res.confirmedRevision,
+      ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
     });
     setSelectedProtoId(res.prototype.id);
     setStageOverride('CANVAS');
@@ -623,6 +649,7 @@ export function PrototypeStudioView({
                 : {}),
               ...(payload.project ? { activeProject: payload.project } : {}),
               ...(payload.agentSessions ? { agentSessions: payload.agentSessions } : {}),
+              ...(payload.artifactHistory ? { artifactHistory: payload.artifactHistory } : {}),
             });
             if (payload.selectedPrototypeId !== undefined) {
               setSelectedProtoId(payload.selectedPrototypeId);
@@ -657,9 +684,28 @@ export function PrototypeStudioView({
           onApplyImmediate={(target, note) => void handleImmediateSelectionRefine(target, note)}
           activeRunningAnchor={activeRunningAnchor}
           flashedAnchors={
-            shouldFlashModifiedAnchors && postRunReview ? postRunReview.modifiedAnchors : []
+            highlightedPrototypeTarget &&
+            highlightedPrototypeTarget.prototypeId === proto.id &&
+            (highlightedPrototypeTarget.screenId || highlightedPrototypeTarget.elementId)
+              ? [
+                  {
+                    ...(highlightedPrototypeTarget.screenId
+                      ? { screenId: highlightedPrototypeTarget.screenId }
+                      : {}),
+                    ...(highlightedPrototypeTarget.elementId
+                      ? { elementId: highlightedPrototypeTarget.elementId }
+                      : {}),
+                  },
+                ]
+              : shouldFlashModifiedAnchors && postRunReview
+                ? postRunReview.modifiedAnchors
+                : []
           }
-          flashKey={postRunReview?.revision.id ?? null}
+          flashKey={
+            highlightedPrototypeTarget && highlightedPrototypeTarget.prototypeId === proto.id
+              ? `jump-${highlightedPrototypeTarget.seq}`
+              : (postRunReview?.revision.id ?? null)
+          }
           htmlOverride={
             postRunReview && beforeAfterMode === 'BEFORE'
               ? postRunReview.previousRevision.htmlContent
@@ -1076,6 +1122,43 @@ export function PrototypeStudioView({
       )}
 
       {renderStageBody('business')}
+
+      <ArtifactHistoryDrawer
+        open={historyDrawerArtifactKind === 'PROTOTYPE'}
+        onOpenChange={(open) => {
+          if (!open) closeArtifactHistoryDrawer();
+        }}
+        artifactLabel={{ zh: '界面原型', en: 'Prototype' }}
+        entries={(data.artifactHistory ?? []).filter(
+          (e) => e.artifactKind === 'PROTOTYPE' && (!proto || e.targetId === proto.id),
+        )}
+        busyEntryId={historyBusyEntryId}
+        onUndoLatest={async (entry) => {
+          setHistoryBusyEntryId(entry.id);
+          try {
+            await undoArtifactChange('PROTOTYPE', entry.id, entry.targetId);
+          } finally {
+            setHistoryBusyEntryId(null);
+          }
+        }}
+        onRestoreBefore={async (entry) => {
+          setHistoryBusyEntryId(entry.id);
+          try {
+            await restoreArtifactBeforeChange('PROTOTYPE', entry.id);
+          } finally {
+            setHistoryBusyEntryId(null);
+          }
+        }}
+        onJumpToTarget={(target) => {
+          if (target.kind === 'PROTOTYPE_ANCHOR') {
+            focusPrototypeTarget(target);
+            useAgentPanelStore.getState().setHoveredAnchor({
+              ...(target.screenId ? { screenId: target.screenId } : {}),
+              ...(target.elementId ? { elementId: target.elementId } : {}),
+            });
+          }
+        }}
+      />
     </div>
   );
 }

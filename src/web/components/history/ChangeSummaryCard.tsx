@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowUpRight, History, Minus, Pencil, Plus, Undo2 } from 'lucide-react';
+import { ArrowUpRight, Columns2, History, Minus, Pencil, Plus, Undo2 } from 'lucide-react';
 import {
   BUSINESS_VOCABULARY,
   checkBusinessViewMarkup,
@@ -9,6 +9,7 @@ import type {
   ArtifactJumpTarget,
   ChangeSummaryItemView,
   ChangeSummaryView,
+  PrototypeCompareRevisionPair,
 } from '../../../packages/workspace-store/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
@@ -20,6 +21,7 @@ export interface ChangeSummaryCardProps {
   onUndo?: (summary: ChangeSummaryView) => void | Promise<void>;
   onJumpToTarget?: (target: ArtifactJumpTarget) => void;
   onOpenHistory?: (artifactKind: ChangeSummaryView['artifactKind']) => void;
+  onCompareRevisions?: (pair: PrototypeCompareRevisionPair) => void;
   className?: string;
 }
 
@@ -66,6 +68,7 @@ export function ChangeSummaryCard({
   onUndo,
   onJumpToTarget,
   onOpenHistory,
+  onCompareRevisions,
   className,
 }: ChangeSummaryCardProps) {
   const { t } = usePreferences();
@@ -109,6 +112,19 @@ export function ChangeSummaryCard({
             >
               {t('已撤销', 'Undone')}
             </span>
+          )}
+
+          {summary.compareRevisionPair && onCompareRevisions && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              data-testid="change-summary-compare-btn"
+              onClick={() => onCompareRevisions(summary.compareRevisionPair!)}
+            >
+              <Columns2 size={11} aria-hidden="true" />
+              {t('对比', 'Compare')}
+            </Button>
           )}
 
           {summary.canUndo && onUndo ? (

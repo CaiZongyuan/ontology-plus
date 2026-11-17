@@ -8,9 +8,13 @@ import {
   type BusinessLocale,
 } from '../../business-vocabulary/index.js';
 import {
+  computeMuDiff,
   diffOntologySuites,
+  extractMuFromPrototypeHtml,
   type AggregateRoot,
   type ModelCode,
+  type MuElementDiff,
+  type MuEventDiff,
   type OntologyElementDiff,
   type OntologySuite,
   type RelatedAggregateRef,
@@ -22,7 +26,9 @@ import type {
   ArtifactHistorySource,
   ChangeSummaryItemView,
   ChangeSummaryView,
+  InteractivePrototype,
   PersistedArtifactHistoryKind,
+  PrototypeRevision,
   RequirementDoc,
   RequirementDocDiff,
   RequirementDocHistoryState,
@@ -1099,6 +1105,491 @@ export function buildOntologySuiteChangeSummaryItems(
 
   ranked.sort((a, b) => a.groupOrder - b.groupOrder || a.seq - b.seq);
   return ranked.map((r) => r.item);
+}
+
+function resolvePrototypeControlTerm(
+  elementType: MuElementDiff['elementType'] | undefined,
+): BilingualText {
+  switch ((elementType ?? '').toUpperCase()) {
+    case 'BUTTON':
+      return { zh: '按钮', en: 'button' };
+    case 'INPUT':
+    case 'TEXTAREA':
+      return { zh: '输入项', en: 'field' };
+    case 'SELECT':
+      return { zh: '下拉选项', en: 'selector' };
+    case 'TABLE':
+      return { zh: '表格', en: 'table' };
+    case 'FORM':
+      return { zh: '表单区', en: 'form' };
+    case 'CARD':
+      return { zh: '卡片区', en: 'card' };
+    default:
+      return { zh: '界面元素', en: 'control' };
+  }
+}
+
+const EMPTY_DISPLAY_MAP: ReadonlyMap<string, string> = new Map();
+
+function cleanPrototypeBusinessName(
+  raw: string | undefined,
+  fallback: BilingualText,
+): BilingualText {
+  return toBilingualElementName(raw, raw, fallback, EMPTY_DISPLAY_MAP, EMPTY_DISPLAY_MAP);
+}
+
+const AUTO_REVISION_TITLE_RE =
+  /^(?:生成首版原型|AI\s*精修修订|导入\s*HTML\s*原型|恢复历史修订|另存为新原型基线|初始修订|手动保存修订|恢复自修订|撤销上一次改动|重做上一次改动)/i;
+
+function isGenericAutoRevisionTitle(title: string | undefined): boolean {
+  const trimmed = (title ?? '').trim();
+  if (!trimmed) return true;
+  return AUTO_REVISION_TITLE_RE.test(trimmed);
+}
+
+export interface BuildPrototypeChangeSummaryOptions {
+  previousHtml?: string;
+  nextHtml: string;
+  prototypeId: string;
+  revisionId: string;
+  previousRevisionId?: string;
+  domain?: string;
+  isRestoreOrUndo?: boolean;
+}
+
+/**
+ * Renders consecutive prototype HTML states (`previousHtml` -> `nextHtml`) into screen-grouped,
+ * Business View-safe `ChangeSummaryItemView[]` via `extractMuFromPrototypeHtml` + `computeMuDiff`,
+ * falling back cleanly for visual-only CSS/layout edits and anchor-free initial prototypes (#67).
+ */
+export function buildPrototypeChangeSummaryItems(
+  options: BuildPrototypeChangeSummaryOptions,
+): ChangeSummaryItemView[] {
+  const domain = options.domain?.trim() || 'OntologyDomain';
+  const prevMu =
+    options.previousHtml !== undefined
+      ? extractMuFromPrototypeHtml(options.previousHtml, domain)
+      : undefined;
+  const nextMu = extractMuFromPrototypeHtml(options.nextHtml, domain);
+  const diff = computeMuDiff(prevMu, nextMu);
+
+  const makeAnchorTarget = (screenId?: string, elementId?: string) => ({
+    kind: 'PROTOTYPE_ANCHOR' as const,
+    prototypeId: options.prototypeId,
+    revisionId: options.revisionId,
+    ...(options.previousRevisionId ? { previousRevisionId: options.previousRevisionId } : {}),
+    ...(screenId ? { screenId } : {}),
+    ...(elementId ? { elementId } : {}),
+  });
+
+  if (!diff.summary.hasChanges) {
+    if (options.previousHtml === undefined) {
+      const count = nextMu.screens.length;
+      return [
+        {
+          id: `${options.revisionId}-proto-init`,
+          changeType: 'ADDED',
+          label:
+            count > 0
+              ? {
+                  zh: `生成了包含 ${count} 个界面的初始原型`,
+                  en: `Generated initial prototype with ${count} ${count === 1 ? 'screen' : 'screens'}`,
+                }
+              : {
+                  zh: '生成了初始界面原型',
+                  en: 'Generated initial prototype',
+                },
+          jumpTarget: makeAnchorTarget(nextMu.screens[0]?.screenId),
+        },
+      ];
+    }
+
+    if (options.previousHtml !== options.nextHtml) {
+      const count = nextMu.screens.length;
+      return [
+        {
+          id: `${options.revisionId}-proto-visual`,
+          changeType: 'MODIFIED',
+          label: {
+            zh: '更新了界面视觉样式与布局',
+            en: 'Updated visual styling and layout',
+          },
+          ...(count > 0
+            ? {
+                detail: {
+                  zh: `保留现有 ${count} 个界面的字段与操作结构不变`,
+                  en: `Preserved fields and actions across ${count} ${count === 1 ? 'screen' : 'screens'}`,
+                },
+              }
+            : {}),
+          jumpTarget: makeAnchorTarget(nextMu.screens[0]?.screenId),
+        },
+      ];
+    }
+
+    if (options.isRestoreOrUndo) {
+      return [
+        {
+          id: `${options.revisionId}-proto-restored`,
+          changeType: 'MODIFIED',
+          label: {
+            zh: '恢复了先前的界面原型版本',
+            en: 'Restored earlier prototype version',
+          },
+          jumpTarget: makeAnchorTarget(nextMu.screens[0]?.screenId),
+        },
+      ];
+    }
+
+    return [];
+  }
+
+  const items: ChangeSummaryItemView[] = [];
+  let seq = 0;
+  const pushItem = (
+    changeType: ChangeSummaryItemView['changeType'],
+    groupLabel: BilingualText,
+    labelRaw: BilingualText,
+    detailRaw?: BilingualText,
+    screenId?: string,
+    elementId?: string,
+  ) => {
+    seq += 1;
+    items.push({
+      id: `${options.revisionId}-proto-${seq}`,
+      changeType,
+      groupLabel: {
+        zh: ensureCleanBusinessCopy(groupLabel.zh, 'zh-CN', EMPTY_DISPLAY_MAP, '界面'),
+        en: ensureCleanBusinessCopy(groupLabel.en, 'en-US', EMPTY_DISPLAY_MAP, 'Screen'),
+      },
+      label: {
+        zh: ensureCleanBusinessCopy(labelRaw.zh, 'zh-CN', EMPTY_DISPLAY_MAP, groupLabel.zh),
+        en: ensureCleanBusinessCopy(labelRaw.en, 'en-US', EMPTY_DISPLAY_MAP, groupLabel.en),
+      },
+      ...(detailRaw
+        ? {
+            detail: {
+              zh: ensureCleanBusinessCopy(detailRaw.zh, 'zh-CN', EMPTY_DISPLAY_MAP, ''),
+              en: ensureCleanBusinessCopy(detailRaw.en, 'en-US', EMPTY_DISPLAY_MAP, ''),
+            },
+          }
+        : {}),
+      jumpTarget: makeAnchorTarget(screenId, elementId),
+    });
+  };
+
+  for (const sc of diff.screens) {
+    if (sc.status === 'UNCHANGED') continue;
+    const screenName = cleanPrototypeBusinessName(sc.name, {
+      zh: MODEL_BUSINESS_NAMES.MU.singularZh,
+      en: MODEL_BUSINESS_NAMES.MU.singularEn,
+    });
+
+    if (sc.status === 'ADDED') {
+      let detailRaw: BilingualText | undefined;
+      if (sc.elements.length > 0) {
+        const cleanEls = sc.elements.map((el) =>
+          cleanPrototypeBusinessName(el.label, resolvePrototypeControlTerm(el.elementType)),
+        );
+        const shownZh = cleanEls
+          .slice(0, 2)
+          .map((e) => `『${e.zh}』`)
+          .join('、');
+        const shownEn = cleanEls
+          .slice(0, 2)
+          .map((e) => `'${e.en}'`)
+          .join(', ');
+        const moreZh = cleanEls.length > 2 ? `等 ${cleanEls.length} 项` : '';
+        const moreEn = cleanEls.length > 2 ? ` (${cleanEls.length} controls)` : '';
+        detailRaw = {
+          zh: `包含${shownZh}${moreZh}`,
+          en: `Includes ${shownEn}${moreEn}`,
+        };
+      }
+      pushItem(
+        'ADDED',
+        screenName,
+        {
+          zh: `新增界面『${screenName.zh}』`,
+          en: `Added screen '${screenName.en}'`,
+        },
+        detailRaw,
+        sc.screenId,
+      );
+      continue;
+    }
+
+    if (sc.status === 'REMOVED') {
+      pushItem(
+        'REMOVED',
+        screenName,
+        {
+          zh: `移除界面『${screenName.zh}』`,
+          en: `Removed screen '${screenName.en}'`,
+        },
+        undefined,
+        sc.screenId,
+      );
+      continue;
+    }
+
+    const changedElements = sc.elements.filter(
+      (el): el is MuElementDiff & { status: 'ADDED' | 'MODIFIED' | 'REMOVED' } =>
+        el.status !== 'UNCHANGED',
+    );
+    const changedEvents = sc.events.filter(
+      (ev): ev is MuEventDiff & { status: 'ADDED' | 'MODIFIED' | 'REMOVED' } =>
+        ev.status !== 'UNCHANGED',
+    );
+    const coveredTriggerElements = new Set<string>();
+
+    for (const el of changedElements) {
+      coveredTriggerElements.add(el.elementId);
+      const kind = resolvePrototypeControlTerm(el.elementType);
+      const elName = cleanPrototypeBusinessName(el.label, kind);
+      const labelRaw: BilingualText =
+        el.status === 'ADDED'
+          ? {
+              zh: `在『${screenName.zh}』上新增${kind.zh}『${elName.zh}』`,
+              en: `Added ${kind.en} '${elName.en}' on '${screenName.en}'`,
+            }
+          : el.status === 'REMOVED'
+            ? {
+                zh: `从『${screenName.zh}』移除${kind.zh}『${elName.zh}』`,
+                en: `Removed ${kind.en} '${elName.en}' from '${screenName.en}'`,
+              }
+            : {
+                zh: `在『${screenName.zh}』上调整${kind.zh}『${elName.zh}』`,
+                en: `Updated ${kind.en} '${elName.en}' on '${screenName.en}'`,
+              };
+      pushItem(
+        el.status,
+        screenName,
+        labelRaw,
+        undefined,
+        sc.screenId,
+        el.status !== 'REMOVED' ? el.elementId : undefined,
+      );
+    }
+
+    for (const ev of changedEvents) {
+      if (
+        (ev.status === 'ADDED' || ev.status === 'REMOVED') &&
+        ev.triggerElementId &&
+        coveredTriggerElements.has(ev.triggerElementId)
+      ) {
+        continue;
+      }
+      const evName = cleanPrototypeBusinessName(ev.name, {
+        zh: '交互操作',
+        en: 'interaction',
+      });
+      const labelRaw: BilingualText =
+        ev.status === 'ADDED'
+          ? {
+              zh: `在『${screenName.zh}』上新增交互动作『${evName.zh}』`,
+              en: `Added interaction '${evName.en}' on '${screenName.en}'`,
+            }
+          : ev.status === 'REMOVED'
+            ? {
+                zh: `从『${screenName.zh}』移除交互动作『${evName.zh}』`,
+                en: `Removed interaction '${evName.en}' from '${screenName.en}'`,
+              }
+            : {
+                zh: `在『${screenName.zh}』上更新交互动作『${evName.zh}』`,
+                en: `Updated interaction '${evName.en}' on '${screenName.en}'`,
+              };
+      pushItem(
+        ev.status,
+        screenName,
+        labelRaw,
+        undefined,
+        sc.screenId,
+        ev.status !== 'REMOVED' && ev.triggerElementId ? ev.triggerElementId : undefined,
+      );
+    }
+
+    if (changedElements.length === 0 && changedEvents.length === 0) {
+      if (sc.previousName && sc.previousName !== sc.name) {
+        const prevScreenName = cleanPrototypeBusinessName(sc.previousName, {
+          zh: MODEL_BUSINESS_NAMES.MU.singularZh,
+          en: MODEL_BUSINESS_NAMES.MU.singularEn,
+        });
+        pushItem(
+          'MODIFIED',
+          screenName,
+          {
+            zh: `将界面『${prevScreenName.zh}』重命名为『${screenName.zh}』`,
+            en: `Renamed screen '${prevScreenName.en}' to '${screenName.en}'`,
+          },
+          undefined,
+          sc.screenId,
+        );
+      } else {
+        pushItem(
+          'MODIFIED',
+          screenName,
+          {
+            zh: `更新界面『${screenName.zh}』的页面设置`,
+            en: `Updated settings of screen '${screenName.en}'`,
+          },
+          undefined,
+          sc.screenId,
+        );
+      }
+    }
+  }
+
+  return items;
+}
+
+export function isPreExistingPrototypeBaselineRevision(rev: PrototypeRevision): boolean {
+  return (
+    rev.revisionNumber === 1 &&
+    !rev.agentRunId &&
+    (rev.source === 'GENERATED' || rev.source === 'MIGRATED' || rev.source === 'CLONED')
+  );
+}
+
+/**
+ * Projects a prototype's linear `PrototypeRevision[]` onto `ArtifactHistoryEntryView[]`
+ * without duplicating HTML in storage (#67).
+ */
+export function buildPrototypeArtifactHistoryViews(
+  prototype: Pick<
+    InteractivePrototype,
+    'id' | 'projectId' | 'name' | 'revisions' | 'coDesignSessionId'
+  >,
+  options?: {
+    domain?: string;
+    maxEntries?: number;
+  },
+): ArtifactHistoryEntryView[] {
+  if (prototype.revisions.length === 0) return [];
+  const ordered = [...prototype.revisions].sort((a, b) => a.revisionNumber - b.revisionNumber);
+  const byId = new Map<string, PrototypeRevision>();
+  const undoDepthById = new Map<string, number>();
+  const activelyUndoneIds = new Set<string>();
+
+  for (const rev of ordered) {
+    byId.set(rev.id, rev);
+    if (rev.undoneRevisionId) {
+      const parentDepth = undoDepthById.get(rev.undoneRevisionId) ?? 0;
+      const depth = parentDepth + 1;
+      undoDepthById.set(rev.id, depth);
+      activelyUndoneIds.add(rev.undoneRevisionId);
+      const target = byId.get(rev.undoneRevisionId);
+      if (target?.undoneRevisionId) {
+        activelyUndoneIds.delete(target.undoneRevisionId);
+      }
+    } else {
+      undoDepthById.set(rev.id, 0);
+    }
+  }
+
+  const maxEntries = options?.maxEntries ?? DEFAULT_MAX_ARTIFACT_HISTORY_ENTRIES;
+  const viewsNewestFirst: ArtifactHistoryEntryView[] = [];
+
+  for (let i = ordered.length - 1; i >= 0; i -= 1) {
+    if (viewsNewestFirst.length >= maxEntries) break;
+    const rev = ordered[i]!;
+    if (i === 0 && isPreExistingPrototypeBaselineRevision(rev)) {
+      continue;
+    }
+
+    const prevRev = i > 0 ? ordered[i - 1] : undefined;
+    const hasPriorRevision = Boolean(prevRev);
+    const isLatest = i === ordered.length - 1;
+    const canUndo = isLatest && hasPriorRevision;
+    const canRestoreBefore = hasPriorRevision;
+    const isUndone = activelyUndoneIds.has(rev.id);
+    const undoDepth = undoDepthById.get(rev.id) ?? 0;
+    const isRedo = Boolean(rev.undoneRevisionId && undoDepth > 0 && undoDepth % 2 === 0);
+
+    let source: ArtifactHistorySource;
+    if (rev.undoneRevisionId) {
+      source = { kind: 'UNDO', undoneEntryId: rev.undoneRevisionId };
+    } else if (rev.source === 'RESTORED') {
+      source = {
+        kind: 'RESTORE',
+        restoredFromEntryId:
+          rev.restoredBeforeRevisionId ?? rev.restoredFromRevisionId ?? rev.id,
+      };
+    } else if (
+      rev.agentRunId ||
+      rev.source === 'AGENT_RUN' ||
+      rev.source === 'REFINED' ||
+      (rev.source === 'GENERATED' && Boolean(rev.agentRunId))
+    ) {
+      const rawReason =
+        rev.agentReason?.trim() ||
+        rev.instruction?.trim() ||
+        (!isGenericAutoRevisionTitle(rev.title) ? rev.title.trim() : '');
+      source = {
+        kind: 'AGENT_RUN',
+        runId: rev.agentRunId ?? rev.id,
+        ...(prototype.coDesignSessionId ? { sessionId: prototype.coDesignSessionId } : {}),
+        ...(rawReason ? { reason: rawReason } : {}),
+      };
+    } else {
+      const rawNote =
+        rev.instruction?.trim() ||
+        (!isGenericAutoRevisionTitle(rev.title) ? rev.title.trim() : '');
+      source = {
+        kind: 'MANUAL',
+        ...(rawNote ? { note: rawNote } : {}),
+      };
+    }
+
+    const title = buildEntryTitle(source, isRedo);
+    const reason = buildReasonFromSource(source);
+    const items = buildPrototypeChangeSummaryItems({
+      ...(prevRev ? { previousHtml: prevRev.htmlContent, previousRevisionId: prevRev.id } : {}),
+      nextHtml: rev.htmlContent,
+      prototypeId: prototype.id,
+      revisionId: rev.id,
+      ...(options?.domain ? { domain: options.domain } : {}),
+      isRestoreOrUndo: source.kind === 'UNDO' || source.kind === 'RESTORE',
+    });
+
+    if (items.length === 0) {
+      continue;
+    }
+
+    const changeSummary: ChangeSummaryView = {
+      entryId: rev.id,
+      artifactKind: 'PROTOTYPE',
+      targetId: prototype.id,
+      ...(reason ? { reason } : {}),
+      items,
+      canUndo,
+      ...(isUndone ? { isUndone: true } : {}),
+      ...(prevRev
+        ? {
+            compareRevisionPair: {
+              prototypeId: prototype.id,
+              leftRevisionId: prevRev.id,
+              rightRevisionId: rev.id,
+            },
+          }
+        : {}),
+    };
+
+    viewsNewestFirst.push({
+      id: rev.id,
+      projectId: prototype.projectId,
+      artifactKind: 'PROTOTYPE',
+      targetId: prototype.id,
+      sequence: rev.revisionNumber,
+      createdAt: rev.createdAt,
+      source,
+      title,
+      changeSummary,
+      canRestoreBefore,
+    });
+  }
+
+  return viewsNewestFirst;
 }
 
 function buildReasonFromSource(source: ArtifactHistorySource): BilingualText | undefined {

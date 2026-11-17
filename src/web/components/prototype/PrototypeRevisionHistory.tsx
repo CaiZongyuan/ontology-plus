@@ -14,6 +14,7 @@ import {
   RotateCcw,
   ShieldCheck,
   Star,
+  Undo2,
   X,
 } from 'lucide-react';
 import {
@@ -489,6 +490,7 @@ export interface PrototypeRevisionCompareViewProps {
   confirmedRevisionId?: string;
   domain?: string;
   tab: CompareInspectorTab;
+  viewMode?: StepViewMode;
   onSelectLeft: (revisionId: string) => void;
   onSelectRight: (revisionId: string) => void;
   onSwap?: () => void;
@@ -504,6 +506,7 @@ export function PrototypeRevisionCompareView({
   confirmedRevisionId,
   domain = 'OntologyDomain',
   tab,
+  viewMode = 'technical',
   onSelectLeft,
   onSelectRight,
   onSwap,
@@ -512,6 +515,14 @@ export function PrototypeRevisionCompareView({
   className,
 }: PrototypeRevisionCompareViewProps) {
   const { t } = usePreferences();
+  const isBusinessView = viewMode === 'business';
+  const formatRevLabel = (rev: PrototypeRevision) =>
+    isBusinessView
+      ? formatPrototypeLabelForBusinessView(
+          rev.title,
+          t(`第 ${rev.revisionNumber} 版`, `Revision #${rev.revisionNumber}`),
+        )
+      : rev.title;
   const orderedAsc = useMemo(
     () => [...prototype.revisions].sort((a, b) => a.revisionNumber - b.revisionNumber),
     [prototype.revisions],
@@ -561,7 +572,7 @@ export function PrototypeRevisionCompareView({
             >
               {orderedAsc.map((rev) => (
                 <option key={rev.id} value={rev.id}>
-                  #{rev.revisionNumber} · {rev.title}
+                  #{rev.revisionNumber} · {formatRevLabel(rev)}
                   {confirmedRevisionId === rev.id
                     ? ` (${t('已确认', 'Confirmed')})`
                     : ''}
@@ -592,7 +603,7 @@ export function PrototypeRevisionCompareView({
             >
               {orderedAsc.map((rev) => (
                 <option key={rev.id} value={rev.id}>
-                  #{rev.revisionNumber} · {rev.title}
+                  #{rev.revisionNumber} · {formatRevLabel(rev)}
                   {confirmedRevisionId === rev.id
                     ? ` (${t('已确认', 'Confirmed')})`
                     : ''}
@@ -606,23 +617,29 @@ export function PrototypeRevisionCompareView({
           <Button
             variant="toggle"
             size="xs"
-            aria-pressed={tab === 'VISUAL_AND_MU'}
+            aria-pressed={isBusinessView ? true : tab === 'VISUAL_AND_MU'}
             onClick={() => onTabChange('VISUAL_AND_MU')}
             data-testid="compare-tab-mu-btn"
           >
             <Layers size={12} aria-hidden="true" />
-            <span>{t('画布与 MU 差异', 'Visual & MU Diff')}</span>
+            <span>
+              {isBusinessView
+                ? t('画面与界面差异', 'Visual & Screen Changes')
+                : t('画布与 MU 差异', 'Visual & MU Diff')}
+            </span>
           </Button>
-          <Button
-            variant="toggle"
-            size="xs"
-            aria-pressed={tab === 'HTML'}
-            onClick={() => onTabChange('HTML')}
-            data-testid="compare-tab-html-btn"
-          >
-            <Code2 size={12} aria-hidden="true" />
-            <span>{t('HTML 源码对比', 'HTML Source')}</span>
-          </Button>
+          {!isBusinessView && (
+            <Button
+              variant="toggle"
+              size="xs"
+              aria-pressed={tab === 'HTML'}
+              onClick={() => onTabChange('HTML')}
+              data-testid="compare-tab-html-btn"
+            >
+              <Code2 size={12} aria-hidden="true" />
+              <span>{t('HTML 源码对比', 'HTML Source')}</span>
+            </Button>
+          )}
           {onClose && (
             <Button
               variant="ghost"
@@ -641,7 +658,7 @@ export function PrototypeRevisionCompareView({
         <div className="proto-rev-compare-pane">
           <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border text-[12px]">
             <span className="font-medium text-foreground truncate">
-              #{leftRev.revisionNumber} · {leftRev.title}
+              #{leftRev.revisionNumber} · {formatRevLabel(leftRev)}
             </span>
             {confirmedRevisionId === leftRev.id && (
               <span className="proto-rev-status-pill is-confirmed">
@@ -664,7 +681,7 @@ export function PrototypeRevisionCompareView({
         <div className="proto-rev-compare-pane">
           <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border text-[12px]">
             <span className="font-medium text-foreground truncate">
-              #{rightRev.revisionNumber} · {rightRev.title}
+              #{rightRev.revisionNumber} · {formatRevLabel(rightRev)}
             </span>
             {confirmedRevisionId === rightRev.id && (
               <span className="proto-rev-status-pill is-confirmed">
@@ -685,7 +702,13 @@ export function PrototypeRevisionCompareView({
         </div>
       </div>
 
-      {tab === 'VISUAL_AND_MU' ? (
+      {isBusinessView ? (
+        <ScreenChangesBusinessPanel
+          diff={pairDiff}
+          nextMu={rightMu}
+          testId="compare-mu-diff-section"
+        />
+      ) : tab === 'VISUAL_AND_MU' ? (
         <MuDiffSummaryPanel
           diff={pairDiff}
           nextMu={rightMu}
@@ -917,6 +940,7 @@ export interface PrototypeRevisionHistoryDrawerProps {
   onClose?: () => void;
   onSelectPreviewRevision: (revisionId: string | null) => void;
   onRestoreRevision: (revisionId: string) => void | Promise<void>;
+  onUndoLatestRevision?: (revisionId: string) => void | Promise<void>;
   onRenameRevision: (revisionId: string, newTitle: string) => void | Promise<void>;
   onToggleStarRevision: (revisionId: string, nextStarred: boolean) => void | Promise<void>;
   onRequestConfirmRevision: (revision: PrototypeRevision) => void;
@@ -936,6 +960,7 @@ export function PrototypeRevisionHistoryDrawer({
   onClose,
   onSelectPreviewRevision,
   onRestoreRevision,
+  onUndoLatestRevision,
   onRenameRevision,
   onToggleStarRevision,
   onRequestConfirmRevision,
@@ -981,6 +1006,25 @@ export function PrototypeRevisionHistoryDrawer({
   const displayProtoName = isBusinessView
     ? formatPrototypeLabelForBusinessView(prototype.name, t('当前原型', 'Current prototype'))
     : prototype.name;
+  const previewBannerTitle = previewingRevision
+    ? isBusinessView
+      ? formatPrototypeLabelForBusinessView(
+          previewingRevision.title,
+          t(
+            `第 ${previewingRevision.revisionNumber} 版`,
+            `Revision #${previewingRevision.revisionNumber}`,
+          ),
+        )
+      : previewingRevision.title
+    : '';
+  const otherConfirmedProtoName = confirmedRevision
+    ? isBusinessView
+      ? formatPrototypeLabelForBusinessView(
+          confirmedRevision.prototype.name,
+          t('其他原型', 'Another prototype'),
+        )
+      : confirmedRevision.prototype.name
+    : '';
 
   return (
     <section
@@ -1068,8 +1112,8 @@ export function PrototypeRevisionHistoryDrawer({
         >
           <span>
             {t(
-              `正在预览历史修订 #${previewingRevision.revisionNumber}「${previewingRevision.title}」（未改写历史）`,
-              `Previewing historical revision #${previewingRevision.revisionNumber} "${previewingRevision.title}" (history unchanged)`,
+              `正在预览历史修订 #${previewingRevision.revisionNumber}「${previewBannerTitle}」（未改写历史）`,
+              `Previewing historical revision #${previewingRevision.revisionNumber} "${previewBannerTitle}" (history unchanged)`,
             )}
           </span>
           <Button
@@ -1089,8 +1133,8 @@ export function PrototypeRevisionHistoryDrawer({
           data-testid="other-prototype-confirmed-banner"
         >
           {t(
-            `当前工程已确认修订位于「${confirmedRevision.prototype.name}」#${confirmedRevision.revision.revisionNumber}`,
-            `Project Confirmed Revision is on "${confirmedRevision.prototype.name}" #${confirmedRevision.revision.revisionNumber}`,
+            `当前工程已确认修订位于「${otherConfirmedProtoName}」#${confirmedRevision.revision.revisionNumber}`,
+            `Project Confirmed Revision is on "${otherConfirmedProtoName}" #${confirmedRevision.revision.revisionNumber}`,
           )}
         </div>
       )}
@@ -1103,6 +1147,7 @@ export function PrototypeRevisionHistoryDrawer({
           confirmedRevisionId={confirmedRevIdOnThisProto}
           domain={domain}
           tab={state.compareTab}
+          viewMode={viewMode}
           onSelectLeft={(revisionId) => dispatch({ type: 'SET_COMPARE_LEFT', revisionId })}
           onSelectRight={(revisionId) => dispatch({ type: 'SET_COMPARE_RIGHT', revisionId })}
           onSwap={() => dispatch({ type: 'SWAP_COMPARE_REVISIONS' })}
@@ -1330,6 +1375,19 @@ export function PrototypeRevisionHistoryDrawer({
                       >
                         <Columns2 size={12} aria-hidden="true" />
                         <span>{t('对比', 'Compare')}</span>
+                      </Button>
+                    )}
+
+                    {isLatest && prototype.revisions.length >= 2 && onUndoLatestRevision && (
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        onClick={() => void onUndoLatestRevision(rev.id)}
+                        disabled={isBusy}
+                        data-testid="revision-undo-latest-btn"
+                      >
+                        <Undo2 size={12} aria-hidden="true" />
+                        <span>{t('撤销', 'Undo')}</span>
                       </Button>
                     )}
 

@@ -56,6 +56,7 @@ import {
   ProjectStepConfirmations,
   ProjectSummary,
   PrototypeArtifact,
+  PrototypeCompareRevisionPair,
   PrototypeRevision,
   PrototypeRevisionSource,
   PrototypeTargetAnchor,
@@ -375,6 +376,19 @@ interface WorkbenchStoreState {
   selectedElementId: string | null;
   highlightedRequirementSection: { heading: string; docId?: string; seq: number } | null;
   highlightedBusinessModelTarget: { pageId?: string; anchorId: string; seq: number } | null;
+  highlightedPrototypeTarget: {
+    prototypeId: string;
+    revisionId?: string;
+    screenId?: string;
+    elementId?: string;
+    seq: number;
+  } | null;
+  highlightedPrototypeComparePair: {
+    prototypeId: string;
+    leftRevisionId: string;
+    rightRevisionId: string;
+    seq: number;
+  } | null;
   historyDrawerArtifactKind: ArtifactHistorySurfaceKind | null;
   liveAnnouncement: string;
   setActiveNav: (nav: string, opts?: { itemId?: string | null; sessionId?: string | null }) => void;
@@ -387,18 +401,25 @@ interface WorkbenchStoreState {
   focusBusinessModelTarget: (
     target: Extract<ArtifactJumpTarget, { kind: 'BUSINESS_OBJECT' }>,
   ) => void;
+  focusPrototypeTarget: (
+    target: Extract<ArtifactJumpTarget, { kind: 'PROTOTYPE_ANCHOR' }>,
+  ) => void;
+  openPrototypeRevisionCompare: (pair: PrototypeCompareRevisionPair) => void;
+  clearPrototypeRevisionCompare: () => void;
   openArtifactHistoryDrawer: (kind: ArtifactHistorySurfaceKind) => void;
   closeArtifactHistoryDrawer: () => void;
   refreshArtifactHistory: (
     projectId?: string,
-    kind?: PersistedArtifactHistoryKind,
+    kind?: ArtifactHistorySurfaceKind,
+    prototypeId?: string,
   ) => Promise<ArtifactHistoryEntryView[]>;
   undoArtifactChange: (
-    artifactKind: PersistedArtifactHistoryKind,
+    artifactKind: ArtifactHistorySurfaceKind,
     expectedEntryId?: string,
+    prototypeId?: string,
   ) => Promise<boolean>;
   restoreArtifactBeforeChange: (
-    artifactKind: PersistedArtifactHistoryKind,
+    artifactKind: ArtifactHistorySurfaceKind,
     entryId: string,
   ) => Promise<boolean>;
   showToast: (msg: string) => void;
@@ -554,6 +575,10 @@ function applyArtifactHistoryMutationToStore(
     ...latest,
     activeProject: res.project,
     requirementDocs: res.requirementDocs,
+    ...(res.prototypes !== undefined ? { prototypes: res.prototypes } : {}),
+    ...(res.confirmedPrototypeRevision !== undefined
+      ? { confirmedPrototypeRevision: res.confirmedPrototypeRevision }
+      : {}),
     stepConfirmations: res.stepConfirmations,
     artifactHistory: res.artifactHistory,
   };
@@ -591,6 +616,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   selectedElementId: null,
   highlightedRequirementSection: null,
   highlightedBusinessModelTarget: null,
+  highlightedPrototypeTarget: null,
+  highlightedPrototypeComparePair: null,
   historyDrawerArtifactKind: null,
   liveAnnouncement: '',
 
@@ -670,21 +697,60 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     });
   },
 
+  focusPrototypeTarget: (target) => {
+    const projectId = get().data?.activeProject.id;
+    if (projectId) {
+      get().setActivePrototypeId(projectId, target.prototypeId);
+    }
+    get().setActiveNav('app-prototype', { itemId: target.prototypeId });
+    const nextSeq = (get().highlightedPrototypeTarget?.seq ?? 0) + 1;
+    set({
+      highlightedPrototypeTarget: {
+        prototypeId: target.prototypeId,
+        ...(target.revisionId ? { revisionId: target.revisionId } : {}),
+        ...(target.screenId ? { screenId: target.screenId } : {}),
+        ...(target.elementId ? { elementId: target.elementId } : {}),
+        seq: nextSeq,
+      },
+    });
+  },
+
+  openPrototypeRevisionCompare: (pair) => {
+    const projectId = get().data?.activeProject.id;
+    if (projectId) {
+      get().setActivePrototypeId(projectId, pair.prototypeId);
+    }
+    get().setActiveNav('app-prototype', { itemId: pair.prototypeId });
+    const nextSeq = (get().highlightedPrototypeComparePair?.seq ?? 0) + 1;
+    set({
+      highlightedPrototypeComparePair: {
+        ...pair,
+        seq: nextSeq,
+      },
+    });
+  },
+
+  clearPrototypeRevisionCompare: () => set({ highlightedPrototypeComparePair: null }),
+
   openArtifactHistoryDrawer: (kind) => set({ historyDrawerArtifactKind: kind }),
 
   closeArtifactHistoryDrawer: () => set({ historyDrawerArtifactKind: null }),
 
-  refreshArtifactHistory: async (projectId, kind) => {
+  refreshArtifactHistory: async (projectId, kind, prototypeId) => {
     const cur = get().data;
     const targetProjectId = projectId ?? cur?.activeProject.id;
     if (!targetProjectId) return [];
-    const res = await apiListArtifactHistory(targetProjectId, kind);
+    const res = await apiListArtifactHistory(targetProjectId, kind, prototypeId);
     const latest = get().data;
     if (latest && latest.activeProject.id === targetProjectId) {
       const merged = kind
         ? [
             ...res.entries,
-            ...(latest.artifactHistory ?? []).filter((e) => e.artifactKind !== kind),
+            ...(latest.artifactHistory ?? []).filter(
+              (e) =>
+                e.artifactKind !== kind ||
+                (kind === 'PROTOTYPE' && prototypeId && e.targetId !== prototypeId),
+            ),
           ]
         : res.entries;
       set({ data: { ...latest, artifactHistory: merged } });
@@ -692,19 +758,26 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     return res.entries;
   },
 
-  undoArtifactChange: async (artifactKind, expectedEntryId) => {
+  undoArtifactChange: async (artifactKind, expectedEntryId, prototypeId) => {
     const cur = get().data;
     if (!cur?.activeProject.id) return false;
     const projectId = cur.activeProject.id;
     const locale = getCurrentClientLocale();
     try {
-      const res = await apiUndoArtifactChange(projectId, artifactKind, expectedEntryId);
+      const res = await apiUndoArtifactChange(
+        projectId,
+        artifactKind,
+        expectedEntryId,
+        prototypeId,
+      );
       applyArtifactHistoryMutationToStore(projectId, res, set, get);
       get().showToast(locale === 'en-US' ? 'Undid latest change' : '已撤销最近一次改动');
       return true;
     } catch (err) {
       get().showToast(err instanceof Error ? err.message : String(err));
-      void get().refreshArtifactHistory(projectId, artifactKind).catch(() => undefined);
+      void get()
+        .refreshArtifactHistory(projectId, artifactKind, prototypeId)
+        .catch(() => undefined);
       return false;
     }
   },
@@ -759,6 +832,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       selectedElementId: null,
       highlightedRequirementSection: null,
       highlightedBusinessModelTarget: null,
+      highlightedPrototypeTarget: null,
+      highlightedPrototypeComparePair: null,
       historyDrawerArtifactKind: null,
     });
     writeLastProjectIdToStorage(payload.activeProject.id);
@@ -2466,6 +2541,7 @@ export async function apiSavePrototype(
   project: ProjectDetail;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  artifactHistory?: ArtifactHistoryEntryView[];
 }> {
   return apiPostJson(`/api/projects/${encodeURIComponent(projectId)}/prototypes`, input);
 }
@@ -2479,6 +2555,7 @@ export async function apiAppendPrototypeRevision(
   project: ProjectDetail;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  artifactHistory?: ArtifactHistoryEntryView[];
 }> {
   return apiPostJson(`/api/prototypes/${encodeURIComponent(prototypeId)}/revisions`, input);
 }
@@ -2492,6 +2569,7 @@ export async function apiRestorePrototypeRevision(
   revision: PrototypeRevision;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  artifactHistory?: ArtifactHistoryEntryView[];
 }> {
   return apiPostJson(
     `/api/prototypes/${encodeURIComponent(prototypeId)}/revisions/${encodeURIComponent(revisionId)}/restore`,
@@ -2508,6 +2586,7 @@ export async function apiUpdatePrototypeRevisionMeta(
   revision: PrototypeRevision;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  artifactHistory?: ArtifactHistoryEntryView[];
 }> {
   const res = await fetch(
     `/api/prototypes/${encodeURIComponent(prototypeId)}/revisions/${encodeURIComponent(revisionId)}`,
@@ -2549,6 +2628,7 @@ export async function apiConfirmPrototypeRevision(
   prototype: InteractivePrototype;
   project: ProjectDetail;
   prototypes: InteractivePrototype[];
+  artifactHistory?: ArtifactHistoryEntryView[];
   stepConfirmations?: ProjectStepConfirmations;
 }> {
   const res = await apiPostJson<{
@@ -2557,6 +2637,7 @@ export async function apiConfirmPrototypeRevision(
     prototype: InteractivePrototype;
     project: ProjectDetail;
     prototypes: InteractivePrototype[];
+    artifactHistory?: ArtifactHistoryEntryView[];
     stepConfirmations?: ProjectStepConfirmations;
   }>(`/api/projects/${encodeURIComponent(projectId)}/prototypes/confirm-revision`, {
     revisionId,
@@ -2587,6 +2668,7 @@ export async function apiDeletePrototype(
   deletedId: string;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  artifactHistory?: ArtifactHistoryEntryView[];
 }> {
   return apiDeleteResource(
     `/api/prototypes/${encodeURIComponent(prototypeId)}?projectId=${encodeURIComponent(projectId)}`,
@@ -2631,6 +2713,7 @@ export type {
   ChangeSummaryItemView,
   ChangeSummaryView,
   PersistedArtifactHistoryKind,
+  PrototypeCompareRevisionPair,
 } from '../packages/workspace-store/index.js';
 
 export interface ArtifactHistoryMutationResponse {
@@ -2641,19 +2724,25 @@ export interface ArtifactHistoryMutationResponse {
   artifactHistory: ArtifactHistoryEntryView[];
   project: ProjectDetail;
   requirementDocs: RequirementDoc[];
+  prototypes?: InteractivePrototype[];
+  confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
   stepConfirmations: ProjectStepConfirmations;
 }
 
 export async function apiListArtifactHistory(
   projectId: string,
-  kind?: PersistedArtifactHistoryKind,
+  kind?: ArtifactHistorySurfaceKind,
+  prototypeId?: string,
 ): Promise<{
   projectId: string;
-  kind: PersistedArtifactHistoryKind | null;
+  kind: ArtifactHistorySurfaceKind | null;
   entries: ArtifactHistoryEntryView[];
   latestEntryId: string | null;
 }> {
-  const qs = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+  const params = new URLSearchParams();
+  if (kind) params.set('kind', kind);
+  if (prototypeId) params.set('prototypeId', prototypeId);
+  const qs = params.toString() ? `?${params.toString()}` : '';
   const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/history${qs}`, {
     headers: buildLocaleHeaders(),
   });
@@ -2666,18 +2755,22 @@ export async function apiListArtifactHistory(
 
 export async function apiUndoArtifactChange(
   projectId: string,
-  artifactKind: PersistedArtifactHistoryKind,
+  artifactKind: ArtifactHistorySurfaceKind,
   expectedEntryId?: string,
+  prototypeId?: string,
 ): Promise<ArtifactHistoryMutationResponse> {
   return apiPostJson<ArtifactHistoryMutationResponse>(
     `/api/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(artifactKind)}/undo`,
-    expectedEntryId ? { expectedEntryId } : {},
+    {
+      ...(expectedEntryId ? { expectedEntryId } : {}),
+      ...(prototypeId ? { prototypeId } : {}),
+    },
   );
 }
 
 export async function apiRestoreArtifactBeforeChange(
   projectId: string,
-  artifactKind: PersistedArtifactHistoryKind,
+  artifactKind: ArtifactHistorySurfaceKind,
   entryId: string,
 ): Promise<ArtifactHistoryMutationResponse> {
   return apiPostJson<ArtifactHistoryMutationResponse>(

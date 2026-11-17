@@ -442,4 +442,131 @@ describe('ChangeSummaryCard & ArtifactHistoryDrawer UI (#65)', () => {
       store.close();
     }
   });
+
+  it('wires PROTOTYPE_CO_DESIGN ShellAgentPanel + ChangeSummaryCard + Compare & Undo + ArtifactHistoryDrawer with 0 Business View violations in zh-CN & en-US (#67)', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const app = createApiApp(store);
+
+    try {
+      const proto = store.listPrototypes('proj-contract')[0]!;
+      const sessRes = await app.request(
+        `/api/projects/proj-contract/prototypes/${proto.id}/co-design-session`,
+        { method: 'POST' },
+      );
+      const { session } = (await sessRes.json()) as { session: { id: string } };
+
+      // 1. Mutating PROTOTYPE_CO_DESIGN run (R2) -> renders ChangeSummaryCard + Compare + Undo
+      const refineRes = await app.request(`/api/agent-sessions/${session.id}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: '增加归档状态筛选框',
+          mockMode: true,
+        }),
+      });
+      await refineRes.text();
+
+      const boot1 = (await (
+        await app.request('/api/bootstrap?projectId=proj-contract')
+      ).json()) as BootstrapPayload;
+      useWorkbenchStore.setState({
+        loading: false,
+        data: boot1,
+        activeNav: 'app-prototype',
+        activeSessionId: session.id,
+      });
+      Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+
+      for (const locale of ['zh-CN', 'en-US'] as const) {
+        stubBrowserStorage({ onto_locale: locale });
+        const panelHtml = renderToStaticMarkup(
+          <PreferencesProvider>
+            <ShellAgentPanel
+              surface={agentPanelSurfaceFor('app-prototype')}
+              overlay={false}
+              side="left"
+              closable={false}
+              onClose={() => {}}
+              onNavigate={() => {}}
+            />
+          </PreferencesProvider>,
+        );
+        const panelViolations = checkBusinessViewMarkup(panelHtml);
+        expect(panelViolations, formatBusinessViewViolations(panelViolations)).toEqual([]);
+        expect(panelHtml).toContain('data-testid="run-change-summary"');
+        expect(panelHtml).toContain('data-artifact-kind="PROTOTYPE"');
+        expect(panelHtml).toContain('data-testid="change-summary-undo-btn"');
+        expect(panelHtml).toContain('data-testid="change-summary-compare-btn"');
+      }
+
+      // 2. Manual prototype revision (R3) -> R2 run card keeps ChangeSummary + Compare + History, omits 1-click Undo
+      const protoR2 = store.getPrototype(proto.id)!;
+      await app.request(`/api/prototypes/${proto.id}/revisions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: '调整按钮间距与阴影',
+          htmlContent: `${protoR2.htmlContent}\n<style>.btn-gap { gap: 10px; }</style>`,
+          source: 'MANUAL_SAVE',
+        }),
+      });
+
+      const boot2 = (await (
+        await app.request('/api/bootstrap?projectId=proj-contract')
+      ).json()) as BootstrapPayload;
+      useWorkbenchStore.setState({
+        loading: false,
+        data: boot2,
+        activeNav: 'app-prototype',
+        activeSessionId: session.id,
+      });
+      Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
+
+      stubBrowserStorage({ onto_locale: 'zh-CN' });
+      const panelAfterManualHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <ShellAgentPanel
+            surface={agentPanelSurfaceFor('app-prototype')}
+            overlay={false}
+            side="left"
+            closable={false}
+            onClose={() => {}}
+            onNavigate={() => {}}
+          />
+        </PreferencesProvider>,
+      );
+      expect(panelAfterManualHtml).toContain('data-testid="run-change-summary"');
+      expect(panelAfterManualHtml).toContain('data-testid="change-summary-compare-btn"');
+      expect(panelAfterManualHtml).toContain('data-testid="change-summary-open-history-btn"');
+      expect(panelAfterManualHtml).not.toContain('data-testid="change-summary-undo-btn"');
+
+      // 3. ArtifactHistoryDrawer for PROTOTYPE shows Undo on R3 and Restore-before on R2 with 0 violations
+      const protoEntries = (boot2.artifactHistory ?? []).filter(
+        (e) => e.artifactKind === 'PROTOTYPE',
+      );
+      expect(protoEntries).toHaveLength(2);
+      for (const locale of ['zh-CN', 'en-US'] as const) {
+        stubBrowserStorage({ onto_locale: locale });
+        const drawerHtml = renderToStaticMarkup(
+          <PreferencesProvider>
+            <ArtifactHistoryDrawer
+              open
+              onOpenChange={() => {}}
+              artifactLabel={{ zh: '界面原型', en: 'Prototype' }}
+              entries={protoEntries}
+              onUndoLatest={() => {}}
+              onRestoreBefore={() => {}}
+            />
+          </PreferencesProvider>,
+        );
+        const drawerViolations = checkBusinessViewMarkup(drawerHtml);
+        expect(drawerViolations, formatBusinessViewViolations(drawerViolations)).toEqual([]);
+        expect(drawerHtml.match(/data-testid="history-undo-latest-btn"/g)?.length).toBe(1);
+        expect(drawerHtml.match(/data-testid="history-restore-before-btn"/g)?.length).toBe(1);
+      }
+    } finally {
+      store.close();
+    }
+  });
 });

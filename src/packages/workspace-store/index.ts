@@ -22,10 +22,13 @@ export {
   DEFAULT_MAX_ARTIFACT_HISTORY_ENTRIES,
   buildArtifactHistoryViews,
   buildOntologySuiteChangeSummaryItems,
+  buildPrototypeArtifactHistoryViews,
+  buildPrototypeChangeSummaryItems,
   captureRequirementDocState,
   computeRequirementDocDiff,
   sanitizeBusinessViewCopy,
   toRequirementDocSnapshot,
+  type BuildPrototypeChangeSummaryOptions,
 } from './lib/artifact-history.js';
 export { DEFAULT_TECHNOLOGY_PROFILE_ID } from '../architecture-assets/index.js';
 
@@ -60,6 +63,7 @@ export type {
   RequirementSectionChange,
   RequirementDocDiff,
   ArtifactJumpTarget,
+  PrototypeCompareRevisionPair,
   ChangeSummaryItemView,
   ChangeSummaryView,
   RequirementsDocHistoryEntry,

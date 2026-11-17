@@ -6,6 +6,7 @@ import {
   formatToolStepLabel as formatVocabularyToolStepLabel,
   getModelBusinessName,
   resolveToolProgressSpec,
+  sanitizeBusinessText,
 } from '../../../packages/business-vocabulary/index.js';
 import {
   MODEL_CODES,
@@ -840,6 +841,25 @@ function buildCompletedSessionRun(
       )
       .map((tc) => tc.targetAnchor!);
 
+  const cleanAssistantText =
+    session.agentKind === 'PROTOTYPE_CO_DESIGN' && aMsg.content
+      ? sanitizeBusinessText(aMsg.content, /[\u4e00-\u9fff]/.test(aMsg.content) ? 'zh-CN' : 'en-US', {
+          elementDisplayMap: new Map(
+            [...modifiedAnchors, ...(aMsg.toolCalls ?? []).map((tc) => tc.targetAnchor).filter(Boolean)]
+              .flatMap((anc) => {
+                const lbl = anc?.label?.trim();
+                if (!lbl || checkBusinessViewMarkup(lbl, { plainText: true }).length > 0) return [];
+                const pairs: [string, string][] = [];
+                if (anc?.elementId) pairs.push([anc.elementId, lbl]);
+                if (anc?.screenId) pairs.push([anc.screenId, lbl]);
+                return pairs;
+              }),
+          ),
+          elementIdFallback: { zh: '目标区域', en: 'target area' },
+        }).replace(/[`]/g, '')
+      : aMsg.content;
+  const effectiveSummaryText = cleanAssistantText.trim();
+
   const visionUsed = Boolean(aMsg.visionFallbackUsed || uMsg.visionFallbackUsed);
   const visionNotice = aMsg.visionFallbackNotice ?? uMsg.visionFallbackNotice;
   const diag = aMsg.errorDiagnostic as
@@ -876,7 +896,7 @@ function buildCompletedSessionRun(
     steps,
     ...(thinking ? { thinking } : {}),
     ...(userPrompt ? { userPrompt } : {}),
-    ...(aMsg.content ? { text: aMsg.content } : {}),
+    ...(cleanAssistantText ? { text: cleanAssistantText } : {}),
     sourceSessionId: session.id,
     sourceUserMessageId: uMsg.id,
     sourceAssistantMessageId: aMsg.id,
@@ -897,8 +917,8 @@ function buildCompletedSessionRun(
     ...(status === 'SUCCEEDED'
       ? {
           result: {
-            summary: summaryText
-              ? { zh: summaryText, en: summaryText }
+            summary: effectiveSummaryText
+              ? { zh: effectiveSummaryText, en: effectiveSummaryText }
               : { zh: '已完成处理。', en: 'Completed.' },
             ...(primaryArtifact
               ? {

@@ -559,6 +559,7 @@ export async function revertPostRunToPreviousRevision(
   store.patchData({
     prototypes: res.prototypes,
     confirmedPrototypeRevision: res.confirmedRevision,
+    ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
   });
   Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
 

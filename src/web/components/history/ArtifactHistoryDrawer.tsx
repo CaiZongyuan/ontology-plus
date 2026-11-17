@@ -203,7 +203,7 @@ export function ArtifactHistoryDrawer({
                             ? t('正在撤销…', 'Undoing…')
                             : t('撤销这次改动', 'Undo this change')}
                         </Button>
-                      ) : !isLatest && onRestoreBefore ? (
+                      ) : !isLatest && entry.canRestoreBefore !== false && onRestoreBefore ? (
                         <Button
                           type="button"
                           variant="ghost"

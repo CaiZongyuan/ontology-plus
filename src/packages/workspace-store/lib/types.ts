@@ -603,6 +603,7 @@ export type ArtifactJumpTarget =
       kind: 'PROTOTYPE_ANCHOR';
       prototypeId: string;
       revisionId?: string;
+      previousRevisionId?: string;
       screenId?: string;
       elementId?: string;
     }
@@ -624,6 +625,12 @@ export interface ChangeSummaryItemView {
   jumpTarget?: ArtifactJumpTarget;
 }
 
+export interface PrototypeCompareRevisionPair {
+  prototypeId: string;
+  leftRevisionId: string;
+  rightRevisionId: string;
+}
+
 export interface ChangeSummaryView {
   entryId: string;
   artifactKind: ArtifactHistorySurfaceKind;
@@ -632,6 +639,7 @@ export interface ChangeSummaryView {
   items: ChangeSummaryItemView[];
   canUndo: boolean;
   isUndone?: boolean;
+  compareRevisionPair?: PrototypeCompareRevisionPair;
 }
 
 export interface RequirementsDocHistoryEntry {
@@ -672,6 +680,7 @@ export interface ArtifactHistoryEntryView {
   source: ArtifactHistorySource;
   title: BilingualText;
   changeSummary: ChangeSummaryView;
+  canRestoreBefore?: boolean;
   requirementsDiff?: RequirementDocDiff;
 }
 
@@ -717,12 +726,16 @@ export interface PrototypeRevision {
   projectId: string;
   revisionNumber: number;
   title: string;
+  instruction?: string;
   starred?: boolean;
   htmlContent: string;
   extractedScreenCount: number;
   source: PrototypeRevisionSource;
   restoredFromRevisionId?: string;
+  restoredBeforeRevisionId?: string;
+  undoneRevisionId?: string;
   agentRunId?: string;
+  agentReason?: string;
   createdAt: string;
 }
 
@@ -826,6 +839,7 @@ export interface CreatePrototypeInput {
   designBrief?: DesignBrief;
   coDesignSessionId?: string;
   agentRunId?: string;
+  agentReason?: string;
 }
 
 export interface AppendPrototypeRevisionInput {
@@ -837,7 +851,10 @@ export interface AppendPrototypeRevisionInput {
   htmlContent: string;
   source?: PrototypeRevisionSource;
   restoredFromRevisionId?: string;
+  restoredBeforeRevisionId?: string;
+  undoneRevisionId?: string;
   agentRunId?: string;
+  agentReason?: string;
 }
 
 export interface FourLayerAsset {
@@ -1388,13 +1405,14 @@ export interface WorkspaceStore {
     sessionId?: string;
     reason?: string;
   }): ArtifactHistoryEntry | null;
+  recordPrototypeRunReason(projectId: string, runId: string, reason: string): void;
   listArtifactHistory(
     projectId: string,
     filter?: { artifactKind?: PersistedArtifactHistoryKind },
   ): ArtifactHistoryEntry[];
   listArtifactHistoryViews(
     projectId: string,
-    filter?: { artifactKind?: PersistedArtifactHistoryKind },
+    filter?: { artifactKind?: ArtifactHistorySurfaceKind; prototypeId?: string },
   ): ArtifactHistoryEntryView[];
   undoLatestArtifactChange(
     projectId: string,
@@ -1405,12 +1423,34 @@ export interface WorkspaceStore {
     entryView: ArtifactHistoryEntryView;
     undoneEntryId: string;
   };
+  undoLatestArtifactChange(
+    projectId: string,
+    artifactKind: ArtifactHistorySurfaceKind,
+    options?: { expectedEntryId?: string; prototypeId?: string },
+  ): {
+    entry?: ArtifactHistoryEntry;
+    revision?: PrototypeRevision;
+    prototype?: InteractivePrototype;
+    entryView: ArtifactHistoryEntryView;
+    undoneEntryId: string;
+  };
   restoreArtifactBeforeEntry(
     projectId: string,
     artifactKind: PersistedArtifactHistoryKind,
     entryId: string,
   ): {
     entry: ArtifactHistoryEntry;
+    entryView: ArtifactHistoryEntryView;
+    restoredBeforeEntryId: string;
+  };
+  restoreArtifactBeforeEntry(
+    projectId: string,
+    artifactKind: ArtifactHistorySurfaceKind,
+    entryId: string,
+  ): {
+    entry?: ArtifactHistoryEntry;
+    revision?: PrototypeRevision;
+    prototype?: InteractivePrototype;
     entryView: ArtifactHistoryEntryView;
     restoredBeforeEntryId: string;
   };

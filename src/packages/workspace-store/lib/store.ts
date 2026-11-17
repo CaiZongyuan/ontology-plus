@@ -92,6 +92,7 @@ import {
   ArtifactHistoryEntry,
   ArtifactHistoryEntryView,
   ArtifactHistorySource,
+  ArtifactHistorySurfaceKind,
   AssembledApplication,
   BusinessModelStepConfirmationRecord,
   CapabilityAgent,
@@ -141,10 +142,13 @@ import {
   areOntologySuitesEqual,
   areRequirementDocStatesEqual,
   buildArtifactHistoryViews,
+  buildPrototypeArtifactHistoryViews,
   captureRequirementDocState,
+  isPreExistingPrototypeBaselineRevision,
 } from './artifact-history.js';
 import {
   PrototypeConfirmedDeleteError,
+  applyPrototypeRunReason,
   applyRevisionMetadataPatch,
   buildStoredPrototypeOnAppend,
   buildStoredPrototypeOnCreate,
@@ -3103,19 +3107,212 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       });
     },
 
+    recordPrototypeRunReason(projectId, runId, reason) {
+      ensurePrototypesMigrated(projectId);
+      const storedList = listItems<StoredInteractivePrototype>('prototypes', projectId);
+      for (const stored of storedList) {
+        const updated = applyPrototypeRunReason(stored, runId, reason);
+        if (updated) {
+          putItem('prototypes', updated.id, updated, updated.projectId, updated.updatedAt);
+        }
+      }
+    },
+
     listArtifactHistory(projectId, filter) {
       const chronological = listChronologicalArtifactHistory(projectId, filter?.artifactKind);
       return [...chronological].reverse();
     },
 
     listArtifactHistoryViews(projectId, filter) {
-      const chronological = listChronologicalArtifactHistory(projectId, filter?.artifactKind);
-      return buildArtifactHistoryViews(chronological);
+      const project = this.getProject(projectId);
+      const domain = project?.domain;
+
+      if (filter?.artifactKind === 'PROTOTYPE') {
+        const protos = this.listPrototypes(projectId);
+        if (protos.length === 0) return [];
+        if (filter.prototypeId) {
+          const target = protos.find((p) => p.id === filter.prototypeId);
+          return target
+            ? buildPrototypeArtifactHistoryViews(target, {
+                ...(domain ? { domain } : {}),
+                maxEntries: maxHistoryEntries,
+              })
+            : [];
+        }
+        const confirmed = this.getConfirmedPrototypeRevision(projectId);
+        const withHistory = protos.find(
+          (p) =>
+            p.revisions.length >= 2 ||
+            (p.revisions[0] && !isPreExistingPrototypeBaselineRevision(p.revisions[0])),
+        );
+        const activeProto =
+          withHistory ??
+          (confirmed ? protos.find((p) => p.id === confirmed.prototypeId) : undefined) ??
+          protos[0]!;
+        return buildPrototypeArtifactHistoryViews(activeProto, {
+          ...(domain ? { domain } : {}),
+          maxEntries: maxHistoryEntries,
+        });
+      }
+
+      if (
+        filter?.artifactKind === 'REQUIREMENTS_DOC' ||
+        filter?.artifactKind === 'ONTOLOGY_SUITE'
+      ) {
+        const chronological = listChronologicalArtifactHistory(projectId, filter.artifactKind);
+        return buildArtifactHistoryViews(chronological);
+      }
+
+      const persistedViews = buildArtifactHistoryViews(
+        listChronologicalArtifactHistory(projectId),
+      );
+      const protos = this.listPrototypes(projectId);
+      if (protos.length === 0) {
+        return persistedViews;
+      }
+      const protoViews = protos.flatMap((proto) =>
+        buildPrototypeArtifactHistoryViews(proto, {
+          ...(domain ? { domain } : {}),
+          maxEntries: maxHistoryEntries,
+        }),
+      );
+      if (protoViews.length === 0) {
+        return persistedViews;
+      }
+      return [...persistedViews, ...protoViews].sort(
+        (a, b) => b.createdAt.localeCompare(a.createdAt) || b.sequence - a.sequence,
+      );
     },
 
-    undoLatestArtifactChange(projectId, artifactKind, undoOptions) {
+    undoLatestArtifactChange(
+      projectId: string,
+      artifactKind: ArtifactHistorySurfaceKind,
+      undoOptions?: { expectedEntryId?: string; prototypeId?: string },
+    ): never {
       const currentProject = this.getProject(projectId);
       if (!currentProject) throw new Error(`Project not found: ${projectId}`);
+
+      if (artifactKind === 'PROTOTYPE') {
+        ensurePrototypesMigrated(projectId);
+        const storedList = listItems<StoredInteractivePrototype>('prototypes', projectId);
+        if (storedList.length === 0) {
+          throw new ArtifactHistoryConflictError({
+            code: 'NOTHING_TO_UNDO',
+            messageZh: '当前项目还没有可撤销的原型改动记录。',
+            messageEn: 'There is no prototype change to undo yet.',
+          });
+        }
+
+        let targetStored: StoredInteractivePrototype | undefined;
+        if (undoOptions?.prototypeId) {
+          targetStored = storedList.find((p) => p.id === undoOptions.prototypeId);
+        } else if (undoOptions?.expectedEntryId) {
+          targetStored = storedList.find((p) =>
+            p.revisions.some((r) => r.id === undoOptions.expectedEntryId),
+          );
+          if (!targetStored) {
+            const hasAnyHistory = storedList.some(
+              (p) =>
+                p.revisions.length >= 2 ||
+                (p.revisions[0] && !isPreExistingPrototypeBaselineRevision(p.revisions[0])),
+            );
+            throw new ArtifactHistoryConflictError(
+              hasAnyHistory
+                ? {
+                    code: 'STALE_LATEST_ENTRY',
+                    messageZh:
+                      '在此改动之后已有新的修改，一键撤销只适用于最近一次改动；请在历史记录中恢复到更早状态。',
+                    messageEn:
+                      'Newer edits exist after this change. One-click undo applies only to the latest change; open History to restore an earlier state.',
+                  }
+                : {
+                    code: 'NOTHING_TO_UNDO',
+                    messageZh: '当前项目还没有可撤销的原型改动记录。',
+                    messageEn: 'There is no prototype change to undo yet.',
+                  },
+            );
+          }
+        } else {
+          const confirmed = getItem<ConfirmedPrototypeRevisionRecord>(
+            'prototype_confirmations',
+            projectId,
+          );
+          targetStored =
+            storedList.find((p) => p.revisions.length >= 2) ??
+            (confirmed ? storedList.find((p) => p.id === confirmed.prototypeId) : undefined) ??
+            storedList[0];
+        }
+
+        if (!targetStored) {
+          throw new ArtifactHistoryConflictError({
+            code: 'NOTHING_TO_UNDO',
+            messageZh: '当前项目还没有可撤销的原型改动记录。',
+            messageEn: 'There is no prototype change to undo yet.',
+          });
+        }
+
+        const ordered = [...targetStored.revisions].sort(
+          (a, b) => a.revisionNumber - b.revisionNumber,
+        );
+        const latestRev = ordered[ordered.length - 1];
+        if (!latestRev) {
+          throw new ArtifactHistoryConflictError({
+            code: 'NOTHING_TO_UNDO',
+            messageZh: '当前项目还没有可撤销的原型改动记录。',
+            messageEn: 'There is no prototype change to undo yet.',
+          });
+        }
+
+        if (undoOptions?.expectedEntryId && latestRev.id !== undoOptions.expectedEntryId) {
+          throw new ArtifactHistoryConflictError({
+            code: 'STALE_LATEST_ENTRY',
+            messageZh:
+              '在此改动之后已有新的修改，一键撤销只适用于最近一次改动；请在历史记录中恢复到更早状态。',
+            messageEn:
+              'Newer edits exist after this change. One-click undo applies only to the latest change; open History to restore an earlier state.',
+          });
+        }
+
+        if (ordered.length < 2) {
+          throw new ArtifactHistoryConflictError({
+            code: 'NOTHING_TO_UNDO',
+            messageZh: '当前原型处于首版状态，之前没有更早的原型版本可撤销退回。',
+            messageEn:
+              'This prototype is on its initial version; there is no earlier prototype revision to revert to.',
+          });
+        }
+
+        const priorRev = ordered[ordered.length - 2]!;
+        const undoDepthById = new Map<string, number>();
+        for (const rev of ordered) {
+          undoDepthById.set(
+            rev.id,
+            rev.undoneRevisionId ? (undoDepthById.get(rev.undoneRevisionId) ?? 0) + 1 : 0,
+          );
+        }
+        const nextDepth = (undoDepthById.get(latestRev.id) ?? 0) + 1;
+        const isRedo = nextDepth % 2 === 0;
+
+        const appendedProto = this.appendPrototypeRevision(targetStored.id, {
+          title: isRedo ? '重做上一次改动' : '撤销上一次改动',
+          htmlContent: priorRev.htmlContent,
+          source: 'RESTORED',
+          restoredFromRevisionId: priorRev.id,
+          undoneRevisionId: latestRev.id,
+        });
+
+        const views = this.listArtifactHistoryViews(projectId, {
+          artifactKind: 'PROTOTYPE',
+          prototypeId: targetStored.id,
+        });
+        const entryView = views.find((v) => v.id === appendedProto.revision.id) ?? views[0]!;
+        return {
+          revision: appendedProto.revision,
+          prototype: appendedProto.prototype,
+          entryView,
+          undoneEntryId: latestRev.id,
+        } as never;
+      }
 
       const chronological = listChronologicalArtifactHistory(projectId, artifactKind);
       const latest = chronological[chronological.length - 1];
@@ -3178,12 +3375,62 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         entry: appended,
         entryView,
         undoneEntryId: latest.id,
-      };
+      } as never;
     },
 
-    restoreArtifactBeforeEntry(projectId, artifactKind, entryId) {
+    restoreArtifactBeforeEntry(
+      projectId: string,
+      artifactKind: ArtifactHistorySurfaceKind,
+      entryId: string,
+    ): never {
       const currentProject = this.getProject(projectId);
       if (!currentProject) throw new Error(`Project not found: ${projectId}`);
+
+      if (artifactKind === 'PROTOTYPE') {
+        ensurePrototypesMigrated(projectId);
+        const storedList = listItems<StoredInteractivePrototype>('prototypes', projectId);
+        const matchedStored = storedList.find((p) =>
+          p.revisions.some((r) => r.id === entryId),
+        );
+        if (!matchedStored) {
+          throw new ArtifactHistoryNotFoundError(entryId);
+        }
+        const ordered = [...matchedStored.revisions].sort(
+          (a, b) => a.revisionNumber - b.revisionNumber,
+        );
+        const targetIdx = ordered.findIndex((r) => r.id === entryId);
+        if (targetIdx < 0) {
+          throw new ArtifactHistoryNotFoundError(entryId);
+        }
+        if (targetIdx === 0) {
+          throw new ArtifactHistoryConflictError({
+            code: 'NOTHING_TO_UNDO',
+            messageZh: '首版原型之前没有更早的原型状态可恢复。',
+            messageEn: 'There is no earlier prototype state before the initial prototype revision.',
+          });
+        }
+
+        const beforeRev = ordered[targetIdx - 1]!;
+        const appendedProto = this.appendPrototypeRevision(matchedStored.id, {
+          title: `恢复自修订 #${beforeRev.revisionNumber}（${beforeRev.title}）`,
+          htmlContent: beforeRev.htmlContent,
+          source: 'RESTORED',
+          restoredFromRevisionId: beforeRev.id,
+          restoredBeforeRevisionId: entryId,
+        });
+
+        const views = this.listArtifactHistoryViews(projectId, {
+          artifactKind: 'PROTOTYPE',
+          prototypeId: matchedStored.id,
+        });
+        const entryView = views.find((v) => v.id === appendedProto.revision.id) ?? views[0]!;
+        return {
+          revision: appendedProto.revision,
+          prototype: appendedProto.prototype,
+          entryView,
+          restoredBeforeEntryId: entryId,
+        } as never;
+      }
 
       const chronological = listChronologicalArtifactHistory(projectId, artifactKind);
       const target = chronological.find((item) => item.id === entryId);
@@ -3234,7 +3481,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         entry: appended,
         entryView,
         restoredBeforeEntryId: target.id,
-      };
+      } as never;
     },
 
     savePrototypeAndSyncMu(projectId, input) {

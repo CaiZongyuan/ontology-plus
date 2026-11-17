@@ -3,7 +3,6 @@ import type {
   AgentSession,
   AgentSessionKind,
   ArtifactJumpTarget,
-  PersistedArtifactHistoryKind,
   WritebackInterface,
 } from '../../../packages/workspace-store/index.js';
 import {
@@ -364,6 +363,8 @@ export function ShellAgentPanel({
     setActivePrototypeId,
     focusRequirementSection,
     focusBusinessModelTarget,
+    focusPrototypeTarget,
+    openPrototypeRevisionCompare,
     openArtifactHistoryDrawer,
     undoArtifactChange,
     ensureProjectAgentSession,
@@ -801,10 +802,7 @@ export function ShellAgentPanel({
       return;
     }
     if (target.kind === 'PROTOTYPE_ANCHOR') {
-      if (activeProjectId) {
-        setActivePrototypeId(activeProjectId, target.prototypeId);
-      }
-      setActiveNav('app-prototype', { itemId: target.prototypeId });
+      focusPrototypeTarget(target);
       onNavigate('app-prototype');
       setHoveredAnchor({
         ...(target.screenId ? { screenId: target.screenId } : {}),
@@ -836,23 +834,22 @@ export function ShellAgentPanel({
             summary={entry.changeSummary}
             undoing={undoingEntryId === entry.id}
             onUndo={async (summary) => {
-              if (
-                summary.artifactKind !== 'REQUIREMENTS_DOC' &&
-                summary.artifactKind !== 'ONTOLOGY_SUITE'
-              ) {
-                return;
-              }
               setUndoingEntryId(entry.id);
               try {
                 await undoArtifactChange(
-                  summary.artifactKind as PersistedArtifactHistoryKind,
+                  summary.artifactKind,
                   entry.id,
+                  summary.artifactKind === 'PROTOTYPE' ? summary.targetId : undefined,
                 );
               } finally {
                 setUndoingEntryId(null);
               }
             }}
             onJumpToTarget={handleJumpToArtifactTarget}
+            onCompareRevisions={(pair) => {
+              openPrototypeRevisionCompare(pair);
+              onNavigate('app-prototype');
+            }}
             onOpenHistory={(kind) => {
               if (kind === 'REQUIREMENTS_DOC') {
                 setActiveNav('app-req-docs');
@@ -860,6 +857,9 @@ export function ShellAgentPanel({
               } else if (kind === 'ONTOLOGY_SUITE') {
                 setActiveNav('app-ontology');
                 onNavigate('app-ontology');
+              } else if (kind === 'PROTOTYPE') {
+                setActiveNav('app-prototype');
+                onNavigate('app-prototype');
               }
               openArtifactHistoryDrawer(kind);
             }}

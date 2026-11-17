@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type {
   AgentSession,
+  ArtifactHistoryEntryView,
   ConfirmedPrototypeRevision,
   InteractivePrototype,
   ProjectDetail,
@@ -34,11 +35,15 @@ import {
   apiRestorePrototypeRevision,
   apiSavePrototype,
   apiUpdatePrototypeRevisionMeta,
+  useWorkbenchStore,
 } from '../../api.js';
 import {
   ConfirmRevisionMuDiffModal,
   PrototypeRevisionHistoryDrawer,
+  createInitialRevisionHistoryViewState,
+  deriveDefaultComparePair,
   formatPrototypeLabelForBusinessView,
+  type RevisionHistoryViewState,
 } from './PrototypeRevisionHistory.js';
 import { useAgentPanelOverlayMode } from '../agent/ShellAgentPanel.js';
 import { AGENT_PANEL_WIDE_CSS_WIDTH, useAgentPanelStore } from '../agent/agentPanelStore.js';
@@ -97,6 +102,7 @@ export interface PrototypeCanvasStageProps {
     project?: ProjectDetail;
     selectedPrototypeId?: string;
     agentSessions?: AgentSession[];
+    artifactHistory?: ArtifactHistoryEntryView[];
   }) => void;
   onBackToBrief: () => void;
   onNotify?: (message: string) => void;
@@ -253,6 +259,7 @@ export async function runDeletePrototypeSafely(
       deletedId: string;
       prototypes: InteractivePrototype[];
       confirmedRevision: ConfirmedPrototypeRevision | null;
+      artifactHistory?: ArtifactHistoryEntryView[];
     }
   | {
       ok: false;
@@ -267,6 +274,7 @@ export async function runDeletePrototypeSafely(
       deletedId: res.deletedId,
       prototypes: res.prototypes,
       confirmedRevision: res.confirmedRevision,
+      ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
     };
   } catch (err) {
     const errorMessage =
@@ -480,6 +488,38 @@ export function PrototypeCanvasStage({
   const activePrototype =
     prototypes.find((p) => p.id === selectedPrototypeId) ?? prototypes[0] ?? null;
 
+  const highlightedComparePair = useWorkbenchStore((s) => s.highlightedPrototypeComparePair);
+  const [historyViewState, setHistoryViewState] = useState<RevisionHistoryViewState | undefined>(
+    () => (activePrototype ? createInitialRevisionHistoryViewState(activePrototype) : undefined),
+  );
+
+  useEffect(() => {
+    if (!activePrototype) return;
+    setHistoryViewState((prev) => {
+      if (!prev) return createInitialRevisionHistoryViewState(activePrototype);
+      if (prev.compareOpen) return prev;
+      const pair = deriveDefaultComparePair(activePrototype);
+      return {
+        ...prev,
+        leftRevisionId: pair.leftRevisionId,
+        rightRevisionId: pair.rightRevisionId,
+      };
+    });
+  }, [activePrototype?.id, activePrototype?.currentRevisionId]);
+
+  useEffect(() => {
+    if (!highlightedComparePair || !activePrototype) return;
+    if (highlightedComparePair.prototypeId !== activePrototype.id) return;
+    setHistoryOpen(true);
+    setHistoryViewState((prev) => ({
+      ...(prev ?? createInitialRevisionHistoryViewState(activePrototype)),
+      compareOpen: true,
+      leftRevisionId: highlightedComparePair.leftRevisionId,
+      rightRevisionId: highlightedComparePair.rightRevisionId,
+    }));
+    useWorkbenchStore.getState().clearPrototypeRevisionCompare();
+  }, [highlightedComparePair?.seq, activePrototype?.id]);
+
   const [cloneNameDraft, setCloneNameDraft] = useState<string>('');
   const [importNameDraft, setImportNameDraft] = useState<string>('');
   const [importHtmlDraft, setImportHtmlDraft] = useState<string>('');
@@ -582,6 +622,7 @@ export function PrototypeCanvasStage({
         confirmedRevision: res.confirmedRevision,
         project: res.project,
         selectedPrototypeId: res.prototype.id,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
       onSelectPrototype(res.prototype.id);
       setSwitcherOpen(false);
@@ -654,6 +695,7 @@ export function PrototypeCanvasStage({
         prototypes: res.prototypes,
         confirmedRevision: res.confirmedRevision,
         ...(nextSelected ? { selectedPrototypeId: nextSelected } : {}),
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
       if (nextSelected) {
         onSelectPrototype(nextSelected);
@@ -677,6 +719,7 @@ export function PrototypeCanvasStage({
         prototypes: res.prototypes,
         confirmedRevision: res.confirmedRevision,
         selectedPrototypeId: res.prototype.id,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
       setPreviewRevisionId(null);
       onNotify?.(
@@ -686,6 +729,21 @@ export function PrototypeCanvasStage({
         ),
       );
     } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleUndoLatestRevision = async (revisionId: string) => {
+    if (actionBusy) return;
+    setActionBusy(true);
+    setBusyRevisionId(revisionId);
+    try {
+      await useWorkbenchStore
+        .getState()
+        .undoArtifactChange('PROTOTYPE', revisionId, activePrototype.id);
+      setPreviewRevisionId(null);
+    } finally {
+      setBusyRevisionId(null);
       setActionBusy(false);
     }
   };
@@ -700,6 +758,7 @@ export function PrototypeCanvasStage({
         prototypes: res.prototypes,
         confirmedRevision: res.confirmedRevision,
         selectedPrototypeId: res.prototype.id,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
     } finally {
       setBusyRevisionId(null);
@@ -716,6 +775,7 @@ export function PrototypeCanvasStage({
         prototypes: res.prototypes,
         confirmedRevision: res.confirmedRevision,
         selectedPrototypeId: res.prototype.id,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
     } finally {
       setBusyRevisionId(null);
@@ -748,6 +808,7 @@ export function PrototypeCanvasStage({
         confirmedRevision: res.confirmedRevision,
         project: res.project,
         selectedPrototypeId: res.prototype.id,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
       setConfirmModalOpen(false);
       setConfirmTargetRevision(null);
@@ -1483,11 +1544,14 @@ export function PrototypeCanvasStage({
               domain={project.domain}
               previewRevisionId={previewRevisionId}
               busyRevisionId={busyRevisionId}
+              {...(historyViewState ? { viewState: historyViewState } : {})}
+              onViewStateChange={setHistoryViewState}
               onClose={() => setHistoryOpen(false)}
               onSelectPreviewRevision={(revId) =>
                 setPreviewRevisionId(revId === currentRevision.id ? null : revId)
               }
               onRestoreRevision={handleRestoreRevision}
+              onUndoLatestRevision={handleUndoLatestRevision}
               onRenameRevision={handleRenameRevision}
               onToggleStarRevision={handleToggleStarRevision}
               onRequestConfirmRevision={(rev) => {

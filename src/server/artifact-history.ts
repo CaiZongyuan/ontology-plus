@@ -3,6 +3,7 @@ import {
   ArtifactHistoryConflictError,
   ArtifactHistoryNotFoundError,
   sanitizeBusinessViewCopy,
+  type ArtifactHistorySurfaceKind,
   type PersistedArtifactHistoryKind,
   type WorkspaceStore,
 } from '../packages/workspace-store/index.js';
@@ -16,13 +17,14 @@ import { deriveProjectStepsForStoreProject } from './step-confirmations.js';
 
 const hookedStores = new WeakSet<WorkspaceStore>();
 
-const VALID_HISTORY_KINDS = new Set<PersistedArtifactHistoryKind>([
+const VALID_HISTORY_KINDS = new Set<ArtifactHistorySurfaceKind>([
   'REQUIREMENTS_DOC',
   'ONTOLOGY_SUITE',
+  'PROTOTYPE',
 ]);
 
-function isValidPersistedArtifactKind(raw: string | undefined): raw is PersistedArtifactHistoryKind {
-  return Boolean(raw && VALID_HISTORY_KINDS.has(raw as PersistedArtifactHistoryKind));
+function isValidArtifactSurfaceKind(raw: string | undefined): raw is ArtifactHistorySurfaceKind {
+  return Boolean(raw && VALID_HISTORY_KINDS.has(raw as ArtifactHistorySurfaceKind));
 }
 
 function resolveRouteLocale(c: {
@@ -102,6 +104,9 @@ export function createArtifactHistoryRunHooks(): AgentRunLifecycleHooks {
         event.sessionId,
         event.assistantMessageId,
       );
+      if (reason) {
+        store.recordPrototypeRunReason(event.projectId, event.runId, reason);
+      }
       store.finishArtifactRunCapture({
         projectId: event.projectId,
         artifactKind: 'REQUIREMENTS_DOC',
@@ -135,7 +140,7 @@ export function registerArtifactHistoryRoutes(app: Hono, store: WorkspaceStore):
     if (!project) return c.json({ error: 'Project not found' }, 404);
 
     const rawKind = c.req.query('kind');
-    if (rawKind !== undefined && rawKind !== '' && !isValidPersistedArtifactKind(rawKind)) {
+    if (rawKind !== undefined && rawKind !== '' && !isValidArtifactSurfaceKind(rawKind)) {
       return c.json(
         {
           error: `Unsupported artifact history kind: ${rawKind}`,
@@ -144,26 +149,38 @@ export function registerArtifactHistoryRoutes(app: Hono, store: WorkspaceStore):
         400,
       );
     }
-    const artifactKind = rawKind ? (rawKind as PersistedArtifactHistoryKind) : undefined;
+    const artifactKind = rawKind ? (rawKind as ArtifactHistorySurfaceKind) : undefined;
+    const prototypeId = c.req.query('prototypeId')?.trim() || undefined;
     const includeStates =
       c.req.query('includeStates') === '1' || c.req.query('includeStates') === 'true';
 
     const entries = store.listArtifactHistoryViews(
       projectId,
-      artifactKind ? { artifactKind } : undefined,
+      artifactKind || prototypeId
+        ? {
+            ...(artifactKind ? { artifactKind } : {}),
+            ...(prototypeId ? { prototypeId } : {}),
+          }
+        : undefined,
     );
 
     return c.json({
       projectId,
       kind: artifactKind ?? null,
+      ...(prototypeId ? { prototypeId } : {}),
       entries,
       latestEntryId: entries[0]?.id ?? null,
       ...(includeStates
         ? {
-            rawEntries: store.listArtifactHistory(
-              projectId,
-              artifactKind ? { artifactKind } : undefined,
-            ),
+            rawEntries:
+              artifactKind === 'PROTOTYPE'
+                ? []
+                : store.listArtifactHistory(
+                    projectId,
+                    artifactKind
+                      ? { artifactKind: artifactKind as PersistedArtifactHistoryKind }
+                      : undefined,
+                  ),
           }
         : {}),
     });
@@ -176,7 +193,7 @@ export function registerArtifactHistoryRoutes(app: Hono, store: WorkspaceStore):
     if (!project) return c.json({ error: 'Project not found' }, 404);
 
     const rawKind = c.req.param('artifactKind');
-    if (!isValidPersistedArtifactKind(rawKind)) {
+    if (!isValidArtifactSurfaceKind(rawKind)) {
       return c.json(
         {
           error: `Unsupported artifact history kind: ${rawKind}`,
@@ -187,22 +204,33 @@ export function registerArtifactHistoryRoutes(app: Hono, store: WorkspaceStore):
     }
 
     const body = await c.req
-      .json<{ expectedEntryId?: string }>()
-      .catch((): { expectedEntryId?: string } => ({}));
+      .json<{ expectedEntryId?: string; prototypeId?: string }>()
+      .catch((): { expectedEntryId?: string; prototypeId?: string } => ({}));
 
     try {
       const result = store.undoLatestArtifactChange(
         projectId,
         rawKind,
-        body.expectedEntryId ? { expectedEntryId: body.expectedEntryId } : undefined,
+        body.expectedEntryId || body.prototypeId
+          ? {
+              ...(body.expectedEntryId ? { expectedEntryId: body.expectedEntryId } : {}),
+              ...(body.prototypeId ? { prototypeId: body.prototypeId } : {}),
+            }
+          : undefined,
       );
+      const scopedProtoId = result.prototype?.id ?? body.prototypeId;
       return c.json({
         entry: result.entryView,
         undoneEntryId: result.undoneEntryId,
-        entries: store.listArtifactHistoryViews(projectId, { artifactKind: rawKind }),
+        entries: store.listArtifactHistoryViews(projectId, {
+          artifactKind: rawKind,
+          ...(rawKind === 'PROTOTYPE' && scopedProtoId ? { prototypeId: scopedProtoId } : {}),
+        }),
         artifactHistory: store.listArtifactHistoryViews(projectId),
         project: store.getProject(projectId)!,
         requirementDocs: store.listRequirementDocs(projectId),
+        prototypes: store.listPrototypes(projectId),
+        confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
         stepConfirmations: store.getProjectStepConfirmations(projectId),
         steps: deriveProjectStepsForStoreProject(store, projectId),
       });
@@ -224,11 +252,12 @@ export function registerArtifactHistoryRoutes(app: Hono, store: WorkspaceStore):
 
   app.post('/api/projects/:id/history/:artifactKind/:entryId/restore', (c) => {
     const projectId = c.req.param('id');
+    const locale = resolveRouteLocale(c);
     const project = store.getProject(projectId);
     if (!project) return c.json({ error: 'Project not found' }, 404);
 
     const rawKind = c.req.param('artifactKind');
-    if (!isValidPersistedArtifactKind(rawKind)) {
+    if (!isValidArtifactSurfaceKind(rawKind)) {
       return c.json(
         {
           error: `Unsupported artifact history kind: ${rawKind}`,
@@ -241,19 +270,36 @@ export function registerArtifactHistoryRoutes(app: Hono, store: WorkspaceStore):
 
     try {
       const result = store.restoreArtifactBeforeEntry(projectId, rawKind, entryId);
+      const scopedProtoId = result.prototype?.id;
       return c.json({
         entry: result.entryView,
         restoredBeforeEntryId: result.restoredBeforeEntryId,
-        entries: store.listArtifactHistoryViews(projectId, { artifactKind: rawKind }),
+        entries: store.listArtifactHistoryViews(projectId, {
+          artifactKind: rawKind,
+          ...(rawKind === 'PROTOTYPE' && scopedProtoId ? { prototypeId: scopedProtoId } : {}),
+        }),
         artifactHistory: store.listArtifactHistoryViews(projectId),
         project: store.getProject(projectId)!,
         requirementDocs: store.listRequirementDocs(projectId),
+        prototypes: store.listPrototypes(projectId),
+        confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
         stepConfirmations: store.getProjectStepConfirmations(projectId),
         steps: deriveProjectStepsForStoreProject(store, projectId),
       });
     } catch (err) {
       if (err instanceof ArtifactHistoryNotFoundError) {
         return c.json({ error: err.message, code: err.code }, 404);
+      }
+      if (err instanceof ArtifactHistoryConflictError) {
+        return c.json(
+          {
+            error: locale === 'en-US' ? err.messageEn : err.messageZh,
+            code: err.code,
+            messageZh: err.messageZh,
+            messageEn: err.messageEn,
+          },
+          409,
+        );
       }
       throw err;
     }

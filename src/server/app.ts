@@ -764,6 +764,7 @@ export function createApiApp(
           ...appended,
           prototypes: store.listPrototypes(projectId),
           confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+          artifactHistory: store.listArtifactHistoryViews(projectId),
         });
       }
     }
@@ -775,6 +776,7 @@ export function createApiApp(
       ...created,
       prototypes: store.listPrototypes(projectId),
       confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+      artifactHistory: store.listArtifactHistoryViews(projectId),
     });
   });
 
@@ -788,6 +790,7 @@ export function createApiApp(
       ...appended,
       prototypes: store.listPrototypes(existing.projectId),
       confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+      artifactHistory: store.listArtifactHistoryViews(existing.projectId),
     });
   });
 
@@ -805,6 +808,7 @@ export function createApiApp(
         ...restored,
         prototypes: store.listPrototypes(existing.projectId),
         confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+        artifactHistory: store.listArtifactHistoryViews(existing.projectId),
       });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
@@ -823,6 +827,7 @@ export function createApiApp(
         ...updated,
         prototypes: store.listPrototypes(existing.projectId),
         confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+        artifactHistory: store.listArtifactHistoryViews(existing.projectId),
       });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
@@ -873,6 +878,7 @@ export function createApiApp(
         prototype: res.prototype,
         project: res.project,
         prototypes: store.listPrototypes(projectId),
+        artifactHistory: store.listArtifactHistoryViews(projectId),
         stepConfirmations,
         steps: deriveProjectStepsForStoreProject(store, projectId),
       });
@@ -910,6 +916,7 @@ export function createApiApp(
         deletedId: id,
         prototypes: store.listPrototypes(projectId),
         confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+        artifactHistory: store.listArtifactHistoryViews(projectId),
       });
     } catch (err) {
       if (
