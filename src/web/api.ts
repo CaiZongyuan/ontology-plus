@@ -17,6 +17,7 @@ import type {
   AnalyticsScenario,
   AppendPrototypeRevisionInput,
   AssembledApplication,
+  BusinessModelStepConfirmationRecord,
   CapabilityAgent,
   CapabilityChatSession,
   ConfirmedPrototypeRevision,
@@ -28,6 +29,7 @@ import type {
   DesignBrief,
   DesignBriefBorrowedReference,
   DesignBriefItem,
+  DevelopmentPackageSnapshot,
   ExtractionJob,
   FourLayerAsset,
   GeneratedSkill,
@@ -39,6 +41,7 @@ import type {
   MetricDefinition,
   ProjectDetail,
   ProjectSnapshot,
+  ProjectStepConfirmations,
   ProjectSummary,
   PrototypeArtifact,
   PrototypeRevision,
@@ -47,6 +50,7 @@ import type {
   ReasoningSession,
   RequirementDoc,
   RequirementSession,
+  RequirementsStepConfirmationRecord,
   SystemSettingsState,
   TechnologyProfile,
   WritebackInterface,
@@ -69,6 +73,7 @@ import {
   DEFAULT_NAV_VIEW,
   deriveProjectStepProgress,
   getProjectLifecycleState,
+  normalizeNavViewAlias,
   readUrlNavState,
   writeUrlNavState,
   type ProjectLifecycleState,
@@ -96,8 +101,10 @@ export interface BootstrapPayload {
   requirementDocs: RequirementDoc[];
   prototypes: PrototypeArtifact[];
   confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
+  stepConfirmations?: ProjectStepConfirmations;
   fourLayerAssets: FourLayerAsset[];
   assembledApplications: AssembledApplication[];
+  packageSnapshots?: DevelopmentPackageSnapshot[];
   generatedSkills: GeneratedSkill[];
   legacySystems: LegacySystemConfig[];
   extractionJobs: ExtractionJob[];
@@ -336,6 +343,10 @@ interface WorkbenchStoreState {
   undo: () => Promise<void>;
   redo: () => Promise<void>;
   patchData: (patch: Partial<BootstrapPayload>) => void;
+  confirmRequirementsStep: (
+    docId?: string,
+  ) => Promise<RequirementsStepConfirmationRecord | null>;
+  confirmBusinessModelStep: () => Promise<BusinessModelStepConfirmationRecord | null>;
   ensureProjectAgentSession: (
     projectId: string,
     agentKind: AgentSessionKind,
@@ -462,15 +473,16 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   liveAnnouncement: '',
 
   setActiveNav: (nav, opts) => {
+    const canonicalNav = normalizeNavViewAlias(nav) ?? nav;
     const nextItem = opts?.itemId !== undefined ? opts.itemId : get().activeItemId;
     const nextSess = opts?.sessionId !== undefined ? opts.sessionId : get().activeSessionId;
     set({
-      activeNav: nav,
+      activeNav: canonicalNav,
       activeItemId: nextItem,
       activeSessionId: nextSess,
     });
     writeUrlNavState({
-      nav,
+      nav: canonicalNav,
       itemId: nextItem ?? '',
       sessionId: nextSess ?? '',
     });
@@ -648,6 +660,54 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       undoStack: [...undoStack, current],
       redoStack: redoStack.slice(0, -1),
     });
+  },
+
+  confirmRequirementsStep: async (docId) => {
+    const cur = get().data;
+    if (!cur) return null;
+    const projectId = cur.activeProject.id;
+    const res = await apiPostJson<{
+      confirmation: RequirementsStepConfirmationRecord;
+      doc: RequirementDoc;
+      docs: RequirementDoc[];
+      stepConfirmations: ProjectStepConfirmations;
+    }>(
+      `/api/projects/${encodeURIComponent(projectId)}/steps/requirements/confirm`,
+      docId ? { docId } : {},
+    );
+    const latest = get().data;
+    if (latest && latest.activeProject.id === projectId) {
+      set({
+        data: {
+          ...latest,
+          requirementDocs: res.docs,
+          stepConfirmations: res.stepConfirmations,
+        },
+      });
+    }
+    return res.confirmation;
+  },
+
+  confirmBusinessModelStep: async () => {
+    const cur = get().data;
+    if (!cur) return null;
+    const projectId = cur.activeProject.id;
+    const res = await apiPostJson<{
+      confirmation: BusinessModelStepConfirmationRecord;
+      project: ProjectDetail;
+      stepConfirmations: ProjectStepConfirmations;
+    }>(`/api/projects/${encodeURIComponent(projectId)}/steps/business-model/confirm`, {});
+    const latest = get().data;
+    if (latest && latest.activeProject.id === projectId) {
+      set({
+        data: {
+          ...latest,
+          activeProject: res.project,
+          stepConfirmations: res.stepConfirmations,
+        },
+      });
+    }
+    return res.confirmation;
   },
 
   ensureProjectAgentSession: async (projectId, agentKind, opts) => {
@@ -1528,6 +1588,7 @@ export interface StreamAgentSessionCallbacks {
     requirementSessions?: RequirementSession[];
     prototypes?: InteractivePrototype[];
     confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
+    stepConfirmations?: ProjectStepConfirmations;
     fourLayerAssets?: FourLayerAsset[];
     assembledApplications?: AssembledApplication[];
     extractionJobs?: ExtractionJob[];
@@ -1710,6 +1771,7 @@ function buildStoreSessionStreamCallbacks(
     requirementSessions?: RequirementSession[];
     prototypes?: InteractivePrototype[];
     confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
+    stepConfirmations?: ProjectStepConfirmations;
     fourLayerAssets?: FourLayerAsset[];
     assembledApplications?: AssembledApplication[];
     extractionJobs?: ExtractionJob[];
@@ -1753,6 +1815,9 @@ function buildStoreSessionStreamCallbacks(
         ...(isSameProject && payload.prototypes ? { prototypes: payload.prototypes } : {}),
         ...(isSameProject && payload.confirmedPrototypeRevision !== undefined
           ? { confirmedPrototypeRevision: payload.confirmedPrototypeRevision }
+          : {}),
+        ...(isSameProject && payload.stepConfirmations !== undefined
+          ? { stepConfirmations: payload.stepConfirmations }
           : {}),
         ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
         ...(isSameProject && payload.assembledApplications
@@ -2110,10 +2175,23 @@ export async function apiConfirmPrototypeRevision(
   prototype: InteractivePrototype;
   project: ProjectDetail;
   prototypes: InteractivePrototype[];
+  stepConfirmations?: ProjectStepConfirmations;
 }> {
-  return apiPostJson(`/api/projects/${encodeURIComponent(projectId)}/prototypes/confirm-revision`, {
+  const res = await apiPostJson<{
+    confirmed: ConfirmedPrototypeRevision;
+    confirmedRevision: ConfirmedPrototypeRevision;
+    prototype: InteractivePrototype;
+    project: ProjectDetail;
+    prototypes: InteractivePrototype[];
+    stepConfirmations?: ProjectStepConfirmations;
+  }>(`/api/projects/${encodeURIComponent(projectId)}/prototypes/confirm-revision`, {
     revisionId,
   });
+  const cur = useWorkbenchStore.getState().data;
+  if (cur && cur.activeProject.id === projectId && res.stepConfirmations) {
+    useWorkbenchStore.getState().patchData({ stepConfirmations: res.stepConfirmations });
+  }
+  return res;
 }
 
 export async function apiClonePrototype(

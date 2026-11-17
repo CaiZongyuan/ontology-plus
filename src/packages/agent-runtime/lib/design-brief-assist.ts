@@ -737,11 +737,14 @@ function buildDeterministicMockDesignBrief(
     signal,
   );
 
+  const boldObjMatch = /\*\*([^*\n]{2,24})\*\*/.exec(effectiveSrsSummary);
+  const confirmedFocusObj = boldObjMatch?.[1]?.trim();
+
   const base: StructuredAssistedDesignBrief = {
     positioning: pickLocaleText(
       locale,
-      `面向「${effectiveProjectName}」（${projectDomain || '企业业务系统'}）的专业级业务工作台，聚焦核心单据流转、状态可追溯与高效闭环操作。`,
-      `Enterprise operational workbench for "${effectiveProjectName}" (${projectDomain || 'core business domain'}), centered on traceable record workflows and fast task completion.`,
+      `面向「${effectiveProjectName}」（${projectDomain || '企业业务系统'}）的专业级业务工作台，${confirmedFocusObj ? `围绕「${confirmedFocusObj}」等已确认需求推进` : '聚焦核心单据'}流转、状态可追溯与高效闭环操作。`,
+      `Enterprise operational workbench for "${effectiveProjectName}" (${projectDomain || 'core business domain'}), centered on ${confirmedFocusObj ? `"${confirmedFocusObj}" and ` : ''}traceable record workflows and fast task completion.`,
     ),
     colorMood: pickLocaleText(
       locale,
@@ -848,9 +851,10 @@ export async function assistProjectDesignBrief(
   const effectiveProjectName =
     input.projectName?.trim() || project?.name || input.projectId || 'Project';
   const effectiveDomain = project?.domain ?? '';
+  const confirmedRequirements = store.getProjectStepConfirmations(input.projectId).requirements;
   const effectiveSrsSummary =
+    confirmedRequirements?.content.slice(0, 3000) ||
     input.srsSummary?.trim() ||
-    store.listRequirementDocs(input.projectId)[0]?.content?.slice(0, 3000) ||
     '';
 
   const sampleText = [input.instruction, input.srsSummary, effectiveProjectName]

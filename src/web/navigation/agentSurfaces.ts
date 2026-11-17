@@ -7,7 +7,7 @@ import type {
   AgentDomainArtifact,
   AgentSessionKind,
 } from '../../packages/workspace-store/index.js';
-import type { NavViewId } from './catalog.js';
+import type { CanonicalNavViewId, NavViewId } from './catalog.js';
 
 export interface AgentSurfaceLocalizedText {
   zh: string;
@@ -43,6 +43,30 @@ export const STEP_SPECIALIST_AGENT_KINDS: Readonly<Record<ProjectStepId, AgentSe
   DELIVERY: 'CODING',
 };
 
+const REQUIREMENTS_AGENT_SURFACE: AgentPanelSurface = {
+  title: AI_ASSISTANT_TITLE,
+  sessionKind: 'REQUIREMENT',
+  conversationPrimary: true,
+  placeholder: {
+    zh: '描述想做的系统、参与角色或需要修改的需求（Enter 发送，Shift+Enter 换行）…',
+    en: 'Describe your system, roles, or requirement updates (Enter to send)…',
+  },
+  starters: [
+    {
+      zh: '梳理核心业务对象、关键状态流转与审批准入条件',
+      en: 'Identify core business objects, lifecycles, and approval rules',
+    },
+    {
+      zh: '识别跨系统协作、对外接口与异常补偿方式',
+      en: 'Clarify cross-system integrations, external interfaces, and compensations',
+    },
+    {
+      zh: '核对当前尚未明确的业务边界并给出可点选方案',
+      en: 'Review open business questions and propose selectable options',
+    },
+  ],
+};
+
 /**
  * Every workbench view presents the single `AI 助手` / `AI Assistant` in the UI
  * while binding to its owning specialist `AgentSessionKind` underneath (ADR 0009, amended).
@@ -56,47 +80,9 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
       en: 'Ask about project progress or start the next action…',
     },
   },
-  'app-req-explore': {
-    title: AI_ASSISTANT_TITLE,
-    sessionKind: 'REQUIREMENT',
-    conversationPrimary: true,
-    placeholder: {
-      zh: '描述业务场景、参与角色或业务规则（Enter 发送，Shift+Enter 换行）…',
-      en: 'Describe workflows, roles, or business rules (Enter to send)…',
-    },
-    starters: [
-      {
-        zh: '梳理核心业务对象、关键状态流转与审批准入条件',
-        en: 'Identify core business objects, lifecycles, and approval rules',
-      },
-      {
-        zh: '识别跨系统协作、对外接口与异常补偿方式',
-        en: 'Clarify cross-system integrations, external interfaces, and compensations',
-      },
-      {
-        zh: '核对当前尚未明确的业务边界并给出推荐方案',
-        en: 'Review open business ambiguities and propose options',
-      },
-    ],
-  },
-  'app-req-docs': {
-    title: AI_ASSISTANT_TITLE,
-    sessionKind: 'REQUIREMENT',
-    placeholder: {
-      zh: '输入需求补充说明或整理需求规格书…',
-      en: 'Add requirement notes or synthesize the requirements specification…',
-    },
-    starters: [
-      {
-        zh: '检查当前需求规格书还缺哪些章节或验收条件',
-        en: 'Review the current specification for missing sections or acceptance criteria',
-      },
-      {
-        zh: '把最近确认的业务规则补充进对应章节',
-        en: 'Fold the latest confirmed business rules into the specification',
-      },
-    ],
-  },
+  'app-requirements': REQUIREMENTS_AGENT_SURFACE,
+  'app-req-explore': REQUIREMENTS_AGENT_SURFACE,
+  'app-req-docs': REQUIREMENTS_AGENT_SURFACE,
   'app-prototype': {
     title: AI_ASSISTANT_TITLE,
     sessionKind: 'PROTOTYPE_CO_DESIGN',
@@ -278,10 +264,10 @@ export function agentPanelSurfaceFor(view: NavViewId): AgentPanelSurface {
   return AGENT_PANEL_SURFACES[view];
 }
 
-export function defaultNavForSessionKind(kind: AgentSessionKind): NavViewId {
+export function defaultNavForSessionKind(kind: AgentSessionKind): CanonicalNavViewId {
   switch (kind) {
     case 'REQUIREMENT':
-      return 'app-req-explore';
+      return 'app-requirements';
     case 'PROTOTYPE_CO_DESIGN':
       return 'app-prototype';
     case 'COPILOT':
@@ -298,7 +284,7 @@ export function defaultNavForSessionKind(kind: AgentSessionKind): NavViewId {
 }
 
 export interface ArtifactNavTarget {
-  view: NavViewId;
+  view: CanonicalNavViewId;
   itemId?: string;
   prototypeId?: string;
   modelCode?: ModelCode;
@@ -314,7 +300,7 @@ export function resolveArtifactNavTarget(artifact: AgentDomainArtifact): Artifac
         prototypeId: artifact.prototypeId,
       };
     case 'REQUIREMENT_DOC':
-      return { view: 'app-req-docs', itemId: artifact.docId };
+      return { view: 'app-requirements', itemId: artifact.docId };
     case 'ONTOLOGY_SUITE':
       return { view: 'app-ontology' };
     case 'ONTOLOGY_DIFF':

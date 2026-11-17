@@ -152,10 +152,37 @@ function escapeMockHtml(text: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function extractPrimaryObjectFromRequirements(
+  markdown: string | undefined,
+): { name?: string; label?: string } {
+  if (!markdown) return {};
+  // Match "**中文名**（EnglishName）" or "**中文名** (EnglishName)" or "**名称**"
+  const biBoldMatch = /\*\*([^*\n]{2,24})\*\*\s*[（(]\s*([A-Za-z][A-Za-z0-9_]*)\s*[)）]/.exec(
+    markdown,
+  );
+  if (biBoldMatch) {
+    return {
+      label: biBoldMatch[1]!.trim(),
+      name: biBoldMatch[2]!.trim(),
+    };
+  }
+  const plainBoldMatch = /\*\*([^*\n]{2,24})\*\*/.exec(markdown);
+  if (plainBoldMatch) {
+    const label = plainBoldMatch[1]!.trim();
+    const ascii = /^[A-Za-z][A-Za-z0-9_]*$/.exec(label);
+    return {
+      label,
+      ...(ascii ? { name: ascii[0] } : {}),
+    };
+  }
+  return {};
+}
+
 function buildMockGeneratedPrototypeHtml(
   project: ProjectDetail | undefined,
   prompt: string,
   locale: AgentLocale,
+  confirmedRequirementsContent?: string,
 ): string {
   const hexMatches = prompt.match(/#[0-9a-fA-F]{6}\b/g) ?? [];
   const wantsDark = /深色|暗色|dark\s*mode|dark\s*cockpit|交易风|#0[0-9a-f]{5}|#1[0-9a-f]{5}/i.test(
@@ -168,9 +195,11 @@ function buildMockGeneratedPrototypeHtml(
   const border = wantsDark ? 'rgba(255,255,255,0.14)' : '#e2ddd3';
   const accent = hexMatches[1] ?? (wantsDark ? '#38bdf8' : '#2563eb');
   const firstAgg = project?.suite.M1?.aggregates?.[0];
-  const aggName = firstAgg?.name || 'BusinessOrder';
+  const fromRequirements = extractPrimaryObjectFromRequirements(confirmedRequirementsContent);
+  const aggName = firstAgg?.name || fromRequirements.name || 'BusinessOrder';
   const aggLabel =
     firstAgg?.alias ||
+    fromRequirements.label ||
     project?.name?.replace(/管理系统|平台|工作台|系统|工程/g, '').trim() ||
     (locale === 'en-US' ? 'Business Record' : '核心业务单据');
   const titleText =
@@ -437,22 +466,22 @@ export const UNIFIED_AGENT_EXTRA_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'ask_user',
       description:
-        'Scoped Human-in-the-Loop tool: ONLY call when collecting missing business parameters or resolving ambiguous business choices (e.g., Class-B [待确认] requirement options). Never call to ask permission for normal tool execution.',
+        'Ask the user ONE clear business question at a time with 2-4 clickable plain-language options and freeform input allowed. ONLY call when resolving an ambiguous business choice or missing business parameter; never call to ask permission for normal tool execution, and never bundle multiple questions in one call.',
       parameters: {
         type: 'object',
         properties: {
           header: {
             type: 'string',
-            description: 'Short category badge such as B类业务决策待确认',
+            description: 'Short plain-language badge such as 需要你的业务选择 / Your choice needed',
           },
           question: {
             type: 'string',
-            description: 'Clear question asking the user to choose or fill a business value',
+            description: 'One concise business question in plain language (no model codes or IDs)',
           },
           options: {
             type: 'array',
             items: { type: 'string' },
-            description: '2-5 concrete business option strings for the user to choose from',
+            description: '2-4 concrete business-language option strings for the user to click',
           },
           multiSelect: { type: 'boolean' },
           allowFreeform: { type: 'boolean' },
@@ -904,23 +933,23 @@ function buildFauxMockModels(
               'ask_user',
               loc === 'en-US'
                 ? {
-                    header: 'Class-B Decision Pending',
-                    question: `For "${userPrompt.slice(0, 48)}", select the exception & approval policy:`,
+                    header: 'Your choice needed',
+                    question: `For "${userPrompt.slice(0, 48)}", how should exceptions and approvals be handled?`,
                     options: [
-                      'Synchronous Precondition Block (M2): reject invalid submissions immediately',
-                      'Escalated M6 Approval Flow: keep draft and route to dual sign-off',
-                      'Async Risk Hold (Writeback): accept order and hold downstream settlement',
+                      'Block submission immediately until all conditions are met',
+                      'Keep as draft and route to joint legal and finance approval',
+                      'Allow registration first while pausing downstream settlement',
                     ],
                     multiSelect: false,
                     allowFreeform: true,
                   }
                 : {
-                    header: 'B类业务边界待确认',
-                    question: `针对「${userPrompt.slice(0, 36)}」，请选择异常处理与审批流转策略：`,
+                    header: '需要你的业务选择',
+                    question: `针对「${userPrompt.slice(0, 36)}」，你希望采用哪种处理方式？`,
                     options: [
-                      '同步前置阻断 (M2 Precondition)：提交时实时拦截零脏数据落库',
-                      '进入 M6 特批会签流：保留草稿并自动升级至法务与财务总监双签',
-                      '异步风控冻结 (WB-01)：允许登记单据但自动冻结下游结算批次',
+                      '提交时直接拦截，补齐条件后再允许提交',
+                      '保留草稿并进入特批会签，由法务与财务共同审批',
+                      '先允许登记，同时自动暂停后续结算付款',
                     ],
                     multiSelect: false,
                     allowFreeform: true,
@@ -934,17 +963,34 @@ function buildFauxMockModels(
       if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
         const targetProto = resolveTargetPrototypeForSession(store, session);
         if (!targetProto) {
+          const confirmedReq = store.getProjectStepConfirmations(session.projectId).requirements;
+          if (!confirmedReq) {
+            return fauxAssistantMessage([
+              fauxText(
+                pickLocaleText(
+                  loc,
+                  '原型步骤还不能开始：请先在「需求」步骤完成并确认需求文档，确认后我会依据该需求文档为你生成界面原型。',
+                  'Prototype cannot start yet: please confirm the requirements document in the Requirements step first, and I will generate the prototype from that confirmed version.',
+                ),
+              ),
+            ]);
+          }
           return fauxAssistantMessage(
             [
               fauxThinking(
                 pickLocaleText(
                   loc,
-                  `正在根据已确认的设计简报、参考设计令牌与 7 组交互动效硬约束生成首版响应式原型（1440px / 768px / 390px），并挂载完整 MU 语义锚点。`,
-                  `Generating initial responsive prototype (1440px / 768px / 390px) from the confirmed Design Brief, design tokens, and 7 motion constraints with full MU semantic anchors.`,
+                  `正在根据已确认的需求文档「${confirmedReq.title}」与设计简报生成首版响应式原型（1440px / 768px / 390px），并挂载完整语义锚点。`,
+                  `Generating initial responsive prototype (1440px / 768px / 390px) from confirmed requirements "${confirmedReq.title}" and the Design Brief.`,
                 ),
               ),
               fauxToolCall('rewrite_prototype_page', {
-                htmlContent: buildMockGeneratedPrototypeHtml(project, userPrompt, loc),
+                htmlContent: buildMockGeneratedPrototypeHtml(
+                  project,
+                  userPrompt,
+                  loc,
+                  confirmedReq.content,
+                ),
                 allowAnchorReset: true,
               }),
             ],
@@ -1269,7 +1315,7 @@ function buildFauxMockModels(
                 ...(typeof parsedAction?.params.title === 'string' && parsedAction.params.title
                   ? { title: parsedAction.params.title }
                   : {}),
-                status: 'CONFIRMED',
+                status: 'DRAFT',
                 content: srsContent,
               }),
             ],
@@ -2138,17 +2184,22 @@ function buildSystemPromptForSession(
       return `${baseHeaderEn}\nYou are the Application Development Agent, helping refine an application implementation specification. Conversation follows the user's language. Author application implementation instructions saved via save_application_instructions in English; original Chinese business material may remain only as clearly quoted source. Target application ID: ${session.targetId ?? '(unselected)'}. Read read_application_inputs before recommending changes; inspect the requirements, confirmed prototype, Ontology Suite, selected Technology Profile and standards, and existing application instructions. Ontology defines business semantics, the confirmed prototype defines UI intent, and the selected standards define engineering constraints. Diagnose missing inputs and explicit contradictions, and ask_user for unresolved choices. Preserve Stage Warnings as non-blocking. Save the complete refined application-specific Markdown with save_application_instructions. Record unresolved explicit contradictions in developmentBlockers to block formal package generation; omission preserves the previous list, and [] is allowed only after resolving those contradictions with the user. An explicit application must belong to this session project; never substitute an unrelated application or standard. Shared standards are authored in the Architecture Asset Agent. Development Package generation is an ordinary explicit action after inputs are resolved. Your tools refine specifications; do not claim code implementation, build or test execution.\nSaved target inputs (use read_application_inputs for full references): ${applicationContext}`;
     }
     if (session.agentKind === 'REQUIREMENT') {
-      return `${baseHeaderEn}\nFollow Class-A/B progressive grilling: tag standard audit/engineering defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], call ask_user for unresolved Class-B decisions (or tag [Pending]), call record_requirement_insights to persist candidate aggregates and rules, and when asked to synthesize the SRS ([ACTION:SYNTHESIZE_SRS ...] or user request), MUST call save_synthesized_srs_doc with the complete 9-chapter Markdown specification (## 1. through ## 9., including ### 9.1 through ### 9.7).`;
+      return `${baseHeaderEn}\nFollow progressive business requirement clarification: auto-complete standard defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], and when a business choice is needed, call ask_user to ask ONLY ONE question at a time with 2-4 plain business-language options (no model codes or IDs) and allowFreeform: true. Call record_requirement_insights to persist candidate business objects and rules, and when asked to synthesize the requirements document ([ACTION:SYNTHESIZE_SRS ...] or user request), MUST call save_synthesized_srs_doc with the complete 9-chapter Markdown specification (## 1. through ## 9., including ### 9.1 through ### 9.7).`;
     }
     if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+      const confirmedReq = store.getProjectStepConfirmations(session.projectId).requirements;
+      const confirmedReqSection = confirmedReq
+        ? `Confirmed Requirements Document (${confirmedReq.title} ${confirmedReq.version}):\n${confirmedReq.content.slice(0, 3000)}`
+        : `Confirmed Requirements Document: NOT YET CONFIRMED. If asked to generate a new prototype before Requirements are confirmed, explain in plain business language that the user must confirm the requirements document in the Requirements step first.`;
       const proto = resolveTargetPrototypeForSession(store, session);
       if (!proto) {
         return [
           baseHeaderEn,
+          confirmedReqSection,
           `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
           `Initial Prototype Generation Rules:`,
-          `1. Call \`rewrite_prototype_page\` with \`allowAnchorReset: true\` and a complete, self-contained HTML5 document.`,
-          `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, 7 interactive motion specifications, and SRS scope.`,
+          `1. Call \`rewrite_prototype_page\` with \`allowAnchorReset: true\` and a complete, self-contained HTML5 document ONLY when a Confirmed Requirements Document is present above.`,
+          `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, 7 interactive motion specifications, and the Confirmed Requirements Document scope (never unconfirmed drafts).`,
           `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
           `4. Ensure clean responsive layout across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
           `5. If \`rewrite_prototype_page\` returns isError=true, fix the semantic anchors and retry in the same turn.`,
@@ -2214,17 +2265,22 @@ function buildSystemPromptForSession(
     return `${baseHeader}\n你是应用开发智能体，负责完善应用的实施规格。对话跟随用户语言。通过 save_application_instructions 编写并保存的应用实施指令必须使用英文；原始中文业务材料可保留为明确标注的引用来源。目标应用 ID：${session.targetId ?? '（未选择）'}。先通过 read_application_inputs 读取需求、已确认原型、本体套件、选定技术方案与规范、现有应用指令，再诊断缺项和明确冲突。本体定义业务语义，已确认原型定义 UI 意图，选定规范定义工程约束；存在未决选择时用 ask_user 澄清，阶段提示保持非阻断。通过 save_application_instructions 保存完整的应用专属 Markdown 实施指令；将未解决的明确矛盾写入 developmentBlockers，阻断正式开发包生成。省略该参数保留已有清单；只有与用户解决这些矛盾后才可传 [] 清空。明确应用必须属于当前会话工程，不得用其他应用或规范代替缺失输入。共享规范由架构资产智能体维护。开发包在输入问题解决后由普通显式生成操作产出。你的工具负责完善规格，不得声称已经实现代码、运行构建或执行测试。\n目标已保存输入（完整引用请调用 read_application_inputs）：${applicationContext}`;
   }
   if (session.agentKind === 'REQUIREMENT') {
-    return `${baseHeader}\n遵循 A/B 分级追问策略：A 类常规默认项标注 [AI自动补全]，B 类核心业务边界标注 [已确认] 或调用 ask_user 让用户选择确认，调用 record_requirement_insights 沉淀候选规则；当用户请求合成 SRS（如 [ACTION:SYNTHESIZE_SRS ...]）时，必须调用 save_synthesized_srs_doc 工具提交完整 9 章节《需求规格说明书.md》（含 ## 1. ~ ## 9. 及 ### 9.1 ~ ### 9.7）。`;
+    return `${baseHeader}\n遵循渐进式业务需求梳理准则：常规默认项标注 [AI自动补全]，已明确的业务规则标注 [已确认]；需要用户拍板时调用 ask_user 工具，每次只问一个问题，附 2～4 个通俗业务语言的可点选方案（严禁出现模型代号或内部标识符）并允许自由输入；调用 record_requirement_insights 沉淀业务对象与规则；当用户请求整理或合成需求文档（如 [ACTION:SYNTHESIZE_SRS ...]）时，必须调用 save_synthesized_srs_doc 工具提交完整 9 章节《需求规格说明书.md》（含 ## 1. ~ ## 9. 及 ### 9.1 ~ ### 9.7）。`;
   }
   if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+    const confirmedReq = store.getProjectStepConfirmations(session.projectId).requirements;
+    const confirmedReqSection = confirmedReq
+      ? `【已确认需求文档快照】（${confirmedReq.title} ${confirmedReq.version}）：\n${confirmedReq.content.slice(0, 3000)}`
+      : `【已确认需求文档快照】：尚未确认。若用户在需求确认前请求生成新原型，请用业务语言说明需先在「需求」步骤确认需求文档后再生成原型。`;
     const proto = resolveTargetPrototypeForSession(store, session);
     if (!proto) {
       return [
         baseHeader,
-        `当前共创目标交互原型：未绑定（按设计简报从零生成首版交互原型 Revision #1）。`,
+        confirmedReqSection,
+        `当前共创目标交互原型：未绑定（按设计简报与已确认需求文档从零生成首版交互原型 Revision #1）。`,
         `首版原型生成准则：`,
-        `1. 直接调用 \`rewrite_prototype_page\`（携带 \`allowAnchorReset: true\`）输出完整单文件可运行 HTML5 原型。`,
-        `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、7 组交互动效硬性约束与 SRS 业务要素。`,
+        `1. 仅在已存在【已确认需求文档快照】时，调用 \`rewrite_prototype_page\`（携带 \`allowAnchorReset: true\`）输出完整单文件可运行 HTML5 原型。`,
+        `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、7 组交互动效硬性约束与【已确认需求文档快照】（严禁读取未确认草稿）。`,
         `3. 每个业务屏幕必须声明合法 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`，所有 <button>/<input>/<select>/<textarea> 必须携带唯一合法 \`data-element-id\` 与 \`data-element-type\`（并合理挂载 \`data-binding\` 与 \`data-event-id\`），严禁使用 window.alert/confirm/prompt。`,
         `4. 页面必须原生支持响应式布局，在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 视口下均排版整洁无溢出。`,
         `5. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
@@ -3060,6 +3116,31 @@ async function executeUnifiedToolCall(
     }
 
     // rewrite_prototype_page
+    if (
+      !resolveTargetPrototypeForSession(store, session) &&
+      !store.getProjectStepConfirmations(session.projectId).requirements
+    ) {
+      const unconfirmedMsg = pickLocaleText(
+        locale,
+        '需要先完成并确认需求文档，才能生成首版界面原型。',
+        'Confirm the requirements document first before generating an initial prototype.',
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: unconfirmedMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: 'REQUIREMENTS_NOT_CONFIRMED',
+          diagnostic: unconfirmedMsg,
+        }),
+        isError: true,
+      };
+    }
     const htmlContent = String(args.htmlContent || '');
     const rewriteRes = rewritePrototypePage(activeHtml, htmlContent, {
       allowAnchorReset: Boolean(args.allowAnchorReset) || activeHtml.trim().length === 0,
@@ -4947,6 +5028,7 @@ function buildSessionMessageEndPayload(
     session,
     ...(extra?.cancelled ? { cancelled: true } : {}),
     project: store.getProject(session.projectId),
+    stepConfirmations: store.getProjectStepConfirmations(session.projectId),
   };
 
   if (session.agentKind === 'PROTOTYPE_CO_DESIGN' || session.agentKind === 'COPILOT') {

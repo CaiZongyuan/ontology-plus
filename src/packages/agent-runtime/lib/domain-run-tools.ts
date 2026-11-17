@@ -1608,7 +1608,8 @@ export const DOMAIN_RUN_OPENAI_TOOLS: OpenAiFunctionTool[] = [
           },
           status: {
             type: 'string',
-            enum: ['DRAFT', 'CONFIRMED', 'PUBLISHED'],
+            enum: ['DRAFT', 'PUBLISHED'],
+            description: 'Defaults to DRAFT; user confirms Requirements explicitly via Step Confirmation.',
           },
           content: {
             type: 'string',
@@ -2324,7 +2325,7 @@ export async function executeDomainRunToolCall(
     const resolvedTitle =
       (typeof args.title === 'string' && args.title.trim()) || defaultTitle;
     const resolvedStatus: RequirementDoc['status'] =
-      args.status === 'DRAFT' || args.status === 'PUBLISHED' ? args.status : 'CONFIRMED';
+      args.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT';
 
     const doc = store.saveRequirementDoc({
       id: docId,

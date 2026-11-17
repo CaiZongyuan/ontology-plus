@@ -5,6 +5,13 @@ export {
 
 export { doesProviderSupportVision } from './lib/types.js';
 export { PrototypeConfirmedDeleteError } from './lib/prototype-revisions.js';
+export {
+  BusinessModelConfirmError,
+  RequirementsConfirmError,
+  computeOntologySuiteHash,
+  computeStepContentHash,
+  normalizeStepMarkdown,
+} from './lib/step-confirmations.js';
 export { DEFAULT_TECHNOLOGY_PROFILE_ID } from '../architecture-assets/index.js';
 
 export type {
@@ -35,6 +42,12 @@ export type {
   PrototypeArtifact,
   ConfirmedPrototypeRevisionRecord,
   ConfirmedPrototypeRevision,
+  ConfirmableProjectStepId,
+  RequirementsStepConfirmationRecord,
+  PrototypeStepConfirmationRecord,
+  BusinessModelStepConfirmationRecord,
+  StepConfirmationRecord,
+  ProjectStepConfirmations,
   CreatePrototypeInput,
   AppendPrototypeRevisionInput,
   FourLayerAsset,

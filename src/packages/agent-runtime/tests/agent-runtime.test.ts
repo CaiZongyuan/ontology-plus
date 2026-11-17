@@ -203,6 +203,15 @@ describe('agent-runtime deep module', () => {
     });
     expect(emptyProj.currentStage).toBe(0);
     expect(emptyProj.validation.presentModels).toEqual([]);
+    store.saveRequirementDoc({
+      id: 'rdoc-srm-po-1',
+      projectId: emptyProj.id,
+      title: '供应商采购订单协同需求文档',
+      version: 'v1.0',
+      status: 'DRAFT',
+      content: '# 供应商采购订单协同需求\n\n## 1. 业务目标\n围绕**采购订单**（PurchaseOrder）支持台账、起草与主管审核。',
+    });
+    store.confirmRequirementsStep(emptyProj.id, { docId: 'rdoc-srm-po-1' });
 
     const briefSess = store.createAgentSession({
       projectId: emptyProj.id,

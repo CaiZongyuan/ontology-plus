@@ -25,11 +25,10 @@ import {
 } from 'lucide-react';
 import type { BilingualText, ProjectStepId } from '../../packages/business-vocabulary/index.js';
 
-export type NavViewId =
+export type CanonicalNavViewId =
   | 'overview'
   // Application Center (应用中心)
-  | 'app-req-explore'
-  | 'app-req-docs'
+  | 'app-requirements'
   | 'app-prototype'
   | 'app-ontology'
   | 'app-model-files'
@@ -55,6 +54,10 @@ export type NavViewId =
   | 'llm-center'
   | 'system-settings';
 
+export type LegacyNavViewAlias = 'app-req-explore' | 'app-req-docs';
+
+export type NavViewId = CanonicalNavViewId | LegacyNavViewAlias;
+
 export type NavGroupId = 'OVERVIEW' | 'APPLICATION' | 'CAPABILITY' | 'ANALYTICS' | 'PLATFORM';
 
 export interface NavGroupSpec {
@@ -64,14 +67,29 @@ export interface NavGroupSpec {
 }
 
 export interface NavItemSpec {
-  id: NavViewId;
+  id: CanonicalNavViewId;
   group: NavGroupId;
   labelZh: string;
   labelEn: string;
   badge?: string;
 }
 
-export const DEFAULT_NAV_VIEW: NavViewId = 'app-ontology';
+export const DEFAULT_NAV_VIEW: CanonicalNavViewId = 'app-ontology';
+
+export const LEGACY_NAV_VIEW_ALIASES: Readonly<Record<LegacyNavViewAlias, CanonicalNavViewId>> = {
+  'app-req-explore': 'app-requirements',
+  'app-req-docs': 'app-requirements',
+};
+
+export function normalizeNavViewAlias(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (Object.prototype.hasOwnProperty.call(LEGACY_NAV_VIEW_ALIASES, trimmed)) {
+    return LEGACY_NAV_VIEW_ALIASES[trimmed as LegacyNavViewAlias];
+  }
+  return trimmed;
+}
 
 export const NAV_GROUPS: NavGroupSpec[] = [
   { id: 'OVERVIEW', labelZh: '平台总览', labelEn: 'Workspace' },
@@ -90,16 +108,10 @@ export const NAV_ITEMS: NavItemSpec[] = [
   },
   // Application Center
   {
-    id: 'app-req-explore',
+    id: 'app-requirements',
     group: 'APPLICATION',
-    labelZh: '需求探索',
-    labelEn: 'Requirement Grilling',
-  },
-  {
-    id: 'app-req-docs',
-    group: 'APPLICATION',
-    labelZh: '需求文档',
-    labelEn: 'SRS Documents',
+    labelZh: '需求',
+    labelEn: 'Requirements',
   },
   {
     id: 'app-prototype',
@@ -236,6 +248,7 @@ export const NAV_ITEMS: NavItemSpec[] = [
 
 export const NAV_ICONS: Record<NavViewId, React.ReactNode> = {
   overview: <FolderKanban size={16} />,
+  'app-requirements': <FileText size={16} />,
   'app-req-explore': <MessageSquare size={16} />,
   'app-req-docs': <FileText size={16} />,
   'app-prototype': <LayoutTemplate size={16} />,
@@ -261,19 +274,23 @@ export const NAV_ICONS: Record<NavViewId, React.ReactNode> = {
   'system-settings': <Settings size={16} />,
 };
 
-const NAV_ITEM_BY_ID = new Map<NavViewId, NavItemSpec>(NAV_ITEMS.map((item) => [item.id, item]));
+const NAV_ITEM_BY_ID = new Map<CanonicalNavViewId, NavItemSpec>(
+  NAV_ITEMS.map((item) => [item.id, item]),
+);
 const NAV_GROUP_BY_ID = new Map<NavGroupId, NavGroupSpec>(NAV_GROUPS.map((grp) => [grp.id, grp]));
 
-export function isNavViewId(value: string | null | undefined): value is NavViewId {
-  return Boolean(value && NAV_ITEM_BY_ID.has(value as NavViewId));
+export function isNavViewId(value: string | null | undefined): value is CanonicalNavViewId {
+  return Boolean(value && NAV_ITEM_BY_ID.has(value as CanonicalNavViewId));
 }
 
-export function resolveNavViewId(candidate: string | null | undefined): NavViewId {
-  return isNavViewId(candidate) ? candidate : DEFAULT_NAV_VIEW;
+export function resolveNavViewId(candidate: string | null | undefined): CanonicalNavViewId {
+  const normalized = normalizeNavViewAlias(candidate);
+  return isNavViewId(normalized) ? normalized : DEFAULT_NAV_VIEW;
 }
 
 export function getNavItemSpec(view: NavViewId): NavItemSpec | undefined {
-  return NAV_ITEM_BY_ID.get(view);
+  const normalized = normalizeNavViewAlias(view);
+  return normalized ? NAV_ITEM_BY_ID.get(normalized as CanonicalNavViewId) : undefined;
 }
 
 export function getNavGroupSpec(group: NavGroupId): NavGroupSpec | undefined {
@@ -285,18 +302,18 @@ export function getNavItemsByGroup(group: NavGroupId): NavItemSpec[] {
 }
 
 export function isFlushNavView(view: NavViewId): boolean {
-  return view === 'app-ontology';
+  return resolveNavViewId(view) === 'app-ontology';
 }
 
 export interface ProjectStepViewSpec {
-  readonly defaultView: NavViewId;
-  readonly views: readonly NavViewId[];
+  readonly defaultView: CanonicalNavViewId;
+  readonly views: readonly CanonicalNavViewId[];
 }
 
 export const PROJECT_STEP_VIEWS: Readonly<Record<ProjectStepId, ProjectStepViewSpec>> = {
   REQUIREMENTS: {
-    defaultView: 'app-req-explore',
-    views: ['app-req-explore', 'app-req-docs'],
+    defaultView: 'app-requirements',
+    views: ['app-requirements'],
   },
   PROTOTYPE: {
     defaultView: 'app-prototype',
@@ -318,8 +335,8 @@ export interface SecondaryAreaSpec {
   readonly id: SecondaryAreaId;
   readonly label: BilingualText;
   readonly hint: BilingualText;
-  readonly defaultView: NavViewId;
-  readonly views: readonly NavViewId[];
+  readonly defaultView: CanonicalNavViewId;
+  readonly views: readonly CanonicalNavViewId[];
 }
 
 export const SECONDARY_AREAS: readonly SecondaryAreaSpec[] = [
@@ -346,14 +363,14 @@ export const SECONDARY_AREAS: readonly SecondaryAreaSpec[] = [
   },
 ];
 
-const VIEW_TO_STEP = new Map<NavViewId, ProjectStepId>();
+const VIEW_TO_STEP = new Map<CanonicalNavViewId, ProjectStepId>();
 for (const [stepId, spec] of Object.entries(PROJECT_STEP_VIEWS) as [ProjectStepId, ProjectStepViewSpec][]) {
   for (const viewId of spec.views) {
     VIEW_TO_STEP.set(viewId, stepId);
   }
 }
 
-const VIEW_TO_SECONDARY_AREA = new Map<NavViewId, SecondaryAreaSpec>();
+const VIEW_TO_SECONDARY_AREA = new Map<CanonicalNavViewId, SecondaryAreaSpec>();
 for (const area of SECONDARY_AREAS) {
   for (const viewId of area.views) {
     VIEW_TO_SECONDARY_AREA.set(viewId, area);
@@ -365,46 +382,51 @@ export type ShellRouteContext =
   | {
       readonly kind: 'project';
       readonly step: ProjectStepId;
-      readonly view: NavViewId;
-      readonly stepViews: readonly NavViewId[];
+      readonly view: CanonicalNavViewId;
+      readonly stepViews: readonly CanonicalNavViewId[];
     }
   | {
       readonly kind: 'secondary';
       readonly area: SecondaryAreaId;
-      readonly view: NavViewId;
+      readonly view: CanonicalNavViewId;
       readonly areaSpec: SecondaryAreaSpec;
     };
 
 export function getProjectStepForView(view: NavViewId): ProjectStepId | null {
-  return VIEW_TO_STEP.get(view) ?? null;
+  const normalized = normalizeNavViewAlias(view);
+  if (!isNavViewId(normalized)) return null;
+  return VIEW_TO_STEP.get(normalized) ?? null;
 }
 
-export function getDefaultViewForStep(step: ProjectStepId): NavViewId {
+export function getDefaultViewForStep(step: ProjectStepId): CanonicalNavViewId {
   return PROJECT_STEP_VIEWS[step].defaultView;
 }
 
 export function getSecondaryAreaForView(view: NavViewId): SecondaryAreaSpec | null {
-  return VIEW_TO_SECONDARY_AREA.get(view) ?? null;
+  const normalized = normalizeNavViewAlias(view);
+  if (!isNavViewId(normalized)) return null;
+  return VIEW_TO_SECONDARY_AREA.get(normalized) ?? null;
 }
 
 export function resolveShellRouteContext(view: NavViewId): ShellRouteContext {
-  if (view === 'overview') {
+  const canonical = resolveNavViewId(view);
+  if (canonical === 'overview') {
     return { kind: 'home', view: 'overview' };
   }
-  const step = getProjectStepForView(view);
+  const step = getProjectStepForView(canonical);
   if (step) {
     return {
       kind: 'project',
       step,
-      view,
+      view: canonical,
       stepViews: PROJECT_STEP_VIEWS[step].views,
     };
   }
-  const areaSpec = getSecondaryAreaForView(view) ?? SECONDARY_AREAS[0]!;
+  const areaSpec = getSecondaryAreaForView(canonical) ?? SECONDARY_AREAS[0]!;
   return {
     kind: 'secondary',
     area: areaSpec.id,
-    view,
+    view: canonical,
     areaSpec,
   };
 }
@@ -428,7 +450,7 @@ export function resolveStepParamToId(raw: string | null | undefined): ProjectSte
   }
 }
 
-export function resolveAreaParamToView(raw: string | null | undefined): NavViewId | null {
+export function resolveAreaParamToView(raw: string | null | undefined): CanonicalNavViewId | null {
   if (!raw) return null;
   const normalized = raw.trim().toLowerCase();
   switch (normalized) {

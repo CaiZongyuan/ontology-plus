@@ -373,9 +373,13 @@ export function hydrateConfirmedPrototypeRevision(
   const revision = hydratedProto.revisions.find((r) => r.id === record.revisionId);
   if (!revision) return undefined;
   return {
+    ...(record.id ? { id: record.id } : {}),
     projectId: record.projectId,
     prototypeId: record.prototypeId,
     revisionId: record.revisionId,
+    ...(record.basedOnConfirmationId !== undefined
+      ? { basedOnConfirmationId: record.basedOnConfirmationId }
+      : {}),
     confirmedAt: record.confirmedAt,
     prototype: hydratedProto,
     revision,

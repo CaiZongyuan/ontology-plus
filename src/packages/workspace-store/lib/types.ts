@@ -411,20 +411,71 @@ export interface InteractivePrototype {
 export type PrototypeArtifact = InteractivePrototype;
 
 export interface ConfirmedPrototypeRevisionRecord {
+  id?: string;
   projectId: string;
   prototypeId: string;
   revisionId: string;
+  basedOnConfirmationId?: string | null;
   confirmedAt: string;
 }
 
 export interface ConfirmedPrototypeRevision {
+  id?: string;
   projectId: string;
   prototypeId: string;
   revisionId: string;
+  basedOnConfirmationId?: string | null;
   confirmedAt: string;
   prototype: InteractivePrototype;
   revision: PrototypeRevision;
   htmlContent: string;
+}
+
+export type ConfirmableProjectStepId = 'REQUIREMENTS' | 'PROTOTYPE' | 'BUSINESS_MODEL';
+
+export interface RequirementsStepConfirmationRecord {
+  id: string;
+  projectId: string;
+  step: 'REQUIREMENTS';
+  docId: string;
+  title: string;
+  version: string;
+  content: string;
+  contentHash: string;
+  basedOnConfirmationId: null;
+  confirmedAt: string;
+}
+
+export interface PrototypeStepConfirmationRecord {
+  id: string;
+  projectId: string;
+  step: 'PROTOTYPE';
+  prototypeId: string;
+  revisionId: string;
+  basedOnConfirmationId: string | null;
+  confirmedAt: string;
+}
+
+export interface BusinessModelStepConfirmationRecord {
+  id: string;
+  projectId: string;
+  step: 'BUSINESS_MODEL';
+  suite: OntologySuite;
+  suiteHash: string;
+  presentModels: ModelCode[];
+  basedOnConfirmationId: string | null;
+  confirmedAt: string;
+}
+
+export type StepConfirmationRecord =
+  | RequirementsStepConfirmationRecord
+  | PrototypeStepConfirmationRecord
+  | BusinessModelStepConfirmationRecord;
+
+export interface ProjectStepConfirmations {
+  requirements: RequirementsStepConfirmationRecord | null;
+  prototype: PrototypeStepConfirmationRecord | null;
+  businessModel: BusinessModelStepConfirmationRecord | null;
 }
 
 export interface CreatePrototypeInput {
@@ -503,6 +554,7 @@ export interface DevelopmentPackageSnapshot {
   projectId: string;
   outputDir: string;
   compiledAt: string;
+  basedOnBusinessModelConfirmationId?: string | null;
   files: DevelopmentPackageFile[];
   manifestJson: Record<string, unknown>;
 }
@@ -958,6 +1010,24 @@ export interface WorkspaceStore {
     project: ProjectDetail;
   };
   getConfirmedPrototypeRevision(projectId: string): ConfirmedPrototypeRevision | undefined;
+  listStepConfirmations(
+    projectId: string,
+    step?: ConfirmableProjectStepId,
+  ): StepConfirmationRecord[];
+  getProjectStepConfirmations(projectId: string): ProjectStepConfirmations;
+  confirmRequirementsStep(
+    projectId: string,
+    options?: { docId?: string },
+  ): {
+    confirmation: RequirementsStepConfirmationRecord;
+    doc: RequirementDoc;
+    stepConfirmations: ProjectStepConfirmations;
+  };
+  confirmBusinessModelStep(projectId: string): {
+    confirmation: BusinessModelStepConfirmationRecord;
+    project: ProjectDetail;
+    stepConfirmations: ProjectStepConfirmations;
+  };
   savePrototypeAndSyncMu(
     projectId: string,
     input: {

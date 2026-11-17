@@ -254,10 +254,10 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await openDialog.getByRole('button', { name: 'Close dialog' }).click();
     await expect(openDialog).toBeHidden();
 
-    // 2. SRS Tiptap Bidirectional Markdown Editor (RICH <-> SOURCE <-> PREVIEW) & Registry switcher
+    // 2. SRS Tiptap Bidirectional Markdown Editor (RICH <-> SOURCE <-> PREVIEW) & Registry switcher (inside Requirements Technical Details)
     await page.getByTestId('enter-active-project-btn').click();
     await page.getByTestId('step-tab-REQUIREMENTS').click();
-    await page.getByTestId('nav-app-req-docs').click();
+    await page.getByTestId('requirements-view-mode-toggle').click();
     await page.getByTestId('md-mode-source').click();
     await expect(page.getByTestId('md-source-textarea')).toBeVisible();
     await page.getByTestId('md-mode-preview').click();

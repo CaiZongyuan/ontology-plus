@@ -60,6 +60,11 @@ import {
 } from '../packages/package-compiler/index.js';
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
+import {
+  deriveProjectStepsForStoreProject,
+  listProjectPackageSnapshots,
+  registerStepConfirmationRoutes,
+} from './step-confirmations.js';
 
 export interface ApiAppOptions {
   agentRunHooks?: AgentRunLifecycleHooks | readonly AgentRunLifecycleHooks[];
@@ -153,9 +158,11 @@ export function createApiApp(
       requirementDocs: store.listRequirementDocs(activeProject.id),
       prototypes: store.listPrototypes(activeProject.id),
       confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(activeProject.id) ?? null,
+      stepConfirmations: store.getProjectStepConfirmations(activeProject.id),
       fourLayerAssets: store.listFourLayerAssets(),
       technologyProfiles: store.listTechnologyProfiles(),
       assembledApplications: store.listAssembledApplications(),
+      packageSnapshots: listProjectPackageSnapshots(store, activeProject.id),
       generatedSkills: store.listGeneratedSkills(),
       legacySystems: store.listLegacySystems(),
       extractionJobs: store.listExtractionJobs(),
@@ -377,6 +384,8 @@ export function createApiApp(
       requirementDocs: store.listRequirementDocs(project.id),
       prototypes: store.listPrototypes(project.id),
       confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(project.id) ?? null,
+      stepConfirmations: store.getProjectStepConfirmations(project.id),
+      packageSnapshots: listProjectPackageSnapshots(store, project.id),
       extractionJobs: store.listExtractionJobs(project.id),
     });
   });
@@ -601,10 +610,13 @@ export function createApiApp(
       projectId: string;
       title: string;
       version: string;
-      status: 'DRAFT' | 'CONFIRMED' | 'PUBLISHED';
+      status?: 'DRAFT' | 'CONFIRMED' | 'PUBLISHED';
       content: string;
     }>();
-    const doc = store.saveRequirementDoc(body);
+    const doc = store.saveRequirementDoc({
+      ...body,
+      status: body.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT',
+    });
     return c.json({ doc, docs: store.listRequirementDocs(body.projectId) });
   });
 
@@ -755,6 +767,8 @@ export function createApiApp(
         prototype: res.prototype,
         project: res.project,
         prototypes: store.listPrototypes(projectId),
+        stepConfirmations: store.getProjectStepConfirmations(projectId),
+        steps: deriveProjectStepsForStoreProject(store, projectId),
       });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
@@ -821,10 +835,23 @@ export function createApiApp(
     const projectId = c.req.param('id');
     const project = store.getProject(projectId);
     if (!project) return c.json({ error: 'Project not found' }, 404);
+    const locale = getReqLocale(c);
+    if (!store.getProjectStepConfirmations(projectId).requirements) {
+      return c.json(
+        {
+          ok: false,
+          code: 'REQUIREMENTS_NOT_CONFIRMED',
+          error:
+            locale === 'en-US'
+              ? 'Confirm the requirements document first before generating a prototype.'
+              : '需要先完成并确认需求文档，才能生成界面原型。',
+        },
+        409,
+      );
+    }
     const body = await c.req
       .json<{ title?: string }>()
       .catch(() => ({ title: undefined }));
-    const locale = getReqLocale(c);
     const session = store.createAgentSession({
       projectId,
       agentKind: 'PROTOTYPE_CO_DESIGN',
@@ -877,6 +904,19 @@ export function createApiApp(
       return c.json({ ok: false, error: `Unsupported brief assist mode: ${body.mode}` }, 400);
     }
     const locale = getReqLocale(c, body as { locale?: string });
+    if (!store.getProjectStepConfirmations(projectId).requirements) {
+      return c.json(
+        {
+          ok: false,
+          code: 'REQUIREMENTS_NOT_CONFIRMED',
+          error:
+            locale === 'en-US'
+              ? 'Confirm the requirements document first before generating a design brief or prototype.'
+              : '需要先完成并确认需求文档，才能准备设计简报与生成原型。',
+        },
+        409,
+      );
+    }
     const res = await assistProjectDesignBrief(store, {
       ...(body as Omit<AssistProjectDesignBriefInput, 'projectId' | 'mode'>),
       projectId,
@@ -993,6 +1033,7 @@ export function createApiApp(
   });
 
   registerApplicationDeliveryRoutes(app, store);
+  registerStepConfirmationRoutes(app, store);
 
   app.post('/api/applications/:appId/publish', async (c) => {
     const appId = c.req.param('appId');

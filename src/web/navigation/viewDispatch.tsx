@@ -11,8 +11,7 @@ import {
   OntologySkillsView,
   OverviewSessionsView,
   PrototypeStudioView,
-  RequirementDocsView,
-  RequirementExploreView,
+  RequirementsStepView,
 } from '../views/ApplicationCenterViews.js';
 import {
   CapabilityAgentsView,
@@ -31,7 +30,11 @@ import {
 } from '../views/CapabilityAndDataViews.js';
 import { KnowledgeGraphCanvas } from '../views/KnowledgeGraphCanvas.js';
 import { OntologyWorkbenchView } from '../views/OntologyWorkbenchView.js';
-import type { NavViewId } from './index.js';
+import {
+  resolveNavViewId,
+  type CanonicalNavViewId,
+  type NavViewId,
+} from './index.js';
 
 export interface NavViewRenderProps {
   onNavigate: (view: NavViewId) => void;
@@ -153,10 +156,9 @@ export function KnowledgeGraphWorkbenchView({ onNavigate }: NavViewRenderProps) 
   );
 }
 
-export const NAV_VIEW_REGISTRY: Record<NavViewId, NavViewRenderer> = {
+export const NAV_VIEW_REGISTRY: Record<CanonicalNavViewId, NavViewRenderer> = {
   overview: ({ onNavigate }) => <OverviewSessionsView onNavigate={onNavigate} />,
-  'app-req-explore': ({ onNavigate }) => <RequirementExploreView onNavigate={onNavigate} />,
-  'app-req-docs': ({ onNavigate }) => <RequirementDocsView onNavigate={onNavigate} />,
+  'app-requirements': ({ onNavigate }) => <RequirementsStepView onNavigate={onNavigate} />,
   'app-prototype': ({ onNavigate }) => <PrototypeStudioView onNavigate={onNavigate} />,
   'app-ontology': ({ onNavigate }) => <OntologyWorkbenchView onNavigate={onNavigate} />,
   'app-model-files': ({ onNavigate }) => <ModelFilesView onNavigate={onNavigate} />,
@@ -192,6 +194,6 @@ export function WorkbenchViewHost({
   activeView: NavViewId;
   onNavigate: (view: NavViewId) => void;
 }) {
-  const renderView = NAV_VIEW_REGISTRY[activeView];
+  const renderView = NAV_VIEW_REGISTRY[resolveNavViewId(activeView)];
   return renderView({ onNavigate });
 }

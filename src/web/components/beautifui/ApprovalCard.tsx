@@ -13,6 +13,21 @@ export interface ApprovalCardProps {
   className?: string;
 }
 
+function formatQuestionHeader(
+  rawHeader: string | undefined,
+  t: (zh: string, en: string) => string,
+): string {
+  if (!rawHeader?.trim()) {
+    return t('需要你的业务选择', 'Your choice needed');
+  }
+  const cleaned = rawHeader
+    .replace(/\(\s*Scoped\s+HITL\s*\)/gi, '')
+    .replace(/^B\s*类/i, '')
+    .replace(/^Class-B\s+/i, '')
+    .trim();
+  return cleaned || t('需要你的业务选择', 'Your choice needed');
+}
+
 export function ApprovalCard({
   prompt,
   disabled = false,
@@ -27,24 +42,29 @@ export function ApprovalCard({
         ? [prompt.options[0]]
         : [],
   );
+  const [explicitOptionPicked, setExplicitOptionPicked] = useState(false);
   const [customText, setCustomText] = useState('');
 
   if (prompt.answered) {
+    const answerSummary =
+      (prompt.selectedAnswers ?? []).join(' · ').trim() || t('已回答', 'Answered');
     return (
       <div
+        data-testid="agent-hitl-answered-summary"
         className={cn(
-          'primitive-card-bar inline-flex flex-wrap items-center gap-2 rounded-card bg-card shadow-card text-[12.5px] animate-[fade-in_200ms_var(--ease-out-strong)_both]',
+          'primitive-card-bar flex w-full min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap rounded-card border border-border bg-muted/45 px-3 py-1.5 text-[12.5px] animate-[fade-in_200ms_var(--ease-out-strong)_both]',
           className,
         )}
       >
-        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-success-soft text-success">
+        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-success-soft text-success">
           <Check size={10} strokeWidth={2.75} />
         </span>
-        <span className="font-medium text-foreground">
-          {prompt.header || t('已确认业务决策', 'Decision Confirmed')}
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{prompt.question}</span>
+        <span className="shrink-0 text-faint-foreground" aria-hidden="true">
+          ·
         </span>
-        <span className="text-faint-foreground">
-          {(prompt.selectedAnswers ?? []).join(' · ') || t('已提交', 'Submitted')}
+        <span className="min-w-0 max-w-[52%] shrink-0 truncate font-medium text-foreground">
+          {answerSummary}
         </span>
       </div>
     );
@@ -52,6 +72,7 @@ export function ApprovalCard({
 
   const toggleOption = (label: string) => {
     if (disabled) return;
+    setExplicitOptionPicked(true);
     if (prompt.multiSelect) {
       setSelected((prev) =>
         prev.includes(label) ? prev.filter((item) => item !== label) : [...prev, label],
@@ -63,12 +84,18 @@ export function ApprovalCard({
 
   const handleConfirm = () => {
     if (disabled || !onSubmit) return;
-    const answers = [...selected];
-    if (customText.trim()) {
-      answers.push(customText.trim());
+    const trimmedCustom = customText.trim();
+    let answers: string[];
+    if (!prompt.multiSelect && trimmedCustom && !explicitOptionPicked) {
+      answers = [trimmedCustom];
+    } else {
+      answers = [...selected];
+      if (trimmedCustom && !answers.includes(trimmedCustom)) {
+        answers.push(trimmedCustom);
+      }
     }
     if (answers.length === 0) return;
-    onSubmit(answers, customText.trim() || undefined);
+    onSubmit(answers, trimmedCustom || undefined);
   };
 
   return (
@@ -83,12 +110,11 @@ export function ApprovalCard({
         <div className="flex items-center gap-1.5">
           <Sparkles size={13} className="text-primary" />
           <span className="text-[11.5px] font-semibold text-primary">
-            {prompt.header ||
-              t('需要补充业务决策 (Scoped HITL)', 'Business Decision Required (Scoped HITL)')}
+            {formatQuestionHeader(prompt.header, t)}
           </span>
         </div>
-        <span className="font-mono text-[11.5px] text-faint-foreground">
-          {prompt.multiSelect ? t('可多选', 'Multi-select') : t('单选', 'Single-select')}
+        <span className="text-[11.5px] text-faint-foreground">
+          {prompt.multiSelect ? t('可多选', 'Multi-select') : t('点选一项', 'Pick one')}
         </span>
       </div>
 
@@ -99,13 +125,15 @@ export function ApprovalCard({
 
         {prompt.options.length > 0 && (
           <GlideMenu className="space-y-0.5">
-            {prompt.options.map((optLabel) => {
+            {prompt.options.map((optLabel, idx) => {
               const isSelected = selected.includes(optLabel);
               return (
                 <button
                   key={optLabel}
                   type="button"
                   data-glide-item
+                  data-testid={`agent-hitl-option-${idx}`}
+                  aria-pressed={isSelected}
                   disabled={disabled}
                   onClick={() => toggleOption(optLabel)}
                   className="relative z-10 flex w-full cursor-pointer items-start gap-2.5 rounded-md px-2.5 py-2 text-left disabled:opacity-50"
@@ -139,6 +167,7 @@ export function ApprovalCard({
           <div className="mt-2.5">
             <input
               type="text"
+              data-testid="agent-hitl-freeform-input"
               value={customText}
               disabled={disabled}
               onChange={(e) => setCustomText(e.target.value)}
@@ -149,8 +178,8 @@ export function ApprovalCard({
                 }
               }}
               placeholder={t(
-                '或输入补充说明 / 自定义参数...',
-                'Or enter custom details / parameters...',
+                '都不合适？在这里用你自己的话回答…',
+                'Or enter your own answer here…',
               )}
               className="w-full rounded-md border border-border bg-muted px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-faint-foreground focus:border-primary focus:outline-none"
             />
@@ -166,7 +195,7 @@ export function ApprovalCard({
           onClick={handleConfirm}
           data-testid="agent-hitl-submit-btn"
         >
-          {t('确认并继续推理', 'Confirm & Continue')}
+          {t('确定并继续', 'Confirm & Continue')}
           <CornerDownLeft size={11} strokeWidth={2} className="opacity-80" />
         </Button>
       </div>

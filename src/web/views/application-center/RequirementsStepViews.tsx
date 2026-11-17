@@ -3,8 +3,13 @@ import {
   ArrowRight,
   Boxes,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  CircleDot,
   Copy,
+  Edit3,
   GitBranch,
+  Info,
   Loader2,
   Plus,
   Search,
@@ -12,7 +17,16 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import type { RequirementDoc } from '../../../packages/workspace-store/index.js';
+import {
+  BUSINESS_VOCABULARY,
+  MODEL_BUSINESS_NAMES,
+  type BusinessLocale,
+} from '../../../packages/business-vocabulary/index.js';
+import type { ModelCode } from '../../../packages/ontology-core/index.js';
+import {
+  normalizeStepMarkdown,
+  type RequirementDoc,
+} from '../../../packages/workspace-store/index.js';
 import {
   apiDeleteResource,
   apiPostJson,
@@ -30,6 +44,7 @@ import {
 import { TiptapMarkdownEditor } from '../../components/markdown/index.js';
 import { usePreferences, type NavViewId } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
+import { getProjectStepsFromBootstrap } from '../../navigation/index.js';
 import { ViewModeHeader } from './ViewModeHeader.js';
 
 // ─── Helper: Parse A/B Classification Tag on Requirement Decisions ────────────
@@ -751,18 +766,18 @@ export function RequirementDocsView({
       {
         id: targetId,
         projectId: data.activeProject.id,
-        title: docTitle.trim() || `${data.activeProject.name} 软件需求规格说明书`,
+        title: docTitle.trim() || `${data.activeProject.name} 需求文档`,
         version: docVersion.trim() || 'v1.0',
         content: mdToSave,
-        status: 'CONFIRMED',
+        status: 'DRAFT',
       },
     );
     patchData({ requirementDocs: res.docs });
     setSelectedDocId(res.doc.id);
     showToast(
       t(
-        '《软件需求说明书》已保存并标记为 CONFIRMED',
-        'SRS Document saved and marked CONFIRMED',
+        '需求文档修改已保存（确认需求文档后下游步骤才会更新）',
+        'Requirements draft saved (confirm requirements when ready for downstream steps)',
       ),
     );
   };
@@ -826,7 +841,7 @@ export function RequirementDocsView({
         title: baseTitle,
         version: 'v1.0',
         content: text,
-        status: 'CONFIRMED',
+        status: 'DRAFT',
       },
     );
     patchData({ requirementDocs: res.docs });
@@ -837,8 +852,8 @@ export function RequirementDocsView({
     setPageMode('WORKSPACE');
     showToast(
       t(
-        `已导入本地需求规格书「${file.name}」并保存`,
-        `Imported and saved Markdown document "${file.name}"`,
+        `已导入本地需求文档「${file.name}」，核对后请确认需求文档`,
+        `Imported "${file.name}" as draft; review and confirm when ready`,
       ),
     );
   };
@@ -852,10 +867,10 @@ export function RequirementDocsView({
         {
           id: `doc-${Date.now()}`,
           projectId: data.activeProject.id,
-          title: docTitle.trim() || `${data.activeProject.name} 软件需求规格说明书`,
+          title: docTitle.trim() || `${data.activeProject.name} 需求文档`,
           version: docVersion.trim() || 'v1.0',
           content,
-          status: 'CONFIRMED',
+          status: 'DRAFT',
         },
       );
       patchData({ requirementDocs: saveJson.docs });
@@ -1081,7 +1096,7 @@ export function RequirementDocsView({
           value={content}
           onChange={setContent}
           onSave={handleSaveDoc}
-          saveLabel={t('保存并确认', 'Save & Confirm')}
+          saveLabel={t('保存修改', 'Save Draft')}
           downloadFilename={`${(docTitle || 'SRS').replace(/[\\/:*?"<>|]+/g, '_')}-${docVersion}.md`}
           minHeight={320}
           className="srs-editor"
@@ -1098,6 +1113,764 @@ export function RequirementDocsView({
         onClose={() => setDeletingDoc(null)}
         onConfirm={() => void handleConfirmDeleteDoc()}
       />
+    </div>
+  );
+}
+
+// ─── 4. Unified Requirements Step Canvas (Spec #37 §5 & §6, Issue #64) ──────
+
+const REQUIREMENTS_VIEW_MODE_STORAGE_KEY = 'onto_step_view_mode_REQUIREMENTS';
+type RequirementsViewMode = 'business' | 'technical';
+
+function readStoredRequirementsViewMode(): RequirementsViewMode {
+  if (typeof window === 'undefined') return 'business';
+  try {
+    return window.localStorage.getItem(REQUIREMENTS_VIEW_MODE_STORAGE_KEY) === 'technical'
+      ? 'technical'
+      : 'business';
+  } catch {
+    return 'business';
+  }
+}
+
+function writeStoredRequirementsViewMode(mode: RequirementsViewMode): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(REQUIREMENTS_VIEW_MODE_STORAGE_KEY, mode);
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+const ELEMENT_ID_RE =
+  /(?<![A-Za-z0-9_-])(?:AGG|ENT|VO|DIC|DICT|ASSOC|BHV|BEH|RUL|RULE|EVT|SCN|ACT|ROL|ROLE|PERM|PGRP|FLW|FLOW|ACTV|QRY|RPT|SCR|EL|UIE|NAV|CC|MAP|INT|IF|MET|ASCN|WB)-[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Za-z0-9_-])/g;
+
+const MODEL_STAGE_CODE_RE =
+  /(?<![A-Za-z0-9_])(?:M[1-7]|ME|MU|MM|MI|STAGE)_[A-Z0-9_]+(?![A-Za-z0-9_])/g;
+
+const PHYSICAL_TABLE_RE = /(?<![A-Za-z0-9_])t_[a-z][a-z0-9_]+(?![A-Za-z0-9_])/g;
+
+const MODEL_CODE_RE = /(?<![A-Za-z0-9_])(M[1-7]|ME|MU|MM|MI)(?![A-Za-z0-9_])/g;
+
+export function formatRequirementTextForBusinessView(
+  raw: string,
+  locale: BusinessLocale = 'zh-CN',
+): string {
+  if (!raw) return '';
+  let out = raw;
+  // Remove parenthetical technical mapping annotations like "(对应 M1 对象模型)" or "(`VisitorPass` / `AGG-01`)"
+  out = out.replace(/[（(]\s*(?:对应|映射|关联)[^)）]*(?:M[1-7]|ME|MU|MM|MI)[^)）]*[)）]/g, '');
+  out = out.replace(/[`'"]?\s*\/\s*[`'"]?(?:AGG|ENT|VO|DIC|DICT|ASSOC|BHV|BEH|RUL|RULE|EVT|SCN|ACT|ROL|ROLE|PERM|PGRP|FLW|FLOW|ACTV|QRY|RPT|SCR|EL|UIE|NAV|CC|MAP|INT|IF|MET|ASCN|WB)-[A-Z0-9-]+[`'"]?/g, '');
+  out = out.replace(ELEMENT_ID_RE, '');
+  out = out.replace(MODEL_STAGE_CODE_RE, '');
+  out = out.replace(PHYSICAL_TABLE_RE, locale === 'en-US' ? 'business table' : '业务数据表');
+  out = out.replace(MODEL_CODE_RE, (_m, code: string) => {
+    const entry = MODEL_BUSINESS_NAMES[code as ModelCode];
+    return entry ? (locale === 'en-US' ? entry.en : entry.zh) : '';
+  });
+  // Strip file extensions and technical format/protocol names on Business View surface
+  out = out.replace(/\.(?:yaml|yml|json|owl|ddl|sql|md|html|css|zip)(?![A-Za-z0-9_])/gi, '');
+  out = out.replace(
+    /(?<![A-Za-z0-9_])(?:YAML|YML|JSON|OWL|DDL|SQLite|SQL|Markdown|HTML5?|CSS|ZIP)(?![A-Za-z0-9_])/gi,
+    locale === 'en-US' ? 'document' : '规格',
+  );
+  out = out.replace(
+    /(?<![A-Za-z0-9_])(?:gRPC|RPC|MCP|SSE|REST|HTTPS?|RESTful|GraphQL|OpenAPI)(?![A-Za-z0-9_])/gi,
+    locale === 'en-US' ? 'integration' : '接口',
+  );
+  out = out.replace(
+    /(?<![A-Za-z0-9_])(?:Agent\s+Sessions?|Agent\s+Runs?|Agent\s+Panels?|Architecture\s+Asset\s+Agent|Application\s+Development\s+Agent|Application\s+Coding\s+Agent|Copilot|PROTOTYPE_CO_DESIGN)(?![A-Za-z0-9_])|智能体会话|智能体运行|智能体面板|Agent\s*面板|Agent\s*运行|架构资产智能体|应用开发智能体/gi,
+    locale === 'en-US' ? BUSINESS_VOCABULARY.AI_ASSISTANT.en : BUSINESS_VOCABULARY.AI_ASSISTANT.zh,
+  );
+  out = out
+    .replace(/[`]/g, '')
+    .replace(/\(\s*\)|（\s*）/g, '')
+    .replace(/^\s*[:：\-·]+\s*/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return out;
+}
+
+interface ParsedRequirementSection {
+  id: string;
+  heading: string;
+  rawLines: string[];
+  displayTitle: string;
+  displayLines: string[];
+  summaryLine: string;
+}
+
+function parseRequirementMarkdownSections(
+  markdown: string,
+  locale: BusinessLocale,
+): ParsedRequirementSection[] {
+  const lines = normalizeStepMarkdown(markdown).split('\n');
+  const rawSections: { heading: string; bodyLines: string[] }[] = [];
+  let current: { heading: string; bodyLines: string[] } | null = null;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (/^#\s+/.test(trimmed) && !/^##/.test(trimmed)) {
+      continue;
+    }
+    const h2Match = /^##\s+(.+)$/.exec(trimmed);
+    if (h2Match) {
+      if (current) rawSections.push(current);
+      current = { heading: h2Match[1]!.trim(), bodyLines: [] };
+      continue;
+    }
+    if (!current) {
+      if (!trimmed) continue;
+      current = {
+        heading: locale === 'en-US' ? 'Overview & Goals' : '业务目标与范围',
+        bodyLines: [],
+      };
+    }
+    current.bodyLines.push(rawLine);
+  }
+  if (current) rawSections.push(current);
+
+  return rawSections.map((sec, index) => {
+    const displayTitle =
+      formatRequirementTextForBusinessView(sec.heading, locale) ||
+      (locale === 'en-US' ? `Section ${index + 1}` : `第 ${index + 1} 部分`);
+    const displayLines = sec.bodyLines
+      .map((line) => line.trim())
+      .filter((line) => Boolean(line) && !/^\|?\s*[-:]+\s*\|/.test(line))
+      .map((line) =>
+        line
+          .replace(/^#{3,6}\s+/, '')
+          .replace(/^[-*+]\s+/, '')
+          .replace(/^\d+\.\s+/, '')
+          .replace(/\*\*([^*]+)\*\*/g, '$1'),
+      )
+      .map((line) => formatRequirementTextForBusinessView(line, locale))
+      .filter(Boolean);
+    const summaryLine =
+      displayLines[0] ?? (locale === 'en-US' ? 'No details yet' : '暂无详细条目');
+    return {
+      id: `req-sec-${index + 1}`,
+      heading: sec.heading,
+      rawLines: sec.bodyLines,
+      displayTitle,
+      displayLines,
+      summaryLine,
+    };
+  });
+}
+
+export function RequirementsStepView({
+  onNavigate,
+}: {
+  onNavigate: (view: NavViewId) => void;
+}) {
+  const { locale, t } = usePreferences();
+  const {
+    data,
+    activeSessionId,
+    liveSessionDrafts,
+    patchData,
+    showToast,
+    startSrsSynthesisRun,
+    confirmRequirementsStep,
+  } = useWorkbenchStore();
+  const rememberedSessionByScope = useAgentPanelStore((s) => s.sessionByScope);
+
+  const [viewMode, setViewMode] = useState<RequirementsViewMode>(() =>
+    readStoredRequirementsViewMode(),
+  );
+  const [toggledSections, setToggledSections] = useState<Record<string, boolean>>({});
+  const [isEditingInline, setIsEditingInline] = useState(false);
+  const [inlineDraft, setInlineDraft] = useState('');
+  const [savingInline, setSavingInline] = useState(false);
+  const [confirmingStep, setConfirmingStep] = useState(false);
+
+  // Sync viewMode with localStorage on mount/project switch
+  useEffect(() => {
+    setViewMode(readStoredRequirementsViewMode());
+    setToggledSections({});
+    setIsEditingInline(false);
+  }, [data?.activeProject.id]);
+
+  const toggleViewMode = (nextMode: RequirementsViewMode) => {
+    setViewMode(nextMode);
+    writeStoredRequirementsViewMode(nextMode);
+  };
+
+  const convergedOutline = useMemo(() => {
+    const objects = new Set<string>();
+    const rules = new Set<string>();
+    const decisions = new Set<string>();
+    const openQuestions = new Set<string>();
+
+    for (const reqSess of data?.requirementSessions ?? []) {
+      reqSess.discoveredAggregates.forEach((a) => objects.add(a));
+      reqSess.discoveredRules.forEach((r) => rules.add(r));
+      reqSess.resolvedDecisions.forEach((d) => decisions.add(d));
+    }
+
+    for (const sess of data?.agentSessions ?? []) {
+      if (sess.projectId !== data?.activeProject.id || sess.agentKind !== 'REQUIREMENT') {
+        continue;
+      }
+      for (const m of sess.messages) {
+        for (const art of m.artifacts ?? []) {
+          if (art.kind === 'REQUIREMENT_HINTS') {
+            art.aggregates.forEach((a) => objects.add(a));
+            art.rules.forEach((r) => rules.add(r));
+            art.decisions?.forEach((d) => decisions.add(d));
+            art.openQuestions.forEach((q) => openQuestions.add(q));
+          }
+        }
+        for (const tc of m.toolCalls ?? []) {
+          if (tc.toolName === 'record_requirement_insights' && tc.arguments) {
+            const args = tc.arguments;
+            if (Array.isArray(args.discoveredAggregates)) {
+              args.discoveredAggregates.forEach((a) => objects.add(String(a)));
+            }
+            if (Array.isArray(args.discoveredRules)) {
+              args.discoveredRules.forEach((r) => rules.add(String(r)));
+            }
+            if (Array.isArray(args.resolvedDecisions)) {
+              args.resolvedDecisions.forEach((d) => decisions.add(String(d)));
+            }
+            if (Array.isArray(args.openQuestions)) {
+              args.openQuestions.forEach((q) => openQuestions.add(String(q)));
+            }
+          }
+        }
+        if (m.askUser?.answered && (m.askUser.selectedAnswers?.length ?? 0) > 0) {
+          decisions.add(
+            `${m.askUser.question}：${m.askUser.selectedAnswers!.join(' · ')}`,
+          );
+        }
+      }
+    }
+
+    return {
+      objects: [...objects]
+        .map((item) => formatRequirementTextForBusinessView(item, locale))
+        .filter(Boolean),
+      rules: [...rules]
+        .map((item) => formatRequirementTextForBusinessView(item, locale))
+        .filter(Boolean),
+      decisions: [...decisions]
+        .map((item) =>
+          formatRequirementTextForBusinessView(
+            item.replace(/^\[(?:AI自动补全|AI Auto-Completed|已确认|Confirmed|待确认|Pending|Open)\]\s*/i, ''),
+            locale,
+          ),
+        )
+        .filter(Boolean),
+      openQuestions: [...openQuestions]
+        .map((item) =>
+          formatRequirementTextForBusinessView(
+            item.replace(/^\[(?:待确认|Pending|Open)\]\s*/i, ''),
+            locale,
+          ),
+        )
+        .filter(Boolean),
+    };
+  }, [data?.agentSessions, data?.requirementSessions, data?.activeProject.id, locale]);
+
+  const preferredAgentSession = useMemo(() => {
+    if (!data) return undefined;
+    const candidates = (data.agentSessions ?? [])
+      .filter((s) => s.projectId === data.activeProject.id && s.agentKind === 'REQUIREMENT')
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const rememberedId =
+      rememberedSessionByScope[agentSessionScopeKey(data.activeProject.id, 'REQUIREMENT')];
+    const onScreen =
+      candidates.find((s) => s.id === activeSessionId) ??
+      candidates.find((s) => s.id === rememberedId);
+    if (onScreen && onScreen.messages.length > 0) return onScreen;
+    return candidates.find((s) => s.messages.length > 0);
+  }, [data, activeSessionId, rememberedSessionByScope]);
+
+  if (!data) return null;
+
+  const steps = getProjectStepsFromBootstrap(data);
+  const reqStep = steps.find((s) => s.id === 'REQUIREMENTS')!;
+  const stepState = reqStep.state;
+
+  const currentDoc = data.requirementDocs[0];
+  const confirmedReq = data.stepConfirmations?.requirements ?? null;
+
+  const assistantWorking = (data.agentSessions ?? []).some(
+    (s) =>
+      s.projectId === data.activeProject.id &&
+      s.agentKind === 'REQUIREMENT' &&
+      (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
+  );
+
+  const parsedSections = currentDoc
+    ? parseRequirementMarkdownSections(currentDoc.content, locale)
+    : [];
+  const confirmedSections = confirmedReq
+    ? parseRequirementMarkdownSections(confirmedReq.content, locale)
+    : [];
+  const modifiedSectionIndexes = new Set<number>();
+  if (stepState === 'UNCONFIRMED_CHANGES') {
+    parsedSections.forEach((sec, idx) => {
+      const prev = confirmedSections[idx];
+      if (!prev || prev.rawLines.join('\n').trim() !== sec.rawLines.join('\n').trim()) {
+        modifiedSectionIndexes.add(idx);
+      }
+    });
+  }
+
+  const focusLeftComposer = () => {
+    useAgentPanelStore.getState().revealPanel();
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLTextAreaElement>('[data-testid="agent-panel-composer-input"]')
+          ?.focus();
+      });
+    }
+  };
+
+  const handleSynthesizeDocument = () => {
+    if (assistantWorking) return;
+    useAgentPanelStore.getState().revealPanel();
+    const reqSess = data.requirementSessions[0];
+    void startSrsSynthesisRun({
+      ...(reqSess?.id ? { requirementSessionId: reqSess.id } : {}),
+      ...(preferredAgentSession?.id ? { agentSessionId: preferredAgentSession.id } : {}),
+      ...(currentDoc?.id ? { docId: currentDoc.id } : {}),
+    });
+  };
+
+  const handleConfirmRequirements = async () => {
+    if (!currentDoc || confirmingStep) return;
+    setConfirmingStep(true);
+    try {
+      const confirmed = await confirmRequirementsStep(currentDoc.id);
+      if (confirmed) {
+        setToggledSections({});
+        setIsEditingInline(false);
+        showToast(
+          t(
+            '已确认需求文档，原型步骤已解锁',
+            'Requirements document confirmed; Prototype step is now unlocked',
+          ),
+        );
+      }
+    } finally {
+      setConfirmingStep(false);
+    }
+  };
+
+  const handleOpenInlineEdit = () => {
+    setInlineDraft(
+      currentDoc?.content ||
+        `# ${data.activeProject.name} ${t('需求文档', 'Requirements Document')}\n\n## 1. ${t('业务目标与范围', 'Business Goals & Scope')}\n- `,
+    );
+    setIsEditingInline(true);
+  };
+
+  const handleSaveInlineEdit = async () => {
+    if (savingInline || !inlineDraft.trim()) return;
+    setSavingInline(true);
+    try {
+      const targetId = currentDoc?.id ?? `doc-${Date.now()}`;
+      const res = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
+        '/api/requirements/docs',
+        {
+          id: targetId,
+          projectId: data.activeProject.id,
+          title: currentDoc?.title || `${data.activeProject.name} ${t('需求文档', 'Requirements Document')}`,
+          version: currentDoc?.version || 'v1.0',
+          content: inlineDraft,
+          status: 'DRAFT',
+        },
+      );
+      patchData({ requirementDocs: res.docs });
+      setIsEditingInline(false);
+      showToast(
+        t(
+          '需求修改已保存；确认需求文档后下游步骤才会更新',
+          'Changes saved; confirm requirements when ready to update downstream steps',
+        ),
+      );
+    } finally {
+      setSavingInline(false);
+    }
+  };
+
+  if (viewMode === 'technical') {
+    return (
+      <div className="space-y-3" data-testid="requirements-technical-details">
+        <div className="card flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+          <div className="flex items-center gap-2 text-[13px]">
+            <span className="font-semibold text-foreground">
+              {t(BUSINESS_VOCABULARY.TECHNICAL_DETAILS.zh, BUSINESS_VOCABULARY.TECHNICAL_DETAILS.en)}
+            </span>
+            <span className="text-muted-foreground">
+              {t(reqStep.statusSummary.zh, reqStep.statusSummary.en)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              data-testid="synthesize-srs-btn"
+              disabled={assistantWorking}
+              onClick={handleSynthesizeDocument}
+            >
+              <Sparkles size={13} aria-hidden="true" />
+              {t('整理需求文档', 'Synthesize Document')}
+            </Button>
+            {currentDoc && stepState !== 'CONFIRMED' && (
+              <Button
+                type="button"
+                variant="accent"
+                size="sm"
+                data-testid="confirm-requirements-btn"
+                disabled={confirmingStep || assistantWorking}
+                onClick={() => void handleConfirmRequirements()}
+              >
+                {stepState === 'UNCONFIRMED_CHANGES'
+                  ? t('重新确认需求文档', 'Re-confirm requirements')
+                  : t('确认需求文档', 'Confirm requirements')}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="requirements-view-mode-toggle"
+              onClick={() => toggleViewMode('business')}
+            >
+              {t(
+                `返回${BUSINESS_VOCABULARY.BUSINESS_VIEW.zh}`,
+                `Back to ${BUSINESS_VOCABULARY.BUSINESS_VIEW.en}`,
+              )}
+            </Button>
+          </div>
+        </div>
+        <RequirementDocsView onNavigate={onNavigate} />
+      </div>
+    );
+  }
+
+  const outlineCount =
+    convergedOutline.objects.length +
+    convergedOutline.rules.length +
+    convergedOutline.decisions.length +
+    convergedOutline.openQuestions.length;
+
+  const canSynthesize =
+    Boolean(preferredAgentSession) ||
+    data.requirementSessions.length > 0 ||
+    outlineCount > 0;
+
+  const statusText = assistantWorking
+    ? t(
+        'AI 助手正在整理需求内容，完成后可以在这里检查并确认。',
+        'AI Assistant is organizing your requirements; review and confirm them here once finished.',
+      )
+    : !currentDoc && stepState === 'IN_PROGRESS'
+      ? t(
+          '已记录对话中的业务要点。点击右上角整理成完整需求文档，核对无误后即可确认。',
+          'Key business points from your conversation are recorded. Generate the full requirements document to review and confirm.',
+        )
+      : t(reqStep.statusSummary.zh, reqStep.statusSummary.en);
+
+  return (
+    <div className="space-y-4" data-testid="requirements-step-canvas">
+      <section className="card space-y-2.5 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="m-0 font-title text-[18px] font-semibold text-foreground">
+            {t('需求文档', 'Requirements Document')}
+          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="requirements-view-mode-toggle"
+              onClick={() => toggleViewMode('technical')}
+            >
+              {t(
+                BUSINESS_VOCABULARY.TECHNICAL_DETAILS.zh,
+                BUSINESS_VOCABULARY.TECHNICAL_DETAILS.en,
+              )}
+            </Button>
+
+            {!isEditingInline && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="edit-requirements-inline-btn"
+                onClick={handleOpenInlineEdit}
+              >
+                <Edit3 size={13} aria-hidden="true" />
+                {currentDoc ? t('修改文字', 'Edit text') : t('直接编写', 'Write directly')}
+              </Button>
+            )}
+
+            {currentDoc && canSynthesize && !isEditingInline && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                data-testid="synthesize-srs-btn"
+                disabled={assistantWorking}
+                onClick={handleSynthesizeDocument}
+              >
+                {assistantWorking ? (
+                  <Loader2 size={13} className="pipeline-spin" aria-hidden="true" />
+                ) : (
+                  <Sparkles size={13} aria-hidden="true" />
+                )}
+                {t('让 AI 助手重新整理', 'Refresh with AI Assistant')}
+              </Button>
+            )}
+
+            {/* Single Primary Action per state (Business View Rule 1) */}
+            {!assistantWorking && !isEditingInline && (
+              <>
+                {stepState === 'NOT_STARTED' && !currentDoc && (
+                  <Button
+                    type="button"
+                    variant="accent"
+                    size="sm"
+                    data-testid="start-requirements-chat-btn"
+                    onClick={focusLeftComposer}
+                  >
+                    <Sparkles size={13.5} aria-hidden="true" />
+                    {t('开始描述需求', 'Start describing requirements')}
+                  </Button>
+                )}
+
+                {stepState === 'IN_PROGRESS' && !currentDoc && (
+                  <Button
+                    type="button"
+                    variant="accent"
+                    size="sm"
+                    data-testid="synthesize-srs-btn"
+                    disabled={!canSynthesize}
+                    onClick={handleSynthesizeDocument}
+                  >
+                    <Sparkles size={13.5} aria-hidden="true" />
+                    {t('整理成需求文档', 'Generate requirements document')}
+                  </Button>
+                )}
+
+                {currentDoc && (stepState === 'IN_PROGRESS' || stepState === 'UNCONFIRMED_CHANGES') && (
+                  <Button
+                    type="button"
+                    variant="accent"
+                    size="sm"
+                    data-testid="confirm-requirements-btn"
+                    disabled={confirmingStep}
+                    onClick={() => void handleConfirmRequirements()}
+                  >
+                    <CheckCircle2 size={14} aria-hidden="true" />
+                    {stepState === 'UNCONFIRMED_CHANGES'
+                      ? t('重新确认需求文档', 'Re-confirm requirements')
+                      : t('确认需求文档', 'Confirm requirements')}
+                  </Button>
+                )}
+
+                {currentDoc && stepState === 'CONFIRMED' && (
+                  <Button
+                    type="button"
+                    variant="accent"
+                    size="sm"
+                    data-testid="go-to-prototype-btn"
+                    onClick={() => onNavigate('app-prototype')}
+                  >
+                    {t('开始做原型', 'Go to Prototype')}
+                    <ArrowRight size={14} aria-hidden="true" />
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        <p
+          className={cn(
+            'm-0 flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]',
+            stepState === 'CONFIRMED'
+              ? 'border-border bg-success-soft/55 text-foreground'
+              : stepState === 'UNCONFIRMED_CHANGES'
+                ? 'border-border bg-warning-soft/65 text-foreground'
+                : 'border-border bg-muted/60 text-muted-foreground',
+          )}
+          data-testid="requirements-status-banner"
+          data-step-state={stepState}
+        >
+          {stepState === 'CONFIRMED' ? (
+            <CheckCircle2 size={15} className="shrink-0 text-success" aria-hidden="true" />
+          ) : stepState === 'UNCONFIRMED_CHANGES' ? (
+            <Info size={15} className="shrink-0 text-warning" aria-hidden="true" />
+          ) : (
+            <CircleDot size={15} className="shrink-0 text-primary" aria-hidden="true" />
+          )}
+          <span>{statusText}</span>
+        </p>
+      </section>
+
+      {isEditingInline ? (
+        <section className="card space-y-3 p-4" data-testid="requirements-inline-editor">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[13px] font-medium text-foreground">
+              {t('直接修改需求文档内容', 'Edit requirements document text')}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsEditingInline(false)}
+              >
+                {t('取消', 'Cancel')}
+              </Button>
+              <Button
+                type="button"
+                variant="accent"
+                size="sm"
+                data-testid="save-requirements-inline-btn"
+                disabled={savingInline || !inlineDraft.trim()}
+                onClick={() => void handleSaveInlineEdit()}
+              >
+                {t('保存修改', 'Save changes')}
+              </Button>
+            </div>
+          </div>
+          <textarea
+            data-testid="requirements-inline-textarea"
+            aria-label={t('需求文档内容', 'Requirements document content')}
+            value={inlineDraft}
+            onChange={(e) => setInlineDraft(e.target.value)}
+            rows={14}
+            className="w-full rounded-md border border-border bg-background p-3 text-[13.5px] leading-relaxed text-foreground focus:border-primary focus:outline-none"
+          />
+        </section>
+      ) : currentDoc ? (
+        <article className="space-y-2" data-testid="requirements-document-sections">
+          {parsedSections.map((section, idx) => {
+            const isModified = modifiedSectionIndexes.has(idx);
+            const defaultExpanded =
+              stepState === 'IN_PROGRESS'
+                ? true
+                : stepState === 'UNCONFIRMED_CHANGES'
+                  ? isModified || modifiedSectionIndexes.size === 0
+                  : false;
+            const isOpen = toggledSections[section.id] ?? defaultExpanded;
+
+            return (
+              <section
+                key={section.id}
+                className="card overflow-hidden p-0"
+                data-testid={`requirements-section-${idx}`}
+              >
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  onClick={() =>
+                    setToggledSections((prev) => ({ ...prev, [section.id]: !isOpen }))
+                  }
+                  className="flex w-full cursor-pointer items-center gap-2.5 px-4 py-3 text-left hover:bg-muted/45"
+                >
+                  {isOpen ? (
+                    <ChevronDown size={15} className="shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight size={15} className="shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="font-medium text-foreground">{section.displayTitle}</span>
+                  {isModified && (
+                    <span className="badge badge-warn shrink-0">
+                      {t('已修改', 'Modified')}
+                    </span>
+                  )}
+                  {!isOpen && (
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
+                      {section.summaryLine}
+                    </span>
+                  )}
+                </button>
+                {isOpen && (
+                  <ul className="m-0 list-disc space-y-1.5 border-t border-border py-3 pr-4 pl-9 text-[13.5px] leading-relaxed text-foreground">
+                    {section.displayLines.map((line, lineIdx) => (
+                      <li key={`${section.id}-${lineIdx}`}>{line}</li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            );
+          })}
+        </article>
+      ) : outlineCount > 0 ? (
+        <article className="space-y-2" data-testid="requirements-forming-outline">
+          {convergedOutline.objects.length > 0 && (
+            <section className="card space-y-2 p-4">
+              <h3 className="m-0 text-[14px] font-semibold text-foreground">
+                {t('识别到的业务对象', 'Business Objects')}
+              </h3>
+              <ul className="m-0 list-disc space-y-1 pl-5 text-[13.5px] text-foreground">
+                {convergedOutline.objects.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {convergedOutline.decisions.length > 0 && (
+            <section className="card space-y-2 p-4">
+              <h3 className="m-0 text-[14px] font-semibold text-foreground">
+                {t('已明确的业务约定', 'Confirmed Business Choices')}
+              </h3>
+              <ul className="m-0 list-disc space-y-1 pl-5 text-[13.5px] text-foreground">
+                {convergedOutline.decisions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {convergedOutline.rules.length > 0 && (
+            <section className="card space-y-2 p-4">
+              <h3 className="m-0 text-[14px] font-semibold text-foreground">
+                {t('业务规则要点', 'Key Business Rules')}
+              </h3>
+              <ul className="m-0 list-disc space-y-1 pl-5 text-[13.5px] text-foreground">
+                {convergedOutline.rules.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {convergedOutline.openQuestions.length > 0 && (
+            <section className="card space-y-2 p-4">
+              <h3 className="m-0 text-[14px] font-semibold text-foreground">
+                {t('待你补充确认的问题', 'Open Questions')}
+              </h3>
+              <ul className="m-0 list-disc space-y-1 pl-5 text-[13.5px] text-muted-foreground">
+                {convergedOutline.openQuestions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </article>
+      ) : (
+        <section className="card flex flex-col items-center justify-center gap-2 py-12 text-center">
+          <Sparkles size={22} className="text-primary" aria-hidden="true" />
+          <h3 className="m-0 text-[15px] font-semibold text-foreground">
+            {t('需求文档将在对话中逐步成形', 'Your requirements document will take shape here')}
+          </h3>
+          <p className="m-0 max-w-[460px] text-[13px] leading-relaxed text-muted-foreground">
+            {t(
+              '在左侧向 AI 助手描述你想做的业务系统、参与角色与关键流程。遇到需要你做选择的地方，AI 助手会给出可点选的方案。',
+              'Tell the AI Assistant on the left what system you want to build, who uses it, and how key workflows run. When choices arise, you will get clickable options.',
+            )}
+          </p>
+        </section>
+      )}
     </div>
   );
 }

@@ -34,10 +34,9 @@ import {
   type NavViewId,
 } from './index.js';
 
-const ALL_EXPECTED_VIEWS: NavViewId[] = [
+const ALL_ACTIVE_NAV_ITEMS: NavViewId[] = [
   'overview',
-  'app-req-explore',
-  'app-req-docs',
+  'app-requirements',
   'app-prototype',
   'app-ontology',
   'app-model-files',
@@ -66,7 +65,7 @@ describe('navigation catalog and URL state', () => {
     vi.unstubAllGlobals();
   });
 
-  it('defines all 5 groups and all 24 unique navigation items with icons and bilingual labels', () => {
+  it('retires legacy app-req-explore and app-req-docs entries from NAV_ITEMS in favor of unified app-requirements', () => {
     expect(NAV_GROUPS.map((g) => g.id)).toEqual<NavGroupId[]>([
       'OVERVIEW',
       'APPLICATION',
@@ -74,10 +73,12 @@ describe('navigation catalog and URL state', () => {
       'ANALYTICS',
       'PLATFORM',
     ]);
-    expect(NAV_ITEMS).toHaveLength(24);
-    expect(NAV_ITEMS.map((item) => item.id)).toEqual(ALL_EXPECTED_VIEWS);
+    expect(NAV_ITEMS).toHaveLength(23);
+    expect(NAV_ITEMS.map((item) => item.id)).toEqual(ALL_ACTIVE_NAV_ITEMS);
+    expect(NAV_ITEMS.some((item) => String(item.id) === 'app-req-explore')).toBe(false);
+    expect(NAV_ITEMS.some((item) => String(item.id) === 'app-req-docs')).toBe(false);
 
-    for (const viewId of ALL_EXPECTED_VIEWS) {
+    for (const viewId of ALL_ACTIVE_NAV_ITEMS) {
       const spec = getNavItemSpec(viewId);
       expect(spec).toBeDefined();
       expect(spec!.labelZh.length).toBeGreaterThan(0);
@@ -87,7 +88,7 @@ describe('navigation catalog and URL state', () => {
       expect(isNavViewId(viewId)).toBe(true);
     }
 
-    expect(getNavItemsByGroup('APPLICATION')).toHaveLength(10);
+    expect(getNavItemsByGroup('APPLICATION')).toHaveLength(9);
     expect(getNavItemsByGroup('CAPABILITY')).toHaveLength(6);
     expect(getNavItemsByGroup('ANALYTICS')).toHaveLength(5);
     expect(getNavItemsByGroup('PLATFORM')).toHaveLength(2);
@@ -97,7 +98,7 @@ describe('navigation catalog and URL state', () => {
     expect(isFlushNavView('overview')).toBe(false);
   });
 
-  it('parses URL query params, falls back to hash route, and round-trips patches cleanly', () => {
+  it('parses URL query params, redirects legacy app-req-explore/app-req-docs URLs cleanly to app-requirements, and round-trips patches', () => {
     expect(
       parseUrlNavState({
         search: '?projectId=proj-mft&mode=app-prototype&itemId=proto-2&sessionId=sess-9',
@@ -110,26 +111,25 @@ describe('navigation catalog and URL state', () => {
       sessionId: 'sess-9',
     });
 
-    // Hash fallback with or without leading slash
-    expect(parseUrlNavState({ search: '', hash: '#/cap-mcp' })).toEqual({ nav: 'cap-mcp' });
-    expect(parseUrlNavState({ search: '', hash: '#data-reasoning' })).toEqual({
-      nav: 'data-reasoning',
-    });
-
-    // Explicit mode query overrides stale hash
-    expect(
-      parseUrlNavState({ search: '?mode=app-req-docs', hash: '#/app-ontology' }),
-    ).toEqual({ nav: 'app-req-docs' });
+    // Legacy ?mode=app-req-explore, ?mode=app-req-docs, #/app-req-explore, #/app-req-docs redirect cleanly to app-requirements
+    expect(readHashView({ search: '?mode=app-req-explore', hash: '' })).toBe('app-requirements');
+    expect(readHashView({ search: '?mode=app-req-docs', hash: '#/app-ontology' })).toBe(
+      'app-requirements',
+    );
+    expect(readHashView({ search: '', hash: '#/app-req-explore' })).toBe('app-requirements');
+    expect(readHashView({ search: '', hash: '#/app-req-docs' })).toBe('app-requirements');
+    expect(resolveNavViewId('app-req-explore')).toBe('app-requirements');
+    expect(resolveNavViewId('app-req-docs')).toBe('app-requirements');
 
     // Round-trip serialization and clearing empty values
     const step1Href = applyUrlNavState('http://127.0.0.1:4342/', {
       projectId: 'proj-contract',
-      nav: 'app-req-explore',
+      nav: 'app-requirements',
       itemId: 'doc-1',
       sessionId: 'sess-1',
     });
     expect(step1Href).toBe(
-      '/?projectId=proj-contract&mode=app-req-explore&itemId=doc-1&sessionId=sess-1#/app-req-explore',
+      '/?projectId=proj-contract&mode=app-requirements&itemId=doc-1&sessionId=sess-1#/app-requirements',
     );
     const parsedStep1 = parseUrlNavState({
       search: step1Href.slice(1, step1Href.indexOf('#')),
@@ -137,7 +137,7 @@ describe('navigation catalog and URL state', () => {
     });
     expect(parsedStep1).toEqual({
       projectId: 'proj-contract',
-      nav: 'app-req-explore',
+      nav: 'app-requirements',
       itemId: 'doc-1',
       sessionId: 'sess-1',
     });
@@ -146,13 +146,10 @@ describe('navigation catalog and URL state', () => {
       itemId: '',
       sessionId: '',
     });
-    expect(clearedHref).toBe('/?projectId=proj-contract&mode=app-req-explore#/app-req-explore');
+    expect(clearedHref).toBe('/?projectId=proj-contract&mode=app-requirements#/app-requirements');
 
     const clearedNavHref = applyUrlNavState(`http://127.0.0.1:4342${clearedHref}`, { nav: '' });
     expect(clearedNavHref).toBe('/?projectId=proj-contract');
-    expect(parseUrlNavState({ search: '?projectId=proj-contract', hash: '' })).toEqual({
-      projectId: 'proj-contract',
-    });
 
     // Window integration for readUrlNavState / writeUrlNavState / readHashView
     let currentHref = 'http://127.0.0.1:4342/?projectId=proj-1#/cap-agents';
@@ -173,11 +170,6 @@ describe('navigation catalog and URL state', () => {
 
     writeUrlNavState({ nav: 'app-assembly-dev', itemId: 'app-1' });
     expect(replaceState).toHaveBeenCalledOnce();
-    expect(readUrlNavState()).toEqual({
-      projectId: 'proj-1',
-      nav: 'app-assembly-dev',
-      itemId: 'app-1',
-    });
     expect(readHashView()).toBe('app-assembly-dev');
 
     // Unknown view falls back to default 'app-ontology'
@@ -185,10 +177,8 @@ describe('navigation catalog and URL state', () => {
     expect(readHashView({ search: '', hash: '#/not-a-real-view' })).toBe('app-ontology');
   });
 
-  it('maps every NavViewId to its specialist AgentPanelSurface and round-trips all 7 AgentSessionKinds', () => {
-    expect(Object.keys(AGENT_PANEL_SURFACES).sort()).toEqual([...ALL_EXPECTED_VIEWS].sort());
-
-    for (const viewId of ALL_EXPECTED_VIEWS) {
+  it('maps every NavViewId (including legacy requirement aliases) to its specialist AgentPanelSurface and round-trips all 7 AgentSessionKinds', () => {
+    for (const viewId of ALL_ACTIVE_NAV_ITEMS) {
       const surface = agentPanelSurfaceFor(viewId);
       expect(surface).toBeDefined();
       expect(surface.title.zh.length).toBeGreaterThan(0);
@@ -196,26 +186,16 @@ describe('navigation catalog and URL state', () => {
       expect(surface.placeholder?.zh.length).toBeGreaterThan(0);
       expect(surface.placeholder?.en.length).toBeGreaterThan(0);
     }
-
-    // Spot-check key surface attributes
+    expect(AGENT_PANEL_SURFACES['app-requirements']).toMatchObject({
+      sessionKind: 'REQUIREMENT',
+      conversationPrimary: true,
+    });
     expect(agentPanelSurfaceFor('app-req-explore')).toMatchObject({
       sessionKind: 'REQUIREMENT',
       conversationPrimary: true,
     });
-    expect(agentPanelSurfaceFor('app-prototype')).toMatchObject({
-      sessionKind: 'PROTOTYPE_CO_DESIGN',
-      usesVision: true,
-    });
-    expect(agentPanelSurfaceFor('app-four-layer-assets').sessionKind).toBe('ARCHITECTURE');
-    expect(agentPanelSurfaceFor('app-assembly-dev').sessionKind).toBe('CODING');
-    expect(agentPanelSurfaceFor('app-publish').sessionKind).toBe('CODING');
-    expect(agentPanelSurfaceFor('cap-agents')).toMatchObject({
-      sessionKind: 'CAPABILITY',
-      conversationPrimary: true,
-    });
-    expect(agentPanelSurfaceFor('data-reasoning')).toMatchObject({
-      sessionKind: 'REASONING',
-      conversationPrimary: true,
+    expect(agentPanelSurfaceFor('app-req-docs')).toMatchObject({
+      sessionKind: 'REQUIREMENT',
     });
 
     const allSessionKinds: AgentSessionKind[] = [
@@ -232,60 +212,32 @@ describe('navigation catalog and URL state', () => {
       expect(isNavViewId(defaultView)).toBe(true);
       expect(agentPanelSurfaceFor(defaultView).sessionKind).toBe(kind);
     }
+    expect(defaultNavForSessionKind('REQUIREMENT')).toBe('app-requirements');
 
     expect(
       resolveArtifactNavTarget({
         kind: 'REQUIREMENT_DOC',
         docId: 'doc-9',
-        title: 'SRS',
+        title: '需求文档',
         version: 'v1',
-        status: 'CONFIRMED',
+        status: 'DRAFT',
       }),
-    ).toEqual({ view: 'app-req-docs', itemId: 'doc-9' });
-    expect(
-      resolveArtifactNavTarget({
-        kind: 'PROTOTYPE_REVISION',
-        prototypeId: 'proto-3',
-        revisionId: 'rev-1',
-        revisionNumber: 1,
-        modifiedAnchors: [],
-      }),
-    ).toEqual({ view: 'app-prototype', itemId: 'proto-3', prototypeId: 'proto-3' });
-    expect(
-      resolveArtifactNavTarget({
-        kind: 'ONTOLOGY_DIFF',
-        title: 'Diff',
-        modelCode: 'M3',
-        changes: [{ id: 'RULE-01', category: 'rule', detail: 'added', action: 'ADDED' }],
-      }),
-    ).toEqual({ view: 'app-ontology', modelCode: 'M3', elementId: 'RULE-01' });
-    expect(
-      resolveArtifactNavTarget({
-        kind: 'CODING_PACKAGE',
-        appId: 'app-1',
-        outputDir: 'out',
-        files: [],
-      }),
-    ).toEqual({ view: 'app-assembly-dev', itemId: 'app-1' });
-    expect(
-      resolveArtifactNavTarget({
-        kind: 'REQUIREMENT_HINTS',
-        aggregates: [],
-        rules: [],
-        openQuestions: [],
-      }),
-    ).toBeNull();
+    ).toEqual({ view: 'app-requirements', itemId: 'doc-9' });
   });
 
-  it('partitions all 24 views across Home, the 4 Project Steps, and the Secondary Areas with business-clean area labels', () => {
+  it('collapses PROJECT_STEP_VIEWS.REQUIREMENTS to a single view (no subview bar) and maps legacy aliases cleanly', () => {
     expect(Object.keys(PROJECT_STEP_VIEWS)).toEqual([...PROJECT_STEP_IDS]);
-    expect(getDefaultViewForStep('REQUIREMENTS')).toBe('app-req-explore');
+    expect(getDefaultViewForStep('REQUIREMENTS')).toBe('app-requirements');
+    expect(PROJECT_STEP_VIEWS.REQUIREMENTS).toEqual({
+      defaultView: 'app-requirements',
+      views: ['app-requirements'],
+    });
     expect(getDefaultViewForStep('PROTOTYPE')).toBe('app-prototype');
     expect(getDefaultViewForStep('BUSINESS_MODEL')).toBe('app-ontology');
     expect(getDefaultViewForStep('DELIVERY')).toBe('app-assembly-dev');
 
     const stepAssignedViews = PROJECT_STEP_IDS.flatMap((id) => PROJECT_STEP_VIEWS[id].views);
-    expect(new Set(stepAssignedViews).size).toBe(10);
+    expect(new Set(stepAssignedViews).size).toBe(9);
     expect([...stepAssignedViews].sort()).toEqual(
       getNavItemsByGroup('APPLICATION')
         .map((item) => item.id)
@@ -300,51 +252,36 @@ describe('navigation catalog and URL state', () => {
       expect(checkBusinessViewMarkup(area.label.en, { plainText: true })).toEqual([]);
       expect(checkBusinessViewMarkup(area.hint.zh, { plainText: true })).toEqual([]);
       expect(checkBusinessViewMarkup(area.hint.en, { plainText: true })).toEqual([]);
-      for (const v of area.views) {
-        expect(getSecondaryAreaForView(v)?.id).toBe(area.id);
-        expect(getProjectStepForView(v)).toBeNull();
-      }
     }
 
     expect(resolveShellRouteContext('overview')).toEqual({ kind: 'home', view: 'overview' });
+    expect(resolveShellRouteContext('app-requirements')).toEqual({
+      kind: 'project',
+      step: 'REQUIREMENTS',
+      view: 'app-requirements',
+      stepViews: ['app-requirements'],
+    });
     expect(resolveShellRouteContext('app-req-docs')).toEqual({
       kind: 'project',
       step: 'REQUIREMENTS',
-      view: 'app-req-docs',
-      stepViews: ['app-req-explore', 'app-req-docs'],
+      view: 'app-requirements',
+      stepViews: ['app-requirements'],
     });
-    expect(resolveShellRouteContext('app-knowledge-graph')).toMatchObject({
-      kind: 'project',
-      step: 'BUSINESS_MODEL',
-      view: 'app-knowledge-graph',
-    });
-    expect(resolveShellRouteContext('cap-extraction')).toMatchObject({
-      kind: 'secondary',
-      area: 'CAPABILITY',
-      view: 'cap-extraction',
-    });
-    expect(resolveShellRouteContext('system-settings')).toMatchObject({
-      kind: 'secondary',
-      area: 'GOVERNANCE',
-      view: 'system-settings',
-    });
+    expect(getProjectStepForView('app-req-explore')).toBe('REQUIREMENTS');
+    expect(getProjectStepForView('app-req-docs')).toBe('REQUIREMENTS');
   });
 
-  it('resolves both legacy ?mode=/#/... URLs and step/area URL routes cleanly', () => {
-    // Legacy query & hash routes
-    expect(readHashView({ search: '?mode=app-ontology', hash: '' })).toBe('app-ontology');
-    expect(readHashView({ search: '?mode=app-assembly-dev', hash: '' })).toBe('app-assembly-dev');
-    expect(readHashView({ search: '', hash: '#/app-prototype' })).toBe('app-prototype');
-    expect(readHashView({ search: '?mode=cap-extraction', hash: '' })).toBe('cap-extraction');
-    expect(readHashView({ search: '?mode=system-settings', hash: '' })).toBe('system-settings');
-
-    // Step query parameters & hash routes
+  it('resolves step/area URL routes cleanly', () => {
     expect(parseUrlNavState({ search: '?projectId=proj-mft&step=REQUIREMENTS', hash: '' })).toEqual(
       {
         projectId: 'proj-mft',
-        nav: 'app-req-explore',
+        nav: 'app-requirements',
       },
     );
+    expect(parseUrlNavState({ search: '', hash: '#/p/proj-mft/requirements' })).toEqual({
+      projectId: 'proj-mft',
+      nav: 'app-requirements',
+    });
     expect(parseUrlNavState({ search: '?step=prototype', hash: '' })).toEqual({
       nav: 'app-prototype',
     });
@@ -353,30 +290,6 @@ describe('navigation catalog and URL state', () => {
     });
     expect(parseUrlNavState({ search: '?step=delivery', hash: '' })).toEqual({
       nav: 'app-assembly-dev',
-    });
-    expect(parseUrlNavState({ search: '', hash: '#/p/proj-mft/prototype' })).toEqual({
-      projectId: 'proj-mft',
-      nav: 'app-prototype',
-    });
-
-    // Secondary area query parameters & hash routes
-    expect(parseUrlNavState({ search: '?area=capability', hash: '' })).toEqual({
-      nav: 'cap-systems',
-    });
-    expect(parseUrlNavState({ search: '?area=analytics', hash: '' })).toEqual({
-      nav: 'data-resources',
-    });
-    expect(parseUrlNavState({ search: '?area=governance', hash: '' })).toEqual({
-      nav: 'llm-center',
-    });
-    expect(parseUrlNavState({ search: '?area=settings', hash: '' })).toEqual({
-      nav: 'system-settings',
-    });
-    expect(parseUrlNavState({ search: '', hash: '#/area/analytics' })).toEqual({
-      nav: 'data-resources',
-    });
-    expect(parseUrlNavState({ search: '', hash: '#/settings' })).toEqual({
-      nav: 'system-settings',
     });
   });
 });

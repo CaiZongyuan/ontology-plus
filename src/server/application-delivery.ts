@@ -47,7 +47,19 @@ function resolveInputs(store: WorkspaceStore, appId: string): CompileDevelopment
   if (application.prototypeRevisionId && application.prototypeRevisionId !== confirmed.revisionId) {
     throw new AssemblyInputError('The selected prototype revision is not the project\'s Confirmed Revision. Confirm it with its UI Model changes or select the confirmed revision.');
   }
-  const requirementDoc = store.listRequirementDocs(project.id).find((document) => document.status !== 'DRAFT');
+  const stepConfirmations = store.getProjectStepConfirmations(project.id);
+  const confirmedReq = stepConfirmations.requirements;
+  const requirementDoc = confirmedReq
+    ? {
+        id: confirmedReq.docId,
+        projectId: project.id,
+        title: confirmedReq.title,
+        version: confirmedReq.version,
+        status: 'CONFIRMED' as const,
+        content: confirmedReq.content,
+        updatedAt: confirmedReq.confirmedAt,
+      }
+    : store.listRequirementDocs(project.id).find((document) => document.status !== 'DRAFT');
   if (!requirementDoc) throw new AssemblyInputError('Confirm the project requirements before generating this package.');
 
   return {
@@ -91,10 +103,16 @@ function findSnapshot(store: WorkspaceStore, appId: string, snapshotId?: string)
 export function registerApplicationDeliveryRoutes(app: Hono, store: WorkspaceStore): void {
   app.post('/api/applications/:appId/compile-package', (c) => {
     try {
-      const compiledPackage = compileDevelopmentPackage({
+      const rawCompiled = compileDevelopmentPackage({
         ...resolveInputs(store, c.req.param('appId')),
         snapshotId: `pkg-${randomUUID()}`,
       });
+      const modelConfirmationId =
+        store.getProjectStepConfirmations(rawCompiled.projectId).businessModel?.id ?? null;
+      const compiledPackage: DevelopmentPackageSnapshot = {
+        ...rawCompiled,
+        basedOnBusinessModelConfirmationId: modelConfirmationId,
+      };
       store.saveDevelopmentPackageSnapshot(compiledPackage);
       return c.json({
         compiledPackage,

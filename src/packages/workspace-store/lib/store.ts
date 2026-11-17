@@ -57,9 +57,19 @@ import {
   SEED_REQUIREMENT_SESSIONS,
   SEED_SETTLEMENT_ORDER_ROWS,
   SEED_SKILLS,
+  SEED_STEP_CONFIRMATIONS,
   SEED_SYSTEM_SETTINGS,
   SEED_WRITEBACK_INTERFACES,
 } from './seed-data.js';
+import {
+  BusinessModelConfirmError,
+  RequirementsConfirmError,
+  computeOntologySuiteHash,
+  computeStepContentHash,
+  listPresentModelCodes,
+  normalizeStepMarkdown,
+  resolveCurrentStepConfirmations,
+} from './step-confirmations.js';
 import {
   doesProviderSupportVision,
   type AgentCheckpointRecord,
@@ -71,9 +81,11 @@ import {
   AnalyticsReport,
   AnalyticsScenario,
   AssembledApplication,
+  BusinessModelStepConfirmationRecord,
   CapabilityAgent,
   CapabilityChatSession,
   CommitSuiteOptions,
+  ConfirmableProjectStepId,
   ConfirmedPrototypeRevisionRecord,
   CrossSystemFlow,
   DataDocument,
@@ -92,11 +104,15 @@ import {
   MetricDefinition,
   ProjectDetail,
   ProjectSnapshot,
+  ProjectStepConfirmations,
   ProjectSummary,
   PrototypeArtifact,
+  PrototypeStepConfirmationRecord,
   ReasoningSession,
   RequirementDoc,
   RequirementSession,
+  RequirementsStepConfirmationRecord,
+  StepConfirmationRecord,
   SuiteCommitEvent,
   SystemSettingsState,
   WorkspaceStore,
@@ -1231,7 +1247,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     }
 
     for (const s of SEED_REQUIREMENT_SESSIONS) putItem('req_sessions', s.id, s, s.projectId);
-    for (const d of SEED_REQUIREMENT_DOCS) putItem('req_docs', d.id, d, d.projectId);
+    for (const d of SEED_REQUIREMENT_DOCS) putItem('req_docs', d.id, d, d.projectId, d.updatedAt);
+    for (const sc of SEED_STEP_CONFIRMATIONS) {
+      putItem('step_confirmations', sc.id, sc, sc.projectId, sc.confirmedAt);
+    }
     for (const pr of SEED_PROTOTYPES) {
       const storedSeed: StoredInteractivePrototype = {
         id: pr.id,
@@ -1248,13 +1267,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       };
       putItem('prototypes', pr.id, storedSeed, pr.projectId);
       if (pr.isConfirmed && pr.confirmedRevisionId) {
+        const seedProtoStepConf = SEED_STEP_CONFIRMATIONS.find(
+          (sc): sc is PrototypeStepConfirmationRecord =>
+            sc.step === 'PROTOTYPE' && sc.projectId === pr.projectId,
+        );
         const confirmation: ConfirmedPrototypeRevisionRecord = {
+          ...(seedProtoStepConf ? { id: seedProtoStepConf.id } : {}),
           projectId: pr.projectId,
           prototypeId: pr.id,
           revisionId: pr.confirmedRevisionId,
+          ...(seedProtoStepConf
+            ? { basedOnConfirmationId: seedProtoStepConf.basedOnConfirmationId }
+            : {}),
           confirmedAt: pr.updatedAt,
         };
-        putItem('prototype_confirmations', pr.projectId, confirmation, pr.projectId);
+        putItem('prototype_confirmations', pr.projectId, confirmation, pr.projectId, pr.updatedAt);
       }
     }
     for (const app of SEED_ASSEMBLED_APPS) putItem('assembled_apps', app.id, app, app.projectId);
@@ -1576,14 +1603,37 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       mirrorProjectFiles(id, source.domain, clonedSuite, changelog);
 
       // Clone SRS docs and Prototypes attached to the project
+      const sourceStepConfirmations = this.getProjectStepConfirmations(projectId);
+      const docIdMap = new Map<string, string>();
       for (const doc of this.listRequirementDocs(projectId)) {
+        const newDocId = nextUniqueId('rdoc');
+        docIdMap.set(doc.id, newDocId);
         this.saveRequirementDoc({
           ...doc,
-          id: nextUniqueId('rdoc'),
+          id: newDocId,
           projectId: id,
           title: `${doc.title} (副本)`,
         });
       }
+      let clonedReqConfId: string | null = null;
+      if (sourceStepConfirmations.requirements) {
+        const srcReq = sourceStepConfirmations.requirements;
+        clonedReqConfId = nextUniqueId('sconf-req');
+        const clonedReqConf: RequirementsStepConfirmationRecord = {
+          id: clonedReqConfId,
+          projectId: id,
+          step: 'REQUIREMENTS',
+          docId: docIdMap.get(srcReq.docId) ?? srcReq.docId,
+          title: `${srcReq.title} (副本)`,
+          version: srcReq.version,
+          content: srcReq.content,
+          contentHash: srcReq.contentHash,
+          basedOnConfirmationId: null,
+          confirmedAt: now,
+        };
+        putItem('step_confirmations', clonedReqConf.id, clonedReqConf, id, now);
+      }
+      let clonedProtoConfId: string | null = null;
       for (const proto of this.listPrototypes(projectId)) {
         const newProtoId = nextUniqueId('proto');
         const revisionIdMap = new Map<string, string>();
@@ -1621,18 +1671,46 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         putItem('prototypes', clonedStored.id, clonedStored, id);
         if (proto.isConfirmed && proto.confirmedRevisionId) {
           const mappedRevId = revisionIdMap.get(proto.confirmedRevisionId) ?? newCurrentRevId;
+          clonedProtoConfId = nextUniqueId('sconf-proto');
           putItem<ConfirmedPrototypeRevisionRecord>(
             'prototype_confirmations',
             id,
             {
+              id: clonedProtoConfId,
               projectId: id,
               prototypeId: newProtoId,
               revisionId: mappedRevId,
+              basedOnConfirmationId: clonedReqConfId,
               confirmedAt: now,
             },
             id,
+            now,
           );
+          const clonedProtoStepConf: PrototypeStepConfirmationRecord = {
+            id: clonedProtoConfId,
+            projectId: id,
+            step: 'PROTOTYPE',
+            prototypeId: newProtoId,
+            revisionId: mappedRevId,
+            basedOnConfirmationId: clonedReqConfId,
+            confirmedAt: now,
+          };
+          putItem('step_confirmations', clonedProtoStepConf.id, clonedProtoStepConf, id, now);
         }
+      }
+      if (sourceStepConfirmations.businessModel) {
+        const srcModel = sourceStepConfirmations.businessModel;
+        const clonedModelConf: BusinessModelStepConfirmationRecord = {
+          id: nextUniqueId('sconf-model'),
+          projectId: id,
+          step: 'BUSINESS_MODEL',
+          suite: structuredClone(srcModel.suite),
+          suiteHash: srcModel.suiteHash,
+          presentModels: [...srcModel.presentModels],
+          basedOnConfirmationId: clonedProtoConfId,
+          confirmedAt: now,
+        };
+        putItem('step_confirmations', clonedModelConf.id, clonedModelConf, id, now);
       }
 
       return this.getProject(id)!;
@@ -2175,13 +2253,30 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         },
       );
 
+      const now = new Date().toISOString();
+      const confirmationId = nextUniqueId('sconf-proto');
+      const currentReqConfirmation = this.getProjectStepConfirmations(projectId).requirements;
+      const basedOnConfirmationId = currentReqConfirmation?.id ?? null;
+
       const record: ConfirmedPrototypeRevisionRecord = {
+        id: confirmationId,
         projectId,
         prototypeId: matchedProto.id,
         revisionId: matchedRevision.id,
-        confirmedAt: new Date().toISOString(),
+        basedOnConfirmationId,
+        confirmedAt: now,
       };
-      putItem('prototype_confirmations', projectId, record, projectId);
+      putItem('prototype_confirmations', projectId, record, projectId, now);
+      const stepRecord: PrototypeStepConfirmationRecord = {
+        id: confirmationId,
+        projectId,
+        step: 'PROTOTYPE',
+        prototypeId: matchedProto.id,
+        revisionId: matchedRevision.id,
+        basedOnConfirmationId,
+        confirmedAt: now,
+      };
+      putItem('step_confirmations', stepRecord.id, stepRecord, projectId, now);
       const confirmed = hydrateConfirmedPrototypeRevision(record, matchedProto)!;
       return {
         confirmed,
@@ -2200,6 +2295,116 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const storedProto = getStoredPrototype(record.prototypeId);
       if (!storedProto) return undefined;
       return hydrateConfirmedPrototypeRevision(record, storedProto);
+    },
+
+    listStepConfirmations(projectId, step) {
+      const all = listItems<StepConfirmationRecord>('step_confirmations', projectId);
+      return step ? all.filter((rec) => rec.step === step) : all;
+    },
+
+    getProjectStepConfirmations(projectId): ProjectStepConfirmations {
+      const records = listItems<StepConfirmationRecord>('step_confirmations', projectId);
+      const fallbackProto = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        projectId,
+      );
+      return resolveCurrentStepConfirmations(records, fallbackProto);
+    },
+
+    confirmRequirementsStep(projectId, options) {
+      const project = this.getProject(projectId);
+      if (!project) throw new Error(`Project not found: ${projectId}`);
+      const docs = this.listRequirementDocs(projectId);
+      const targetDoc = options?.docId
+        ? docs.find((d) => d.id === options.docId)
+        : docs[0];
+      if (!targetDoc) {
+        throw new RequirementsConfirmError({
+          code: 'NO_REQUIREMENT_DOC',
+          messageZh: '当前项目还没有可确认的需求文档，请先与 AI 助手梳理并生成需求文档。',
+          messageEn:
+            'No requirements document exists for this project yet. Generate or write a requirements document first.',
+        });
+      }
+      const normalizedContent = normalizeStepMarkdown(targetDoc.content);
+      if (!normalizedContent) {
+        throw new RequirementsConfirmError({
+          code: 'EMPTY_REQUIREMENT_DOC',
+          messageZh: '需求文档内容为空，无法确认。请先补充需求内容后再确认。',
+          messageEn:
+            'The requirements document is empty and cannot be confirmed. Add requirement content first.',
+        });
+      }
+      const confirmedAt = new Date().toISOString();
+      const updatedDoc = putItem<RequirementDoc>(
+        'req_docs',
+        targetDoc.id,
+        {
+          ...targetDoc,
+          status: 'CONFIRMED',
+          updatedAt: confirmedAt,
+        },
+        projectId,
+        confirmedAt,
+      );
+      const confirmation: RequirementsStepConfirmationRecord = {
+        id: nextUniqueId('sconf-req'),
+        projectId,
+        step: 'REQUIREMENTS',
+        docId: updatedDoc.id,
+        title: updatedDoc.title,
+        version: updatedDoc.version,
+        content: updatedDoc.content,
+        contentHash: computeStepContentHash(updatedDoc.content),
+        basedOnConfirmationId: null,
+        confirmedAt,
+      };
+      putItem('step_confirmations', confirmation.id, confirmation, projectId, confirmedAt);
+      return {
+        confirmation,
+        doc: updatedDoc,
+        stepConfirmations: this.getProjectStepConfirmations(projectId),
+      };
+    },
+
+    confirmBusinessModelStep(projectId) {
+      const project = this.getProject(projectId);
+      if (!project) throw new Error(`Project not found: ${projectId}`);
+      if (project.validation.presentModels.length === 0) {
+        throw new BusinessModelConfirmError({
+          code: 'EMPTY_BUSINESS_MODEL',
+          messageZh: '当前项目还没有生成任何业务模型内容，无法确认。',
+          messageEn: 'The Business Model has no content yet and cannot be confirmed.',
+        });
+      }
+      if (project.validation.errorCount > 0) {
+        throw new BusinessModelConfirmError({
+          code: 'CONSISTENCY_ERRORS_PRESENT',
+          errorCount: project.validation.errorCount,
+          messageZh: `业务模型还有 ${project.validation.errorCount} 个需要修正的问题，修正后才能确认。`,
+          messageEn: `The Business Model still has ${project.validation.errorCount} problem(s) to fix before it can be confirmed.`,
+        });
+      }
+      const confirmedAt = new Date().toISOString();
+      const basedOnConfirmationId =
+        this.getProjectStepConfirmations(projectId).prototype?.id ?? null;
+      const suiteSnapshot = structuredClone(project.suite);
+      const confirmation: BusinessModelStepConfirmationRecord = {
+        id: nextUniqueId('sconf-model'),
+        projectId,
+        step: 'BUSINESS_MODEL',
+        suite: suiteSnapshot,
+        suiteHash: computeOntologySuiteHash(suiteSnapshot),
+        presentModels: listPresentModelCodes(suiteSnapshot),
+        basedOnConfirmationId,
+        confirmedAt,
+      };
+      putItem('step_confirmations', confirmation.id, confirmation, projectId, confirmedAt);
+      return {
+        confirmation,
+        project,
+        stepConfirmations: this.getProjectStepConfirmations(projectId),
+      };
     },
 
     savePrototypeAndSyncMu(projectId, input) {

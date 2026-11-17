@@ -3,6 +3,11 @@ import {
   CONTRACT_PROTOTYPE_HTML,
   MFT_ENTERPRISE_SUITE,
 } from '../../ontology-core/index.js';
+import {
+  computeOntologySuiteHash,
+  computeStepContentHash,
+  listPresentModelCodes,
+} from './step-confirmations.js';
 import type {
   AgentSession,
   AnalyticsReport,
@@ -27,6 +32,7 @@ import type {
   ReasoningSession,
   RequirementDoc,
   RequirementSession,
+  StepConfirmationRecord,
   SystemSettingsState,
   WritebackInterface,
 } from './types.js';
@@ -334,25 +340,59 @@ export const SEED_REQUIREMENT_DOCS: RequirementDoc[] = [
   {
     id: 'req-doc-contract-srs',
     projectId: 'proj-contract',
-    title: '合同全生命周期管理系统软件需求说明书 (SRS v5.0)',
+    title: '合同全生命周期管理系统需求文档',
     version: 'v5.0',
     status: 'CONFIRMED',
-    content: `# 合同全生命周期管理系统 — 软件需求说明书 (SRS)
+    content: `# 合同全生命周期管理系统需求文档
 
 ## 1. 业务目标与范围
-构建基于 **11 元模型业务本体** 的企业级合同全生命周期管理系统（CLM），实现从相对方资信核验、合同起草、风险定级会签、CA 电子签章到首期履约结算的端到端闭环。
+面向企业采购、销售与外包业务，建立从相对方资信准入、合同起草、按金额分级法务会签到电子签章及首期履约结算的全流程管理闭环。
 
-## 2. 核心领域对象 (对应 M1 对象模型)
-- **合同 (\`Contract\` / \`AGG-01\`)**：包含合同编号、名称、合同类型、相对方引用、合同总金额、状态、履约有效期（\`SignPeriod\`）及风险等级；下辖子实体 \`ContractLineItem\`（标的明细）与 \`PaymentMilestone\`（收付款里程碑）。
-- **签约相对方 (\`Counterparty\` / \`AGG-02\`)**：维护统一社会信用代码、企业全称、资信等级（AAA~C）与准入状态。
-- **履约结算单 (\`SettlementOrder\` / \`AGG-03\`)**：关联执行中合同，记录每期结算金额与核销状态。
+## 2. 核心业务对象
+- **合同**：记录合同编号、合同标题、合同类型、签约相对方、合同总金额、履约状态、履约有效期及风险等级；包含标的明细与收付款里程碑。
+- **签约相对方**：维护统一社会信用代码、企业全称、资信等级与准入状态。
+- **履约结算单**：关联执行中的合同与收付款里程碑，记录每期结算金额、逾期天数与核销状态。
 
-## 3. 关键业务行为与规则 (对应 M2 / M3 / ME / M4)
-1. **起草合同 (\`BHV-01\`)**：前置检查相对方状态必须为 \`ACTIVE\`，调用 \`RULE-01\` 校验百万级合同资信门槛，发布 \`EVT-01 (Contract.DraftCreated)\`。
-2. **提交合同审批 (\`BHV-02\`)**：调用 \`RULE-02\` 按金额阈值（50万/200万）自动判定风险等级，发布 \`EVT-02 (Contract.SubmittedForApproval)\`。
-3. **法务终审与结算联动 (\`BHV-03\` / \`SCN-01\`)**：法务审批放行后发布 \`EVT-03 (Contract.ApprovedAndSigned)\`，触发 \`RULE-03\` 结算总额守恒校验并调用 \`BHV-04\` 自动生成首期结算单。
+## 3. 关键业务操作与业务规则
+1. **起草合同**：起草前核验签约相对方必须处于正常准入状态；百万级及以上合同要求相对方具备优良资信等级。
+2. **提交合同审批**：按合同金额自动划分风险等级（50 万元与 200 万元分档），进入对应的部门、财务及法务会签流程。
+3. **法务终审与结算联动**：审批放行并完成签章后，自动核对各期收付款里程碑总额与合同总金额一致，并生成首期履约结算单。
 `,
     updatedAt: '2026-11-10T08:30:00.000Z',
+  },
+];
+
+export const SEED_STEP_CONFIRMATIONS: StepConfirmationRecord[] = [
+  {
+    id: 'sconf-req-contract-v1',
+    projectId: 'proj-contract',
+    step: 'REQUIREMENTS',
+    docId: 'req-doc-contract-srs',
+    title: SEED_REQUIREMENT_DOCS[0]!.title,
+    version: SEED_REQUIREMENT_DOCS[0]!.version,
+    content: SEED_REQUIREMENT_DOCS[0]!.content,
+    contentHash: computeStepContentHash(SEED_REQUIREMENT_DOCS[0]!.content),
+    basedOnConfirmationId: null,
+    confirmedAt: '2026-11-10T08:30:00.000Z',
+  },
+  {
+    id: 'sconf-proto-contract-v1',
+    projectId: 'proj-contract',
+    step: 'PROTOTYPE',
+    prototypeId: 'proto-contract-v1',
+    revisionId: 'proto-contract-v1::rev-1',
+    basedOnConfirmationId: 'sconf-req-contract-v1',
+    confirmedAt: '2026-11-10T08:45:00.000Z',
+  },
+  {
+    id: 'sconf-model-contract-v1',
+    projectId: 'proj-contract',
+    step: 'BUSINESS_MODEL',
+    suite: CONTRACT_LIFECYCLE_SUITE,
+    suiteHash: computeOntologySuiteHash(CONTRACT_LIFECYCLE_SUITE),
+    presentModels: listPresentModelCodes(CONTRACT_LIFECYCLE_SUITE),
+    basedOnConfirmationId: 'sconf-proto-contract-v1',
+    confirmedAt: '2026-11-10T09:00:00.000Z',
   },
 ];
 

@@ -93,7 +93,7 @@ describe('ApplicationCenterViews step module split', () => {
     expect(docsHtml).toContain('data-testid="srs-mode-registry"');
     expect(docsHtml).toContain('data-testid="generate-prototype-btn"');
     expect(docsHtml).toContain(data.requirementDocs[0]!.status);
-    expect(docsHtml).toContain('Save &amp; Confirm');
+    expect(docsHtml).toContain('Save Draft');
 
     const headerHtml = renderToStaticMarkup(
       <ViewModeHeader
@@ -173,7 +173,9 @@ describe('ApplicationCenterViews step module split', () => {
       'PrototypeStudioView',
       'RequirementDocsView',
       'RequirementExploreView',
+      'RequirementsStepView',
       'fetchSavedApplicationPackage',
+      'formatRequirementTextForBusinessView',
       'resolvePrototypeStudioStage',
     ]);
 

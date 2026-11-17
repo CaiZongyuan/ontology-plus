@@ -10,19 +10,26 @@ import {
   type ProjectStepStateId,
 } from '../../packages/business-vocabulary/index.js';
 import type { ModelCode, OntologySuite } from '../../packages/ontology-core/index.js';
-import type {
-  AgentSession,
-  AssembledApplication,
-  ConfirmedPrototypeRevision,
-  GeneratedSkill,
-  PrototypeArtifact,
-  RequirementDoc,
-  RequirementSession,
+import {
+  computeOntologySuiteHash,
+  computeStepContentHash,
+  normalizeStepMarkdown,
+  type AgentSession,
+  type AssembledApplication,
+  type ConfirmedPrototypeRevision,
+  type DevelopmentPackageSnapshot,
+  type GeneratedSkill,
+  type ProjectStepConfirmations,
+  type PrototypeArtifact,
+  type PrototypeStepConfirmationRecord,
+  type RequirementDoc,
+  type RequirementSession,
 } from '../../packages/workspace-store/index.js';
 
 export type ProjectStepNumber = 1 | 2 | 3 | 4 | 5;
 
 export type ProjectStepTargetView =
+  | 'app-requirements'
   | 'app-req-explore'
   | 'app-req-docs'
   | 'app-prototype'
@@ -69,10 +76,20 @@ export interface ProjectStepProgressInput {
   };
   agentSessions?: readonly Pick<AgentSession, 'projectId' | 'agentKind' | 'messages'>[];
   requirementSessions?: readonly Pick<RequirementSession, 'id'>[];
-  requirementDocs: readonly (Pick<RequirementDoc, 'id'> & Partial<Pick<RequirementDoc, 'status'>>)[];
-  prototypes: readonly (Pick<PrototypeArtifact, 'id'> & Partial<Pick<PrototypeArtifact, 'currentRevisionId'>>)[];
-  confirmedPrototypeRevision?: Pick<ConfirmedPrototypeRevision, 'prototypeId' | 'revisionId'> | null;
+  requirementDocs: readonly (Pick<RequirementDoc, 'id'> &
+    Partial<Pick<RequirementDoc, 'status' | 'content' | 'updatedAt'>>)[];
+  prototypes: readonly (Pick<PrototypeArtifact, 'id'> &
+    Partial<Pick<PrototypeArtifact, 'currentRevisionId'>>)[];
+  confirmedPrototypeRevision?:
+    | (Pick<ConfirmedPrototypeRevision, 'prototypeId' | 'revisionId'> &
+        Partial<Pick<ConfirmedPrototypeRevision, 'id' | 'basedOnConfirmationId' | 'confirmedAt'>>)
+    | null;
+  stepConfirmations?: ProjectStepConfirmations | null;
   assembledApplications?: readonly AssembledApplication[];
+  packageSnapshots?: readonly Pick<
+    DevelopmentPackageSnapshot,
+    'snapshotId' | 'appId' | 'compiledAt' | 'basedOnBusinessModelConfirmationId'
+  >[];
   generatedSkills?: readonly GeneratedSkill[];
 }
 
@@ -83,7 +100,9 @@ export interface ProjectLifecycleBootstrapSlice {
   requirementDocs: ProjectStepProgressInput['requirementDocs'];
   prototypes: ProjectStepProgressInput['prototypes'];
   confirmedPrototypeRevision?: ProjectStepProgressInput['confirmedPrototypeRevision'];
+  stepConfirmations?: ProjectStepProgressInput['stepConfirmations'];
   assembledApplications?: ProjectStepProgressInput['assembledApplications'];
+  packageSnapshots?: ProjectStepProgressInput['packageSnapshots'];
   generatedSkills?: ProjectStepProgressInput['generatedSkills'];
 }
 
@@ -102,9 +121,12 @@ export function deriveProjectStepProgress(input: ProjectStepProgressInput): Proj
   const hasExploration = explorationCount > 0;
   const srsDocCount = input.requirementDocs.length;
   const hasSrsDoc = srsDocCount > 0;
+  const hasConfirmedRequirements = Boolean(input.stepConfirmations?.requirements);
   const prototypeCount = input.prototypes.length;
   const hasPrototype = prototypeCount > 0;
-  const hasConfirmedPrototype = Boolean(input.confirmedPrototypeRevision);
+  const hasConfirmedPrototype = Boolean(
+    input.stepConfirmations?.prototype ?? input.confirmedPrototypeRevision,
+  );
   const presentModelCount = project.validation.presentModels.length;
   const hasOntology = presentModelCount > 0;
 
@@ -122,65 +144,59 @@ export function deriveProjectStepProgress(input: ProjectStepProgressInput): Proj
   const projectSkills = (input.generatedSkills ?? []).filter((s) => s.projectId === project.id);
 
   let nextStep: ProjectNextStep;
-  if (!hasExploration) {
+  if (!hasExploration && !hasSrsDoc) {
     nextStep = {
       step: 1,
-      targetView: 'app-req-explore',
+      targetView: 'app-requirements',
       labelZh: '前往第 1 步：开始需求探索',
-      labelEn: 'Step 1: Start Requirement Exploration',
-      hintZh: '先与 AI 澄清核心业务角色、单据与规则决策，再逐步自动生成规格书、原型与业务本体。',
-      hintEn:
-        'Clarify domain roles, entities, and rules with AI first before generating downstream artifacts.',
+      labelEn: 'Step 1: Start Requirements',
+      hintZh: '先与 AI 助手描述想做的系统，梳理核心业务对象与业务规则。',
+      hintEn: 'Describe your system with the AI Assistant to clarify core objects and business rules.',
     };
-  } else if (!hasSrsDoc) {
+  } else if (!hasConfirmedPrototype && (!hasSrsDoc || !hasConfirmedRequirements)) {
     nextStep = {
       step: 2,
-      targetView: 'app-req-explore',
-      labelZh: '前往需求探索：合成《需求文档》',
-      labelEn: 'Step 2: Synthesize SRS Document',
-      hintZh: '您已完成需求探索对话，下一步请合成《软件需求说明书》，作为原型与本体的输入依据。',
-      hintEn:
-        'Exploration session found. Next, synthesize the Software Requirements Specification (SRS).',
+      targetView: 'app-requirements',
+      labelZh: hasSrsDoc ? '前往需求：确认需求文档' : '前往需求：整理并确认需求文档',
+      labelEn: hasSrsDoc ? 'Step 2: Confirm Requirements Document' : 'Step 2: Synthesize & Confirm Requirements',
+      hintZh: '需求文档确认后，原型步骤将依据确认版本解锁。',
+      hintEn: 'Once the requirements document is confirmed, the Prototype step unlocks.',
     };
   } else if (!hasConfirmedPrototype) {
     nextStep = hasPrototype
       ? {
           step: 3,
           targetView: 'app-prototype',
-          labelZh: '前往界面原型：确认为当前原型',
+          labelZh: '前往原型：确认当前原型',
           labelEn: 'Step 3: Confirm Current Prototype',
-          hintZh:
-            '草稿原型已生成，请先在「界面原型」中点击「确认为当前原型」，再推导 11 元模型业务本体。',
-          hintEn:
-            'Draft prototype exists. Confirm a prototype revision ("Confirm Current Prototype") first before synthesizing the 11-model ontology.',
+          hintZh: '草稿原型已生成，请先确认原型修订，再整理业务模型。',
+          hintEn: 'Draft prototype exists. Confirm a prototype revision first before building the Business Model.',
         }
       : {
           step: 3,
-          targetView: 'app-req-docs',
-          labelZh: '前往需求文档：生成交互界面原型',
-          labelEn: 'Step 3: Generate UI Prototype',
-          hintZh: '《需求文档》已就绪，下一步请生成交互式 HTML 原型以确认页面布局与业务操作流。',
-          hintEn:
-            'SRS is ready. Next, generate an interactive HTML prototype to confirm screens and actions.',
+          targetView: 'app-prototype',
+          labelZh: '前往原型：生成交互界面原型',
+          labelEn: 'Step 3: Generate Prototype',
+          hintZh: '需求文档已确认，下一步可生成交互界面原型以确认页面布局与业务操作。',
+          hintEn: 'Requirements confirmed. Next, generate an interactive prototype to review screens and actions.',
         };
   } else if (!hasOntology) {
     nextStep = {
       step: 4,
       targetView: 'app-prototype',
-      labelZh: '前往界面原型：一键推导业务本体',
-      labelEn: 'Step 4: Synthesize 11-Model Ontology',
-      hintZh: '交互原型已就绪，现在可在「界面原型」中一键推导出本工程专属的 11 元模型业务本体。',
-      hintEn:
-        'Prototype is ready. Synthesize your project-specific 11-model ontology from the prototype.',
+      labelZh: '前往原型：推导业务模型',
+      labelEn: 'Step 4: Synthesize Business Model',
+      hintZh: '交互原型已确认，现在可推导出当前项目的业务模型。',
+      hintEn: 'Prototype is confirmed. Synthesize your project Business Model from the prototype.',
     };
   } else {
     nextStep = {
       step: 5,
       targetView: 'app-assembly-dev',
-      labelZh: '前往应用开发：组装四层开发资料包',
-      labelEn: 'Step 5: Assemble 4-Layer Dev Package',
-      hintZh: '业务本体已就绪，可绑定四层架构资产并编译导出《开发指导书》与开发资料包。',
-      hintEn: 'Business ontology is ready. Bind 4-layer assets and compile the development package.',
+      labelZh: '前往交付：生成开发资料包',
+      labelEn: 'Step 5: Generate Development Package',
+      hintZh: '业务模型已就绪，可前往交付步骤检查就绪状态并下载开发资料包。',
+      hintEn: 'Business Model is ready. Open Delivery to check readiness and download the development package.',
     };
   }
 
@@ -222,7 +238,9 @@ export function getProjectLifecycleState(data: ProjectLifecycleBootstrapSlice): 
     ...(data.confirmedPrototypeRevision !== undefined
       ? { confirmedPrototypeRevision: data.confirmedPrototypeRevision }
       : {}),
+    ...(data.stepConfirmations !== undefined ? { stepConfirmations: data.stepConfirmations } : {}),
     ...(data.assembledApplications ? { assembledApplications: data.assembledApplications } : {}),
+    ...(data.packageSnapshots ? { packageSnapshots: data.packageSnapshots } : {}),
     ...(data.generatedSkills ? { generatedSkills: data.generatedSkills } : {}),
   });
 }
@@ -240,6 +258,7 @@ export interface ProjectStepStatusView {
   readonly name: BilingualText;
   readonly state: ProjectStepStateId;
   readonly stateLabel: BilingualText;
+  readonly statusSummary: BilingualText;
   readonly hasContent: boolean;
   readonly blocked?: ProjectStepBlockedInfo;
 }
@@ -276,58 +295,242 @@ const BLOCKED_STEP_COPY: Readonly<
   },
 };
 
+function resolvePrototypeStepConfirmation(
+  input: ProjectStepProgressInput,
+): PrototypeStepConfirmationRecord | null {
+  if (input.stepConfirmations?.prototype) {
+    return input.stepConfirmations.prototype;
+  }
+  if (!input.confirmedPrototypeRevision) {
+    return null;
+  }
+  return {
+    id:
+      input.confirmedPrototypeRevision.id ??
+      `sconf-proto-${input.project.id}-${input.confirmedPrototypeRevision.revisionId}`,
+    projectId: input.project.id,
+    step: 'PROTOTYPE',
+    prototypeId: input.confirmedPrototypeRevision.prototypeId,
+    revisionId: input.confirmedPrototypeRevision.revisionId,
+    basedOnConfirmationId: input.confirmedPrototypeRevision.basedOnConfirmationId ?? null,
+    confirmedAt: input.confirmedPrototypeRevision.confirmedAt ?? '',
+  };
+}
+
+function buildStepStatusSummary(
+  step: ProjectStepId,
+  state: ProjectStepStateId,
+  blocked?: ProjectStepBlockedInfo,
+): BilingualText {
+  if (blocked) {
+    return blocked.detail;
+  }
+  switch (step) {
+    case 'REQUIREMENTS':
+      switch (state) {
+        case 'NOT_STARTED':
+          return {
+            zh: '和左边的 AI 助手描述你想做的系统，需求文档会在这里逐步成形。',
+            en: 'Describe the system you want to build to the AI Assistant on the left, and the requirements document will take shape here.',
+          };
+        case 'IN_PROGRESS':
+          return {
+            zh: '需求文档尚未确认。检查内容无误后请点击确认，原型会依据确认版本生成。',
+            en: 'Requirements are in progress. Review the document and confirm it to unlock Prototype.',
+          };
+        case 'UNCONFIRMED_CHANGES':
+          return {
+            zh: '需求文档有未确认的修改。原型仍依据上次确认的版本；重新确认后，原型会标为待更新。',
+            en: 'Requirements have unconfirmed changes. Prototype still uses the last confirmed version; re-confirming will mark Prototype as Outdated.',
+          };
+        case 'CONFIRMED':
+          return {
+            zh: '需求文档已确认。下一步可以开始做原型；若想法变了，随时回来修改。',
+            en: 'Requirements document confirmed. Next, build your Prototype; you can return and revise anytime.',
+          };
+        case 'OUTDATED':
+          return {
+            zh: '需求文档待更新。',
+            en: 'Requirements are outdated.',
+          };
+      }
+      break;
+    case 'PROTOTYPE':
+      switch (state) {
+        case 'NOT_STARTED':
+          return {
+            zh: '需求文档已确认。现在可以挑选视觉参考或让 AI 助手生成首版原型。',
+            en: 'Requirements are confirmed. Pick visual references or ask the AI Assistant to generate the first prototype.',
+          };
+        case 'IN_PROGRESS':
+          return {
+            zh: '原型草稿已生成，尚未确认。核对界面无误后请确认原型。',
+            en: 'A draft prototype is in progress. Review the screens and confirm the prototype when ready.',
+          };
+        case 'OUTDATED':
+          return {
+            zh: '需求有了新的确认；原型更新确认后，业务模型也会提示更新。',
+            en: 'Requirements were re-confirmed; once the prototype is updated and confirmed, the Business Model will also prompt for an update.',
+          };
+        case 'UNCONFIRMED_CHANGES':
+          return {
+            zh: '原型有未确认的新修订。业务模型仍依据上次确认的原型；确认新修订后会更新下游。',
+            en: 'Prototype has unconfirmed revisions. Business Model still uses the previously confirmed prototype.',
+          };
+        case 'CONFIRMED':
+          return {
+            zh: '原型已确认。下一步可以整理并确认业务模型。',
+            en: 'Prototype confirmed. Next, review and confirm your Business Model.',
+          };
+      }
+      break;
+    case 'BUSINESS_MODEL':
+      switch (state) {
+        case 'NOT_STARTED':
+          return {
+            zh: '原型已确认。现在可以让 AI 助手根据已确认的原型整理业务模型。',
+            en: 'Prototype confirmed. Ask the AI Assistant to synthesize the Business Model from the confirmed prototype.',
+          };
+        case 'IN_PROGRESS':
+          return {
+            zh: '业务模型正在完善中。没有需要修正的问题后即可确认业务模型。',
+            en: 'Business Model is in progress. Resolve any problems to fix and confirm when ready.',
+          };
+        case 'OUTDATED':
+          return {
+            zh: '原型有了新的确认；业务模型更新确认后，交付也会提示更新。',
+            en: 'The prototype was re-confirmed; once the Business Model is updated and confirmed, Delivery will also prompt for an update.',
+          };
+        case 'UNCONFIRMED_CHANGES':
+          return {
+            zh: '业务模型有未确认的修改。交付仍依据上次确认的业务模型；重新确认后生效。',
+            en: 'Business Model has unconfirmed changes. Delivery still uses the previously confirmed Business Model.',
+          };
+        case 'CONFIRMED':
+          return {
+            zh: '业务模型已确认。下一步可以前往交付生成开发资料包。',
+            en: 'Business Model confirmed. Next, open Delivery to generate your development package.',
+          };
+      }
+      break;
+    case 'DELIVERY':
+      switch (state) {
+        case 'NOT_STARTED':
+          return {
+            zh: '需要先确认业务模型，才能生成开发资料包。',
+            en: 'Confirm the Business Model first before generating the development package.',
+          };
+        case 'IN_PROGRESS':
+          return {
+            zh: '业务模型已确认，还没有基于当前确认版本生成开发资料包。',
+            en: 'Business Model is confirmed; generate a development package snapshot from the current confirmation.',
+          };
+        case 'OUTDATED':
+          return {
+            zh: '业务模型有了新的确认；重新生成开发资料包即可对齐最新业务模型。',
+            en: 'Business Model was re-confirmed; regenerate the development package to match the latest confirmation.',
+          };
+        case 'UNCONFIRMED_CHANGES':
+          return {
+            zh: '交付配置有未生成的新改动，重新生成开发资料包后生效。',
+            en: 'Delivery settings have uncompiled edits; regenerate the development package to apply them.',
+          };
+        case 'CONFIRMED':
+          return {
+            zh: '蓝图已就绪，已基于当前确认的业务模型生成开发资料包，可交付开发。',
+            en: 'Blueprint ready: a development package snapshot has been generated from the confirmed Business Model.',
+          };
+      }
+      break;
+  }
+}
+
 export function deriveProjectSteps(input: ProjectStepProgressInput): readonly ProjectStepStatusView[] {
   const lifecycle = deriveProjectStepProgress(input);
-  const hasConfirmedRequirementDoc = input.requirementDocs.some(
-    (doc) => doc.status === undefined || doc.status === 'CONFIRMED' || doc.status === 'PUBLISHED',
-  );
+  const reqConf = input.stepConfirmations?.requirements ?? null;
+  const protoConf = resolvePrototypeStepConfirmation(input);
+  const modelConf = input.stepConfirmations?.businessModel ?? null;
+
+  // 1. REQUIREMENTS
   const hasAnyRequirementWork = lifecycle.hasExploration || lifecycle.hasSrsDoc;
+  let requirementsState: ProjectStepStateId;
+  if (!reqConf) {
+    requirementsState = hasAnyRequirementWork ? 'IN_PROGRESS' : 'NOT_STARTED';
+  } else {
+    const latestDoc = input.requirementDocs[0];
+    const matchedDoc = input.requirementDocs.find((d) => d.id === reqConf.docId);
+    const hasNewerDifferentDoc = Boolean(latestDoc && latestDoc.id !== reqConf.docId);
+    const contentChanged =
+      !matchedDoc ||
+      (matchedDoc.content !== undefined
+        ? computeStepContentHash(matchedDoc.content) !== reqConf.contentHash &&
+          normalizeStepMarkdown(matchedDoc.content) !== normalizeStepMarkdown(reqConf.content)
+        : matchedDoc.status === 'DRAFT');
+    requirementsState =
+      hasNewerDifferentDoc || contentChanged ? 'UNCONFIRMED_CHANGES' : 'CONFIRMED';
+  }
 
-  const requirementsState: ProjectStepStateId = hasConfirmedRequirementDoc
-    ? 'CONFIRMED'
-    : hasAnyRequirementWork
-      ? 'IN_PROGRESS'
-      : 'NOT_STARTED';
-
-  const confirmedProto = input.confirmedPrototypeRevision;
-  const confirmedProtoEntity = confirmedProto
-    ? input.prototypes.find((p) => p.id === confirmedProto.prototypeId)
-    : undefined;
-  const hasUnconfirmedProtoChanges = Boolean(
-    confirmedProto &&
+  // 2. PROTOTYPE
+  const prototypeBlocked = !reqConf && !protoConf && !lifecycle.hasPrototype;
+  let prototypeState: ProjectStepStateId;
+  if (!protoConf) {
+    prototypeState = lifecycle.hasPrototype ? 'IN_PROGRESS' : 'NOT_STARTED';
+  } else if (reqConf && protoConf.basedOnConfirmationId !== reqConf.id) {
+    prototypeState = 'OUTDATED';
+  } else {
+    const confirmedProtoEntity = input.prototypes.find((p) => p.id === protoConf.prototypeId);
+    const hasUnconfirmedProtoChanges = Boolean(
       confirmedProtoEntity?.currentRevisionId &&
-      confirmedProtoEntity.currentRevisionId !== confirmedProto.revisionId,
-  );
+        confirmedProtoEntity.currentRevisionId !== protoConf.revisionId,
+    );
+    prototypeState = hasUnconfirmedProtoChanges ? 'UNCONFIRMED_CHANGES' : 'CONFIRMED';
+  }
 
-  const prototypeBlocked = !hasConfirmedRequirementDoc && !lifecycle.hasPrototype;
-  const prototypeState: ProjectStepStateId = confirmedProto
-    ? hasUnconfirmedProtoChanges
-      ? 'UNCONFIRMED_CHANGES'
-      : 'CONFIRMED'
-    : lifecycle.hasPrototype
-      ? 'IN_PROGRESS'
-      : 'NOT_STARTED';
+  // 3. BUSINESS_MODEL (Cascading rule: ONLY outdated when Prototype's current confirmation changed!)
+  const businessModelBlocked = !protoConf && !modelConf && !lifecycle.hasOntology;
+  let businessModelState: ProjectStepStateId;
+  if (!modelConf) {
+    businessModelState = lifecycle.hasOntology ? 'IN_PROGRESS' : 'NOT_STARTED';
+  } else if (protoConf && modelConf.basedOnConfirmationId !== protoConf.id) {
+    businessModelState = 'OUTDATED';
+  } else {
+    const currentSuiteHash = computeOntologySuiteHash(input.project.suite);
+    businessModelState =
+      currentSuiteHash !== modelConf.suiteHash ? 'UNCONFIRMED_CHANGES' : 'CONFIRMED';
+  }
 
-  const errorCount = input.project.validation.errorCount ?? 0;
-  const isModelCompleteAndClean = lifecycle.presentModelCount === 11 && errorCount === 0;
-  const businessModelBlocked = !lifecycle.hasConfirmedPrototype && !lifecycle.hasOntology;
-  const businessModelState: ProjectStepStateId = !lifecycle.hasOntology
-    ? 'NOT_STARTED'
-    : isModelCompleteAndClean
-      ? 'CONFIRMED'
-      : 'IN_PROGRESS';
-
+  // 4. DELIVERY (#48 Decision #4: mapped from Business Model confirmation + package snapshots)
   const hasDeliveryContent =
     lifecycle.projectApps.length > 0 || lifecycle.projectSkills.length > 0;
-  const hasCompiledPackageSnapshot = lifecycle.projectApps.some((app) =>
+  const deliveryBlocked = !modelConf && !hasDeliveryContent;
+
+  const snapshotsById = new Map(
+    (input.packageSnapshots ?? []).map((snap) => [snap.snapshotId, snap]),
+  );
+  const appsWithSnapshot = lifecycle.projectApps.filter((app) =>
     Boolean(app.latestPackageSnapshotId),
   );
-  const deliveryBlocked = !lifecycle.hasOntology && !hasDeliveryContent;
-  const deliveryState: ProjectStepStateId = hasCompiledPackageSnapshot
-    ? 'CONFIRMED'
-    : hasDeliveryContent || isModelCompleteAndClean
-      ? 'IN_PROGRESS'
-      : 'NOT_STARTED';
+  let deliveryState: ProjectStepStateId;
+  if (!modelConf) {
+    deliveryState = hasDeliveryContent ? 'IN_PROGRESS' : 'NOT_STARTED';
+  } else if (appsWithSnapshot.length === 0) {
+    deliveryState = 'IN_PROGRESS';
+  } else {
+    const resolvedSnapshots = appsWithSnapshot
+      .map((app) => snapshotsById.get(app.latestPackageSnapshotId!))
+      .filter((s): s is NonNullable<typeof s> => Boolean(s))
+      .sort((a, b) => b.compiledAt.localeCompare(a.compiledAt));
+    const latestSnapshot = resolvedSnapshots[0];
+    if (
+      latestSnapshot &&
+      latestSnapshot.basedOnBusinessModelConfirmationId !== undefined &&
+      latestSnapshot.basedOnBusinessModelConfirmationId !== modelConf.id
+    ) {
+      deliveryState = 'OUTDATED';
+    } else {
+      deliveryState = 'CONFIRMED';
+    }
+  }
 
   const stateById: Record<ProjectStepId, ProjectStepStateId> = {
     REQUIREMENTS: requirementsState,
@@ -356,6 +559,7 @@ export function deriveProjectSteps(input: ProjectStepProgressInput): readonly Pr
       name: PROJECT_STEP_NAMES[id],
       state,
       stateLabel: PROJECT_STEP_STATE_NAMES[state],
+      statusSummary: buildStepStatusSummary(id, state, blocked),
       hasContent: hasContentById[id],
       ...(blocked ? { blocked } : {}),
     };
@@ -374,7 +578,9 @@ export function getProjectStepsFromBootstrap(
     ...(data.confirmedPrototypeRevision !== undefined
       ? { confirmedPrototypeRevision: data.confirmedPrototypeRevision }
       : {}),
+    ...(data.stepConfirmations !== undefined ? { stepConfirmations: data.stepConfirmations } : {}),
     ...(data.assembledApplications ? { assembledApplications: data.assembledApplications } : {}),
+    ...(data.packageSnapshots ? { packageSnapshots: data.packageSnapshots } : {}),
     ...(data.generatedSkills ? { generatedSkills: data.generatedSkills } : {}),
   });
 }

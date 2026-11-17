@@ -89,7 +89,23 @@ export function PrototypeStudioView({
   const prototypes = data?.prototypes ?? [];
   const confirmedRevision = data?.confirmedPrototypeRevision ?? null;
   const proto = prototypes.find((p) => p.id === selectedProtoId) ?? prototypes[0];
-  const docs = data?.requirementDocs ?? [];
+  const confirmedRequirementsDoc = useMemo(() => {
+    const reqConf = data?.stepConfirmations?.requirements;
+    if (!reqConf) return undefined;
+    return {
+      id: reqConf.docId,
+      projectId: reqConf.projectId,
+      title: reqConf.title,
+      version: reqConf.version,
+      status: 'CONFIRMED' as const,
+      content: reqConf.content,
+      updatedAt: reqConf.confirmedAt,
+    };
+  }, [data?.stepConfirmations?.requirements]);
+  const docs = useMemo(
+    () => (confirmedRequirementsDoc ? [confirmedRequirementsDoc] : []),
+    [confirmedRequirementsDoc],
+  );
   const revisionSignature = prototypes
     .map((p) => `${p.id}:${p.currentRevisionId ?? ''}:${p.revisions?.length ?? 0}`)
     .join('|');
@@ -307,12 +323,19 @@ export function PrototypeStudioView({
 
   const handleGenerateNewPrototype = async (options?: { prompt?: string; docId?: string }) => {
     if (refining || isRunningCoDesignSession) return;
-    const targetDocId = options?.docId || selectedDocId || undefined;
-    const srsDoc = docs.find((d) => d.id === targetDocId) ?? docs[0];
+    if (!confirmedRequirementsDoc) {
+      showToast(
+        t(
+          '需要先在「需求」步骤确认需求文档，才能生成界面原型',
+          'Confirm your requirements document in the Requirements step first before generating a prototype',
+        ),
+      );
+      return;
+    }
     const promptNote = options?.prompt?.trim() || `${project.name} 交互界面原型`;
     const decided = await decideDesignBriefForMe({
       project,
-      ...(srsDoc ? { doc: srsDoc } : {}),
+      doc: confirmedRequirementsDoc,
       userFeelNote: promptNote,
       locale,
     });
@@ -554,6 +577,15 @@ export function PrototypeStudioView({
             : {})}
           {...(onNavigate ? { onOpenLlmCenter: () => onNavigate('llm-center') } : {})}
           onConfirmGenerateBrief={async ({ brief, compiledPrompt, prototypeName, images }) => {
+            if (!confirmedRequirementsDoc) {
+              showToast(
+                t(
+                  '需要先在「需求」步骤确认需求文档，才能生成界面原型',
+                  'Confirm your requirements document in the Requirements step first before generating a prototype',
+                ),
+              );
+              return;
+            }
             pendingBriefTransitionRef.current = {
               active: true,
               baselineSignature: revisionSignature,

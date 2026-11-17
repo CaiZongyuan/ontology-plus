@@ -1,10 +1,11 @@
 import {
   DEFAULT_NAV_VIEW,
   getDefaultViewForStep,
+  normalizeNavViewAlias,
   resolveAreaParamToView,
   resolveNavViewId,
   resolveStepParamToId,
-  type NavViewId,
+  type CanonicalNavViewId,
 } from './catalog.js';
 
 export interface UrlNavState {
@@ -22,18 +23,18 @@ function parseHashRoute(rawHash: string): { projectId?: string; nav?: string } {
     const step = resolveStepParamToId(parts[2] ?? 'requirements');
     return {
       projectId: parts[1],
-      nav: step ? getDefaultViewForStep(step) : 'app-req-explore',
+      nav: step ? getDefaultViewForStep(step) : 'app-requirements',
     };
   }
   if (parts[0] === 'area' && parts[1]) {
     const areaView = resolveAreaParamToView(parts[1]);
-    return areaView ? { nav: areaView } : { nav: cleaned };
+    return areaView ? { nav: areaView } : { nav: normalizeNavViewAlias(cleaned) ?? cleaned };
   }
   if (parts.length === 1) {
     const aliasView = resolveAreaParamToView(parts[0]);
     if (aliasView) return { nav: aliasView };
   }
-  return { nav: cleaned };
+  return { nav: normalizeNavViewAlias(cleaned) ?? cleaned };
 }
 
 export function parseUrlNavState(location: { search: string; hash: string }): UrlNavState {
@@ -42,8 +43,9 @@ export function parseUrlNavState(location: { search: string; hash: string }): Ur
   const projectId = params.get('projectId') || hashRoute.projectId || undefined;
   const stepId = resolveStepParamToId(params.get('step'));
   const areaNav = resolveAreaParamToView(params.get('area'));
+  const rawMode = params.get('mode');
   const nav =
-    params.get('mode') ||
+    normalizeNavViewAlias(rawMode) ||
     (stepId ? getDefaultViewForStep(stepId) : undefined) ||
     areaNav ||
     hashRoute.nav ||
@@ -65,9 +67,10 @@ export function applyUrlNavState(currentHref: string, patch: UrlNavState): strin
     else url.searchParams.delete('projectId');
   }
   if (patch.nav !== undefined) {
-    if (patch.nav) {
-      url.searchParams.set('mode', patch.nav);
-      url.hash = `#/${patch.nav}`;
+    const canonicalNav = normalizeNavViewAlias(patch.nav);
+    if (canonicalNav) {
+      url.searchParams.set('mode', canonicalNav);
+      url.hash = `#/${canonicalNav}`;
     } else {
       url.searchParams.delete('mode');
       url.hash = '';
@@ -95,7 +98,7 @@ export function writeUrlNavState(patch: UrlNavState): void {
   window.history.replaceState({}, '', nextRelativeUrl);
 }
 
-export function readHashView(location?: { search: string; hash: string }): NavViewId {
+export function readHashView(location?: { search: string; hash: string }): CanonicalNavViewId {
   if (!location && typeof window === 'undefined') return DEFAULT_NAV_VIEW;
   const urlState = location ? parseUrlNavState(location) : readUrlNavState();
   return resolveNavViewId(urlState.nav);
