@@ -4,9 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import { createArchitectureAssetCatalog } from '../../architecture-assets/index.js';
-import type {
-  ProjectStepId,
-  ProjectStepStateId,
+import {
+  isReservedIdentifierPrefix,
+  type ProjectStepId,
+  type ProjectStepStateId,
 } from '../../business-vocabulary/index.js';
 import {
   CONTRACT_LIFECYCLE_SUITE,
@@ -857,42 +858,6 @@ const CODE_STOP_WORDS = new Set([
   'WITH',
 ]);
 
-const RESERVED_CODE_PREFIXES = new Set([
-  'AGG',
-  'ENT',
-  'VO',
-  'DIC',
-  'DICT',
-  'ASSOC',
-  'BHV',
-  'BEH',
-  'RUL',
-  'RULE',
-  'EVT',
-  'SCN',
-  'ACT',
-  'ROL',
-  'ROLE',
-  'PERM',
-  'PGRP',
-  'FLW',
-  'FLOW',
-  'ACTV',
-  'QRY',
-  'RPT',
-  'SCR',
-  'EL',
-  'UIE',
-  'NAV',
-  'CC',
-  'MAP',
-  'INT',
-  'IF',
-  'MET',
-  'ASCN',
-  'WB',
-]);
-
 const CJK_CODE_PREFIX_RULES: readonly [RegExp, string][] = [
   [/合同|法务|签约/, 'CONTRACT'],
   [/供应商|采购|询价|准入/, 'SUPPLIER'],
@@ -943,7 +908,7 @@ function deriveUniqueProjectCode(
   existingCodes: ReadonlySet<string>,
 ): string {
   const asciiTokens = (sourceText.toUpperCase().match(/[A-Z0-9]{2,}/g) ?? [])
-    .filter((tok) => !CODE_STOP_WORDS.has(tok) && !RESERVED_CODE_PREFIXES.has(tok))
+    .filter((tok) => !CODE_STOP_WORDS.has(tok) && !isReservedIdentifierPrefix(tok))
     .slice(0, 2);
 
   let basePrefix = asciiTokens.length > 0 ? asciiTokens.join('-').slice(0, 18) : '';

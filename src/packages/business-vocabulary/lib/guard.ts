@@ -1,3 +1,12 @@
+import { MODEL_CODES, type ModelCode } from '../../ontology-core/index.js';
+import {
+  BUSINESS_VOCABULARY,
+  getModelBusinessName,
+  pickBusinessText,
+  type BilingualText,
+  type BusinessLocale,
+} from './vocabulary.js';
+
 export type BusinessViewViolationCategory =
   | 'MODEL_CODE'
   | 'IDENTIFIER'
@@ -250,56 +259,125 @@ function extractVisibleSegmentsFromHtml(
   return segments;
 }
 
+export const TECHNICAL_IDENTIFIER_PREFIXES = [
+  'AGG',
+  'ENT',
+  'VO',
+  'DIC',
+  'DICT',
+  'ASSOC',
+  'BHV',
+  'BEH',
+  'RUL',
+  'RULE',
+  'EVT',
+  'SCN',
+  'ACT',
+  'ROL',
+  'ROLE',
+  'PERM',
+  'PGRP',
+  'FLW',
+  'FLOW',
+  'ACTV',
+  'QRY',
+  'RPT',
+  'SCR',
+  'EL',
+  'UIE',
+  'NAV',
+  'CC',
+  'MAP',
+  'INT',
+  'IF',
+  'MET',
+  'ASCN',
+  'WB',
+] as const;
+
+export type TechnicalIdentifierPrefix = (typeof TECHNICAL_IDENTIFIER_PREFIXES)[number];
+
+const TECHNICAL_IDENTIFIER_PREFIX_SET: ReadonlySet<string> = new Set(TECHNICAL_IDENTIFIER_PREFIXES);
+
+export function isReservedIdentifierPrefix(token: string): boolean {
+  return TECHNICAL_IDENTIFIER_PREFIX_SET.has(token.trim().toUpperCase());
+}
+
+type GuardReplacementKind =
+  | 'MODEL_CODE'
+  | 'ELEMENT_ID'
+  | 'DIAGNOSTIC_CODE'
+  | 'SQL_TABLE'
+  | 'FILE_EXTENSION'
+  | 'FILE_FORMAT'
+  | 'PROTOCOL'
+  | 'INTERNAL_TERM';
+
 interface GuardRule {
   readonly category: BusinessViewViolationCategory;
+  readonly replacementKind: GuardReplacementKind;
   readonly pattern: RegExp;
 }
+
+const ELEMENT_ID_PATTERN = new RegExp(
+  `(?<![A-Za-z0-9_-])(?:${TECHNICAL_IDENTIFIER_PREFIXES.join('|')})-[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Za-z0-9_-])`,
+  'g',
+);
 
 const GUARD_RULES: readonly GuardRule[] = [
   // 1. 11 Canonical Model Codes (case-sensitive uppercase so English "me"/"mm"/"mi" never false-positive)
   {
     category: 'MODEL_CODE',
+    replacementKind: 'MODEL_CODE',
     pattern: /(?<![A-Za-z0-9_])(?:M[1-7]|ME|MU|MM|MI)(?![A-Za-z0-9_])/g,
   },
   // 2. Identifiers: element/artifact IDs, validator diagnostic codes, and physical SQL table names
   {
     category: 'IDENTIFIER',
-    pattern:
-      /(?<![A-Za-z0-9_-])(?:AGG|ENT|VO|DIC|DICT|ASSOC|BHV|BEH|RUL|RULE|EVT|SCN|ACT|ROL|ROLE|PERM|PGRP|FLW|FLOW|ACTV|QRY|RPT|SCR|EL|UIE|NAV|CC|MAP|INT|IF|MET|ASCN|WB)-[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Za-z0-9_-])/g,
+    replacementKind: 'ELEMENT_ID',
+    pattern: ELEMENT_ID_PATTERN,
   },
   {
     category: 'IDENTIFIER',
+    replacementKind: 'DIAGNOSTIC_CODE',
     pattern: /(?<![A-Za-z0-9_])(?:M[1-7]|ME|MU|MM|MI|STAGE)_[A-Z0-9_]+(?![A-Za-z0-9_])/g,
   },
   {
     category: 'IDENTIFIER',
+    replacementKind: 'SQL_TABLE',
     pattern: /(?<![A-Za-z0-9_])t_[a-z][a-z0-9_]+(?![A-Za-z0-9_])/g,
   },
   // 3. File formats & extensions (ZIP uppercase or .zip extension so English "zip code" stays valid)
   {
     category: 'FILE_FORMAT',
+    replacementKind: 'FILE_EXTENSION',
     pattern: /\.(?:yaml|yml|json|owl|ddl|sql|md|html|css|zip)(?![A-Za-z0-9_])/gi,
   },
   {
     category: 'FILE_FORMAT',
+    replacementKind: 'FILE_FORMAT',
     pattern: /(?<![A-Za-z0-9_])(?:YAML|YML|JSON|OWL|DDL|SQLite|SQL|Markdown|HTML5?|CSS)(?![A-Za-z0-9_])/gi,
   },
   {
     category: 'FILE_FORMAT',
+    replacementKind: 'FILE_FORMAT',
     pattern: /(?<![A-Za-z0-9_])ZIP(?![A-Za-z0-9_])/g,
   },
   // 4. Protocols (REST/RPC/MCP/SSE uppercase so English "the rest" never false-positives)
   {
     category: 'PROTOCOL',
+    replacementKind: 'PROTOCOL',
     pattern: /(?<![A-Za-z0-9_])(?:gRPC|RPC|MCP|SSE|REST)(?![A-Za-z0-9_])/g,
   },
   {
     category: 'PROTOCOL',
+    replacementKind: 'PROTOCOL',
     pattern: /(?<![A-Za-z0-9_])(?:HTTPS?|RESTful|GraphQL|OpenAPI)(?![A-Za-z0-9_])/gi,
   },
   // 5. Internal agent & engineering terms forbidden on the Business View surface
   {
     category: 'INTERNAL_TERM',
+    replacementKind: 'INTERNAL_TERM',
     pattern:
       /(?<![A-Za-z0-9_])(?:Agent\s+Sessions?|Agent\s+Runs?|Agent\s+Panels?|Architecture\s+Asset\s+Agent|Application\s+Development\s+Agent|Application\s+Coding\s+Agent|Copilot|PROTOTYPE_CO_DESIGN)(?![A-Za-z0-9_])|智能体会话|智能体运行|智能体面板|Agent\s*面板|Agent\s*运行|架构资产智能体|应用开发智能体/gi,
   },
@@ -384,4 +462,83 @@ export function formatBusinessViewViolations(
 /** Convenience check returning `true` when markup contains any Business View violation. */
 export function isTechnicalIdentifierOrJargon(value: string): boolean {
   return checkBusinessViewMarkup(value, { plainText: true }).length > 0;
+}
+
+export interface SanitizeBusinessTextOptions {
+  /** Optional map of known element IDs / physical table names to localized business labels. */
+  readonly elementDisplayMap?: ReadonlyMap<string, string>;
+  /** Custom fallback label for unmatched technical element IDs (`AGG-01`, `BHV-02`, etc.). */
+  readonly elementIdFallback?: BilingualText;
+}
+
+/**
+ * Sanitizes raw model text into clean Business View prose using the exact `GUARD_RULES`
+ * shared with `checkBusinessViewMarkup`, so detection and sanitization never drift.
+ */
+export function sanitizeBusinessText(
+  raw: string | undefined,
+  locale: BusinessLocale = 'zh-CN',
+  options?: SanitizeBusinessTextOptions,
+): string {
+  if (!raw) return '';
+  let text = raw.trim();
+  if (!text) return '';
+
+  if (checkBusinessViewMarkup(text, { plainText: true }).length === 0) {
+    return text;
+  }
+
+  if (options?.elementDisplayMap) {
+    for (const [id, businessLabel] of options.elementDisplayMap.entries()) {
+      if (text.includes(id)) {
+        text = text.split(id).join(businessLabel);
+      }
+    }
+    if (checkBusinessViewMarkup(text, { plainText: true }).length === 0) {
+      return text.replace(/\s+/g, ' ').trim();
+    }
+  }
+
+  const validModelCodes = new Set<string>(MODEL_CODES);
+  const elementFallback = options?.elementIdFallback
+    ? pickBusinessText(options.elementIdFallback, locale)
+    : locale === 'en-US'
+      ? 'related item'
+      : '关联项';
+
+  for (const rule of GUARD_RULES) {
+    const re = new RegExp(rule.pattern.source, rule.pattern.flags);
+    switch (rule.replacementKind) {
+      case 'MODEL_CODE':
+        text = text.replace(re, (match) =>
+          validModelCodes.has(match)
+            ? getModelBusinessName(match as ModelCode, locale, { singular: true })
+            : match,
+        );
+        break;
+      case 'ELEMENT_ID':
+        text = text.replace(re, elementFallback);
+        break;
+      case 'DIAGNOSTIC_CODE':
+        text = text.replace(re, locale === 'en-US' ? 'check item' : '检查项');
+        break;
+      case 'SQL_TABLE':
+        text = text.replace(re, locale === 'en-US' ? 'data record' : '数据记录');
+        break;
+      case 'FILE_EXTENSION':
+        text = text.replace(re, locale === 'en-US' ? ' file' : '文件');
+        break;
+      case 'FILE_FORMAT':
+        text = text.replace(re, locale === 'en-US' ? 'document' : '模型内容');
+        break;
+      case 'PROTOCOL':
+        text = text.replace(re, locale === 'en-US' ? 'external service' : '外部服务');
+        break;
+      case 'INTERNAL_TERM':
+        text = text.replace(re, pickBusinessText(BUSINESS_VOCABULARY.AI_ASSISTANT, locale));
+        break;
+    }
+  }
+
+  return text.replace(/\s+/g, ' ').trim();
 }

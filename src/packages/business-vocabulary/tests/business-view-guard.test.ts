@@ -5,8 +5,11 @@ import {
   MODEL_BUSINESS_NAMES,
   PROJECT_STEP_NAMES,
   PROJECT_STEP_STATE_NAMES,
+  TECHNICAL_IDENTIFIER_PREFIXES,
   checkBusinessViewMarkup,
   formatBusinessViewViolations,
+  isReservedIdentifierPrefix,
+  sanitizeBusinessText,
 } from '../index.js';
 
 describe('Business View vocabulary guard (checkBusinessViewMarkup)', () => {
@@ -255,5 +258,29 @@ describe('Business View vocabulary guard (checkBusinessViewMarkup)', () => {
         expect.objectContaining({ category: 'MODEL_CODE', match: 'M1' }),
       ]),
     );
+  });
+
+  it('sanitizes all 5 violation categories via shared GUARD_RULES and exposes reserved identifier prefixes', () => {
+    expect(TECHNICAL_IDENTIFIER_PREFIXES).toContain('AGG');
+    expect(TECHNICAL_IDENTIFIER_PREFIXES).toContain('WB');
+    expect(isReservedIdentifierPrefix('agg')).toBe(true);
+    expect(isReservedIdentifierPrefix('SCR')).toBe(true);
+    expect(isReservedIdentifierPrefix('CONTRACT')).toBe(false);
+
+    const displayMap = new Map<string, string>([
+      ['AGG-01', '「合同」'],
+      ['BHV-02', '「提交审批」'],
+    ]);
+    const rawZh =
+      '在 M1 的 AGG-01 上执行 BHV-02 与 RULE-99，写入 t_contract_main.yaml 并通过 REST / Agent Sessions 通知 STAGE_M7_MISSING';
+    const cleanedZh = sanitizeBusinessText(rawZh, 'zh-CN', { elementDisplayMap: displayMap });
+    expect(cleanedZh).toContain('「合同」');
+    expect(cleanedZh).toContain('「提交审批」');
+    expect(checkBusinessViewMarkup(cleanedZh, { plainText: true })).toEqual([]);
+
+    const rawEn =
+      'Update M2 BHV-02 and ASSOC-01 from m1-object-model.yaml via OpenAPI in Agent Panels (M3_BROKEN_REF on t_orders)';
+    const cleanedEn = sanitizeBusinessText(rawEn, 'en-US');
+    expect(checkBusinessViewMarkup(cleanedEn, { plainText: true })).toEqual([]);
   });
 });

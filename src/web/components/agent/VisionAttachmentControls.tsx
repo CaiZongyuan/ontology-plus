@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { EyeOff, ImageOff, ImagePlus, Settings2, X } from 'lucide-react';
+import { ChevronRight, EyeOff, ImageOff, ImagePlus, Settings2, X } from 'lucide-react';
 import {
   doesProviderSupportVision,
   type AgentImageAttachmentRef,
@@ -19,6 +19,7 @@ import {
 } from '../../lib/localImageStore.js';
 import { cn } from '../../lib/utils.js';
 import { Button } from '../beautifui/index.js';
+import { PLATFORM_UNAVAILABLE_COPY } from './agentRun.js';
 
 export function resolveActiveVisionCapability(
   data: Pick<BootstrapPayload, 'llmProviders'> | null | undefined,
@@ -28,6 +29,7 @@ export function resolveActiveVisionCapability(
   visionSupported: boolean;
   provider?: LlmProviderConfig;
   providerLabel?: string;
+  modelLabel?: string;
 } {
   const providers = data?.llmProviders ?? [];
   const activeProvider = providerId
@@ -38,32 +40,47 @@ export function resolveActiveVisionCapability(
   if (!activeProvider) {
     return { visionSupported: true };
   }
+  const resolvedModel = modelOverride || activeProvider.defaultModel;
   return {
     visionSupported: doesProviderSupportVision(activeProvider, modelOverride),
     provider: activeProvider,
     providerLabel: activeProvider.name,
+    ...(resolvedModel ? { modelLabel: resolvedModel } : {}),
   };
 }
 
 export interface VisionCapabilityBannerProps {
   visionSupported: boolean;
   providerLabel?: string;
+  modelLabel?: string;
   onOpenLlmCenter?: () => void;
+  onOpenPlatformSettings?: () => void;
   className?: string;
 }
 
 /**
- * Prominent non-silent notice shown whenever the active LLM provider has `supportsVision === false`.
- * Provides a direct link to LLM Center so the user can switch or enable a vision-capable gateway.
+ * Prominent non-silent notice shown whenever the active model does not support vision/images.
+ * Uses calm Business View copy (Spec #37 §11 / #63), deployer link ("前往平台设置"), and keeps
+ * technical diagnostics inside a collapsed `<details>` ("查看细节").
  */
 export function VisionCapabilityBanner({
   visionSupported,
   providerLabel,
+  modelLabel,
   onOpenLlmCenter,
+  onOpenPlatformSettings,
   className,
 }: VisionCapabilityBannerProps) {
   const { t } = usePreferences();
   if (visionSupported) return null;
+
+  const handleOpenSettings = onOpenPlatformSettings ?? onOpenLlmCenter;
+  const diagnosticItems = [
+    'code=VISION_UNSUPPORTED',
+    'supportsVision=false',
+    providerLabel ? `provider=${providerLabel} (${providerLabel})` : '',
+    modelLabel ? `model=${modelLabel}` : '',
+  ].filter(Boolean);
 
   return (
     <div
@@ -75,28 +92,43 @@ export function VisionCapabilityBanner({
         <EyeOff size={14} className="vision-capability-banner-icon" aria-hidden="true" />
         <div className="vision-capability-banner-copy">
           <span className="vision-capability-banner-text">
+            {t(PLATFORM_UNAVAILABLE_COPY.zh, PLATFORM_UNAVAILABLE_COPY.en)}
+          </span>
+          <span className="vision-capability-banner-subtext">
             {t(
               '当前模型看不了图，将只使用文字设计说明',
               'Current model cannot view images; only text design notes will be used',
             )}
           </span>
-          {providerLabel && (
-            <span className="vision-capability-banner-meta">({providerLabel})</span>
-          )}
         </div>
       </div>
-      {onOpenLlmCenter && (
+      {handleOpenSettings && (
         <Button
           type="button"
           variant="secondary"
           size="xs"
           data-testid="vision-open-llm-center-btn"
-          onClick={onOpenLlmCenter}
+          onClick={handleOpenSettings}
         >
           <Settings2 size={12} aria-hidden="true" />
-          {t('前往 LLM 中心', 'Open LLM Center')}
+          {t('前往平台设置', 'Open platform settings')}
         </Button>
       )}
+      <details
+        className="vision-capability-banner-details"
+        data-testid="vision-fallback-details"
+      >
+        <summary
+          className="vision-capability-banner-summary"
+          data-testid="vision-fallback-details-toggle"
+        >
+          <ChevronRight size={12} className="agent-run-chevron" aria-hidden="true" />
+          <span>{t('查看细节', 'View details')}</span>
+        </summary>
+        <div className="vision-capability-banner-diagnostics">
+          <p className="agent-run-details-meta">{diagnosticItems.join(' · ')}</p>
+        </div>
+      </details>
     </div>
   );
 }
@@ -278,7 +310,9 @@ export interface VisionAttachmentControlsProps {
   onAttachmentsChange: (next: AgentImageAttachmentRef[]) => void;
   visionSupported?: boolean;
   providerLabel?: string;
+  modelLabel?: string;
   onOpenLlmCenter?: () => void;
+  onOpenPlatformSettings?: () => void;
   defaultRole?: AgentImageAttachmentRole;
   disabled?: boolean;
   className?: string;
@@ -293,7 +327,9 @@ export function VisionAttachmentControls({
   onAttachmentsChange,
   visionSupported = true,
   providerLabel,
+  modelLabel,
   onOpenLlmCenter,
+  onOpenPlatformSettings,
   defaultRole = 'user_upload',
   disabled = false,
   className,
@@ -349,7 +385,9 @@ export function VisionAttachmentControls({
       <VisionCapabilityBanner
         visionSupported={visionSupported}
         {...(providerLabel ? { providerLabel } : {})}
+        {...(modelLabel ? { modelLabel } : {})}
         {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
+        {...(onOpenPlatformSettings ? { onOpenPlatformSettings } : {})}
       />
 
       <div className="vision-attachment-toolbar">

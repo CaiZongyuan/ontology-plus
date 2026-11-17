@@ -18,11 +18,16 @@ export {
 } from './lib/vocabulary.js';
 
 export {
+  TECHNICAL_IDENTIFIER_PREFIXES,
+  isReservedIdentifierPrefix,
   checkBusinessViewMarkup,
   formatBusinessViewViolations,
+  sanitizeBusinessText,
+  type TechnicalIdentifierPrefix,
   type BusinessViewViolationCategory,
   type BusinessViewViolation,
   type BusinessViewGuardOptions,
+  type SanitizeBusinessTextOptions,
 } from './lib/guard.js';
 
 export {

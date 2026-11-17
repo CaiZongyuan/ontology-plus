@@ -147,7 +147,7 @@ export function DropdownMenuLabel({
 }: DropdownMenuLabelProps) {
   const inGroup = React.useContext(DropdownMenuInGroupContext);
   const labelClassName = cn(
-    'px-2 py-1.5 font-sans text-[11.5px] font-medium text-muted-foreground data-[inset]:pl-8',
+    'px-2 py-1.5 font-sans text-xs font-medium text-muted-foreground data-[inset]:pl-8',
     className,
   );
 
@@ -189,7 +189,7 @@ export function DropdownMenuItem({
       data-inset={inset || undefined}
       data-variant={variant}
       className={cn(
-        'group/dropdown-menu-item relative flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 font-sans text-[13px] leading-snug text-popover-foreground select-none transition-colors duration-100',
+        'group/dropdown-menu-item relative flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 font-sans text-[13px] leading-snug text-popover-foreground select-none',
         'data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground',
         'data-[variant=destructive]:text-destructive data-[variant=destructive]:data-[highlighted]:bg-destructive-soft data-[variant=destructive]:data-[highlighted]:text-destructive',
         'data-[inset]:pl-8 data-[disabled]:pointer-events-none data-[disabled]:opacity-45',
@@ -214,7 +214,7 @@ export function DropdownMenuCheckboxItem({
       data-slot="dropdown-menu-checkbox-item"
       checked={checked}
       className={cn(
-        'relative flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-8 font-sans text-[13px] leading-snug text-popover-foreground select-none transition-colors duration-100 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*="size-"])]:size-4',
+        'relative flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-8 font-sans text-[13px] leading-snug text-popover-foreground select-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*="size-"])]:size-4',
         className,
       )}
       {...props}
@@ -260,7 +260,7 @@ export function DropdownMenuRadioItem({
     <MenuPrimitive.RadioItem
       data-slot="dropdown-menu-radio-item"
       className={cn(
-        'relative flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-8 font-sans text-[13px] leading-snug text-popover-foreground select-none transition-colors duration-100 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*="size-"])]:size-4',
+        'relative flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-8 font-sans text-[13px] leading-snug text-popover-foreground select-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*="size-"])]:size-4',
         className,
       )}
       {...props}
@@ -301,7 +301,7 @@ export function DropdownMenuShortcut({
     <span
       data-slot="dropdown-menu-shortcut"
       className={cn(
-        'ml-auto font-mono text-[11.5px] tracking-wide text-faint-foreground',
+        'ml-auto font-mono text-xs tracking-wide text-faint-foreground',
         className,
       )}
       {...props}
@@ -332,7 +332,7 @@ export function DropdownMenuSubTrigger({
   ...props
 }: DropdownMenuSubTriggerProps) {
   const subTriggerClassName = cn(
-    'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 font-sans text-[13px] leading-snug text-popover-foreground select-none transition-colors duration-100 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[popup-open]:bg-accent data-[popup-open]:text-accent-foreground data-[inset]:pl-8 data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*="size-"])]:size-4',
+    'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 font-sans text-[13px] leading-snug text-popover-foreground select-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[popup-open]:bg-accent data-[popup-open]:text-accent-foreground data-[inset]:pl-8 data-[disabled]:pointer-events-none data-[disabled]:opacity-45 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*="size-"])]:size-4',
     className,
   );
 

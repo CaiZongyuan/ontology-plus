@@ -94,7 +94,7 @@ export function DialogContent({
     <DialogPrimitive.Close
       data-slot="dialog-close"
       aria-label={closeLabel}
-      className="absolute top-3.5 right-3.5 inline-flex size-7 cursor-pointer items-center justify-center rounded-sm text-faint-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground [&_svg:not([class*='size-'])]:size-4"
+      className="absolute top-3.5 right-3.5 inline-flex size-7 cursor-pointer items-center justify-center rounded-sm text-faint-foreground hover:bg-accent hover:text-foreground [&_svg:not([class*='size-'])]:size-4"
     >
       <XIcon />
     </DialogPrimitive.Close>
