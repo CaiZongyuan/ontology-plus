@@ -327,6 +327,26 @@ export interface AgentAskUserPrompt {
   selectedAnswers?: string[];
 }
 
+export type StepHandoffStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED';
+
+export interface StepHandoffProposal {
+  id: string;
+  sourceStep?: ProjectStepId | null;
+  targetStep: ProjectStepId;
+  request: string;
+  reason?: string;
+  status: StepHandoffStatus;
+  resolvedAt?: string;
+  targetSessionId?: string;
+  targetRunId?: string;
+}
+
+export interface StepHandoffOrigin {
+  handoffId: string;
+  sourceStep?: ProjectStepId | null;
+  sourceSessionId: string;
+}
+
 export type AgentDomainArtifact =
   | {
       kind: 'ONTOLOGY_DIFF';
@@ -460,6 +480,8 @@ export interface AgentSessionMessage {
   visionFallbackNotice?: string;
   toolCalls?: AgentToolCallTrace[];
   askUser?: AgentAskUserPrompt;
+  stepHandoff?: StepHandoffProposal;
+  handoffFrom?: StepHandoffOrigin;
   artifacts?: AgentDomainArtifact[];
   cancelled?: boolean;
   errorDiagnostic?: {
@@ -810,6 +832,7 @@ export interface BusinessModelStepConfirmationRecord {
   projectId: string;
   step: 'BUSINESS_MODEL';
   suite: OntologySuite;
+  suiteSnapshot?: OntologySuite;
   suiteHash: string;
   presentModels: ModelCode[];
   basedOnConfirmationId: string | null;

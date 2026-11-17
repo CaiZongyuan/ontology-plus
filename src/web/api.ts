@@ -64,6 +64,7 @@ import {
   RequirementDoc,
   RequirementSession,
   RequirementsStepConfirmationRecord,
+  StepHandoffProposal,
   SystemSettingsState,
   TechnologyProfile,
   WritebackInterface,
@@ -84,6 +85,7 @@ import {
 } from './components/agent/agentPanelStore.js';
 import {
   DEFAULT_NAV_VIEW,
+  STEP_SPECIALIST_AGENT_KINDS,
   deriveProjectStepProgress,
   getDefaultViewForStep,
   getProjectLifecycleState,
@@ -92,6 +94,7 @@ import {
   readUrlNavState,
   writeStepViewMode,
   writeUrlNavState,
+  type CanonicalNavViewId,
   type ProjectLifecycleState,
   type ProjectStepProgressInput,
   type UrlNavState,
@@ -217,7 +220,22 @@ export interface SessionLiveDraft {
   steps: SessionLiveStep[];
   artifacts?: AgentDomainArtifact[];
   askUser?: AgentAskUserPrompt;
+  stepHandoff?: StepHandoffProposal;
   activeAnchor?: PrototypeTargetAnchor;
+}
+
+export interface AcceptStepHandoffResult {
+  handoff: StepHandoffProposal;
+  sourceSession: AgentSession;
+  targetSession: AgentSession;
+  targetStep: ProjectStepId;
+  targetNavView: CanonicalNavViewId;
+  targetSessionId: string;
+  targetRunId: string;
+  targetItemId?: string;
+  agentSessions: AgentSession[];
+  project?: ProjectDetail;
+  stepConfirmations?: ProjectStepConfirmations;
 }
 
 export interface QueuedSessionPromptItem {
@@ -510,6 +528,9 @@ interface WorkbenchStoreState {
   startOntologySynthesisRun: (opts?: {
     prototypeId?: string;
     docId?: string;
+    mode?: 'synthesize' | 'update' | 'fix_problems' | 'complete_missing';
+    instruction?: string;
+    displayTitle?: string;
     mockMode?: boolean;
   }) => Promise<{ sessionId: string } | null>;
   startOntologyCopilotRun: (
@@ -558,6 +579,14 @@ interface WorkbenchStoreState {
     runId?: string,
     fallbackPrompt?: string,
   ) => Promise<void>;
+  acceptStepHandoff: (
+    sessionId: string,
+    handoffId: string,
+  ) => Promise<AcceptStepHandoffResult | null>;
+  declineStepHandoff: (
+    sessionId: string,
+    handoffId: string,
+  ) => Promise<StepHandoffProposal | null>;
   removeQueuedSessionPrompt: (sessionId: string, queueId: string) => void;
 }
 
@@ -1428,21 +1457,19 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     const payload: Record<string, unknown> = {
       ...(opts?.prototypeId ? { prototypeId: opts.prototypeId } : {}),
       ...(opts?.docId ? { docId: opts.docId } : {}),
+      ...(opts?.mode ? { mode: opts.mode } : {}),
     };
     const header = `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE ${JSON.stringify(payload)}]`;
-    const instruction =
+    const defaultInstruction =
       locale === 'en-US'
         ? 'Synthesize and validate the 11-model Ontology Suite from the confirmed UI prototype and SRS context via synthesize_ontology_suite.'
         : '请从已确认的界面原型锚点与需求规格上下文推导并校验完整的 11 模型本体套件，通过 synthesize_ontology_suite 工具保存。';
-    const displayTitle =
-      locale === 'en-US'
-        ? 'Synthesize 11-Model Ontology Suite'
-        : '从已确认原型合成 11 模型本体';
+    const instruction = opts?.instruction?.trim() || defaultInstruction;
 
     await get().startSessionAgentRun({
       sessionId: session.id,
       prompt: `${header}\n${instruction}`,
-      displayTitle,
+      ...(opts?.displayTitle?.trim() ? { displayTitle: opts.displayTitle.trim() } : {}),
       activeModelCode: get().selectedModel,
       ...(opts?.mockMode !== undefined ? { mockMode: opts.mockMode } : {}),
     });
@@ -1712,6 +1739,94 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     });
   },
 
+  acceptStepHandoff: async (sessionId, handoffId) => {
+    const cur = get().data;
+    const sourceSession = cur?.agentSessions.find((s) => s.id === sessionId);
+    const proposal = sourceSession?.messages
+      .slice()
+      .reverse()
+      .find((m) => m.stepHandoff?.id === handoffId)?.stepHandoff;
+    const projectId = sourceSession?.projectId ?? cur?.activeProject.id;
+
+    let preferredTargetSessionId: string | undefined;
+    let preferredPrototypeId: string | undefined;
+    let preferredApplicationId: string | undefined;
+
+    if (projectId && proposal) {
+      const targetKind = STEP_SPECIALIST_AGENT_KINDS[proposal.targetStep];
+      if (proposal.targetStep === 'PROTOTYPE') {
+        preferredPrototypeId = get().activePrototypeIdByProject[projectId];
+      } else {
+        if (proposal.targetStep === 'DELIVERY') {
+          const activeApp = cur?.assembledApplications.find(
+            (a) => a.id === get().activeItemId && a.projectId === projectId,
+          );
+          preferredApplicationId = activeApp?.id;
+        }
+        preferredTargetSessionId =
+          useAgentPanelStore.getState().sessionByScope[
+            agentSessionScopeKey(projectId, targetKind)
+          ];
+      }
+    }
+
+    const res = await apiAcceptStepHandoff(sessionId, handoffId, {
+      runInBackground: true,
+      ...(preferredTargetSessionId ? { preferredTargetSessionId } : {}),
+      ...(preferredPrototypeId ? { preferredPrototypeId } : {}),
+      ...(preferredApplicationId ? { preferredApplicationId } : {}),
+    });
+
+    const latest = get().data;
+    if (latest) {
+      const isSameProject = projectId && latest.activeProject.id === projectId;
+      set({
+        data: {
+          ...latest,
+          agentSessions: res.agentSessions,
+          ...(isSameProject && res.project ? { activeProject: res.project } : {}),
+          ...(isSameProject && res.stepConfirmations
+            ? { stepConfirmations: res.stepConfirmations }
+            : {}),
+        },
+      });
+    }
+
+    if (projectId) {
+      if (res.targetStep === 'PROTOTYPE' && res.targetItemId) {
+        get().setActivePrototypeId(projectId, res.targetItemId);
+      } else if (res.targetStep !== 'PROTOTYPE') {
+        const targetKind = STEP_SPECIALIST_AGENT_KINDS[res.targetStep];
+        useAgentPanelStore
+          .getState()
+          .rememberSession(agentSessionScopeKey(projectId, targetKind), res.targetSessionId);
+      }
+    }
+
+    useAgentPanelStore.getState().revealPanel();
+    get().setActiveNav(res.targetNavView, {
+      itemId: res.targetItemId ?? null,
+      sessionId: res.targetSessionId,
+    });
+    void get().attachLiveSessionStream(res.targetSessionId);
+
+    return res;
+  },
+
+  declineStepHandoff: async (sessionId, handoffId) => {
+    const res = await apiDeclineStepHandoff(sessionId, handoffId);
+    const latest = get().data;
+    if (latest) {
+      set({
+        data: {
+          ...latest,
+          agentSessions: res.agentSessions,
+        },
+      });
+    }
+    return res.handoff;
+  },
+
   removeQueuedSessionPrompt: (sessionId, queueId) => {
     const curQueue = get().sessionQueues[sessionId] ?? [];
     const filtered = curQueue.filter((item) => item.id !== queueId);
@@ -1881,6 +1996,37 @@ export async function apiCompactAgentSession(
   return res.json();
 }
 
+export async function apiAcceptStepHandoff(
+  sessionId: string,
+  handoffId: string,
+  input?: {
+    preferredTargetSessionId?: string;
+    preferredPrototypeId?: string;
+    preferredApplicationId?: string;
+    runInBackground?: boolean;
+    mockMode?: boolean;
+  },
+): Promise<AcceptStepHandoffResult> {
+  return apiPostJson<AcceptStepHandoffResult>(
+    `/api/agent-sessions/${encodeURIComponent(sessionId)}/handoffs/${encodeURIComponent(handoffId)}/accept`,
+    input ?? {},
+  );
+}
+
+export async function apiDeclineStepHandoff(
+  sessionId: string,
+  handoffId: string,
+): Promise<{
+  handoff: StepHandoffProposal;
+  sourceSession: AgentSession;
+  agentSessions: AgentSession[];
+}> {
+  return apiPostJson(
+    `/api/agent-sessions/${encodeURIComponent(sessionId)}/handoffs/${encodeURIComponent(handoffId)}/decline`,
+    {},
+  );
+}
+
 export interface StreamAgentSessionCallbacks {
   onSessionMeta?: (meta: {
     sessionId: string;
@@ -1903,6 +2049,7 @@ export interface StreamAgentSessionCallbacks {
   onToolResult?: (trace: AgentToolCallTrace, step: number) => void;
   onArtifact?: (artifact: AgentDomainArtifact) => void;
   onAskUser?: (askUser: AgentAskUserPrompt) => void;
+  onStepHandoff?: (stepHandoff: StepHandoffProposal) => void;
   onUsage?: (usage: {
     tokenUsage?: AgentSession['tokenUsage'];
     providerName?: string;
@@ -1991,6 +2138,9 @@ function consumeAgentSessionSseBody(
           break;
         case 'ask_user':
           callbacks.onAskUser?.(parsed.askUser as AgentAskUserPrompt);
+          break;
+        case 'step_handoff':
+          callbacks.onStepHandoff?.(parsed.stepHandoff as StepHandoffProposal);
           break;
         case 'usage':
           callbacks.onUsage?.(parsed as never);
@@ -2330,6 +2480,13 @@ function buildStoreSessionStreamCallbacks(
         ...cur,
         askUser,
         liveStatus: { zh: '等待确认关键业务决策…', en: 'Waiting for user decision…' },
+      }));
+    },
+    onStepHandoff: (stepHandoff) => {
+      patchDraft((cur) => ({
+        ...cur,
+        stepHandoff,
+        liveStatus: { zh: '已准备步骤转交建议…', en: 'Prepared step hand-off…' },
       }));
     },
     onArtifact: (artifact) => {

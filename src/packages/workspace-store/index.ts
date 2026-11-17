@@ -15,6 +15,7 @@ export {
   computeOntologySuiteHash,
   computeStepContentHash,
   normalizeStepMarkdown,
+  type BusinessModelConfirmErrorCode,
 } from './lib/step-confirmations.js';
 export {
   ArtifactHistoryConflictError,
@@ -46,6 +47,9 @@ export type {
   PrototypeTargetAnchor,
   AgentToolCallTrace,
   AgentAskUserPrompt,
+  StepHandoffStatus,
+  StepHandoffProposal,
+  StepHandoffOrigin,
   AgentDomainArtifact,
   AgentImageAttachmentRole,
   AgentImageAttachmentRef,

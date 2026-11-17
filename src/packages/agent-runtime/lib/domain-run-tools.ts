@@ -1484,6 +1484,125 @@ export function alignSuiteWithExtractedMu(
   return suite;
 }
 
+function repairMockSuiteConsistencyErrors(
+  baseSuite: OntologySuite,
+  htmlContent: string,
+  domain: string,
+): OntologySuite {
+  const suite: OntologySuite = alignSuiteWithExtractedMu(baseSuite, htmlContent, domain);
+  const aggregates = suite.M1?.aggregates ?? [];
+  const primaryAgg = aggregates[0];
+  if (!primaryAgg) return suite;
+
+  const dictMap = new Map<string, Set<string>>();
+  for (const dict of suite.M1?.data_dictionaries ?? []) {
+    dictMap.set(dict.id, new Set(dict.types.map((t) => t.typeCode)));
+  }
+  const seenAggNames = new Set<string>();
+  const aggKeys = new Set<string>();
+  for (const [idx, agg] of aggregates.entries()) {
+    if (!agg.name.trim()) agg.name = `DomainObject0${idx + 1}`;
+    if (seenAggNames.has(agg.name)) agg.name = `${agg.name}${idx + 1}`;
+    seenAggNames.add(agg.name);
+    if (seenAggNames.has(agg.alias)) agg.alias = `${agg.alias}${idx + 1}`;
+    seenAggNames.add(agg.alias);
+    aggKeys.add(agg.id);
+    aggKeys.add(agg.name);
+  }
+
+  for (const agg of aggregates) {
+    const voNames = new Set(agg.valueObjects.map((vo) => vo.name));
+    for (const attr of agg.attributes) {
+      if (attr.type === 'DictionaryRef') {
+        const ref = attr.dictionaryRef;
+        if (!ref || !dictMap.get(ref.dictionaryId)?.has(ref.typeCode)) {
+          attr.type = 'String';
+          delete attr.dictionaryRef;
+        }
+      } else if (attr.type === 'AggregateRootRef') {
+        if (!attr.targetAggregate || !aggKeys.has(attr.targetAggregate)) {
+          attr.targetAggregate = primaryAgg.name;
+        }
+      } else if (attr.type === 'ValueObject') {
+        if (!attr.valueObjectRef || !voNames.has(attr.valueObjectRef)) {
+          attr.type = 'String';
+          delete attr.valueObjectRef;
+        }
+      }
+    }
+    if (agg.uiBindings && suite.MU) {
+      const screenIds = new Set(suite.MU.screens.map((s) => s.screenId));
+      agg.uiBindings = agg.uiBindings.filter((id) => screenIds.has(id));
+    }
+  }
+
+  const ruleIds = new Set((suite.M3?.rules ?? []).map((r) => r.id));
+  const eventIds = new Set((suite.ME?.events ?? []).map((e) => e.id));
+  const permIds = new Set((suite.M5?.permissions ?? []).map((p) => p.id));
+  const reportIds = new Set((suite.M7?.query_reports ?? []).map((q) => q.id));
+
+  for (const beh of suite.M2?.behaviors ?? []) {
+    if (!beh.ownerEntity || !aggKeys.has(beh.ownerEntity)) {
+      beh.ownerEntity = primaryAgg.name;
+    }
+    beh.invokedRules = beh.invokedRules.filter((id) => ruleIds.has(id));
+    beh.producedEvents = beh.producedEvents.filter((ev) =>
+      typeof ev === 'string' ? eventIds.has(ev) : eventIds.has(ev.eventRef),
+    );
+    beh.requiredPermissions = beh.requiredPermissions.filter((id) => permIds.has(id));
+    if (beh.behaviorType !== 'QUERY' && beh.queryReportRef) {
+      delete beh.queryReportRef;
+    } else if (beh.queryReportRef && !reportIds.has(beh.queryReportRef)) {
+      beh.behaviorType = 'COMMAND';
+      delete beh.queryReportRef;
+    }
+  }
+
+  const behIds = new Set((suite.M2?.behaviors ?? []).map((b) => b.id));
+  for (const rule of suite.M3?.rules ?? []) {
+    const validObjs = rule.referencedObjects.filter((ref) => aggKeys.has(ref));
+    rule.referencedObjects = validObjs.length > 0 ? validObjs : [primaryAgg.name];
+    rule.triggeredBehaviors = rule.triggeredBehaviors.filter((tb) =>
+      behIds.has(tb.behaviorRef),
+    );
+    rule.producedEvents = rule.producedEvents.filter((id) => eventIds.has(id));
+    rule.triggeredByEvents = rule.triggeredByEvents.filter((id) => eventIds.has(id));
+  }
+
+  if (suite.MM) {
+    for (const mp of suite.MM.mappings) {
+      const owner = aggregates.find((a) => a.id === mp.objectRef || a.name === mp.objectName);
+      if (!owner) {
+        mp.objectRef = primaryAgg.id;
+        mp.objectName = primaryAgg.name;
+      }
+      const resolvedOwner = owner ?? primaryAgg;
+      const validAttrs = new Set(resolvedOwner.attributes.map((a) => a.name));
+      for (const tm of mp.tableMappings) {
+        tm.columnMappings = tm.columnMappings.filter((cm) => {
+          const shortName = cm.attributeRef.includes('.')
+            ? cm.attributeRef.split('.').slice(1).join('.')
+            : cm.attributeRef;
+          return cm.isDerived || shortName === 'id' || validAttrs.has(shortName);
+        });
+      }
+    }
+  }
+
+  if (suite.MI) {
+    const firstBehId = suite.M2?.behaviors[0]?.id;
+    for (const intf of suite.MI.interfaces) {
+      if (intf.direction === 'PROVIDED' && firstBehId) {
+        if (!intf.relatedBehaviorRef || !behIds.has(intf.relatedBehaviorRef)) {
+          intf.relatedBehaviorRef = firstBehId;
+        }
+      }
+    }
+  }
+
+  return suite;
+}
+
 export interface LiveAnalyticsComputedStats {
   totalContracts: number;
   totalAmount: number;
@@ -2426,20 +2545,33 @@ export async function executeDomainRunToolCall(
         : typeof actionParams?.prototypeId === 'string' && actionParams.prototypeId.trim()
           ? actionParams.prototypeId.trim()
           : undefined;
+    const explicitRevisionId =
+      typeof args.revisionId === 'string' && args.revisionId.trim()
+        ? args.revisionId.trim()
+        : typeof actionParams?.revisionId === 'string' && actionParams.revisionId.trim()
+          ? actionParams.revisionId.trim()
+          : undefined;
 
     // ADR 0010: MU and prototype HTML for ontology synthesis come EXCLUSIVELY from Confirmed Prototype Revision
     const confirmed = store.getConfirmedPrototypeRevision(project.id);
-    if (explicitPrototypeId && confirmed?.prototype.id !== explicitPrototypeId) {
+    if (
+      (explicitPrototypeId && confirmed?.prototype.id !== explicitPrototypeId) ||
+      (explicitRevisionId && confirmed?.revisionId !== explicitRevisionId)
+    ) {
+      const requestedRef = explicitRevisionId ?? explicitPrototypeId ?? '';
       const unconfirmedMsg = pickLocaleText(
         locale,
-        `已拦截未确认原型合成请求（prototypeId="${explicitPrototypeId}"）：合成 MU 界面模型与 11 模型本体套件必须基于「已确认界面原型修订 (Confirmed Prototype Revision)」。请先确认目标原型修订后再执行合成。`,
-        `Rejected unconfirmed prototype synthesis (prototypeId="${explicitPrototypeId}"): a Confirmed Prototype Revision (已确认界面原型修订) is required before synthesizing MU and the 11-model Ontology Suite.`,
+        `已拦截未确认原型合成请求（"${requestedRef}"）：合成 MU 界面模型与 11 模型本体套件必须基于「已确认界面原型修订 (Confirmed Prototype Revision)」。请先确认目标原型修订后再执行合成。`,
+        `Rejected unconfirmed prototype synthesis ("${requestedRef}"): a Confirmed Prototype Revision (已确认界面原型修订) is required before synthesizing MU and the 11-model Ontology Suite.`,
       );
       return {
         trace: {
           id: toolCallId,
           toolName,
-          arguments: { prototypeId: explicitPrototypeId },
+          arguments: {
+            ...(explicitPrototypeId ? { prototypeId: explicitPrototypeId } : {}),
+            ...(explicitRevisionId ? { revisionId: explicitRevisionId } : {}),
+          },
           output: unconfirmedMsg,
           isError: true,
           durationMs: Date.now() - started,
@@ -2447,8 +2579,10 @@ export async function executeDomainRunToolCall(
         toolResultContent: JSON.stringify({
           status: 'CONFIRMED_PROTOTYPE_REQUIRED',
           error: unconfirmedMsg,
-          requestedPrototypeId: explicitPrototypeId,
+          requestedPrototypeId: explicitPrototypeId ?? null,
+          requestedRevisionId: explicitRevisionId ?? null,
           confirmedPrototypeId: confirmed?.prototype.id ?? null,
+          confirmedRevisionId: confirmed?.revisionId ?? null,
         }),
         isError: true,
       };
@@ -2563,12 +2697,20 @@ export async function executeDomainRunToolCall(
     };
     const currentCheck = validateOntologySuite(currentWithSyncedMu);
 
-    const candidateSuite: OntologySuite =
+    let candidateSuite: OntologySuite =
       currentCheck.errorCount === 0 && currentCheck.presentModels.length === 11
         ? currentWithSyncedMu
         : alignSuiteWithExtractedMu(seedSuite, confirmedHtml, project.domain);
 
-    const finalValidation = validateOntologySuite(candidateSuite);
+    let finalValidation = validateOntologySuite(candidateSuite);
+    if (isMock && finalValidation.errorCount > 0) {
+      candidateSuite = repairMockSuiteConsistencyErrors(
+        candidateSuite,
+        confirmedHtml,
+        project.domain,
+      );
+      finalValidation = validateOntologySuite(candidateSuite);
+    }
     if (finalValidation.errorCount > 0) {
       const firstErr = finalValidation.diagnostics.find((d) => d.tier === 'ERROR');
       const rejectMsg = pickLocaleText(

@@ -1,5 +1,6 @@
 import type { ModelCode, OntologySuite } from '../../ontology-core/index.js';
 import type {
+  BusinessModelStepConfirmationRecord,
   ConfirmedPrototypeRevisionRecord,
   ProjectStepConfirmations,
   PrototypeStepConfirmationRecord,
@@ -72,14 +73,19 @@ export class RequirementsConfirmError extends Error {
   }
 }
 
+export type BusinessModelConfirmErrorCode =
+  | 'PROTOTYPE_NOT_CONFIRMED'
+  | 'EMPTY_BUSINESS_MODEL'
+  | 'CONSISTENCY_ERRORS_PRESENT';
+
 export class BusinessModelConfirmError extends Error {
-  readonly code: 'EMPTY_BUSINESS_MODEL' | 'CONSISTENCY_ERRORS_PRESENT';
+  readonly code: BusinessModelConfirmErrorCode;
   readonly errorCount: number;
   readonly messageZh: string;
   readonly messageEn: string;
 
   constructor(params: {
-    code: 'EMPTY_BUSINESS_MODEL' | 'CONSISTENCY_ERRORS_PRESENT';
+    code: BusinessModelConfirmErrorCode;
     errorCount?: number;
     messageZh: string;
     messageEn: string;
@@ -91,6 +97,17 @@ export class BusinessModelConfirmError extends Error {
     this.messageZh = params.messageZh;
     this.messageEn = params.messageEn;
   }
+}
+
+export function normalizeBusinessModelConfirmation(
+  record: BusinessModelStepConfirmationRecord,
+): BusinessModelStepConfirmationRecord {
+  const snapshot = structuredClone(record.suiteSnapshot ?? record.suite ?? {});
+  return {
+    ...record,
+    suite: snapshot,
+    suiteSnapshot: structuredClone(snapshot),
+  };
 }
 
 export function toPrototypeStepConfirmation(
@@ -121,7 +138,7 @@ export function resolveCurrentStepConfirmations(
     } else if (rec.step === 'PROTOTYPE' && !prototype) {
       prototype = rec;
     } else if (rec.step === 'BUSINESS_MODEL' && !businessModel) {
-      businessModel = rec;
+      businessModel = normalizeBusinessModelConfirmation(rec);
     }
     if (requirements && prototype && businessModel) break;
   }

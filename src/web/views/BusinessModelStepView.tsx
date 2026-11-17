@@ -23,6 +23,7 @@ import {
   pickBusinessText,
   sanitizeBusinessText as sanitizeSharedBusinessText,
   type BusinessLocale,
+  type ProjectStepStateId,
 } from '../../packages/business-vocabulary/index.js';
 import {
   DEFAULT_COLLAPSED_OBJECT_SECTIONS,
@@ -58,6 +59,7 @@ import { useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import { ArtifactHistoryDrawer } from '../components/history/index.js';
 import { usePreferences, type NavViewId } from '../i18n.js';
 import {
+  getProjectStepsFromBootstrap,
   resolveLegacyBusinessModelTechTab,
   useStepViewMode,
   writeStepViewMode,
@@ -115,6 +117,7 @@ export interface BusinessModelStepViewProps {
     | DefaultExpandedObjectSection
     | DefaultCollapsedObjectSection
   )[];
+  readonly defaultShowIncomplete?: boolean;
 }
 
 export function resolveBusinessModelPageId(
@@ -427,11 +430,148 @@ function humanizeStageWarning(
   const modelName = getModelBusinessName(diag.model, locale);
   if (diag.code.startsWith('STAGE_') && diag.code.endsWith('_MISSING')) {
     return locale === 'en-US'
-      ? `"${modelName}" has not been organized yet.`
-      : `尚未整理「${modelName}」。`;
+      ? `Not yet completed: ${modelName} details.`
+      : `尚未补充「${modelName}」说明。`;
   }
   const rawMsg = locale === 'en-US' ? diag.messageEn : diag.messageZh;
   return sanitizeBusinessText(rawMsg, elementDisplayMap, locale);
+}
+
+function summarizeIncompleteModels(
+  warnings: readonly ValidationDiagnostic[],
+  locale: BusinessLocale,
+): string {
+  const names: string[] = [];
+  for (const diag of warnings) {
+    const name = getModelBusinessName(diag.model, locale);
+    if (name && !names.includes(name)) {
+      names.push(name);
+    }
+  }
+  if (names.length === 0) return '';
+  if (locale === 'en-US') {
+    const preview = names.slice(0, 3).join(', ');
+    return names.length > 3
+      ? `Missing ${preview} and ${names.length - 3} more`
+      : `Missing ${preview} details`;
+  }
+  const preview = names.slice(0, 3).join('与');
+  return names.length > 3
+    ? `尚未补充${names.slice(0, 3).join('、')}等 ${names.length} 项说明`
+    : `尚未补充${preview}说明`;
+}
+
+function humanizeConsistencyProblem(
+  diag: ValidationDiagnostic,
+  elementDisplayMap: ReadonlyMap<string, string>,
+  locale: BusinessLocale,
+): string {
+  const itemLabel = diag.elementId ? elementDisplayMap.get(diag.elementId) : undefined;
+  const partName = getModelBusinessName(diag.model, locale, { singular: true });
+  const subject = itemLabel
+    ? locale === 'en-US'
+      ? `${partName} ${itemLabel}`
+      : `${partName}${itemLabel}`
+    : partName;
+
+  switch (diag.code) {
+    case 'M1_EMPTY_AGGREGATE_NAME':
+      return locale === 'en-US'
+        ? `A business object is missing its name; give it a clear business name.`
+        : `${subject}缺少名称，请补充清晰的业务名称。`;
+    case 'M1_DUPLICATE_AGGREGATE_NAME':
+    case 'M1_DUPLICATE_AGGREGATE_ID':
+      return locale === 'en-US'
+        ? `${subject} shares the same name with another business object; keep each business object uniquely named.`
+        : `${subject}与其他业务对象重名，请调整名称或合并重复项。`;
+    case 'M1_DANGLING_DICTIONARY_REF':
+    case 'M1_DICT_REF_MISSING':
+    case 'M1_INVALID_DICTIONARY_DEFAULT':
+      return locale === 'en-US'
+        ? `An option field on ${subject} refers to an option dictionary that has not been defined yet.`
+        : `${subject}中的选项字段引用了尚未定义的业务选项字典，请补充字典或调整字段类型。`;
+    case 'M1_DANGLING_AGGREGATE_REF':
+    case 'M1_MISSING_TARGET_AGGREGATE':
+      return locale === 'en-US'
+        ? `A linked field on ${subject} refers to a business object that does not exist.`
+        : `${subject}中的关联字段指向了不存在的业务对象，请重新指定关联目标。`;
+    case 'M2_DANGLING_OWNER_ENTITY':
+      return locale === 'en-US'
+        ? `${subject} is linked to a business object that does not exist; assign it to a valid business object.`
+        : `${subject}关联的所属业务对象不存在，请重新指定有效的业务对象。`;
+    case 'M2_DANGLING_RULE_REF':
+      return locale === 'en-US'
+        ? `${subject} refers to a business rule that does not exist; update or remove that rule link.`
+        : `${subject}引用了不存在的业务规则，请更新或移除该规则关联。`;
+    case 'M2_DANGLING_EVENT_REF':
+      return locale === 'en-US'
+        ? `${subject} refers to a business event that does not exist.`
+        : `${subject}引用了不存在的业务事件，请同步补齐或调整关联。`;
+    case 'M2_DANGLING_PERMISSION_REF':
+      return locale === 'en-US'
+        ? `${subject} refers to a role permission that does not exist.`
+        : `${subject}引用了不存在的权限项，请同步更新角色与权限。`;
+    case 'M2_DANGLING_QUERY_REPORT_REF':
+    case 'M2_M7_ONE_TO_ONE_MISMATCH':
+      return locale === 'en-US'
+        ? `${subject} and its paired query or report are out of sync.`
+        : `${subject}与配对的查询报表未保持一致，请同步对齐。`;
+    case 'M3_DANGLING_OBJECT_REF':
+      return locale === 'en-US'
+        ? `${subject} refers to a business object that does not exist.`
+        : `${subject}引用了不存在的业务对象，请更新适用对象范围。`;
+    case 'M3_DANGLING_BEHAVIOR_REF':
+      return locale === 'en-US'
+        ? `${subject} refers to an action that does not exist.`
+        : `${subject}引用了不存在的业务操作，请同步调整联动操作。`;
+    case 'M3_DANGLING_EVENT_REF':
+      return locale === 'en-US'
+        ? `${subject} refers to a business event that does not exist.`
+        : `${subject}引用了不存在的业务事件，请同步调整触发或产生的事件。`;
+    case 'MU_INVALID_DATA_BINDING':
+      return locale === 'en-US'
+        ? `A screen control on ${subject} binds to a field that has not been added to the business object yet.`
+        : `${subject}上的界面控件绑定了尚未添加到业务对象的字段，请同步补齐字段。`;
+    case 'MU_DANGLING_BEHAVIOR_REF':
+      return locale === 'en-US'
+        ? `A screen button on ${subject} triggers an action that has not been added to the business model yet.`
+        : `${subject}上的界面按钮关联了尚未定义的业务操作，请同步补齐该业务操作。`;
+    case 'MM_DANGLING_OBJECT_REF':
+    case 'MM_DANGLING_ATTRIBUTE_REF':
+      return locale === 'en-US'
+        ? `${subject} references a business object or field that no longer exists.`
+        : `${subject}关联了已变更或不存在的业务对象字段，请同步更新数据存储说明。`;
+    case 'MI_PROVIDED_MISSING_BEHAVIOR':
+    case 'MI_DEPENDENT_MISSING_EXTERNAL_ENTITY':
+      return locale === 'en-US'
+        ? `${subject} is missing its paired action or external partner.`
+        : `${subject}缺少对应的业务操作或外部协作方说明，请同步补齐。`;
+    default: {
+      const raw = (locale === 'en-US' ? diag.messageEn : diag.messageZh)
+        .replace(/聚合根|聚合/g, '业务对象')
+        .replace(/\baggregate\s+roots?\b|\baggregates?\b/gi, 'business object')
+        .replace(/领域行为|承接行为/g, '业务操作')
+        .replace(/领域事件/g, '业务事件')
+        .replace(/物理表|数据表/g, '数据存储记录')
+        .replace(
+          /\b(?:relatedBehaviorRef|relatedExternalEntityRef|relatedEventRef|queryReportRef|ownerEntity|interfaceId|EXTERNAL_ENTITY|PROVIDED|DEPENDENT|MASTER|DETAIL)\b/g,
+          locale === 'en-US' ? 'linked item' : '关联项',
+        );
+      return sanitizeBusinessText(raw, elementDisplayMap, locale);
+    }
+  }
+}
+
+function revealConversationPane(): void {
+  const panel = useAgentPanelStore.getState();
+  panel.revealPanel();
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(max-width: 1279px)').matches
+  ) {
+    panel.setOverlayOpen(true);
+  }
 }
 
 /* ─── Main Step View Component ─── */
@@ -447,6 +587,7 @@ export function BusinessModelStepView({
   initialInlineEditState = null,
   initialRejectionState = null,
   defaultExpandedSections,
+  defaultShowIncomplete = false,
 }: BusinessModelStepViewProps = {}) {
   const { locale, t } = usePreferences();
   const businessLocale: BusinessLocale = locale === 'en-US' ? 'en-US' : 'zh-CN';
@@ -466,11 +607,16 @@ export function BusinessModelStepView({
     restoreArtifactBeforeChange,
     focusBusinessModelTarget,
     applyBusinessModelEdit,
+    confirmBusinessModelStep,
+    showToast,
     startOntologySynthesisRun,
     startOntologyCopilotRun,
   } = useWorkbenchStore();
 
   const [historyBusyEntryId, setHistoryBusyEntryId] = useState<string | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [updatedForProtoConfId, setUpdatedForProtoConfId] = useState<string | null>(null);
 
   const [activeInlineEdit, setActiveInlineEdit] = useState<InlineEditDraftState | null>(
     () => initialInlineEditState,
@@ -497,7 +643,9 @@ export function BusinessModelStepView({
     () => effectiveLegacyTab ?? 'editor',
   );
   const [focusTarget, setFocusTarget] = useState<OntologyWorkbenchFocusTarget | null>(null);
-  const [showStageWarnings, setShowStageWarnings] = useState(false);
+  const [showStageWarnings, setShowStageWarnings] = useState<boolean>(
+    () => defaultShowIncomplete,
+  );
 
   useEffect(() => {
     if (effectiveLegacyTab) {
@@ -533,7 +681,12 @@ export function BusinessModelStepView({
     setInternalPageId(null);
     setActiveInlineEdit(initialInlineEditState);
     setActiveRejection(initialRejectionState);
+    setConfirmError(null);
   }, [project?.id, initialInlineEditState, initialRejectionState]);
+
+  useEffect(() => {
+    setConfirmError(null);
+  }, [project?.updatedAt, data?.stepConfirmations?.businessModel?.id]);
 
   const resolvedPageId: BusinessModelPageId = useMemo(() => {
     if (!projection) return 'view:flows';
@@ -614,15 +767,7 @@ export function BusinessModelStepView({
           : rejection.assistantPromptZh || rejection.assistantPromptEn;
       setActiveRejection(null);
       setActiveInlineEdit(null);
-      const panel = useAgentPanelStore.getState();
-      panel.revealPanel();
-      if (
-        typeof window !== 'undefined' &&
-        typeof window.matchMedia === 'function' &&
-        window.matchMedia('(max-width: 1279px)').matches
-      ) {
-        panel.setOverlayOpen(true);
-      }
+      revealConversationPane();
       if (prompt.trim()) {
         void startOntologyCopilotRun(prompt);
       }
@@ -680,6 +825,10 @@ export function BusinessModelStepView({
   if (!data || !project || !projection) return null;
 
   const lifecycle = getProjectLifecycleState(data);
+  const projectSteps = getProjectStepsFromBootstrap(data);
+  const bmStep = projectSteps.find((s) => s.id === 'BUSINESS_MODEL') ?? null;
+  const stepState: ProjectStepStateId =
+    bmStep?.state ?? (lifecycle.hasOntology ? 'IN_PROGRESS' : 'NOT_STARTED');
   const validation = project.validation;
   const effectiveFlashTarget =
     flashTarget ??
@@ -873,7 +1022,11 @@ export function BusinessModelStepView({
                   ? t('业务模型还没有整理', 'Business model not yet organized')
                   : t('等待已确认的原型', 'Waiting for a confirmed prototype')}
             </h1>
-            <p className="bm-empty-copy" data-testid="business-model-status-line">
+            <p
+              className="bm-empty-copy"
+              data-testid="business-model-status-banner"
+              data-step-state={stepState}
+            >
               {isCopilotBusy
                 ? t(
                     'AI 助手正在依据已确认的原型找出业务对象、业务规则和角色权限，实时进度显示在左侧对话中。',
@@ -881,8 +1034,8 @@ export function BusinessModelStepView({
                   )
                 : canOrganizeFromPrototype
                   ? t(
-                      'AI 助手会依据已确认的原型，自动整理出业务对象、业务操作、业务规则与角色权限。',
-                      'AI Assistant will organize business objects, actions, business rules, and role permissions from your confirmed prototype.',
+                      '原型已确认。点击下方按钮，AI 助手会依据已确认的原型自动整理出业务对象、业务操作、业务规则与角色权限。',
+                      'Prototype confirmed. Click below so AI Assistant can organize business objects, actions, business rules, and role permissions from your confirmed prototype.',
                     )
                   : t(
                       '先完成并确认界面原型后，AI 助手即可在这里整理出完整的业务模型。',
@@ -897,11 +1050,23 @@ export function BusinessModelStepView({
                   size="md"
                   data-testid="organize-business-model-btn"
                   onClick={() => {
-                    useAgentPanelStore.getState().revealPanel();
+                    revealConversationPane();
                     void startOntologySynthesisRun();
                   }}
                 >
                   <span>{t('整理业务模型', 'Organize Business Model')}</span>
+                </Button>
+              )}
+              {!canOrganizeFromPrototype && onNavigate && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="business-model-go-to-prototype-btn"
+                  onClick={() => onNavigate('app-prototype')}
+                >
+                  <span>{t('去确认原型', 'Go to Prototype')}</span>
+                  <ArrowRight size={14} aria-hidden="true" />
                 </Button>
               )}
               {ontHistoryEntries.length > 0 && historyTriggerButton}
@@ -929,56 +1094,166 @@ export function BusinessModelStepView({
 
   /* ─── Populated Business View (`mode === 'business'`) ─── */
   const activeObject = projection.objects.find((o) => o.id === resolvedPageId) ?? null;
+  const consistencyProblems = validation.diagnostics.filter((d) => d.tier === 'ERROR');
   const stageWarnings = validation.diagnostics.filter((d) => d.tier === 'STAGE_WARNING');
+  const isOutdated = stepState === 'OUTDATED';
+  const canConfirmCleanly =
+    lifecycle.hasConfirmedPrototype &&
+    validation.presentModels.length > 0 &&
+    validation.errorCount === 0;
 
-  const statusLine: {
+  const handleConfirmBusinessModel = async () => {
+    if (isConfirming || isCopilotBusy) return;
+    setIsConfirming(true);
+    setConfirmError(null);
+    try {
+      const confirmed = await confirmBusinessModelStep();
+      if (confirmed) {
+        showToast(t('已确认当前业务模型', 'Confirmed current Business Model'));
+      }
+    } catch (err) {
+      const rawErr = err instanceof Error ? err.message : String(err);
+      const cleaned = humanize(rawErr) || t('暂时无法确认业务模型，请先检查是否存在需要修正的问题。', 'Unable to confirm the Business Model; check for problems to fix first.');
+      setConfirmError(cleaned);
+      showToast(cleaned);
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  const handleFixProblemsWithAssistant = (singleProblem?: ValidationDiagnostic) => {
+    revealConversationPane();
+    const targetList = singleProblem ? [singleProblem] : consistencyProblems.slice(0, 6);
+    const descriptions = targetList.map((d) =>
+      humanizeConsistencyProblem(d, elementDisplayMap, businessLocale),
+    );
+    const instruction =
+      businessLocale === 'en-US'
+        ? `Please fix the following problems in the Business Model so all business objects, actions, business rules, and role permissions stay consistent: ${descriptions.join(' ')}`
+        : `请帮我处理当前业务模型中需要修正的问题，使各业务对象、业务操作、业务规则与角色权限保持一致：${descriptions.join(' ')}`;
+    if (lifecycle.hasConfirmedPrototype) {
+      void startOntologySynthesisRun({
+        mode: 'fix_problems',
+        instruction,
+      });
+    } else {
+      void startOntologyCopilotRun(instruction);
+    }
+  };
+
+  const handleCompleteMissingWithAssistant = () => {
+    revealConversationPane();
+    const missingSummary = summarizeIncompleteModels(stageWarnings, businessLocale);
+    const instruction =
+      businessLocale === 'en-US'
+        ? `Please complete the parts not yet completed in the Business Model (${missingSummary || 'remaining details'}) based on the confirmed prototype.`
+        : `请依据已确认的原型，补全当前业务模型中尚未完成的部分（${missingSummary || '剩余关联说明'}）。`;
+    if (lifecycle.hasConfirmedPrototype) {
+      void startOntologySynthesisRun({
+        mode: 'complete_missing',
+        instruction,
+      });
+    } else {
+      void startOntologyCopilotRun(instruction);
+    }
+  };
+
+  const handleUpdateFromConfirmedPrototype = () => {
+    revealConversationPane();
+    const currentProtoConfId = data.stepConfirmations?.prototype?.id ?? null;
+    const confirmedProtoId =
+      data.stepConfirmations?.prototype?.prototypeId ??
+      data.confirmedPrototypeRevision?.prototypeId;
+    const confirmedProtoEntity = confirmedProtoId
+      ? data.prototypes.find((p) => p.id === confirmedProtoId)
+      : data.prototypes[0];
+    const protoTitle = humanize(confirmedProtoEntity?.name) || t('已确认的原型', 'confirmed prototype');
+    const instruction =
+      businessLocale === 'en-US'
+        ? `The prototype (${protoTitle}) has a new confirmation. Please align and update the Business Model from the newly confirmed prototype while preserving existing business rules and permissions where appropriate.`
+        : `界面原型（${protoTitle}）有了新的确认。请依据最新已确认的原型同步更新业务模型，同时保留仍然适用的业务规则与角色权限。`;
+    void startOntologySynthesisRun({
+      ...(confirmedProtoId ? { prototypeId: confirmedProtoId } : {}),
+      mode: 'update',
+      instruction,
+    }).then((res) => {
+      if (res && currentProtoConfId) {
+        setUpdatedForProtoConfId(currentProtoConfId);
+      }
+    });
+  };
+
+  const currentProtoConf = data.stepConfirmations?.prototype ?? null;
+  const hasUpdatedAfterProtoConf =
+    isOutdated &&
+    Boolean(currentProtoConf) &&
+    (updatedForProtoConfId === currentProtoConf?.id ||
+      (Boolean(currentProtoConf?.confirmedAt) &&
+        ontHistoryEntries.some(
+          (entry) =>
+            entry.source.kind === 'AGENT_RUN' &&
+            entry.createdAt >= currentProtoConf!.confirmedAt,
+        )));
+
+  const statusBanner: {
     tone: 'ok' | 'warn' | 'error' | 'info';
     text: string;
-  } = isCopilotBusy
+  } = confirmError
     ? {
-        tone: 'info',
-        text: t(
-          'AI 助手正在修改业务模型，完成后会在对话里列出改了什么。',
-          'AI Assistant is updating the business model and will list what changed in the conversation.',
-        ),
+        tone: 'error',
+        text: confirmError,
       }
-    : validation.errorCount > 0
+    : isCopilotBusy
       ? {
-          tone: 'error',
+          tone: 'info',
           text: t(
-            `有 ${validation.errorCount} 个${BUSINESS_VOCABULARY.CONSISTENCY_ERROR.zh}，处理后才能进入交付。`,
-            `${validation.errorCount} ${validation.errorCount === 1 ? 'problem to fix' : 'problems to fix'} before continuing to delivery.`,
+            'AI 助手正在修改业务模型，完成后会在左侧对话列出改了什么。',
+            'AI Assistant is updating the Business Model and will list what changed in the conversation.',
           ),
         }
-      : {
-          tone: 'ok',
-          text: t(
-            `没有${BUSINESS_VOCABULARY.CONSISTENCY_ERROR.zh}。逐个核对业务对象、规则与权限；没问题即可进入交付。`,
-            'No problems to fix. Review each business object, rule, and permission, then continue to delivery.',
-          ),
-        };
-
-  const defaultPrimaryAction =
-    validation.errorCount > 0 ? (
-      <Button
-        type="button"
-        variant="accent"
-        size="sm"
-        data-testid="ask-assistant-fix-btn"
-        disabled={isCopilotBusy}
-        onClick={() => {
-          useAgentPanelStore.getState().revealPanel();
-          void startOntologyCopilotRun(
-            t(
-              '请检查并修复当前业务模型中所有需要修正的问题，确保各业务对象、操作、规则与权限保持一致。',
-              'Please inspect and fix all problems in the current business model so objects, actions, rules, and permissions are consistent.',
+      : validation.errorCount > 0
+        ? {
+            tone: 'error',
+            text: t(
+              `还有 ${validation.errorCount} 个${BUSINESS_VOCABULARY.CONSISTENCY_ERROR.zh}，处理完后才能确认业务模型。`,
+              `${validation.errorCount} ${validation.errorCount === 1 ? 'problem to fix' : 'problems to fix'} must be resolved before confirming the Business Model.`,
             ),
-          );
-        }}
-      >
-        <span>{t('让 AI 助手处理', 'Ask AI Assistant to fix')}</span>
-      </Button>
-    ) : onNavigate ? (
+          }
+        : !lifecycle.hasConfirmedPrototype
+          ? {
+              tone: 'warn',
+              text: t(
+                '需要先在「原型」步骤确认界面原型，之后即可确认业务模型。',
+                'Confirm an interactive prototype in the Prototype step first before confirming the Business Model.',
+              ),
+            }
+          : stepState === 'CONFIRMED'
+            ? {
+                tone: 'ok',
+                text: t(
+                  '业务模型已确认，没有需要修正的问题；下一步可以前往交付生成开发资料包。',
+                  'Business Model is confirmed with no problems to fix; continue to Delivery to generate the development package.',
+                ),
+              }
+            : stepState === 'UNCONFIRMED_CHANGES'
+              ? {
+                  tone: 'warn',
+                  text: t(
+                    '业务模型有未确认的修改，交付仍依据上次确认的版本；核对无误后请确认业务模型。',
+                    'Business Model has unconfirmed changes while Delivery still uses the last confirmed version; confirm when ready.',
+                  ),
+                }
+              : {
+                  tone: 'info',
+                  text: t(
+                    '没有需要修正的问题。逐个核对业务对象、规则与权限后，请确认业务模型。',
+                    'No problems to fix. Review your business objects, rules, and permissions, then confirm the Business Model.',
+                  ),
+                };
+
+  const defaultHeaderCta = isOutdated ? null : stepState === 'CONFIRMED' &&
+    validation.errorCount === 0 ? (
+    onNavigate ? (
       <Button
         type="button"
         variant="accent"
@@ -989,7 +1264,47 @@ export function BusinessModelStepView({
         <span>{t('去交付', 'Go to Delivery')}</span>
         <ArrowRight size={14} aria-hidden="true" />
       </Button>
-    ) : null;
+    ) : null
+  ) : !lifecycle.hasConfirmedPrototype ? (
+    <>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        data-testid="confirm-business-model-btn"
+        disabled
+      >
+        <CheckCircle2 size={13.5} aria-hidden="true" />
+        <span>{t('确认业务模型', 'Confirm Business Model')}</span>
+      </Button>
+      {onNavigate && validation.errorCount === 0 && (
+        <Button
+          type="button"
+          variant="accent"
+          size="sm"
+          data-testid="business-model-go-to-prototype-btn"
+          onClick={() => onNavigate('app-prototype')}
+        >
+          <span>{t('去确认原型', 'Go to Prototype')}</span>
+          <ArrowRight size={14} aria-hidden="true" />
+        </Button>
+      )}
+    </>
+  ) : (
+    <Button
+      type="button"
+      variant={canConfirmCleanly ? 'accent' : 'secondary'}
+      size="sm"
+      data-testid="confirm-business-model-btn"
+      disabled={!canConfirmCleanly || isConfirming || isCopilotBusy}
+      onClick={() => void handleConfirmBusinessModel()}
+    >
+      <CheckCircle2 size={13.5} aria-hidden="true" />
+      <span>{t('确认业务模型', 'Confirm Business Model')}</span>
+    </Button>
+  );
+
+  const incompleteSummaryText = summarizeIncompleteModels(stageWarnings, businessLocale);
 
   return (
     <div className="bm-step-root" data-testid="business-model-business-view">
@@ -1003,56 +1318,248 @@ export function BusinessModelStepView({
           </h1>
           <div className="bm-head-actions">
             {historyTriggerButton}
-            {headerActions ?? defaultPrimaryAction}
+            {headerActions ?? defaultHeaderCta}
           </div>
         </div>
 
-        <p
-          className="bm-status-line"
-          data-testid="business-model-status-line"
-          data-tone={statusLine.tone}
-        >
-          {statusLine.tone === 'ok' ? (
-            <CheckCircle2 size={14} aria-hidden="true" />
-          ) : statusLine.tone === 'error' || statusLine.tone === 'warn' ? (
-            <TriangleAlert size={14} aria-hidden="true" />
-          ) : (
-            <Info size={14} aria-hidden="true" />
-          )}
-          <span>{statusLine.text}</span>
-        </p>
-
-        {validation.warningCount > 0 && (
-          <div>
-            <button
-              type="button"
-              className="bm-fold-btn"
-              data-testid="toggle-stage-warnings-btn"
-              aria-expanded={showStageWarnings}
-              onClick={() => setShowStageWarnings((prev) => !prev)}
+        {isOutdated ? (
+          <section
+            className="bm-outdated-banner"
+            data-testid="business-model-outdated-banner"
+            data-step-state="OUTDATED"
+            role="region"
+            aria-label={t('业务模型待更新提示', 'Business Model update notice')}
+          >
+            <p
+              className="bm-outdated-copy"
+              data-testid="business-model-status-banner"
+              data-step-state="OUTDATED"
             >
-              {showStageWarnings ? (
-                <ChevronDown size={14} aria-hidden="true" />
-              ) : (
-                <ChevronRight size={14} aria-hidden="true" />
-              )}
+              <Info size={15} aria-hidden="true" />
               <span>
-                {t(
-                  `${BUSINESS_VOCABULARY.STAGE_WARNING.zh} · ${validation.warningCount}`,
-                  `${BUSINESS_VOCABULARY.STAGE_WARNING.en} · ${validation.warningCount}`,
-                )}
+                {validation.errorCount > 0
+                  ? t(
+                      `原型有了新的确认，且当前还有 ${validation.errorCount} 个${BUSINESS_VOCABULARY.CONSISTENCY_ERROR.zh}；点击「让 AI 助手更新」可一并对齐处理。`,
+                      `The prototype was re-confirmed and ${validation.errorCount} ${validation.errorCount === 1 ? 'problem to fix exists' : 'problems to fix exist'}; click Update with AI Assistant to align and resolve them.`,
+                    )
+                  : hasUpdatedAfterProtoConf
+                    ? t(
+                        'AI 助手已依据最新确认的原型更新业务模型；核对无误后请确认业务模型。',
+                        'AI Assistant updated the Business Model from the confirmed prototype; review and confirm when ready.',
+                      )
+                    : t(
+                        '原型有了新的确认；业务模型更新确认后，交付也会提示更新。',
+                        'The prototype was re-confirmed; once the Business Model is updated and confirmed, Delivery will also prompt for an update.',
+                      )}
               </span>
-            </button>
-            {showStageWarnings && stageWarnings.length > 0 && (
-              <ul className="bm-warning-list" data-testid="stage-warnings-list">
+            </p>
+            <div className="bm-outdated-actions">
+              {hasUpdatedAfterProtoConf && canConfirmCleanly ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    data-testid="business-model-ask-assistant-update-btn"
+                    disabled={isConfirming || isCopilotBusy}
+                    onClick={handleUpdateFromConfirmedPrototype}
+                  >
+                    <Sparkles size={13.5} aria-hidden="true" />
+                    <span>{t('让 AI 助手更新', 'Update with AI Assistant')}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="accent"
+                    size="sm"
+                    data-testid="confirm-business-model-btn"
+                    disabled={isConfirming || isCopilotBusy}
+                    onClick={() => void handleConfirmBusinessModel()}
+                  >
+                    <CheckCircle2 size={13.5} aria-hidden="true" />
+                    <span>{t('确认业务模型', 'Confirm Business Model')}</span>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    data-testid="business-model-confirm-as-is-btn"
+                    disabled={!canConfirmCleanly || isConfirming || isCopilotBusy}
+                    onClick={() => void handleConfirmBusinessModel()}
+                  >
+                    <CheckCircle2 size={13.5} aria-hidden="true" />
+                    <span>{t('不需要改动，按现状确认', 'Confirm as is without changes')}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="accent"
+                    size="sm"
+                    data-testid="business-model-ask-assistant-update-btn"
+                    disabled={isConfirming || isCopilotBusy}
+                    onClick={handleUpdateFromConfirmedPrototype}
+                  >
+                    <Sparkles size={13.5} aria-hidden="true" />
+                    <span>{t('让 AI 助手更新', 'Update with AI Assistant')}</span>
+                  </Button>
+                </>
+              )}
+            </div>
+          </section>
+        ) : (
+          <p
+            className="bm-status-banner"
+            data-testid="business-model-status-banner"
+            data-step-state={stepState}
+            data-tone={statusBanner.tone}
+          >
+            {statusBanner.tone === 'ok' ? (
+              <CheckCircle2 size={15} aria-hidden="true" />
+            ) : statusBanner.tone === 'error' || statusBanner.tone === 'warn' ? (
+              <TriangleAlert size={15} aria-hidden="true" />
+            ) : (
+              <Info size={15} aria-hidden="true" />
+            )}
+            <span>{statusBanner.text}</span>
+          </p>
+        )}
+
+        {consistencyProblems.length > 0 && (
+          <section
+            className="bm-diag-card is-problems"
+            data-testid="business-model-problems-card"
+            aria-label={t(
+              BUSINESS_VOCABULARY.CONSISTENCY_ERROR.zh,
+              BUSINESS_VOCABULARY.CONSISTENCY_ERROR.en,
+            )}
+          >
+            <div className="bm-diag-head">
+              <span className="bm-diag-title is-error">
+                <TriangleAlert size={14} aria-hidden="true" />
+                <span>
+                  {t(
+                    `${BUSINESS_VOCABULARY.CONSISTENCY_ERROR.zh} · ${consistencyProblems.length}`,
+                    `${BUSINESS_VOCABULARY.CONSISTENCY_ERROR.en} · ${consistencyProblems.length}`,
+                  )}
+                </span>
+              </span>
+              <Button
+                type="button"
+                variant={isOutdated ? 'secondary' : 'accent'}
+                size="sm"
+                data-testid="fix-problems-with-assistant-btn"
+                disabled={isCopilotBusy || isConfirming}
+                onClick={() => handleFixProblemsWithAssistant()}
+              >
+                <Sparkles size={13.5} aria-hidden="true" />
+                <span>{t('让 AI 助手处理', 'Let AI Assistant fix')}</span>
+              </Button>
+            </div>
+            <ul className="bm-diag-list" data-testid="business-model-problems-list">
+              {consistencyProblems.map((diag, idx) => (
+                <li
+                  key={diag.id}
+                  className="bm-diag-item"
+                  data-testid="business-model-problem-item"
+                >
+                  <span className="bm-diag-item-text">
+                    {humanizeConsistencyProblem(diag, elementDisplayMap, businessLocale)}
+                  </span>
+                  <span className="bm-diag-item-actions">
+                    <button
+                      type="button"
+                      className="bm-item-tech-btn"
+                      data-testid={`fix-problem-item-btn-${idx}`}
+                      disabled={isCopilotBusy || isConfirming}
+                      onClick={() => handleFixProblemsWithAssistant(diag)}
+                    >
+                      <span>{t('让 AI 助手处理', 'Let AI Assistant fix')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="bm-item-tech-btn"
+                      data-testid={`locate-problem-tech-btn-${idx}`}
+                      onClick={() =>
+                        handleOpenTechnicalDetails({
+                          model: diag.model,
+                          elementId: diag.elementId ?? '',
+                        })
+                      }
+                    >
+                      <Code2 size={12} aria-hidden="true" />
+                      <span>
+                        {t(
+                          BUSINESS_VOCABULARY.TECHNICAL_DETAILS.zh,
+                          BUSINESS_VOCABULARY.TECHNICAL_DETAILS.en,
+                        )}
+                      </span>
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {stageWarnings.length > 0 && (
+          <section
+            className="bm-diag-card is-incomplete"
+            data-testid="business-model-incomplete-card"
+            aria-label={t(
+              BUSINESS_VOCABULARY.STAGE_WARNING.zh,
+              BUSINESS_VOCABULARY.STAGE_WARNING.en,
+            )}
+          >
+            <div className="bm-diag-head">
+              <button
+                type="button"
+                className="bm-diag-toggle"
+                data-testid="toggle-incomplete-parts-btn"
+                aria-expanded={showStageWarnings}
+                onClick={() => setShowStageWarnings((prev) => !prev)}
+              >
+                {showStageWarnings ? (
+                  <ChevronDown size={14} aria-hidden="true" />
+                ) : (
+                  <ChevronRight size={14} aria-hidden="true" />
+                )}
+                <span>
+                  {t(
+                    `${BUSINESS_VOCABULARY.STAGE_WARNING.zh} · ${stageWarnings.length}`,
+                    `${BUSINESS_VOCABULARY.STAGE_WARNING.en} · ${stageWarnings.length}`,
+                  )}
+                </span>
+                {incompleteSummaryText && (
+                  <span className="bm-diag-summary">· {incompleteSummaryText}</span>
+                )}
+              </button>
+              {showStageWarnings && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="complete-missing-with-assistant-btn"
+                  disabled={isCopilotBusy || isConfirming}
+                  onClick={handleCompleteMissingWithAssistant}
+                >
+                  <Sparkles size={13.5} aria-hidden="true" />
+                  <span>{t('让 AI 助手补全', 'Ask AI Assistant to complete')}</span>
+                </Button>
+              )}
+            </div>
+            {showStageWarnings && (
+              <ul className="bm-diag-list" data-testid="business-model-incomplete-list">
                 {stageWarnings.map((diag) => (
-                  <li key={diag.id}>
-                    {humanizeStageWarning(diag, elementDisplayMap, businessLocale)}
+                  <li key={diag.id} className="bm-diag-item">
+                    <span className="bm-diag-item-text">
+                      {humanizeStageWarning(diag, elementDisplayMap, businessLocale)}
+                    </span>
                   </li>
                 ))}
               </ul>
             )}
-          </div>
+          </section>
         )}
       </header>
 

@@ -70,6 +70,7 @@ import {
   listProjectPackageSnapshots,
   registerStepConfirmationRoutes,
 } from './step-confirmations.js';
+import { registerStepHandoffRoutes } from './step-handoff.js';
 
 export interface ApiAppOptions {
   agentRunHooks?: AgentRunLifecycleHooks | readonly AgentRunLifecycleHooks[];
@@ -1149,6 +1150,7 @@ export function createApiApp(
   registerArtifactHistoryRoutes(app, store);
   registerBusinessModelEditRoutes(app, store);
   registerStepConfirmationRoutes(app, store);
+  registerStepHandoffRoutes(app, store);
 
   app.post('/api/applications/:appId/publish', async (c) => {
     const appId = c.req.param('appId');

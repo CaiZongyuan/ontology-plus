@@ -26,6 +26,10 @@ import {
   defineTool,
 } from '@earendil-works/pi-durable';
 import {
+  PROJECT_STEP_NAMES,
+  type ProjectStepId,
+} from '../../business-vocabulary/index.js';
+import {
   MODEL_CODES,
   checkSqlGrounding,
   validateOntologySuite,
@@ -51,6 +55,8 @@ import {
   type LlmProviderConfig,
   type ProjectDetail,
   type PrototypeTargetAnchor,
+  type StepHandoffOrigin,
+  type StepHandoffProposal,
   type WorkspaceStore,
 } from '../../workspace-store/index.js';
 import {
@@ -576,6 +582,35 @@ export const UNIFIED_AGENT_EXTRA_TOOLS: OpenAiFunctionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_step_handoff',
+      description:
+        'Propose handing off a cross-step user request to the Project Step that owns it (REQUIREMENTS, PROTOTYPE, BUSINESS_MODEL, or DELIVERY). Call this instead of attempting cross-step mutations whenever the user asks for work belonging to another step.',
+      parameters: {
+        type: 'object',
+        properties: {
+          targetStep: {
+            type: 'string',
+            enum: ['REQUIREMENTS', 'PROTOTYPE', 'BUSINESS_MODEL', 'DELIVERY'],
+            description: 'Destination Project Step that owns the user request',
+          },
+          request: {
+            type: 'string',
+            description:
+              'Plain-language request to carry over verbatim as a user message in targetStep if accepted',
+          },
+          reason: {
+            type: 'string',
+            description:
+              'Concise plain-language explanation of why this request belongs in targetStep',
+          },
+        },
+        required: ['targetStep', 'request'],
+      },
+    },
+  },
   ...DOMAIN_RUN_OPENAI_TOOLS,
 ];
 
@@ -785,6 +820,7 @@ export type UnifiedAgentSseEventType =
   | 'tool_result'
   | 'artifact'
   | 'ask_user'
+  | 'step_handoff'
   | 'usage'
   | 'run_error'
   | 'message_end';
@@ -842,6 +878,169 @@ function getLazyApiForType(providerType: LlmProviderConfig['providerType']) {
   if (providerType === 'ANTHROPIC') return lazyAnthropicMessages;
   if (providerType === 'GOOGLE_GEMINI') return lazyGoogleGenAi;
   return lazyOpenAiCompletions;
+}
+
+function getBlockedStepExplanation(
+  store: WorkspaceStore,
+  session: AgentSession,
+  locale: AgentLocale,
+): string | null {
+  if (!session.projectId) return null;
+  const stepConfs = store.getProjectStepConfirmations(session.projectId);
+  const hasConfirmedProto = Boolean(
+    stepConfs.prototype ?? store.getConfirmedPrototypeRevision(session.projectId),
+  );
+
+  if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+    const hasPrototype = store.listPrototypes(session.projectId).length > 0;
+    if (!stepConfs.requirements && !hasConfirmedProto && !hasPrototype) {
+      return pickLocaleText(
+        locale,
+        '原型步骤还不能开始：已收到你的请求。请先在「需求」步骤完成并确认需求文档，确认后我会依据该需求文档为你生成并调整界面原型。',
+        'Prototype cannot start yet: I have noted your request here. Please confirm the requirements document in the Requirements step first, and I will generate and refine the prototype from that confirmed version.',
+      );
+    }
+    return null;
+  }
+
+  if (session.agentKind === 'COPILOT') {
+    const project = store.getProject(session.projectId);
+    const hasOntology = (project?.validation.presentModels.length ?? 0) > 0;
+    if (project && !hasConfirmedProto && !stepConfs.businessModel && !hasOntology) {
+      return pickLocaleText(
+        locale,
+        '业务模型步骤还不能开始：已收到你的请求。请先在「原型」步骤确认界面原型，确认后我会结合这份请求为你整理业务模型。',
+        'Business Model cannot start yet: I have noted your request here. Please confirm the interactive prototype in the Prototype step first, and I will incorporate this into the Business Model once ready.',
+      );
+    }
+    return null;
+  }
+
+  if (session.agentKind === 'CODING') {
+    const hasApps = store
+      .listAssembledApplications()
+      .some((app) => app.projectId === session.projectId);
+    const hasSkills = store.listGeneratedSkills(session.projectId).length > 0;
+    if (!stepConfs.businessModel && !hasApps && !hasSkills) {
+      return pickLocaleText(
+        locale,
+        '交付步骤还不能开始：已收到你的请求。请先在「业务模型」步骤完成并确认业务模型，确认后即可在这里完善交付说明并生成开发资料包。',
+        'Delivery cannot start yet: I have noted your request here. Please confirm the Business Model in the Business Model step first before preparing deliverables and generating the development package.',
+      );
+    }
+    return null;
+  }
+
+  return null;
+}
+
+function detectMockStepHandoff(
+  kind: AgentSessionKind,
+  userPrompt: string,
+  locale: AgentLocale,
+): { targetStep: ProjectStepId; reason: string } | null {
+  const clean = userPrompt.trim();
+  if (!clean || clean.length > 240 || /\n#\s/.test(clean)) return null;
+  if (
+    /^\[ACTION:[A-Z_]+/.test(clean) ||
+    /\[(?:用户已确认选择|User Confirmed Choice|Visual Element Annotations|用户可视化圈选|PROTOTYPE_BRIEF_RESTYLE|Target application ID:|TEST_)/.test(
+      clean,
+    ) ||
+    /确认设计简报|Confirm Brief|更新当前原型|Update the existing prototype|\belement=[A-Za-z0-9_-]+|\bscreen=[A-Za-z0-9_-]+/i.test(
+      clean,
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    kind !== 'CODING' &&
+    kind !== 'ARCHITECTURE' &&
+    /(?:生成|下载|导出|打包|编译).*(?:开发资料包|开发包|交付包|交付资料包)|(?:generate|download|compile|export)\s+(?:the\s+)?(?:dev(?:elopment)?\s+package|deliverable\s+package)/i.test(
+      clean,
+    )
+  ) {
+    return {
+      targetStep: 'DELIVERY',
+      reason: pickLocaleText(
+        locale,
+        '开发资料包的生成与交付准备属于「交付」步骤的范围',
+        'Generating and preparing the development package belongs in the Delivery step',
+      ),
+    };
+  }
+
+  if (
+    kind !== 'PROTOTYPE_CO_DESIGN' &&
+    (/(?:在|给|把|调整|修改).*(?:界面原型|原型(?:页面|台账|表格|卡片|按钮)?).*(?:加一列|增加一列|新增一列|按钮|配色|颜色|间距|布局|筛选|字段|列)|(?:界面原型|原型表格|原型页面).*(?:加一列|增加|新增|修改|调整)|(?:add|insert|change|update|restyle)\b.*\b(?:column|button|color|layout|spacing|filter)\b.*\bprototype\b|\bprototype\s+(?:screen|page|table|button|layout)\b/i.test(
+      clean,
+    ))
+  ) {
+    return {
+      targetStep: 'PROTOTYPE',
+      reason: pickLocaleText(
+        locale,
+        '界面布局、表格列与页面控件调整属于「原型」步骤的范围',
+        'Screen layout, table columns, and visual controls belong in the Prototype step',
+      ),
+    };
+  }
+
+  if (
+    kind !== 'REQUIREMENT' &&
+    (/(?:修改|更新|补充|重写).*(?:需求文档|需求规格书)|(?:在|往)(?:需求文档|需求规格书)(?:里|中)|(?:update|edit|revise|rewrite)\s+(?:the\s+)?requirements\s+document/i.test(
+      clean,
+    ))
+  ) {
+    return {
+      targetStep: 'REQUIREMENTS',
+      reason: pickLocaleText(
+        locale,
+        '修改需求文档章节与整体业务范围属于「需求」步骤的范围',
+        'Editing the requirements document and overall scope belongs in the Requirements step',
+      ),
+    };
+  }
+
+  if (
+    kind === 'PROTOTYPE_CO_DESIGN' &&
+    !/原型|界面|页面|屏幕|按钮|配色|背景色|字号|间距|文案|徽章|三屏|响应式|列宽|筛选|表格|表单|字段|布局|视觉风格|prototype|screen|page|button|color|spacing|font|badge|column|filter|table|form|field|layout|style/i.test(
+      clean,
+    ) &&
+    (/(?:总经理|总监|主管|副总|法务|财务|会签|分级|多级)?审批|(?:业务|校验|准入|风控|权限)规则|角色权限|超过\s*\d+.*(?:审批|拦截|复核)|(?:approval|validation|permission)\s+rule|require.*approval|over\s+\$?\d+.*approv/i.test(
+      clean,
+    ))
+  ) {
+    return {
+      targetStep: 'BUSINESS_MODEL',
+      reason: pickLocaleText(
+        locale,
+        '业务规则、审批条件与角色权限属于「业务模型」步骤的范围',
+        'Business rules, approval thresholds, and role permissions belong in the Business Model step',
+      ),
+    };
+  }
+
+  if (
+    (kind === 'CODING' || kind === 'ARCHITECTURE') &&
+    !/验收条件|开发规格|实施规格|开发说明|补充说明|技术规范|acceptance\s+criteria|implementation\s+spec/i.test(
+      clean,
+    ) &&
+    (/(?:在业务模型|去业务模型|业务模型里|业务模型中)|(?:新增|添加|修改)(?:一条|一个)?(?:业务规则|业务对象|角色权限)|(?:in|to)\s+the\s+business\s+model/i.test(
+      clean,
+    ))
+  ) {
+    return {
+      targetStep: 'BUSINESS_MODEL',
+      reason: pickLocaleText(
+        locale,
+        '业务对象、业务规则与角色权限属于「业务模型」步骤的范围',
+        'Business objects, business rules, and role permissions belong in the Business Model step',
+      ),
+    };
+  }
+
+  return null;
 }
 
 function extractUserMessageText(msg: Extract<Message, { role: 'user' }> | undefined): string {
@@ -958,6 +1157,48 @@ function buildFauxMockModels(
           ],
           { stopReason: 'toolUse' },
         );
+      }
+
+      // Cross-step handoff check (when not already executing a handed-off turn)
+      const latestSessionRecord = store.getAgentSession(session.id) ?? session;
+      const lastPersistedUser = [...latestSessionRecord.messages]
+        .reverse()
+        .find((m) => m.role === 'user');
+      const isHandedOffTurn = Boolean(lastPersistedUser?.handoffFrom);
+      if (!parsedAction && !hasResolvedChoice && !isHandedOffTurn) {
+        const handoffCandidate = detectMockStepHandoff(session.agentKind, userPrompt, loc);
+        if (handoffCandidate) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `识别到跨步骤请求，当前步骤不做跨界改动，调用 propose_step_handoff 提供一键步骤转交卡片。`,
+                  `Detected a cross-step request; preserving strict step isolation and calling propose_step_handoff.`,
+                ),
+              ),
+              fauxToolCall('propose_step_handoff', {
+                targetStep: handoffCandidate.targetStep,
+                request: userPrompt.trim(),
+                reason: handoffCandidate.reason,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+      }
+
+      // Blocked-step check (#48 Decision #3): if this step cannot start yet, explain what upstream step confirmation is needed without mutating
+      const blockedStepMessage = !parsedAction
+        ? getBlockedStepExplanation(store, latestSessionRecord, loc)
+        : null;
+      if (
+        blockedStepMessage &&
+        (isHandedOffTurn ||
+          session.agentKind !== 'COPILOT' ||
+          !/\b(?:aggregate|entity)\s+[A-Z][A-Za-z0-9]+/.test(userPrompt))
+      ) {
+        return fauxAssistantMessage([fauxText(blockedStepMessage)]);
       }
 
       if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
@@ -1665,6 +1906,23 @@ function buildFauxMockModels(
           .map((c) => c.text)
           .join('\n') ?? '';
 
+      if (lastResult?.toolName === 'propose_step_handoff' && !lastResult.isError) {
+        const parsedHandoff = extractJsonObjectFromText<{
+          targetStep?: ProjectStepId;
+          reason?: string;
+        }>(lastResultText);
+        const stepId = parsedHandoff?.targetStep ?? 'BUSINESS_MODEL';
+        const stepName = PROJECT_STEP_NAMES[stepId];
+        const reasonText = parsedHandoff?.reason?.trim();
+        return fauxAssistantMessage([
+          fauxText(
+            loc === 'en-US'
+              ? `${reasonText ? `${reasonText}. ` : `This request belongs in the ${stepName.en} step. `}I kept the current step unchanged and prepared a hand-off card below so you can continue in ${stepName.en} or stay here.`
+              : `${reasonText ? `${reasonText}。` : `这项内容属于「${stepName.zh}」步骤的范围。`}我不会在当前步骤直接改动，已在下方准备好转交卡片，你可以转到该步骤继续，也可以选择留在这里。`,
+          ),
+        ]);
+      }
+
       if (session.agentKind === 'REQUIREMENT') {
         if (lastResult?.isError) {
           return fauxAssistantMessage([
@@ -2197,7 +2455,7 @@ export function buildPiModelsForStore(
 
 // ─── System Prompt & Toolset Builder per Agent Kind ──────────────────────────
 
-function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
+export function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
   const toPiTool = (spec: OpenAiFunctionTool): Tool => ({
     name: spec.function.name,
     description: spec.function.description,
@@ -2208,6 +2466,7 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
   const extraByName = new Map(
     UNIFIED_AGENT_EXTRA_TOOLS.map((t) => [t.function.name, toPiTool(t)]),
   );
+  const stepHandoffTool = extraByName.get('propose_step_handoff')!;
 
   switch (kind) {
     case 'REQUIREMENT':
@@ -2216,6 +2475,7 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
         extraByName.get('save_synthesized_srs_doc')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
+        stepHandoffTool,
       ];
     case 'COPILOT':
       return [
@@ -2223,6 +2483,7 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
         extraByName.get('synthesize_ontology_suite')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
+        stepHandoffTool,
       ];
     case 'ARCHITECTURE':
       return [
@@ -2230,6 +2491,7 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
         extraByName.get('save_architecture_asset')!,
         extraByName.get('save_tech_architecture_spec')!,
         extraByName.get('ask_user')!,
+        stepHandoffTool,
       ];
     case 'CODING':
       return [
@@ -2237,6 +2499,7 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
         extraByName.get('save_application_instructions')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
+        stepHandoffTool,
       ];
     case 'CAPABILITY':
       return [
@@ -2244,6 +2507,7 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
         extraByName.get('run_ontology_extraction')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
+        stepHandoffTool,
       ];
     case 'REASONING':
       return [
@@ -2253,12 +2517,14 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
         extraByName.get('save_scenario_attribution_report')!,
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
+        stepHandoffTool,
       ];
     case 'PROTOTYPE_CO_DESIGN':
       return [
         ...PROTOTYPE_ANCHOR_OPENAI_TOOLS.map(toPiTool),
         extraByName.get('inspect_ontology_model')!,
         extraByName.get('ask_user')!,
+        stepHandoffTool,
       ];
   }
 }
@@ -2319,6 +2585,10 @@ function buildSystemPromptForSession(
       `2. ONLY call \`ask_user\` when required business parameters are missing or a Class-B business boundary ambiguity requires a human decision.`,
       `3. If an ontology mutation returns an 11-model consistency error (isError=true), read the diagnostics and self-repair in the same turn.`,
       `4. Always use the term "Ontology Extraction" — never "reverse engineering".`,
+      `5. Step Isolation & Hand-off: NEVER execute mutations belonging to another Project Step (REQUIREMENTS=scope & requirements doc; PROTOTYPE=screen layout, table columns, buttons & visual styling; BUSINESS_MODEL=business objects, actions, business/approval rules, roles & permissions, flows, reports, storage & integrations; DELIVERY=application implementation specs & development package). When the user asks for work belonging to another step, explain briefly in plain business language and call \`propose_step_handoff\` with \`targetStep\`, \`request\`, and \`reason\`.`,
+      getBlockedStepExplanation(store, session, 'en-US')
+        ? `[Current Step Status — Cannot Start Yet] ${getBlockedStepExplanation(store, session, 'en-US')} Do NOT call any mutation or synthesis tools until the upstream step is confirmed.`
+        : '',
     ]
       .filter(Boolean)
       .join('\n');
@@ -2400,6 +2670,10 @@ function buildSystemPromptForSession(
     `2. 仅当缺少必填业务参数或存在 B 类业务规则分歧需要用户拍板时，才调用 \`ask_user\` 工具弹出结构化单选/多选卡片。`,
     `3. 若本体变更工具返回 11 模型一致性错误（isError=true），请仔细阅读错误诊断并在本轮自动修正参数重试。`,
     `4. 严禁使用“逆向”或“逆向工程”字眼，统一使用“本体萃取 (Ontology Extraction)”。`,
+    `5. 跨步骤隔离与步骤转交准则：严禁在当前会话中执行其他步骤的改动（REQUIREMENTS=需求范围与需求文档；PROTOTYPE=页面布局、表格列、按钮与视觉样式；BUSINESS_MODEL=业务对象、业务操作、审批与校验等业务规则、角色权限、流程、报表、存储与接口；DELIVERY=应用实施说明与开发资料包）。当用户提出属于其他步骤的请求时，请用通俗业务语言简要说明原因，并调用 \`propose_step_handoff\` 工具（传入 \`targetStep\`、原样携带的 \`request\` 与 \`reason\`）生成转交卡片。`,
+    getBlockedStepExplanation(store, session, 'zh-CN')
+      ? `【当前步骤状态：还不能开始】${getBlockedStepExplanation(store, session, 'zh-CN')} 在上游步骤确认前，严禁调用任何写入或合成工具。`
+      : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -2500,6 +2774,7 @@ interface ExecutedToolStep {
   isError: boolean;
   artifact?: AgentDomainArtifact;
   askUserPrompt?: AgentAskUserPrompt;
+  stepHandoffProposal?: StepHandoffProposal;
 }
 
 async function executeUnifiedToolCall(
@@ -2582,6 +2857,124 @@ async function executeUnifiedToolCall(
       }),
       isError: false,
       askUserPrompt: promptCard,
+    };
+  }
+
+  // 1b. Cross-step hand-off proposal (#72)
+  if (tc.name === 'propose_step_handoff') {
+    const rawTarget = typeof args.targetStep === 'string' ? args.targetStep.trim() : '';
+    const normalizedKey = rawTarget.toUpperCase().replace(/-/g, '_');
+    const stepMap: Record<string, ProjectStepId> = {
+      REQUIREMENTS: 'REQUIREMENTS',
+      REQUIREMENT: 'REQUIREMENTS',
+      PROTOTYPE: 'PROTOTYPE',
+      BUSINESS_MODEL: 'BUSINESS_MODEL',
+      MODEL: 'BUSINESS_MODEL',
+      DELIVERY: 'DELIVERY',
+    };
+    const targetStep = stepMap[normalizedKey];
+    if (!targetStep) {
+      const errMsg = pickLocaleText(
+        locale,
+        `无效的目标步骤「${rawTarget}」，可选值：REQUIREMENTS、PROTOTYPE、BUSINESS_MODEL、DELIVERY。`,
+        `Invalid targetStep "${rawTarget}"; expected REQUIREMENTS, PROTOTYPE, BUSINESS_MODEL, or DELIVERY.`,
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: errMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({ status: 'ERROR', message: errMsg }),
+        isError: true,
+      };
+    }
+
+    const sourceStep = deriveProjectStepForSessionKind(session.agentKind);
+    if (sourceStep && sourceStep === targetStep) {
+      const sameMsg = pickLocaleText(
+        locale,
+        `当前已经在「${PROJECT_STEP_NAMES[targetStep].zh}」步骤，无需发起跨步骤转交。`,
+        `Already in the ${PROJECT_STEP_NAMES[targetStep].en} step; no hand-off needed.`,
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: sameMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({ status: 'ERROR', message: sameMsg }),
+        isError: true,
+      };
+    }
+
+    const rawRequest = typeof args.request === 'string' ? args.request.trim() : '';
+    const cleanRequest = rawRequest || (latestUserPrompt(session)?.trim() ?? '');
+    if (!cleanRequest) {
+      const emptyMsg = pickLocaleText(
+        locale,
+        '转交请求内容不能为空。',
+        'Hand-off request text cannot be empty.',
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: emptyMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({ status: 'ERROR', message: emptyMsg }),
+        isError: true,
+      };
+    }
+
+    const cleanReason =
+      typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim() : undefined;
+    const proposal: StepHandoffProposal = {
+      id: `handoff-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      sourceStep,
+      targetStep,
+      request: cleanRequest,
+      ...(cleanReason ? { reason: cleanReason } : {}),
+      status: 'PENDING',
+    };
+    const stepName = PROJECT_STEP_NAMES[targetStep];
+
+    return {
+      trace: {
+        id: tc.id,
+        toolName: tc.name,
+        arguments: {
+          targetStep,
+          request: cleanRequest,
+          ...(cleanReason ? { reason: cleanReason } : {}),
+        },
+        output: pickLocaleText(
+          locale,
+          `已准备转交到「${stepName.zh}」步骤：${cleanRequest}`,
+          `Prepared hand-off to ${stepName.en}: ${cleanRequest}`,
+        ),
+        isError: false,
+        durationMs: Date.now() - started,
+      },
+      toolResultContent: JSON.stringify({
+        status: 'HANDOFF_PROPOSED',
+        handoffId: proposal.id,
+        sourceStep,
+        targetStep,
+        request: cleanRequest,
+        ...(cleanReason ? { reason: cleanReason } : {}),
+      }),
+      isError: false,
+      stepHandoffProposal: proposal,
     };
   }
 
@@ -3624,6 +4017,7 @@ export interface UnifiedAgentStreamInput {
     selectedAnswers: string[];
     freeformText?: string;
   };
+  handoffFrom?: StepHandoffOrigin;
   images?: TransientTurnImageInput[];
   designBrief?: DesignBrief;
   prototypeName?: string;
@@ -3894,6 +4288,7 @@ async function executeUnifiedTurnCore(
       runId: turnIdentity.runId,
       role: 'user',
       content: synthesizedPrompt,
+      ...(input.handoffFrom ? { handoffFrom: input.handoffFrom } : {}),
       ...(turnAttachmentRefs.length > 0 ? { images: turnAttachmentRefs } : {}),
       timestamp: nowIso,
     });
@@ -3949,6 +4344,7 @@ async function executeUnifiedTurnCore(
   const allToolTraces: AgentToolCallTrace[] = [];
   const allArtifacts: AgentDomainArtifact[] = [];
   let pendingAskUser: AgentAskUserPrompt | undefined;
+  let pendingStepHandoff: StepHandoffProposal | undefined;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let hadValidatorError = false;
@@ -4361,6 +4757,17 @@ async function executeUnifiedTurnCore(
           });
         }
 
+        if (executed.stepHandoffProposal) {
+          pendingStepHandoff = executed.stepHandoffProposal;
+          emit({
+            id: nextEventId(),
+            event: 'step_handoff',
+            data: {
+              stepHandoff: executed.stepHandoffProposal,
+            },
+          });
+        }
+
         const toolResultMsg: ToolResultMessage<JsonObject> = {
           role: 'toolResult',
           toolCallId: tc.id,
@@ -4561,7 +4968,9 @@ async function executeUnifiedTurnCore(
       prototypeTurnDraft &&
       !prototypeTurnDraft.prototypeId &&
       !prototypeTurnDraft.workingHtml.trim() &&
-      !pendingAskUser
+      !pendingAskUser &&
+      !pendingStepHandoff &&
+      Boolean(store.getProjectStepConfirmations(sessionState.projectId).requirements)
     ) {
       throw new LlmGatewayError({
         message: pickLocaleText(
@@ -4647,7 +5056,23 @@ async function executeUnifiedTurnCore(
       }
     }
 
-    if (!accumulatedText.trim() && allToolTraces.length > 0) {
+    if (!accumulatedText.trim() && pendingStepHandoff) {
+      const stepName = PROJECT_STEP_NAMES[pendingStepHandoff.targetStep];
+      const reasonPrefix = pendingStepHandoff.reason
+        ? effectiveLocale === 'en-US'
+          ? `${pendingStepHandoff.reason}. `
+          : `${pendingStepHandoff.reason}。`
+        : '';
+      accumulatedText =
+        effectiveLocale === 'en-US'
+          ? `${reasonPrefix}I kept the current step unchanged and prepared a hand-off card below so you can continue in ${stepName.en} or stay here.`
+          : `${reasonPrefix}我不会在当前步骤直接改动，已在下方准备好转交卡片，你可以转到该步骤继续，也可以选择留在这里。`;
+      emit({
+        id: nextEventId(),
+        event: 'delta',
+        data: { step: 1, text: accumulatedText },
+      });
+    } else if (!accumulatedText.trim() && allToolTraces.length > 0) {
       const sep = effectiveLocale === 'en-US' ? ': ' : '：';
       accumulatedText = allToolTraces.map((t) => `- **${t.toolName}**${sep}${t.output}`).join('\n');
       emit({
@@ -4667,6 +5092,7 @@ async function executeUnifiedTurnCore(
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
+      ...(pendingStepHandoff ? { stepHandoff: pendingStepHandoff } : {}),
       ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
       ...(usedVisionFallback
         ? {
@@ -5395,6 +5821,46 @@ export async function* attachUnifiedAgentSessionLiveStream(
     id: `${sessionId}-evt-snapshot-${Date.now().toString(36)}`,
     event: 'message_end',
     data: buildSessionMessageEndPayload(store, existing),
+  };
+}
+
+export async function startUnifiedAgentSessionTurn(
+  store: WorkspaceStore,
+  input: Omit<UnifiedAgentStreamInput, 'signal'>,
+  options?: { awaitCompletion?: boolean },
+): Promise<{ runId: string; session: AgentSession }> {
+  const existing = store.getAgentSession(input.sessionId);
+  if (!existing) {
+    throw new Error(`Agent session not found: ${input.sessionId}`);
+  }
+  if (options?.awaitCompletion !== false) {
+    const collected = await collectUnifiedAgentTurn(store, input);
+    const lastUser = [...collected.session.messages].reverse().find((m) => m.role === 'user');
+    return {
+      runId: lastUser?.runId ?? lastUser?.id ?? '',
+      session: collected.session,
+    };
+  }
+
+  const slot = getOrCreateSessionSlot(store, input.sessionId);
+  if (slot.activeRun && !slot.activeRun.done) {
+    const turnIdentity = allocateTurnRunIdentity(existing, input);
+    slot.queue.push({
+      queueId: `sq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      input,
+      cancelled: false,
+      resolveRun: () => undefined,
+    });
+    return {
+      runId: turnIdentity.runId,
+      session: store.getAgentSession(input.sessionId) ?? existing,
+    };
+  }
+
+  const run = launchActiveRunInSlot(store, slot, input.sessionId, input);
+  return {
+    runId: run.runId,
+    session: store.getAgentSession(input.sessionId) ?? existing,
   };
 }
 
