@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { resolveThemeId } from '../packages/workbench-theme/index.js';
 
+/** This device's light/dark choice; absent when it follows the system. */
+export const THEME_MODE_STORAGE_KEY = 'onto_theme';
 /** This device's Workbench Theme choice (ADR 0012); never sent to the backend. */
 export const WORKBENCH_THEME_STORAGE_KEY = 'onto_workbench_theme';
 
@@ -247,7 +249,7 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
 
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
     try {
-      const saved = localStorage.getItem('onto_theme');
+      const saved = localStorage.getItem(THEME_MODE_STORAGE_KEY);
       if (saved === 'light' || saved === 'dark') return saved;
       return 'system';
     } catch {
@@ -275,7 +277,7 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     };
     mql.addEventListener('change', onChange);
     const onStorage = (e: StorageEvent) => {
-      if (e.key === 'onto_theme') {
+      if (e.key === THEME_MODE_STORAGE_KEY) {
         setThemePreference(
           e.newValue === 'light' || e.newValue === 'dark' ? e.newValue : 'system',
         );
@@ -300,9 +302,9 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     }
     try {
       if (themePreference === 'system') {
-        localStorage.removeItem('onto_theme');
+        localStorage.removeItem(THEME_MODE_STORAGE_KEY);
       } else {
-        localStorage.setItem('onto_theme', themePreference);
+        localStorage.setItem(THEME_MODE_STORAGE_KEY, themePreference);
       }
     } catch {
       // Ignore storage write errors in restricted contexts
