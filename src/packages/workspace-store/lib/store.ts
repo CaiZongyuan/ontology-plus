@@ -806,7 +806,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     rootDirectory: architectureAssetsRoot,
     writable: options.architectureAssetsWritable,
   });
-  const bundledAssetIds = new Set(architectureCatalog.listAssets().map((asset) => asset.id));
+  const bundledAssetIds = new Set([
+    ...architectureCatalog.listAssets().map((asset) => asset.id),
+    ...architectureCatalog.listTechnologyProfiles().flatMap((profile) => profile.compatibleAssetIds),
+  ]);
 
   if (dbPath !== ':memory:') {
     try {

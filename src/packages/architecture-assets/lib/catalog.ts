@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import uiAsset from './catalog/assets/asset-ui-spatial-paper.json';
 import foundationAsset from './catalog/assets/asset-foundation-ts-edge.json';
@@ -141,10 +141,13 @@ export function createArchitectureAssetCatalog(options: ArchitectureAssetCatalog
         updatedAt: new Date().toISOString(),
       };
       const content = serialize(full);
+      const temporary = path.join(path.dirname(target), `.${asset.id}-${randomUUID()}.tmp`);
       try {
         // The directory and filename are selected by the catalog, never by caller-supplied paths.
-        fs.writeFileSync(target, content, { flag: 'w' });
+        fs.writeFileSync(temporary, content, { flag: 'wx' });
+        fs.renameSync(temporary, target);
       } catch (error) {
+        if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
         throw new Error(`Cannot save repository standard ${asset.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
       return { ...full, sourcePath: `${SOURCE_ROOT}/assets/${asset.id}.json`, sourceRevision: revision(content) };
