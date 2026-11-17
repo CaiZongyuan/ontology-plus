@@ -1,5 +1,6 @@
 import {
   PROJECT_STEP_IDS,
+  type BilingualText,
   type ProjectStepId,
   type ProjectStepStateId,
 } from '../../business-vocabulary/index.js';
@@ -527,6 +528,148 @@ export interface RequirementDoc {
   status: 'DRAFT' | 'CONFIRMED' | 'PUBLISHED';
   content: string;
   updatedAt: string;
+}
+
+export type PersistedArtifactHistoryKind = 'REQUIREMENTS_DOC' | 'ONTOLOGY_SUITE';
+
+export type ArtifactHistorySurfaceKind = PersistedArtifactHistoryKind | 'PROTOTYPE';
+
+export type ArtifactHistorySource =
+  | {
+      kind: 'AGENT_RUN';
+      runId: string;
+      sessionId?: string;
+      reason?: string;
+    }
+  | {
+      kind: 'MANUAL';
+      note?: string;
+    }
+  | {
+      kind: 'UNDO';
+      undoneEntryId: string;
+    }
+  | {
+      kind: 'RESTORE';
+      restoredFromEntryId: string;
+    };
+
+export interface RequirementDocSnapshot {
+  id: string;
+  projectId: string;
+  title: string;
+  version: string;
+  status: RequirementDoc['status'];
+  content: string;
+}
+
+export interface RequirementDocHistoryState {
+  doc: RequirementDocSnapshot | null;
+  docs: RequirementDocSnapshot[];
+}
+
+export type RequirementSectionChangeKind = 'ADDED' | 'MODIFIED' | 'REMOVED';
+
+export interface RequirementSectionChange {
+  id: string;
+  changeType: RequirementSectionChangeKind;
+  sectionHeading: string;
+  sectionTitle: string;
+  addedLines: number;
+  removedLines: number;
+  excerpt?: string;
+  summary: BilingualText;
+}
+
+export interface RequirementDocDiff {
+  hasChanges: boolean;
+  titleChanged: boolean;
+  beforeTitle?: string;
+  afterTitle?: string;
+  addedCount: number;
+  modifiedCount: number;
+  removedCount: number;
+  sections: RequirementSectionChange[];
+}
+
+export type ArtifactJumpTarget =
+  | {
+      kind: 'REQUIREMENTS_SECTION';
+      docId?: string;
+      sectionHeading: string;
+    }
+  | {
+      kind: 'PROTOTYPE_ANCHOR';
+      prototypeId: string;
+      revisionId?: string;
+      screenId?: string;
+      elementId?: string;
+    }
+  | {
+      kind: 'BUSINESS_OBJECT';
+      objectId?: string;
+      modelCode?: ModelCode;
+      elementId?: string;
+    };
+
+export interface ChangeSummaryItemView {
+  id: string;
+  changeType: 'ADDED' | 'MODIFIED' | 'REMOVED';
+  groupLabel?: BilingualText;
+  label: BilingualText;
+  detail?: BilingualText;
+  jumpTarget?: ArtifactJumpTarget;
+}
+
+export interface ChangeSummaryView {
+  entryId: string;
+  artifactKind: ArtifactHistorySurfaceKind;
+  targetId: string;
+  reason?: BilingualText;
+  items: ChangeSummaryItemView[];
+  canUndo: boolean;
+  isUndone?: boolean;
+}
+
+export interface RequirementsDocHistoryEntry {
+  id: string;
+  projectId: string;
+  artifactKind: 'REQUIREMENTS_DOC';
+  targetId: string;
+  sequence: number;
+  createdAt: string;
+  source: ArtifactHistorySource;
+  beforeState: RequirementDocHistoryState;
+  afterState: RequirementDocHistoryState;
+}
+
+export interface OntologySuiteHistoryEntry {
+  id: string;
+  projectId: string;
+  artifactKind: 'ONTOLOGY_SUITE';
+  targetId: string;
+  sequence: number;
+  createdAt: string;
+  source: ArtifactHistorySource;
+  beforeState: OntologySuite;
+  afterState: OntologySuite;
+}
+
+export type ArtifactHistoryEntry =
+  | RequirementsDocHistoryEntry
+  | OntologySuiteHistoryEntry;
+
+export interface ArtifactHistoryEntryView {
+  id: string;
+  projectId: string;
+  artifactKind: ArtifactHistorySurfaceKind;
+  targetId: string;
+  sequence: number;
+  createdAt: string;
+  source: ArtifactHistorySource;
+  title: BilingualText;
+  changeSummary: ChangeSummaryView;
+  requirementsDiff?: RequirementDocDiff;
 }
 
 export interface DesignBriefItem {
@@ -1228,6 +1371,45 @@ export interface WorkspaceStore {
     confirmation: BusinessModelStepConfirmationRecord;
     project: ProjectDetail;
     stepConfirmations: ProjectStepConfirmations;
+  };
+  beginArtifactRunCapture(input: {
+    projectId: string;
+    artifactKind: PersistedArtifactHistoryKind;
+    runId: string;
+    sessionId?: string;
+  }): void;
+  finishArtifactRunCapture(input: {
+    projectId: string;
+    artifactKind: PersistedArtifactHistoryKind;
+    runId: string;
+    sessionId?: string;
+    reason?: string;
+  }): ArtifactHistoryEntry | null;
+  listArtifactHistory(
+    projectId: string,
+    filter?: { artifactKind?: PersistedArtifactHistoryKind },
+  ): ArtifactHistoryEntry[];
+  listArtifactHistoryViews(
+    projectId: string,
+    filter?: { artifactKind?: PersistedArtifactHistoryKind },
+  ): ArtifactHistoryEntryView[];
+  undoLatestArtifactChange(
+    projectId: string,
+    artifactKind: PersistedArtifactHistoryKind,
+    options?: { expectedEntryId?: string },
+  ): {
+    entry: ArtifactHistoryEntry;
+    entryView: ArtifactHistoryEntryView;
+    undoneEntryId: string;
+  };
+  restoreArtifactBeforeEntry(
+    projectId: string,
+    artifactKind: PersistedArtifactHistoryKind,
+    entryId: string,
+  ): {
+    entry: ArtifactHistoryEntry;
+    entryView: ArtifactHistoryEntryView;
+    restoredBeforeEntryId: string;
   };
   savePrototypeAndSyncMu(
     projectId: string,

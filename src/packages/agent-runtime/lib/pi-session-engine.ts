@@ -1285,6 +1285,43 @@ function buildFauxMockModels(
       }
 
       if (session.agentKind === 'REQUIREMENT') {
+        const existingPrimaryDoc = store.listRequirementDocs(session.projectId)[0];
+        if (
+          existingPrimaryDoc &&
+          !parsedAction &&
+          /更新需求文档|修改需求文档|在需求文档(?:里|中)|补充到需求文档|(?:update|revise)\s+requirements\s+document/i.test(
+            userPrompt,
+          )
+        ) {
+          const cleanNote = userPrompt
+            .replace(/^(?:请|麻烦)?(?:帮我)?(?:更新需求文档|修改需求文档|补充到需求文档)\s*[:：，,]?\s*/i, '')
+            .trim() || userPrompt.trim();
+          const updatedMarkdown = `${existingPrimaryDoc.content.trimEnd()}\n\n## 补充业务约定\n- ${cleanNote}\n`;
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在按用户最新说明更新当前需求文档的相关章节。`,
+                  `Updating the requirements document sections with your latest instructions.`,
+                ),
+              ),
+              fauxToolCall('save_synthesized_srs_doc', {
+                docId: existingPrimaryDoc.id,
+                title: existingPrimaryDoc.title,
+                status: 'DRAFT',
+                content: updatedMarkdown,
+                reason: pickLocaleText(
+                  loc,
+                  '按你补充的业务说明在需求文档中增加了相应章节与约定。',
+                  'Added the requested business conventions to the requirements document.',
+                ),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
         if (
           parsedAction?.kind === 'SYNTHESIZE_SRS' ||
           /合成\s*SRS|合成需求规格|生成\s*SRS|synthesize\s+(?:9[- ]chapter\s+)?srs/i.test(userPrompt)
@@ -1299,6 +1336,17 @@ function buildFauxMockModels(
           const srsContent = project
             ? buildDeterministicSrsMarkdown(store, project, reqSession, session, loc)
             : '# 需求规格说明书\n\n## 1. 引言与业务目标 (Introduction & Business Goals)\n';
+          const reason = existingPrimaryDoc
+            ? pickLocaleText(
+                loc,
+                '结合最新对话中的业务要点重新整理并更新了需求文档各章节。',
+                'Refreshed the requirements document sections from your latest conversation points.',
+              )
+            : pickLocaleText(
+                loc,
+                '根据对话中确认的业务对象、规则与约定整理出首版需求文档。',
+                'Organized the initial requirements document from your confirmed business objects and rules.',
+              );
           return fauxAssistantMessage(
             [
               fauxThinking(
@@ -1317,6 +1365,7 @@ function buildFauxMockModels(
                   : {}),
                 status: 'DRAFT',
                 content: srsContent,
+                reason,
               }),
             ],
             { stopReason: 'toolUse' },
@@ -1570,6 +1619,40 @@ function buildFauxMockModels(
           .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
           .map((c) => c.text)
           .join('\n') ?? '';
+
+      if (session.agentKind === 'REQUIREMENT') {
+        if (lastResult?.isError) {
+          return fauxAssistantMessage([
+            fauxText(
+              pickLocaleText(
+                loc,
+                '需求整理过程中遇到问题，请补充描述或重试。',
+                'Could not update the requirements document; please add more detail or retry.',
+              ),
+            ),
+          ]);
+        }
+        if (lastResult?.toolName === 'save_synthesized_srs_doc') {
+          return fauxAssistantMessage([
+            fauxText(
+              pickLocaleText(
+                loc,
+                '已整理并更新需求文档，你可以在右侧逐章核对内容，确认无误后点击「确认需求文档」。',
+                'Updated the requirements document. Review the sections on the right and click Confirm requirements when ready.',
+              ),
+            ),
+          ]);
+        }
+        return fauxAssistantMessage([
+          fauxText(
+            pickLocaleText(
+              loc,
+              '已记录你提到的业务对象、规则与约定。你可以继续补充流程细节，或整理成完整需求文档。',
+              'Recorded the business objects, rules, and choices from your message. Continue adding details or generate the full requirements document.',
+            ),
+          ),
+        ]);
+      }
 
       if (session.agentKind === 'ARCHITECTURE' || session.agentKind === 'CODING') {
         const result = extractJsonObjectFromText<Record<string, unknown>>(lastResultText);
@@ -4770,6 +4853,9 @@ async function executeUnifiedTurnCore(
         runId: turnRunId,
         diagnostic: errorAssistantMsg.errorDiagnostic,
         session: sessionState,
+        ...(sessionState.projectId
+          ? { artifactHistory: store.listArtifactHistoryViews(sessionState.projectId) }
+          : {}),
         ...(sessionState.agentKind === 'REQUIREMENT'
           ? { requirementDocs: store.listRequirementDocs(sessionState.projectId) }
           : {}),
@@ -5029,6 +5115,7 @@ function buildSessionMessageEndPayload(
     ...(extra?.cancelled ? { cancelled: true } : {}),
     project: store.getProject(session.projectId),
     stepConfirmations: store.getProjectStepConfirmations(session.projectId),
+    artifactHistory: session.projectId ? store.listArtifactHistoryViews(session.projectId) : [],
   };
 
   if (session.agentKind === 'PROTOTYPE_CO_DESIGN' || session.agentKind === 'COPILOT') {

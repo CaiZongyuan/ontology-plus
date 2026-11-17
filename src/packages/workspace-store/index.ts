@@ -16,6 +16,16 @@ export {
   computeStepContentHash,
   normalizeStepMarkdown,
 } from './lib/step-confirmations.js';
+export {
+  ArtifactHistoryConflictError,
+  ArtifactHistoryNotFoundError,
+  DEFAULT_MAX_ARTIFACT_HISTORY_ENTRIES,
+  buildArtifactHistoryViews,
+  captureRequirementDocState,
+  computeRequirementDocDiff,
+  sanitizeBusinessViewCopy,
+  toRequirementDocSnapshot,
+} from './lib/artifact-history.js';
 export { DEFAULT_TECHNOLOGY_PROFILE_ID } from '../architecture-assets/index.js';
 
 export type {
@@ -40,6 +50,21 @@ export type {
   RequirementMessage,
   RequirementSession,
   RequirementDoc,
+  PersistedArtifactHistoryKind,
+  ArtifactHistorySurfaceKind,
+  ArtifactHistorySource,
+  RequirementDocSnapshot,
+  RequirementDocHistoryState,
+  RequirementSectionChangeKind,
+  RequirementSectionChange,
+  RequirementDocDiff,
+  ArtifactJumpTarget,
+  ChangeSummaryItemView,
+  ChangeSummaryView,
+  RequirementsDocHistoryEntry,
+  OntologySuiteHistoryEntry,
+  ArtifactHistoryEntry,
+  ArtifactHistoryEntryView,
   DesignBriefItem,
   DesignBriefBorrowedReference,
   DesignBrief,

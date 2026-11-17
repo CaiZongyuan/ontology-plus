@@ -63,6 +63,7 @@ import {
 } from '../packages/package-compiler/index.js';
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
+import { registerArtifactHistoryRoutes } from './artifact-history.js';
 import { registerBusinessModelEditRoutes } from './business-model-edits.js';
 import {
   deriveProjectStepsForStoreProject,
@@ -196,6 +197,9 @@ export function createApiApp(
       stepConfirmations: activeProject.id
         ? store.getProjectStepConfirmations(activeProject.id)
         : { requirements: null, prototype: null, businessModel: null },
+      artifactHistory: activeProject.id
+        ? store.listArtifactHistoryViews(activeProject.id)
+        : [],
       fourLayerAssets: store.listFourLayerAssets(),
       technologyProfiles: store.listTechnologyProfiles(),
       assembledApplications: store.listAssembledApplications(),
@@ -456,6 +460,7 @@ export function createApiApp(
       prototypes: store.listPrototypes(project.id),
       confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(project.id) ?? null,
       stepConfirmations: store.getProjectStepConfirmations(project.id),
+      artifactHistory: store.listArtifactHistoryViews(project.id),
       packageSnapshots: listProjectPackageSnapshots(store, project.id),
       extractionJobs: store.listExtractionJobs(project.id),
     });
@@ -688,13 +693,21 @@ export function createApiApp(
       ...body,
       status: body.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT',
     });
-    return c.json({ doc, docs: store.listRequirementDocs(body.projectId) });
+    return c.json({
+      doc,
+      docs: store.listRequirementDocs(body.projectId),
+      artifactHistory: store.listArtifactHistoryViews(body.projectId),
+    });
   });
 
   app.post('/api/requirements/docs/:id/clone', (c) => {
     const id = c.req.param('id');
     const doc = store.cloneRequirementDoc(id);
-    return c.json({ doc, docs: store.listRequirementDocs(doc.projectId) });
+    return c.json({
+      doc,
+      docs: store.listRequirementDocs(doc.projectId),
+      artifactHistory: store.listArtifactHistoryViews(doc.projectId),
+    });
   });
 
   app.delete('/api/requirements/docs/:id', (c) => {
@@ -704,6 +717,7 @@ export function createApiApp(
     return c.json({
       deletedId: id,
       docs: store.listRequirementDocs(projectId),
+      artifactHistory: store.listArtifactHistoryViews(projectId),
     });
   });
 
@@ -1104,6 +1118,7 @@ export function createApiApp(
   });
 
   registerApplicationDeliveryRoutes(app, store);
+  registerArtifactHistoryRoutes(app, store);
   registerBusinessModelEditRoutes(app, store);
   registerStepConfirmationRoutes(app, store);
 

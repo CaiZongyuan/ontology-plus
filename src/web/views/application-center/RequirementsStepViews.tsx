@@ -9,6 +9,7 @@ import {
   Copy,
   Edit3,
   GitBranch,
+  History,
   Info,
   Loader2,
   Plus,
@@ -19,12 +20,13 @@ import {
 } from 'lucide-react';
 import {
   BUSINESS_VOCABULARY,
-  MODEL_BUSINESS_NAMES,
   type BusinessLocale,
 } from '../../../packages/business-vocabulary/index.js';
-import type { ModelCode } from '../../../packages/ontology-core/index.js';
 import {
   normalizeStepMarkdown,
+  sanitizeBusinessViewCopy,
+  type ArtifactHistoryEntryView,
+  type ArtifactJumpTarget,
   type RequirementDoc,
 } from '../../../packages/workspace-store/index.js';
 import {
@@ -41,6 +43,7 @@ import {
   ConfirmDialog,
   RegistryTable,
 } from '../../components/beautifui/index.js';
+import { ArtifactHistoryDrawer } from '../../components/history/index.js';
 import { TiptapMarkdownEditor } from '../../components/markdown/index.js';
 import { usePreferences, type NavViewId } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
@@ -765,18 +768,22 @@ export function RequirementDocsView({
 
   const handleSaveDoc = async (mdToSave = content) => {
     const targetId = selectedDoc?.id ?? `doc-${Date.now()}`;
-    const res = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
-      '/api/requirements/docs',
-      {
-        id: targetId,
-        projectId: data.activeProject.id,
-        title: docTitle.trim() || `${data.activeProject.name} 需求文档`,
-        version: docVersion.trim() || 'v1.0',
-        content: mdToSave,
-        status: 'DRAFT',
-      },
-    );
-    patchData({ requirementDocs: res.docs });
+    const res = await apiPostJson<{
+      doc: RequirementDoc;
+      docs: RequirementDoc[];
+      artifactHistory?: ArtifactHistoryEntryView[];
+    }>('/api/requirements/docs', {
+      id: targetId,
+      projectId: data.activeProject.id,
+      title: docTitle.trim() || `${data.activeProject.name} 需求文档`,
+      version: docVersion.trim() || 'v1.0',
+      content: mdToSave,
+      status: 'DRAFT',
+    });
+    patchData({
+      requirementDocs: res.docs,
+      ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
+    });
     setSelectedDocId(res.doc.id);
     showToast(
       t(
@@ -787,45 +794,57 @@ export function RequirementDocsView({
   };
 
   const handleCreateBlankDoc = async () => {
-    const res = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
-      '/api/requirements/docs',
-      {
-        id: `doc-${Date.now()}`,
-        projectId: data.activeProject.id,
-        title: `${data.activeProject.name} 需求规格书 #${docs.length + 1}`,
-        version: 'v1.0',
-        content: `# ${data.activeProject.name} 软件需求规格说明书\n\n## 1. 业务目标与范围\n\n## 2. 核心领域对象与状态机\n\n| 对象名称 | 编码 | 核心职责 |\n| --- | --- | --- |\n| 示例聚合根 | AGG-01 | 核心业务单据 |\n`,
-        status: 'DRAFT',
-      },
-    );
-    patchData({ requirementDocs: res.docs });
+    const res = await apiPostJson<{
+      doc: RequirementDoc;
+      docs: RequirementDoc[];
+      artifactHistory?: ArtifactHistoryEntryView[];
+    }>('/api/requirements/docs', {
+      id: `doc-${Date.now()}`,
+      projectId: data.activeProject.id,
+      title: `${data.activeProject.name} 需求规格书 #${docs.length + 1}`,
+      version: 'v1.0',
+      content: `# ${data.activeProject.name} 软件需求规格说明书\n\n## 1. 业务目标与范围\n\n## 2. 核心领域对象与状态机\n\n| 对象名称 | 编码 | 核心职责 |\n| --- | --- | --- |\n| 示例聚合根 | AGG-01 | 核心业务单据 |\n`,
+      status: 'DRAFT',
+    });
+    patchData({
+      requirementDocs: res.docs,
+      ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
+    });
     setSelectedDocId(res.doc.id);
     setPageMode('WORKSPACE');
     showToast(t('已新建需求规格书草稿', 'Created new SRS draft'));
   };
 
   const handleCloneDoc = async (doc: RequirementDoc) => {
-    const res = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
-      '/api/requirements/docs',
-      {
-        id: `doc-clone-${Date.now()}`,
-        projectId: data.activeProject.id,
-        title: `${doc.title} (副本)`,
-        version: doc.version,
-        content: doc.content,
-        status: 'DRAFT',
-      },
-    );
-    patchData({ requirementDocs: res.docs });
+    const res = await apiPostJson<{
+      doc: RequirementDoc;
+      docs: RequirementDoc[];
+      artifactHistory?: ArtifactHistoryEntryView[];
+    }>('/api/requirements/docs', {
+      id: `doc-clone-${Date.now()}`,
+      projectId: data.activeProject.id,
+      title: `${doc.title} (副本)`,
+      version: doc.version,
+      content: doc.content,
+      status: 'DRAFT',
+    });
+    patchData({
+      requirementDocs: res.docs,
+      ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
+    });
     showToast(t(`已克隆文档「${doc.title}」`, `Cloned "${doc.title}"`));
   };
 
   const handleConfirmDeleteDoc = async () => {
     if (!deletingDoc) return;
-    const res = await apiDeleteResource<{ docs: RequirementDoc[] }>(
-      `/api/requirements/docs/${deletingDoc.id}?projectId=${data.activeProject.id}`,
-    );
-    patchData({ requirementDocs: res.docs });
+    const res = await apiDeleteResource<{
+      docs: RequirementDoc[];
+      artifactHistory?: ArtifactHistoryEntryView[];
+    }>(`/api/requirements/docs/${deletingDoc.id}?projectId=${data.activeProject.id}`);
+    patchData({
+      requirementDocs: res.docs,
+      ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
+    });
     setDeletingDoc(null);
     showToast(t('已删除需求规格书', 'Deleted SRS document'));
   };
@@ -837,18 +856,22 @@ export function RequirementDocsView({
     const text = await file.text();
     const baseTitle =
       file.name.replace(/\.(md|txt)$/i, '') || `${data.activeProject.name} 需求规格书`;
-    const res = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
-      '/api/requirements/docs',
-      {
-        id: `doc-upload-${Date.now()}`,
-        projectId: data.activeProject.id,
-        title: baseTitle,
-        version: 'v1.0',
-        content: text,
-        status: 'DRAFT',
-      },
-    );
-    patchData({ requirementDocs: res.docs });
+    const res = await apiPostJson<{
+      doc: RequirementDoc;
+      docs: RequirementDoc[];
+      artifactHistory?: ArtifactHistoryEntryView[];
+    }>('/api/requirements/docs', {
+      id: `doc-upload-${Date.now()}`,
+      projectId: data.activeProject.id,
+      title: baseTitle,
+      version: 'v1.0',
+      content: text,
+      status: 'DRAFT',
+    });
+    patchData({
+      requirementDocs: res.docs,
+      ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
+    });
     setSelectedDocId(res.doc.id);
     setDocTitle(res.doc.title);
     setDocVersion(res.doc.version);
@@ -866,18 +889,22 @@ export function RequirementDocsView({
     if (generatingProto) return;
     let targetDocId = selectedDoc?.id;
     if (!targetDocId && content.trim()) {
-      const saveJson = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
-        '/api/requirements/docs',
-        {
-          id: `doc-${Date.now()}`,
-          projectId: data.activeProject.id,
-          title: docTitle.trim() || `${data.activeProject.name} 需求文档`,
-          version: docVersion.trim() || 'v1.0',
-          content,
-          status: 'DRAFT',
-        },
-      );
-      patchData({ requirementDocs: saveJson.docs });
+      const saveJson = await apiPostJson<{
+        doc: RequirementDoc;
+        docs: RequirementDoc[];
+        artifactHistory?: ArtifactHistoryEntryView[];
+      }>('/api/requirements/docs', {
+        id: `doc-${Date.now()}`,
+        projectId: data.activeProject.id,
+        title: docTitle.trim() || `${data.activeProject.name} 需求文档`,
+        version: docVersion.trim() || 'v1.0',
+        content,
+        status: 'DRAFT',
+      });
+      patchData({
+        requirementDocs: saveJson.docs,
+        ...(saveJson.artifactHistory ? { artifactHistory: saveJson.artifactHistory } : {}),
+      });
       targetDocId = saveJson.doc.id;
     }
     setActiveItemId(targetDocId ?? null);
@@ -1123,53 +1150,11 @@ export function RequirementDocsView({
 
 // ─── 4. Unified Requirements Step Canvas (Spec #37 §5 & §6, Issue #64) ──────
 
-const ELEMENT_ID_RE =
-  /(?<![A-Za-z0-9_-])(?:AGG|ENT|VO|DIC|DICT|ASSOC|BHV|BEH|RUL|RULE|EVT|SCN|ACT|ROL|ROLE|PERM|PGRP|FLW|FLOW|ACTV|QRY|RPT|SCR|EL|UIE|NAV|CC|MAP|INT|IF|MET|ASCN|WB)-[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Za-z0-9_-])/g;
-
-const MODEL_STAGE_CODE_RE =
-  /(?<![A-Za-z0-9_])(?:M[1-7]|ME|MU|MM|MI|STAGE)_[A-Z0-9_]+(?![A-Za-z0-9_])/g;
-
-const PHYSICAL_TABLE_RE = /(?<![A-Za-z0-9_])t_[a-z][a-z0-9_]+(?![A-Za-z0-9_])/g;
-
-const MODEL_CODE_RE = /(?<![A-Za-z0-9_])(M[1-7]|ME|MU|MM|MI)(?![A-Za-z0-9_])/g;
-
 export function formatRequirementTextForBusinessView(
   raw: string,
   locale: BusinessLocale = 'zh-CN',
 ): string {
-  if (!raw) return '';
-  let out = raw;
-  // Remove parenthetical technical mapping annotations like "(对应 M1 对象模型)" or "(`VisitorPass` / `AGG-01`)"
-  out = out.replace(/[（(]\s*(?:对应|映射|关联)[^)）]*(?:M[1-7]|ME|MU|MM|MI)[^)）]*[)）]/g, '');
-  out = out.replace(/[`'"]?\s*\/\s*[`'"]?(?:AGG|ENT|VO|DIC|DICT|ASSOC|BHV|BEH|RUL|RULE|EVT|SCN|ACT|ROL|ROLE|PERM|PGRP|FLW|FLOW|ACTV|QRY|RPT|SCR|EL|UIE|NAV|CC|MAP|INT|IF|MET|ASCN|WB)-[A-Z0-9-]+[`'"]?/g, '');
-  out = out.replace(ELEMENT_ID_RE, '');
-  out = out.replace(MODEL_STAGE_CODE_RE, '');
-  out = out.replace(PHYSICAL_TABLE_RE, locale === 'en-US' ? 'business table' : '业务数据表');
-  out = out.replace(MODEL_CODE_RE, (_m, code: string) => {
-    const entry = MODEL_BUSINESS_NAMES[code as ModelCode];
-    return entry ? (locale === 'en-US' ? entry.en : entry.zh) : '';
-  });
-  // Strip file extensions and technical format/protocol names on Business View surface
-  out = out.replace(/\.(?:yaml|yml|json|owl|ddl|sql|md|html|css|zip)(?![A-Za-z0-9_])/gi, '');
-  out = out.replace(
-    /(?<![A-Za-z0-9_])(?:YAML|YML|JSON|OWL|DDL|SQLite|SQL|Markdown|HTML5?|CSS|ZIP)(?![A-Za-z0-9_])/gi,
-    locale === 'en-US' ? 'document' : '规格',
-  );
-  out = out.replace(
-    /(?<![A-Za-z0-9_])(?:gRPC|RPC|MCP|SSE|REST|HTTPS?|RESTful|GraphQL|OpenAPI)(?![A-Za-z0-9_])/gi,
-    locale === 'en-US' ? 'integration' : '接口',
-  );
-  out = out.replace(
-    /(?<![A-Za-z0-9_])(?:Agent\s+Sessions?|Agent\s+Runs?|Agent\s+Panels?|Architecture\s+Asset\s+Agent|Application\s+Development\s+Agent|Application\s+Coding\s+Agent|Copilot|PROTOTYPE_CO_DESIGN)(?![A-Za-z0-9_])|智能体会话|智能体运行|智能体面板|Agent\s*面板|Agent\s*运行|架构资产智能体|应用开发智能体/gi,
-    locale === 'en-US' ? BUSINESS_VOCABULARY.AI_ASSISTANT.en : BUSINESS_VOCABULARY.AI_ASSISTANT.zh,
-  );
-  out = out
-    .replace(/[`]/g, '')
-    .replace(/\(\s*\)|（\s*）/g, '')
-    .replace(/^\s*[:：\-·]+\s*/, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-  return out;
+  return sanitizeBusinessViewCopy(raw, locale);
 }
 
 interface ParsedRequirementSection {
@@ -1250,8 +1235,15 @@ export function RequirementsStepView({
     data,
     activeSessionId,
     liveSessionDrafts,
+    highlightedRequirementSection,
+    historyDrawerArtifactKind,
     patchData,
     showToast,
+    focusRequirementSection,
+    openArtifactHistoryDrawer,
+    closeArtifactHistoryDrawer,
+    undoArtifactChange,
+    restoreArtifactBeforeChange,
     startSrsSynthesisRun,
     confirmRequirementsStep,
   } = useWorkbenchStore();
@@ -1259,14 +1251,19 @@ export function RequirementsStepView({
 
   const [viewMode, setViewMode] = useStepViewMode('REQUIREMENTS');
   const [toggledSections, setToggledSections] = useState<Record<string, boolean>>({});
+  const [activeHighlightedSectionId, setActiveHighlightedSectionId] = useState<string | null>(
+    null,
+  );
   const [isEditingInline, setIsEditingInline] = useState(false);
   const [inlineDraft, setInlineDraft] = useState('');
   const [savingInline, setSavingInline] = useState(false);
   const [confirmingStep, setConfirmingStep] = useState(false);
+  const [historyBusyEntryId, setHistoryBusyEntryId] = useState<string | null>(null);
 
   // Reset ephemeral section/editing state on project switch
   useEffect(() => {
     setToggledSections({});
+    setActiveHighlightedSectionId(null);
     setIsEditingInline(false);
   }, [data?.activeProject.id]);
 
@@ -1364,14 +1361,90 @@ export function RequirementsStepView({
     return candidates.find((s) => s.messages.length > 0);
   }, [data, activeSessionId, rememberedSessionByScope]);
 
+  const currentDoc = data?.requirementDocs[0];
+  const parsedSections = useMemo(
+    () => (currentDoc ? parseRequirementMarkdownSections(currentDoc.content, locale) : []),
+    [currentDoc?.content, locale],
+  );
+
+  // Jump to & highlight a target section when clicked from ChangeSummaryCard or History Drawer
+  useEffect(() => {
+    if (!highlightedRequirementSection) return;
+    const targetHeading = highlightedRequirementSection.heading.trim().toLowerCase();
+    if (!targetHeading) return;
+    const matched =
+      parsedSections.find((sec) => sec.heading.trim().toLowerCase() === targetHeading) ??
+      parsedSections.find((sec) =>
+        sec.heading
+          .trim()
+          .replace(/^\d+(?:\.\d+)*[.\s、：:-]+/, '')
+          .toLowerCase() ===
+        targetHeading.replace(/^\d+(?:\.\d+)*[.\s、：:-]+/, ''),
+      );
+    if (!matched) return;
+
+    if (viewMode === 'technical') {
+      setViewMode('business');
+    }
+    setIsEditingInline(false);
+    setToggledSections((prev) => ({ ...prev, [matched.id]: true }));
+    setActiveHighlightedSectionId(matched.id);
+
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLElement>(
+          `[data-section-id="${matched.id}"]`,
+        );
+        el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      });
+    }
+  }, [highlightedRequirementSection?.seq, parsedSections, viewMode, setViewMode]);
+
   if (!data) return null;
 
   const steps = getProjectStepsFromBootstrap(data);
   const reqStep = steps.find((s) => s.id === 'REQUIREMENTS')!;
   const stepState = reqStep.state;
 
-  const currentDoc = data.requirementDocs[0];
   const confirmedReq = data.stepConfirmations?.requirements ?? null;
+  const reqHistoryEntries = (data.artifactHistory ?? []).filter(
+    (entry) => entry.artifactKind === 'REQUIREMENTS_DOC',
+  );
+  const historyDrawerOpen = historyDrawerArtifactKind === 'REQUIREMENTS_DOC';
+
+  const handleHistoryDrawerOpenChange = (open: boolean) => {
+    if (open) {
+      openArtifactHistoryDrawer('REQUIREMENTS_DOC');
+    } else {
+      closeArtifactHistoryDrawer();
+    }
+  };
+
+  const handleUndoLatestFromDrawer = async (entry: ArtifactHistoryEntryView) => {
+    setHistoryBusyEntryId(entry.id);
+    try {
+      await undoArtifactChange('REQUIREMENTS_DOC', entry.id);
+      setIsEditingInline(false);
+    } finally {
+      setHistoryBusyEntryId(null);
+    }
+  };
+
+  const handleRestoreBeforeFromDrawer = async (entry: ArtifactHistoryEntryView) => {
+    setHistoryBusyEntryId(entry.id);
+    try {
+      await restoreArtifactBeforeChange('REQUIREMENTS_DOC', entry.id);
+      setIsEditingInline(false);
+    } finally {
+      setHistoryBusyEntryId(null);
+    }
+  };
+
+  const handleJumpFromDrawer = (target: ArtifactJumpTarget) => {
+    if (target.kind === 'REQUIREMENTS_SECTION') {
+      focusRequirementSection(target.sectionHeading, target.docId);
+    }
+  };
 
   const assistantWorking = (data.agentSessions ?? []).some(
     (s) =>
@@ -1380,9 +1453,6 @@ export function RequirementsStepView({
       (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
   );
 
-  const parsedSections = currentDoc
-    ? parseRequirementMarkdownSections(currentDoc.content, locale)
-    : [];
   const confirmedSections = confirmedReq
     ? parseRequirementMarkdownSections(confirmedReq.content, locale)
     : [];
@@ -1451,18 +1521,22 @@ export function RequirementsStepView({
     setSavingInline(true);
     try {
       const targetId = currentDoc?.id ?? `doc-${Date.now()}`;
-      const res = await apiPostJson<{ doc: RequirementDoc; docs: RequirementDoc[] }>(
-        '/api/requirements/docs',
-        {
-          id: targetId,
-          projectId: data.activeProject.id,
-          title: currentDoc?.title || `${data.activeProject.name} ${t('需求文档', 'Requirements Document')}`,
-          version: currentDoc?.version || 'v1.0',
-          content: inlineDraft,
-          status: 'DRAFT',
-        },
-      );
-      patchData({ requirementDocs: res.docs });
+      const res = await apiPostJson<{
+        doc: RequirementDoc;
+        docs: RequirementDoc[];
+        artifactHistory?: ArtifactHistoryEntryView[];
+      }>('/api/requirements/docs', {
+        id: targetId,
+        projectId: data.activeProject.id,
+        title: currentDoc?.title || `${data.activeProject.name} ${t('需求文档', 'Requirements Document')}`,
+        version: currentDoc?.version || 'v1.0',
+        content: inlineDraft,
+        status: 'DRAFT',
+      });
+      patchData({
+        requirementDocs: res.docs,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
+      });
       setIsEditingInline(false);
       showToast(
         t(
@@ -1488,6 +1562,16 @@ export function RequirementsStepView({
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="requirements-history-btn"
+              onClick={() => openArtifactHistoryDrawer('REQUIREMENTS_DOC')}
+            >
+              <History size={13} aria-hidden="true" />
+              {t('历史与恢复', 'History')}
+            </Button>
             <Button
               type="button"
               variant="secondary"
@@ -1528,6 +1612,16 @@ export function RequirementsStepView({
           </div>
         </div>
         <RequirementDocsView onNavigate={onNavigate} />
+        <ArtifactHistoryDrawer
+          open={historyDrawerOpen}
+          onOpenChange={handleHistoryDrawerOpenChange}
+          artifactLabel={{ zh: '需求文档', en: 'Requirements Document' }}
+          entries={reqHistoryEntries}
+          busyEntryId={historyBusyEntryId}
+          onUndoLatest={handleUndoLatestFromDrawer}
+          onRestoreBefore={handleRestoreBeforeFromDrawer}
+          onJumpToTarget={handleJumpFromDrawer}
+        />
       </div>
     );
   }
@@ -1563,6 +1657,17 @@ export function RequirementsStepView({
             {t('需求文档', 'Requirements Document')}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="requirements-history-btn"
+              onClick={() => openArtifactHistoryDrawer('REQUIREMENTS_DOC')}
+            >
+              <History size={13} aria-hidden="true" />
+              {t('历史与恢复', 'History')}
+            </Button>
+
             <Button
               type="button"
               variant="ghost"
@@ -1733,6 +1838,7 @@ export function RequirementsStepView({
         <article className="space-y-2" data-testid="requirements-document-sections">
           {parsedSections.map((section, idx) => {
             const isModified = modifiedSectionIndexes.has(idx);
+            const isHighlighted = activeHighlightedSectionId === section.id;
             const defaultExpanded =
               stepState === 'IN_PROGRESS'
                 ? true
@@ -1744,8 +1850,14 @@ export function RequirementsStepView({
             return (
               <section
                 key={section.id}
-                className="card overflow-hidden p-0"
+                className={cn(
+                  'card overflow-hidden p-0',
+                  isHighlighted && 'border-primary ring-2 ring-ring/30',
+                )}
                 data-testid={`requirements-section-${idx}`}
+                data-section-id={section.id}
+                data-section-heading={section.heading}
+                data-highlighted={isHighlighted ? 'true' : undefined}
               >
                 <button
                   type="button"
@@ -1848,6 +1960,17 @@ export function RequirementsStepView({
           </p>
         </section>
       )}
+
+      <ArtifactHistoryDrawer
+        open={historyDrawerOpen}
+        onOpenChange={handleHistoryDrawerOpenChange}
+        artifactLabel={{ zh: '需求文档', en: 'Requirements Document' }}
+        entries={reqHistoryEntries}
+        busyEntryId={historyBusyEntryId}
+        onUndoLatest={handleUndoLatestFromDrawer}
+        onRestoreBefore={handleRestoreBeforeFromDrawer}
+        onJumpToTarget={handleJumpFromDrawer}
+      />
     </div>
   );
 }

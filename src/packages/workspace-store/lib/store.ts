@@ -89,6 +89,9 @@ import {
   type AnalyticsQueryResult,
   AnalyticsReport,
   AnalyticsScenario,
+  ArtifactHistoryEntry,
+  ArtifactHistoryEntryView,
+  ArtifactHistorySource,
   AssembledApplication,
   BusinessModelStepConfirmationRecord,
   CapabilityAgent,
@@ -111,6 +114,8 @@ import {
   LlmProviderConfig,
   McpServerConfig,
   MetricDefinition,
+  OntologySuiteHistoryEntry,
+  PersistedArtifactHistoryKind,
   ProjectDetail,
   ProjectSnapshot,
   ProjectStepConfirmations,
@@ -119,7 +124,9 @@ import {
   PrototypeStepConfirmationRecord,
   ReasoningSession,
   RequirementDoc,
+  RequirementDocHistoryState,
   RequirementSession,
+  RequirementsDocHistoryEntry,
   RequirementsStepConfirmationRecord,
   StepConfirmationRecord,
   SuiteCommitEvent,
@@ -127,6 +134,15 @@ import {
   WorkspaceStore,
   WritebackInterface,
 } from './types.js';
+import {
+  ArtifactHistoryConflictError,
+  ArtifactHistoryNotFoundError,
+  DEFAULT_MAX_ARTIFACT_HISTORY_ENTRIES,
+  areOntologySuitesEqual,
+  areRequirementDocStatesEqual,
+  buildArtifactHistoryViews,
+  captureRequirementDocState,
+} from './artifact-history.js';
 import {
   PrototypeConfirmedDeleteError,
   applyRevisionMetadataPatch,
@@ -166,6 +182,8 @@ export interface WorkspaceStoreOptions {
   architectureAssetsWritable?: boolean;
   /** Invoked synchronously whenever an existing project's OntologySuite is committed. */
   onSuiteCommit?: (event: SuiteCommitEvent) => void;
+  /** Maximum retained linear history entries per `(projectId, artifactKind)` (defaults to 50). */
+  maxHistoryEntries?: number;
 }
 
 interface SqliteStatementLike {
@@ -1760,6 +1778,128 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     return row ? (JSON.parse(String(row.suite_json)) as OntologySuite) : undefined;
   }
 
+  const maxHistoryEntries = Math.max(
+    1,
+    options.maxHistoryEntries ?? DEFAULT_MAX_ARTIFACT_HISTORY_ENTRIES,
+  );
+
+  type ActiveArtifactRunCapture =
+    | {
+        projectId: string;
+        artifactKind: 'REQUIREMENTS_DOC';
+        runId: string;
+        sessionId?: string;
+        beforeState: RequirementDocHistoryState;
+      }
+    | {
+        projectId: string;
+        artifactKind: 'ONTOLOGY_SUITE';
+        runId: string;
+        sessionId?: string;
+        beforeState: OntologySuite;
+      };
+
+  const activeRunCaptures = new Map<string, ActiveArtifactRunCapture>();
+
+  function runCaptureKey(
+    projectId: string,
+    artifactKind: PersistedArtifactHistoryKind,
+    runId: string,
+  ): string {
+    return `${projectId}::${artifactKind}::${runId}`;
+  }
+
+  function hasActiveArtifactRunCapture(
+    projectId: string,
+    artifactKind: PersistedArtifactHistoryKind,
+  ): boolean {
+    const prefix = `${projectId}::${artifactKind}::`;
+    for (const key of activeRunCaptures.keys()) {
+      if (key.startsWith(prefix)) return true;
+    }
+    return false;
+  }
+
+  function listChronologicalArtifactHistory(
+    projectId: string,
+    artifactKind?: PersistedArtifactHistoryKind,
+  ): ArtifactHistoryEntry[] {
+    const rows = listItems<ArtifactHistoryEntry>('artifact_history', projectId);
+    const filtered = artifactKind ? rows.filter((r) => r.artifactKind === artifactKind) : rows;
+    return filtered.sort(
+      (a, b) => a.sequence - b.sequence || a.createdAt.localeCompare(b.createdAt),
+    );
+  }
+
+  function appendArtifactHistoryEntry(
+    entryWithoutIdAndSeq:
+      | Omit<RequirementsDocHistoryEntry, 'id' | 'sequence' | 'createdAt'>
+      | Omit<OntologySuiteHistoryEntry, 'id' | 'sequence' | 'createdAt'>,
+  ): ArtifactHistoryEntry {
+    const existing = listChronologicalArtifactHistory(
+      entryWithoutIdAndSeq.projectId,
+      entryWithoutIdAndSeq.artifactKind,
+    );
+    const nextSequence =
+      existing.length > 0 ? existing[existing.length - 1]!.sequence + 1 : 1;
+    const now = new Date().toISOString();
+    const id = nextUniqueId('ahist');
+    const entry: ArtifactHistoryEntry =
+      entryWithoutIdAndSeq.artifactKind === 'REQUIREMENTS_DOC'
+        ? {
+            ...entryWithoutIdAndSeq,
+            id,
+            sequence: nextSequence,
+            createdAt: now,
+          }
+        : {
+            ...entryWithoutIdAndSeq,
+            id,
+            sequence: nextSequence,
+            createdAt: now,
+          };
+
+    putItem('artifact_history', entry.id, entry, entry.projectId, now);
+
+    const nextTotal = existing.length + 1;
+    if (nextTotal > maxHistoryEntries) {
+      const toPrune = existing.slice(0, nextTotal - maxHistoryEntries);
+      for (const oldEntry of toPrune) {
+        deleteItem('artifact_history', oldEntry.id);
+      }
+    }
+
+    return entry;
+  }
+
+  function applyRequirementDocHistoryState(
+    projectId: string,
+    state: RequirementDocHistoryState,
+  ): void {
+    const existingDocs = listItems<RequirementDoc>('req_docs', projectId);
+    const targetIds = new Set(state.docs.map((d) => d.id));
+    for (const doc of existingDocs) {
+      if (!targetIds.has(doc.id)) {
+        deleteItem('req_docs', doc.id);
+      }
+    }
+    const baseMs = Date.now() - Math.max(0, state.docs.length - 1);
+    const oldestFirst = [...state.docs].reverse();
+    oldestFirst.forEach((snap, idx) => {
+      const updatedAt = new Date(baseMs + idx).toISOString();
+      const restoredDoc: RequirementDoc = {
+        id: snap.id,
+        projectId,
+        title: snap.title,
+        version: snap.version,
+        status: snap.status,
+        content: snap.content,
+        updatedAt,
+      };
+      putItem('req_docs', restoredDoc.id, restoredDoc, projectId, updatedAt);
+    });
+  }
+
   function getUpgradedExtractionJob(jobId: string): ExtractionJob | undefined {
     const stored = getItem<StoredExtractionJob>('extraction_jobs', jobId);
     if (!stored) return undefined;
@@ -1959,12 +2099,19 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       for (const doc of this.listRequirementDocs(projectId)) {
         const newDocId = nextUniqueId('rdoc');
         docIdMap.set(doc.id, newDocId);
-        this.saveRequirementDoc({
-          ...doc,
-          id: newDocId,
-          projectId: id,
-          title: `${doc.title} (副本)`,
-        });
+        putItem<RequirementDoc>(
+          'req_docs',
+          newDocId,
+          {
+            ...doc,
+            id: newDocId,
+            projectId: id,
+            title: `${doc.title} (副本)`,
+            updatedAt: now,
+          },
+          id,
+          now,
+        );
       }
       let clonedReqConfId: string | null = null;
       if (sourceStepConfirmations.requirements) {
@@ -2455,11 +2602,31 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     saveRequirementDoc(doc) {
+      const shouldRecordManual = !hasActiveArtifactRunCapture(doc.projectId, 'REQUIREMENTS_DOC');
+      const beforeState = shouldRecordManual
+        ? captureRequirementDocState(listItems<RequirementDoc>('req_docs', doc.projectId))
+        : undefined;
       const full: RequirementDoc = {
         ...doc,
         updatedAt: new Date().toISOString(),
       };
-      return putItem('req_docs', full.id, full, full.projectId);
+      const saved = putItem('req_docs', full.id, full, full.projectId);
+      if (beforeState) {
+        const afterState = captureRequirementDocState(
+          listItems<RequirementDoc>('req_docs', doc.projectId),
+        );
+        if (!areRequirementDocStatesEqual(beforeState, afterState)) {
+          appendArtifactHistoryEntry({
+            projectId: doc.projectId,
+            artifactKind: 'REQUIREMENTS_DOC',
+            targetId: saved.id,
+            source: { kind: 'MANUAL' },
+            beforeState,
+            afterState,
+          });
+        }
+      }
+      return saved;
     },
 
     cloneRequirementDoc(docId) {
@@ -2474,7 +2641,30 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     deleteRequirementDoc(docId) {
+      const existing = getItem<RequirementDoc>('req_docs', docId);
+      const shouldRecordManual = Boolean(
+        existing && !hasActiveArtifactRunCapture(existing.projectId, 'REQUIREMENTS_DOC'),
+      );
+      const beforeState =
+        shouldRecordManual && existing
+          ? captureRequirementDocState(listItems<RequirementDoc>('req_docs', existing.projectId))
+          : undefined;
       deleteItem('req_docs', docId);
+      if (beforeState && existing) {
+        const afterState = captureRequirementDocState(
+          listItems<RequirementDoc>('req_docs', existing.projectId),
+        );
+        if (!areRequirementDocStatesEqual(beforeState, afterState)) {
+          appendArtifactHistoryEntry({
+            projectId: existing.projectId,
+            artifactKind: 'REQUIREMENTS_DOC',
+            targetId: afterState.doc?.id ?? existing.id,
+            source: { kind: 'MANUAL' },
+            beforeState,
+            afterState,
+          });
+        }
+      }
     },
 
     listPrototypes(projectId) {
@@ -2806,6 +2996,201 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         confirmation,
         project,
         stepConfirmations: this.getProjectStepConfirmations(projectId),
+      };
+    },
+
+    beginArtifactRunCapture(input) {
+      const project = this.getProject(input.projectId);
+      if (!project) return;
+      const key = runCaptureKey(input.projectId, input.artifactKind, input.runId);
+      if (input.artifactKind === 'REQUIREMENTS_DOC') {
+        activeRunCaptures.set(key, {
+          projectId: input.projectId,
+          artifactKind: 'REQUIREMENTS_DOC',
+          runId: input.runId,
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+          beforeState: captureRequirementDocState(
+            listItems<RequirementDoc>('req_docs', input.projectId),
+          ),
+        });
+      } else {
+        activeRunCaptures.set(key, {
+          projectId: input.projectId,
+          artifactKind: 'ONTOLOGY_SUITE',
+          runId: input.runId,
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+          beforeState: structuredClone(project.suite),
+        });
+      }
+    },
+
+    finishArtifactRunCapture(input) {
+      const key = runCaptureKey(input.projectId, input.artifactKind, input.runId);
+      const active = activeRunCaptures.get(key);
+      activeRunCaptures.delete(key);
+      if (!active) return null;
+
+      const source: ArtifactHistorySource = {
+        kind: 'AGENT_RUN',
+        runId: input.runId,
+        ...(input.sessionId || active.sessionId
+          ? { sessionId: input.sessionId ?? active.sessionId! }
+          : {}),
+        ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
+      };
+
+      if (active.artifactKind === 'REQUIREMENTS_DOC') {
+        const afterState = captureRequirementDocState(
+          listItems<RequirementDoc>('req_docs', input.projectId),
+        );
+        if (areRequirementDocStatesEqual(active.beforeState, afterState)) {
+          return null;
+        }
+        return appendArtifactHistoryEntry({
+          projectId: input.projectId,
+          artifactKind: 'REQUIREMENTS_DOC',
+          targetId: afterState.doc?.id ?? active.beforeState.doc?.id ?? input.projectId,
+          source,
+          beforeState: active.beforeState,
+          afterState,
+        });
+      }
+
+      const afterSuite = structuredClone(getProjectSuite(input.projectId) ?? {});
+      if (areOntologySuitesEqual(active.beforeState, afterSuite)) {
+        return null;
+      }
+      return appendArtifactHistoryEntry({
+        projectId: input.projectId,
+        artifactKind: 'ONTOLOGY_SUITE',
+        targetId: input.projectId,
+        source,
+        beforeState: active.beforeState,
+        afterState: afterSuite,
+      });
+    },
+
+    listArtifactHistory(projectId, filter) {
+      const chronological = listChronologicalArtifactHistory(projectId, filter?.artifactKind);
+      return [...chronological].reverse();
+    },
+
+    listArtifactHistoryViews(projectId, filter) {
+      const chronological = listChronologicalArtifactHistory(projectId, filter?.artifactKind);
+      return buildArtifactHistoryViews(chronological);
+    },
+
+    undoLatestArtifactChange(projectId, artifactKind, undoOptions) {
+      const currentProject = this.getProject(projectId);
+      if (!currentProject) throw new Error(`Project not found: ${projectId}`);
+
+      const chronological = listChronologicalArtifactHistory(projectId, artifactKind);
+      const latest = chronological[chronological.length - 1];
+      if (!latest) {
+        throw new ArtifactHistoryConflictError({
+          code: 'NOTHING_TO_UNDO',
+          messageZh: '当前成果还没有可撤销的改动记录。',
+          messageEn: 'There is no recorded change to undo yet.',
+        });
+      }
+      if (undoOptions?.expectedEntryId && latest.id !== undoOptions.expectedEntryId) {
+        throw new ArtifactHistoryConflictError({
+          code: 'STALE_LATEST_ENTRY',
+          messageZh: '在此改动之后已有新的修改，一键撤销只适用于最近一次改动；请在历史记录中恢复到更早状态。',
+          messageEn:
+            'Newer edits exist after this change. One-click undo applies only to the latest change; open History to restore an earlier state.',
+        });
+      }
+
+      let appended: ArtifactHistoryEntry;
+      if (latest.artifactKind === 'REQUIREMENTS_DOC') {
+        const currentState = captureRequirementDocState(
+          listItems<RequirementDoc>('req_docs', projectId),
+        );
+        const restoredState = structuredClone(latest.beforeState);
+        applyRequirementDocHistoryState(projectId, restoredState);
+        appended = appendArtifactHistoryEntry({
+          projectId,
+          artifactKind: 'REQUIREMENTS_DOC',
+          targetId: restoredState.doc?.id ?? currentState.doc?.id ?? latest.targetId,
+          source: { kind: 'UNDO', undoneEntryId: latest.id },
+          beforeState: currentState,
+          afterState: restoredState,
+        });
+      } else {
+        const currentSuite = structuredClone(currentProject.suite);
+        const restoredSuite = structuredClone(latest.beforeState);
+        this.commitSuite(projectId, restoredSuite, {
+          source: { kind: 'MANUAL' },
+          note: `Undid change ${latest.id}`,
+        });
+        appended = appendArtifactHistoryEntry({
+          projectId,
+          artifactKind: 'ONTOLOGY_SUITE',
+          targetId: projectId,
+          source: { kind: 'UNDO', undoneEntryId: latest.id },
+          beforeState: currentSuite,
+          afterState: restoredSuite,
+        });
+      }
+
+      const views = this.listArtifactHistoryViews(projectId, { artifactKind });
+      const entryView = views.find((v) => v.id === appended.id) ?? views[0]!;
+      return {
+        entry: appended,
+        entryView,
+        undoneEntryId: latest.id,
+      };
+    },
+
+    restoreArtifactBeforeEntry(projectId, artifactKind, entryId) {
+      const currentProject = this.getProject(projectId);
+      if (!currentProject) throw new Error(`Project not found: ${projectId}`);
+
+      const chronological = listChronologicalArtifactHistory(projectId, artifactKind);
+      const target = chronological.find((item) => item.id === entryId);
+      if (!target) {
+        throw new ArtifactHistoryNotFoundError(entryId);
+      }
+
+      let appended: ArtifactHistoryEntry;
+      if (target.artifactKind === 'REQUIREMENTS_DOC') {
+        const currentState = captureRequirementDocState(
+          listItems<RequirementDoc>('req_docs', projectId),
+        );
+        const restoredState = structuredClone(target.beforeState);
+        applyRequirementDocHistoryState(projectId, restoredState);
+        appended = appendArtifactHistoryEntry({
+          projectId,
+          artifactKind: 'REQUIREMENTS_DOC',
+          targetId: restoredState.doc?.id ?? currentState.doc?.id ?? target.targetId,
+          source: { kind: 'RESTORE', restoredFromEntryId: target.id },
+          beforeState: currentState,
+          afterState: restoredState,
+        });
+      } else {
+        const currentSuite = structuredClone(currentProject.suite);
+        const restoredSuite = structuredClone(target.beforeState);
+        this.commitSuite(projectId, restoredSuite, {
+          source: { kind: 'MANUAL' },
+          note: `Restored suite to before ${target.id}`,
+        });
+        appended = appendArtifactHistoryEntry({
+          projectId,
+          artifactKind: 'ONTOLOGY_SUITE',
+          targetId: projectId,
+          source: { kind: 'RESTORE', restoredFromEntryId: target.id },
+          beforeState: currentSuite,
+          afterState: restoredSuite,
+        });
+      }
+
+      const views = this.listArtifactHistoryViews(projectId, { artifactKind });
+      const entryView = views.find((v) => v.id === appended.id) ?? views[0]!;
+      return {
+        entry: appended,
+        entryView,
+        restoredBeforeEntryId: target.id,
       };
     },
 

@@ -22,10 +22,15 @@ import {
   AnalyticsReport,
   AnalyticsScenario,
   AppendPrototypeRevisionInput,
+  ArtifactHistoryEntryView,
+  ArtifactHistorySurfaceKind,
+  ArtifactJumpTarget,
   AssembledApplication,
   BusinessModelStepConfirmationRecord,
   CapabilityAgent,
   CapabilityChatSession,
+  ChangeSummaryItemView,
+  ChangeSummaryView,
   ConfirmedPrototypeRevision,
   CreatePrototypeInput,
   CrossSystemFlow,
@@ -45,6 +50,7 @@ import {
   LlmProviderConfig,
   McpServerConfig,
   MetricDefinition,
+  PersistedArtifactHistoryKind,
   ProjectDetail,
   ProjectSnapshot,
   ProjectStepConfirmations,
@@ -110,6 +116,7 @@ export interface BootstrapPayload {
   prototypes: PrototypeArtifact[];
   confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
   stepConfirmations?: ProjectStepConfirmations;
+  artifactHistory?: ArtifactHistoryEntryView[];
   fourLayerAssets: FourLayerAsset[];
   assembledApplications: AssembledApplication[];
   packageSnapshots?: DevelopmentPackageSnapshot[];
@@ -336,6 +343,8 @@ interface WorkbenchStoreState {
   redoStack: OntologySuite[];
   selectedModel: ModelCode;
   selectedElementId: string | null;
+  highlightedRequirementSection: { heading: string; docId?: string; seq: number } | null;
+  historyDrawerArtifactKind: ArtifactHistorySurfaceKind | null;
   liveAnnouncement: string;
   setActiveNav: (nav: string, opts?: { itemId?: string | null; sessionId?: string | null }) => void;
   setActiveItemId: (itemId: string | null) => void;
@@ -343,6 +352,21 @@ interface WorkbenchStoreState {
   setActivePrototypeId: (projectId: string, prototypeId: string) => void;
   setSelectedModel: (code: ModelCode, elementId?: string | null) => void;
   setSelectedElementId: (elementId: string | null) => void;
+  focusRequirementSection: (sectionHeading: string, docId?: string) => void;
+  openArtifactHistoryDrawer: (kind: ArtifactHistorySurfaceKind) => void;
+  closeArtifactHistoryDrawer: () => void;
+  refreshArtifactHistory: (
+    projectId?: string,
+    kind?: PersistedArtifactHistoryKind,
+  ) => Promise<ArtifactHistoryEntryView[]>;
+  undoArtifactChange: (
+    artifactKind: PersistedArtifactHistoryKind,
+    expectedEntryId?: string,
+  ) => Promise<boolean>;
+  restoreArtifactBeforeChange: (
+    artifactKind: PersistedArtifactHistoryKind,
+    entryId: string,
+  ) => Promise<boolean>;
   showToast: (msg: string) => void;
   announcePolite: (msg: string) => void;
   bootstrap: (projectId?: string) => Promise<void>;
@@ -485,6 +509,41 @@ interface WorkbenchStoreState {
 
 const initialUrl = readUrlNavState();
 
+function applyArtifactHistoryMutationToStore(
+  projectId: string,
+  res: ArtifactHistoryMutationResponse,
+  set: (partial: Partial<WorkbenchStoreState>) => void,
+  get: () => WorkbenchStoreState,
+): void {
+  const latest = get().data;
+  if (!latest || latest.activeProject.id !== projectId) return;
+  const nextData: BootstrapPayload = {
+    ...latest,
+    activeProject: res.project,
+    requirementDocs: res.requirementDocs,
+    stepConfirmations: res.stepConfirmations,
+    artifactHistory: res.artifactHistory,
+  };
+  const derivedSteps = getProjectStepsFromBootstrap(nextData);
+  const stepStates = Object.fromEntries(
+    derivedSteps.map((st) => [st.id, st.state]),
+  ) as Record<ProjectStepId, ProjectStepStateId>;
+  const currentStep = resolveCurrentProjectStep(stepStates);
+  nextData.projects = latest.projects.map((p) =>
+    p.id === projectId
+      ? {
+          ...p,
+          currentStage: res.project.currentStage,
+          currentStep,
+          currentStepState: stepStates[currentStep],
+          stepStates,
+          updatedAt: res.project.updatedAt,
+        }
+      : p,
+  );
+  set({ data: nextData });
+}
+
 export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   data: null,
   loading: true,
@@ -499,6 +558,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   redoStack: [],
   selectedModel: 'M1',
   selectedElementId: null,
+  highlightedRequirementSection: null,
+  historyDrawerArtifactKind: null,
   liveAnnouncement: '',
 
   setActiveNav: (nav, opts) => {
@@ -544,6 +605,76 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
 
   setSelectedElementId: (elementId) => set({ selectedElementId: elementId }),
 
+  focusRequirementSection: (sectionHeading, docId) => {
+    const nextSeq = (get().highlightedRequirementSection?.seq ?? 0) + 1;
+    set({
+      highlightedRequirementSection: {
+        heading: sectionHeading,
+        ...(docId ? { docId } : {}),
+        seq: nextSeq,
+      },
+    });
+  },
+
+  openArtifactHistoryDrawer: (kind) => set({ historyDrawerArtifactKind: kind }),
+
+  closeArtifactHistoryDrawer: () => set({ historyDrawerArtifactKind: null }),
+
+  refreshArtifactHistory: async (projectId, kind) => {
+    const cur = get().data;
+    const targetProjectId = projectId ?? cur?.activeProject.id;
+    if (!targetProjectId) return [];
+    const res = await apiListArtifactHistory(targetProjectId, kind);
+    const latest = get().data;
+    if (latest && latest.activeProject.id === targetProjectId) {
+      const merged = kind
+        ? [
+            ...res.entries,
+            ...(latest.artifactHistory ?? []).filter((e) => e.artifactKind !== kind),
+          ]
+        : res.entries;
+      set({ data: { ...latest, artifactHistory: merged } });
+    }
+    return res.entries;
+  },
+
+  undoArtifactChange: async (artifactKind, expectedEntryId) => {
+    const cur = get().data;
+    if (!cur?.activeProject.id) return false;
+    const projectId = cur.activeProject.id;
+    const locale = getCurrentClientLocale();
+    try {
+      const res = await apiUndoArtifactChange(projectId, artifactKind, expectedEntryId);
+      applyArtifactHistoryMutationToStore(projectId, res, set, get);
+      get().showToast(locale === 'en-US' ? 'Undid latest change' : '已撤销最近一次改动');
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : String(err));
+      void get().refreshArtifactHistory(projectId, artifactKind).catch(() => undefined);
+      return false;
+    }
+  },
+
+  restoreArtifactBeforeChange: async (artifactKind, entryId) => {
+    const cur = get().data;
+    if (!cur?.activeProject.id) return false;
+    const projectId = cur.activeProject.id;
+    const locale = getCurrentClientLocale();
+    try {
+      const res = await apiRestoreArtifactBeforeChange(projectId, artifactKind, entryId);
+      applyArtifactHistoryMutationToStore(projectId, res, set, get);
+      get().showToast(
+        locale === 'en-US'
+          ? 'Restored to the state before that change (undoable)'
+          : '已恢复到该次改动之前的状态（本次恢复也可撤销）',
+      );
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  },
+
   showToast: (msg) => {
     set({ toast: msg });
     setTimeout(() => {
@@ -581,6 +712,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       undoStack: [],
       redoStack: [],
       selectedElementId: null,
+      highlightedRequirementSection: null,
+      historyDrawerArtifactKind: null,
     });
     writeLastProjectIdToStorage(payload.activeProject.id);
     writeUrlNavState({ projectId: payload.activeProject.id });
@@ -1701,6 +1834,7 @@ export interface StreamAgentSessionCallbacks {
     prototypes?: InteractivePrototype[];
     confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
     stepConfirmations?: ProjectStepConfirmations;
+    artifactHistory?: ArtifactHistoryEntryView[];
     fourLayerAssets?: FourLayerAsset[];
     assembledApplications?: AssembledApplication[];
     extractionJobs?: ExtractionJob[];
@@ -1901,6 +2035,7 @@ function buildStoreSessionStreamCallbacks(
     prototypes?: InteractivePrototype[];
     confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
     stepConfirmations?: ProjectStepConfirmations;
+    artifactHistory?: ArtifactHistoryEntryView[];
     fourLayerAssets?: FourLayerAsset[];
     assembledApplications?: AssembledApplication[];
     extractionJobs?: ExtractionJob[];
@@ -1946,6 +2081,9 @@ function buildStoreSessionStreamCallbacks(
         : {}),
       ...(isSameProject && payload.stepConfirmations !== undefined
         ? { stepConfirmations: payload.stepConfirmations }
+        : {}),
+      ...(isSameProject && payload.artifactHistory !== undefined
+        ? { artifactHistory: payload.artifactHistory }
         : {}),
       ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
       ...(isSameProject && payload.assembledApplications
@@ -2461,9 +2599,68 @@ export async function apiEnsurePrototypeCoDesignSession(
 }
 
 export type {
+  ArtifactHistoryEntryView,
+  ArtifactHistorySurfaceKind,
+  ArtifactJumpTarget,
   BusinessModelInlineEditTarget,
   BusinessModelIntentSummary,
+  ChangeSummaryItemView,
+  ChangeSummaryView,
+  PersistedArtifactHistoryKind,
 } from '../packages/workspace-store/index.js';
+
+export interface ArtifactHistoryMutationResponse {
+  entry: ArtifactHistoryEntryView;
+  undoneEntryId?: string;
+  restoredBeforeEntryId?: string;
+  entries: ArtifactHistoryEntryView[];
+  artifactHistory: ArtifactHistoryEntryView[];
+  project: ProjectDetail;
+  requirementDocs: RequirementDoc[];
+  stepConfirmations: ProjectStepConfirmations;
+}
+
+export async function apiListArtifactHistory(
+  projectId: string,
+  kind?: PersistedArtifactHistoryKind,
+): Promise<{
+  projectId: string;
+  kind: PersistedArtifactHistoryKind | null;
+  entries: ArtifactHistoryEntryView[];
+  latestEntryId: string | null;
+}> {
+  const qs = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/history${qs}`, {
+    headers: buildLocaleHeaders(),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to load artifact history');
+  }
+  return body;
+}
+
+export async function apiUndoArtifactChange(
+  projectId: string,
+  artifactKind: PersistedArtifactHistoryKind,
+  expectedEntryId?: string,
+): Promise<ArtifactHistoryMutationResponse> {
+  return apiPostJson<ArtifactHistoryMutationResponse>(
+    `/api/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(artifactKind)}/undo`,
+    expectedEntryId ? { expectedEntryId } : {},
+  );
+}
+
+export async function apiRestoreArtifactBeforeChange(
+  projectId: string,
+  artifactKind: PersistedArtifactHistoryKind,
+  entryId: string,
+): Promise<ArtifactHistoryMutationResponse> {
+  return apiPostJson<ArtifactHistoryMutationResponse>(
+    `/api/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(artifactKind)}/${encodeURIComponent(entryId)}/restore`,
+    {},
+  );
+}
 
 export interface PatchBusinessModelInput {
   edit?: import('../packages/workspace-store/index.js').BusinessModelInlineEditTarget;

@@ -1616,6 +1616,11 @@ export const DOMAIN_RUN_OPENAI_TOOLS: OpenAiFunctionTool[] = [
             description:
               'Full 9-chapter Markdown SRS body strictly tailored to the project domain and session decisions (headings ## 1. through ## 9. and ### 9.1 through ### 9.7).',
           },
+          reason: {
+            type: 'string',
+            description:
+              'Optional one-sentence plain-language explanation of why these requirement changes were made.',
+          },
         },
         required: ['content'],
       },
@@ -2367,6 +2372,9 @@ export async function executeDomainRunToolCall(
       },
     );
 
+    const changeReason =
+      typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim() : undefined;
+
     return {
       trace: {
         id: toolCallId,
@@ -2377,6 +2385,7 @@ export async function executeDomainRunToolCall(
           version: doc.version,
           status: doc.status,
           chars: srsMarkdown.length,
+          ...(changeReason ? { reason: changeReason } : {}),
         },
         output: pickLocaleText(
           locale,

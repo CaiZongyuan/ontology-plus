@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type {
   AgentSession,
   AgentSessionKind,
+  ArtifactJumpTarget,
+  PersistedArtifactHistoryKind,
   WritebackInterface,
 } from '../../../packages/workspace-store/index.js';
 import {
@@ -24,6 +26,7 @@ import {
   type NavViewId,
 } from '../../navigation/index.js';
 import { Button } from '../beautifui/index.js';
+import { ChangeSummaryCard } from '../history/index.js';
 import { decideDesignBriefForMe } from '../prototype/DesignBriefAndStyleTile.js';
 import { SelectionAttachmentStrip } from '../prototype/SelectionAttachmentStrip.js';
 import {
@@ -359,6 +362,9 @@ export function ShellAgentPanel({
     setSelectedModel,
     setSelectedElementId,
     setActivePrototypeId,
+    focusRequirementSection,
+    openArtifactHistoryDrawer,
+    undoArtifactChange,
     ensureProjectAgentSession,
     startPrototypeBriefGenerationRun,
     startSessionAgentRun,
@@ -378,6 +384,7 @@ export function ShellAgentPanel({
   const [reasoningMode, setReasoningMode] = useState<'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY'>(
     'ASK_POLICY',
   );
+  const [undoingEntryId, setUndoingEntryId] = useState<string | null>(null);
 
   const {
     session: activeSession,
@@ -774,6 +781,100 @@ export function ShellAgentPanel({
     }
   };
 
+  const artifactHistoryByRunId = useMemo(() => {
+    const map = new Map<string, NonNullable<BootstrapPayload['artifactHistory']>>();
+    for (const entry of data?.artifactHistory ?? []) {
+      if (entry.source.kind !== 'AGENT_RUN') continue;
+      const list = map.get(entry.source.runId) ?? [];
+      list.push(entry);
+      map.set(entry.source.runId, list);
+    }
+    return map;
+  }, [data?.artifactHistory]);
+
+  const handleJumpToArtifactTarget = (target: ArtifactJumpTarget) => {
+    if (target.kind === 'REQUIREMENTS_SECTION') {
+      setActiveNav('app-req-docs');
+      onNavigate('app-req-docs');
+      focusRequirementSection(target.sectionHeading, target.docId);
+      return;
+    }
+    if (target.kind === 'PROTOTYPE_ANCHOR') {
+      if (activeProjectId) {
+        setActivePrototypeId(activeProjectId, target.prototypeId);
+      }
+      setActiveNav('app-prototype', { itemId: target.prototypeId });
+      onNavigate('app-prototype');
+      setHoveredAnchor({
+        ...(target.screenId ? { screenId: target.screenId } : {}),
+        ...(target.elementId ? { elementId: target.elementId } : {}),
+      });
+      return;
+    }
+    if (target.kind === 'BUSINESS_OBJECT') {
+      if (target.modelCode) {
+        setSelectedModel(target.modelCode, target.elementId ?? target.objectId ?? null);
+      } else if (target.elementId || target.objectId) {
+        setSelectedElementId(target.elementId ?? target.objectId ?? null);
+      }
+      setActiveNav('app-ontology', {
+        ...(target.objectId ? { itemId: target.objectId } : {}),
+      });
+      onNavigate('app-ontology');
+    }
+  };
+
+  const renderRunFooter = (run: (typeof runs)[number]): React.ReactNode => {
+    if (run.status === 'RUNNING') return null;
+    const matched =
+      artifactHistoryByRunId.get(run.id) ??
+      (run.sourceUserMessageId ? artifactHistoryByRunId.get(run.sourceUserMessageId) : undefined);
+    if (!matched || matched.length === 0) return null;
+
+    const visibleEntries = matched.filter((entry) => entry.changeSummary.items.length > 0);
+    if (visibleEntries.length === 0) return null;
+
+    return (
+      <div className="space-y-2">
+        {visibleEntries.map((entry) => (
+          <ChangeSummaryCard
+            key={entry.id}
+            summary={entry.changeSummary}
+            undoing={undoingEntryId === entry.id}
+            onUndo={async (summary) => {
+              if (
+                summary.artifactKind !== 'REQUIREMENTS_DOC' &&
+                summary.artifactKind !== 'ONTOLOGY_SUITE'
+              ) {
+                return;
+              }
+              setUndoingEntryId(entry.id);
+              try {
+                await undoArtifactChange(
+                  summary.artifactKind as PersistedArtifactHistoryKind,
+                  entry.id,
+                );
+              } finally {
+                setUndoingEntryId(null);
+              }
+            }}
+            onJumpToTarget={handleJumpToArtifactTarget}
+            onOpenHistory={(kind) => {
+              if (kind === 'REQUIREMENTS_DOC') {
+                setActiveNav('app-req-docs');
+                onNavigate('app-req-docs');
+              } else if (kind === 'ONTOLOGY_SUITE') {
+                setActiveNav('app-ontology');
+                onNavigate('app-ontology');
+              }
+              openArtifactHistoryDrawer(kind);
+            }}
+          />
+        ))}
+      </div>
+    );
+  };
+
   return (
     <AgentPanel
       title={surface.title}
@@ -801,6 +902,7 @@ export function ShellAgentPanel({
       onTriggerWriteback={(writebackId, actionTitle) =>
         void handleTriggerWriteback(writebackId, actionTitle)
       }
+      renderRunFooter={renderRunFooter}
       {...(sessionsOwnedByArtifact
         ? {
             sessions: sessionOptions,
