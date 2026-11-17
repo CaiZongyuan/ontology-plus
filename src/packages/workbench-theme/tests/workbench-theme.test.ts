@@ -60,6 +60,24 @@ describe('the contract', () => {
     }
   });
 
+  it('keeps every shared derived variable name of its version, since components read them as they read tokens', () => {
+    // Renaming or removing one of these breaks components: bump THEME_CONTRACT_VERSION and update this list.
+    const version1 = [
+      'accent-strong',
+      'border-strong',
+      'focus-ring',
+      'shadow-hairline',
+      'shadow-btn',
+      'shadow-card',
+      'shadow-raised',
+      'shadow-overlay',
+    ];
+    expect(THEME_CONTRACT_VERSION).toBe(1);
+    expect(DERIVED_VARIABLES.map((variable) => variable.name)).toEqual(expect.arrayContaining(version1));
+    const names = [...THEME_TOKENS, ...DERIVED_VARIABLES].map((entry) => entry.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
   it('only lets a token follow another contract token, and never in a circle', () => {
     const byName = new Map(THEME_TOKENS.map((token) => [token.name, token]));
     for (const token of THEME_TOKENS) {
@@ -299,6 +317,8 @@ describe('files generated from the contract and the theme tables', () => {
   it('the contract reference lists the shared derived variables, which a theme does not fill', () => {
     const doc = renderContractDoc();
     expect(doc).toContain('## Shared derived variables');
+    const section = doc.slice(doc.indexOf('## Shared derived variables'), doc.indexOf('## Adding a built-in theme'));
+    expect(section).toMatch(/names are part of the contract: renaming or removing one .*bumps the contract version/);
     for (const variable of DERIVED_VARIABLES) {
       expect(doc).toContain(`| \`${cssVarName(variable.name)}\` | ${variable.description} | \`${variable.value}\` |`);
     }

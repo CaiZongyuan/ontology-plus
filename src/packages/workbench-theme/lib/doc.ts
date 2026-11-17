@@ -38,7 +38,7 @@ export function renderContractDoc(): string {
     '',
     '## Shared derived variables',
     '',
-    'These are computed from contract tokens and are the same for every theme, so a theme author does not fill them: they follow the tokens they are made of. Components may read them as they read contract tokens. They are written to the generated theme stylesheet; a new colour or shadow shared between files is registered in `DERIVED_VARIABLES` (`src/packages/workbench-theme/lib/contract.ts`), not declared in a component stylesheet.',
+    'These are computed from contract tokens and are the same for every theme, so a theme author does not fill them: they follow the tokens they are made of. Components may read them as they read contract tokens, so their names are part of the contract: renaming or removing one breaks components and bumps the contract version, as it does for a token. Their values may change without a bump. They are written to the generated theme stylesheet; a new colour or shadow shared between files is registered in `DERIVED_VARIABLES` (`src/packages/workbench-theme/lib/contract.ts`), not declared in a component stylesheet.',
     '',
     '| CSS variable | Meaning | Value |',
     '| --- | --- | --- |',

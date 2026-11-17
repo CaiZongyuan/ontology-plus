@@ -3,7 +3,8 @@
  * component may read, and the only ones a theme may set.
  *
  * Renaming or removing a token breaks themes and bumps
- * `THEME_CONTRACT_VERSION`. `docs/workbench-theme-contract.md` is generated
+ * `THEME_CONTRACT_VERSION`; so does renaming or removing a shared derived
+ * variable, which components read as they read tokens. `docs/workbench-theme-contract.md` is generated
  * from this file; a test keeps the two in step.
  */
 
@@ -144,7 +145,8 @@ export interface DerivedVariableSpec {
 /**
  * Shared derived variables: computed from contract tokens and the same for every theme,
  * so a theme sets the tokens they are made of, not these. Components may read them as
- * they read contract tokens. They are written to the generated theme stylesheet; a new
+ * they read contract tokens, so their names are part of the contract: renaming or removing
+ * one bumps `THEME_CONTRACT_VERSION`. They are written to the generated theme stylesheet; a new
  * shared colour or shadow is registered here, not declared in a component stylesheet.
  */
 export const DERIVED_VARIABLES: readonly DerivedVariableSpec[] = [
