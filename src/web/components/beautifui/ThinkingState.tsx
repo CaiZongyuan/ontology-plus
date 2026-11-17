@@ -55,7 +55,7 @@ export function ThinkingState({
         onClick={() => hasBody && setManualOpen(!open)}
         aria-expanded={open}
         className={cn(
-          'group inline-flex items-center gap-1.5 rounded-chip py-1 text-left transition-colors duration-150',
+          'group inline-flex items-center gap-1.5 rounded-sm py-1 text-left transition-colors duration-150',
           hasBody ? 'cursor-pointer' : 'cursor-default',
         )}
       >
@@ -63,7 +63,7 @@ export function ThinkingState({
           className={cn(
             'inline-block font-medium',
             working
-              ? 'bg-[linear-gradient(110deg,var(--muted-foreground)_35%,var(--ink)_50%,var(--muted-foreground)_65%)] bg-[length:220%_100%] bg-clip-text text-transparent animate-[shimmer-text_1.9s_linear_infinite]'
+              ? 'bg-[linear-gradient(110deg,var(--muted-foreground)_35%,var(--foreground)_50%,var(--muted-foreground)_65%)] bg-[length:220%_100%] bg-clip-text text-transparent animate-[shimmer-text_1.9s_linear_infinite]'
               : 'text-faint-foreground group-hover:text-foreground-soft',
           )}
         >

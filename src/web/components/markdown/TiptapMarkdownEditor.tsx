@@ -211,7 +211,7 @@ export function TiptapMarkdownEditor({
           {badge}
 
           {/* 3-Mode Segmented Control */}
-          <div className="inline-flex items-center rounded-[7px] border border-border bg-card p-0.5 shadow-2xs">
+          <div className="inline-flex items-center rounded-[7px] border border-border bg-card p-0.5 shadow-xs">
             {!readOnly && (
               <button
                 type="button"
@@ -525,7 +525,7 @@ function ToolbarBtn({
       title={title}
       aria-label={title}
       className={cn(
-        'inline-flex h-7 w-7 items-center justify-center rounded-control cursor-pointer transition-colors duration-120',
+        'inline-flex h-7 w-7 items-center justify-center rounded-md cursor-pointer transition-colors duration-120',
         active
           ? 'bg-primary-soft text-primary'
           : 'text-foreground-soft hover:bg-accent hover:text-foreground',

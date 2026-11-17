@@ -1311,7 +1311,7 @@ export function OntologyWorkbenchView({
                       </span>
                       <span className="text-[12px] text-faint-foreground font-mono">0 / 11 Models</span>
                     </div>
-                    <h3 className="font-serif text-[17.5px] font-semibold text-foreground m-0">
+                    <h3 className="font-title text-[17.5px] font-semibold text-foreground m-0">
                       {t(
                         `「${project.name}」暂未生成业务本体（无预置无关内容）`,
                         `"${project.name}" has no ontology models yet (clean slate)`,
@@ -1381,7 +1381,7 @@ export function OntologyWorkbenchView({
                         <span>
                           {item.step}. {t(item.titleZh, item.titleEn)}
                         </span>
-                        {item.done && <CheckCircle2 size={13} className="text-green-600" />}
+                        {item.done && <CheckCircle2 size={13} className="text-success" />}
                       </div>
                       <span className={`badge ${item.done ? 'badge-ok' : 'badge-warn'} w-fit`}>
                         {t(item.statusZh, item.statusEn)}
@@ -1768,7 +1768,7 @@ export function OntologyWorkbenchView({
               {pendingDeleteAction && (
                 <Button
                   type="button"
-                  variant="secondary" size="md" className="text-destructive border-[var(--bad)]"
+                  variant="secondary" size="md" className="text-destructive border-destructive"
                   onClick={() => pendingDeleteAction.execute()}
                 >
                   {t('强制删除此元素', 'Force Delete Element')}
@@ -2454,7 +2454,7 @@ function StructuredModelInspector({
                   <div className="flex flex-wrap gap-1.5">
                     {b.inputParameters.map((p, pIdx) => (
                       <div
-                        key={`${b.id}-p-${pIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-muted border border-[var(--line-2)]"
+                        key={`${b.id}-p-${pIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-muted border border-border-subtle"
                       >
                         <input
                           className="input"
@@ -2814,7 +2814,7 @@ function StructuredModelInspector({
                   <div className="flex flex-wrap gap-1.5">
                     {ev.payload.map((pf, pfIdx) => (
                       <div
-                        key={`${ev.id}-pf-${pfIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-muted border border-[var(--line-2)]"
+                        key={`${ev.id}-pf-${pfIdx}`} className="inline-flex items-center gap-1 p-[3px_6px] rounded-[4px] bg-muted border border-border-subtle"
                       >
                         <input
                           className="input"
@@ -3348,7 +3348,7 @@ function StructuredModelInspector({
                 </div>
 
                 {/* Visual Node Sequence Strip */}
-                <div className="p-[8px_10px] mb-2.5 rounded-[5px] bg-muted border border-[var(--line-2)] flex items-center flex-wrap gap-1.5"
+                <div className="p-[8px_10px] mb-2.5 rounded-[5px] bg-muted border border-border-subtle flex items-center flex-wrap gap-1.5"
                 >
                   {fl.activities.map((a, idx) => (
                     <React.Fragment key={a.id}>
@@ -3830,7 +3830,7 @@ function StructuredModelInspector({
                   >
                     {sc.elements.map((el, elIdx) => (
                       <div
-                        key={el.elementId} className="inline-flex items-center gap-1.25 p-[4px_8px] rounded-[4px] bg-muted border border-[var(--line-2)] text-[11.5px]"
+                        key={el.elementId} className="inline-flex items-center gap-1.25 p-[4px_8px] rounded-[4px] bg-muted border border-border-subtle text-[11.5px]"
                       >
                         <span className="font-mono font-semibold">
                           [{el.elementId}]

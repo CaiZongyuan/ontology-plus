@@ -17,9 +17,9 @@ export const buttonVariants = cva(
       variant: {
         primary: 'bg-primary border-primary text-primary-foreground enabled:hover:brightness-[0.93]',
         accent: 'bg-primary border-primary text-primary-foreground enabled:hover:brightness-[0.93]',
-        secondary: 'bg-card border-border text-foreground enabled:hover:bg-muted enabled:hover:border-line-strong',
+        secondary: 'bg-card border-border text-foreground enabled:hover:bg-muted enabled:hover:border-border-strong',
         ghost: 'bg-transparent border-transparent text-foreground-soft enabled:hover:bg-accent enabled:hover:text-foreground',
-        quiet: 'bg-muted border-transparent text-foreground-soft enabled:hover:bg-hover-2 enabled:hover:text-foreground',
+        quiet: 'bg-muted border-transparent text-foreground-soft enabled:hover:bg-accent-strong enabled:hover:text-foreground',
         success: 'bg-success-soft border-success/30 text-success enabled:hover:border-success/60',
         // Segment / filter toggle: pair with aria-pressed (or aria-selected for tabs).
         toggle:

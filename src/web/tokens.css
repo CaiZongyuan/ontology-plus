@@ -1,6 +1,13 @@
 @layer theme, base, utilities;
 @import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities);
+/* Class names are read only from the app's own markup: src/web and index.html. Packages,
+   scripts, docs, and skill notes only mention utilities (the appearance guard names the
+   ones it forbids), and tests are not shipped, so none of them adds to the stylesheet. */
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "./";
+@source "../../index.html";
+@source not "./**/*.test.{ts,tsx}";
+@source not "./**/__tests__";
 
 /* Registered custom properties for accessible indeterminate <progress class="loading-spinner">
    (modern-web-guidance: spinner — kept top-level/unscoped) */
@@ -114,53 +121,11 @@
     U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* ─── Root Colour-Scheme & Workbench Theme Token Aliases ───
-   Colours, fonts, radii, shadows and the background texture come from the active
-   Workbench Theme: see workbench-themes.generated.css and ADR 0012. The block below
-   holds the pre-contract token names, kept as aliases of contract tokens until their
-   last callers have moved to the contract names (#45). Nothing outside this block in
-   tokens.css or shell.css reads them. */
-:root,
-[data-theme] {
-  --ground: var(--background);
-  --page: var(--background);
-  --ground-2: var(--canvas);
-  --surface: var(--card);
-  --surface-2: var(--muted);
-  --inset: var(--muted);
-  --field: var(--muted);
-  --line: var(--border);
-  --line-2: var(--border-subtle);
-  --line-soft: var(--border-subtle);
-  --ghost: var(--accent);
-  --hover: var(--accent);
-
-  --ink: var(--foreground);
-  --ink-2: var(--foreground-soft);
-  --faint: var(--faint-foreground);
-  --ink-3: var(--faint-foreground);
-
-  --ok: var(--success);
-  --green: var(--success);
-  --ok-soft: var(--success-soft);
-  --green-tint: var(--success-soft);
-  --warn: var(--warning);
-  --orange: var(--warning);
-  --warn-soft: var(--warning-soft);
-  --orange-tint: var(--warning-soft);
-  --bad: var(--destructive);
-  --red: var(--destructive);
-  --bad-soft: var(--destructive-soft);
-  --red-tint: var(--destructive-soft);
-
-  --serif: var(--font-title);
-  --sans: var(--font-sans);
-  --mono: var(--font-mono);
-
-  --paper-grain-url: var(--backdrop-image);
-  --paper-grain-size: var(--backdrop-size);
-}
-
+/* ─── Root Colour-Scheme, Type, Spacing and Motion Scales ───
+   Colours, fonts, radii, shadows and the background texture come only from the active
+   Workbench Theme's contract tokens and the shared derived variables, both written to
+   workbench-themes.generated.css (ADR 0012, docs/workbench-theme-contract.md).
+   `pnpm lint:theme` fails on anything else. */
 :root {
   color-scheme: light dark;
 
@@ -184,7 +149,6 @@
 
   /* ─── Shape & Motion Scale (radii and shadows come from the theme) ─── */
   --radius-pill: 999px;
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--ring) 28%, transparent);
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --dur-fast: 120ms;
@@ -839,23 +803,6 @@ progress.loading-spinner:indeterminate {
   }
 }
 
-/* ─── Shared Derived Variables ───
-   Computed from contract tokens and the same for every Workbench Theme: a theme sets
-   the tokens they are made of, not these. */
-:root,
-[data-theme] {
-  /* A stronger hover fill, for controls that already sit on the quiet fill. */
-  --hover-2: color-mix(in srgb, var(--foreground) 8%, transparent);
-  /* A stronger outline: control outlines and hovered borders. */
-  --line-strong: color-mix(in srgb, var(--muted-foreground) 42%, var(--border));
-  /* Contract shadows with a hairline outline, so surfaces read on any ground. */
-  --shadow-hairline: 0 0 0 1px var(--border);
-  --shadow-btn: 0 0 0 1px var(--line-strong), var(--shadow-xs);
-  --shadow-card: 0 0 0 1px var(--border), var(--shadow-sm);
-  --shadow-raised: 0 0 0 1px var(--border), var(--shadow-md);
-  --shadow-overlay: 0 0 0 1px var(--border), var(--shadow-lg);
-}
-
 @theme inline {
   /* The root font size is 13px, so Tailwind's default rem-based step (0.25rem) would be
      3.25px. Pin it to 4px so `gap-2` is 8px and utilities line up with --space-*. */
@@ -893,27 +840,14 @@ progress.loading-spinner:indeterminate {
   --color-destructive-soft: var(--destructive-soft);
   --color-destructive-foreground: var(--destructive-foreground);
 
-  /* Shared derived colours (see above). */
-  --color-hover-2: var(--hover-2);
-  --color-line-strong: var(--line-strong);
+  /* Shared derived variables (DERIVED_VARIABLES in the workbench-theme contract). */
+  --color-accent-strong: var(--accent-strong);
+  --color-border-strong: var(--border-strong);
 
-  /* Pre-contract utility names, read from contract tokens until markup has moved (#44, #45). */
-  --color-page: var(--background);
-  --color-surface: var(--card);
-  --color-inset: var(--muted);
-  --color-field: var(--muted);
-  --color-ink: var(--foreground);
-  --color-ink-2: var(--foreground-soft);
-  --color-ink-3: var(--faint-foreground);
-  --color-hover: var(--accent);
-  --color-line: var(--border);
-  --color-green: var(--success);
-  --color-green-tint: var(--success-soft);
-  --color-orange: var(--warning);
-  --color-orange-tint: var(--warning-soft);
-  --color-red: var(--destructive);
-  --color-red-tint: var(--destructive-soft);
-
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
   --shadow-hairline: var(--shadow-hairline);
   --shadow-btn: var(--shadow-btn);
   --shadow-card: var(--shadow-card);
@@ -923,10 +857,7 @@ progress.loading-spinner:indeterminate {
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
   --font-title: var(--font-title);
-  --font-serif: var(--font-title);
 
-  --radius-chip: var(--radius-sm);
-  --radius-control: var(--radius-md);
   --radius-card: var(--radius-card);
   --radius-window: var(--radius-window);
 
@@ -957,7 +888,7 @@ progress.loading-spinner:indeterminate {
   height: 28px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
 }
 
 .stream-tail {

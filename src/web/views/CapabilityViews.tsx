@@ -223,7 +223,7 @@ export function CapabilitySystemsView() {
           <div className="text-[11.5px] text-muted-foreground">
             {t('已接入存量业务系统', 'Registered Legacy Systems')}
           </div>
-          <div className="font-serif text-[22px] font-semibold mt-1">
+          <div className="font-title text-[22px] font-semibold mt-1">
             {data.legacySystems.length}
           </div>
         </div>
@@ -231,7 +231,7 @@ export function CapabilitySystemsView() {
           <div className="text-[11.5px] text-muted-foreground">
             {t('已完成本体萃取系统', 'Ontology Extracted Systems')}
           </div>
-          <div className="font-serif text-[22px] font-semibold mt-1">
+          <div className="font-title text-[22px] font-semibold mt-1">
             {data.legacySystems.filter((s) => s.status !== 'CONNECTED').length}
           </div>
         </div>
@@ -239,7 +239,7 @@ export function CapabilitySystemsView() {
           <div className="text-[11.5px] text-muted-foreground">
             {t('MCP 服务在线封装数', 'Active MCP Wrapped Systems')}
           </div>
-          <div className="font-serif text-[22px] font-semibold mt-1">
+          <div className="font-title text-[22px] font-semibold mt-1">
             {data.legacySystems.filter((s) => s.status === 'MCP_ACTIVE').length}
           </div>
         </div>
@@ -1232,8 +1232,8 @@ export function CapabilityMcpView() {
   return (
     <div className="flex flex-col gap-3.5">
       {/* Top Mode Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-2xs">
-        <div className="inline-flex items-center gap-1 rounded-control bg-muted p-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-xs">
+        <div className="inline-flex items-center gap-1 rounded-md bg-muted p-1">
           <Button
             type="button"
             onClick={() => setViewMode('DEBUGGER')}
@@ -1856,7 +1856,7 @@ export function CapabilityAgentsView() {
               </div>
             </div>
 
-            <div className="rounded-[6px] border border-border bg-surface-2 p-3">
+            <div className="rounded-[6px] border border-border p-3">
               <div className="text-[11px] font-semibold text-faint-foreground mb-1">
                 {t('智能体系统提示词契约', 'System Prompt Contract')}
               </div>
@@ -2093,7 +2093,7 @@ export function CapabilityCrossFlowsView() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-2xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-xs">
         <div className="flex items-center gap-2 text-[13px] font-semibold text-foreground">
           <Workflow size={15} className="text-primary" />
           {t(
@@ -2408,8 +2408,8 @@ export function KnowledgeCenterView() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-2xs">
-        <div className="inline-flex items-center gap-1 rounded-control bg-muted p-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-xs">
+        <div className="inline-flex items-center gap-1 rounded-md bg-muted p-1">
           <Button
             type="button"
             variant="toggle" size="sm" aria-pressed={viewMode === 'WORKSPACE'}

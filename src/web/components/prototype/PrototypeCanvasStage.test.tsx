@@ -613,6 +613,7 @@ describe('PrototypeCanvasStage toolbar, revision status & preview controls (#27)
       targetOrigin: 'http://localhost:5173',
       initialActive: true,
       locale: 'en-US',
+      selectionColor: '#2466de',
     });
     expect(inspectedHtml).toContain('data-onto-visual-inspector="1"');
 

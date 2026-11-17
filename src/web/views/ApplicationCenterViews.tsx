@@ -116,7 +116,7 @@ function ViewModeHeader({
   rightActions?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 overflow-hidden rounded-window border border-border bg-card px-3.5 py-2 shadow-2xs">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 overflow-hidden rounded-window border border-border bg-card px-3.5 py-2 shadow-xs">
       <div className="inline-flex shrink-0 items-center rounded-[7px] border border-border bg-muted p-0.5">
         <button
           type="button"
@@ -144,7 +144,7 @@ function ViewModeHeader({
           <span
             className={cn(
               'rounded-full px-1.5 font-mono text-[10.5px] tabular-nums',
-              mode === 'REGISTRY' ? 'bg-white/20 text-card' : 'bg-card text-faint-foreground',
+              mode === 'REGISTRY' ? 'bg-muted text-muted-foreground' : 'bg-card text-faint-foreground',
             )}
           >
             {count}
@@ -155,7 +155,7 @@ function ViewModeHeader({
         <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{rightActions}</div>
       )}
       {centerSlot && (
-        <div className="-mx-3.5 -mb-2 flex min-w-0 basis-[calc(100%+1.75rem)] flex-wrap items-center gap-2 border-t border-line-soft bg-muted/40 px-3.5 py-2">
+        <div className="-mx-3.5 -mb-2 flex min-w-0 basis-[calc(100%+1.75rem)] flex-wrap items-center gap-2 border-t bg-muted/40 px-3.5 py-2">
           {centerSlot}
         </div>
       )}
@@ -431,7 +431,7 @@ export function OverviewSessionsView({
           <div className="text-[11.5px] text-muted-foreground">
             {t('当前激活本体工程', 'Active Ontology Project')}
           </div>
-          <div className="font-serif text-[18px] font-semibold mt-1">
+          <div className="font-title text-[18px] font-semibold mt-1">
             {active.name}
           </div>
           <div className="mt-1.5">
@@ -448,7 +448,7 @@ export function OverviewSessionsView({
           <div className="text-[11.5px] text-muted-foreground">
             {t('两级一致性校验门禁', 'Two-Tier Validation Gate')}
           </div>
-          <div className="font-serif text-[18px] font-semibold mt-1">
+          <div className="font-title text-[18px] font-semibold mt-1">
             {!lifecycle.hasOntology
               ? t('尚未进入本体阶段', 'Pre-Ontology Stage')
               : active.validation.errorCount === 0
@@ -469,7 +469,7 @@ export function OverviewSessionsView({
           <div className="text-[11.5px] text-muted-foreground">
             {t('四层架构资产与当前工程应用', '4-Layer Assets & Project Apps')}
           </div>
-          <div className="font-serif text-[18px] font-semibold mt-1">
+          <div className="font-title text-[18px] font-semibold mt-1">
             {data.fourLayerAssets.length} {t('项标准资产', 'Assets')} ·{' '}
             {lifecycle.projectApps.length} {t('个本工程应用', 'Project Apps')}
           </div>
@@ -488,7 +488,7 @@ export function OverviewSessionsView({
           <div className="text-[11.5px] text-muted-foreground">
             {t('活跃智能体推理网关', 'Active Agent LLM Gateway')}
           </div>
-          <div className="font-serif text-[18px] font-semibold mt-1">
+          <div className="font-title text-[18px] font-semibold mt-1">
             {data.systemSettings.mockLlmMode
               ? 'Mock Demo Engine'
               : ((data.llmProviders.find((p) => p.enabled) ?? data.llmProviders[0])
@@ -528,7 +528,7 @@ export function OverviewSessionsView({
               className={cn(
                 'p-[10px_12px] rounded-[6px] border flex flex-col justify-between gap-2 transition-colors',
                 st.isNext
-                  ? 'border-primary bg-card shadow-2xs'
+                  ? 'border-primary bg-card shadow-xs'
                   : st.ready
                     ? 'border-border bg-muted'
                     : 'border-border bg-muted opacity-80',
@@ -933,7 +933,7 @@ export function OverviewSessionsView({
                 snapshotsForModal.map((snap) => (
                   <div
                     key={snap.id}
-                    className="flex items-center justify-between gap-2 rounded-control border border-border bg-card p-2.5"
+                    className="flex items-center justify-between gap-2 rounded-md border border-border bg-card p-2.5"
                   >
                     <div className="min-w-0">
                       <div className="font-semibold text-foreground">{snap.label}</div>
@@ -2762,7 +2762,7 @@ export function ModelFilesView({
           <span className="badge badge-warn">
             {t('尚未到达此阶段 · 暂无模型文件', 'Stage Not Reached · No Model Files Yet')}
           </span>
-          <h3 className="font-serif text-[18px] font-semibold text-foreground m-0">
+          <h3 className="font-title text-[18px] font-semibold text-foreground m-0">
             {t(
               `「${project.name}」暂未生成 YAML / OWL 模型文件`,
               `"${project.name}" has no generated YAML / OWL model files yet`,
@@ -3937,7 +3937,7 @@ export function ApplicationAssemblyDevView({
               ? t('第 5 步 · 本体已就绪，可组装应用', 'Step 5 · Ready to Assemble')
               : t('第 5 步 · 尚未到达此阶段', 'Step 5 · Stage Not Reached Yet')}
           </span>
-          <h3 className="font-serif text-[18px] font-semibold text-foreground m-0">
+          <h3 className="font-title text-[18px] font-semibold text-foreground m-0">
             {t(
               `「${data.activeProject.name}」尚未创建四层装配应用`,
               `"${data.activeProject.name}" has no assembled application yet`,
@@ -4242,7 +4242,7 @@ export function ApplicationAssemblyDevView({
                               });
                             })();
                           }}
-                          className="flex items-center justify-between gap-2 rounded-control border border-border bg-surface-2 px-3 py-2 text-left text-[12.5px] text-foreground transition-colors hover:border-primary hover:bg-primary-soft cursor-pointer disabled:opacity-50"
+                          className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-left text-[12.5px] text-foreground transition-colors hover:border-primary hover:bg-primary-soft cursor-pointer disabled:opacity-50"
                         >
                           <span>{starter}</span>
                           <ArrowRight size={13} className="shrink-0 text-primary" />
@@ -4252,7 +4252,7 @@ export function ApplicationAssemblyDevView({
                   </div>
                 </div>
 
-                <div className="rounded-control border border-border bg-muted/45 p-2.5 text-[11.5px] text-faint-foreground">
+                <div className="rounded-md border border-border bg-muted/45 p-2.5 text-[11.5px] text-faint-foreground">
                   {t(
                     `装配应用：${app.name} (${app.status} · ${app.publishedVersion || 'v1.0.0'})`,
                     `Application: ${app.name} (${app.status} · ${app.publishedVersion || 'v1.0.0'})`,
@@ -4619,7 +4619,7 @@ export function OntologySkillsView({
               ? t('本体已就绪 · 可编译技能包', 'Ontology Ready · Ready to Compile')
               : t('尚未到达此阶段 · 暂无本体技能', 'Stage Not Reached · No Skill Yet')}
           </span>
-          <h3 className="font-serif text-[18px] font-semibold text-foreground m-0">
+          <h3 className="font-title text-[18px] font-semibold text-foreground m-0">
             {t(
               `「${data.activeProject.name}」尚未生成 SKILL.md 技能包`,
               `"${data.activeProject.name}" has no compiled SKILL.md yet`,
@@ -4740,7 +4740,7 @@ export function AppPublishView({
         <span className="badge badge-warn">
           {t('尚未到达此阶段 · 暂无待发布应用', 'Stage Not Reached · No App to Release')}
         </span>
-        <h3 className="font-serif text-[18px] font-semibold text-foreground m-0">
+        <h3 className="font-title text-[18px] font-semibold text-foreground m-0">
           {t(
             `「${data.activeProject.name}」暂无可发布的装配应用`,
             `"${data.activeProject.name}" has no assembled application to release yet`,

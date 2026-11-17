@@ -156,3 +156,36 @@ Every built-in theme is checked in both modes. Text must reach 4.5:1 and marks 3
 | `ring` | `card` | 3:1 |
 | `scrollbar-thumb` | `background` | 3:1 |
 | `scrollbar-thumb` | `card` | 3:1 |
+
+## Shared derived variables
+
+These are computed from contract tokens and are the same for every theme, so a theme author does not fill them: they follow the tokens they are made of. Components may read them as they read contract tokens. They are written to the generated theme stylesheet; a new colour or shadow shared between files is registered in `DERIVED_VARIABLES` (`src/packages/workbench-theme/lib/contract.ts`), not declared in a component stylesheet.
+
+| CSS variable | Meaning | Value |
+| --- | --- | --- |
+| `--accent-strong` | A stronger hover fill, for controls that already sit on the quiet fill. | `color-mix(in srgb, var(--foreground) 8%, transparent)` |
+| `--border-strong` | A stronger outline: control outlines and hovered borders. | `color-mix(in srgb, var(--muted-foreground) 42%, var(--border))` |
+| `--focus-ring` | A soft focus halo, as a box-shadow, for fields that show focus without an outline. | `0 0 0 3px color-mix(in srgb, var(--ring) 28%, transparent)` |
+| `--shadow-hairline` | A hairline outline, as a box-shadow. | `0 0 0 1px var(--border)` |
+| `--shadow-btn` | `shadow-xs` with a control outline: buttons and segmented controls. | `0 0 0 1px var(--border-strong), var(--shadow-xs)` |
+| `--shadow-card` | `shadow-sm` with a hairline outline, so cards read on any ground. | `0 0 0 1px var(--border), var(--shadow-sm)` |
+| `--shadow-raised` | `shadow-md` with a hairline outline: menus and popovers. | `0 0 0 1px var(--border), var(--shadow-md)` |
+| `--shadow-overlay` | `shadow-lg` with a hairline outline: dialogs and drawers. | `0 0 0 1px var(--border), var(--shadow-lg)` |
+
+## Adding a built-in theme
+
+1. Add a file under `src/packages/workbench-theme/lib/themes/`, starting from an existing theme. Give the theme an id (lowercase letters, digits, and hyphens; it is written to `data-workbench-theme`) and a name in Chinese and English.
+2. Fill the light table and the dark table: a value for every token above that does not follow another. A token marked "follows" may be left out, and then takes the value of the token it follows. Do not set the shared derived variables. Colours that text or marks are measured against must be hex or `rgb()`/`rgba()`.
+3. Add the theme to `BUILT_IN_THEMES` in `src/packages/workbench-theme/lib/themes.ts`. The first theme in the list is the one a device gets until it chooses; the theme picker lists the rest.
+4. Pass the theme check: `pnpm test src/packages/workbench-theme` runs `checkTheme` on every built-in theme, in light and in dark, and lists any token without a value, any entry the contract does not know, any colour it cannot read, and any text or mark below the contrast in the table above.
+5. Run `pnpm themes:generate` to write the theme stylesheet and this reference, then `pnpm check`. Its `pnpm lint:theme` step is the appearance guard: workbench styles and components read only the tokens and derived variables listed here.
+
+## The appearance guard
+
+`pnpm lint:theme` (part of `pnpm check`) reads every stylesheet and component under `src/web` and fails when one of them:
+
+- reads a CSS variable that is not a contract token, not a shared derived variable, and not declared in `src/web` (such as a retired pre-contract name; the message names the token to use instead);
+- writes a colour utility, `@theme` mapping, or shadow or radius utility under a name the contract does not define;
+- gives a contract token or a derived variable a value outside the generated theme stylesheet, or shares a colour computed from tokens between files without registering it;
+- paints a literal colour (hex, `rgb()`, `white`, a Tailwind palette colour such as `text-green-600`), except in files that paint the user's designed application, which are registered with the reason in `src/packages/workbench-theme/lib/guard.ts`;
+- uses `accent` or `muted` with their pre-contract meaning (brand colour, secondary text).

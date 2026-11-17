@@ -3,10 +3,12 @@ export {
   THEME_TOKEN_GROUPS,
   THEME_TOKENS,
   CONTRAST_PAIRS,
+  DERIVED_VARIABLES,
   cssVarName,
   type ThemeTokenGroup,
   type ThemeTokenSpec,
   type ContrastPair,
+  type DerivedVariableSpec,
 } from './lib/contract.js';
 
 export {
@@ -30,3 +32,11 @@ export { checkTheme, type ThemeProblem, type ThemeProblemKind } from './lib/chec
 export { contrastRatio } from './lib/color.js';
 
 export { renderContractDoc } from './lib/doc.js';
+
+export {
+  checkWorkbenchSources,
+  formatAppearanceProblems,
+  type AppearanceProblem,
+  type AppearanceProblemKind,
+  type SourceFile,
+} from './lib/guard.js';

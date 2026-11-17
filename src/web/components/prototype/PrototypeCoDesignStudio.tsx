@@ -826,7 +826,7 @@ export function PrototypeCoDesignStudio({
               />
             </div>
 
-            <div className="flex justify-end border-t border-line-soft pt-3">
+            <div className="flex justify-end border-t pt-3">
               <Button type="button" variant="accent" size="sm" onClick={() => goToBriefStep('MOTION')}>
                 {t('下一步：交互示意', 'Next: Interactions')}
                 <ArrowRight size={13.5} aria-hidden="true" />

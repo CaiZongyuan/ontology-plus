@@ -1,4 +1,4 @@
-import { THEME_TOKENS, cssVarName } from './contract.js';
+import { DERIVED_VARIABLES, THEME_TOKENS, cssVarName } from './contract.js';
 import { BUILT_IN_THEMES, DEFAULT_THEME_ID } from './themes.js';
 import type { ThemeMode, WorkbenchTheme } from './types.js';
 
@@ -78,7 +78,22 @@ export function compileThemeCss(theme: WorkbenchTheme, options: CompileThemeOpti
     .join('\n');
 }
 
-/** The stylesheet for every built-in theme, default first. */
+/**
+ * The shared derived variables, the same for every theme. They are declared again on
+ * every element that sets a theme or a mode, because a custom property computed from
+ * `var()` resolves where it is declared, not where it is read.
+ */
+function compileDerivedCss(): string {
+  return [
+    '/* Shared derived variables: computed from contract tokens, the same in every theme. */\n',
+    block(
+      ':root,\n[data-theme],\n[data-workbench-theme]',
+      DERIVED_VARIABLES.map((variable) => `${cssVarName(variable.name)}: ${variable.value};`),
+    ),
+  ].join('');
+}
+
+/** The stylesheet for every built-in theme, default first, then the shared derived variables. */
 export function compileBuiltInThemesCss(): string {
   const header = [
     '/* Generated from src/packages/workbench-theme by `pnpm themes:generate`. Do not edit by hand:',
@@ -88,5 +103,5 @@ export function compileBuiltInThemesCss(): string {
   const themes = BUILT_IN_THEMES.map((theme) =>
     compileThemeCss(theme, { isDefault: theme.id === DEFAULT_THEME_ID }),
   );
-  return `${header}\n${themes.join('\n')}`;
+  return `${header}\n${themes.join('\n')}\n${compileDerivedCss()}`;
 }

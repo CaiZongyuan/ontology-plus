@@ -747,7 +747,7 @@ input[type='checkbox'] {
   width: 15px;
   height: 15px;
   margin: 0;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   background: var(--card) center / 11px 11px no-repeat;
   cursor: pointer;
@@ -3121,7 +3121,7 @@ dialog.inspo-lightbox-dialog::backdrop {
 }
 
 .agent-panel-toggle:hover {
-  border-color: var(--line-strong);
+  border-color: var(--border-strong);
   color: var(--foreground);
 }
 
@@ -4240,7 +4240,7 @@ button.fla-layer {
 }
 
 button.fla-layer:hover {
-  border-color: var(--line-strong);
+  border-color: var(--border-strong);
 }
 
 button.fla-layer:focus-visible {

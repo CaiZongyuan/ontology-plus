@@ -1152,8 +1152,8 @@ export function DataMetricsReportsView() {
   return (
     <div className="flex flex-col gap-4">
       {/* Top Mode Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-2xs">
-        <div className="inline-flex items-center gap-1 rounded-control bg-muted p-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-xs">
+        <div className="inline-flex items-center gap-1 rounded-md bg-muted p-1">
           <Button
             type="button"
             variant="toggle" size="sm" aria-pressed={viewMode === 'DASHBOARD'}
@@ -1271,7 +1271,7 @@ export function DataMetricsReportsView() {
                     </div>
 
                     <div className="font-semibold text-[14px]">{m.name}</div>
-                    <div className="font-serif text-[24px] font-semibold">
+                    <div className="font-title text-[24px] font-semibold">
                       {m.currentValue}{' '}
                       <span className="text-[12.5px] font-mono text-muted-foreground">
                         ({m.yoYChange})
@@ -1495,7 +1495,7 @@ export function DataMetricsReportsView() {
                     </Button>
                   </div>
                 </div>
-                <div className="rounded-card border border-border bg-surface-2 p-3.5">
+                <div className="rounded-card border border-border p-3.5">
                   <MarkdownRenderer content={rp.markdownContent} />
                 </div>
               </div>
@@ -1947,7 +1947,7 @@ export function DataWritebackView() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-2xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-xs">
         <div className="text-[13px] font-semibold text-foreground">
           {t('受治理业务系统闭环回写接口注册表', 'Governed Write-Back Interfaces')} (
           {data.writebackInterfaces.length})
@@ -2185,7 +2185,7 @@ export function LlmCenterView() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-3 shadow-2xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-3 shadow-xs">
         <div>
           <div className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
             <Cpu size={15} className="text-primary" />
@@ -2344,7 +2344,7 @@ export function LlmCenterView() {
             />
           </div>
         </div>
-        <div className="mt-2 rounded-control border border-border bg-muted px-3 py-2.5">
+        <div className="mt-2 rounded-md border border-border bg-muted px-3 py-2.5">
           <label className="inline-flex cursor-pointer items-start gap-2">
             <input
               type="checkbox"

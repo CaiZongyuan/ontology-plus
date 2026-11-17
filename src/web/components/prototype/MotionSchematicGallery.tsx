@@ -549,7 +549,7 @@ export function InteractiveMiniStage({
             e.stopPropagation();
             onTrigger();
           }}
-          className="inline-flex shrink-0 cursor-pointer items-center gap-1 px-2 py-0.5 text-[10.5px] font-semibold shadow-2xs focus-visible:outline-2"
+          className="inline-flex shrink-0 cursor-pointer items-center gap-1 px-2 py-0.5 text-[10.5px] font-semibold shadow-xs focus-visible:outline-2"
           style={{
             backgroundColor: palette.accentColor,
             color: btnInk,
@@ -1212,7 +1212,7 @@ export function InteractiveMiniStage({
               </span>
             </div>
             <div
-              className="ml-auto rounded border px-2 py-1 text-[9.5px] font-medium shadow-2xs"
+              className="ml-auto rounded border px-2 py-1 text-[9.5px] font-medium shadow-xs"
               style={{
                 ...motionStyle,
                 borderColor: palette.accentColor,
@@ -1476,7 +1476,7 @@ export function StyleTileMotionSampleStrip({
               key={group.key}
               data-testid={`style-tile-motion-sample-${group.key}`}
               data-schematic-id={item.id}
-              className="flex flex-col overflow-hidden rounded-card border border-border bg-card shadow-2xs"
+              className="flex flex-col overflow-hidden rounded-card border border-border bg-card shadow-xs"
             >
               <InteractiveMiniStage
                 id={item.id}
@@ -1776,7 +1776,7 @@ export function MotionSchematicGallery({
               <Sparkles size={11.5} />
               {t('7 组动态示意选型', '7-Group Motion Schematics')}
             </span>
-            <h3 className="m-0 font-serif text-[16.5px] font-semibold text-foreground">
+            <h3 className="m-0 font-title text-[16.5px] font-semibold text-foreground">
               {t(
                 '亲手点一点试手感 — 已按需求规格书为您预选全套默认方案',
                 'Click Any Mini Stage to Feel the Interaction — Pre-Selected from Your SRS',

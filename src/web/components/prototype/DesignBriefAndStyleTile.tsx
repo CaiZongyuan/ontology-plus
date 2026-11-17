@@ -1089,7 +1089,7 @@ export function DesignBriefCard({
       <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border pb-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="m-0 font-serif text-[16px] font-semibold text-foreground">
+            <h3 className="m-0 font-title text-[16px] font-semibold text-foreground">
               {t('设计简报', 'Design Brief')}
             </h3>
             <span className="badge badge-accent font-mono text-[10.5px] tabular-nums">
@@ -1154,7 +1154,7 @@ export function DesignBriefCard({
 
       {brief.userImageRefs && brief.userImageRefs.length > 0 && (
         <div
-          className="flex flex-wrap items-center gap-2 rounded-control border border-border bg-muted/40 p-2"
+          className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 p-2"
           data-testid="design-brief-image-refs"
         >
           {brief.userImageRefs.map((imgRef) => (
@@ -1190,7 +1190,7 @@ export function DesignBriefCard({
 
       {/* One-sentence Agent rewrite input */}
       <form
-        className="flex gap-1.5 rounded-control border border-border bg-muted/55 p-2"
+        className="flex gap-1.5 rounded-md border border-border bg-muted/55 p-2"
         onSubmit={(e) => {
           e.preventDefault();
           if (!rewriteDraft.trim()) return;
@@ -1234,7 +1234,7 @@ export function DesignBriefCard({
             <li
               key={item.id}
               data-testid={`design-brief-item-${item.id}`}
-              className="rounded-control border border-border bg-muted/35 px-3 py-2 text-[12.5px] leading-relaxed text-foreground"
+              className="rounded-md border border-border bg-muted/35 px-3 py-2 text-[12.5px] leading-relaxed text-foreground"
             >
               {isEditing ? (
                 <div className="flex flex-col gap-2">
@@ -1443,7 +1443,7 @@ export function StyleTileCard({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2.5">
         <div className="flex items-center gap-2">
           <Palette size={15} className="text-primary" />
-          <h3 className="m-0 font-serif text-[15.5px] font-semibold text-foreground">
+          <h3 className="m-0 font-title text-[15.5px] font-semibold text-foreground">
             {t('实时风格样张', 'Live Style Tile')}
           </h3>
         </div>
@@ -1458,7 +1458,7 @@ export function StyleTileCard({
         {swatches.map((sw) => (
           <div
             key={sw.key}
-            className="flex items-center gap-2 rounded-control border border-border bg-muted/40 px-2 py-1.5"
+            className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5"
           >
             <span
               className="h-5 w-5 shrink-0 rounded border border-black/15"

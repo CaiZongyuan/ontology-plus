@@ -128,7 +128,7 @@ export function RegistryTable<T>({
       {(matchesSearch || (statusFilters && statusFilters.length > 0)) && (
         <div className="primitive-card-bar flex flex-wrap items-center gap-2 border-b border-border bg-muted/35">
           {matchesSearch && (
-            <div className="flex min-w-[200px] flex-1 items-center gap-1.5 rounded-control bg-card px-2.5 py-1 shadow-hairline">
+            <div className="flex min-w-[200px] flex-1 items-center gap-1.5 rounded-md bg-card px-2.5 py-1 shadow-hairline">
               <Search size={13} strokeWidth={1.75} className="shrink-0 text-faint-foreground" />
               <input
                 value={query}

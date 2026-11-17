@@ -6,6 +6,7 @@ import {
   BUILT_IN_THEMES,
   CONTRAST_PAIRS,
   DEFAULT_THEME_ID,
+  DERIVED_VARIABLES,
   THEME_CONTRACT_VERSION,
   THEME_TOKENS,
   THEME_TOKEN_GROUPS,
@@ -257,6 +258,19 @@ describe('compiling a theme to CSS', () => {
     expect(css).toContain(`--muted: ${warmPaper.light.muted};`);
     expect(css).not.toContain('--contract-');
   });
+
+  it('writes the shared derived variables once, from contract tokens, wherever a theme or mode is set', () => {
+    const css = compileBuiltInThemesCss();
+    const block = /^:root,\n\[data-theme\],\n\[data-workbench-theme\] \{\n([\s\S]*?)^\}/m.exec(css)?.[1] ?? '';
+    expect(block).toContain('--border-strong: color-mix(in srgb, var(--muted-foreground) 42%, var(--border));');
+    expect(block).toContain('--shadow-card: 0 0 0 1px var(--border), var(--shadow-sm);');
+    expect(block.match(/^\s*--[\w-]+:/gm)).toHaveLength(DERIVED_VARIABLES.length);
+    for (const theme of BUILT_IN_THEMES) {
+      for (const mode of ['light', 'dark'] as const) {
+        for (const variable of DERIVED_VARIABLES) expect(theme[mode]).not.toHaveProperty(variable.name);
+      }
+    }
+  });
 });
 
 describe('files generated from the contract and the theme tables', () => {
@@ -272,138 +286,23 @@ describe('files generated from the contract and the theme tables', () => {
     }
     expect(doc).toContain(`Contract version: ${THEME_CONTRACT_VERSION}`);
   });
-});
 
-describe('the stylesheets that still use pre-contract names', () => {
-  it('resolve every old colour, font, and texture name to a contract token', () => {
-    const tokensCss = readRepoFile('src/web/tokens.css');
-    const aliases: Record<string, string> = {
-      ground: 'background',
-      'ground-2': 'canvas',
-      surface: 'card',
-      'surface-2': 'muted',
-      line: 'border',
-      'line-2': 'border-subtle',
-      ghost: 'accent',
-      hover: 'accent',
-      ink: 'foreground',
-      'ink-2': 'foreground-soft',
-      faint: 'faint-foreground',
-      ok: 'success',
-      'ok-soft': 'success-soft',
-      warn: 'warning',
-      'warn-soft': 'warning-soft',
-      bad: 'destructive',
-      'bad-soft': 'destructive-soft',
-      serif: 'font-title',
-      sans: 'font-sans',
-      mono: 'font-mono',
-      'paper-grain-url': 'backdrop-image',
-      'paper-grain-size': 'backdrop-size',
-    };
-    for (const [oldName, token] of Object.entries(aliases)) {
-      expect(tokensCss).toContain(`--${oldName}: var(${cssVarName(token)});`);
+  it('the contract reference lists the shared derived variables, which a theme does not fill', () => {
+    const doc = renderContractDoc();
+    expect(doc).toContain('## Shared derived variables');
+    for (const variable of DERIVED_VARIABLES) {
+      expect(doc).toContain(`| \`${cssVarName(variable.name)}\` | ${variable.description} | \`${variable.value}\` |`);
     }
   });
 
-  it('no longer carry literal values for anything the theme owns', () => {
-    const tokensCss = readRepoFile('src/web/tokens.css');
-    for (const token of THEME_TOKENS) {
-      const literal = new RegExp(`^\\s*${cssVarName(token.name)}:(?!\\s*var\\()`, 'm');
-      expect(tokensCss, `${token.name} should come from the theme`).not.toMatch(literal);
-    }
-  });
-});
-
-describe('the shell stylesheet and the base stylesheet', () => {
-  // The pre-contract names live on as aliases in one block of tokens.css until every
-  // caller has moved (#45). These two stylesheets are already migrated (#42).
-  const tokensCss = readRepoFile('src/web/tokens.css');
-  const aliasBlock = /^:root,\n\[data-theme\] \{\n[\s\S]*?^\}\n/m.exec(tokensCss)?.[0] ?? '';
-  const oldNames = [...aliasBlock.matchAll(/^\s*--([\w-]+):\s*var\(--[\w-]+\);/gm)].map((match) => match[1]!);
-  const stylesheets = {
-    'src/web/shell.css': readRepoFile('src/web/shell.css'),
-    'src/web/tokens.css': tokensCss.replace(aliasBlock, ''),
-  };
-
-  const offending = (pattern: RegExp) =>
-    Object.entries(stylesheets).flatMap(([file, css]) =>
-      css.split('\n').flatMap((line, index) => (pattern.test(line) ? [`${file}:${index + 1}: ${line.trim()}`] : [])),
-    );
-
-  it('keep the pre-contract names only in the alias block', () => {
-    expect(oldNames).toEqual(expect.arrayContaining(['ground', 'ink', 'ink-3', 'line', 'surface-2', 'inset', 'red-tint']));
-    const used = new RegExp(`var\\(--(?:${oldNames.join('|')})[\\s,)]`);
-    const found = offending(used);
-    expect(found, found.join('\n')).toEqual([]);
-  });
-
-  it('take every colour, including shadow and scrim colours, from contract tokens', () => {
-    // Masks only use the alpha channel, so the colour they name is not appearance.
-    const literal = /#[\da-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(\s*[\d.]|\b(?:white|black)\b/i;
-    const found = Object.entries(stylesheets).flatMap(([file, css]) =>
-      [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([\w-]+)\s*:\s*([^;{}]+);/g)]
-        .filter(([, property, value]) => !/^(?:-webkit-)?mask/.test(property!) && literal.test(value!))
-        .map(([declaration]) => `${file}: ${declaration.replace(/\s+/g, ' ')}`),
-    );
-    expect(found, found.join('\n')).toEqual([]);
-  });
-});
-
-describe('accent and muted keep their contract meaning', () => {
-  // Before the contract, `accent` was the brand colour and `muted` was secondary text.
-  // In the contract `accent` is the hover fill and `muted` the quiet fill; the old
-  // meanings are now `primary` and `muted-foreground`.
-  const webRoot = path.join(repoRoot, 'src/web');
-  const skipped = new Set([
-    // Written by `pnpm themes:generate`: the one place the contract tokens are defined.
-    'workbench-themes.generated.css',
-    // Example CSS for generated prototypes, which define their own `--accent` palette.
-    'components/prototype/motionSchematicSpecs.ts',
-  ]);
-  const sources = (dir: string): string[] =>
-    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) return sources(full);
-      return /\.(css|tsx?)$/.test(entry.name) ? [full] : [];
-    });
-
-  const oldMeanings: ReadonlyArray<readonly [what: string, pattern: RegExp, cssOnly?: boolean]> = [
-    ['a removed brand-colour name (use primary-foreground or primary-soft)', /\baccent-(?:ink|soft|tint)\b/],
-    ['the text-muted utility, which paints text in the quiet fill (use text-muted-foreground)', /(?<![\w-])text-muted(?![\w-])/],
-    [
-      'accent as a text, border, or ring colour utility (use primary)',
-      /(?<![\w-])(?:text|border(?:-[xytrblse])?|ring|outline|decoration|fill|stroke|caret|divide|placeholder)-accent(?![\w-])/,
-    ],
-    // SVG `fill` is left out of the two below: it paints shapes such as graph cards and
-    // label backgrounds, which is what the quiet fill and the hover fill are for.
-    [
-      'var(--accent) or var(--muted) as a text, border, or outline colour (use primary or muted-foreground)',
-      /(?<![\w-])(?:color|border[\w-]*|outline[\w-]*|stroke|caret-color|accent-color|text-decoration[\w-]*|box-shadow)\s*:[^;{}]*?var\(--(?:accent|muted)[\s,)]/,
-      true,
-    ],
-    [
-      'var(--accent) or var(--muted) as a text, border, or outline colour in an inline style',
-      /(?<![\w-])(?:color|border\w*|outline\w*|stroke|caretColor|accentColor|textDecoration\w*|boxShadow)\s*:\s*(?:[^'"`\n]*\?\s*)?['"`][^'"`]*var\(--(?:accent|muted)[\s,)]/,
-    ],
-    ['a redefinition of --accent or --muted outside the theme stylesheet', /(?<![\w-])--(?:accent|muted)\s*:/],
-  ];
-
-  it('no stylesheet, inline style, or component markup uses them with the old meaning', () => {
-    const found: string[] = [];
-    for (const file of sources(webRoot)) {
-      const relative = path.relative(webRoot, file).split(path.sep).join('/');
-      if (skipped.has(relative)) continue;
-      const isCss = file.endsWith('.css');
-      fs.readFileSync(file, 'utf8')
-        .split('\n')
-        .forEach((line, index) => {
-          for (const [what, pattern, cssOnly] of oldMeanings) {
-            if (cssOnly && !isCss) continue;
-            if (pattern.test(line)) found.push(`src/web/${relative}:${index + 1}: ${what}\n    ${line.trim()}`);
-          }
-        });
-    }
-    expect(found, found.join('\n')).toEqual([]);
+  it('the contract reference says how to add a built-in theme and how the theme check is run', () => {
+    const doc = renderContractDoc();
+    const section = doc.slice(doc.indexOf('## Adding a built-in theme'));
+    expect(section).toMatch(/^## Adding a built-in theme/);
+    expect(section).toContain('src/packages/workbench-theme/lib/themes/');
+    expect(section).toContain('BUILT_IN_THEMES');
+    expect(section).toContain('checkTheme');
+    expect(section).toContain('pnpm themes:generate');
+    expect(section).toContain('pnpm lint:theme');
   });
 });

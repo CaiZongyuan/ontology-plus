@@ -333,3 +333,17 @@
   --backdrop-image: none;
   --backdrop-size: 260px 260px, 260px 260px, 900px 900px;
 }
+
+/* Shared derived variables: computed from contract tokens, the same in every theme. */
+:root,
+[data-theme],
+[data-workbench-theme] {
+  --accent-strong: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --border-strong: color-mix(in srgb, var(--muted-foreground) 42%, var(--border));
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--ring) 28%, transparent);
+  --shadow-hairline: 0 0 0 1px var(--border);
+  --shadow-btn: 0 0 0 1px var(--border-strong), var(--shadow-xs);
+  --shadow-card: 0 0 0 1px var(--border), var(--shadow-sm);
+  --shadow-raised: 0 0 0 1px var(--border), var(--shadow-md);
+  --shadow-overlay: 0 0 0 1px var(--border), var(--shadow-lg);
+}

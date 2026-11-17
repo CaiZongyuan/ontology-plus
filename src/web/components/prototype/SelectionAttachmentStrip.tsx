@@ -48,7 +48,7 @@ export function SelectionAttachmentStrip({
       data-testid="selection-attachment-strip"
       aria-label={t('画布框选附件列表', 'Canvas selection attachments')}
       className={cn(
-        'flex flex-col gap-1.5 rounded-[8px] border border-border bg-surface-2/80 p-2',
+        'flex flex-col gap-1.5 rounded-[8px] border border-border p-2',
         className,
       )}
     >
@@ -95,7 +95,7 @@ export function SelectionAttachmentStrip({
 
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 font-mono text-[10px] font-semibold text-white shrink-0">
+                  <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 font-mono text-[10px] font-semibold text-primary-foreground shrink-0">
                     {idx + 1}
                   </span>
                   {anchorBadge ? (
@@ -135,7 +135,7 @@ export function SelectionAttachmentStrip({
                 )}
                 title={t('移除此框选目标', 'Remove selection')}
                 onClick={() => removeSelectionAttachment(prototypeId, att.id)}
-                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-foreground transition-colors hover:text-foreground"
               >
                 <X size={12.5} aria-hidden="true" />
               </button>

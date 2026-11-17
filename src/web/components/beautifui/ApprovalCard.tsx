@@ -108,13 +108,13 @@ export function ApprovalCard({
                   data-glide-item
                   disabled={disabled}
                   onClick={() => toggleOption(optLabel)}
-                  className="relative z-10 flex w-full cursor-pointer items-start gap-2.5 rounded-control px-2.5 py-2 text-left disabled:opacity-50"
+                  className="relative z-10 flex w-full cursor-pointer items-start gap-2.5 rounded-md px-2.5 py-2 text-left disabled:opacity-50"
                 >
                   <span
                     className={cn(
                       'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border transition-colors duration-150',
                       prompt.multiSelect ? 'rounded-[4px]' : 'rounded-full',
-                      isSelected ? 'border-foreground bg-foreground' : 'border-line-strong bg-card',
+                      isSelected ? 'border-foreground bg-foreground' : 'border-border-strong bg-card',
                     )}
                   >
                     <span
@@ -152,7 +152,7 @@ export function ApprovalCard({
                 '或输入补充说明 / 自定义参数...',
                 'Or enter custom details / parameters...',
               )}
-              className="w-full rounded-control border border-border bg-muted px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-faint-foreground focus:border-primary focus:outline-none"
+              className="w-full rounded-md border border-border bg-muted px-2.5 py-1.5 text-[12.5px] text-foreground placeholder:text-faint-foreground focus:border-primary focus:outline-none"
             />
           </div>
         )}

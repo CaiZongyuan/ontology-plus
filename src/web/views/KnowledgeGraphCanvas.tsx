@@ -176,7 +176,7 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
       data-testid="kg-node"
       data-node-id={data.node.id}
       className={cn(
-        'group relative flex h-[56px] w-[188px] flex-col justify-between overflow-hidden rounded-control border bg-card px-2.5 py-1.5 transition-[opacity,box-shadow,border-color,transform] duration-150',
+        'group relative flex h-[56px] w-[188px] flex-col justify-between overflow-hidden rounded-md border bg-card px-2.5 py-1.5 transition-[opacity,box-shadow,border-color,transform] duration-150',
         data.isSelected && 'ring-2 ring-primary border-primary shadow-raised',
         !data.isSelected && data.isNeighbor && 'border-primary/65 shadow-card',
         !data.isSelected && !data.isNeighbor && 'border-border shadow-xs hover:border-faint-foreground',
@@ -1199,7 +1199,7 @@ function KnowledgeGraphInner({
       <div className="kg-toolbar">
         <div className="kg-chips">
           {/* Layout Mode Switcher */}
-          <div className="mr-1 inline-flex items-center rounded-[7px] border border-border bg-card p-0.5 shadow-2xs">
+          <div className="mr-1 inline-flex items-center rounded-[7px] border border-border bg-card p-0.5 shadow-xs">
             <button
               type="button"
               data-testid="kg-mode-swimlane-btn"
@@ -1583,7 +1583,7 @@ function KnowledgeGraphInner({
 
                       return (
                         <div
-                          key={edge.id} className="p-[6px_8px] rounded-[5px] bg-muted border border-[var(--line-2)] text-[11.5px] flex flex-col gap-1"
+                          key={edge.id} className="p-[6px_8px] rounded-[5px] bg-muted border border-border-subtle text-[11.5px] flex flex-col gap-1"
                         >
                           <div className="flex justify-between items-center gap-1"
                           >

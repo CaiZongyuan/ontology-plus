@@ -609,7 +609,7 @@ function VisualReferenceLightboxDialog({
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-3.5">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h2 id={headingId} className="m-0 font-serif text-[18px] font-semibold text-foreground">
+              <h2 id={headingId} className="m-0 font-title text-[18px] font-semibold text-foreground">
                 {item.title}
               </h2>
               <a
@@ -665,7 +665,7 @@ function VisualReferenceLightboxDialog({
                 type="button"
                 onClick={() => dialogRef.current?.close()}
                 aria-label={t('关闭大图预览', 'Close preview')}
-                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-control text-faint-foreground hover:bg-muted hover:text-foreground"
+                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-faint-foreground hover:bg-muted hover:text-foreground"
               >
                 <X size={16} />
               </button>
@@ -926,7 +926,7 @@ export function VisualReferencePicker({
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0 flex-[1_1_320px]">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="m-0 font-serif text-[17px] font-semibold text-foreground">
+            <h3 className="m-0 font-title text-[17px] font-semibold text-foreground">
               {t('选一张主参考', 'Pick a Primary Reference')}
             </h3>
             <span
@@ -1109,7 +1109,7 @@ export function VisualReferencePicker({
                   <div
                     key={borrowed.item.slug}
                     data-testid={`borrowed-ref-card-${borrowed.item.slug}`}
-                    className="flex flex-col gap-2 rounded-control border border-primary/35 bg-card p-3"
+                    className="flex flex-col gap-2 rounded-md border border-primary/35 bg-card p-3"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
@@ -1135,7 +1135,7 @@ export function VisualReferencePicker({
                             removeBorrowedReference(selection, borrowed.item.slug),
                           )
                         }
-                        className="inline-flex cursor-pointer items-center gap-1 rounded-control px-2 py-0.5 text-[11.5px] text-faint-foreground hover:bg-muted hover:text-destructive"
+                        className="inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] text-faint-foreground hover:bg-muted hover:text-destructive"
                       >
                         <Trash2 size={12} />
                         <span>{t('移除', 'Remove')}</span>
@@ -1322,7 +1322,7 @@ export function VisualReferencePicker({
           </select>
 
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
-            <div className="inline-flex items-center gap-0.5 rounded-control border border-border bg-muted/50 p-0.5">
+            <div className="inline-flex items-center gap-0.5 rounded-md border border-border bg-muted/50 p-0.5">
               <Button
                 type="button"
                 variant="toggle"

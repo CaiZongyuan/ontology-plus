@@ -120,6 +120,63 @@ export const THEME_TOKENS: readonly ThemeTokenSpec[] = [
   ]),
 ];
 
+export interface DerivedVariableSpec {
+  /** Without the leading `--`. */
+  name: string;
+  /** The CSS value, computed from contract tokens. */
+  value: string;
+  description: string;
+}
+
+/**
+ * Shared derived variables: computed from contract tokens and the same for every theme,
+ * so a theme sets the tokens they are made of, not these. Components may read them as
+ * they read contract tokens. They are written to the generated theme stylesheet; a new
+ * shared colour or shadow is registered here, not declared in a component stylesheet.
+ */
+export const DERIVED_VARIABLES: readonly DerivedVariableSpec[] = [
+  {
+    name: 'accent-strong',
+    value: 'color-mix(in srgb, var(--foreground) 8%, transparent)',
+    description: 'A stronger hover fill, for controls that already sit on the quiet fill.',
+  },
+  {
+    name: 'border-strong',
+    value: 'color-mix(in srgb, var(--muted-foreground) 42%, var(--border))',
+    description: 'A stronger outline: control outlines and hovered borders.',
+  },
+  {
+    name: 'focus-ring',
+    value: '0 0 0 3px color-mix(in srgb, var(--ring) 28%, transparent)',
+    description: 'A soft focus halo, as a box-shadow, for fields that show focus without an outline.',
+  },
+  {
+    name: 'shadow-hairline',
+    value: '0 0 0 1px var(--border)',
+    description: 'A hairline outline, as a box-shadow.',
+  },
+  {
+    name: 'shadow-btn',
+    value: '0 0 0 1px var(--border-strong), var(--shadow-xs)',
+    description: '`shadow-xs` with a control outline: buttons and segmented controls.',
+  },
+  {
+    name: 'shadow-card',
+    value: '0 0 0 1px var(--border), var(--shadow-sm)',
+    description: '`shadow-sm` with a hairline outline, so cards read on any ground.',
+  },
+  {
+    name: 'shadow-raised',
+    value: '0 0 0 1px var(--border), var(--shadow-md)',
+    description: '`shadow-md` with a hairline outline: menus and popovers.',
+  },
+  {
+    name: 'shadow-overlay',
+    value: '0 0 0 1px var(--border), var(--shadow-lg)',
+    description: '`shadow-lg` with a hairline outline: dialogs and drawers.',
+  },
+];
+
 /** The CSS custom property a contract token is emitted as. */
 export function cssVarName(token: string): string {
   return `--${token}`;

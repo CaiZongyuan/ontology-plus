@@ -412,7 +412,7 @@ export function ToolChips({
               aria-controls={isExpanded ? panelId : undefined}
               onClick={() => setExpandedId(isExpanded ? null : trace.id)}
               className={cn(
-                'group/chip inline-flex min-h-[28px] max-w-full cursor-pointer items-center gap-1.5 rounded-control border px-2 py-1 text-left text-[12px]',
+                'group/chip inline-flex min-h-[28px] max-w-full cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-left text-[12px]',
                 'transition-[background-color,border-color,color,box-shadow] duration-150 ease-out-strong',
                 running && 'border-primary/40 bg-primary-soft/55 text-primary',
                 isError && !isExpanded && 'border-destructive/35 bg-destructive-soft/45 text-destructive hover:border-destructive/55',
@@ -420,7 +420,7 @@ export function ToolChips({
                 !running &&
                   !isError &&
                   !isExpanded &&
-                  'border-border bg-card text-foreground-soft shadow-2xs hover:border-line-strong hover:bg-accent hover:text-foreground',
+                  'border-border bg-card text-foreground-soft shadow-xs hover:border-border-strong hover:bg-accent hover:text-foreground',
                 !running &&
                   !isError &&
                   isExpanded &&
@@ -570,7 +570,7 @@ export function ToolChips({
                         active.targetElementId,
                       )
                     }
-                    className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-chip border border-primary/30 bg-primary-soft px-2 text-[11px] font-medium text-primary transition-opacity hover:opacity-85"
+                    className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-sm border border-primary/30 bg-primary-soft px-2 text-[11px] font-medium text-primary transition-opacity hover:opacity-85"
                   >
                     <Crosshair size={11.5} aria-hidden="true" className="shrink-0" />
                     {t('定位', 'Locate')} {active.targetModelCode}
@@ -580,7 +580,7 @@ export function ToolChips({
 
                 {/* Segmented Structured / Raw JSON Switch */}
                 <div
-                  className="inline-flex h-6 items-center rounded-chip border border-border bg-muted p-0.5"
+                  className="inline-flex h-6 items-center rounded-sm border border-border bg-muted p-0.5"
                   role="group"
                   aria-label={t('参数视图模式', 'Arguments view mode')}
                 >
@@ -590,7 +590,7 @@ export function ToolChips({
                     className={cn(
                       'inline-flex h-[18px] cursor-pointer items-center gap-1 rounded-[4px] px-1.5 text-[10.5px] font-medium transition-colors',
                       viewMode === 'structured'
-                        ? 'bg-card text-foreground shadow-2xs'
+                        ? 'bg-card text-foreground shadow-xs'
                         : 'text-faint-foreground hover:text-foreground-soft',
                     )}
                   >
@@ -603,7 +603,7 @@ export function ToolChips({
                     className={cn(
                       'inline-flex h-[18px] cursor-pointer items-center gap-1 rounded-[4px] px-1.5 font-mono text-[10.5px] font-medium transition-colors',
                       viewMode === 'json'
-                        ? 'bg-card text-foreground shadow-2xs'
+                        ? 'bg-card text-foreground shadow-xs'
                         : 'text-faint-foreground hover:text-foreground-soft',
                     )}
                   >
@@ -617,7 +617,7 @@ export function ToolChips({
                   onClick={() => handleCopyJson(active)}
                   title={t('复制工具调用详情 (JSON)', 'Copy tool call JSON')}
                   aria-label={t('复制工具调用详情', 'Copy tool call JSON')}
-                  className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-chip border border-border bg-card text-faint-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-sm border border-border bg-card text-faint-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   {isCopied ? (
                     <Check size={11.5} strokeWidth={2.3} className="text-success" />
@@ -632,7 +632,7 @@ export function ToolChips({
               {/* Full-Width Result / Validator Feedback Strip */}
               <div
                 className={cn(
-                  'flex items-start gap-2 rounded-control border px-2.5 py-2 text-[12px] leading-relaxed',
+                  'flex items-start gap-2 rounded-md border px-2.5 py-2 text-[12px] leading-relaxed',
                   isError
                     ? 'border-destructive/35 bg-destructive-soft/35 text-foreground'
                     : running
@@ -676,7 +676,7 @@ export function ToolChips({
                   <div className="text-[10.5px] font-medium text-faint-foreground">
                     {t('原始调用入参 (JSON)', 'Raw Arguments (JSON)')}
                   </div>
-                  <pre className="bui-scroller m-0 max-h-72 overflow-y-auto overflow-x-hidden rounded-control border border-border bg-card p-2.5 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-foreground-soft">
+                  <pre className="bui-scroller m-0 max-h-72 overflow-y-auto overflow-x-hidden rounded-md border border-border bg-card p-2.5 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-foreground-soft">
                     {highlightJsonText(JSON.stringify(active.arguments ?? {}, null, 2))}
                   </pre>
                 </div>
@@ -698,7 +698,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
 
   if (entries.length === 0) {
     return (
-      <div className="rounded-control border border-border bg-card px-2.5 py-1.5 text-[11.5px] text-faint-foreground">
+      <div className="rounded-md border border-border bg-card px-2.5 py-1.5 text-[11.5px] text-faint-foreground">
         {t('无显式传入参数（使用当前会话默认上下文）', 'No explicit arguments (using session context)')}
       </div>
     );
@@ -738,7 +738,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
             return (
               <div
                 key={key}
-                className="flex flex-col gap-0.5 rounded-control border border-border bg-card px-2.5 py-1.5"
+                className="flex flex-col gap-0.5 rounded-md border border-border bg-card px-2.5 py-1.5"
               >
                 <div className="flex items-center justify-between gap-1">
                   <span className="truncate text-[10.5px] font-medium text-faint-foreground">
@@ -775,7 +775,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
           return (
             <div key={key} className="space-y-1">
               {renderFieldHeader(key)}
-              <pre className="bui-scroller m-0 max-h-56 overflow-y-auto overflow-x-hidden rounded-control border border-border bg-card px-2.5 py-2 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-foreground">
+              <pre className="bui-scroller m-0 max-h-56 overflow-y-auto overflow-x-hidden rounded-md border border-border bg-card px-2.5 py-2 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap break-words text-foreground">
                 {val}
               </pre>
             </div>
@@ -788,7 +788,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
           return (
             <div key={key} className="space-y-1">
               {renderFieldHeader(key)}
-              <div className="rounded-control border border-border bg-card px-2.5 py-2 text-[12.5px] leading-[1.6] whitespace-pre-wrap break-words text-foreground">
+              <div className="rounded-md border border-border bg-card px-2.5 py-2 text-[12.5px] leading-[1.6] whitespace-pre-wrap break-words text-foreground">
                 <TaggedInlineContent parsed={parsed} />
               </div>
             </div>
@@ -801,7 +801,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
             return (
               <div key={key} className="space-y-1">
                 {renderFieldHeader(key, val.length)}
-                <div className="flex flex-wrap gap-1.5 rounded-control border border-border bg-card px-2.5 py-2">
+                <div className="flex flex-wrap gap-1.5 rounded-md border border-border bg-card px-2.5 py-2">
                   {val.map((token, idx) => (
                     <span
                       key={`${String(token)}-${idx}`}
@@ -823,7 +823,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
             return (
               <div key={key} className="space-y-1">
                 {renderFieldHeader(key, val.length)}
-                <ul className="bui-scroller m-0 max-h-64 divide-y divide-border overflow-y-auto overflow-x-hidden rounded-control border border-border bg-card p-0 list-none">
+                <ul className="bui-scroller m-0 max-h-64 divide-y divide-border overflow-y-auto overflow-x-hidden rounded-md border border-border bg-card p-0 list-none">
                   {val.map((item, idx) => {
                     const parsed = parseTaggedListItem(String(item));
                     return (
@@ -849,7 +849,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
           return (
             <div key={key} className="space-y-1">
               {renderFieldHeader(key, val.length)}
-              <div className="bui-scroller max-h-64 divide-y divide-border overflow-y-auto overflow-x-hidden rounded-control border border-border bg-card">
+              <div className="bui-scroller max-h-64 divide-y divide-border overflow-y-auto overflow-x-hidden rounded-md border border-border bg-card">
                 {val.map((obj, idx) => {
                   if (!obj || typeof obj !== 'object') {
                     return (
@@ -887,7 +887,7 @@ function StructuredArgumentsView({ args }: { args: Record<string, unknown> }) {
           return (
             <div key={key} className="space-y-1">
               {renderFieldHeader(key, subEntries.length)}
-              <div className="divide-y divide-border rounded-control border border-border bg-card">
+              <div className="divide-y divide-border rounded-md border border-border bg-card">
                 {subEntries.map(([subK, subV]) => (
                   <div
                     key={subK}

@@ -770,7 +770,7 @@ function ShellInner() {
                     <>
                       <strong>{validation.presentModels.length}/11</strong>
                       {t('模型', 'Models')}
-                      <span className="text-[var(--line)]">|</span>
+                      <span className="text-border">|</span>
                       <strong>{validation.errorCount}</strong>
                       {t('错误', 'Errors')}
                     </>
@@ -827,7 +827,7 @@ function ShellInner() {
                     <span className="badge badge-warn">
                       {t('尚未到达此阶段 · 暂无图谱节点', 'Stage Not Yet Reached · No Graph Nodes')}
                     </span>
-                    <h3 className="font-serif text-[18px] font-semibold text-foreground m-0">
+                    <h3 className="font-title text-[18px] font-semibold text-foreground m-0">
                       {t(
                         `「${data.activeProject.name}」尚未生成业务本体`,
                         `"${data.activeProject.name}" has not synthesized its ontology yet`,

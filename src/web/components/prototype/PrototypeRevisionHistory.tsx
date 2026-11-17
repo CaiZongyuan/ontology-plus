@@ -606,7 +606,7 @@ export function PrototypeRevisionCompareView({
 
       <div className="proto-rev-compare-grid">
         <div className="proto-rev-compare-pane">
-          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border bg-surface-2 text-[12px]">
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border text-[12px]">
             <span className="font-medium text-foreground truncate">
               #{leftRev.revisionNumber} · {leftRev.title}
             </span>
@@ -629,7 +629,7 @@ export function PrototypeRevisionCompareView({
         </div>
 
         <div className="proto-rev-compare-pane">
-          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border bg-surface-2 text-[12px]">
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border text-[12px]">
             <span className="font-medium text-foreground truncate">
               #{rightRev.revisionNumber} · {rightRev.title}
             </span>
@@ -1409,7 +1409,7 @@ export function ConfirmRevisionMuDiffModal({
       onClose={onClose}
     >
       <div className="flex flex-col">
-        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 bg-surface-2">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="flex items-center gap-2 min-w-0">
             <CheckCircle2 size={16} className="text-primary shrink-0" aria-hidden="true" />
             <h3 id={titleId} className="m-0 text-[14px] font-semibold text-foreground truncate">

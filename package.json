@@ -11,8 +11,9 @@
     "start": "tsx src/server/node-server.ts",
     "typecheck": "tsc --noEmit",
     "lint:boundaries": "tsx scripts/lint-boundaries.ts",
+    "lint:theme": "tsx scripts/lint-theme.ts",
     "themes:generate": "tsx scripts/generate-workbench-themes.ts",
-    "check": "pnpm typecheck && pnpm lint:boundaries",
+    "check": "pnpm typecheck && pnpm lint:boundaries && pnpm lint:theme",
     "test": "vitest run src",
     "test:e2e": "playwright test"
   },

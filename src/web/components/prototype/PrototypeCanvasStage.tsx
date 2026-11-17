@@ -759,7 +759,7 @@ export function PrototypeCanvasStage({
       className={cn(
         'flex flex-col overflow-hidden rounded-card border border-border bg-card',
         focusMode
-          ? 'fixed top-0 bottom-0 left-0 z-[980] rounded-none border-0 bg-ground shadow-lg'
+          ? 'fixed top-0 bottom-0 left-0 z-[980] rounded-none border-0 shadow-lg'
           : 'min-h-[calc(100dvh-100px)]',
       )}
       style={focusMode ? { right: focusRightOffset, animation: 'none' } : undefined}
@@ -887,7 +887,7 @@ export function PrototypeCanvasStage({
                   {switcherSubPanel === 'IMPORT_HTML' && (
                     <form
                       data-testid="prototype-import-panel"
-                      className="flex flex-col gap-2 rounded-[6px] border border-border bg-surface-2 p-2.5"
+                      className="flex flex-col gap-2 rounded-[6px] border border-border p-2.5"
                       onSubmit={(e) => {
                         e.preventDefault();
                         void handleImportHtmlContent(importNameDraft, importHtmlDraft);
@@ -972,7 +972,7 @@ export function PrototypeCanvasStage({
                   {switcherSubPanel === 'CLONE' && (
                     <form
                       data-testid="prototype-clone-panel"
-                      className="flex flex-col gap-2 rounded-[6px] border border-border bg-surface-2 p-2.5"
+                      className="flex flex-col gap-2 rounded-[6px] border border-border p-2.5"
                       onSubmit={(e) => void handleCloneSubmit(e)}
                     >
                       <label htmlFor={cloneNameId} className="text-[11.5px] font-medium text-foreground">
@@ -1088,7 +1088,7 @@ export function PrototypeCanvasStage({
                   {switcherSubPanel === 'DELETE' && (
                     <div
                       data-testid="prototype-delete-confirm-box"
-                      className="flex flex-col gap-2 rounded-[6px] border border-destructive/40 bg-surface-2 p-2.5"
+                      className="flex flex-col gap-2 rounded-[6px] border border-destructive/40 p-2.5"
                     >
                       <p className="m-0 text-[12px] text-foreground">
                         {t(
@@ -1359,7 +1359,7 @@ export function PrototypeCanvasStage({
       {isPreviewingHistorical && (
         <div
           data-testid="prototype-historical-preview-banner"
-          className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-2 px-3 py-1.5 text-[12px] text-foreground-soft shrink-0"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-1.5 text-[12px] text-foreground-soft shrink-0"
         >
           <span>
             {t(
