@@ -10,6 +10,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
+import { BUSINESS_VOCABULARY } from '../../../packages/business-vocabulary/index.js';
 import type { CompiledDevelopmentPackage } from '../../../packages/package-compiler/index.js';
 import type {
   AssembledApplication,
@@ -403,7 +404,7 @@ export function FourLayerAssetsView() {
               )}
               {generatingArch
                 ? t('正在生成架构文档…', 'Generating…')
-                : t('请架构资产智能体协助编写规范', 'Author standards with the Architecture Asset Agent')}
+                : t('请 AI 助手协助编写规范', 'Author standards with the AI Assistant')}
             </Button>
           </div>
         </div>
@@ -523,17 +524,17 @@ export function FourLayerAssetsView() {
             className="modal-panel"
             role="dialog"
             aria-modal="true"
-            aria-label={t('请架构资产智能体协助编写规范', 'Author standards with the Architecture Asset Agent')}
+            aria-label={t('请 AI 助手协助编写规范', 'Author standards with the AI Assistant')}
             style={{ maxWidth: 520 }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="card-header">
               <div>
-                <h3 className="card-title">{t('请架构资产智能体协助编写规范', 'Author standards with the Architecture Asset Agent')}</h3>
+                <h3 className="card-title">{t('请 AI 助手协助编写规范', 'Author standards with the AI Assistant')}</h3>
                 <p className="m-0 mt-1 text-[12.5px] leading-relaxed text-faint-foreground">
                   {t(
-                    '给出技术栈，架构资产智能体会在独立的对话里编写开发规范，保存后写入仓库源文件。',
-                    'Name the stack; the Architecture Asset Agent drafts the standard in its own conversation, and saving writes it to repository source.',
+                    '给出技术栈，AI 助手会在独立的规范对话里编写开发规范，保存后写入仓库源文件。',
+                    'Name the stack; the AI Assistant drafts the standard in its own conversation, and saving writes it to repository source.',
                   )}
                 </p>
               </div>
@@ -947,7 +948,7 @@ export function ApplicationAssemblyDevView({
     useAgentPanelStore.getState().revealPanel();
     try {
       const session = await ensureProjectAgentSession(project.id, 'CODING', {
-        targetId: app.id, title: `${app.name} · ${t('应用开发智能体', 'Application Development Agent')}`,
+        targetId: app.id, title: `${app.name} · ${t('交付规格对话', 'Delivery specification')}`,
       });
       setActiveSessionId(session.id);
       if (prompt) await startSessionAgentRun({ sessionId: session.id, prompt });
@@ -1146,7 +1147,7 @@ export function ApplicationAssemblyDevView({
           </>}
         </section>
         {app && <section className="card flex flex-col gap-3" data-testid="coding-agent-context-card">
-          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="card-title">{t('应用开发智能体', 'Application Development Agent')}</h4><Button onClick={() => void openApplicationAgent()}>{t('打开智能体面板', 'Open Agent Panel')}</Button></div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="card-title">{t(BUSINESS_VOCABULARY.AI_ASSISTANT.zh, BUSINESS_VOCABULARY.AI_ASSISTANT.en)}</h4><Button onClick={() => void openApplicationAgent()}>{t('与 AI 助手对话', 'Ask AI Assistant')}</Button></div>
           <p className="m-0 text-[length:var(--text-sm)] text-faint-foreground">{t('检查当前应用的输入、指出缺失或冲突，并完善实施规格。', 'Inspect this application’s inputs, identify gaps or conflicts, and refine its implementation specification.')}</p>
           <div className="flex flex-wrap gap-2">{[
             t('检查当前应用的输入来源，列出缺失内容和明确冲突。', 'Review this application’s input sources and identify missing information or explicit contradictions.'),

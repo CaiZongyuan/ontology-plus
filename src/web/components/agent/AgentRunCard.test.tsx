@@ -345,8 +345,9 @@ describe('Agent Panel preferences & Wide Mode (#35)', () => {
     expect(wideHtml).toContain('data-wide-mode="true"');
     expect(wideHtml).toContain('data-testid="agent-panel-wide-toggle"');
     expect(wideHtml).not.toContain('agent-new-session-btn');
+    expect(wideHtml).not.toContain('agent-panel-session-select');
     expect(wideHtml).toContain('data-testid="agent-panel-fork-badge"');
-    expect(wideHtml).toContain('data-testid="agent-panel-session-select"');
+    expect(wideHtml).toContain('data-testid="assistant-history-menu-btn"');
   });
 });
 
@@ -863,6 +864,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
         <ShellAgentPanel
           surface={agentPanelSurfaceFor('data-reasoning')!}
           overlay={false}
+          defaultHistoryOpen
           onClose={noop}
           onNavigate={noop}
         />
@@ -871,20 +873,21 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_DATA"');
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_WHY"');
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_POLICY"');
-    // Every specialised agent except Prototype Co-Design can hold several conversations (ADR 0009, amended).
-    expect(dataReasoningHtml).toContain('data-testid="agent-new-session-btn"');
-    expect(dataReasoningHtml).toContain('data-testid="agent-panel-session-select"');
+    // Every specialised agent except Prototype Co-Design can hold several conversations in the History Menu (ADR 0009, amended).
+    expect(dataReasoningHtml).toContain('data-testid="assistant-history-menu-btn"');
+    expect(dataReasoningHtml).toContain('data-testid="assistant-new-session-btn"');
     const prototypePanelHtml = renderToStaticMarkup(
       <PreferencesProvider>
         <ShellAgentPanel
           surface={agentPanelSurfaceFor('app-prototype')!}
           overlay={false}
+          defaultHistoryOpen
           onClose={noop}
           onNavigate={noop}
         />
       </PreferencesProvider>,
     );
-    expect(prototypePanelHtml).not.toContain('agent-new-session-btn');
+    expect(prototypePanelHtml).not.toContain('assistant-new-session-btn');
 
     // AgentRunView preserves user message images & renders "图片已不在本机" when missing from localImageStore, plus EXTRACTION_JOB chip
     const extractionSession: AgentSession = {

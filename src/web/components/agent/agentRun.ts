@@ -121,7 +121,7 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
   }
   const trimmed = rawPrompt.trim();
   if (!trimmed) {
-    return { zh: '智能体运行', en: 'Agent run' };
+    return { zh: '对话请求', en: 'Assistant request' };
   }
 
   const actionMatch = /^\[ACTION:([A-Z_]+)(?:\s+(\{[^\r\n]*\}))?\]/.exec(trimmed);

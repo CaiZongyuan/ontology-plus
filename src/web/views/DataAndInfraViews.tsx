@@ -1700,8 +1700,8 @@ export function DataReasoningView() {
             </h3>
             <div className="text-[12.5px] text-muted-foreground">
               {t(
-                '推理对话与实时 SQL / 归因步骤统一在右侧智能体面板（支持宽屏模式与会话分叉）中执行；下方展示最新沉淀的三段式结论与受治理回写动作。',
-                'Reasoning runs and live SQL/causal steps execute in the unified Agent Panel on the right; latest 3-stage conclusions and governed write-backs appear below.',
+                '推理对话与实时 SQL / 归因步骤统一在右侧 AI 助手中进行；下方展示最新沉淀的三段式结论与受治理回写动作。',
+                'Reasoning conversations and live SQL/causal steps run in the AI Assistant on the right; latest 3-stage conclusions and governed write-backs appear below.',
               )}
             </div>
           </div>
@@ -1716,7 +1716,7 @@ export function DataReasoningView() {
               panel.setWideMode(true, { commit: false });
             }}
           >
-            {t('展开推理面板', 'Open Reasoning Panel')}
+            {t('打开 AI 助手', 'Open AI Assistant')}
           </Button>
         </div>
 
@@ -1778,7 +1778,7 @@ export function DataReasoningView() {
                   onClick={() => void handleQuickReasoningPrompt(stage.mode, stage.samplePrompt)}
                 >
                   <Play size={11} />
-                  {t('在智能体面板运行示例', 'Run in Agent Panel')}
+                  {t('交给 AI 助手运行示例', 'Run example with AI Assistant')}
                 </Button>
               </div>
             </div>
@@ -2193,8 +2193,8 @@ export function LlmCenterView() {
           </div>
           <div className="text-[12.5px] text-muted-foreground">
             {t(
-              '统一管理 OpenAI-Compatible、Anthropic 与 Google Gemini 端点；Live 模式下所有 5 类智能体会话均通过此网关进行真实流式推理',
-              'Manage OpenAI-Compatible, Anthropic, and Google Gemini gateways powering all 5 Pi Durable agent surfaces',
+              '统一管理 OpenAI-Compatible、Anthropic 与 Google Gemini 端点；实时模式下各步骤与模块的 AI 助手均通过此网关进行流式推理',
+              'Manage OpenAI-Compatible, Anthropic, and Google Gemini gateways powering the AI Assistant across the workbench',
             )}
           </div>
         </div>
@@ -2359,8 +2359,8 @@ export function LlmCenterView() {
               </strong>
               <span className="text-[12px] text-muted-foreground">
                 {t(
-                  '开启后，智能体运行会将主参考、借鉴参考、上传图片与框选截图直接发送给模型；关闭后改用文字设计说明。',
-                  'When enabled, Agent Runs send Visual References, uploaded images, and selection crops directly to the model; when off, text design notes are used instead.',
+                  '开启后，AI 助手会将主参考、借鉴参考、上传图片与框选截图直接发送给模型；关闭后改用文字设计说明。',
+                  'When enabled, the AI Assistant sends Visual References, uploaded images, and selection crops directly to the model; when off, text design notes are used instead.',
                 )}
               </span>
             </span>

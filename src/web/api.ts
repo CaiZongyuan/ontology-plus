@@ -1,12 +1,17 @@
 import { create } from 'zustand';
-import { formatToolStepLabel as formatVocabularyToolStepLabel } from '../packages/business-vocabulary/index.js';
+import {
+  formatToolStepLabel as formatVocabularyToolStepLabel,
+  type ProjectStepId,
+  type ProjectStepStateId,
+} from '../packages/business-vocabulary/index.js';
 import type {
   ImpactAnalysisReport,
   ModelCode,
   OntologySuite,
 } from '../packages/ontology-core/index.js';
-import type {
-  AgentAskUserPrompt,
+import {
+  resolveCurrentProjectStep,
+  type AgentAskUserPrompt,
   AgentDomainArtifact,
   AgentImageAttachmentRef,
   AgentSession,
@@ -68,7 +73,9 @@ import {
 import {
   DEFAULT_NAV_VIEW,
   deriveProjectStepProgress,
+  getDefaultViewForStep,
   getProjectLifecycleState,
+  getProjectStepsFromBootstrap,
   readUrlNavState,
   writeUrlNavState,
   type ProjectLifecycleState,
@@ -331,6 +338,11 @@ interface WorkbenchStoreState {
     description?: string;
     template: 'CONTRACT' | 'MFT' | 'EMPTY';
   }) => Promise<ProjectDetail>;
+  createProjectFromDescription: (description: string) => Promise<{
+    project: ProjectDetail;
+    session: AgentSession;
+    runPromise: Promise<void>;
+  }>;
   saveSuiteWithUndo: (suite: OntologySuite, note?: string) => Promise<void>;
   pushUndoSnapshot: (prevSuite: OntologySuite) => void;
   undo: () => Promise<void>;
@@ -560,17 +572,53 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   createNewProject: async (input) => {
     const res = await fetch('/api/projects', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildJsonHeaders(),
       body: JSON.stringify(input),
     });
     const { project } = (await res.json()) as { project: ProjectDetail };
     await get().bootstrap(project.id);
     get().showToast(
       getCurrentClientLocale() === 'en-US'
-        ? `Created ontology project "${project.name}"`
-        : `已创建本体工程「${project.name}」`,
+        ? `Created project "${project.name}"`
+        : `已创建项目「${project.name}」`,
     );
     return project;
+  },
+
+  createProjectFromDescription: async (description) => {
+    const trimmed = description.trim();
+    if (!trimmed) {
+      throw new Error('Project description is required.');
+    }
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: buildJsonHeaders(),
+      body: JSON.stringify({ description: trimmed }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error || 'Create project failed');
+    }
+    const { project } = (await res.json()) as { project: ProjectDetail };
+    await get().bootstrap(project.id);
+
+    const session = await get().ensureProjectAgentSession(project.id, 'REQUIREMENT', {
+      title: project.name,
+    });
+    useAgentPanelStore
+      .getState()
+      .rememberSession(agentSessionScopeKey(project.id, 'REQUIREMENT'), session.id);
+    useAgentPanelStore.getState().revealPanel();
+
+    const targetView = getDefaultViewForStep('REQUIREMENTS');
+    get().setActiveNav(targetView, { itemId: null, sessionId: session.id });
+
+    const runPromise = get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: trimmed,
+    });
+
+    return { project, session, runPromise };
   },
 
   saveSuiteWithUndo: async (suite, note) => {
@@ -676,13 +724,13 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
 
     const locale = getCurrentClientLocale();
     const defaultTitleByKind: Record<AgentSessionKind, { zh: string; en: string }> = {
-      REQUIREMENT: { zh: '需求探索与 SRS 合成会话', en: 'Requirement & SRS Session' },
-      COPILOT: { zh: '本体智能助手会话', en: 'Ontology Copilot Session' },
-      PROTOTYPE_CO_DESIGN: { zh: '原型协同精修会话', en: 'Prototype Co-Design Session' },
-      ARCHITECTURE: { zh: '架构资产编写会话', en: 'Architecture Asset Authoring Session' },
-      CODING: { zh: '应用开发规格会话', en: 'Application Specification Session' },
-      CAPABILITY: { zh: '能力智能体会话', en: 'Capability Agent Session' },
-      REASONING: { zh: '数据归因与指标洞察会话', en: 'Data Reasoning & Insight Session' },
+      REQUIREMENT: { zh: '需求梳理对话', en: 'Requirements conversation' },
+      COPILOT: { zh: '业务模型对话', en: 'Business model conversation' },
+      PROTOTYPE_CO_DESIGN: { zh: '原型共创对话', en: 'Prototype conversation' },
+      ARCHITECTURE: { zh: '开发规范编写对话', en: 'Standards authoring conversation' },
+      CODING: { zh: '应用交付对话', en: 'Delivery conversation' },
+      CAPABILITY: { zh: '能力中心对话', en: 'Capability conversation' },
+      REASONING: { zh: '数据分析对话', en: 'Data analysis conversation' },
     };
     const fallbackTitle = defaultTitleByKind[agentKind];
     const created = await apiCreateAgentSession({
@@ -1026,8 +1074,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     const session = await get().ensureProjectAgentSession(projectId, 'COPILOT', {
       title:
         locale === 'en-US'
-          ? `${curData.activeProject.name} Ontology Copilot`
-          : `${curData.activeProject.name} 本体智能助手`,
+          ? `${curData.activeProject.name} Business Model`
+          : `${curData.activeProject.name} 业务模型对话`,
     });
     get().setActiveSessionId(session.id);
 
@@ -1726,46 +1774,66 @@ function buildStoreSessionStreamCallbacks(
       : [updatedSession, ...(cur.agentSessions ?? [])];
     const isSameProject =
       cur.activeProject.id === (payload.project?.id ?? updatedSession.projectId);
-    set({
-      data: {
-        ...cur,
-        agentSessions: nextSessions,
-        ...(isSameProject && payload.project
+    const nextData: BootstrapPayload = {
+      ...cur,
+      agentSessions: nextSessions,
+      ...(isSameProject && payload.project
+        ? {
+            activeProject: payload.project,
+            projects: cur.projects.map((p) =>
+              p.id === payload.project!.id
+                ? {
+                    ...p,
+                    currentStage: payload.project!.currentStage,
+                    updatedAt: payload.project!.updatedAt,
+                  }
+                : p,
+            ),
+          }
+        : {}),
+      ...(isSameProject && payload.requirementDocs
+        ? { requirementDocs: payload.requirementDocs }
+        : {}),
+      ...(isSameProject && payload.requirementSessions
+        ? { requirementSessions: payload.requirementSessions }
+        : {}),
+      ...(isSameProject && payload.prototypes ? { prototypes: payload.prototypes } : {}),
+      ...(isSameProject && payload.confirmedPrototypeRevision !== undefined
+        ? { confirmedPrototypeRevision: payload.confirmedPrototypeRevision }
+        : {}),
+      ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
+      ...(isSameProject && payload.assembledApplications
+        ? { assembledApplications: payload.assembledApplications }
+        : {}),
+      ...(payload.extractionJobs ? { extractionJobs: payload.extractionJobs } : {}),
+      ...(payload.metrics ? { metrics: payload.metrics } : {}),
+      ...(payload.analyticsReports ? { analyticsReports: payload.analyticsReports } : {}),
+      ...(isSameProject && payload.reasoningSessions
+        ? { reasoningSessions: payload.reasoningSessions }
+        : {}),
+    };
+
+    if (isSameProject && nextData.activeProject.id) {
+      const derivedSteps = getProjectStepsFromBootstrap(nextData);
+      const stepStates = Object.fromEntries(
+        derivedSteps.map((st) => [st.id, st.state]),
+      ) as Record<ProjectStepId, ProjectStepStateId>;
+      const currentStep = resolveCurrentProjectStep(stepStates);
+      const currentStepState = stepStates[currentStep];
+      nextData.projects = nextData.projects.map((p) =>
+        p.id === nextData.activeProject.id
           ? {
-              activeProject: payload.project,
-              projects: cur.projects.map((p) =>
-                p.id === payload.project!.id
-                  ? {
-                      ...p,
-                      currentStage: payload.project!.currentStage,
-                      updatedAt: payload.project!.updatedAt,
-                    }
-                  : p,
-              ),
+              ...p,
+              currentStep,
+              currentStepState,
+              stepStates,
+              updatedAt: updatedSession.updatedAt || p.updatedAt,
             }
-          : {}),
-        ...(isSameProject && payload.requirementDocs
-          ? { requirementDocs: payload.requirementDocs }
-          : {}),
-        ...(isSameProject && payload.requirementSessions
-          ? { requirementSessions: payload.requirementSessions }
-          : {}),
-        ...(isSameProject && payload.prototypes ? { prototypes: payload.prototypes } : {}),
-        ...(isSameProject && payload.confirmedPrototypeRevision !== undefined
-          ? { confirmedPrototypeRevision: payload.confirmedPrototypeRevision }
-          : {}),
-        ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
-        ...(isSameProject && payload.assembledApplications
-          ? { assembledApplications: payload.assembledApplications }
-          : {}),
-        ...(payload.extractionJobs ? { extractionJobs: payload.extractionJobs } : {}),
-        ...(payload.metrics ? { metrics: payload.metrics } : {}),
-        ...(payload.analyticsReports ? { analyticsReports: payload.analyticsReports } : {}),
-        ...(isSameProject && payload.reasoningSessions
-          ? { reasoningSessions: payload.reasoningSessions }
-          : {}),
-      },
-    });
+          : p,
+      );
+    }
+
+    set({ data: nextData });
   };
 
   return {

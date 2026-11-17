@@ -246,17 +246,11 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
   }) => {
     await page.goto('/');
 
-    // 1. Ontology Project Hub (overview): Registry table + non-blocking Milestone Snapshot manager
+    // 1. Projects Home (overview): One-sentence composer + project step status list
     await page.getByTestId('nav-overview').click();
-    await expect(page.getByTestId('project-hub-registry')).toBeVisible();
-    await page.getByTestId('project-snapshots-btn-proj-contract').click();
-    const openDialog = page.locator('dialog[open]');
-    await expect(openDialog).toBeVisible();
-    await openDialog.getByPlaceholder(/快照版本标签|Snapshot label/).fill('v5.3 E2E Baseline');
-    await page.getByTestId('create-snapshot-confirm-btn').click();
-    await expect(openDialog).toContainText('v5.3 E2E Baseline');
-    await openDialog.getByRole('button', { name: 'Close dialog' }).click();
-    await expect(openDialog).toBeHidden();
+    await expect(page.getByTestId('home-view')).toBeVisible();
+    await expect(page.getByTestId('home-project-list')).toBeVisible();
+    await expect(page.getByTestId('home-project-step-proj-contract')).toContainText('交付');
 
     // 2. SRS Tiptap Bidirectional Markdown Editor (RICH <-> SOURCE <-> PREVIEW) & Registry switcher
     await page.getByTestId('enter-active-project-btn').click();
@@ -339,12 +333,14 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
       { timeout: 15_000 },
     );
     await expect(agentPanel.getByTestId('agent-panel-fork-badge')).toBeVisible({ timeout: 15_000 });
-    await expect(agentPanel.getByTestId('agent-panel-session-select')).toBeVisible();
+    await agentPanel.getByTestId('assistant-history-menu-btn').click();
+    await expect(page.getByTestId('assistant-history-menu')).toContainText('合同工作台原型 · 分支方向');
 
-    // Reload page and verify cloned prototype + forked multi-prototype session selector persist in SQLite
+    // Reload page and verify cloned prototype + forked multi-prototype history menu persist in SQLite
     await page.reload();
     await expect(page.getByTestId('prototype-canvas-stage')).toBeVisible();
-    await expect(page.getByTestId('agent-panel').getByTestId('agent-panel-session-select')).toBeVisible();
+    await page.getByTestId('agent-panel').getByTestId('assistant-history-menu-btn').click();
+    await expect(page.getByTestId('assistant-history-menu')).toContainText('合同工作台原型 · 分支方向');
   });
 
   test('5. New Workbench Shell (#60): 4-step bar & blocked step (>=12px secondary color), More secondary menu, legacy ?mode= URL recovery, and tablet (<1280px) Conversation <-> Canvas toggle', async ({
