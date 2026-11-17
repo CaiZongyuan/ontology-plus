@@ -1,3 +1,8 @@
+import {
+  PROJECT_STEP_IDS,
+  type ProjectStepId,
+  type ProjectStepStateId,
+} from '../../business-vocabulary/index.js';
 import type {
   CandidateDecision,
   ExtractionCandidate,
@@ -22,8 +27,29 @@ export interface ProjectSummary {
   domain: string;
   description: string;
   currentStage: number;
+  currentStep?: ProjectStepId;
+  currentStepState?: ProjectStepStateId;
+  stepStates?: Record<ProjectStepId, ProjectStepStateId>;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Selects the step a returning user should land on for a project:
+ * the first non-confirmed step at or after the earliest started step,
+ * defaulting to `'REQUIREMENTS'` when nothing has started and `'DELIVERY'` when all four are confirmed.
+ */
+export function resolveCurrentProjectStep(
+  stepStates: Readonly<Record<ProjectStepId, ProjectStepStateId>>,
+): ProjectStepId {
+  const firstStartedIndex = PROJECT_STEP_IDS.findIndex((id) => stepStates[id] !== 'NOT_STARTED');
+  if (firstStartedIndex < 0) {
+    return 'REQUIREMENTS';
+  }
+  return (
+    PROJECT_STEP_IDS.slice(firstStartedIndex).find((id) => stepStates[id] !== 'CONFIRMED') ??
+    'DELIVERY'
+  );
 }
 
 export interface ProjectDetail extends ProjectSummary {
@@ -871,20 +897,31 @@ export interface SystemSettingsState {
   mockLlmMode?: boolean;
 }
 
+export type CreateProjectInput =
+  | {
+      description: string;
+      name?: string;
+      code?: string;
+      center?: 'APPLICATION' | 'CAPABILITY' | 'ANALYTICS';
+      domain?: string;
+      template?: 'CONTRACT' | 'MFT' | 'EMPTY';
+    }
+  | {
+      name: string;
+      code: string;
+      center?: 'APPLICATION' | 'CAPABILITY' | 'ANALYTICS';
+      domain: string;
+      description?: string;
+      template?: 'CONTRACT' | 'MFT' | 'EMPTY';
+    };
+
 export interface WorkspaceStore {
   /** Release the store's native SQLite connection. Repeated calls are safe. */
   close(): void;
   // Projects & 11-Model Ontology Suite
   listProjects(): ProjectSummary[];
   getProject(projectId: string): ProjectDetail | undefined;
-  createProject(input: {
-    name: string;
-    code: string;
-    center?: 'APPLICATION' | 'CAPABILITY' | 'ANALYTICS';
-    domain: string;
-    description?: string;
-    template?: 'CONTRACT' | 'MFT' | 'EMPTY';
-  }): ProjectDetail;
+  createProject(input: CreateProjectInput): ProjectDetail;
   updateProjectMeta(
     projectId: string,
     patch: Partial<Pick<ProjectSummary, 'name' | 'code' | 'center' | 'domain' | 'description'>>,

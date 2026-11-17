@@ -23,10 +23,12 @@ import {
   getSecondaryAreaForView,
   isFlushNavView,
   isNavViewId,
+  isRetiredNavEntry,
   parseUrlNavState,
   readHashView,
   readUrlNavState,
   resolveArtifactNavTarget,
+  resolveLegacyBusinessModelTechTab,
   resolveNavViewId,
   resolveShellRouteContext,
   writeUrlNavState,
@@ -236,9 +238,25 @@ describe('navigation catalog and URL state', () => {
     expect(getDefaultViewForStep('BUSINESS_MODEL')).toBe('app-ontology');
     expect(getDefaultViewForStep('DELIVERY')).toBe('app-assembly-dev');
 
+    expect(PROJECT_STEP_VIEWS.BUSINESS_MODEL).toEqual({
+      defaultView: 'app-ontology',
+      views: ['app-ontology'],
+    });
+    expect(isRetiredNavEntry('app-ontology')).toBe(true);
+    expect(isRetiredNavEntry('app-model-files')).toBe(true);
+    expect(isRetiredNavEntry('app-knowledge-graph')).toBe(true);
+    expect(isRetiredNavEntry('cap-extraction')).toBe(false);
+    expect(resolveLegacyBusinessModelTechTab('app-model-files')).toBe('files');
+    expect(resolveLegacyBusinessModelTechTab('app-knowledge-graph')).toBe('graph');
+    expect(resolveLegacyBusinessModelTechTab('app-ontology')).toBeNull();
+    expect(isFlushNavView('app-model-files')).toBe(true);
+    expect(isFlushNavView('app-knowledge-graph')).toBe(true);
+
     const stepAssignedViews = PROJECT_STEP_IDS.flatMap((id) => PROJECT_STEP_VIEWS[id].views);
-    expect(new Set(stepAssignedViews).size).toBe(9);
-    expect([...stepAssignedViews].sort()).toEqual(
+    expect(new Set(stepAssignedViews).size).toBe(7);
+    expect(
+      [...stepAssignedViews, 'app-model-files', 'app-knowledge-graph'].sort(),
+    ).toEqual(
       getNavItemsByGroup('APPLICATION')
         .map((item) => item.id)
         .sort(),
@@ -266,6 +284,28 @@ describe('navigation catalog and URL state', () => {
       step: 'REQUIREMENTS',
       view: 'app-requirements',
       stepViews: ['app-requirements'],
+    });
+    expect(resolveShellRouteContext('app-knowledge-graph')).toEqual({
+      kind: 'project',
+      step: 'BUSINESS_MODEL',
+      view: 'app-knowledge-graph',
+      stepViews: ['app-ontology'],
+    });
+    expect(resolveShellRouteContext('app-model-files')).toEqual({
+      kind: 'project',
+      step: 'BUSINESS_MODEL',
+      view: 'app-model-files',
+      stepViews: ['app-ontology'],
+    });
+    expect(resolveShellRouteContext('cap-extraction')).toMatchObject({
+      kind: 'secondary',
+      area: 'CAPABILITY',
+      view: 'cap-extraction',
+    });
+    expect(resolveShellRouteContext('system-settings')).toMatchObject({
+      kind: 'secondary',
+      area: 'GOVERNANCE',
+      view: 'system-settings',
     });
     expect(getProjectStepForView('app-req-explore')).toBe('REQUIREMENTS');
     expect(getProjectStepForView('app-req-docs')).toBe('REQUIREMENTS');

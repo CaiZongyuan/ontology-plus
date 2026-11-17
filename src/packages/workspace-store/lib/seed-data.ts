@@ -246,7 +246,7 @@ export const SEED_PROJECTS = [
     center: 'APPLICATION' as const,
     domain: '合同全生命周期管理系统',
     description:
-      '覆盖合同起草、相对方资信准入、金额分级法务会签、电子签章与首期履约结算联动的全套 11 模型标杆工程。',
+      '覆盖合同起草、相对方资信准入、金额分级法务会签、电子签章与首期履约结算联动。',
     currentStage: 11,
     suite: CONTRACT_LIFECYCLE_SUITE,
     changelog: [
@@ -265,7 +265,7 @@ export const SEED_PROJECTS = [
     center: 'CAPABILITY' as const,
     domain: '企业文件安全传输系统 (MFT)',
     description:
-      '通过存量系统本体萃取（Ontology Extraction）从既有 MFT 跨网文件传输系统 DDL 与接口规范提炼的领域本体工程。',
+      '从既有跨网文件传输系统提炼业务规则、传输工单与安全域权限管控的文件传输项目。',
     currentStage: 5,
     suite: MFT_ENTERPRISE_SUITE,
     changelog: [

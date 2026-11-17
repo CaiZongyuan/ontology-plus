@@ -1,12 +1,18 @@
 import { create } from 'zustand';
-import { formatToolStepLabel as formatVocabularyToolStepLabel } from '../packages/business-vocabulary/index.js';
+import {
+  formatToolProgress as formatVocabularyToolProgress,
+  formatToolStepLabel as formatVocabularyToolStepLabel,
+  type ProjectStepId,
+  type ProjectStepStateId,
+} from '../packages/business-vocabulary/index.js';
 import type {
   ImpactAnalysisReport,
   ModelCode,
   OntologySuite,
 } from '../packages/ontology-core/index.js';
-import type {
-  AgentAskUserPrompt,
+import {
+  resolveCurrentProjectStep,
+  type AgentAskUserPrompt,
   AgentDomainArtifact,
   AgentImageAttachmentRef,
   AgentSession,
@@ -72,7 +78,9 @@ import {
 import {
   DEFAULT_NAV_VIEW,
   deriveProjectStepProgress,
+  getDefaultViewForStep,
   getProjectLifecycleState,
+  getProjectStepsFromBootstrap,
   normalizeNavViewAlias,
   readUrlNavState,
   writeUrlNavState,
@@ -175,6 +183,7 @@ export interface SessionLiveStep {
   at?: string;
   targetAnchor?: PrototypeTargetAnchor;
   toolName?: string;
+  arguments?: Record<string, unknown>;
 }
 
 export interface SessionLiveDraft {
@@ -186,6 +195,14 @@ export interface SessionLiveDraft {
   startedAt: number;
   liveStatus: { zh: string; en: string };
   model?: string;
+  providerName?: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  visionFallbackUsed?: boolean;
+  visionFallbackNotice?: string;
   thinking: string;
   text: string;
   steps: SessionLiveStep[];
@@ -338,6 +355,11 @@ interface WorkbenchStoreState {
     description?: string;
     template: 'CONTRACT' | 'MFT' | 'EMPTY';
   }) => Promise<ProjectDetail>;
+  createProjectFromDescription: (description: string) => Promise<{
+    project: ProjectDetail;
+    session: AgentSession;
+    runPromise: Promise<void>;
+  }>;
   saveSuiteWithUndo: (suite: OntologySuite, note?: string) => Promise<void>;
   pushUndoSnapshot: (prevSuite: OntologySuite) => void;
   undo: () => Promise<void>;
@@ -450,7 +472,11 @@ interface WorkbenchStoreState {
     mockMode?: boolean;
   }) => Promise<{ sessionId: string }>;
   cancelSessionAgentRun: (sessionId: string) => Promise<void>;
-  retrySessionAgentRun: (sessionId: string, runId?: string) => Promise<void>;
+  retrySessionAgentRun: (
+    sessionId: string,
+    runId?: string,
+    fallbackPrompt?: string,
+  ) => Promise<void>;
   removeQueuedSessionPrompt: (sessionId: string, queueId: string) => void;
 }
 
@@ -572,17 +598,53 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   createNewProject: async (input) => {
     const res = await fetch('/api/projects', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildJsonHeaders(),
       body: JSON.stringify(input),
     });
     const { project } = (await res.json()) as { project: ProjectDetail };
     await get().bootstrap(project.id);
     get().showToast(
       getCurrentClientLocale() === 'en-US'
-        ? `Created ontology project "${project.name}"`
-        : `已创建本体工程「${project.name}」`,
+        ? `Created project "${project.name}"`
+        : `已创建项目「${project.name}」`,
     );
     return project;
+  },
+
+  createProjectFromDescription: async (description) => {
+    const trimmed = description.trim();
+    if (!trimmed) {
+      throw new Error('Project description is required.');
+    }
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: buildJsonHeaders(),
+      body: JSON.stringify({ description: trimmed }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error || 'Create project failed');
+    }
+    const { project } = (await res.json()) as { project: ProjectDetail };
+    await get().bootstrap(project.id);
+
+    const session = await get().ensureProjectAgentSession(project.id, 'REQUIREMENT', {
+      title: project.name,
+    });
+    useAgentPanelStore
+      .getState()
+      .rememberSession(agentSessionScopeKey(project.id, 'REQUIREMENT'), session.id);
+    useAgentPanelStore.getState().revealPanel();
+
+    const targetView = getDefaultViewForStep('REQUIREMENTS');
+    get().setActiveNav(targetView, { itemId: null, sessionId: session.id });
+
+    const runPromise = get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: trimmed,
+    });
+
+    return { project, session, runPromise };
   },
 
   saveSuiteWithUndo: async (suite, note) => {
@@ -1351,15 +1413,18 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     }
   },
 
-  retrySessionAgentRun: async (sessionId, runId) => {
+  retrySessionAgentRun: async (sessionId, runId, fallbackPrompt) => {
     const sess = get().data?.agentSessions.find((s) => s.id === sessionId);
-    if (!sess) return;
+    if (!sess && !fallbackPrompt?.trim()) return;
     let targetPrompt = '';
-    if (runId) {
+    if (sess && runId) {
       const msg = sess.messages.find((m) => m.id === runId && m.role === 'user');
       if (msg) targetPrompt = msg.content;
     }
-    if (!targetPrompt) {
+    if (!targetPrompt && fallbackPrompt?.trim()) {
+      targetPrompt = fallbackPrompt;
+    }
+    if (!targetPrompt && sess) {
       for (let i = sess.messages.length - 1; i >= 0; i -= 1) {
         const m = sess.messages[i]!;
         if (m.role === 'user' && m.content.trim()) {
@@ -1576,6 +1641,8 @@ export interface StreamAgentSessionCallbacks {
       code: string;
       providerName?: string;
       baseUrl?: string;
+      model?: string;
+      statusCode?: number;
       message: string;
       remediation: string;
     };
@@ -1704,18 +1771,35 @@ export async function streamAgentSessionTurn(
   signal?: AbortSignal,
 ): Promise<void> {
   const locale = body.locale || getCurrentClientLocale();
-  const res = await fetch(`/api/agent-sessions/${sessionId}/stream`, {
-    method: 'POST',
-    headers: buildJsonHeaders(),
-    body: JSON.stringify({ ...body, locale }),
-    ...(signal ? { signal } : {}),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api/agent-sessions/${sessionId}/stream`, {
+      method: 'POST',
+      headers: buildJsonHeaders(),
+      body: JSON.stringify({ ...body, locale }),
+      ...(signal ? { signal } : {}),
+    });
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    callbacks.onRunError?.({
+      diagnostic: {
+        code: 'LLM_UNREACHABLE',
+        message: err instanceof Error ? err.message : String(err),
+        remediation:
+          locale === 'en-US'
+            ? 'Check backend server status or configure your gateway in LLM Center.'
+            : '请检查后端服务状态或 LLM 中心网关配置。',
+      },
+    });
+    return;
+  }
 
   if (!res.ok || !res.body) {
     const errJson = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     callbacks.onRunError?.({
       diagnostic: errJson.diagnostic ?? {
         code: 'HTTP_ERROR',
+        statusCode: res.status,
         message:
           errJson.error ||
           (locale === 'en-US' ? `Request failed (${res.status})` : `请求失败 (${res.status})`),
@@ -1788,60 +1872,92 @@ function buildStoreSessionStreamCallbacks(
       : [updatedSession, ...(cur.agentSessions ?? [])];
     const isSameProject =
       cur.activeProject.id === (payload.project?.id ?? updatedSession.projectId);
-    set({
-      data: {
-        ...cur,
-        agentSessions: nextSessions,
-        ...(isSameProject && payload.project
+    const nextData: BootstrapPayload = {
+      ...cur,
+      agentSessions: nextSessions,
+      ...(isSameProject && payload.project
+        ? {
+            activeProject: payload.project,
+            projects: cur.projects.map((p) =>
+              p.id === payload.project!.id
+                ? {
+                    ...p,
+                    currentStage: payload.project!.currentStage,
+                    updatedAt: payload.project!.updatedAt,
+                  }
+                : p,
+            ),
+          }
+        : {}),
+      ...(isSameProject && payload.requirementDocs
+        ? { requirementDocs: payload.requirementDocs }
+        : {}),
+      ...(isSameProject && payload.requirementSessions
+        ? { requirementSessions: payload.requirementSessions }
+        : {}),
+      ...(isSameProject && payload.prototypes ? { prototypes: payload.prototypes } : {}),
+      ...(isSameProject && payload.confirmedPrototypeRevision !== undefined
+        ? { confirmedPrototypeRevision: payload.confirmedPrototypeRevision }
+        : {}),
+      ...(isSameProject && payload.stepConfirmations !== undefined
+        ? { stepConfirmations: payload.stepConfirmations }
+        : {}),
+      ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
+      ...(isSameProject && payload.assembledApplications
+        ? { assembledApplications: payload.assembledApplications }
+        : {}),
+      ...(payload.extractionJobs ? { extractionJobs: payload.extractionJobs } : {}),
+      ...(payload.metrics ? { metrics: payload.metrics } : {}),
+      ...(payload.analyticsReports ? { analyticsReports: payload.analyticsReports } : {}),
+      ...(isSameProject && payload.reasoningSessions
+        ? { reasoningSessions: payload.reasoningSessions }
+        : {}),
+    };
+
+    if (isSameProject && nextData.activeProject.id) {
+      const derivedSteps = getProjectStepsFromBootstrap(nextData);
+      const stepStates = Object.fromEntries(
+        derivedSteps.map((st) => [st.id, st.state]),
+      ) as Record<ProjectStepId, ProjectStepStateId>;
+      const currentStep = resolveCurrentProjectStep(stepStates);
+      const currentStepState = stepStates[currentStep];
+      nextData.projects = nextData.projects.map((p) =>
+        p.id === nextData.activeProject.id
           ? {
-              activeProject: payload.project,
-              projects: cur.projects.map((p) =>
-                p.id === payload.project!.id
-                  ? {
-                      ...p,
-                      currentStage: payload.project!.currentStage,
-                      updatedAt: payload.project!.updatedAt,
-                    }
-                  : p,
-              ),
+              ...p,
+              currentStep,
+              currentStepState,
+              stepStates,
+              updatedAt: updatedSession.updatedAt || p.updatedAt,
             }
-          : {}),
-        ...(isSameProject && payload.requirementDocs
-          ? { requirementDocs: payload.requirementDocs }
-          : {}),
-        ...(isSameProject && payload.requirementSessions
-          ? { requirementSessions: payload.requirementSessions }
-          : {}),
-        ...(isSameProject && payload.prototypes ? { prototypes: payload.prototypes } : {}),
-        ...(isSameProject && payload.confirmedPrototypeRevision !== undefined
-          ? { confirmedPrototypeRevision: payload.confirmedPrototypeRevision }
-          : {}),
-        ...(isSameProject && payload.stepConfirmations !== undefined
-          ? { stepConfirmations: payload.stepConfirmations }
-          : {}),
-        ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
-        ...(isSameProject && payload.assembledApplications
-          ? { assembledApplications: payload.assembledApplications }
-          : {}),
-        ...(payload.extractionJobs ? { extractionJobs: payload.extractionJobs } : {}),
-        ...(payload.metrics ? { metrics: payload.metrics } : {}),
-        ...(payload.analyticsReports ? { analyticsReports: payload.analyticsReports } : {}),
-        ...(isSameProject && payload.reasoningSessions
-          ? { reasoningSessions: payload.reasoningSessions }
-          : {}),
-      },
-    });
+          : p,
+      );
+    }
+
+    set({ data: nextData });
   };
 
   return {
     onSessionMeta: (meta) => {
-      patchDraft((cur) => ({ ...cur, model: meta.model }));
+      patchDraft((cur) => ({
+        ...cur,
+        model: meta.model,
+        providerName: meta.provider,
+        ...(meta.visionSupported === false && cur.images && cur.images.length > 0
+          ? {
+              visionFallbackUsed: true,
+              ...(meta.visionFallbackNotice
+                ? { visionFallbackNotice: meta.visionFallbackNotice }
+                : {}),
+            }
+          : {}),
+      }));
     },
     onThinkingDelta: (delta) => {
       patchDraft((cur) => ({
         ...cur,
         thinking: `${cur.thinking}${delta}`,
-        liveStatus: cur.activeAnchor
+        liveStatus: cur.steps.some((s) => s.status === 'RUNNING')
           ? cur.liveStatus
           : { zh: '正在思考…', en: 'Thinking…' },
       }));
@@ -1854,15 +1970,19 @@ function buildStoreSessionStreamCallbacks(
       }));
     },
     onToolCall: (call) => {
-      const anchorText = formatAnchorBadgeLabel(call.targetAnchor);
-      const stepLabel = formatToolStepLabel(call.toolName, call.arguments, call.targetAnchor);
+      const progressLabel = formatVocabularyToolProgress(
+        call.toolName,
+        call.arguments,
+        call.targetAnchor?.label ? { targetLabel: call.targetAnchor.label } : undefined,
+      );
       patchDraft((cur) => {
         const existingIdx = cur.steps.findIndex((s) => s.id === call.id);
         const nextStep: SessionLiveStep = {
           id: call.id,
-          label: stepLabel,
+          label: { zh: progressLabel.zh, en: progressLabel.en },
           status: 'RUNNING',
           toolName: call.toolName,
+          arguments: call.arguments,
           at: new Date().toISOString(),
           ...(call.targetAnchor ? { targetAnchor: call.targetAnchor } : {}),
         };
@@ -1874,12 +1994,7 @@ function buildStoreSessionStreamCallbacks(
           ...cur,
           steps: nextSteps,
           ...(call.targetAnchor ? { activeAnchor: call.targetAnchor } : {}),
-          liveStatus: anchorText
-            ? {
-                zh: `${stepLabel.zh} (${anchorText})…`,
-                en: `${stepLabel.en} (${anchorText})…`,
-              }
-            : stepLabel,
+          liveStatus: { zh: progressLabel.zh, en: progressLabel.en },
         };
       });
     },
@@ -1903,6 +2018,7 @@ function buildStoreSessionStreamCallbacks(
           label: formatToolStepLabel(trace.toolName, trace.arguments, trace.targetAnchor),
           status: stepStatus,
           toolName: trace.toolName,
+          ...(trace.arguments ? { arguments: trace.arguments } : {}),
           ...(trace.targetAnchor
             ? { targetAnchor: trace.targetAnchor }
             : existingIdx >= 0 && cur.steps[existingIdx]?.targetAnchor
@@ -1924,6 +2040,14 @@ function buildStoreSessionStreamCallbacks(
         };
       });
     },
+    onUsage: (usage) => {
+      patchDraft((cur) => ({
+        ...cur,
+        ...(usage.tokenUsage ? { usage: usage.tokenUsage } : {}),
+        ...(usage.providerName ? { providerName: usage.providerName } : {}),
+        ...(usage.modelUsed ? { model: usage.modelUsed } : {}),
+      }));
+    },
     onAskUser: (askUser) => {
       patchDraft((cur) => ({
         ...cur,
@@ -1944,7 +2068,50 @@ function buildStoreSessionStreamCallbacks(
       }
     },
     onRunError: (payload) => {
-      upsertCompletedSession(payload);
+      if (payload.session) {
+        upsertCompletedSession(payload);
+        return;
+      }
+      const cur = get().data;
+      const draft = get().liveSessionDrafts[sessionId];
+      const existing = cur?.agentSessions.find((s) => s.id === sessionId);
+      if (!cur || !existing || !payload.diagnostic) return;
+      const nowIso = new Date().toISOString();
+      const startedIso = draft ? new Date(draft.startedAt).toISOString() : nowIso;
+      const promptText = draft?.userPrompt ?? '';
+      const lastMsg = existing.messages[existing.messages.length - 1];
+      const needsUserMsg =
+        Boolean(promptText.trim()) &&
+        !(lastMsg?.role === 'user' && lastMsg.content === promptText);
+      const nextMessages = [
+        ...existing.messages,
+        ...(needsUserMsg
+          ? [
+              {
+                id: `${draft?.runId ?? 'err'}-u`,
+                role: 'user' as const,
+                content: promptText,
+                timestamp: startedIso,
+              },
+            ]
+          : []),
+        {
+          id: `${draft?.runId ?? 'err'}-a`,
+          role: 'assistant' as const,
+          content: draft?.text ?? '',
+          ...(draft?.thinking ? { thinking: draft.thinking } : {}),
+          errorDiagnostic: payload.diagnostic,
+          timestamp: nowIso,
+        },
+      ];
+      upsertCompletedSession({
+        session: {
+          ...existing,
+          status: 'ERROR',
+          messages: nextMessages,
+          updatedAt: nowIso,
+        },
+      });
     },
     onMessageEnd: (payload) => {
       upsertCompletedSession(payload);

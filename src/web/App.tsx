@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  Boxes,
   CheckCircle2,
   ChevronDown,
   FolderKanban,
@@ -14,12 +15,14 @@ import {
   Sun,
 } from 'lucide-react';
 import {
+  MODEL_BUSINESS_NAMES,
   PROJECT_STEP_IDS,
   PROJECT_STEP_NAMES,
   type ProjectStepId,
 } from '../packages/business-vocabulary/index.js';
+import { projectByBusinessObject } from '../packages/ontology-core/index.js';
 import { BUILT_IN_THEMES } from '../packages/workbench-theme/index.js';
-import { useWorkbenchStore } from './api.js';
+import { useWorkbenchStore, type BootstrapPayload } from './api.js';
 import {
   ShellAgentPanel,
   resolveActiveWorkspaceRuns,
@@ -63,6 +66,7 @@ import {
   getProjectStepForView,
   getProjectStepsFromBootstrap,
   isFlushNavView,
+  isRetiredNavEntry,
   readHashView,
   readUrlNavState,
   resolveNavViewId,
@@ -72,6 +76,7 @@ import {
   type SecondaryAreaId,
 } from './navigation/index.js';
 import { WorkbenchViewHost } from './navigation/viewDispatch.js';
+import { navigateToBusinessModelObject } from './views/BusinessModelStepView.js';
 
 export type WorkspacePane = 'conversation' | 'canvas';
 
@@ -104,7 +109,7 @@ function useCompactWorkspaceMode(override?: boolean): boolean {
 }
 
 /* ─── Command Palette (Ctrl/⌘ + K) ─── */
-interface CommandEntry {
+export interface CommandEntry {
   key: string;
   section: string;
   label: string;
@@ -112,6 +117,161 @@ interface CommandEntry {
   icon: React.ReactNode;
   keywords: string[];
   run: () => void;
+}
+
+export function buildCommandPaletteEntries({
+  data,
+  locale,
+  theme,
+  workbenchTheme,
+  t,
+  onSelectStep,
+  onSelectView,
+  onSwitchProject,
+  onToggleTheme,
+  onSelectWorkbenchTheme,
+  onToggleLocale,
+}: {
+  data: BootstrapPayload | null;
+  locale: 'zh-CN' | 'en-US';
+  theme: 'light' | 'dark';
+  workbenchTheme: string;
+  t: (zh: string, en: string) => string;
+  onSelectStep: (step: ProjectStepId) => void;
+  onSelectView: (view: NavViewId) => void;
+  onSwitchProject: (projectId: string) => unknown;
+  onToggleTheme: () => void;
+  onSelectWorkbenchTheme: (themeId: string) => void;
+  onToggleLocale: () => void;
+}): CommandEntry[] {
+  const stepEntries: CommandEntry[] = PROJECT_STEP_IDS.map((stepId, idx) => {
+    const stepName = PROJECT_STEP_NAMES[stepId];
+    const defaultView = getDefaultViewForStep(stepId);
+    return {
+      key: `step:${stepId}`,
+      section: t('项目步骤', 'Project steps'),
+      label: `${idx + 1}. ${t(stepName.zh, stepName.en)}`,
+      ...(data?.activeProject.name ? { meta: data.activeProject.name } : {}),
+      icon: NAV_ICONS[defaultView],
+      keywords: [stepName.zh, stepName.en, stepId.toLowerCase(), '步骤', 'step'],
+      run: () => onSelectStep(stepId),
+    };
+  });
+
+  const projectedObjects = data?.activeProject.suite
+    ? projectByBusinessObject(data.activeProject.suite).objects
+    : [];
+  const businessObjectEntries: CommandEntry[] = projectedObjects.map((obj) => ({
+    key: `object:${obj.id}`,
+    section: t(MODEL_BUSINESS_NAMES.M1.zh, MODEL_BUSINESS_NAMES.M1.en),
+    label: obj.displayName,
+    ...(data?.activeProject.name ? { meta: data.activeProject.name } : {}),
+    icon: <Boxes size={15} />,
+    keywords: [
+      obj.displayName,
+      obj.name,
+      obj.alias,
+      obj.id,
+      MODEL_BUSINESS_NAMES.M1.zh,
+      MODEL_BUSINESS_NAMES.M1.en,
+      'object',
+    ],
+    run: () => navigateToBusinessModelObject(obj.id),
+  }));
+
+  const projectEntries: CommandEntry[] = [
+    {
+      key: 'home:overview',
+      section: t('项目', 'Projects'),
+      label: t('返回项目首页', 'Back to Projects Home'),
+      icon: <House size={15} />,
+      keywords: ['home', 'overview', '首页', '项目列表', 'projects'],
+      run: () => onSelectView('overview'),
+    },
+    ...(data?.projects ?? []).map((p) => ({
+      key: `project:${p.id}`,
+      section: t('切换项目', 'Switch project'),
+      label: p.name,
+      ...(p.id === data?.activeProject.id ? { meta: t('当前', 'Current') } : {}),
+      icon: <FolderKanban size={15} />,
+      keywords: [p.name, p.code, 'project', '项目', '工程'],
+      run: () => {
+        void onSwitchProject(p.id);
+      },
+    })),
+  ];
+
+  const pageEntries: CommandEntry[] = NAV_ITEMS.filter(
+    (item) => item.id !== 'overview' && !isRetiredNavEntry(item.id),
+  ).map((item) => {
+    const grp = getNavGroupSpec(item.group);
+    return {
+      key: `nav:${item.id}`,
+      section: t('全部页面', 'All pages'),
+      label: t(item.labelZh, item.labelEn),
+      ...(grp ? { meta: t(grp.labelZh, grp.labelEn) } : {}),
+      icon: NAV_ICONS[item.id],
+      keywords: [
+        item.labelZh,
+        item.labelEn,
+        item.id,
+        grp?.labelZh ?? '',
+        grp?.labelEn ?? '',
+      ],
+      run: () => onSelectView(item.id),
+    };
+  });
+
+  const prefEntries: CommandEntry[] = [
+    {
+      key: 'pref:theme',
+      section: t('偏好', 'Preferences'),
+      label:
+        theme === 'light'
+          ? t('切换到深色主题', 'Switch to dark theme')
+          : t('切换到浅色主题', 'Switch to light theme'),
+      icon: theme === 'light' ? <Moon size={15} /> : <Sun size={15} />,
+      keywords: ['theme', 'dark', 'light', '主题', '深色', '浅色'],
+      run: onToggleTheme,
+    },
+    ...BUILT_IN_THEMES.filter((option) => option.id !== workbenchTheme).map(
+      (option): CommandEntry => ({
+        key: `pref:workbench-theme:${option.id}`,
+        section: t('偏好', 'Preferences'),
+        label: t(
+          `切换到工作台主题：${option.name.zh}`,
+          `Switch to workbench theme: ${option.name.en}`,
+        ),
+        icon: <Palette size={15} />,
+        keywords: [
+          'workbench',
+          'theme',
+          '工作台主题',
+          '主题',
+          option.id,
+          option.name.zh,
+          option.name.en,
+        ],
+        run: () => onSelectWorkbenchTheme(option.id),
+      }),
+    ),
+    {
+      key: 'pref:locale',
+      section: t('偏好', 'Preferences'),
+      label: locale === 'zh-CN' ? 'Switch to English' : '切换为中文',
+      icon: <Globe size={15} />,
+      keywords: ['language', 'locale', 'english', 'chinese', '语言', '中文', '英文'],
+      run: onToggleLocale,
+    },
+  ];
+
+  return [
+    ...stepEntries,
+    ...businessObjectEntries,
+    ...projectEntries,
+    ...pageEntries,
+    ...prefEntries,
+  ];
 }
 
 function CommandPalette({
@@ -150,14 +310,20 @@ function CommandPalette({
         <DialogHeader className="sr-only">
           <DialogTitle>{t('命令面板', 'Command palette')}</DialogTitle>
           <DialogDescription>
-            {t('搜索项目、步骤或页面并立即跳转', 'Search projects, steps, or pages')}
+            {t(
+              '搜索项目、步骤或业务对象并立即跳转',
+              'Search projects, steps, or business objects',
+            )}
           </DialogDescription>
         </DialogHeader>
         <Command search={query} onSearchChange={setQuery}>
           <CommandInput
             role="textbox"
             autoFocus
-            placeholder={t('搜索项目、步骤或页面…', 'Search projects, steps, or pages…')}
+            placeholder={t(
+              '搜索项目、步骤或业务对象…',
+              'Search projects, steps, or business objects…',
+            )}
             aria-label={t('搜索', 'Search')}
           />
           <CommandList className="max-h-80">
@@ -411,8 +577,11 @@ export function WorkbenchShell({
     const initial = readUrlNavState();
     void bootstrap(initial.projectId);
     const syncFromLocation = () => {
+      const nextUrl = readUrlNavState();
       const next = readHashView();
-      setActiveNav(next);
+      setActiveNav(next, {
+        ...(nextUrl.itemId !== undefined ? { itemId: nextUrl.itemId } : {}),
+      });
     };
     window.addEventListener('hashchange', syncFromLocation);
     window.addEventListener('popstate', syncFromLocation);
@@ -470,108 +639,24 @@ export function WorkbenchShell({
     document.title = activeLabel ? `${activeLabel} · Ontology Plus` : 'Ontology Plus';
   }, [activeLabel]);
 
-  const paletteEntries = useMemo<CommandEntry[]>(() => {
-    const stepEntries: CommandEntry[] = PROJECT_STEP_IDS.map((stepId, idx) => {
-      const stepName = PROJECT_STEP_NAMES[stepId];
-      const defaultView = getDefaultViewForStep(stepId);
-      return {
-        key: `step:${stepId}`,
-        section: t('项目步骤', 'Project steps'),
-        label: `${idx + 1}. ${t(stepName.zh, stepName.en)}`,
-        meta: data?.activeProject.name,
-        icon: NAV_ICONS[defaultView],
-        keywords: [stepName.zh, stepName.en, stepId.toLowerCase(), '步骤', 'step'],
-        run: () => handleSelectStep(stepId),
-      };
-    });
-
-    const projectEntries: CommandEntry[] = [
-      {
-        key: 'home:overview',
-        section: t('项目', 'Projects'),
-        label: t('返回项目首页', 'Back to Projects Home'),
-        icon: <House size={15} />,
-        keywords: ['home', 'overview', '首页', '项目列表', 'projects'],
-        run: () => setActiveView('overview'),
-      },
-      ...(data?.projects ?? []).map((p) => ({
-        key: `project:${p.id}`,
-        section: t('切换项目', 'Switch project'),
-        label: p.name,
-        meta: p.id === data?.activeProject.id ? t('当前', 'Current') : undefined,
-        icon: <FolderKanban size={15} />,
-        keywords: [p.name, p.code, 'project', '项目', '工程'],
-        run: () => switchProject(p.id),
-      })),
-    ];
-
-    const pageEntries: CommandEntry[] = NAV_ITEMS.filter((item) => item.id !== 'overview').map(
-      (item) => {
-        const grp = getNavGroupSpec(item.group);
-        return {
-          key: `nav:${item.id}`,
-          section: t('全部页面', 'All pages'),
-          label: t(item.labelZh, item.labelEn),
-          meta: grp ? t(grp.labelZh, grp.labelEn) : undefined,
-          icon: NAV_ICONS[item.id],
-          keywords: [
-            item.labelZh,
-            item.labelEn,
-            item.id,
-            grp?.labelZh ?? '',
-            grp?.labelEn ?? '',
-          ],
-          run: () => setActiveView(item.id),
-        };
-      },
-    );
-
-    const prefEntries: CommandEntry[] = [
-      {
-        key: 'pref:theme',
-        section: t('偏好', 'Preferences'),
-        label:
-          theme === 'light'
-            ? t('切换到深色主题', 'Switch to dark theme')
-            : t('切换到浅色主题', 'Switch to light theme'),
-        icon: theme === 'light' ? <Moon size={15} /> : <Sun size={15} />,
-        keywords: ['theme', 'dark', 'light', '主题', '深色', '浅色'],
-        run: toggleTheme,
-      },
-      ...BUILT_IN_THEMES.filter((option) => option.id !== workbenchTheme).map(
-        (option): CommandEntry => ({
-          key: `pref:workbench-theme:${option.id}`,
-          section: t('偏好', 'Preferences'),
-          label: t(
-            `切换到工作台主题：${option.name.zh}`,
-            `Switch to workbench theme: ${option.name.en}`,
-          ),
-          icon: <Palette size={15} />,
-          keywords: [
-            'workbench',
-            'theme',
-            '工作台主题',
-            '主题',
-            option.id,
-            option.name.zh,
-            option.name.en,
-          ],
-          run: () => setWorkbenchTheme(option.id),
-        }),
-      ),
-      {
-        key: 'pref:locale',
-        section: t('偏好', 'Preferences'),
-        label: locale === 'zh-CN' ? 'Switch to English' : '切换为中文',
-        icon: <Globe size={15} />,
-        keywords: ['language', 'locale', 'english', 'chinese', '语言', '中文', '英文'],
-        run: toggleLocale,
-      },
-    ];
-
-    return [...stepEntries, ...projectEntries, ...pageEntries, ...prefEntries];
+  const paletteEntries = useMemo<CommandEntry[]>(
+    () =>
+      buildCommandPaletteEntries({
+        data,
+        locale,
+        theme,
+        workbenchTheme,
+        t,
+        onSelectStep: handleSelectStep,
+        onSelectView: setActiveView,
+        onSwitchProject: switchProject,
+        onToggleTheme: toggleTheme,
+        onSelectWorkbenchTheme: setWorkbenchTheme,
+        onToggleLocale: toggleLocale,
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, locale, theme, workbenchTheme]);
+    [data, locale, theme, workbenchTheme],
+  );
 
   const validation = data?.activeProject.validation;
   const healthSummary = useMemo(

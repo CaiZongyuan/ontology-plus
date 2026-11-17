@@ -14,11 +14,14 @@ export {
   getSecondaryAreaForView,
   isFlushNavView,
   isNavViewId,
+  isRetiredNavEntry,
   normalizeNavViewAlias,
   resolveAreaParamToView,
+  resolveLegacyBusinessModelTechTab,
   resolveNavViewId,
   resolveShellRouteContext,
   resolveStepParamToId,
+  type BusinessModelTechTab,
   type CanonicalNavViewId,
   type LegacyNavViewAlias,
   type NavGroupId,
@@ -69,3 +72,14 @@ export {
   type ProjectStepStatusView,
   type ProjectStepTargetView,
 } from './projectSteps.js';
+
+export {
+  STEP_VIEW_MODE_STORAGE_PREFIX,
+  getStepViewModeStorageKey,
+  parseStepViewMode,
+  readStepViewMode,
+  subscribeStepViewMode,
+  useStepViewMode,
+  writeStepViewMode,
+  type StepViewMode,
+} from './stepViewMode.js';

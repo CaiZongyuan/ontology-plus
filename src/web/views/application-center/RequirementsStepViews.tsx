@@ -44,7 +44,11 @@ import {
 import { TiptapMarkdownEditor } from '../../components/markdown/index.js';
 import { usePreferences, type NavViewId } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
-import { getProjectStepsFromBootstrap } from '../../navigation/index.js';
+import {
+  getProjectStepsFromBootstrap,
+  useStepViewMode,
+  type StepViewMode,
+} from '../../navigation/index.js';
 import { ViewModeHeader } from './ViewModeHeader.js';
 
 // ─── Helper: Parse A/B Classification Tag on Requirement Decisions ────────────
@@ -1119,29 +1123,6 @@ export function RequirementDocsView({
 
 // ─── 4. Unified Requirements Step Canvas (Spec #37 §5 & §6, Issue #64) ──────
 
-const REQUIREMENTS_VIEW_MODE_STORAGE_KEY = 'onto_step_view_mode_REQUIREMENTS';
-type RequirementsViewMode = 'business' | 'technical';
-
-function readStoredRequirementsViewMode(): RequirementsViewMode {
-  if (typeof window === 'undefined') return 'business';
-  try {
-    return window.localStorage.getItem(REQUIREMENTS_VIEW_MODE_STORAGE_KEY) === 'technical'
-      ? 'technical'
-      : 'business';
-  } catch {
-    return 'business';
-  }
-}
-
-function writeStoredRequirementsViewMode(mode: RequirementsViewMode): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(REQUIREMENTS_VIEW_MODE_STORAGE_KEY, mode);
-  } catch {
-    // Ignore storage quota errors
-  }
-}
-
 const ELEMENT_ID_RE =
   /(?<![A-Za-z0-9_-])(?:AGG|ENT|VO|DIC|DICT|ASSOC|BHV|BEH|RUL|RULE|EVT|SCN|ACT|ROL|ROLE|PERM|PGRP|FLW|FLOW|ACTV|QRY|RPT|SCR|EL|UIE|NAV|CC|MAP|INT|IF|MET|ASCN|WB)-[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Za-z0-9_-])/g;
 
@@ -1276,25 +1257,21 @@ export function RequirementsStepView({
   } = useWorkbenchStore();
   const rememberedSessionByScope = useAgentPanelStore((s) => s.sessionByScope);
 
-  const [viewMode, setViewMode] = useState<RequirementsViewMode>(() =>
-    readStoredRequirementsViewMode(),
-  );
+  const [viewMode, setViewMode] = useStepViewMode('REQUIREMENTS');
   const [toggledSections, setToggledSections] = useState<Record<string, boolean>>({});
   const [isEditingInline, setIsEditingInline] = useState(false);
   const [inlineDraft, setInlineDraft] = useState('');
   const [savingInline, setSavingInline] = useState(false);
   const [confirmingStep, setConfirmingStep] = useState(false);
 
-  // Sync viewMode with localStorage on mount/project switch
+  // Reset ephemeral section/editing state on project switch
   useEffect(() => {
-    setViewMode(readStoredRequirementsViewMode());
     setToggledSections({});
     setIsEditingInline(false);
   }, [data?.activeProject.id]);
 
-  const toggleViewMode = (nextMode: RequirementsViewMode) => {
+  const toggleViewMode = (nextMode: StepViewMode) => {
     setViewMode(nextMode);
-    writeStoredRequirementsViewMode(nextMode);
   };
 
   const convergedOutline = useMemo(() => {

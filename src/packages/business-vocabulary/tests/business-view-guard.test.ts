@@ -216,4 +216,44 @@ describe('Business View vocabulary guard (checkBusinessViewMarkup)', () => {
     expect(formatted).toContain('[aria-label]');
     expect(formatted).toContain('RULE-01');
   });
+
+  it('respects HTML5 <details> disclosure visibility: checks <summary> when closed, skips closed body, and checks body when open', () => {
+    const closedCleanSummary = `
+      <article>
+        <p>更新业务操作「提交审批」</p>
+        <details data-testid="agent-run-details">
+          <summary>查看细节</summary>
+          <div>
+            <code>upsert_behavior</code>
+            <pre>{"id":"BHV-02","modelCode":"M2"}</pre>
+            <p>HTTP 502 from http://127.0.0.1:3425/v1</p>
+          </div>
+        </details>
+      </article>
+    `;
+    expect(checkBusinessViewMarkup(closedCleanSummary)).toEqual([]);
+
+    const closedJargonSummary = `
+      <details>
+        <summary>查看 M2 细节</summary>
+        <div>干净正文</div>
+      </details>
+    `;
+    expect(checkBusinessViewMarkup(closedJargonSummary)).toEqual([
+      expect.objectContaining({ category: 'MODEL_CODE', match: 'M2' }),
+    ]);
+
+    const openDetails = `
+      <details open>
+        <summary>查看细节</summary>
+        <pre>{"id":"AGG-01","modelCode":"M1"}</pre>
+      </details>
+    `;
+    expect(checkBusinessViewMarkup(openDetails)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: 'IDENTIFIER', match: 'AGG-01' }),
+        expect.objectContaining({ category: 'MODEL_CODE', match: 'M1' }),
+      ]),
+    );
+  });
 });

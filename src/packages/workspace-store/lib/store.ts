@@ -4,6 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import { createArchitectureAssetCatalog } from '../../architecture-assets/index.js';
+import type {
+  ProjectStepId,
+  ProjectStepStateId,
+} from '../../business-vocabulary/index.js';
 import {
   CONTRACT_LIFECYCLE_SUITE,
   MFT_ENTERPRISE_SUITE,
@@ -72,6 +76,7 @@ import {
 } from './step-confirmations.js';
 import {
   doesProviderSupportVision,
+  resolveCurrentProjectStep,
   type AgentCheckpointRecord,
   type AgentImageAttachmentRef,
   type AgentImageAttachmentRole,
@@ -149,6 +154,8 @@ export interface WorkspaceStoreOptions {
   dbPath?: string;
   workspaceRoot?: string;
   enableFileMirror?: boolean;
+  /** Set false to initialize a clean first-use workspace with zero seeded demo projects. */
+  seedProjects?: boolean;
   d1Database?: D1DatabaseBinding;
   /** Alternate source root, primarily for isolated tests. A new directory receives the bundled catalog. */
   architectureAssetsRoot?: string;
@@ -818,6 +825,147 @@ function sanitizeAgentSessionForPersistence(session: AgentSession): AgentSession
   };
 }
 
+const CODE_STOP_WORDS = new Set([
+  'A',
+  'AN',
+  'AND',
+  'APP',
+  'APPLICATION',
+  'BUILD',
+  'CREATE',
+  'DESIGN',
+  'DEVELOP',
+  'FOR',
+  'HELP',
+  'I',
+  'IN',
+  'MAKE',
+  'ME',
+  'NEED',
+  'OF',
+  'ON',
+  'PLEASE',
+  'PORTAL',
+  'SYSTEM',
+  'THE',
+  'TO',
+  'WANT',
+  'WE',
+  'WITH',
+]);
+
+const RESERVED_CODE_PREFIXES = new Set([
+  'AGG',
+  'ENT',
+  'VO',
+  'DIC',
+  'DICT',
+  'ASSOC',
+  'BHV',
+  'BEH',
+  'RUL',
+  'RULE',
+  'EVT',
+  'SCN',
+  'ACT',
+  'ROL',
+  'ROLE',
+  'PERM',
+  'PGRP',
+  'FLW',
+  'FLOW',
+  'ACTV',
+  'QRY',
+  'RPT',
+  'SCR',
+  'EL',
+  'UIE',
+  'NAV',
+  'CC',
+  'MAP',
+  'INT',
+  'IF',
+  'MET',
+  'ASCN',
+  'WB',
+]);
+
+const CJK_CODE_PREFIX_RULES: readonly [RegExp, string][] = [
+  [/合同|法务|签约/, 'CONTRACT'],
+  [/供应商|采购|询价|准入/, 'SUPPLIER'],
+  [/报销|费用|发票|财务|预算/, 'EXPENSE'],
+  [/售后|工单|报修|客服/, 'SERVICE'],
+  [/库存|仓储|出入库|盘点/, 'INVENTORY'],
+  [/订单|销售|客户|线索/, 'ORDER'],
+  [/员工|考勤|招聘|人事/, 'PEOPLE'],
+];
+
+function deriveProjectNameFromDescription(description: string): string {
+  const collapsed = description.trim().replace(/\s+/g, ' ');
+  const firstClause =
+    collapsed.split(/[：:，,。；;！!？?\n]|\.\s+/)[0]?.replace(/\.+$/, '').trim() || collapsed;
+
+  let cleaned = firstClause
+    .replace(
+      /^(?:我想|我要|帮我|请帮我|我们需要|我们想|想|要)?(?:做一个|做一套|做个|搭建一个|搭建一套|搭建|开发一个|开发一套|开发|设计一个|设计一套|设计|建立一个|建立)\s*/,
+      '',
+    )
+    .replace(
+      /^(?:(?:i|we)\s+(?:want|need|would\s+like)\s+to\s+|help\s+(?:me|us)\s+|please\s+)?(?:build|create|design|make|develop)\s+(?:a|an|the)\s+/i,
+      '',
+    )
+    .trim();
+
+  if (cleaned.length < 2) {
+    cleaned = firstClause || collapsed;
+  }
+
+  if (/^[a-z]/.test(cleaned)) {
+    cleaned = `${cleaned[0]!.toUpperCase()}${cleaned.slice(1)}`;
+  }
+
+  const hasCjk = /[\u4e00-\u9fff]/.test(cleaned);
+  const maxLen = hasCjk ? 24 : 36;
+  if (cleaned.length <= maxLen) return cleaned;
+  if (!hasCjk) {
+    const cut = cleaned.slice(0, maxLen);
+    const lastSpace = cut.lastIndexOf(' ');
+    if (lastSpace >= 12) return cut.slice(0, lastSpace).trim();
+  }
+  return cleaned.slice(0, maxLen).trim();
+}
+
+function deriveUniqueProjectCode(
+  sourceText: string,
+  existingCodes: ReadonlySet<string>,
+): string {
+  const asciiTokens = (sourceText.toUpperCase().match(/[A-Z0-9]{2,}/g) ?? [])
+    .filter((tok) => !CODE_STOP_WORDS.has(tok) && !RESERVED_CODE_PREFIXES.has(tok))
+    .slice(0, 2);
+
+  let basePrefix = asciiTokens.length > 0 ? asciiTokens.join('-').slice(0, 18) : '';
+  if (!basePrefix) {
+    const matched = CJK_CODE_PREFIX_RULES.find(([re]) => re.test(sourceText));
+    basePrefix = matched ? matched[1] : 'PROJ';
+  }
+  basePrefix = basePrefix.replace(/-+$/, '') || 'PROJ';
+
+  if (asciiTokens.length >= 2 && !existingCodes.has(basePrefix)) {
+    return basePrefix;
+  }
+
+  let n = 1;
+  while (n < 10_000) {
+    const suffix = String(n).padStart(2, '0');
+    const candidate = `${basePrefix}-${suffix}`;
+    if (!existingCodes.has(candidate)) {
+      return candidate;
+    }
+    n += 1;
+  }
+  return `${basePrefix}-${Date.now().toString(36).toUpperCase()}`;
+}
+
 export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): WorkspaceStore {
   const envWorkspaceRoot =
     typeof process !== 'undefined' ? process.env.ONTOLOGY_WORKSPACE_ROOT?.trim() : undefined;
@@ -1221,8 +1369,9 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
   }
 
   // Idempotent seed on first startup
+  const shouldSeedProjects = options.seedProjects !== false;
   const countRow = db.prepare(`SELECT COUNT(*) AS cnt FROM projects`).get() as { cnt: number };
-  if (countRow.cnt === 0) {
+  if (countRow.cnt === 0 && shouldSeedProjects) {
     const now = '2026-11-10T09:00:00.000Z';
     const insertProj = db.prepare(`
       INSERT INTO projects (id, name, code, center, domain, description, current_stage, suite_json, changelog, created_at, updated_at)
@@ -1314,6 +1463,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     for (const llm of discoveredProviders) putItem('llm_providers', llm.id, llm);
 
     putItem('system_settings', 'global', SEED_SYSTEM_SETTINGS);
+  } else if (countRow.cnt === 0 && !shouldSeedProjects) {
+    const discoveredProviders = discoverPiModelsJsonProviders(workspaceRoot, SEED_LLM_PROVIDERS);
+    for (const llm of discoveredProviders) putItem('llm_providers', llm.id, llm);
+    putItem('system_settings', 'global', SEED_SYSTEM_SETTINGS);
   } else {
     if (listItems<AgentSession>('agent_sessions').length === 0) {
       for (const asess of SEED_AGENT_SESSIONS) {
@@ -1327,18 +1480,217 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     }
   }
 
+  interface ProjectStepContextCollections {
+    reqSessionsByProject: Map<string, RequirementSession[]>;
+    reqDocsByProject: Map<string, RequirementDoc[]>;
+    prototypesByProject: Map<string, StoredInteractivePrototype[]>;
+    confirmationsByProject: Map<string, ConfirmedPrototypeRevisionRecord>;
+    stepConfirmationsByProject: Map<string, StepConfirmationRecord[]>;
+    agentSessionsByProject: Map<string, AgentSession[]>;
+    appsByProject: Map<string, AssembledApplication[]>;
+    packageSnapshotsById: Map<string, DevelopmentPackageSnapshot>;
+    skillsByProject: Map<string, GeneratedSkill[]>;
+  }
+
+  function loadProjectStepCollections(singleProjectId?: string): ProjectStepContextCollections {
+    const groupByProject = <T extends { projectId: string }>(items: T[]): Map<string, T[]> => {
+      const map = new Map<string, T[]>();
+      for (const item of items) {
+        if (!item?.projectId) continue;
+        const list = map.get(item.projectId);
+        if (list) list.push(item);
+        else map.set(item.projectId, [item]);
+      }
+      return map;
+    };
+
+    const rawProtos = listItems<AnyStoredPrototype>('prototypes', singleProjectId);
+    const upgradedProtos: StoredInteractivePrototype[] = rawProtos
+      .filter((p): p is AnyStoredPrototype => Boolean(p?.projectId))
+      .map((p) => (isLegacyStoredPrototype(p) ? upgradeLegacyPrototype(p) : p));
+
+    const confirmations = listItems<ConfirmedPrototypeRevisionRecord>(
+      'prototype_confirmations',
+      singleProjectId,
+    );
+    const confirmationsByProject = new Map<string, ConfirmedPrototypeRevisionRecord>();
+    for (const conf of confirmations) {
+      if (conf?.projectId && !confirmationsByProject.has(conf.projectId)) {
+        confirmationsByProject.set(conf.projectId, conf);
+      }
+    }
+
+    const packageSnapshotsById = new Map<string, DevelopmentPackageSnapshot>();
+    for (const snap of listItems<DevelopmentPackageSnapshot>(
+      'package_snapshots',
+      singleProjectId,
+    )) {
+      if (snap?.snapshotId) {
+        packageSnapshotsById.set(snap.snapshotId, snap);
+      }
+    }
+
+    return {
+      reqSessionsByProject: groupByProject(
+        listItems<RequirementSession>('req_sessions', singleProjectId),
+      ),
+      reqDocsByProject: groupByProject(listItems<RequirementDoc>('req_docs', singleProjectId)),
+      prototypesByProject: groupByProject(upgradedProtos),
+      confirmationsByProject,
+      stepConfirmationsByProject: groupByProject(
+        listItems<StepConfirmationRecord>('step_confirmations', singleProjectId),
+      ),
+      agentSessionsByProject: groupByProject(
+        listItems<AgentSession>('agent_sessions', singleProjectId),
+      ),
+      appsByProject: groupByProject(
+        listItems<AssembledApplication>('assembled_apps', singleProjectId),
+      ),
+      packageSnapshotsById,
+      skillsByProject: groupByProject(listItems<GeneratedSkill>('skills', singleProjectId)),
+    };
+  }
+
+  function deriveProjectStepSummaryFromCollections(
+    projectId: string,
+    suite: OntologySuite,
+    validation: { presentModels: readonly ModelCode[]; errorCount: number },
+    collections: ProjectStepContextCollections,
+  ): {
+    currentStep: ProjectStepId;
+    currentStepState: ProjectStepStateId;
+    stepStates: Record<ProjectStepId, ProjectStepStateId>;
+  } {
+    const reqSessions = collections.reqSessionsByProject.get(projectId) ?? [];
+    const reqDocs = collections.reqDocsByProject.get(projectId) ?? [];
+    const agentSessions = collections.agentSessionsByProject.get(projectId) ?? [];
+    const prototypes = collections.prototypesByProject.get(projectId) ?? [];
+    const rawProtoConf = collections.confirmationsByProject.get(projectId) ?? null;
+    const confirmedProto = rawProtoConf
+      ? prototypes.find((p) => p.id === rawProtoConf.prototypeId)
+      : undefined;
+    const validProtoConf =
+      confirmedProto && confirmedProto.revisions.some((rev) => rev.id === rawProtoConf!.revisionId)
+        ? rawProtoConf
+        : null;
+    const stepConfs = resolveCurrentStepConfirmations(
+      collections.stepConfirmationsByProject.get(projectId) ?? [],
+      validProtoConf ?? undefined,
+    );
+    const reqConf = stepConfs.requirements;
+    const protoConf = stepConfs.prototype;
+    const modelConf = stepConfs.businessModel;
+
+    // 1. REQUIREMENTS
+    const hasReqAgentWork = agentSessions.some(
+      (s) => s.agentKind === 'REQUIREMENT' && (s.messages?.length ?? 0) > 0,
+    );
+    const hasAnyRequirementWork = reqSessions.length > 0 || hasReqAgentWork || reqDocs.length > 0;
+    let requirementsState: ProjectStepStateId;
+    if (!reqConf) {
+      requirementsState = hasAnyRequirementWork ? 'IN_PROGRESS' : 'NOT_STARTED';
+    } else {
+      const latestDoc = reqDocs[0];
+      const matchedDoc = reqDocs.find((d) => d.id === reqConf.docId);
+      const hasNewerDifferentDoc = Boolean(latestDoc && latestDoc.id !== reqConf.docId);
+      const contentChanged =
+        !matchedDoc ||
+        (computeStepContentHash(matchedDoc.content) !== reqConf.contentHash &&
+          normalizeStepMarkdown(matchedDoc.content) !== normalizeStepMarkdown(reqConf.content));
+      requirementsState =
+        hasNewerDifferentDoc || contentChanged ? 'UNCONFIRMED_CHANGES' : 'CONFIRMED';
+    }
+
+    // 2. PROTOTYPE
+    let prototypeState: ProjectStepStateId;
+    if (!protoConf) {
+      prototypeState = prototypes.length > 0 ? 'IN_PROGRESS' : 'NOT_STARTED';
+    } else if (reqConf && protoConf.basedOnConfirmationId !== reqConf.id) {
+      prototypeState = 'OUTDATED';
+    } else {
+      const protoEntity = prototypes.find((p) => p.id === protoConf.prototypeId);
+      const hasUnconfirmedProtoChanges = Boolean(
+        protoEntity?.currentRevisionId && protoEntity.currentRevisionId !== protoConf.revisionId,
+      );
+      prototypeState = hasUnconfirmedProtoChanges ? 'UNCONFIRMED_CHANGES' : 'CONFIRMED';
+    }
+
+    // 3. BUSINESS_MODEL
+    const hasOntology = validation.presentModels.length > 0;
+    let businessModelState: ProjectStepStateId;
+    if (!modelConf) {
+      businessModelState = hasOntology ? 'IN_PROGRESS' : 'NOT_STARTED';
+    } else if (protoConf && modelConf.basedOnConfirmationId !== protoConf.id) {
+      businessModelState = 'OUTDATED';
+    } else {
+      businessModelState =
+        computeOntologySuiteHash(suite) !== modelConf.suiteHash
+          ? 'UNCONFIRMED_CHANGES'
+          : 'CONFIRMED';
+    }
+
+    // 4. DELIVERY
+    const projectApps = collections.appsByProject.get(projectId) ?? [];
+    const projectSkills = collections.skillsByProject.get(projectId) ?? [];
+    const hasDeliveryContent = projectApps.length > 0 || projectSkills.length > 0;
+    const appsWithSnapshot = projectApps.filter((app) => Boolean(app.latestPackageSnapshotId));
+    let deliveryState: ProjectStepStateId;
+    if (!modelConf) {
+      deliveryState = hasDeliveryContent ? 'IN_PROGRESS' : 'NOT_STARTED';
+    } else if (appsWithSnapshot.length === 0) {
+      deliveryState = 'IN_PROGRESS';
+    } else {
+      const resolvedSnapshots = appsWithSnapshot
+        .map((app) => collections.packageSnapshotsById.get(app.latestPackageSnapshotId!))
+        .filter((s): s is DevelopmentPackageSnapshot => Boolean(s))
+        .sort((a, b) => b.compiledAt.localeCompare(a.compiledAt));
+      const latestSnapshot = resolvedSnapshots[0];
+      if (
+        latestSnapshot &&
+        latestSnapshot.basedOnBusinessModelConfirmationId !== undefined &&
+        latestSnapshot.basedOnBusinessModelConfirmationId !== modelConf.id
+      ) {
+        deliveryState = 'OUTDATED';
+      } else {
+        deliveryState = 'CONFIRMED';
+      }
+    }
+
+    const stepStates: Record<ProjectStepId, ProjectStepStateId> = {
+      REQUIREMENTS: requirementsState,
+      PROTOTYPE: prototypeState,
+      BUSINESS_MODEL: businessModelState,
+      DELIVERY: deliveryState,
+    };
+    const currentStep = resolveCurrentProjectStep(stepStates);
+
+    return {
+      currentStep,
+      currentStepState: stepStates[currentStep],
+      stepStates,
+    };
+  }
+
   function hydrateProject(row: Record<string, unknown>): ProjectDetail {
+    const id = String(row.id);
     const suite = JSON.parse(String(row.suite_json)) as OntologySuite;
     const validation = validateOntologySuite(suite);
     const knowledgeGraph = buildKnowledgeGraph(suite);
+    const stepSummary = deriveProjectStepSummaryFromCollections(
+      id,
+      suite,
+      validation,
+      loadProjectStepCollections(id),
+    );
     return {
-      id: String(row.id),
+      id,
       name: String(row.name),
       code: String(row.code),
       center: row.center as ProjectSummary['center'],
       domain: String(row.domain),
       description: String(row.description),
       currentStage: Number(row.current_stage),
+      ...stepSummary,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       suite,
@@ -1457,21 +1809,35 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     listProjects(): ProjectSummary[] {
       const rows = db
-        .prepare(
-          `SELECT id, name, code, center, domain, description, current_stage, created_at, updated_at FROM projects ORDER BY created_at ASC`,
-        )
+        .prepare(`SELECT * FROM projects ORDER BY created_at ASC`)
         .all() as Record<string, unknown>[];
-      return rows.map((row) => ({
-        id: String(row.id),
-        name: String(row.name),
-        code: String(row.code),
-        center: row.center as ProjectSummary['center'],
-        domain: String(row.domain),
-        description: String(row.description),
-        currentStage: Number(row.current_stage),
-        createdAt: String(row.created_at),
-        updatedAt: String(row.updated_at),
-      }));
+      if (rows.length === 0) return [];
+      const collections = loadProjectStepCollections();
+      return rows.map((row) => {
+        const id = String(row.id);
+        const suite = row.suite_json
+          ? (JSON.parse(String(row.suite_json)) as OntologySuite)
+          : ({} as OntologySuite);
+        const validation = validateOntologySuite(suite);
+        const stepSummary = deriveProjectStepSummaryFromCollections(
+          id,
+          suite,
+          validation,
+          collections,
+        );
+        return {
+          id,
+          name: String(row.name),
+          code: String(row.code),
+          center: row.center as ProjectSummary['center'],
+          domain: String(row.domain),
+          description: String(row.description),
+          currentStage: Number(row.current_stage),
+          ...stepSummary,
+          createdAt: String(row.created_at),
+          updatedAt: String(row.updated_at),
+        };
+      });
     },
 
     getProject(projectId: string): ProjectDetail | undefined {
@@ -1482,6 +1848,23 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     createProject(input): ProjectDetail {
+      const trimmedDesc = input.description?.trim() ?? '';
+      const explicitName = input.name?.trim() ?? '';
+      if (!explicitName && !trimmedDesc) {
+        throw new Error('Project description or name is required.');
+      }
+
+      const derivedName = explicitName || deriveProjectNameFromDescription(trimmedDesc);
+      const derivedDomain = input.domain?.trim() || derivedName;
+      const existingCodes = new Set(
+        (
+          db.prepare(`SELECT code FROM projects`).all() as { code?: unknown }[]
+        ).map((r) => String(r.code ?? '').toUpperCase()),
+      );
+      const derivedCode =
+        input.code?.trim() ||
+        deriveUniqueProjectCode(trimmedDesc || derivedName, existingCodes);
+
       const id = nextUniqueId('proj');
       const now = new Date().toISOString();
       let baseSuite: OntologySuite;
@@ -1492,8 +1875,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       } else {
         baseSuite = {};
       }
-      const changelog = `# Ontology Change Log - ${input.name}\n\n## [${now}] Project Created\n- Domain: ${input.domain}\n`;
-      const desc = input.description ?? `${input.domain}本体工程`;
+      const changelog = `# Ontology Change Log - ${derivedName}\n\n## [${now}] Project Created\n- Domain: ${derivedDomain}\n`;
+      const desc = trimmedDesc || `${derivedDomain}项目`;
       const stage = Object.keys(baseSuite).length;
       const suiteJson = JSON.stringify(baseSuite);
       db.prepare(`
@@ -1501,10 +1884,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
-        input.name,
-        input.code,
+        derivedName,
+        derivedCode,
         input.center ?? 'APPLICATION',
-        input.domain,
+        derivedDomain,
         desc,
         stage,
         suiteJson,
@@ -1515,10 +1898,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       replicateToD1(
         `INSERT INTO projects (id, name, code, center, domain, description, current_stage, suite_json, changelog, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
-        input.name,
-        input.code,
+        derivedName,
+        derivedCode,
         input.center ?? 'APPLICATION',
-        input.domain,
+        derivedDomain,
         desc,
         stage,
         suiteJson,
@@ -1527,7 +1910,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         now,
       );
       syncEaRelations(id, baseSuite);
-      mirrorProjectFiles(id, input.domain, baseSuite, changelog);
+      mirrorProjectFiles(id, derivedDomain, baseSuite, changelog);
       return this.getProject(id)!;
     },
 
@@ -1718,9 +2101,6 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     deleteProject(projectId, force) {
       const allProjects = this.listProjects();
-      if (allProjects.length <= 1) {
-        throw new Error('Cannot delete the last remaining ontology project in the workspace.');
-      }
       const target = allProjects.find((p) => p.id === projectId);
       if (!target) {
         throw new Error(`Project not found: ${projectId}`);
@@ -1752,7 +2132,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const remaining = this.listProjects();
       return {
         deletedId: projectId,
-        remainingProjectId: remaining[0].id,
+        remainingProjectId: remaining[0]?.id ?? '',
       };
     },
 

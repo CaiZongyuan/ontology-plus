@@ -16,7 +16,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     // 1. Verify initial light theme, business-language health status, and Conversation-left + Canvas-right layout
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await expect(page.getByTestId('shell-health-status')).toContainText('没有需要修正的问题');
-    await expect(page.getByTestId('validation-error-badge')).toContainText('0 Errors');
+    await expect(page.getByTestId('business-model-business-view')).toBeVisible();
     const agentPanel = page.getByTestId('agent-panel');
     const canvas = page.getByTestId('workbench-canvas');
     await expect(agentPanel).toBeVisible();
@@ -42,12 +42,14 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.getByTestId('locale-toggle-btn').click();
     await expect(page.getByTestId('step-tab-BUSINESS_MODEL')).toContainText('Business Model');
     await expect(page.getByTestId('shell-health-status')).toContainText('No problems to fix');
-    await expect(page.getByTestId('nav-app-ontology')).toContainText('11-Model Ontology');
+    await expect(page.getByTestId('open-technical-details-btn')).toContainText('Technical Details');
     await page.getByTestId('locale-toggle-btn').click();
     await expect(page.getByTestId('step-tab-BUSINESS_MODEL')).toContainText('业务模型');
-    await expect(page.getByTestId('nav-app-ontology')).toContainText('业务本体');
+    await expect(page.getByTestId('open-technical-details-btn')).toContainText('技术细节');
 
-    // 4. Navigate across M1, M2, MU in the 11-model workbench & Quick-Add with Undo/Redo
+    // 4. Open Technical Details & navigate across M1, M2, MU in the 11-model workbench & Quick-Add with Undo/Redo
+    await page.getByTestId('open-technical-details-btn').click();
+    await expect(page.getByTestId('validation-error-badge')).toContainText('0 Errors');
     await page.getByTestId('model-nav-M2').click();
     await expect(page.locator('.workbench-center')).toContainText('BHV-01');
     await page.getByTestId('model-nav-MU').click();
@@ -60,12 +62,12 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await expect(page.getByTestId('validation-error-badge')).toContainText('0 Errors');
 
     // 5. Explore Interactive Knowledge Graph with edge filter & zoom controls
-    await page.getByTestId('nav-app-knowledge-graph').click();
+    await page.getByTestId('tech-tab-graph').click();
     await expect(page.getByTestId('kg-edge-filter')).toBeVisible();
     await page.getByTestId('kg-zoom-in-btn').click();
 
     // 6. Return to Ontology Workbench -> Open non-blocking Cascade Rename & Impact Analysis modal
-    await page.getByTestId('nav-app-ontology').click();
+    await page.getByTestId('tech-tab-editor').click();
     await page.getByTestId('open-cascade-rename-btn').click();
     await page.getByTestId('cascade-rename-new-input').fill('Contract');
     await page.getByTestId('confirm-cascade-rename-btn').click();
@@ -97,6 +99,11 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
       timeout: 25_000,
     });
     await expect(agentPanel).toContainText(/需求规格书|SRS/, { timeout: 25_000 });
+    await page.getByTestId('confirm-requirements-btn').click();
+    await expect(page.getByTestId('requirements-status-banner')).toHaveAttribute(
+      'data-step-state',
+      'CONFIRMED',
+    );
 
     // 2. Prototype Co-Design Studio -> Briefing/Canvas toggle, localized refinement in ShellAgentPanel & Confirm This Revision -> MU sync
     await page.getByTestId('step-tab-PROTOTYPE').click();
@@ -134,10 +141,20 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await expect(agentPanel.locator('[data-tool-name="upsert_rule"]').first()).toBeVisible({
       timeout: 25_000,
     });
+    await expect(
+      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+    ).toBeVisible({ timeout: 25_000 });
+    await expect(page.getByTestId('shell-health-status')).toContainText('没有需要修正的问题');
+    const confirmBmRes = await page.request.post(
+      '/api/projects/proj-contract/steps/business-model/confirm',
+      { data: {} },
+    );
+    expect(confirmBmRes.ok()).toBe(true);
+    await page.getByTestId('open-technical-details-btn').click();
     await expect(page.getByTestId('validation-error-badge')).toContainText('0 Errors');
 
     // 4. Model Files -> Export W3C OWL XML, Generate SKILL.md, Publish MCP Server
-    await page.getByTestId('nav-app-model-files').click();
+    await page.getByTestId('tech-tab-files').click();
     await page.getByTestId('export-owl-btn').click();
     await expect(page.getByTestId('owl-xml-preview')).toContainText('<owl:Ontology');
     await page.locator('.modal-panel button', { hasText: '✕' }).click();
@@ -242,17 +259,13 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
   }) => {
     await page.goto('/');
 
-    // 1. Ontology Project Hub (overview): Registry table + non-blocking Milestone Snapshot manager
+    // 1. Projects Home (overview): One-sentence composer + project step status list
     await page.getByTestId('nav-overview').click();
-    await expect(page.getByTestId('project-hub-registry')).toBeVisible();
-    await page.getByTestId('project-snapshots-btn-proj-contract').click();
-    const openDialog = page.locator('dialog[open]');
-    await expect(openDialog).toBeVisible();
-    await openDialog.getByPlaceholder(/快照版本标签|Snapshot label/).fill('v5.3 E2E Baseline');
-    await page.getByTestId('create-snapshot-confirm-btn').click();
-    await expect(openDialog).toContainText('v5.3 E2E Baseline');
-    await openDialog.getByRole('button', { name: 'Close dialog' }).click();
-    await expect(openDialog).toBeHidden();
+    await expect(page.getByTestId('home-view')).toBeVisible();
+    await expect(page.getByTestId('home-project-list')).toBeVisible();
+    await expect(page.getByTestId('home-project-step-proj-contract')).toContainText(
+      /(业务模型|交付)/,
+    );
 
     // 2. SRS Tiptap Bidirectional Markdown Editor (RICH <-> SOURCE <-> PREVIEW) & Registry switcher (inside Requirements Technical Details)
     await page.getByTestId('enter-active-project-btn').click();
@@ -290,7 +303,8 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
 
     // 4. React Flow v12 + ELK Swimlane + d3-force Ego Focus Knowledge Graph & Data Lineage preset
     await page.getByTestId('step-tab-BUSINESS_MODEL').click();
-    await page.getByTestId('nav-app-knowledge-graph').click();
+    await page.getByTestId('open-technical-details-btn').click();
+    await page.getByTestId('tech-tab-graph').click();
     await expect(page.getByTestId('kg-root')).toBeVisible();
     await expect(page.locator('.react-flow').first()).toBeVisible();
     await page.getByTestId('kg-mode-ego-btn').click();

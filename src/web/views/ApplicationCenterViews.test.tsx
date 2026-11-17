@@ -65,9 +65,9 @@ describe('ApplicationCenterViews step module split', () => {
         <OverviewSessionsView onNavigate={noop} />
       </PreferencesProvider>,
     );
-    expect(html).toContain('data-testid="project-hub-registry"');
-    expect(html).toContain(data.activeProject.code);
-    expect(html).toContain('End-to-End Application Ontology Lifecycle Pipeline');
+    expect(html).toContain('data-testid="home-view"');
+    expect(html).toContain('data-testid="home-description-input"');
+    expect(html).toContain(data.activeProject.name);
   });
 
   it('renders RequirementExploreView, RequirementDocsView, and shared ViewModeHeader identically to the barrel', async () => {

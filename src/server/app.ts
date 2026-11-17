@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
+  buildKnowledgeGraph,
   exportToOwl,
   parseModelYaml,
+  validateOntologySuite,
   type ModelCode,
   type OntologySuite,
 } from '../packages/ontology-core/index.js';
@@ -23,6 +25,7 @@ import {
   type LlmProviderConfig,
   type McpServerConfig,
   type MetricDefinition,
+  type ProjectDetail,
   type WorkspaceStore,
   type WritebackInterface,
 } from '../packages/workspace-store/index.js';
@@ -145,24 +148,59 @@ export function createApiApp(
 
   app.get('/api/bootstrap', (c) => {
     const projects = store.listProjects();
-    const requestedProjectId = c.req.query('projectId') || projects[0]?.id || 'proj-contract';
+    const requestedProjectId = c.req.query('projectId') || projects[0]?.id || '';
+    const emptyFallbackProject = (): ProjectDetail => {
+      const now = new Date(0).toISOString();
+      const suite: OntologySuite = {};
+      return {
+        id: '',
+        name: '',
+        code: '',
+        center: 'APPLICATION',
+        domain: '',
+        description: '',
+        currentStage: 0,
+        currentStep: 'REQUIREMENTS',
+        currentStepState: 'NOT_STARTED',
+        stepStates: {
+          REQUIREMENTS: 'NOT_STARTED',
+          PROTOTYPE: 'NOT_STARTED',
+          BUSINESS_MODEL: 'NOT_STARTED',
+          DELIVERY: 'NOT_STARTED',
+        },
+        createdAt: now,
+        updatedAt: now,
+        suite,
+        validation: validateOntologySuite(suite),
+        knowledgeGraph: buildKnowledgeGraph(suite),
+        changelog: '',
+      };
+    };
     const activeProject =
-      store.getProject(requestedProjectId) ?? store.getProject(projects[0]!.id)!;
+      (requestedProjectId ? store.getProject(requestedProjectId) : undefined) ??
+      (projects[0] ? store.getProject(projects[0].id) : undefined) ??
+      emptyFallbackProject();
 
     return c.json({
       projects,
       activeProject,
-      projectSnapshots: store.listProjectSnapshots(activeProject.id),
+      projectSnapshots: activeProject.id ? store.listProjectSnapshots(activeProject.id) : [],
       agentSessions: store.listAgentSessions(),
-      requirementSessions: store.listRequirementSessions(activeProject.id),
-      requirementDocs: store.listRequirementDocs(activeProject.id),
-      prototypes: store.listPrototypes(activeProject.id),
-      confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(activeProject.id) ?? null,
-      stepConfirmations: store.getProjectStepConfirmations(activeProject.id),
+      requirementSessions: activeProject.id ? store.listRequirementSessions(activeProject.id) : [],
+      requirementDocs: activeProject.id ? store.listRequirementDocs(activeProject.id) : [],
+      prototypes: activeProject.id ? store.listPrototypes(activeProject.id) : [],
+      confirmedPrototypeRevision: activeProject.id
+        ? (store.getConfirmedPrototypeRevision(activeProject.id) ?? null)
+        : null,
+      stepConfirmations: activeProject.id
+        ? store.getProjectStepConfirmations(activeProject.id)
+        : { requirements: null, prototype: null, businessModel: null },
       fourLayerAssets: store.listFourLayerAssets(),
       technologyProfiles: store.listTechnologyProfiles(),
       assembledApplications: store.listAssembledApplications(),
-      packageSnapshots: listProjectPackageSnapshots(store, activeProject.id),
+      packageSnapshots: activeProject.id
+        ? listProjectPackageSnapshots(store, activeProject.id)
+        : [],
       generatedSkills: store.listGeneratedSkills(),
       legacySystems: store.listLegacySystems(),
       extractionJobs: store.listExtractionJobs(),
@@ -360,18 +398,55 @@ export function createApiApp(
     return c.json({ projects: store.listProjects() });
   });
 
-  app.post('/api/projects', async (c) => {
-    const body = await c.req.json<{
-      name: string;
-      code: string;
-      center?: 'APPLICATION' | 'CAPABILITY' | 'ANALYTICS';
-      domain: string;
-      description?: string;
-      template?: 'CONTRACT' | 'MFT' | 'EMPTY';
-    }>();
-    const project = store.createProject(body);
-    return c.json({ project, projects: store.listProjects() });
+  app.get('/api/projects/overview', (c) => {
+    return c.json({ projects: store.listProjects() });
   });
+
+  const handleCreateProject = async (c: {
+    req: { json: <T>() => Promise<T> };
+    json: (data: unknown, status?: 200 | 201 | 400) => Response;
+  }) => {
+    const body = await c.req
+      .json<{
+        name?: string;
+        code?: string;
+        center?: 'APPLICATION' | 'CAPABILITY' | 'ANALYTICS';
+        domain?: string;
+        description?: string;
+        template?: 'CONTRACT' | 'MFT' | 'EMPTY';
+      }>()
+      .catch(() => ({} as Record<string, never>));
+
+    const hasExplicitName = Boolean(body.name?.trim());
+    const hasDescription = Boolean(body.description?.trim());
+    if (!hasExplicitName && !hasDescription) {
+      return c.json({ error: 'Project description or name is required.' }, 400);
+    }
+
+    if (hasExplicitName) {
+      const project = store.createProject({
+        name: body.name!.trim(),
+        code: body.code?.trim() ?? '',
+        ...(body.center ? { center: body.center } : {}),
+        domain: body.domain?.trim() || body.name!.trim(),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(body.template ? { template: body.template } : {}),
+      });
+      return c.json({ project, projects: store.listProjects() }, 200);
+    }
+
+    const project = store.createProject({
+      description: body.description!.trim(),
+      ...(body.code ? { code: body.code } : {}),
+      ...(body.center ? { center: body.center } : {}),
+      ...(body.domain ? { domain: body.domain } : {}),
+      template: body.template ?? 'EMPTY',
+    });
+    return c.json({ project, projects: store.listProjects() }, 201);
+  };
+
+  app.post('/api/projects', handleCreateProject);
+  app.post('/api/projects/from-description', handleCreateProject);
 
   app.get('/api/projects/:id', (c) => {
     const project = store.getProject(c.req.param('id'));
