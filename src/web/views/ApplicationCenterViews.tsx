@@ -3416,7 +3416,7 @@ export function FourLayerAssetsView() {
                 <Button
                   type="button"
                   variant="secondary" size="sm"
-                  aria-label={t(`克隆 ${asset.name}`, `Clone ${asset.name}`)}
+                  aria-label={t(`编辑 ${asset.name}`, `Edit ${asset.name}`)}
                   onClick={() => openEditAssetModal(asset)}
                 >
                   {t('编辑规范', 'Edit')}
@@ -3425,6 +3425,7 @@ export function FourLayerAssetsView() {
                   type="button"
                   variant="secondary" size="sm"
                   onClick={() => void handleCloneAsset(asset)}
+                  aria-label={t(`克隆 ${asset.name}`, `Clone ${asset.name}`)}
                   title={t('克隆副本', 'Clone')}
                 >
                   <Copy size={12} />
