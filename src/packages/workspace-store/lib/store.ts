@@ -3,6 +3,7 @@ import nodeModule from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
+import { createArchitectureAssetCatalog } from '../../architecture-assets/index.js';
 import {
   CONTRACT_LIFECYCLE_SUITE,
   MFT_ENTERPRISE_SUITE,
@@ -41,7 +42,6 @@ import {
   SEED_DATA_MAPPINGS,
   SEED_DICT_ROWS,
   SEED_EXTRACTION_JOBS,
-  SEED_FOUR_LAYER_ASSETS,
   SEED_KNOWLEDGE_ENTRIES,
   SEED_LEGACY_SYSTEMS,
   SEED_LLM_PROVIDERS,
@@ -131,6 +131,9 @@ export interface WorkspaceStoreOptions {
   workspaceRoot?: string;
   enableFileMirror?: boolean;
   d1Database?: D1DatabaseBinding;
+  /** Alternate source root, primarily for isolated tests. A new directory receives the bundled catalog. */
+  architectureAssetsRoot?: string;
+  architectureAssetsWritable?: boolean;
 }
 
 interface SqliteStatementLike {
@@ -795,6 +798,15 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         : path.resolve(envDbPath)
       : path.join(workspaceRoot, 'onto-cs.db'));
   const d1Database = options.d1Database;
+  const architectureAssetsRoot = options.architectureAssetsRoot ??
+    (dbPath === ':memory:' && options.architectureAssetsWritable !== false
+      ? path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ontology-standards-')), 'catalog')
+      : undefined);
+  const architectureCatalog = createArchitectureAssetCatalog({
+    rootDirectory: architectureAssetsRoot,
+    writable: options.architectureAssetsWritable,
+  });
+  const bundledAssetIds = new Set(architectureCatalog.listAssets().map((asset) => asset.id));
 
   if (dbPath !== ':memory:') {
     try {
@@ -1194,7 +1206,6 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         putItem('prototype_confirmations', pr.projectId, confirmation, pr.projectId);
       }
     }
-    for (const a of SEED_FOUR_LAYER_ASSETS) putItem('four_layer_assets', a.id, a);
     for (const app of SEED_ASSEMBLED_APPS) putItem('assembled_apps', app.id, app, app.projectId);
     for (const sk of SEED_SKILLS) putItem('skills', sk.id, sk, sk.projectId);
     for (const sys of SEED_LEGACY_SYSTEMS) putItem('legacy_systems', sys.id, sys, sys.linkedProjectId);
@@ -2200,12 +2211,27 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     listFourLayerAssets(layer) {
-      const all = listItems<FourLayerAsset>('four_layer_assets');
+      // Repository files win on every read, including in workspaces created before the catalog existed.
+      // Keep useful custom legacy records until the user explicitly saves them into source.
+      const sources = architectureCatalog.listAssets();
+      const sourceIds = new Set(sources.map((asset) => asset.id));
+      const legacy = listItems<FourLayerAsset>('four_layer_assets').filter(
+        (asset) => !asset.sourcePath && !bundledAssetIds.has(asset.id) && !sourceIds.has(asset.id),
+      );
+      const all = [...sources, ...legacy];
       return layer ? all.filter((a) => a.layer === layer) : all;
     },
 
+    listTechnologyProfiles() {
+      return architectureCatalog.listTechnologyProfiles();
+    },
+
     saveFourLayerAsset(asset) {
-      const full: FourLayerAsset = { ...asset, updatedAt: new Date().toISOString() };
+      const existing = this.listFourLayerAssets().find((item) => item.id === asset.id);
+      const full = architectureCatalog.saveAsset({
+        ...asset,
+        technologyProfileId: asset.technologyProfileId ?? existing?.technologyProfileId,
+      });
       return putItem('four_layer_assets', full.id, full);
     },
 
@@ -2221,6 +2247,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
           `Asset is referenced by assembled application(s): ${boundApps.map((a) => a.name).join(', ')}. Unbind or confirm force deletion.`,
         );
       }
+      architectureCatalog.deleteAsset(assetId);
       deleteItem('four_layer_assets', assetId);
     },
 

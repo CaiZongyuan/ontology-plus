@@ -10,6 +10,9 @@ import type {
   ValidationReport,
 } from '../../ontology-core/index.js';
 import type { InspoCacheEntry, InspoCacheEntryInput } from './inspo-cache.js';
+import type { TechnologyProfile } from '../../architecture-assets/index.js';
+
+export type { TechnologyProfile } from '../../architecture-assets/index.js';
 
 export interface ProjectSummary {
   id: string;
@@ -405,6 +408,10 @@ export interface FourLayerAsset {
   tags: string[];
   specMarkdown: string;
   updatedAt: string;
+  /** Repository identity; absent only for retained legacy workspace material. */
+  sourcePath?: string;
+  sourceRevision?: string;
+  technologyProfileId?: string;
 }
 
 export interface AssembledApplication {
@@ -907,6 +914,7 @@ export interface WorkspaceStore {
   clonePrototype(protoId: string, options?: { name?: string }): InteractivePrototype;
   deletePrototype(protoId: string): void;
   listFourLayerAssets(layer?: FourLayerAsset['layer']): FourLayerAsset[];
+  listTechnologyProfiles(): TechnologyProfile[];
   saveFourLayerAsset(asset: Omit<FourLayerAsset, 'updatedAt'>): FourLayerAsset;
   deleteFourLayerAsset(assetId: string, force?: boolean): void;
   listAssembledApplications(): AssembledApplication[];

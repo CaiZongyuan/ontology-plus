@@ -19,7 +19,8 @@ describe('workspace-store deep module', () => {
     expect(contractProj!.validation.presentModels).toHaveLength(11);
 
     const assets = store.listFourLayerAssets();
-    expect(assets.length).toBeGreaterThanOrEqual(5);
+    expect(assets.length).toBeGreaterThanOrEqual(3);
+    expect(assets.every((asset) => asset.sourcePath && asset.sourceRevision)).toBe(true);
 
     const providers = store.listLlmProviders();
     expect(providers[0].id).toBe('llm-pi-local');
