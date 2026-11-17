@@ -2205,6 +2205,19 @@ export interface DomainToolExecutionResult {
 export interface DomainToolExecutionOptions {
   isMock?: boolean;
   actionParams?: Record<string, unknown>;
+  runId?: string;
+}
+
+export function resolveAgentTurnRunId(
+  messages: readonly { id: string; role: string }[],
+  explicitRunId: string | undefined,
+  fallbackId: string,
+): string {
+  if (explicitRunId) return explicitRunId;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'user') return messages[i]!.id;
+  }
+  return fallbackId;
 }
 
 export async function executeDomainRunToolCall(
@@ -2219,6 +2232,7 @@ export async function executeDomainRunToolCall(
   const started = Date.now();
   const isMock = Boolean(options?.isMock);
   const actionParams = options?.actionParams;
+  const effectiveRunId = resolveAgentTurnRunId(session.messages, options?.runId, toolCallId);
 
   // 1. SRS Synthesis (`REQUIREMENT` session)
   if (toolName === 'save_synthesized_srs_doc') {
@@ -2569,11 +2583,15 @@ export async function executeDomainRunToolCall(
       };
     }
 
-    const updatedProject = store.updateSuite(
-      project.id,
-      candidateSuite,
-      `Synthesized 11-model ontology suite from confirmed prototype ${confirmedProtoId} (rev ${confirmed.revisionId})`,
-    );
+    const updatedProject = store.commitSuite(project.id, candidateSuite, {
+      source: {
+        kind: 'AGENT_RUN',
+        runId: effectiveRunId,
+        sessionId: session.id,
+        toolName,
+      },
+      note: `Synthesized 11-model ontology suite from confirmed prototype ${confirmedProtoId} (rev ${confirmed.revisionId})`,
+    });
     const synthesizedModels = MODEL_CODES.filter((c) => Boolean(updatedProject.suite[c]));
 
     return {
@@ -3051,6 +3069,12 @@ export async function executeDomainRunToolCall(
       ...(applyImmediately !== undefined ? { applyImmediately } : {}),
       locale,
       mockMode: isMock,
+      source: {
+        kind: 'AGENT_RUN',
+        runId: effectiveRunId,
+        sessionId: session.id,
+        toolName,
+      },
     });
 
     const candidateCount = res.job.candidates.length;

@@ -449,7 +449,10 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
   app.put('/api/projects/:id/suite', async (c) => {
     const projectId = c.req.param('id');
     const body = await c.req.json<{ suite: OntologySuite; changelogNote?: string }>();
-    const project = store.updateSuite(projectId, body.suite, body.changelogNote);
+    const project = store.commitSuite(projectId, body.suite, {
+      source: { kind: 'MANUAL' },
+      ...(body.changelogNote !== undefined ? { note: body.changelogNote } : {}),
+    });
     return c.json({ project });
   });
 

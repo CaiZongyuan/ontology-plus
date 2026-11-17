@@ -73,6 +73,7 @@ import {
   AssembledApplication,
   CapabilityAgent,
   CapabilityChatSession,
+  CommitSuiteOptions,
   ConfirmedPrototypeRevisionRecord,
   CrossSystemFlow,
   DataDocument,
@@ -96,6 +97,7 @@ import {
   ReasoningSession,
   RequirementDoc,
   RequirementSession,
+  SuiteCommitEvent,
   SystemSettingsState,
   WorkspaceStore,
   WritebackInterface,
@@ -135,6 +137,8 @@ export interface WorkspaceStoreOptions {
   /** Alternate source root, primarily for isolated tests. A new directory receives the bundled catalog. */
   architectureAssetsRoot?: string;
   architectureAssetsWritable?: boolean;
+  /** Invoked synchronously whenever an existing project's OntologySuite is committed. */
+  onSuiteCommit?: (event: SuiteCommitEvent) => void;
 }
 
 interface SqliteStatementLike {
@@ -354,12 +358,6 @@ function createEdgeMemoryFallbackDb(): SqliteDbLike {
                   changelog,
                   updated_at,
                 });
-              }
-            } else if (params.length === 4) {
-              const [suite_json, changelog, updated_at, id] = params;
-              const cur = projectsMap.get(String(id));
-              if (cur) {
-                projectsMap.set(String(id), { ...cur, suite_json, changelog, updated_at });
               }
             }
             return;
@@ -1710,11 +1708,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         throw new Error(`Project snapshot not found: ${snapshotId}`);
       }
       const restoredSuite: OntologySuite = JSON.parse(JSON.stringify(snap.suite));
-      return this.updateSuite(
-        projectId,
-        restoredSuite,
-        `Restored project snapshot "${snap.label}" (${snap.id})`,
-      );
+      return this.commitSuite(projectId, restoredSuite, {
+        source: { kind: 'SNAPSHOT_RESTORE', snapshotId: snap.id },
+        note: `Restored project snapshot "${snap.label}" (${snap.id})`,
+      });
     },
 
     deleteProjectSnapshot(snapshotId) {
@@ -1728,17 +1725,25 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         ...current.suite,
         [modelCode]: modelData,
       };
-      return this.updateSuite(projectId, nextSuite, `Updated ${modelCode} model`);
+      return this.commitSuite(projectId, nextSuite, {
+        source: { kind: 'MANUAL', modelCode },
+        note: `Updated ${modelCode} model`,
+      });
     },
 
-    updateSuite(projectId, suite, changelogNote): ProjectDetail {
+    commitSuite(projectId, suite, commitOptions: CommitSuiteOptions): ProjectDetail {
       const current = this.getProject(projectId);
       if (!current) throw new Error(`Project not found: ${projectId}`);
       const now = new Date().toISOString();
       const validation = validateOntologySuite(suite);
-      const nextChangelog = changelogNote
-        ? `${current.changelog}\n## [${now}] ${changelogNote}\n- Present Models: ${validation.presentModels.join(', ')}\n- Consistency Errors: ${validation.errorCount}, Stage Warnings: ${validation.warningCount}\n`
-        : current.changelog;
+      let nextChangelog = current.changelog;
+      if (commitOptions.changelogEntry !== undefined) {
+        if (commitOptions.changelogEntry) {
+          nextChangelog = `${current.changelog}\n${commitOptions.changelogEntry}`;
+        }
+      } else if (commitOptions.note) {
+        nextChangelog = `${current.changelog}\n## [${now}] ${commitOptions.note}\n- Present Models: ${validation.presentModels.join(', ')}\n- Consistency Errors: ${validation.errorCount}, Stage Warnings: ${validation.warningCount}\n`;
+      }
       const suiteJson = JSON.stringify(suite);
 
       db.prepare(`
@@ -1756,22 +1761,38 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       );
       syncEaRelations(projectId, suite);
       mirrorProjectFiles(projectId, current.domain, suite, nextChangelog);
-      return this.getProject(projectId)!;
+      const updated = this.getProject(projectId)!;
+      options.onSuiteCommit?.({
+        projectId,
+        previousSuite: current.suite,
+        nextSuite: updated.suite,
+        source: commitOptions.source,
+        ...(commitOptions.note !== undefined ? { note: commitOptions.note } : {}),
+        committedAt: now,
+      });
+      return updated;
+    },
+
+    updateSuite(projectId, suite, changelogNote): ProjectDetail {
+      return this.commitSuite(projectId, suite, {
+        source: { kind: 'MANUAL' },
+        ...(changelogNote !== undefined ? { note: changelogNote } : {}),
+      });
     },
 
     importYamlFiles(projectId, files) {
       const current = this.getProject(projectId);
       if (!current) throw new Error(`Project not found: ${projectId}`);
       const { suite: parsedPartial, parseErrors } = parseSuiteFromYamlFiles(files);
+      const importedModels = Object.keys(parsedPartial) as ModelCode[];
       const mergedSuite: OntologySuite = {
         ...current.suite,
         ...parsedPartial,
       };
-      const updated = this.updateSuite(
-        projectId,
-        mergedSuite,
-        `Imported YAML files (${Object.keys(parsedPartial).join(', ')})`,
-      );
+      const updated = this.commitSuite(projectId, mergedSuite, {
+        source: { kind: 'YAML_IMPORT', models: importedModels },
+        note: `Imported YAML files (${importedModels.join(', ')})`,
+      });
       return { project: updated, parseErrors };
     },
 
@@ -1797,23 +1818,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const current = this.getProject(projectId);
       if (!current) throw new Error(`Project not found: ${projectId}`);
       const result = renameOntologySymbol(current.suite, oldId, newId);
-      const nextChangelog = `${current.changelog}\n${result.changelogEntry}`;
-      const now = new Date().toISOString();
-      const suiteJson = JSON.stringify(result.suite);
-      db.prepare(`
-        UPDATE projects SET suite_json = ?, changelog = ?, updated_at = ? WHERE id = ?
-      `).run(suiteJson, nextChangelog, now, projectId);
-      replicateToD1(
-        `UPDATE projects SET suite_json = ?, changelog = ?, updated_at = ? WHERE id = ?`,
-        suiteJson,
-        nextChangelog,
-        now,
-        projectId,
-      );
-      syncEaRelations(projectId, result.suite);
-      mirrorProjectFiles(projectId, current.domain, result.suite, nextChangelog);
+      const project = this.commitSuite(projectId, result.suite, {
+        source: { kind: 'SYMBOL_RENAME', oldId, newId },
+        note: `Cascade Rename \`${oldId}\` -> \`${newId}\``,
+        changelogEntry: result.changelogEntry,
+      });
       return {
-        project: this.getProject(projectId)!,
+        project,
         changedCount: result.changedReferences.length,
         changelogEntry: result.changelogEntry,
       };
@@ -2148,13 +2159,20 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       }
 
       const extractedMu = extractMuFromPrototypeHtml(matchedRevision.htmlContent, current.domain);
-      const updatedProject = this.updateSuite(
+      const updatedProject = this.commitSuite(
         projectId,
         {
           ...current.suite,
           MU: extractedMu,
         },
-        `Confirmed prototype revision "${matchedRevision.title}" (${matchedRevision.id}) and extracted MU UI Model`,
+        {
+          source: {
+            kind: 'PROTOTYPE_CONFIRM',
+            prototypeId: matchedProto.id,
+            revisionId: matchedRevision.id,
+          },
+          note: `Confirmed prototype revision "${matchedRevision.title}" (${matchedRevision.id}) and extracted MU UI Model`,
+        },
       );
 
       const record: ConfirmedPrototypeRevisionRecord = {
@@ -2544,11 +2562,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       job.appliedToProject = true;
       job.appliedCandidateCount = preview.acceptedCount;
       putItem('extraction_jobs', job.id, job, input.projectId);
-      const merged = this.updateSuite(
-        input.projectId,
-        preview.suite,
-        `Applied ontology extraction job: ${input.title}`,
-      );
+      const merged = this.commitSuite(input.projectId, preview.suite, {
+        source: input.source ?? { kind: 'EXTRACTION_APPLY', jobId: job.id },
+        note: `Applied ontology extraction job: ${input.title}`,
+      });
       return { job, project: merged, blockedBy: [] };
     },
 
@@ -2594,11 +2611,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         return { job: existing, project: currentProject, blockedBy: preview.newErrors };
       }
 
-      const updatedProject = this.updateSuite(
-        existing.projectId,
-        preview.suite,
-        `Applied reviewed extraction job (${existing.id}): ${existing.title}`,
-      );
+      const updatedProject = this.commitSuite(existing.projectId, preview.suite, {
+        source: { kind: 'EXTRACTION_APPLY', jobId: existing.id },
+        note: `Applied reviewed extraction job (${existing.id}): ${existing.title}`,
+      });
       const updatedJob: ExtractionJob = {
         ...existing,
         status: 'REVIEWED',

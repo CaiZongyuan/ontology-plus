@@ -68,6 +68,7 @@ import {
   extractJsonObjectFromText,
   findRequirementSessionOptional,
   parseStructuredActionFromPrompt,
+  resolveAgentTurnRunId,
   type LlmSynthesizedDomainBlueprint,
 } from './domain-run-tools.js';
 import {
@@ -2274,7 +2275,7 @@ async function executeUnifiedToolCall(
   hadPreviousValidatorError: boolean,
   locale: AgentLocale = 'zh-CN',
   prototypeDraft?: PrototypeTurnDraft,
-  options?: { isMock?: boolean; actionParams?: Record<string, unknown> },
+  options?: { isMock?: boolean; actionParams?: Record<string, unknown>; runId?: string },
 ): Promise<ExecutedToolStep> {
   const started = Date.now();
   const args = (tc.arguments ?? {}) as Record<string, unknown>;
@@ -2422,11 +2423,16 @@ async function executeUnifiedToolCall(
         };
       }
 
-      const saved = store.updateSuite(
-        project.id,
-        mutation.nextSuite,
-        `Pi Session (${session.title}) executed ${tc.name} -> ${mutation.elementId}`,
-      );
+      const effectiveRunId = resolveAgentTurnRunId(session.messages, options?.runId, tc.id);
+      const saved = store.commitSuite(project.id, mutation.nextSuite, {
+        source: {
+          kind: 'AGENT_RUN',
+          runId: effectiveRunId,
+          sessionId: session.id,
+          toolName: tc.name,
+        },
+        note: `Pi Session (${session.title}) executed ${tc.name} -> ${mutation.elementId}`,
+      });
 
       const actionType: 'ADDED' | 'MODIFIED' | 'REMOVED' =
         tc.name === 'delete_element' ? 'REMOVED' : 'ADDED';
@@ -2862,6 +2868,7 @@ async function executeUnifiedToolCall(
     {
       ...(options?.isMock !== undefined ? { isMock: options.isMock } : {}),
       ...(options?.actionParams ? { actionParams: options.actionParams } : {}),
+      ...(options?.runId ? { runId: options.runId } : {}),
     },
   );
   if (domainToolResult) {
@@ -3658,6 +3665,7 @@ async function executeUnifiedTurnCore(
 
   const turnStartMs = Date.now();
   const assistantMsgId = `amsg-${Date.now().toString(36)}-a`;
+  const turnRunId = resolveAgentTurnRunId(workingMessages, currentTurnUserMsgId, assistantMsgId);
   let built: ReturnType<typeof buildPiModelsForStore> | undefined;
   let accumulatedThinking = '';
   let accumulatedText = '';
@@ -3981,6 +3989,7 @@ async function executeUnifiedTurnCore(
           prototypeTurnDraft,
           {
             isMock: built.isMock,
+            runId: turnRunId,
             ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
           },
         );
@@ -4132,7 +4141,7 @@ async function executeUnifiedTurnCore(
               ...(parsedBp as Record<string, unknown>),
             },
             effectiveLocale,
-            { isMock: false, actionParams: structuredTurnAction.params },
+            { isMock: false, runId: turnRunId, actionParams: structuredTurnAction.params },
           );
           if (autoOnto) {
             allToolTraces.push(autoOnto.trace);

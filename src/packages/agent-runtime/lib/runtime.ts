@@ -28,6 +28,7 @@ import type {
   ReasoningSession,
   RequirementMessage,
   RequirementSession,
+  SuiteWriteSource,
   WorkspaceStore,
 } from '../../workspace-store/index.js';
 import {
@@ -1044,6 +1045,7 @@ export async function runSmartOntologyExtractionJob(
     applyImmediately?: boolean;
     locale?: AgentLocale | string;
     mockMode?: boolean;
+    source?: SuiteWriteSource;
   },
 ): Promise<ExtractionMergeResult> {
   const project = store.getProject(input.projectId);
@@ -1063,6 +1065,7 @@ export async function runSmartOntologyExtractionJob(
     sourceType: input.sourceType,
     sourceSnippet: source,
     ...(input.applyImmediately !== undefined ? { applyImmediately: input.applyImmediately } : {}),
+    ...(input.source !== undefined ? { source: input.source } : {}),
   };
   const fromScan = (
     result: StructuralScanResult,

@@ -45,6 +45,57 @@ export interface ProjectSnapshot {
   createdAt: string;
 }
 
+export type SuiteWriteSource =
+  | {
+      kind: 'AGENT_RUN';
+      runId: string;
+      sessionId?: string;
+      toolName?: string;
+    }
+  | {
+      kind: 'MANUAL';
+      modelCode?: ModelCode;
+    }
+  | {
+      kind: 'SYMBOL_RENAME';
+      oldId: string;
+      newId: string;
+    }
+  | {
+      kind: 'YAML_IMPORT';
+      models: ModelCode[];
+    }
+  | {
+      kind: 'SNAPSHOT_RESTORE';
+      snapshotId: string;
+    }
+  | {
+      kind: 'PROTOTYPE_CONFIRM';
+      prototypeId: string;
+      revisionId: string;
+    }
+  | {
+      kind: 'EXTRACTION_APPLY';
+      jobId: string;
+    };
+
+export interface CommitSuiteOptions {
+  source: SuiteWriteSource;
+  /** Concise summary appended as a timestamped changelog section unless `changelogEntry` is provided. */
+  note?: string;
+  /** Pre-formatted markdown changelog block to append verbatim. */
+  changelogEntry?: string;
+}
+
+export interface SuiteCommitEvent {
+  projectId: string;
+  previousSuite: OntologySuite;
+  nextSuite: OntologySuite;
+  source: SuiteWriteSource;
+  note?: string;
+  committedAt: string;
+}
+
 export type AgentSessionKind =
   | 'REQUIREMENT'
   | 'PROTOTYPE_CO_DESIGN'
@@ -804,6 +855,11 @@ export interface WorkspaceStore {
     modelCode: K,
     modelData: NonNullable<OntologySuite[K]>,
   ): ProjectDetail;
+  commitSuite(
+    projectId: string,
+    suite: OntologySuite,
+    options: CommitSuiteOptions,
+  ): ProjectDetail;
   updateSuite(projectId: string, suite: OntologySuite, changelogNote?: string): ProjectDetail;
   importYamlFiles(
     projectId: string,
@@ -954,6 +1010,7 @@ export interface WorkspaceStore {
     sourceSnippet: string;
     applyImmediately?: boolean;
     extraction?: ExtractionResultInput;
+    source?: SuiteWriteSource;
   }): ExtractionMergeResult;
   /** Record confirmations on an unmerged job; `null` clears one. */
   saveExtractionDecisions(
