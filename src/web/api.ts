@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import {
+  formatToolProgress as formatVocabularyToolProgress,
   formatToolStepLabel as formatVocabularyToolStepLabel,
   type ProjectStepId,
   type ProjectStepStateId,
@@ -175,6 +176,7 @@ export interface SessionLiveStep {
   at?: string;
   targetAnchor?: PrototypeTargetAnchor;
   toolName?: string;
+  arguments?: Record<string, unknown>;
 }
 
 export interface SessionLiveDraft {
@@ -186,6 +188,14 @@ export interface SessionLiveDraft {
   startedAt: number;
   liveStatus: { zh: string; en: string };
   model?: string;
+  providerName?: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  visionFallbackUsed?: boolean;
+  visionFallbackNotice?: string;
   thinking: string;
   text: string;
   steps: SessionLiveStep[];
@@ -454,7 +464,11 @@ interface WorkbenchStoreState {
     mockMode?: boolean;
   }) => Promise<{ sessionId: string }>;
   cancelSessionAgentRun: (sessionId: string) => Promise<void>;
-  retrySessionAgentRun: (sessionId: string, runId?: string) => Promise<void>;
+  retrySessionAgentRun: (
+    sessionId: string,
+    runId?: string,
+    fallbackPrompt?: string,
+  ) => Promise<void>;
   removeQueuedSessionPrompt: (sessionId: string, queueId: string) => void;
 }
 
@@ -1384,15 +1398,18 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     }
   },
 
-  retrySessionAgentRun: async (sessionId, runId) => {
+  retrySessionAgentRun: async (sessionId, runId, fallbackPrompt) => {
     const sess = get().data?.agentSessions.find((s) => s.id === sessionId);
-    if (!sess) return;
+    if (!sess && !fallbackPrompt?.trim()) return;
     let targetPrompt = '';
-    if (runId) {
+    if (sess && runId) {
       const msg = sess.messages.find((m) => m.id === runId && m.role === 'user');
       if (msg) targetPrompt = msg.content;
     }
-    if (!targetPrompt) {
+    if (!targetPrompt && fallbackPrompt?.trim()) {
+      targetPrompt = fallbackPrompt;
+    }
+    if (!targetPrompt && sess) {
       for (let i = sess.messages.length - 1; i >= 0; i -= 1) {
         const m = sess.messages[i]!;
         if (m.role === 'user' && m.content.trim()) {
@@ -1609,6 +1626,8 @@ export interface StreamAgentSessionCallbacks {
       code: string;
       providerName?: string;
       baseUrl?: string;
+      model?: string;
+      statusCode?: number;
       message: string;
       remediation: string;
     };
@@ -1736,18 +1755,35 @@ export async function streamAgentSessionTurn(
   signal?: AbortSignal,
 ): Promise<void> {
   const locale = body.locale || getCurrentClientLocale();
-  const res = await fetch(`/api/agent-sessions/${sessionId}/stream`, {
-    method: 'POST',
-    headers: buildJsonHeaders(),
-    body: JSON.stringify({ ...body, locale }),
-    ...(signal ? { signal } : {}),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api/agent-sessions/${sessionId}/stream`, {
+      method: 'POST',
+      headers: buildJsonHeaders(),
+      body: JSON.stringify({ ...body, locale }),
+      ...(signal ? { signal } : {}),
+    });
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    callbacks.onRunError?.({
+      diagnostic: {
+        code: 'LLM_UNREACHABLE',
+        message: err instanceof Error ? err.message : String(err),
+        remediation:
+          locale === 'en-US'
+            ? 'Check backend server status or configure your gateway in LLM Center.'
+            : '请检查后端服务状态或 LLM 中心网关配置。',
+      },
+    });
+    return;
+  }
 
   if (!res.ok || !res.body) {
     const errJson = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     callbacks.onRunError?.({
       diagnostic: errJson.diagnostic ?? {
         code: 'HTTP_ERROR',
+        statusCode: res.status,
         message:
           errJson.error ||
           (locale === 'en-US' ? `Request failed (${res.status})` : `请求失败 (${res.status})`),
@@ -1883,13 +1919,25 @@ function buildStoreSessionStreamCallbacks(
 
   return {
     onSessionMeta: (meta) => {
-      patchDraft((cur) => ({ ...cur, model: meta.model }));
+      patchDraft((cur) => ({
+        ...cur,
+        model: meta.model,
+        providerName: meta.provider,
+        ...(meta.visionSupported === false && cur.images && cur.images.length > 0
+          ? {
+              visionFallbackUsed: true,
+              ...(meta.visionFallbackNotice
+                ? { visionFallbackNotice: meta.visionFallbackNotice }
+                : {}),
+            }
+          : {}),
+      }));
     },
     onThinkingDelta: (delta) => {
       patchDraft((cur) => ({
         ...cur,
         thinking: `${cur.thinking}${delta}`,
-        liveStatus: cur.activeAnchor
+        liveStatus: cur.steps.some((s) => s.status === 'RUNNING')
           ? cur.liveStatus
           : { zh: '正在思考…', en: 'Thinking…' },
       }));
@@ -1902,15 +1950,19 @@ function buildStoreSessionStreamCallbacks(
       }));
     },
     onToolCall: (call) => {
-      const anchorText = formatAnchorBadgeLabel(call.targetAnchor);
-      const stepLabel = formatToolStepLabel(call.toolName, call.arguments, call.targetAnchor);
+      const progressLabel = formatVocabularyToolProgress(
+        call.toolName,
+        call.arguments,
+        call.targetAnchor?.label ? { targetLabel: call.targetAnchor.label } : undefined,
+      );
       patchDraft((cur) => {
         const existingIdx = cur.steps.findIndex((s) => s.id === call.id);
         const nextStep: SessionLiveStep = {
           id: call.id,
-          label: stepLabel,
+          label: { zh: progressLabel.zh, en: progressLabel.en },
           status: 'RUNNING',
           toolName: call.toolName,
+          arguments: call.arguments,
           at: new Date().toISOString(),
           ...(call.targetAnchor ? { targetAnchor: call.targetAnchor } : {}),
         };
@@ -1922,12 +1974,7 @@ function buildStoreSessionStreamCallbacks(
           ...cur,
           steps: nextSteps,
           ...(call.targetAnchor ? { activeAnchor: call.targetAnchor } : {}),
-          liveStatus: anchorText
-            ? {
-                zh: `${stepLabel.zh} (${anchorText})…`,
-                en: `${stepLabel.en} (${anchorText})…`,
-              }
-            : stepLabel,
+          liveStatus: { zh: progressLabel.zh, en: progressLabel.en },
         };
       });
     },
@@ -1951,6 +1998,7 @@ function buildStoreSessionStreamCallbacks(
           label: formatToolStepLabel(trace.toolName, trace.arguments, trace.targetAnchor),
           status: stepStatus,
           toolName: trace.toolName,
+          ...(trace.arguments ? { arguments: trace.arguments } : {}),
           ...(trace.targetAnchor
             ? { targetAnchor: trace.targetAnchor }
             : existingIdx >= 0 && cur.steps[existingIdx]?.targetAnchor
@@ -1972,6 +2020,14 @@ function buildStoreSessionStreamCallbacks(
         };
       });
     },
+    onUsage: (usage) => {
+      patchDraft((cur) => ({
+        ...cur,
+        ...(usage.tokenUsage ? { usage: usage.tokenUsage } : {}),
+        ...(usage.providerName ? { providerName: usage.providerName } : {}),
+        ...(usage.modelUsed ? { model: usage.modelUsed } : {}),
+      }));
+    },
     onAskUser: (askUser) => {
       patchDraft((cur) => ({
         ...cur,
@@ -1992,7 +2048,50 @@ function buildStoreSessionStreamCallbacks(
       }
     },
     onRunError: (payload) => {
-      upsertCompletedSession(payload);
+      if (payload.session) {
+        upsertCompletedSession(payload);
+        return;
+      }
+      const cur = get().data;
+      const draft = get().liveSessionDrafts[sessionId];
+      const existing = cur?.agentSessions.find((s) => s.id === sessionId);
+      if (!cur || !existing || !payload.diagnostic) return;
+      const nowIso = new Date().toISOString();
+      const startedIso = draft ? new Date(draft.startedAt).toISOString() : nowIso;
+      const promptText = draft?.userPrompt ?? '';
+      const lastMsg = existing.messages[existing.messages.length - 1];
+      const needsUserMsg =
+        Boolean(promptText.trim()) &&
+        !(lastMsg?.role === 'user' && lastMsg.content === promptText);
+      const nextMessages = [
+        ...existing.messages,
+        ...(needsUserMsg
+          ? [
+              {
+                id: `${draft?.runId ?? 'err'}-u`,
+                role: 'user' as const,
+                content: promptText,
+                timestamp: startedIso,
+              },
+            ]
+          : []),
+        {
+          id: `${draft?.runId ?? 'err'}-a`,
+          role: 'assistant' as const,
+          content: draft?.text ?? '',
+          ...(draft?.thinking ? { thinking: draft.thinking } : {}),
+          errorDiagnostic: payload.diagnostic,
+          timestamp: nowIso,
+        },
+      ];
+      upsertCompletedSession({
+        session: {
+          ...existing,
+          status: 'ERROR',
+          messages: nextMessages,
+          updatedAt: nowIso,
+        },
+      });
     },
     onMessageEnd: (payload) => {
       upsertCompletedSession(payload);

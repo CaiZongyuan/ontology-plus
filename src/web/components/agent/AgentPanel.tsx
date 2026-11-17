@@ -79,6 +79,7 @@ export interface AgentPanelProps {
   onCancelRun?: (runId: string) => void;
   onRetryRun?: (runId: string) => void;
   onOpenRunArtifact?: (runId: string) => void;
+  onOpenPlatformSettings?: () => void;
   onOpenLlmCenter?: () => void;
   onHoverAnchor?: (anchor: PrototypeTargetAnchor | null) => void;
   onAnswerAskUser?: (
@@ -88,6 +89,8 @@ export interface AgentPanelProps {
     freeformText?: string,
   ) => void;
   onTriggerWriteback?: (writebackInterfaceId: string, actionTitle: string) => void;
+  /** Optional hook slot for #65/#67/#70 computed Change Summary & run-level Undo footer per run. */
+  renderRunFooter?: (run: AgentRunView) => React.ReactNode;
   /** Conversations of the current specialist agent, newest first, shown inside the History Menu. */
   sessions?: AgentPanelSessionOption[];
   activeSessionId?: string;
@@ -144,10 +147,12 @@ export function AgentPanel({
   onCancelRun,
   onRetryRun,
   onOpenRunArtifact,
+  onOpenPlatformSettings,
   onOpenLlmCenter,
   onHoverAnchor,
   onAnswerAskUser,
   onTriggerWriteback,
+  renderRunFooter,
   sessions,
   activeSessionId,
   isForkSession = false,
@@ -481,6 +486,7 @@ export function AgentPanel({
                 {...(onCancelRun ? { onCancel: () => onCancelRun(run.id) } : {})}
                 {...(onRetryRun ? { onRetry: () => onRetryRun(run.id) } : {})}
                 {...(onOpenRunArtifact ? { onOpenArtifact: () => onOpenRunArtifact(run.id) } : {})}
+                {...(onOpenPlatformSettings ? { onOpenPlatformSettings } : {})}
                 {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
                 {...(onHoverAnchor ? { onHoverAnchor } : {})}
                 {...(onAnswerAskUser
@@ -490,6 +496,7 @@ export function AgentPanel({
                     }
                   : {})}
                 {...(onTriggerWriteback ? { onTriggerWriteback } : {})}
+                {...(renderRunFooter ? { changeSummarySlot: renderRunFooter(run) } : {})}
               />
             ))
           )}

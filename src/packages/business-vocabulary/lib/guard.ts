@@ -117,8 +117,15 @@ function extractVisibleSegmentsFromHtml(
   ignoreTestIds: ReadonlySet<string>,
 ): TextSegment[] {
   const segments: TextSegment[] = [];
-  const stack: { tag: string; skipped: boolean }[] = [];
-  const isSkipped = () => stack.some((item) => item.skipped);
+  const stack: {
+    tag: string;
+    skipped: boolean;
+    closedDetails: boolean;
+    summarySeen: boolean;
+  }[] = [];
+  const isSkipped = () =>
+    stack.some((item) => item.skipped) ||
+    Boolean(stack[stack.length - 1]?.closedDetails);
 
   let i = 0;
   let textStart = 0;
@@ -193,8 +200,20 @@ function extractVisibleSegmentsFromHtml(
     const attrs = parseAttributes(rawAttrRegion);
     const hasHiddenAttr = attrs.has('hidden');
     const testId = attrs.get('data-testid');
+    const parent = stack[stack.length - 1];
+    const isDirectSummaryOfClosedDetails =
+      tag === 'summary' &&
+      parent?.tag === 'details' &&
+      parent.closedDetails &&
+      !parent.summarySeen;
+    if (isDirectSummaryOfClosedDetails) {
+      parent.summarySeen = true;
+    }
+    const hiddenByAncestor =
+      stack.some((item) => item.skipped) ||
+      (Boolean(parent?.closedDetails) && !isDirectSummaryOfClosedDetails);
     const skipThisNode =
-      isSkipped() || hasHiddenAttr || (testId !== undefined && ignoreTestIds.has(testId));
+      hiddenByAncestor || hasHiddenAttr || (testId !== undefined && ignoreTestIds.has(testId));
 
     if (!skipThisNode) {
       for (const attrName of VISIBLE_ATTR_ORDER) {
@@ -215,7 +234,12 @@ function extractVisibleSegmentsFromHtml(
     }
 
     if (!selfClosing && !VOID_TAGS.has(tag)) {
-      stack.push({ tag, skipped: skipThisNode });
+      stack.push({
+        tag,
+        skipped: skipThisNode,
+        closedDetails: tag === 'details' && !attrs.has('open'),
+        summarySeen: false,
+      });
     }
 
     i = end;

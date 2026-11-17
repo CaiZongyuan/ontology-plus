@@ -184,3 +184,144 @@ test.describe('Single AI Assistant & History Menu (#62)', () => {
     await expect(protoMenu.getByTestId('assistant-delete-session-btn')).toHaveCount(0);
   });
 });
+
+test.describe('Run Progress in Business Language, Cancel/Retry & Platform Problem UX (#63)', () => {
+  test.beforeEach(({ page }) => {
+    page.on('dialog', (dialog) => {
+      throw new Error(`Forbidden blocking browser dialog triggered: ${dialog.message()}`);
+    });
+  });
+
+  test('shows concise deterministic business-language progress, folds technical details under 查看细节, supports cancel & retry, and surfaces unified platform notice with settings navigation', async ({
+    page,
+  }) => {
+    await page.goto('/?projectId=proj-contract');
+    await page.getByTestId('step-tab-BUSINESS_MODEL').click();
+
+    const panel = page.getByTestId('agent-panel');
+    await expect(panel).toBeVisible();
+
+    // Start a fresh conversation so assertions inspect clean turns
+    await panel.getByTestId('assistant-history-menu-btn').click();
+    const menu = page.getByTestId('assistant-history-menu');
+    await menu.getByTestId('assistant-new-session-btn').click();
+    await expect(panel.getByTestId('agent-panel-empty')).toBeVisible();
+
+    // 1. Deterministic business-language progress + collapsed "查看细节" by default
+    await page
+      .getByTestId('agent-panel-composer-input')
+      .fill('请新增一条超额采购合同双重风控校验规则');
+    await page.getByTestId('agent-panel-send-btn').click();
+
+    const succeededCard = panel
+      .locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]')
+      .last();
+    await expect(succeededCard).toBeVisible({ timeout: 25_000 });
+    await expect(succeededCard.getByTestId('agent-run-progress')).toContainText('业务规则');
+    await expect(succeededCard.getByTestId('agent-run-details-body')).toBeHidden();
+
+    // Open "查看细节" to inspect tool calls, thinking, and usage
+    await succeededCard.getByTestId('agent-run-details-toggle').click();
+    await expect(succeededCard.getByTestId('agent-run-details-body')).toBeVisible();
+    await expect(succeededCard.getByTestId('agent-run-tool-details')).toContainText('upsert_rule');
+    await expect(succeededCard.getByTestId('agent-run-thinking')).toBeVisible();
+    await expect(succeededCard.getByTestId('agent-run-usage')).toBeVisible();
+
+    // 2. Cancel an in-flight run via agent-run-cancel-btn
+    let abortCalled = false;
+    await page.route(
+      '**/api/agent-sessions/*/abort',
+      async (route) => {
+        abortCalled = true;
+        await route.continue();
+      },
+      { times: 1 },
+    );
+
+    let releaseHeldStream: (() => void) | undefined;
+    await page.route(
+      '**/api/agent-sessions/*/stream',
+      async (route) => {
+        await new Promise<void>((resolve) => {
+          releaseHeldStream = resolve;
+          setTimeout(resolve, 10_000);
+        });
+        await route
+          .fulfill({
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+            body: '',
+          })
+          .catch(() => undefined);
+      },
+      { times: 1 },
+    );
+
+    await page.getByTestId('agent-panel-composer-input').fill('测试中途取消的业务调整');
+    await page.getByTestId('agent-panel-send-btn').click();
+
+    const runningCard = panel.locator('[data-testid="agent-run-card"][data-run-status="RUNNING"]');
+    await expect(runningCard).toBeVisible();
+    await expect(runningCard.getByTestId('agent-run-cancel-btn')).toBeVisible();
+    await runningCard.getByTestId('agent-run-cancel-btn').click();
+    releaseHeldStream?.();
+    await expect.poll(() => abortCalled).toBe(true);
+
+    // 3. Platform problem -> "AI 服务暂不可用，请联系为你部署的人" + diagnostics in details + retry + platform settings link
+    await page.route(
+      '**/api/agent-sessions/*/stream',
+      async (route) => {
+        await route.fulfill({
+          status: 502,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            error: 'HTTP 502 Bad Gateway',
+            diagnostic: {
+              code: 'LLM_GATEWAY_ERROR',
+              providerName: 'Unreachable Corp Gateway',
+              baseUrl: 'http://127.0.0.1:9999/v1',
+              statusCode: 502,
+              message: 'ECONNREFUSED 127.0.0.1:9999',
+              remediation: 'Check gateway URL and API key in LLM Center.',
+            },
+          }),
+        });
+      },
+      { times: 1 },
+    );
+
+    await page.getByTestId('agent-panel-composer-input').fill('请检查合同归档操作');
+    await page.getByTestId('agent-panel-send-btn').click();
+
+    const failedCard = panel
+      .locator('[data-testid="agent-run-card"][data-run-status="FAILED"]')
+      .last();
+    await expect(failedCard).toBeVisible();
+    await expect(failedCard.getByTestId('agent-run-failure')).toContainText(
+      'AI 服务暂不可用，请联系为你部署的人',
+    );
+    await expect(failedCard.getByTestId('agent-run-retry-btn')).toBeVisible();
+    await expect(failedCard.getByTestId('agent-run-open-platform-settings-btn')).toBeVisible();
+
+    // Diagnostics stay tucked inside closed "查看细节" until opened
+    await expect(failedCard.getByTestId('agent-run-diagnostic-details')).toBeHidden();
+    await failedCard.getByTestId('agent-run-details-toggle').click();
+    await expect(failedCard.getByTestId('agent-run-diagnostic-details')).toBeVisible();
+    await expect(failedCard.getByTestId('agent-run-diagnostic-details')).toContainText(
+      'LLM_GATEWAY_ERROR',
+    );
+    await expect(failedCard.getByTestId('agent-run-diagnostic-details')).toContainText(
+      'Unreachable Corp Gateway',
+    );
+
+    // Clicking "重试" retries the prompt against the real mock engine and succeeds
+    await failedCard.getByTestId('agent-run-retry-btn').click();
+    await expect(
+      panel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+    ).toBeVisible({ timeout: 25_000 });
+
+    // Clicking "前往平台设置" on the failed card navigates directly to llm-center
+    await failedCard.getByTestId('agent-run-open-platform-settings-btn').click();
+    await expect(page).toHaveURL(/llm-center/);
+  });
+});
