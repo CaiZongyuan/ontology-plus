@@ -11,9 +11,12 @@ export const ARTBOARD_BOOTSTRAP =
 
 const BORN_FADE_MS = 600;
 
-function runtimeCss(): string {
+function runtimeCss(page: boolean): string {
   return [
-    '[data-screen-id]{display:block!important;visibility:visible!important;opacity:1!important}',
+    page
+      ? // Web mode: the whole page, one screen at a time (the shell's `.is-active` convention).
+        '[data-screen-id]{display:none!important}[data-screen-id].is-active{display:block!important;visibility:visible!important;opacity:1!important}'
+      : '[data-screen-id]{display:block!important;visibility:visible!important;opacity:1!important}',
     `[${BORN_ATTR}]{animation:onto-born .45s ease-out both}`,
     '@keyframes onto-born{from{opacity:0;transform:translateY(6px)}}',
   ].join('\n');
@@ -86,6 +89,14 @@ interface ArtboardFrameProps {
   onEscape: () => void;
   /** Fill the parent at its real width (web mode) instead of the fixed artboard size. */
   fill?: boolean;
+  /**
+   * Web mode: `bodyHtml` is the whole page (every screen) and `screenId` the one shown. A page
+   * change only moves `is-active`; every screen's nodes, listeners and inputs stay as they are.
+   */
+  page?: boolean;
+  /** Hidden for now: hold updates and apply the latest when shown again. */
+  paused?: boolean;
+  testId?: string;
   /** Receives the frame's handle for overlays. */
   handleRef?: MutableRefObject<ArtboardHandle | null>;
 }
@@ -109,12 +120,15 @@ export const ArtboardFrame = memo(function ArtboardFrame({
   onNavigate,
   onEscape,
   fill = false,
+  page = false,
+  paused = false,
+  testId,
   handleRef,
 }: ArtboardFrameProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [loadVersion, setLoadVersion] = useState(0);
   const loadCount = useRef(0);
-  const applied = useRef<{ version: number; html: string } | null>(null);
+  const applied = useRef<{ version: number; html: string; screenId: string } | null>(null);
   const interactiveRef = useRef(interactive);
   interactiveRef.current = interactive;
   const navigateRef = useRef(onNavigate);
@@ -172,35 +186,54 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     const d = doc();
     if (!d || loadVersion === 0) return;
     const runtime = ensureHeadStyle(d, 'data-onto-runtime');
-    const nextRuntime = runtimeCss();
+    const nextRuntime = runtimeCss(page);
     if (runtime.textContent !== nextRuntime) runtime.textContent = nextRuntime;
     const frame = ensureHeadStyle(d, 'data-onto-frame');
     if (frame.textContent !== css) frame.textContent = css;
     const screenCss = ensureHeadStyle(d, 'data-onto-screen-css');
     if (screenCss.textContent !== (extraCss ?? '')) screenCss.textContent = extraCss ?? '';
     syncLinks(d, linksKey ? linksKey.split('\n') : []);
-  }, [loadVersion, css, extraCss, linksKey]);
+  }, [loadVersion, css, extraCss, linksKey, page]);
 
   // Morph the body in place; finished content keeps its nodes, new nodes fade in.
   useLayoutEffect(() => {
     const d = doc();
-    if (!d || loadVersion === 0) return;
-    if (applied.current?.version === loadVersion && applied.current.html === bodyHtml) return;
-    applied.current = { version: loadVersion, html: bodyHtml };
+    if (!d || loadVersion === 0 || paused) return;
+    const last = applied.current;
+    if (last?.version === loadVersion && last.html === bodyHtml && last.screenId === screenId) return;
+    const markActive = (root: ParentNode) => {
+      for (const tab of Array.from(root.querySelectorAll('[data-nav-screen]'))) {
+        tab.classList.toggle('is-active', tab.getAttribute('data-nav-screen') === screenId);
+      }
+      if (!page) return;
+      for (const section of Array.from(root.querySelectorAll('[data-screen-id]'))) {
+        section.classList.toggle('is-active', section.getAttribute('data-screen-id') === screenId);
+      }
+    };
+    const toTop = () => {
+      if (shownScreen.current !== null && shownScreen.current !== screenId) {
+        const scroller = d.scrollingElement ?? d.documentElement;
+        scroller.scrollTop = 0;
+        scroller.scrollLeft = 0;
+      }
+      shownScreen.current = screenId;
+    };
+    const onlyPageChanged = last?.version === loadVersion && last.html === bodyHtml;
+    applied.current = { version: loadVersion, html: bodyHtml, screenId };
+    if (onlyPageChanged) {
+      // Same content, another page: move `is-active` in the live document and touch nothing
+      // else, so what the person did on each page (state set by its scripts, typed text) stays.
+      markActive(d);
+      toTop();
+      return;
+    }
     const parsed = new DOMParser().parseFromString(
       `<!doctype html><html><head></head><body>${bodyHtml}</body></html>`,
       'text/html',
     );
-    for (const tab of Array.from(parsed.querySelectorAll('[data-nav-screen]'))) {
-      tab.classList.toggle('is-active', tab.getAttribute('data-nav-screen') === screenId);
-    }
+    markActive(parsed);
     morphChildren(d.body, parsed.body);
-    if (shownScreen.current !== null && shownScreen.current !== screenId) {
-      const scroller = d.scrollingElement ?? d.documentElement;
-      scroller.scrollTop = 0;
-      scroller.scrollLeft = 0;
-    }
-    shownScreen.current = screenId;
+    toTop();
     const stamp = String(Date.now());
     for (const el of Array.from(d.querySelectorAll(`[${BORN_ATTR}=""]`))) el.setAttribute(BORN_ATTR, stamp);
     const timer = setTimeout(() => {
@@ -210,13 +243,13 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       }
     }, BORN_FADE_MS + 50);
     return () => clearTimeout(timer);
-  }, [loadVersion, bodyHtml, screenId]);
+  }, [loadVersion, bodyHtml, screenId, page, paused]);
 
   // Scripts: parsed scripts never run, so once the screen has landed each one is recreated with
   // createElement and runs exactly once, without reloading the iframe.
   useLayoutEffect(() => {
     const d = doc();
-    if (!d || loadVersion === 0 || !landed) return;
+    if (!d || loadVersion === 0 || !landed || paused) return;
     let ran = 0;
     const recreate = (source: Element): HTMLScriptElement => {
       const fresh = d.createElement('script');
@@ -236,6 +269,8 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       ran += 1;
     }
     for (const script of Array.from(d.body.querySelectorAll('script'))) {
+      // A screen still being written has not landed: its scripts wait (web mode shows them all).
+      if (script.closest('[data-screen-status="streaming"]')) continue;
       const source = `${script.getAttribute('src') ?? ''}\u0000${script.textContent ?? ''}`;
       if (ranScripts.current.get(script) === source) continue;
       const fresh = recreate(script);
@@ -254,7 +289,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     // The prototype's own navigation helper must not replace the canvas's try-out navigation.
     const win = d.defaultView as ProtoWindow | null;
     if (win && selectRef.current) win.__selectProtoScreen = selectRef.current;
-  }, [loadVersion, bodyHtml, landed, headScriptsKey]);
+  }, [loadVersion, bodyHtml, landed, headScriptsKey, paused]);
 
   // Try-out wiring: navigation anchors and Esc inside the prototype.
   useEffect(() => {
@@ -294,7 +329,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       title={title}
       srcDoc={ARTBOARD_BOOTSTRAP}
       sandbox="allow-scripts allow-same-origin"
-      data-testid={`prototype-artboard-frame-${screenId}`}
+      data-testid={testId ?? `prototype-artboard-frame-${screenId}`}
       tabIndex={interactive ? 0 : -1}
       className="block border-0 bg-background"
       style={{

@@ -71,14 +71,14 @@ test.describe('Prototype web mode (#97)', () => {
     await expect(page.getByTestId('prototype-web-drawing')).toHaveCount(0);
 
     // Real width: the frame fills the page area, far wider than an artboard on the canvas.
-    const frameEl = web.locator('iframe');
+    const frameEl = page.getByTestId('prototype-web-frame');
     const box = await frameEl.boundingBox();
     expect(box?.width ?? 0).toBeGreaterThan(700);
 
     // Browse: page select, a link inside the prototype, back and forward; each page starts at the top.
     await page.getByTestId('prototype-web-page-select').selectOption('SCR-HOME');
     await expect(web).toHaveAttribute('data-web-screen', 'SCR-HOME');
-    const frame = page.frameLocator('[data-testid="prototype-web-view"] iframe');
+    const frame = page.frameLocator('[data-testid="prototype-web-frame"]');
     await expect(frame.locator('[data-screen-id="SCR-HOME"]')).toBeVisible();
     await frame.locator('body').evaluate((body) => {
       body.ownerDocument.scrollingElement!.scrollTop = 300;
@@ -95,6 +95,14 @@ test.describe('Prototype web mode (#97)', () => {
     await page.getByTestId('prototype-web-back').click();
     await expect(web).toHaveAttribute('data-web-screen', 'SCR-HOME');
     await page.getByTestId('prototype-web-forward').click();
+    await expect(web).toHaveAttribute('data-web-screen', 'SCR-NEW-ORDER');
+    // the page keeps what was done on it (one document, pages switch by is-active)
+    await expect(qty).toHaveText('1');
+    // a screen-strip card shows that page, and its card is the highlighted one
+    await page.getByTestId('prototype-strip-card-SCR-REFUND').locator('button').first().click();
+    await expect(web).toHaveAttribute('data-web-screen', 'SCR-REFUND');
+    await expect(page.getByTestId('prototype-strip-card-SCR-REFUND')).toHaveClass(/border-primary/);
+    await page.getByTestId('prototype-web-back').click();
     await expect(web).toHaveAttribute('data-web-screen', 'SCR-NEW-ORDER');
     expect(await frameEl.getAttribute('data-load-count')).toBe('1');
     await page.waitForTimeout(700); // let the page's fade-in finish before the evidence screenshot

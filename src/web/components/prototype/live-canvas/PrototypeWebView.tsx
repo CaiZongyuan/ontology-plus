@@ -9,8 +9,10 @@ import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboar
 export interface PrototypeWebViewHandle {
   /** The page shown now. */
   screenId: () => string | undefined;
-  /** Shows another page (as navigation inside the prototype would). */
+  /** Shows another page without recording it (a demo tour moving on, say). */
   show: (screenId: string) => void;
+  /** Opens a page as the person would: recorded for back, and following stops. */
+  open: (screenId: string) => void;
   /** An anchored element's box, relative to the page area (the overlay's coordinates). */
   rectOf: (elementId: string) => ArtboardRect | null;
   /** Scrolls an off-screen element into view and returns its box. */
@@ -19,6 +21,9 @@ export interface PrototypeWebViewHandle {
 
 export interface PrototypeWebViewProps {
   screens: readonly PrototypeCanvasArtboard[];
+  /** The whole page body (the shell with every screen) and the styles of screens being written. */
+  pageBodyHtml: string;
+  pageCss: string;
   css: string;
   linksKey: string;
   headScriptsKey: string;
@@ -29,11 +34,14 @@ export interface PrototypeWebViewProps {
   followScreenId?: string | undefined;
   /** The person navigated by hand: following stops. */
   onManualNavigate?: () => void;
+  /** The page shown changed (the screen strip highlights it). */
+  onPageChange?: (screenId: string | undefined) => void;
   busy?: boolean;
   onRetryScreen?: (screenId: string, screenName: string) => void;
   /** The whole document as it stands now, for 「新标签页打开」. */
   composeDocument: () => string;
-  onOpenStandalone: (documentHtml: string, screenId: string) => void;
+  /** Opens it in a new tab; false when there was nothing to open. */
+  onOpenStandalone: (documentHtml: string, screenId: string) => boolean;
 }
 
 interface History {
@@ -42,13 +50,16 @@ interface History {
 }
 
 /**
- * Web mode (#97): the prototype as a real page at its real width. One iframe loads once and the
- * page changes by morphing it (the same load-once artboard the canvas uses), starting at the top;
- * links inside the prototype, back/forward and the page select all move between pages.
+ * Web mode (#97): the prototype as a real page at its real width. One iframe loads the whole page
+ * once (every screen, like the saved document) and a page change only moves the shell's
+ * `is-active` to another screen, starting at the top; scripts, listeners and what was typed stay
+ * with their screen. Links inside the prototype, back/forward and the page select move pages.
  */
 export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebViewProps>(function PrototypeWebView(
   {
     screens,
+    pageBodyHtml,
+    pageCss,
     css,
     linksKey,
     headScriptsKey,
@@ -56,6 +67,7 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
     initialScreenId,
     followScreenId,
     onManualNavigate,
+    onPageChange,
     busy = false,
     onRetryScreen,
     composeDocument,
@@ -73,12 +85,23 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
   const currentRef = useRef(currentId);
   currentRef.current = currentId;
   const frameHandle = useRef<ArtboardHandle | null>(null);
+  const [openFailed, setOpenFailed] = useState(false);
+
+  const onPageChangeRef = useRef(onPageChange);
+  onPageChangeRef.current = onPageChange;
+  useEffect(() => {
+    onPageChangeRef.current?.(currentId);
+  }, [currentId]);
+  useEffect(() => () => onPageChangeRef.current?.(undefined), []);
 
   /** A page change the person made: recorded for back, and following stops. */
   const go = useCallback(
     (to: string) => {
       const from = currentRef.current;
       if (!to || to === from || !screens.some((s) => s.screenId === to)) return;
+      // Updated now, so a second report of the same click (a tab's inline onclick and the
+      // frame's link handler) is a no-op, not a second history entry.
+      currentRef.current = to;
       setHistory((h) => ({
         back: from ? [...h.back, from] : h.back,
         forward: [],
@@ -91,7 +114,10 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
 
   // Following: show the page being drawn (the canvas already applies the dwell time).
   useEffect(() => {
-    if (followScreenId && followScreenId !== currentRef.current) setRequested(followScreenId);
+    if (followScreenId && followScreenId !== currentRef.current) {
+      currentRef.current = followScreenId;
+      setRequested(followScreenId);
+    }
   }, [followScreenId]);
 
   const back = () => {
@@ -101,6 +127,7 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
       back: h.back.slice(0, -1),
       forward: [currentId, ...h.forward],
     }));
+    currentRef.current = prev;
     setRequested(prev);
     onManualNavigate?.();
   };
@@ -111,6 +138,7 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
       back: [...h.back, currentId],
       forward: h.forward.slice(1),
     }));
+    currentRef.current = next;
     setRequested(next);
     onManualNavigate?.();
   };
@@ -122,10 +150,11 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
       show: (screenId: string) => {
         if (screens.some((s) => s.screenId === screenId)) setRequested(screenId);
       },
+      open: go,
       rectOf: (elementId: string) => frameHandle.current?.rectOf(elementId) ?? null,
       reveal: (elementId: string) => frameHandle.current?.reveal(elementId) ?? null,
     };
-  }, [screens]);
+  }, [go, screens]);
 
   const statusText = (s: PrototypeCanvasArtboard) =>
     s.status === 'streaming' ? t('正在画', 'Drawing') : s.status === 'queued' ? t('还没画', 'Not drawn yet') : '';
@@ -195,12 +224,17 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
           data-testid="prototype-web-open-standalone"
           title={t('把原型作为独立网页在新标签页打开', 'Open the prototype as its own page in a new tab')}
           onClick={() => {
-            if (currentId) onOpenStandalone(composeDocument(), currentId);
+            if (currentId) setOpenFailed(!onOpenStandalone(composeDocument(), currentId));
           }}
         >
           <ExternalLink size={12} aria-hidden="true" />
           {t('新标签页打开', 'Open in new tab')}
         </Button>
+        {openFailed && (
+          <span role="status" className="text-warning" data-testid="prototype-web-open-failed">
+            {t('还没有可以打开的页面', 'There is nothing to open yet')}
+          </span>
+        )}
       </div>
 
       <div className="relative min-h-0 flex-1 bg-background" data-testid="prototype-web-page">
@@ -208,14 +242,16 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
           <ArtboardFrame
             screenId={board.screenId}
             title={nameOf(board, index)}
-            bodyHtml={board.bodyHtml}
+            bodyHtml={pageBodyHtml}
             css={css}
-            {...(board.css ? { extraCss: board.css } : {})}
+            {...(pageCss ? { extraCss: pageCss } : {})}
             linksKey={linksKey}
             headScriptsKey={headScriptsKey}
-            landed={board.status === 'ready'}
+            landed
             interactive
             fill
+            page
+            testId="prototype-web-frame"
             handleRef={frameHandle}
             onNavigate={go}
             onEscape={noop}
@@ -262,6 +298,7 @@ export function WebModeHint({ onTry, onDismiss }: { onTry: () => void; onDismiss
   const { t } = usePreferences();
   return (
     <div
+      role="status"
       className="m-2 flex flex-col gap-2 rounded-md border border-border bg-primary-soft px-3 py-2 text-[12px] text-foreground"
       data-testid="prototype-web-mode-hint"
     >

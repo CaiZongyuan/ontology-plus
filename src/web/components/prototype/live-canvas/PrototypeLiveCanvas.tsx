@@ -34,8 +34,9 @@ import {
   type FollowState,
   type Rect,
 } from './camera.js';
-import { openPrototypeStandalone, readPrototypeView, writePrototypeView, type PrototypeView } from './prototypeView.js';
-import { PrototypeWebView, WebModeHint } from './PrototypeWebView.js';
+import { openCleanPrototypeInNewTab } from '../PrototypeVisualInspector.js';
+import { readPrototypeView, writePrototypeView, type PrototypeView } from './prototypeView.js';
+import { PrototypeWebView, WebModeHint, type PrototypeWebViewHandle } from './PrototypeWebView.js';
 
 /** How long the follow camera stays on a screen before moving to another one. */
 export const FOLLOW_DWELL_MS = 1600;
@@ -56,7 +57,7 @@ export interface PrototypeLiveCanvasProps {
   /** Open one screen in the single-screen view (where box-select and inspection live). */
   onOpenSingleScreen?: (screenId: string) => void;
   /** Opens the composed document in a new tab (defaults to a blob URL; tests replace it). */
-  onOpenStandalone?: (documentHtml: string, screenId: string) => void;
+  onOpenStandalone?: (documentHtml: string, screenId: string) => boolean;
 }
 
 interface Viewport {
@@ -91,7 +92,7 @@ export function PrototypeLiveCanvas({
   viewMode = 'business',
   onRetryScreen,
   onOpenSingleScreen,
-  onOpenStandalone = openPrototypeStandalone,
+  onOpenStandalone = openStandalone,
 }: PrototypeLiveCanvasProps) {
   const { locale, t } = usePreferences();
   const isBusiness = viewMode === 'business';
@@ -142,24 +143,32 @@ export function PrototypeLiveCanvas({
   // ─── View: artboards or web page (#97), remembered per device ──────────────
   const [view, setViewState] = useState<PrototypeView>(readPrototypeView);
   const [webHint, setWebHint] = useState(false);
+  const webRef = useRef<PrototypeWebViewHandle | null>(null);
+  /** The page web mode shows (the screen strip highlights it). */
+  const [webScreenId, setWebScreenId] = useState<string | undefined>(undefined);
+  /** The page web mode opens on: the screen being tried out, else the one being drawn. */
+  const [webStart, setWebStart] = useState<string | undefined>(undefined);
   const setView = (next: PrototypeView) => {
+    if (next === 'web') setWebStart(tryScreenId ?? followTarget ?? focusScreenId ?? followedScreenId);
     setTryScreenId(null);
     setWebHint(false);
     setViewState(next);
     writePrototypeView(next);
   };
-  // A build that finishes suggests web mode once (the hint sits in the build log).
+  // A build that finishes with every screen drawn suggests web mode once (in the build log).
+  // A run that fails or is cancelled partway does not: it waits until every screen is drawn.
   const sawLiveBuild = useRef(false);
+  const allDrawn = screens.length > 0 && screens.every((s) => s.status === 'ready');
   useEffect(() => {
     if (busy) {
       if (live && Object.keys(live.screens).length > 0) sawLiveBuild.current = true;
       return;
     }
-    if (sawLiveBuild.current) {
+    if (sawLiveBuild.current && allDrawn) {
       sawLiveBuild.current = false;
       setWebHint(true);
     }
-  }, [busy, live]);
+  }, [allDrawn, busy, live]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -436,6 +445,7 @@ export function PrototypeLiveCanvas({
                     headScriptsKey={headScriptsKey}
                     landed={board.status === 'ready'}
                     interactive={isTrying}
+                    paused={view === 'web'}
                     onNavigate={navigateFromPrototype}
                     onEscape={exitTry}
                   />
@@ -463,14 +473,18 @@ export function PrototypeLiveCanvas({
 
           {view === 'web' && (
             <PrototypeWebView
+              ref={webRef}
               screens={screens}
+              pageBodyHtml={model.pageBodyHtml}
+              pageCss={model.pageCss}
               css={model.css}
               linksKey={linksKey}
               headScriptsKey={headScriptsKey}
               nameOf={cleanName}
-              initialScreenId={followTarget ?? focusScreenId ?? followedScreenId}
+              initialScreenId={webStart ?? followTarget ?? focusScreenId ?? followedScreenId}
               followScreenId={following ? followedScreenId : undefined}
               onManualNavigate={takeManualControl}
+              onPageChange={setWebScreenId}
               busy={busy}
               {...(onRetryScreen ? { onRetryScreen } : {})}
               composeDocument={() => composePrototypeDocument(documentHtml, live)}
@@ -608,7 +622,9 @@ export function PrototypeLiveCanvas({
               key={board.screenId}
               className={cn(
                 'flex min-w-[150px] shrink-0 flex-col gap-1 rounded-md border px-2.5 py-1.5 text-left text-[12px]',
-                tryScreenId === board.screenId || followTarget === board.screenId
+                (view === 'web'
+                  ? webScreenId === board.screenId
+                  : tryScreenId === board.screenId || followTarget === board.screenId)
                   ? 'border-primary bg-primary-soft'
                   : 'border-border bg-background',
               )}
@@ -619,6 +635,10 @@ export function PrototypeLiveCanvas({
                 type="button"
                 className="flex min-w-0 cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0 text-left text-foreground"
                 onClick={() => {
+                  if (view === 'web') {
+                    webRef.current?.open(board.screenId);
+                    return;
+                  }
                   takeManualControl();
                   frameScreen(board.screenId);
                 }}
@@ -660,4 +680,8 @@ export function PrototypeLiveCanvas({
       </div>
     </div>
   );
+}
+
+function openStandalone(documentHtml: string, screenId: string): boolean {
+  return openCleanPrototypeInNewTab(documentHtml, screenId) !== null;
 }

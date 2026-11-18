@@ -13,7 +13,7 @@ import { checkBusinessViewMarkup } from '../../../../packages/business-vocabular
 import { PreferencesProvider } from '../../../i18n.js';
 import { PrototypeLiveCanvas, type PrototypeLiveCanvasProps } from './PrototypeLiveCanvas.js';
 import { PrototypeWebView, type PrototypeWebViewHandle } from './PrototypeWebView.js';
-import { openPrototypeStandalone, PROTOTYPE_VIEW_STORAGE_KEY } from './prototypeView.js';
+import { PROTOTYPE_VIEW_STORAGE_KEY } from './prototypeView.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,7 +49,12 @@ async function render(props: PrototypeLiveCanvasProps) {
 }
 
 const q = <T extends Element = HTMLElement>(testId: string) => host.querySelector<T>(`[data-testid="${testId}"]`);
-const webFrame = () => q<HTMLIFrameElement>('prototype-web-view')!.querySelector('iframe')!;
+const webFrame = () => q<HTMLIFrameElement>('prototype-web-frame')!;
+/** The screens the web page shows (the shell's `is-active` convention). */
+const shown = () =>
+  Array.from(webFrame().contentDocument!.querySelectorAll('[data-screen-id].is-active')).map((el) =>
+    el.getAttribute('data-screen-id'),
+  );
 const webScreen = () => q('prototype-web-view')?.getAttribute('data-web-screen');
 
 async function click(el: Element | null) {
@@ -134,8 +139,9 @@ describe('web mode pages', () => {
     expect(frame.style.width).toBe('100%');
     expect(webScreen()).toBe('SCR-A');
     const inner = frame.contentDocument!;
-    expect(inner.body.textContent).toContain('早上好');
-    expect(inner.body.textContent).not.toContain('订货单');
+    expect(shown()).toEqual(['SCR-A']);
+    // the web frame has its own test id; the hidden canvas keeps its artboard frames
+    expect(host.querySelectorAll('[data-testid="prototype-artboard-frame-SCR-A"]')).toHaveLength(1);
     expect(q('prototype-web-back')!.hasAttribute('disabled')).toBe(true);
 
     // a link inside the prototype
@@ -150,14 +156,14 @@ describe('web mode pages', () => {
     expect(webFrame()).toBe(frame);
     expect(frame.contentDocument).toBe(inner);
     expect(frame.getAttribute('data-load-count')).toBe('1');
-    expect(inner.body.textContent).toContain('DH-1025');
+    expect(shown()).toEqual(['SCR-B']);
     expect(inner.documentElement.scrollTop).toBe(0);
     expect(inner.querySelector('[data-nav-screen="SCR-B"]')!.classList.contains('is-active')).toBe(true);
 
     // the page select
     await selectPage('SCR-C');
     expect(webScreen()).toBe('SCR-C');
-    expect(inner.body.textContent).toContain('新建订货单');
+    expect(shown()).toEqual(['SCR-C']);
 
     // back, back, forward
     await click(q('prototype-web-back'));
@@ -210,7 +216,7 @@ describe('web mode pages', () => {
 
   it('opens the composed document (live draft included) in a new tab on the page shown', async () => {
     localStorage.setItem(PROTOTYPE_VIEW_STORAGE_KEY, 'web');
-    const onOpenStandalone = vi.fn();
+    const onOpenStandalone = vi.fn(() => true);
     const tracker = createPrototypeLiveTracker();
     let state: PrototypeLiveState = emptyPrototypeLiveState();
     for (const ev of tracker.observeDocument(doc('<p>排队中</p>', 'queued'))) state = applyPrototypeLiveEvent(state, ev);
@@ -221,7 +227,7 @@ describe('web mode pages', () => {
     await render({ documentHtml: '', live: state, busy: true, onOpenStandalone });
     await click(q('prototype-web-open-standalone'));
     expect(onOpenStandalone).toHaveBeenCalledTimes(1);
-    const [html, screenId] = onOpenStandalone.mock.calls[0]!;
+    const [html, screenId] = onOpenStandalone.mock.calls[0]! as unknown as [string, string];
     expect(screenId).toBe('SCR-C');
     // one document with every screen and the shell's own navigation
     expect(html).toMatch(/^<!DOCTYPE html>/);
@@ -262,7 +268,9 @@ describe('web mode handle (for design notes and demo tours)', () => {
             headScriptsKey=""
             nameOf={(b) => b.screenName}
             composeDocument={() => SAVED}
-            onOpenStandalone={() => undefined}
+            pageBodyHtml={model.pageBodyHtml}
+            pageCss={model.pageCss}
+            onOpenStandalone={() => true}
           />
         </PreferencesProvider>,
       );
@@ -284,19 +292,124 @@ describe('web mode handle (for design notes and demo tours)', () => {
   });
 });
 
-describe('openPrototypeStandalone', () => {
-  it('opens the document as a blob page on the requested screen and frees the blob later', () => {
-    vi.useFakeTimers();
-    const create = vi.fn(() => 'blob:https://app.test/abc');
-    const revoke = vi.fn();
-    Object.assign(URL, { createObjectURL: create, revokeObjectURL: revoke });
-    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
-    expect(openPrototypeStandalone('<!DOCTYPE html><html></html>', 'SCR-B')).toBe(true);
-    expect(open).toHaveBeenCalledWith('blob:https://app.test/abc#SCR-B', '_blank', 'noopener');
-    expect((create.mock.calls[0] as unknown as [Blob])[0].type).toBe('text/html');
-    vi.advanceTimersByTime(60_000);
-    expect(revoke).toHaveBeenCalledWith('blob:https://app.test/abc');
-    expect(openPrototypeStandalone('  ')).toBe(false);
-    vi.useRealTimers();
+describe('#97 review fixes', () => {
+  /** Page B's script binds directly to its own button when the document loads. */
+  const WITH_SCRIPT = SAVED.replace('<p data-element-id="EL-ROW">DH-1025</p>', '<p data-element-id="EL-ROW">DH-1025</p><button type="button" id="b-btn">筛选</button><span id="b-count">0</span><input id="b-input">').replace(
+    '</main>',
+    '</main><script data-screen-js="SCR-B">document.getElementById("b-btn").addEventListener("click", function () { document.body.setAttribute("data-filtered", "yes"); document.getElementById("b-count").textContent = "1"; });</script>',
+  );
+
+  it('a script bound directly on page B works after navigating A → B, and what was typed stays with its page', async () => {
+    localStorage.setItem(PROTOTYPE_VIEW_STORAGE_KEY, 'web');
+    await render({ documentHtml: WITH_SCRIPT, live: null });
+    const frame = webFrame();
+    const inner = frame.contentDocument!;
+    expect(shown()).toEqual(['SCR-A']);
+    await act(async () => {
+      inner.querySelector<HTMLElement>('[data-navigate-to="SCR-B"]')!.dispatchEvent(
+        new inner.defaultView!.MouseEvent('click', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+    expect(shown()).toEqual(['SCR-B']);
+    inner.getElementById('b-btn')!.click();
+    expect(inner.body.getAttribute('data-filtered')).toBe('yes');
+    (inner.getElementById('b-input') as HTMLInputElement).value = 'DH-10';
+    await selectPage('SCR-A');
+    expect(inner.querySelector('[data-screen-id="SCR-A"] #b-input')).toBeNull(); // nothing carried onto A
+    await click(q('prototype-web-back'));
+    expect(shown()).toEqual(['SCR-B']);
+    expect((inner.getElementById('b-input') as HTMLInputElement).value).toBe('DH-10');
+    expect(inner.getElementById('b-count')!.textContent).toBe('1'); // a page change re-renders nothing
+    expect(inner.body.getAttribute('data-filtered')).toBe('yes');
+    expect(frame.getAttribute('data-load-count')).toBe('1');
+  });
+
+  it('one click on a shell tab with an inline onclick is one history entry; back and forward go A ↔ B', async () => {
+    localStorage.setItem(PROTOTYPE_VIEW_STORAGE_KEY, 'web');
+    const withOnclick = SAVED.replace(
+      '<button type="button" data-nav-screen="SCR-B">',
+      `<button type="button" data-nav-screen="SCR-B" onclick="window.__selectProtoScreen('SCR-B')">`,
+    );
+    await render({ documentHtml: withOnclick, live: null });
+    const inner = webFrame().contentDocument!;
+    await act(async () => {
+      inner.querySelector<HTMLElement>('[data-nav-screen="SCR-B"]')!.click();
+    });
+    await settle();
+    expect(webScreen()).toBe('SCR-B');
+    await click(q('prototype-web-back'));
+    expect(webScreen()).toBe('SCR-A');
+    expect(q('prototype-web-back')!.hasAttribute('disabled')).toBe(true); // exactly one entry
+    await click(q('prototype-web-forward'));
+    expect(webScreen()).toBe('SCR-B');
+    expect(q('prototype-web-forward')!.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('in web mode a screen-strip card shows that page (one history entry) and the shown page’s card is highlighted', async () => {
+    localStorage.setItem(PROTOTYPE_VIEW_STORAGE_KEY, 'web');
+    await render({ documentHtml: SAVED, live: null });
+    const card = (sid: string) => q(`prototype-strip-card-${sid}`)!;
+    expect(card('SCR-A').className).toContain('border-primary');
+    await click(card('SCR-C').querySelector('button'));
+    expect(webScreen()).toBe('SCR-C');
+    expect(card('SCR-C').className).toContain('border-primary');
+    expect(card('SCR-A').className).not.toContain('border-primary');
+    await click(q('prototype-web-back'));
+    expect(webScreen()).toBe('SCR-A');
+    expect(q('prototype-web-back')!.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('does not suggest web mode when a run ends with screens left unfinished', async () => {
+    const tracker = createPrototypeLiveTracker();
+    let state: PrototypeLiveState = emptyPrototypeLiveState();
+    for (const ev of tracker.observeDocument(doc('<p>排队中</p>', 'queued'))) state = applyPrototypeLiveEvent(state, ev);
+    state = applyPrototypeLiveEvent(state, tracker.observePartialScreen({ screenId: 'SCR-C', partialHtml: '<h2>新' })!);
+    await render({ documentHtml: '', live: state, busy: true, building: true });
+    const partway = doc('<p>排队中</p>', 'queued');
+    await render({ documentHtml: partway, live: null, busy: false });
+    expect(q('prototype-web-mode-hint')).toBeNull();
+    // finishing that screen later (继续这一屏) does
+    await render({ documentHtml: partway, live: state, busy: true });
+    await render({ documentHtml: SAVED, live: null, busy: false });
+    expect(q('prototype-web-mode-hint')?.getAttribute('role')).toBe('status');
+  });
+
+  it('switching to web while trying a screen opens that screen', async () => {
+    await render({ documentHtml: SAVED, live: null });
+    await act(async () => {
+      q('prototype-artboard-SCR-B')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    expect(q('prototype-canvas-viewport')!.getAttribute('data-trying')).toBe('SCR-B');
+    await click(q('prototype-dock-view-web'));
+    expect(webScreen()).toBe('SCR-B');
+  });
+
+  it('holds the hidden artboards while web mode is open and catches them up on return', async () => {
+    const tracker = createPrototypeLiveTracker();
+    let state: PrototypeLiveState = emptyPrototypeLiveState();
+    for (const ev of tracker.observeDocument(doc('<p>排队中</p>', 'queued'))) state = applyPrototypeLiveEvent(state, ev);
+    state = applyPrototypeLiveEvent(state, tracker.observePartialScreen({ screenId: 'SCR-C', partialHtml: '<h2>新建' })!);
+    await render({ documentHtml: '', live: state, busy: true });
+    const boardC = host.querySelector<HTMLIFrameElement>('[data-testid="prototype-artboard-frame-SCR-C"]')!;
+    await click(q('prototype-dock-view-web'));
+    state = applyPrototypeLiveEvent(
+      state,
+      tracker.observePartialScreen({ screenId: 'SCR-C', partialHtml: '<h2>新建订货单</h2><p>挑选商品</p>' })!,
+    );
+    await render({ documentHtml: '', live: state, busy: true });
+    expect(webFrame().contentDocument!.body.textContent).toContain('挑选商品');
+    expect(boardC.contentDocument!.body.textContent).not.toContain('挑选商品');
+    await click(q('prototype-dock-view-artboards'));
+    expect(boardC.contentDocument!.body.textContent).toContain('挑选商品');
+    expect(boardC.getAttribute('data-load-count')).toBe('1');
+  });
+
+  it('says so when there is nothing to open in a new tab', async () => {
+    localStorage.setItem(PROTOTYPE_VIEW_STORAGE_KEY, 'web');
+    await render({ documentHtml: SAVED, live: null, onOpenStandalone: () => false });
+    expect(q('prototype-web-open-failed')).toBeNull();
+    await click(q('prototype-web-open-standalone'));
+    expect(q('prototype-web-open-failed')?.getAttribute('role')).toBe('status');
   });
 });

@@ -21,18 +21,3 @@ export function writePrototypeView(view: PrototypeView): void {
     // Storage can be unavailable (private mode, quota); the choice just is not remembered.
   }
 }
-
-/**
- * Opens the prototype as its own page in a new tab: the composed `界面原型.html` (the live
- * draft during a build, the saved revision after), starting on `screenId`. The document's own
- * shell script does the navigation, the same as in the saved file. False: nothing to open.
- */
-export function openPrototypeStandalone(documentHtml: string, screenId?: string): boolean {
-  if (!documentHtml.trim() || typeof URL.createObjectURL !== 'function') return false;
-  const url = URL.createObjectURL(new Blob([documentHtml], { type: 'text/html' }));
-  // With `noopener` the call returns null even when the tab opened, so there is nothing to check.
-  window.open(screenId ? `${url}#${encodeURIComponent(screenId)}` : url, '_blank', 'noopener');
-  // The new tab has read the blob long before this; release it.
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  return true;
-}
