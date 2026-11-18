@@ -314,4 +314,23 @@ describe('PrototypeLiveCanvas: #89 review fixes', () => {
     expect(viewport.getAttribute('data-follow-target')).toBe('');
     expect(host.querySelector('[data-testid="prototype-strip-card-SCR-B"]')?.className).not.toContain('border-primary');
   });
+
+  it('replays DOMContentLoaded and load once, so init code a screen waits for still runs', async () => {
+    const withInit = SAVED.replace(
+      '</main>',
+      '</main><script>window.__domReady = 0; window.__loaded = 0; document.addEventListener("DOMContentLoaded", function () { window.__domReady += 1; document.body.setAttribute("data-init", "dom"); }); window.addEventListener("load", function () { window.__loaded += 1; document.body.setAttribute("data-loaded", "yes"); });</script>',
+    );
+    await render({ documentHtml: withInit, live: null });
+    const frameA = frame('SCR-A');
+    const body = frameA.contentDocument!.body;
+    const win = frameA.contentWindow as unknown as { __domReady?: number; __loaded?: number };
+    expect(body.getAttribute('data-init')).toBe('dom');
+    expect(body.getAttribute('data-loaded')).toBe('yes');
+    expect(win.__domReady).toBe(1);
+    expect(win.__loaded).toBe(1);
+    await render({ documentHtml: withInit, live: null, highlightedScreenId: 'SCR-B' });
+    expect(win.__domReady).toBe(1);
+    expect(win.__loaded).toBe(1);
+    expect(frameA.getAttribute('data-load-count')).toBe('1');
+  });
 });

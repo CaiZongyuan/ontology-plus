@@ -94,6 +94,8 @@ export const ArtboardFrame = memo(function ArtboardFrame({
   /** Script element → the source it last ran with; a script runs once per source. */
   const ranScripts = useRef(new WeakMap<Element, string>());
   const ranHeadScripts = useRef(new Set<string>());
+  /** The load (document) for which DOMContentLoaded/load were replayed to the screen's scripts. */
+  const lifecycleReplayedFor = useRef(0);
 
   const doc = (): Document | null => {
     const d = frameRef.current?.contentDocument ?? null;
@@ -144,6 +146,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
   useLayoutEffect(() => {
     const d = doc();
     if (!d || loadVersion === 0 || !landed) return;
+    let ran = 0;
     const recreate = (source: Element): HTMLScriptElement => {
       const fresh = d.createElement('script');
       for (const attr of Array.from(source.attributes)) fresh.setAttribute(attr.name, attr.value);
@@ -159,6 +162,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       const fresh = recreate(source);
       fresh.setAttribute('data-onto-head-script', '');
       d.head.appendChild(fresh);
+      ran += 1;
     }
     for (const script of Array.from(d.body.querySelectorAll('script'))) {
       const source = `${script.getAttribute('src') ?? ''}\u0000${script.textContent ?? ''}`;
@@ -166,6 +170,15 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       const fresh = recreate(script);
       ranScripts.current.set(fresh, source);
       script.replaceWith(fresh);
+      ran += 1;
+    }
+    // The blank page loaded long before these scripts ran, so init code waiting for
+    // DOMContentLoaded or load would never start: replay both once for this document.
+    const view = d.defaultView;
+    if (ran > 0 && view && lifecycleReplayedFor.current !== loadVersion) {
+      lifecycleReplayedFor.current = loadVersion;
+      d.dispatchEvent(new view.Event('DOMContentLoaded', { bubbles: true }));
+      view.dispatchEvent(new view.Event('load'));
     }
     // The prototype's own navigation helper must not replace the canvas's try-out navigation.
     const win = d.defaultView as ProtoWindow | null;

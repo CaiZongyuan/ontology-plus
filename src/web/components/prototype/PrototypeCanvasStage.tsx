@@ -608,6 +608,13 @@ export function PrototypeCanvasStage({
     return () => document.removeEventListener('mousedown', onPointerDown);
   }, [switcherOpen]);
 
+  // The live page is recomposed only when its inputs change, and only where it is needed.
+  const liveDocumentCache = useRef<{
+    html: string;
+    live: PrototypeLiveState | null;
+    composed: string;
+  } | null>(null);
+
   if (!activePrototype) return null;
 
   const currentRevision =
@@ -634,11 +641,17 @@ export function PrototypeCanvasStage({
   const artboardCount = extractPrototypeArtboards(displayedHtml).length;
   const canvasLiveState = isPreviewingHistorical || htmlOverride !== null ? null : liveState;
   // The page as it stands during a run (the saved revision when nothing is running).
-  const liveDocumentHtml = composePrototypeDocument(displayedHtml, canvasLiveState);
+  const liveDocument = (): string => {
+    const cached = liveDocumentCache.current;
+    if (cached && cached.html === displayedHtml && cached.live === canvasLiveState) return cached.composed;
+    const composed = composePrototypeDocument(displayedHtml, canvasLiveState);
+    liveDocumentCache.current = { html: displayedHtml, live: canvasLiveState, composed };
+    return composed;
+  };
   // The layout follows the document, never the run: a saved prototype keeps its layout while a
   // run starts and ends; a first build is judged by what it has written so far.
   const hasMultiArtboardShell = isPrototypeShellDocument(
-    pendingLive ? liveDocumentHtml : displayedHtml,
+    pendingLive ? liveDocument() : displayedHtml,
     pendingLive,
   );
   const effectiveCanvasLayout: 'ARTBOARDS' | 'SINGLE' = inspectMode
@@ -646,6 +659,8 @@ export function PrototypeCanvasStage({
     : (layoutOverride ?? (hasMultiArtboardShell ? 'ARTBOARDS' : 'SINGLE'));
 
   const singleStageHtml = (() => {
+    if (effectiveCanvasLayout !== 'SINGLE') return '';
+    const liveDocumentHtml = liveDocument();
     if (!focusedScreenId) return liveDocumentHtml;
     const jsScreen = JSON.stringify(focusedScreenId);
     const autoSelectScript = `<script data-focus-screen>(function(){window.addEventListener('DOMContentLoaded',function(){if(typeof window.__selectProtoScreen==='function'){try{window.__selectProtoScreen(${jsScreen});}catch(_){}}});})();</script>`;

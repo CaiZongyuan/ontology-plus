@@ -5117,445 +5117,449 @@ async function executeUnifiedTurnCore(
       };
     };
 
-    const MAX_TOOL_ROUNDS = 24;
-    for (let step = 0; step < MAX_TOOL_ROUNDS; step += 1) {
-      if (controller.signal.aborted) {
-        throw toAbortedError();
-      }
-      resetIdleTimer();
-
-      const systemPrompt = buildSystemPromptForSession(
-        store,
-        sessionState,
-        input.activeModelCode,
-        effectiveLocale,
-        {
-          codeMode: effectiveCodeMode,
-          multiAgentConcurrency: effectiveConcurrency,
-          offeredTools: tools,
-        },
-      );
-      const context: Context = {
-        systemPrompt,
-        messages: piMessages,
-        tools,
-      };
-
-      const eventStream = built.models.streamSimple(built.selectedModel, context, {
-        signal: controller.signal,
-        timeoutMs: stepTimeoutMs,
-        temperature: 0.2,
-        maxTokens: resolvedMaxTokens,
-      });
-
-      let finalMessage: AssistantMessage | undefined;
-      const announcedToolCallIds = new Set<string>();
-      let lastToolDeltaEmitMs = 0;
-
-      for await (const ev of eventStream) {
-        if (ev.type !== 'error') {
-          resetIdleTimer();
+    try {
+      const MAX_TOOL_ROUNDS = 24;
+      for (let step = 0; step < MAX_TOOL_ROUNDS; step += 1) {
+        if (controller.signal.aborted) {
+          throw toAbortedError();
         }
+        resetIdleTimer();
 
-        if (ev.type === 'thinking_delta') {
-          accumulatedThinking += ev.delta;
-          emit({
-            id: nextEventId(),
-            event: 'thinking_delta',
-            data: { step: step + 1, delta: ev.delta },
-          });
-        } else if (ev.type === 'text_delta') {
-          accumulatedText += ev.delta;
-          emit({
-            id: nextEventId(),
-            event: 'delta',
-            data: { step: step + 1, text: ev.delta },
-          });
-        } else if (
-          ev.type === 'toolcall_start' ||
-          ev.type === 'toolcall_delta' ||
-          ev.type === 'toolcall_end'
-        ) {
-          if (ev.type === 'toolcall_delta') {
-            streamedToolArgChars += ev.delta.length;
-            const nowMs = Date.now();
-            const partialCall = ev.partial.content[ev.contentIndex];
-            if (
-              partialCall?.type === 'toolCall' &&
-              partialCall.name === 'upsert_prototype_screen' &&
-              prototypeTurnDraft
-            ) {
-              const pArgs = (partialCall.arguments ?? {}) as Record<string, unknown>;
-              const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
-              const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
-              if (pSid && pHtml.length >= 24) {
-                streamPartialPrototypeScreen({
-                  screenId: pSid,
-                  ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
-                  ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
-                  partialScreenHtml: pHtml,
-                  ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
+        const systemPrompt = buildSystemPromptForSession(
+          store,
+          sessionState,
+          input.activeModelCode,
+          effectiveLocale,
+          {
+            codeMode: effectiveCodeMode,
+            multiAgentConcurrency: effectiveConcurrency,
+            offeredTools: tools,
+          },
+        );
+        const context: Context = {
+          systemPrompt,
+          messages: piMessages,
+          tools,
+        };
+
+        const eventStream = built.models.streamSimple(built.selectedModel, context, {
+          signal: controller.signal,
+          timeoutMs: stepTimeoutMs,
+          temperature: 0.2,
+          maxTokens: resolvedMaxTokens,
+        });
+
+        let finalMessage: AssistantMessage | undefined;
+        const announcedToolCallIds = new Set<string>();
+        let lastToolDeltaEmitMs = 0;
+
+        for await (const ev of eventStream) {
+          if (ev.type !== 'error') {
+            resetIdleTimer();
+          }
+
+          if (ev.type === 'thinking_delta') {
+            accumulatedThinking += ev.delta;
+            emit({
+              id: nextEventId(),
+              event: 'thinking_delta',
+              data: { step: step + 1, delta: ev.delta },
+            });
+          } else if (ev.type === 'text_delta') {
+            accumulatedText += ev.delta;
+            emit({
+              id: nextEventId(),
+              event: 'delta',
+              data: { step: step + 1, text: ev.delta },
+            });
+          } else if (
+            ev.type === 'toolcall_start' ||
+            ev.type === 'toolcall_delta' ||
+            ev.type === 'toolcall_end'
+          ) {
+            if (ev.type === 'toolcall_delta') {
+              streamedToolArgChars += ev.delta.length;
+              const nowMs = Date.now();
+              const partialCall = ev.partial.content[ev.contentIndex];
+              if (
+                partialCall?.type === 'toolCall' &&
+                partialCall.name === 'upsert_prototype_screen' &&
+                prototypeTurnDraft
+              ) {
+                const pArgs = (partialCall.arguments ?? {}) as Record<string, unknown>;
+                const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
+                const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
+                if (pSid && pHtml.length >= 24) {
+                  streamPartialPrototypeScreen({
+                    screenId: pSid,
+                    ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
+                    ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
+                    partialScreenHtml: pHtml,
+                    ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
+                  });
+                }
+              }
+              if (nowMs - lastToolDeltaEmitMs >= 250) {
+                lastToolDeltaEmitMs = nowMs;
+                emit({
+                  id: nextEventId(),
+                  event: 'tool_delta',
+                  data: {
+                    step: step + 1,
+                    toolName: partialCall?.type === 'toolCall' ? partialCall.name : undefined,
+                    streamedChars: streamedToolArgChars,
+                  },
                 });
               }
             }
-            if (nowMs - lastToolDeltaEmitMs >= 250) {
-              lastToolDeltaEmitMs = nowMs;
+            const candidate =
+              ev.type === 'toolcall_end'
+                ? ev.toolCall
+                : ev.partial.content[ev.contentIndex];
+            if (
+              candidate &&
+              candidate.type === 'toolCall' &&
+              candidate.id &&
+              candidate.name &&
+              !announcedToolCallIds.has(candidate.id)
+            ) {
+              announcedToolCallIds.add(candidate.id);
+              const candidateArgs = (candidate.arguments ?? {}) as Record<string, unknown>;
+              const candidateAnchor = extractTargetAnchorFromArgs(candidate.name, candidateArgs);
               emit({
                 id: nextEventId(),
-                event: 'tool_delta',
+                event: 'tool_call',
                 data: {
+                  id: candidate.id,
+                  toolName: candidate.name,
+                  arguments: candidateArgs,
+                  ...(candidateAnchor ? { targetAnchor: candidateAnchor } : {}),
                   step: step + 1,
-                  toolName: partialCall?.type === 'toolCall' ? partialCall.name : undefined,
-                  streamedChars: streamedToolArgChars,
                 },
               });
             }
-          }
-          const candidate =
-            ev.type === 'toolcall_end'
-              ? ev.toolCall
-              : ev.partial.content[ev.contentIndex];
-          if (
-            candidate &&
-            candidate.type === 'toolCall' &&
-            candidate.id &&
-            candidate.name &&
-            !announcedToolCallIds.has(candidate.id)
-          ) {
-            announcedToolCallIds.add(candidate.id);
-            const candidateArgs = (candidate.arguments ?? {}) as Record<string, unknown>;
-            const candidateAnchor = extractTargetAnchorFromArgs(candidate.name, candidateArgs);
-            emit({
-              id: nextEventId(),
-              event: 'tool_call',
-              data: {
-                id: candidate.id,
-                toolName: candidate.name,
-                arguments: candidateArgs,
-                ...(candidateAnchor ? { targetAnchor: candidateAnchor } : {}),
-                step: step + 1,
-              },
+          } else if (ev.type === 'done') {
+            finalMessage = ev.message;
+          } else if (ev.type === 'error') {
+            if (controller.signal.aborted) {
+              throw toAbortedError();
+            }
+            const errText =
+              ev.error.errorMessage ||
+              pickLocaleText(
+                effectiveLocale,
+                `网关流式请求失败 (reason=${ev.reason})`,
+                `Gateway streaming request failed (reason=${ev.reason})`,
+              );
+            const isStepTimeout =
+              !/connect\s*timeout|connection\s*error/i.test(errText) &&
+              (ev.reason === 'aborted' ||
+                (/timed?\s*out|timeout/i.test(errText) &&
+                  Date.now() - turnStartMs >= Math.min(idleTimeoutMs, stepTimeoutMs) * 0.5));
+            if (isStepTimeout) {
+              throw new SessionStreamAbortedError(
+                'IDLE_TIMEOUT',
+                pickLocaleText(
+                  effectiveLocale,
+                  `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
+                  `LLM single-step inference timed out (exceeded ${Math.round(stepTimeoutMs / 1000)}s)`,
+                ),
+              );
+            }
+            throw new LlmGatewayError({
+              message: errText,
+              providerName: built.providerConfig?.name ?? built.providerLabel,
+              baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+              model: built.selectedModel.id,
+              locale: effectiveLocale,
             });
           }
-        } else if (ev.type === 'done') {
-          finalMessage = ev.message;
-        } else if (ev.type === 'error') {
+        }
+
+        if (!finalMessage) {
+          break;
+        }
+
+        if (finalMessage.stopReason === 'error' || finalMessage.errorMessage) {
           if (controller.signal.aborted) {
             throw toAbortedError();
           }
-          const errText =
-            ev.error.errorMessage ||
-            pickLocaleText(
-              effectiveLocale,
-              `网关流式请求失败 (reason=${ev.reason})`,
-              `Gateway streaming request failed (reason=${ev.reason})`,
-            );
-          const isStepTimeout =
-            !/connect\s*timeout|connection\s*error/i.test(errText) &&
-            (ev.reason === 'aborted' ||
-              (/timed?\s*out|timeout/i.test(errText) &&
-                Date.now() - turnStartMs >= Math.min(idleTimeoutMs, stepTimeoutMs) * 0.5));
-          if (isStepTimeout) {
-            throw new SessionStreamAbortedError(
-              'IDLE_TIMEOUT',
+          throw new LlmGatewayError({
+            message:
+              finalMessage.errorMessage ||
               pickLocaleText(
                 effectiveLocale,
-                `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
-                `LLM single-step inference timed out (exceeded ${Math.round(stepTimeoutMs / 1000)}s)`,
+                '上游模型网关返回错误响应',
+                'Upstream LLM gateway returned an error response',
               ),
-            );
-          }
-          throw new LlmGatewayError({
-            message: errText,
             providerName: built.providerConfig?.name ?? built.providerLabel,
             baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
             model: built.selectedModel.id,
             locale: effectiveLocale,
           });
         }
-      }
 
-      if (!finalMessage) {
-        break;
-      }
+        totalInputTokens += finalMessage.usage?.input ?? 0;
+        totalOutputTokens += finalMessage.usage?.output ?? 0;
+        piMessages.push(finalMessage);
 
-      if (finalMessage.stopReason === 'error' || finalMessage.errorMessage) {
-        if (controller.signal.aborted) {
-          throw toAbortedError();
+        const toolCalls = finalMessage.content.filter(
+          (block): block is ToolCall => block.type === 'toolCall',
+        );
+
+        if (toolCalls.length === 0) {
+          break;
         }
-        throw new LlmGatewayError({
-          message:
-            finalMessage.errorMessage ||
-            pickLocaleText(
-              effectiveLocale,
-              '上游模型网关返回错误响应',
-              'Upstream LLM gateway returned an error response',
-            ),
-          providerName: built.providerConfig?.name ?? built.providerLabel,
-          baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
-          model: built.selectedModel.id,
-          locale: effectiveLocale,
-        });
-      }
 
-      totalInputTokens += finalMessage.usage?.input ?? 0;
-      totalOutputTokens += finalMessage.usage?.output ?? 0;
-      piMessages.push(finalMessage);
+        for (const tc of toolCalls) {
+          if (controller.signal.aborted) {
+            throw toAbortedError();
+          }
+          resetIdleTimer();
+          const tcArgs = (tc.arguments ?? {}) as Record<string, unknown>;
+          const tcAnchor = extractTargetAnchorFromArgs(tc.name, tcArgs);
+          emit({
+            id: nextEventId(),
+            event: 'tool_call',
+            data: {
+              id: tc.id,
+              toolName: tc.name,
+              arguments: tcArgs,
+              ...(tcAnchor ? { targetAnchor: tcAnchor } : {}),
+              step: step + 1,
+            },
+          });
 
-      const toolCalls = finalMessage.content.filter(
-        (block): block is ToolCall => block.type === 'toolCall',
-      );
-
-      if (toolCalls.length === 0) {
-        break;
-      }
-
-      for (const tc of toolCalls) {
-        if (controller.signal.aborted) {
-          throw toAbortedError();
-        }
-        resetIdleTimer();
-        const tcArgs = (tc.arguments ?? {}) as Record<string, unknown>;
-        const tcAnchor = extractTargetAnchorFromArgs(tc.name, tcArgs);
-        emit({
-          id: nextEventId(),
-          event: 'tool_call',
-          data: {
-            id: tc.id,
-            toolName: tc.name,
-            arguments: tcArgs,
-            ...(tcAnchor ? { targetAnchor: tcAnchor } : {}),
-            step: step + 1,
-          },
-        });
-
-        const executed: ExecutedToolStep =
-          tc.name === 'spawn_subagents'
-            ? await runSpawnSubagentsTool(tc.id, tcArgs, step + 1)
-            : tc.name === 'codemode'
-              ? await (async (): Promise<ExecutedToolStep> => {
-                  const startedCm = Date.now();
-                  const scriptCode = String(tcArgs.code ?? '');
-                  if (scriptCode.trim()) {
-                    lastCodeModeScript = scriptCode;
-                  }
-                  const cmRes = await runCodemodeScript({
-                    code: scriptCode,
-                    callableTools: tools.filter((t) => t.name !== 'codemode'),
-                    signal: controller.signal,
-                    timeoutMs: stepTimeoutMs,
-                    executeNestedTool: async (nestedToolName, nestedArgs, nestedIdx) => {
-                      resetIdleTimer();
-                      const nestedCallId = `${tc.id}/c${nestedIdx}`;
-                      const nestedAnchor = extractTargetAnchorFromArgs(nestedToolName, nestedArgs);
-                      emit({
-                        id: nextEventId(),
-                        event: 'tool_call',
-                        data: {
-                          id: nestedCallId,
-                          toolName: nestedToolName,
-                          arguments: nestedArgs,
-                          ...(nestedAnchor ? { targetAnchor: nestedAnchor } : {}),
-                          step: step + 1,
-                        },
-                      });
-
-                      const nestedOut =
-                        nestedToolName === 'spawn_subagents'
-                          ? await runSpawnSubagentsTool(nestedCallId, nestedArgs, step + 1)
-                          : await executeUnifiedToolCall(
-                              store,
-                              sessionState,
-                              {
-                                type: 'toolCall',
-                                id: nestedCallId,
-                                name: nestedToolName,
-                                arguments: nestedArgs as JsonObject,
-                              },
-                              hadValidatorError,
-                              effectiveLocale,
-                              prototypeTurnDraft,
-                              {
-                                isMock: built!.isMock,
-                                runId: turnRunId,
-                                ...(structuredTurnAction
-                                  ? { actionParams: structuredTurnAction.params }
-                                  : {}),
-                              },
-                            );
-
-                      if (nestedOut.isError) {
-                        hadValidatorError = true;
-                      }
-                      allToolTraces.push(nestedOut.trace);
-                      emit({
-                        id: nextEventId(),
-                        event: 'tool_result',
-                        data: {
-                          trace: nestedOut.trace,
-                          step: step + 1,
-                        },
-                      });
-                      syncPrototypeLiveDocument();
-
-                      if (nestedOut.artifact) {
-                        allArtifacts.push(nestedOut.artifact);
+          const executed: ExecutedToolStep =
+            tc.name === 'spawn_subagents'
+              ? await runSpawnSubagentsTool(tc.id, tcArgs, step + 1)
+              : tc.name === 'codemode'
+                ? await (async (): Promise<ExecutedToolStep> => {
+                    const startedCm = Date.now();
+                    const scriptCode = String(tcArgs.code ?? '');
+                    if (scriptCode.trim()) {
+                      lastCodeModeScript = scriptCode;
+                    }
+                    const cmRes = await runCodemodeScript({
+                      code: scriptCode,
+                      callableTools: tools.filter((t) => t.name !== 'codemode'),
+                      signal: controller.signal,
+                      timeoutMs: stepTimeoutMs,
+                      executeNestedTool: async (nestedToolName, nestedArgs, nestedIdx) => {
+                        resetIdleTimer();
+                        const nestedCallId = `${tc.id}/c${nestedIdx}`;
+                        const nestedAnchor = extractTargetAnchorFromArgs(nestedToolName, nestedArgs);
                         emit({
                           id: nextEventId(),
-                          event: 'artifact',
-                          data: { artifact: nestedOut.artifact },
+                          event: 'tool_call',
+                          data: {
+                            id: nestedCallId,
+                            toolName: nestedToolName,
+                            arguments: nestedArgs,
+                            ...(nestedAnchor ? { targetAnchor: nestedAnchor } : {}),
+                            step: step + 1,
+                          },
                         });
-                      }
-                      if (nestedOut.askUserPrompt) {
-                        pendingAskUser = nestedOut.askUserPrompt;
+
+                        const nestedOut =
+                          nestedToolName === 'spawn_subagents'
+                            ? await runSpawnSubagentsTool(nestedCallId, nestedArgs, step + 1)
+                            : await executeUnifiedToolCall(
+                                store,
+                                sessionState,
+                                {
+                                  type: 'toolCall',
+                                  id: nestedCallId,
+                                  name: nestedToolName,
+                                  arguments: nestedArgs as JsonObject,
+                                },
+                                hadValidatorError,
+                                effectiveLocale,
+                                prototypeTurnDraft,
+                                {
+                                  isMock: built!.isMock,
+                                  runId: turnRunId,
+                                  ...(structuredTurnAction
+                                    ? { actionParams: structuredTurnAction.params }
+                                    : {}),
+                                },
+                              );
+
+                        if (nestedOut.isError) {
+                          hadValidatorError = true;
+                        }
+                        allToolTraces.push(nestedOut.trace);
                         emit({
                           id: nextEventId(),
-                          event: 'ask_user',
-                          data: { askUser: nestedOut.askUserPrompt },
+                          event: 'tool_result',
+                          data: {
+                            trace: nestedOut.trace,
+                            step: step + 1,
+                          },
                         });
-                      }
-                      if (nestedOut.stepHandoffProposal) {
-                        pendingStepHandoff = nestedOut.stepHandoffProposal;
-                        emit({
-                          id: nextEventId(),
-                          event: 'step_handoff',
-                          data: { stepHandoff: nestedOut.stepHandoffProposal },
-                        });
-                      }
+                        syncPrototypeLiveDocument();
 
-                      let parsedJson: unknown = nestedOut.toolResultContent;
-                      try {
-                        parsedJson = JSON.parse(nestedOut.toolResultContent);
-                      } catch {
-                        parsedJson = nestedOut.toolResultContent;
-                      }
-                      return {
-                        outputJson: parsedJson,
-                        isError: nestedOut.isError,
-                        ...(nestedOut.isError ? { errorText: nestedOut.trace.output } : {}),
-                      };
-                    },
-                  });
+                        if (nestedOut.artifact) {
+                          allArtifacts.push(nestedOut.artifact);
+                          emit({
+                            id: nextEventId(),
+                            event: 'artifact',
+                            data: { artifact: nestedOut.artifact },
+                          });
+                        }
+                        if (nestedOut.askUserPrompt) {
+                          pendingAskUser = nestedOut.askUserPrompt;
+                          emit({
+                            id: nextEventId(),
+                            event: 'ask_user',
+                            data: { askUser: nestedOut.askUserPrompt },
+                          });
+                        }
+                        if (nestedOut.stepHandoffProposal) {
+                          pendingStepHandoff = nestedOut.stepHandoffProposal;
+                          emit({
+                            id: nextEventId(),
+                            event: 'step_handoff',
+                            data: { stepHandoff: nestedOut.stepHandoffProposal },
+                          });
+                        }
 
-                  return {
-                    trace: {
-                      id: tc.id,
-                      toolName: 'codemode',
-                      arguments: tcArgs,
-                      output: cmRes.outputText,
+                        let parsedJson: unknown = nestedOut.toolResultContent;
+                        try {
+                          parsedJson = JSON.parse(nestedOut.toolResultContent);
+                        } catch {
+                          parsedJson = nestedOut.toolResultContent;
+                        }
+                        return {
+                          outputJson: parsedJson,
+                          isError: nestedOut.isError,
+                          ...(nestedOut.isError ? { errorText: nestedOut.trace.output } : {}),
+                        };
+                      },
+                    });
+
+                    return {
+                      trace: {
+                        id: tc.id,
+                        toolName: 'codemode',
+                        arguments: tcArgs,
+                        output: cmRes.outputText,
+                        isError: cmRes.isError,
+                        durationMs: Date.now() - startedCm,
+                      },
+                      toolResultContent: cmRes.outputText,
                       isError: cmRes.isError,
-                      durationMs: Date.now() - startedCm,
+                    };
+                  })()
+                : await executeUnifiedToolCall(
+                    store,
+                    sessionState,
+                    tc,
+                    hadValidatorError,
+                    effectiveLocale,
+                    prototypeTurnDraft,
+                    {
+                      isMock: built.isMock,
+                      runId: turnRunId,
+                      ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
                     },
-                    toolResultContent: cmRes.outputText,
-                    isError: cmRes.isError,
-                  };
-                })()
-              : await executeUnifiedToolCall(
-                  store,
-                  sessionState,
-                  tc,
-                  hadValidatorError,
-                  effectiveLocale,
-                  prototypeTurnDraft,
-                  {
-                    isMock: built.isMock,
-                    runId: turnRunId,
-                    ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
-                  },
-                );
-        if (executed.isError) {
-          hadValidatorError = true;
-        }
-        if (tc.name === 'upsert_prototype_screen') {
-          const doneSid = (tc.arguments as Record<string, unknown> | undefined)?.screenId;
-          endPartialPrototypeScreen(typeof doneSid === 'string' ? doneSid : undefined);
-        }
-        allToolTraces.push(executed.trace);
+                  );
+          if (executed.isError) {
+            hadValidatorError = true;
+          }
+          if (tc.name === 'upsert_prototype_screen') {
+            const doneSid = (tc.arguments as Record<string, unknown> | undefined)?.screenId;
+            endPartialPrototypeScreen(typeof doneSid === 'string' ? doneSid : undefined);
+          }
+          allToolTraces.push(executed.trace);
 
-        emit({
-          id: nextEventId(),
-          event: 'tool_result',
-          data: {
-            trace: executed.trace,
-            step: step + 1,
-          },
+          emit({
+            id: nextEventId(),
+            event: 'tool_result',
+            data: {
+              trace: executed.trace,
+              step: step + 1,
+            },
+          });
+          syncPrototypeLiveDocument();
+
+          if (executed.artifact) {
+            allArtifacts.push(executed.artifact);
+            emit({
+              id: nextEventId(),
+              event: 'artifact',
+              data: {
+                artifact: executed.artifact,
+              },
+            });
+          }
+
+          if (executed.askUserPrompt) {
+            pendingAskUser = executed.askUserPrompt;
+            emit({
+              id: nextEventId(),
+              event: 'ask_user',
+              data: {
+                askUser: executed.askUserPrompt,
+              },
+            });
+          }
+
+          if (executed.stepHandoffProposal) {
+            pendingStepHandoff = executed.stepHandoffProposal;
+            emit({
+              id: nextEventId(),
+              event: 'step_handoff',
+              data: {
+                stepHandoff: executed.stepHandoffProposal,
+              },
+            });
+          }
+
+          const toolResultMsg: ToolResultMessage<JsonObject> = {
+            role: 'toolResult',
+            toolCallId: tc.id,
+            toolName: tc.name,
+            content: [{ type: 'text', text: executed.toolResultContent }],
+            isError: executed.isError,
+            timestamp: Date.now(),
+          };
+          piMessages.push(toolResultMsg);
+        }
+
+        saveSessionCheckpointSafe(store, sessionState, {
+          phase: 'STEP_PROGRESS',
+          step: step + 1,
+          toolCallsCount: allToolTraces.length,
+          accumulatedChars: accumulatedText.length,
         });
-        syncPrototypeLiveDocument();
 
-        if (executed.artifact) {
-          allArtifacts.push(executed.artifact);
-          emit({
-            id: nextEventId(),
-            event: 'artifact',
-            data: {
-              artifact: executed.artifact,
-            },
-          });
+        if (pendingAskUser) {
+          if (!accumulatedText.trim()) {
+            const defaultHeader = pickLocaleText(
+              effectiveLocale,
+              '业务决策选项',
+              'Business Decision Options',
+            );
+            accumulatedText = pickLocaleText(
+              effectiveLocale,
+              `请先在下方确认 **${pendingAskUser.header ?? defaultHeader}**，确认后我将立即继续执行。`,
+              `Please confirm **${pendingAskUser.header ?? defaultHeader}** below so I can proceed immediately.`,
+            );
+            emit({
+              id: nextEventId(),
+              event: 'delta',
+              data: { step: step + 1, text: accumulatedText },
+            });
+          }
+          break;
         }
-
-        if (executed.askUserPrompt) {
-          pendingAskUser = executed.askUserPrompt;
-          emit({
-            id: nextEventId(),
-            event: 'ask_user',
-            data: {
-              askUser: executed.askUserPrompt,
-            },
-          });
-        }
-
-        if (executed.stepHandoffProposal) {
-          pendingStepHandoff = executed.stepHandoffProposal;
-          emit({
-            id: nextEventId(),
-            event: 'step_handoff',
-            data: {
-              stepHandoff: executed.stepHandoffProposal,
-            },
-          });
-        }
-
-        const toolResultMsg: ToolResultMessage<JsonObject> = {
-          role: 'toolResult',
-          toolCallId: tc.id,
-          toolName: tc.name,
-          content: [{ type: 'text', text: executed.toolResultContent }],
-          isError: executed.isError,
-          timestamp: Date.now(),
-        };
-        piMessages.push(toolResultMsg);
       }
-
-      saveSessionCheckpointSafe(store, sessionState, {
-        phase: 'STEP_PROGRESS',
-        step: step + 1,
-        toolCallsCount: allToolTraces.length,
-        accumulatedChars: accumulatedText.length,
-      });
-
-      if (pendingAskUser) {
-        if (!accumulatedText.trim()) {
-          const defaultHeader = pickLocaleText(
-            effectiveLocale,
-            '业务决策选项',
-            'Business Decision Options',
-          );
-          accumulatedText = pickLocaleText(
-            effectiveLocale,
-            `请先在下方确认 **${pendingAskUser.header ?? defaultHeader}**，确认后我将立即继续执行。`,
-            `Please confirm **${pendingAskUser.header ?? defaultHeader}** below so I can proceed immediately.`,
-          );
-          emit({
-            id: nextEventId(),
-            event: 'delta',
-            data: { step: step + 1, text: accumulatedText },
-          });
-        }
-        break;
-      }
+    } finally {
+      // Nothing streams after the model loop, whether it finished or failed: a held delta
+      // must not arrive after the run's end.
+      partialScreenThrottle.dispose();
     }
-    // Nothing streams after the model loop; a held delta must not arrive after the run's end.
-    partialScreenThrottle.dispose();
 
     if (
       !built.isMock &&
