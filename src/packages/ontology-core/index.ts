@@ -208,3 +208,25 @@ export {
   extractPrototypeArtboards,
   type PrototypeArtboardSlice,
 } from './lib/prototype-artboards.js';
+
+export {
+  healPartialHtml,
+  healPartialScreenSection,
+  splitPrototypeDocument,
+  composeArtboardBody,
+  createPrototypeLiveTracker,
+  emptyPrototypeLiveState,
+  applyPrototypeLiveEvent,
+  buildPrototypeCanvasModel,
+  type PrototypeScreenStatus,
+  type PrototypeScreenStub,
+  type PrototypeScreenSlice,
+  type PrototypeDocumentFrame,
+  type PrototypeLiveEvent,
+  type PartialPrototypeScreenStream,
+  type PrototypeLiveTracker,
+  type PrototypeLiveScreenState,
+  type PrototypeLiveState,
+  type PrototypeCanvasArtboard,
+  type PrototypeCanvasModel,
+} from './lib/prototype-live.js';
