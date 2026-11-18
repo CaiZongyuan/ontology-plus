@@ -32,6 +32,7 @@ import {
 import {
   MODEL_CODES,
   checkSqlGrounding,
+  createPartialScreenThrottle,
   createPrototypeLiveTracker,
   validateOntologySuite,
   type ModelCode,
@@ -1159,7 +1160,9 @@ function buildFauxMockModels(
       },
     ],
     tokensPerSecond:
-      process.env.VITEST === 'true'
+      Number(process.env.ONTOLOGY_MOCK_TOKENS_PER_SECOND) > 0
+        ? Number(process.env.ONTOLOGY_MOCK_TOKENS_PER_SECOND)
+        : process.env.VITEST === 'true'
         ? 50000
         : isMockInitialPrototypeBuild(store, session)
           ? MOCK_PROTOTYPE_BUILD_TOKENS_PER_SECOND
@@ -4895,8 +4898,23 @@ async function executeUnifiedTurnCore(
     const prototypeLiveTracker = createPrototypeLiveTracker();
     prototypeLiveTracker.reset(prototypeTurnDraft?.workingHtml ?? '');
     const streamingPrototypeScreens = new Set<string>();
-    const lastPartialScreenEmitMs = new Map<string, number>();
-    const PARTIAL_SCREEN_THROTTLE_MS = 150;
+    // About one delta per screen every 150 ms; the latest held delta is flushed after the
+    // interval so the last update before the model pauses still reaches the canvas.
+    const partialScreenThrottle = createPartialScreenThrottle<PartialPrototypeScreenInput>({
+      intervalMs: 150,
+      onFlush: (screenId, partial) => {
+        if (!prototypeTurnDraft || controller.signal.aborted) return;
+        if (!streamingPrototypeScreens.has(screenId)) return;
+        const liveEvent = prototypeLiveTracker.observePartialScreen({
+          screenId,
+          ...(partial.screenName ? { screenName: partial.screenName } : {}),
+          ...(partial.screenType ? { screenType: partial.screenType } : {}),
+          partialHtml: partial.partialScreenHtml,
+          ...(partial.extraCss ? { css: partial.extraCss } : {}),
+        });
+        if (liveEvent) emitPrototypeLiveEvents([liveEvent]);
+      },
+    });
 
     const emitPrototypeLiveEvents = (events: readonly PrototypeLiveEvent[]) => {
       if (!prototypeTurnDraft) return;
@@ -4929,17 +4947,7 @@ async function executeUnifiedTurnCore(
       const screenId = partial.screenId.trim();
       if (!screenId) return;
       streamingPrototypeScreens.add(screenId);
-      const nowMs = Date.now();
-      if (nowMs - (lastPartialScreenEmitMs.get(screenId) ?? 0) < PARTIAL_SCREEN_THROTTLE_MS) return;
-      lastPartialScreenEmitMs.set(screenId, nowMs);
-      const liveEvent = prototypeLiveTracker.observePartialScreen({
-        screenId,
-        ...(partial.screenName ? { screenName: partial.screenName } : {}),
-        ...(partial.screenType ? { screenType: partial.screenType } : {}),
-        partialHtml: partial.partialScreenHtml,
-        ...(partial.extraCss ? { css: partial.extraCss } : {}),
-      });
-      if (liveEvent) emitPrototypeLiveEvents([liveEvent]);
+      partialScreenThrottle.push(screenId, partial);
     };
 
     /** A screen's write ended (landed or rejected): the document version is the truth again. */
@@ -4947,7 +4955,7 @@ async function executeUnifiedTurnCore(
       const sid = screenId?.trim();
       if (!sid) return;
       streamingPrototypeScreens.delete(sid);
-      lastPartialScreenEmitMs.delete(sid);
+      partialScreenThrottle.end(sid);
     };
 
     const runSpawnSubagentsTool = async (
@@ -5001,7 +5009,6 @@ async function executeUnifiedTurnCore(
         tasks: parsedTasks,
         concurrency: effectiveConcurrency,
         locale: effectiveLocale,
-        isMock: built!.isMock,
         models: built!.models,
         selectedModel: built!.selectedModel,
         baseSystemPrompt: subBaseSystemPrompt,
@@ -5547,6 +5554,8 @@ async function executeUnifiedTurnCore(
         break;
       }
     }
+    // Nothing streams after the model loop; a held delta must not arrive after the run's end.
+    partialScreenThrottle.dispose();
 
     if (
       !built.isMock &&

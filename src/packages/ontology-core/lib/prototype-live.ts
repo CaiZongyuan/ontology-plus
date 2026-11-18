@@ -20,12 +20,14 @@ export interface PrototypeScreenSlice extends PrototypeScreenStub {
   html: string;
 }
 
-/** Everything in a prototype document that is not a screen: shared styles and the shell. */
+/** Everything in a prototype document that is not a screen: the head and the shell. */
 export interface PrototypeDocumentFrame {
-  /** Concatenated text of every `<style>` in `<head>`. */
-  css: string;
-  /** Stylesheet `<link>` hrefs from `<head>`. */
-  links: string[];
+  /** The raw attributes of `<html>` (e.g. ` lang="zh-CN"`). */
+  htmlAttrs: string;
+  /** The `<head>` inner HTML: shared styles, links and head scripts. */
+  headHtml: string;
+  /** The raw attributes of `<body>`. */
+  bodyAttrs: string;
   /** The `<body>` inner HTML with each screen replaced by a `<!--onto-screen:ID-->` marker. */
   bodyHtml: string;
   screens: PrototypeScreenStub[];
@@ -67,17 +69,39 @@ const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
 /** Index just past the `>` that ends a tag starting at `from`, honouring quotes; -1 if unfinished. */
 function findTagClose(html: string, from: number): number {
   let quote: string | null = null;
+  let lastSignificant = '';
   for (let i = from; i < html.length; i += 1) {
     const ch = html[i]!;
     if (quote) {
       if (ch === quote) quote = null;
-    } else if (ch === '"' || ch === "'") {
+      continue;
+    }
+    // A quote only opens an attribute value right after `=`; in `title=it's` it is text.
+    if ((ch === '"' || ch === "'") && lastSignificant === '=') {
       quote = ch;
     } else if (ch === '>') {
       return i + 1;
     }
+    if (!/\s/.test(ch)) lastSignificant = ch;
   }
   return -1;
+}
+
+/** Entity names a stream is likely to be in the middle of; `R&D` is not one of them. */
+const COMMON_ENTITY_NAMES = [
+  'amp', 'lt', 'gt', 'quot', 'apos', 'nbsp', 'copy', 'reg', 'trade', 'yen', 'euro', 'pound', 'cent',
+  'times', 'divide', 'middot', 'hellip', 'mdash', 'ndash', 'laquo', 'raquo', 'ldquo', 'rdquo',
+  'lsquo', 'rsquo', 'bull', 'rarr', 'larr', 'uarr', 'darr', 'deg', 'plusmn', 'sect', 'para', 'ensp',
+  'emsp', 'thinsp', 'check', 'star',
+];
+
+/** Drops a trailing half-written entity (`&am`, `&#12`, a bare `&`), keeping text such as `R&D`. */
+function dropHalfEntity(text: string): string {
+  const m = /&(#[0-9]*|#x[0-9a-fA-F]*|[A-Za-z0-9]*)$/.exec(text);
+  if (!m) return text;
+  const name = m[1]!;
+  const half = name === '' || name.startsWith('#') || COMMON_ENTITY_NAMES.some((e) => e.startsWith(name));
+  return half ? text.slice(0, m.index) : text;
 }
 
 function parseAttributes(region: string): Record<string, string> {
@@ -203,8 +227,12 @@ export function healPartialHtml(raw: string): string {
   const unfenced = raw.replace(/^\s*```(?:html)?\s*/i, '').replace(/\s*```\s*$/i, '');
   const scan = scanHtml(unfenced);
   let body = unfenced.slice(0, scan.safeEnd);
-  if (!scan.openRawTag) {
-    body = body.replace(/&#?[A-Za-z0-9]*$/, '');
+  if (scan.openRawTag) {
+    // `.a{}</sty` — a half-written end tag of the raw-text element itself.
+    const half = /<\/?[A-Za-z]*$/.exec(body);
+    if (half && `</${scan.openRawTag}`.startsWith(half[0].toLowerCase())) body = body.slice(0, half.index);
+  } else {
+    body = dropHalfEntity(body);
   }
   const closers = scan.open
     .slice()
@@ -246,18 +274,12 @@ export function splitPrototypeDocument(html: string): {
   const body = scan.elements.find((el) => el.tag === 'body');
   const headEnd = head ? (head.end === -1 ? source.length : head.end) : -1;
 
-  const css: string[] = [];
-  const links: string[] = [];
-  for (const el of scan.elements) {
-    const inHead = head ? el.start > head.start && el.start < headEnd : false;
-    if (!inHead) continue;
-    if (el.tag === 'style') {
-      const closeAt = el.end === -1 ? source.length : source.lastIndexOf('</', el.end);
-      css.push(source.slice(el.openEnd, Math.max(el.openEnd, closeAt)));
-    } else if (el.tag === 'link' && /stylesheet/i.test(el.attrs.rel ?? '') && el.attrs.href) {
-      links.push(el.attrs.href);
-    }
-  }
+  const htmlEl = scan.elements.find((el) => el.tag === 'html');
+  const rawAttrs = (el: ScannedElement | undefined) =>
+    el ? source.slice(el.start + 1 + el.tag.length, el.openEnd - 1).replace(/\/\s*$/, '') : '';
+  const headHtml = head
+    ? source.slice(head.openEnd, head.end === -1 ? source.length : source.lastIndexOf('</', head.end))
+    : '';
 
   const bodyStart = body ? body.openEnd : head ? headEnd : 0;
   const bodyEnd = body
@@ -281,8 +303,9 @@ export function splitPrototypeDocument(html: string): {
 
   return {
     frame: {
-      css: css.join('\n'),
-      links,
+      htmlAttrs: rawAttrs(htmlEl),
+      headHtml,
+      bodyAttrs: rawAttrs(body),
       bodyHtml: bodyHtml.trim() ? bodyHtml : '',
       screens: screens.map(({ html: _html, ...stub }) => stub),
     },
@@ -315,6 +338,29 @@ export function composeArtboardBody(
     : `${composed}${screenHtml}`;
 }
 
+/** Shared styles, stylesheet links and head scripts of a frame, for artboards. */
+export function prototypeFrameAssets(frame: PrototypeDocumentFrame | undefined): {
+  css: string;
+  links: string[];
+  scripts: string[];
+} {
+  const headHtml = frame?.headHtml ?? '';
+  const css: string[] = [];
+  const links: string[] = [];
+  const scripts: string[] = [];
+  for (const el of scanHtml(headHtml).elements) {
+    if (el.tag === 'style') {
+      const closeAt = el.end === -1 ? headHtml.length : headHtml.lastIndexOf('</', el.end);
+      css.push(headHtml.slice(el.openEnd, Math.max(el.openEnd, closeAt)));
+    } else if (el.tag === 'link' && /stylesheet/i.test(el.attrs.rel ?? '') && el.attrs.href) {
+      links.push(el.attrs.href);
+    } else if (el.tag === 'script' && el.end !== -1) {
+      scripts.push(headHtml.slice(el.start, el.end));
+    }
+  }
+  return { css: css.join('\n'), links, scripts };
+}
+
 function escapeAttr(raw: string): string {
   return raw.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -337,10 +383,14 @@ export function healPartialScreenSection(
   const screenId = input.screenId.trim();
   const screenName = input.screenName?.trim() || known?.screenName || screenId;
   const screenType = input.screenType?.trim() || known?.screenType || 'LIST';
-  let inner = healPartialHtml(input.partialHtml);
-  const opened = /^\s*<section\b[^>]*data-screen-id\s*=[^>]*>/i.exec(inner);
-  if (opened) {
-    inner = inner.slice(opened[0].length).replace(/<\/section>\s*$/i, '');
+  // Same shape as upsert_prototype_screen's landed section (`>\n${fragment}\n</section>`, or the
+  // model's own section kept as-is), so streamed nodes keep their positions when the screen lands.
+  let inner = healPartialHtml(input.partialHtml).trimStart();
+  const opened = /^<section\b[^>]*data-screen-id\s*=\s*["']?([^"'\s>]+)[^>]*>/i.exec(inner);
+  if (opened && opened[1] === screenId) {
+    inner = inner.slice(opened[0].length).replace(/<\/section>$/i, '');
+  } else {
+    inner = `\n${inner.trimEnd()}\n`;
   }
   const html = `<section id="screen-${escapeAttr(screenId)}" class="proto-screen is-active" data-screen-id="${escapeAttr(screenId)}" data-screen-name="${escapeAttr(screenName)}" data-screen-type="${escapeAttr(screenType)}" data-screen-status="streaming">${inner}</section>`;
   return { html, screenName, screenType };
@@ -358,8 +408,9 @@ function healPartialCss(css: string | undefined): string | undefined {
 /** Screen status changes travel in screen events, so they do not make the frame "changed". */
 function frameKey(frame: PrototypeDocumentFrame): string {
   return JSON.stringify({
-    css: frame.css,
-    links: frame.links,
+    htmlAttrs: frame.htmlAttrs,
+    headHtml: frame.headHtml,
+    bodyAttrs: frame.bodyAttrs,
     bodyHtml: frame.bodyHtml,
     screens: frame.screens.map((s) => [s.screenId, s.screenName, s.screenType]),
   });
@@ -505,13 +556,21 @@ export function applyPrototypeLiveEvent(
     html: event.html,
     ...(event.css ? { css: event.css } : {}),
   };
-  return {
+  // The follow camera aims only at screens being written; a screen that lands releases it.
+  const focus =
+    event.status === 'streaming'
+      ? { focusScreenId: event.screenId, focusSeq: state.focusSeq + 1 }
+      : state.focusScreenId === event.screenId
+        ? { focusScreenId: undefined, focusSeq: state.focusSeq + 1 }
+        : {};
+  const nextState: PrototypeLiveState = {
     ...state,
     screens: { ...state.screens, [event.screenId]: next },
     arrival: prev ? state.arrival : [...state.arrival, event.screenId],
-    focusScreenId: event.screenId,
-    focusSeq: state.focusSeq + 1,
+    ...focus,
   };
+  if (nextState.focusScreenId === undefined) delete nextState.focusScreenId;
+  return nextState;
 }
 
 export interface PrototypeCanvasArtboard extends PrototypeScreenStub {
@@ -524,6 +583,8 @@ export interface PrototypeCanvasArtboard extends PrototypeScreenStub {
 export interface PrototypeCanvasModel {
   css: string;
   links: string[];
+  /** Head scripts, run in each artboard once its screen has landed. */
+  headScripts: string[];
   screens: PrototypeCanvasArtboard[];
 }
 
@@ -544,9 +605,12 @@ export function buildPrototypeCanvasModel(
       order.push(id);
     }
   };
+  // The frame lists the document's screens; beyond those, only screens still being written show
+  // (a screen the latest frame dropped is gone, not a ghost).
   for (const stub of frame.screens) push(stub.screenId);
-  if (!live?.frame) for (const s of saved.screens) push(s.screenId);
-  for (const id of live?.arrival ?? []) push(id);
+  for (const id of live?.arrival ?? []) {
+    if (live?.screens[id]?.status === 'streaming') push(id);
+  }
 
   const stubById = new Map(frame.screens.map((s) => [s.screenId, s]));
   const screens: PrototypeCanvasArtboard[] = [];
@@ -566,5 +630,88 @@ export function buildPrototypeCanvasModel(
       ...(liveScreen?.css ? { css: liveScreen.css } : {}),
     });
   }
-  return { css: frame.css, links: frame.links, screens };
+  const assets = prototypeFrameAssets(frame);
+  return { css: assets.css, links: assets.links, headScripts: assets.scripts, screens };
+}
+
+/**
+ * The whole document as it stands during a run: the live frame (or the saved one) with every
+ * screen's latest HTML, for views that show the prototype as one page. Without live state it
+ * returns the saved document unchanged.
+ */
+export function composePrototypeDocument(
+  documentHtml: string,
+  live?: PrototypeLiveState | null,
+): string {
+  const hasLive = Boolean(live && (live.frame || Object.keys(live.screens).length > 0));
+  if (!hasLive) return documentHtml;
+  const saved = splitPrototypeDocument(documentHtml ?? '');
+  const frame = live!.frame ?? saved.frame;
+  const htmlById = new Map(saved.screens.map((s) => [s.screenId, s.html]));
+  for (const [id, screen] of Object.entries(live!.screens)) htmlById.set(id, screen.html);
+  const markerRe = new RegExp(`<!--${ARTBOARD_SCREEN_MARKER_PREFIX}([\\s\\S]*?)-->`, 'g');
+  const placed = new Set<string>();
+  let body = frame.bodyHtml.replace(markerRe, (_marker, rawId: string) => {
+    const id = rawId.replace(/- -/g, '--');
+    placed.add(id);
+    return htmlById.get(id) ?? '';
+  });
+  const extra = (live!.arrival ?? [])
+    .filter((id) => !placed.has(id) && live!.screens[id]?.status === 'streaming')
+    .map((id) => htmlById.get(id) ?? '')
+    .join('');
+  if (extra) {
+    const mainClose = body.search(/<\/main>/i);
+    body = mainClose >= 0 ? `${body.slice(0, mainClose)}${extra}${body.slice(mainClose)}` : `${body}${extra}`;
+  }
+  return `<!DOCTYPE html>\n<html${frame.htmlAttrs}>\n<head>${frame.headHtml}</head>\n<body${frame.bodyAttrs}>${body}</body>\n</html>`;
+}
+
+/**
+ * About one update per screen per interval: the first update goes out at once, later ones are
+ * held and the latest is flushed when the interval has passed, so the last update before the
+ * model pauses still arrives. `end` drops what is pending for a screen whose write ended.
+ */
+export function createPartialScreenThrottle<T>(options: {
+  intervalMs: number;
+  onFlush: (screenId: string, value: T) => void;
+}): { push(screenId: string, value: T): void; end(screenId: string): void; dispose(): void } {
+  const lastSent = new Map<string, number>();
+  const pending = new Map<string, T>();
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const flush = (screenId: string) => {
+    timers.delete(screenId);
+    if (!pending.has(screenId)) return;
+    const value = pending.get(screenId) as T;
+    pending.delete(screenId);
+    lastSent.set(screenId, Date.now());
+    options.onFlush(screenId, value);
+  };
+  return {
+    push(screenId, value) {
+      const since = Date.now() - (lastSent.get(screenId) ?? -Infinity);
+      pending.set(screenId, value);
+      if (since >= options.intervalMs) {
+        const timer = timers.get(screenId);
+        if (timer) clearTimeout(timer);
+        flush(screenId);
+        return;
+      }
+      if (!timers.has(screenId)) {
+        timers.set(screenId, setTimeout(() => flush(screenId), options.intervalMs - since));
+      }
+    },
+    end(screenId) {
+      const timer = timers.get(screenId);
+      if (timer) clearTimeout(timer);
+      timers.delete(screenId);
+      pending.delete(screenId);
+      lastSent.delete(screenId);
+    },
+    dispose() {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+      pending.clear();
+    },
+  };
 }

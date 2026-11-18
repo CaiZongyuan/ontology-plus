@@ -1,11 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   applyPrototypeLiveEvent,
   buildPrototypeCanvasModel,
   composeArtboardBody,
+  composePrototypeDocument,
+  createPartialScreenThrottle,
   createPrototypeLiveTracker,
   emptyPrototypeLiveState,
   healPartialHtml,
+  healPartialScreenSection,
+  prototypeFrameAssets,
   splitPrototypeDocument,
   type PrototypeLiveEvent,
 } from '../index.js';
@@ -89,7 +93,7 @@ describe('splitPrototypeDocument / composeArtboardBody: one screen per artboard'
     ]);
     expect(screens[0]!.html).toContain('<h1>早上好</h1>');
     expect(screens[0]!.html.startsWith('<section')).toBe(true);
-    expect(frame.css).toContain('.proto-screen');
+    expect(prototypeFrameAssets(frame).css).toContain('.proto-screen');
     expect(frame.bodyHtml).toContain('data-nav-screen="SCR-B"');
     expect(frame.bodyHtml).not.toContain('早上好');
     expect(frame.bodyHtml).not.toContain('排队中');
@@ -213,6 +217,7 @@ describe('applyPrototypeLiveEvent / buildPrototypeCanvasModel: the client side',
     const a = model.screens.find((s) => s.screenId === 'SCR-A')!;
     expect(a.bodyHtml).toContain('早上好');
     expect(model.css).toContain('.proto-screen');
+    expect(model.screens.find((s) => s.screenId === 'SCR-B')!.status).toBe('streaming');
   });
 
   it('builds artboards from live events alone when nothing has been saved yet', () => {
@@ -229,5 +234,94 @@ describe('applyPrototypeLiveEvent / buildPrototypeCanvasModel: the client side',
       ['SCR-C', 'streaming'],
     ]);
     expect(model.screens[2]!.screenName).toBe('退款');
+  });
+});
+
+describe('#89 review fixes', () => {
+  it('healPartialHtml: an unquoted apostrophe does not swallow the rest; R&D is kept; a half end tag in a style is dropped', () => {
+    expect(healPartialHtml("<p class=foo title=it's>ok</p><div>z")).toBe("<p class=foo title=it's>ok</p><div>z</div>");
+    expect(healPartialHtml('<p>R&D')).toBe('<p>R&D</p>');
+    expect(healPartialHtml('<p>A &nbs')).toBe('<p>A </p>');
+    expect(healPartialHtml('<p>A &')).toBe('<p>A </p>');
+    expect(healPartialHtml('<div><style>.a{color:red}</sty')).toBe('<div><style>.a{color:red}</style></div>');
+  });
+
+  it('a streamed screen has the same shape as the landed screen, so nodes keep their place', () => {
+    const fragment = '<section class="page" data-element-id="EL-A"><h1>Hi</h1></section>\n<section class="page" data-element-id="EL-B"><p>two</p></section>';
+    const streamed = healPartialScreenSection({ screenId: 'SCR-1', partialHtml: fragment }).html;
+    const landed = `<section id="screen-SCR-1" class="proto-screen is-active" data-screen-id="SCR-1" data-screen-name="SCR-1" data-screen-type="LIST" data-screen-status="ready">\n${fragment}\n</section>`;
+    const inner = (html: string) => html.slice(html.indexOf('>') + 1);
+    expect(inner(streamed)).toBe(inner(landed));
+  });
+
+  it('shows only the frame’s screens plus screens still being written (no ghosts)', () => {
+    const shell = (ids: string[]) =>
+      `<!DOCTYPE html><html><head><style>.x{}</style></head><body><main id="proto-screens-root">${ids
+        .map((i) => `<section data-screen-id="${i}" data-screen-name="${i}" data-screen-status="queued"></section>`)
+        .join('')}</main></body></html>`;
+    const tracker = createPrototypeLiveTracker();
+    let state = emptyPrototypeLiveState();
+    for (const e of tracker.observeDocument(shell(['SCR-A', 'SCR-B']))) state = applyPrototypeLiveEvent(state, e);
+    for (const e of tracker.observeDocument(shell(['SCR-C']))) state = applyPrototypeLiveEvent(state, e);
+    expect(buildPrototypeCanvasModel('', state).screens.map((s) => s.screenId)).toEqual(['SCR-C']);
+    state = applyPrototypeLiveEvent(state, tracker.observePartialScreen({ screenId: 'SCR-D', partialHtml: '<p>新' })!);
+    expect(buildPrototypeCanvasModel('', state).screens.map((s) => s.screenId)).toEqual(['SCR-C', 'SCR-D']);
+  });
+
+  it('focus follows screens being written, not queued placeholders, and clears when that screen lands', () => {
+    const tracker = createPrototypeLiveTracker();
+    let state = emptyPrototypeLiveState();
+    for (const e of tracker.observeDocument(DOC)) state = applyPrototypeLiveEvent(state, e);
+    expect(state.focusScreenId).toBeUndefined();
+    state = applyPrototypeLiveEvent(state, tracker.observePartialScreen({ screenId: 'SCR-B', partialHtml: '<p>订' })!);
+    expect(state.focusScreenId).toBe('SCR-B');
+    for (const e of tracker.observeDocument(withScreenB('<p>订单</p>'))) state = applyPrototypeLiveEvent(state, e);
+    expect(state.focusScreenId).toBeUndefined();
+  });
+
+  it('composes the whole live document for the single-page view, with head scripts kept', () => {
+    const saved = DOC.replace('</head>', '<script id="head-js">window.ready = 1;</script></head>');
+    const tracker = createPrototypeLiveTracker();
+    tracker.reset(saved);
+    let state = emptyPrototypeLiveState();
+    state = applyPrototypeLiveEvent(state, tracker.observePartialScreen({ screenId: 'SCR-B', partialHtml: '<p>新订单' })!);
+    const doc = composePrototypeDocument(saved, state);
+    expect(doc).toContain('早上好');
+    expect(doc).toContain('<p>新订单</p>');
+    expect(doc).not.toContain('排队中');
+    expect(doc).toContain('id="head-js"');
+    expect(doc).toContain('<html lang="zh-CN">');
+    const { frame } = splitPrototypeDocument(saved);
+    expect(prototypeFrameAssets(frame).scripts).toEqual(['<script id="head-js">window.ready = 1;</script>']);
+    expect(composePrototypeDocument(saved, null)).toBe(saved);
+  });
+});
+
+describe('createPartialScreenThrottle: about one update per screen per interval, and the last one always arrives', () => {
+  it('sends the first update at once, holds later ones, and flushes the latest after the interval', () => {
+    vi.useFakeTimers();
+    try {
+      const sent: string[] = [];
+      const throttle = createPartialScreenThrottle<string>({ intervalMs: 150, onFlush: (id, v) => sent.push(`${id}:${v}`) });
+      throttle.push('A', 'a1');
+      throttle.push('A', 'a2');
+      throttle.push('B', 'b1');
+      throttle.push('A', 'a3');
+      expect(sent).toEqual(['A:a1', 'B:b1']);
+      vi.advanceTimersByTime(160);
+      expect(sent).toEqual(['A:a1', 'B:b1', 'A:a3']);
+      throttle.push('B', 'b2'); // the interval has passed: sent at once
+      throttle.push('B', 'b3'); // held
+      throttle.end('B'); // the write ended: nothing pending is sent afterwards
+      vi.advanceTimersByTime(500);
+      expect(sent).toEqual(['A:a1', 'B:b1', 'A:a3', 'B:b2']);
+      throttle.push('C', 'c1');
+      throttle.push('C', 'c2');
+      throttle.dispose();
+      vi.advanceTimersByTime(500);
+      expect(sent).toEqual(['A:a1', 'B:b1', 'A:a3', 'B:b2', 'C:c1']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

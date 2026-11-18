@@ -283,8 +283,6 @@ export interface RunParallelSubagentsOptions {
   tasks: readonly SubagentTaskSpec[];
   concurrency: number;
   locale: AgentLocale;
-  /** Mock mode answers subagents from the faux provider: the same streaming path as a real model. */
-  isMock: boolean;
   models: MutableModels;
   selectedModel: Model<Api>;
   baseSystemPrompt: string;

@@ -8,7 +8,12 @@ import {
   type PrototypeLiveEvent,
 } from '../../ontology-core/index.js';
 import { createWorkspaceStore } from '../../workspace-store/index.js';
-import { collectUnifiedAgentTurn } from '../index.js';
+import {
+  attachUnifiedAgentSessionLiveStream,
+  collectUnifiedAgentTurn,
+  startUnifiedAgentSessionTurn,
+  type UnifiedAgentSseEvent,
+} from '../index.js';
 
 const SCREENS = ['SCR-HOME', 'SCR-ORDERS', 'SCR-NEW-ORDER', 'SCR-ORDER-DETAIL', 'SCR-REFUND'];
 
@@ -91,5 +96,76 @@ describe('Mock mode replays a recorded multi-screen prototype build through the 
     const lastAssistant = turn.session.messages.filter((m) => m.role === 'assistant').at(-1)!;
     expect(lastAssistant.content).toContain('工作台首页');
     expect(checkBusinessViewMarkup(lastAssistant.content, { plainText: true })).toHaveLength(0);
+  });
+});
+
+describe('Reconnecting with afterEventId mid-build (#89)', () => {
+  it('catches up with each screen’s current state, one delta per screen, not every delta in between', async () => {
+    const previousPace = process.env.ONTOLOGY_MOCK_TOKENS_PER_SECOND;
+    process.env.ONTOLOGY_MOCK_TOKENS_PER_SECOND = '1500';
+    try {
+      const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+      store.updateSystemSettings({ mockLlmMode: true });
+      const session = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'PROTOTYPE_CO_DESIGN',
+        title: '首版原型生成',
+      });
+      await startUnifiedAgentSessionTurn(
+        store,
+        { sessionId: session.id, prompt: '按已确认的需求生成首版原型', prototypeName: '重连原型', mockMode: true },
+        { awaitCompletion: false },
+      );
+
+      // First connection: read until one screen has landed, then drop the connection.
+      const first: UnifiedAgentSseEvent[] = [];
+      const dropped = new AbortController();
+      for await (const ev of attachUnifiedAgentSessionLiveStream(store, session.id, { signal: dropped.signal })) {
+        first.push(ev);
+        if (ev.event === 'prototype_screen' && ev.data.status === 'ready' && String(ev.data.screenId).startsWith('SCR-')) {
+          dropped.abort();
+          break;
+        }
+      }
+      const lastSeen = first.at(-1)!.id;
+
+      // While disconnected, the other screens keep streaming several deltas each.
+      await new Promise((r) => setTimeout(r, 450));
+
+      // The backlog is replayed from the run's log without waiting on any timer, so everything
+      // that arrives before the first macrotask turn is backlog; later events are live.
+      const second: { ev: UnifiedAgentSseEvent; backlog: boolean }[] = [];
+      let inBacklog = true;
+      setImmediate(() => {
+        inBacklog = false;
+      });
+      for await (const ev of attachUnifiedAgentSessionLiveStream(store, session.id, { afterEventId: lastSeen })) {
+        second.push({ ev, backlog: inBacklog });
+      }
+      expect(second.length).toBeGreaterThan(0);
+
+      // The backlog delivered on reconnect holds at most one delta per screen.
+      const backlog = second.filter((x) => x.backlog && x.ev.event === 'prototype_screen');
+      expect(backlog.length).toBeGreaterThan(0);
+      const perScreen = new Map<string, number>();
+      for (const { ev } of backlog) {
+        const id = String(ev.data.screenId);
+        perScreen.set(id, (perScreen.get(id) ?? 0) + 1);
+      }
+      expect(Math.max(...perScreen.values())).toBe(1);
+
+      // What the client folds from both connections is exactly what was saved.
+      const state = [...first, ...second.map((x) => x.ev)]
+        .filter((e) => e.event === 'prototype_screen' || e.event === 'prototype_frame')
+        .map((e) => e.data as unknown as PrototypeLiveEvent)
+        .reduce(applyPrototypeLiveEvent, emptyPrototypeLiveState());
+      const saved = store.listPrototypes('proj-contract').find((p) => p.name === '重连原型')!;
+      expect(buildPrototypeCanvasModel('', state).screens.map((s) => s.bodyHtml)).toEqual(
+        buildPrototypeCanvasModel(saved.htmlContent).screens.map((s) => s.bodyHtml),
+      );
+    } finally {
+      if (previousPace === undefined) delete process.env.ONTOLOGY_MOCK_TOKENS_PER_SECOND;
+      else process.env.ONTOLOGY_MOCK_TOKENS_PER_SECOND = previousPace;
+    }
   });
 });
