@@ -104,6 +104,10 @@ import {
   type SubagentTaskSpec,
 } from './codemode-subagent.js';
 import {
+  MOCK_PROTOTYPE_BUILD_TOKENS_PER_SECOND,
+  createMockPrototypeBuildReplay,
+} from './mock-prototype-build.js';
+import {
   createCoalescingRunEventBuffer,
   prototypeLiveCoalesceKey,
   type CoalescingRunEventBuffer,
@@ -167,6 +171,15 @@ function resolveTargetPrototypeForSession(
   }
   const list = store.listPrototypes(session.projectId);
   return list.find((p) => p.coDesignSessionId === session.id);
+}
+
+/** Mock mode's first prototype generation replays the recorded multi-screen build. */
+function isMockInitialPrototypeBuild(store: WorkspaceStore, session: AgentSession): boolean {
+  return (
+    session.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+    !resolveTargetPrototypeForSession(store, session) &&
+    resolveSessionMultiAgentConcurrency(session) > 1
+  );
 }
 
 function isBriefRestylePrompt(prompt: string): boolean {
@@ -470,10 +483,12 @@ function parseMockPrototypeTargetFromPrompt(
   }
 
   const overview = listPrototypeAnchors(proto?.htmlContent ?? '');
-  if (overview.elements[0]?.elementId) {
+  // Prefer a control inside a screen over the shell's navigation tabs.
+  const firstElement = overview.elements.find((el) => el.screenId) ?? overview.elements[0];
+  if (firstElement?.elementId) {
     return {
-      elementId: overview.elements[0].elementId,
-      ...(overview.elements[0].screenId ? { screenId: overview.elements[0].screenId } : {}),
+      elementId: firstElement.elementId,
+      ...(firstElement.screenId ? { screenId: firstElement.screenId } : {}),
     };
   }
   if (overview.screens[0]?.screenId) {
@@ -1143,7 +1158,12 @@ function buildFauxMockModels(
         maxTokens: 4096,
       },
     ],
-    tokensPerSecond: process.env.VITEST === 'true' ? 50000 : 900,
+    tokensPerSecond:
+      process.env.VITEST === 'true'
+        ? 50000
+        : isMockInitialPrototypeBuild(store, session)
+          ? MOCK_PROTOTYPE_BUILD_TOKENS_PER_SECOND
+          : 900,
     tokenSize: { min: 6, max: 18 },
   });
 
@@ -1275,6 +1295,20 @@ function buildFauxMockModels(
                 ),
               ),
             ]);
+          }
+          if (resolveSessionMultiAgentConcurrency(session) > 1) {
+            // Replay the recorded multi-screen build through the real engine: the lead plans the
+            // shell and hands one screen to each subagent; every subagent call below is answered
+            // by the same faux provider, so its tool-call arguments stream token by token.
+            const replay = createMockPrototypeBuildReplay(loc);
+            faux.setResponses(
+              Array.from({ length: replay.responseBudget }, () => replay.respond),
+            );
+            const primaryObject = extractPrimaryObjectFromRequirements(confirmedReq.content);
+            return replay.leadOpening(
+              confirmedReq.title,
+              primaryObject.label ?? primaryObject.name,
+            );
           }
           return fauxAssistantMessage(
             [

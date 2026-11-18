@@ -283,6 +283,7 @@ export interface RunParallelSubagentsOptions {
   tasks: readonly SubagentTaskSpec[];
   concurrency: number;
   locale: AgentLocale;
+  /** Mock mode answers subagents from the faux provider: the same streaming path as a real model. */
   isMock: boolean;
   models: MutableModels;
   selectedModel: Model<Api>;
@@ -321,42 +322,6 @@ function defaultWorkerLabel(slotIndex: number, roleHint?: string): { zh: string;
     { zh: '6 号智能体', en: 'Worker #6' },
   ];
   return presets[(slotIndex - 1) % presets.length]!;
-}
-
-function buildMockScreenFragment(spec: SubagentTaskSpec, index: number, locale: AgentLocale): string {
-  const sid = (spec.screenId?.trim() || `SCR-AUTO-0${index + 1}`).replace(/[^A-Za-z0-9_-]/g, '-');
-  const sname = spec.screenName?.trim() || spec.title.trim();
-  const uid = `${sid}-${index + 1}`;
-  if (locale === 'en-US') {
-    return [
-      `<div class="proto-card" style="display:flex;flex-direction:column;gap:14px;">`,
-      `  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">`,
-      `    <div>`,
-      `      <h2 style="margin:0;font-size:18px;">${sname}</h2>`,
-      `      <p style="margin:4px 0 0;font-size:13px;color:var(--proto-muted);">${spec.instruction.slice(0, 120)}</p>`,
-      `    </div>`,
-      `    <div style="display:flex;gap:8px;">`,
-      `      <input type="search" placeholder="Filter records..." data-element-id="EL-SEARCH-${uid}" data-element-type="INPUT" data-element-label="Search ${sname}" style="padding:7px 12px;border:1px solid var(--proto-border);border-radius:8px;background:var(--proto-bg);color:var(--proto-text);" />`,
-      `      <button type="button" data-element-id="EL-PRIMARY-${uid}" data-element-type="BUTTON" data-element-label="Create in ${sname}" data-event-id="EVT-${uid}-CREATE" style="padding:7px 14px;border:none;border-radius:8px;background:var(--proto-accent);color:#fff;cursor:pointer;font-weight:600;">+ Action</button>`,
-      `    </div>`,
-      `  </div>`,
-      `</div>`,
-    ].join('\n');
-  }
-  return [
-    `<div class="proto-card" style="display:flex;flex-direction:column;gap:14px;">`,
-    `  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">`,
-    `    <div>`,
-    `      <h2 style="margin:0;font-size:18px;">${sname}</h2>`,
-    `      <p style="margin:4px 0 0;font-size:13px;color:var(--proto-muted);">${spec.instruction.slice(0, 120)}</p>`,
-    `    </div>`,
-    `    <div style="display:flex;gap:8px;">`,
-    `      <input type="search" placeholder="搜索关键字…" data-element-id="EL-SEARCH-${uid}" data-element-type="INPUT" data-element-label="搜索${sname}" style="padding:7px 12px;border:1px solid var(--proto-border);border-radius:8px;background:var(--proto-bg);color:var(--proto-text);" />`,
-    `      <button type="button" data-element-id="EL-PRIMARY-${uid}" data-element-type="BUTTON" data-element-label="新增${sname}记录" data-event-id="EVT-${uid}-CREATE" style="padding:7px 14px;border:none;border-radius:8px;background:var(--proto-accent);color:#fff;cursor:pointer;font-weight:600;">+ 立即办理</button>`,
-    `    </div>`,
-    `  </div>`,
-    `</div>`,
-  ].join('\n');
 }
 
 function inferThinkingCursorSignal(
@@ -492,71 +457,6 @@ export async function runParallelSubagents(
     options.onActivity();
 
     try {
-      if (options.isMock) {
-        if (spec.screenId?.trim()) {
-          const mockHtml = buildMockScreenFragment(spec, taskIdx, locale);
-          const halfHtml = mockHtml.slice(0, Math.max(40, Math.floor(mockHtml.length * 0.55)));
-          lane.phase = 'STREAMING';
-          lane.cursorZone = 'body';
-          lane.streamedHtmlChars = halfHtml.length;
-          lane.progressChars = halfHtml.length;
-          lane.liveAction = {
-            zh: `正在绘制 · ${spec.screenName?.trim() || spec.title.trim()}`,
-            en: `Painting · ${spec.screenName?.trim() || spec.title.trim()}`,
-          };
-          options.onPartialScreenStream?.(
-            {
-              screenId: spec.screenId.trim(),
-              screenName: spec.screenName?.trim() || spec.title.trim(),
-              screenType: spec.screenType?.trim() || 'LIST',
-              partialScreenHtml: halfHtml,
-            },
-            { ...lane },
-          );
-          options.onLaneUpdate({ ...lane }, stripHeavyFieldsForLiveSse(lanes));
-
-          const mockTc: ToolCall = {
-            type: 'toolCall',
-            id: `tc-submock-${lane.laneId}`,
-            name: 'upsert_prototype_screen',
-            arguments: {
-              screenId: spec.screenId.trim(),
-              screenName: spec.screenName?.trim() || spec.title.trim(),
-              screenType: spec.screenType?.trim() || 'LIST',
-              screenHtml: mockHtml,
-            },
-          };
-          const execRes = await options.executeSubagentToolCall(mockTc, lane, false);
-          lane.progressChars = mockHtml.length;
-          lane.streamedHtmlChars = mockHtml.length;
-          if (execRes.isError) {
-            throw new Error(execRes.toolResultContent);
-          }
-          lane.output = pickLocaleText(
-            locale,
-            `已完成「${spec.screenName || spec.title}」并行构建`,
-            `Completed parallel build for "${spec.screenName || spec.title}"`,
-          );
-        } else {
-          lane.progressChars = 128;
-          lane.output = pickLocaleText(
-            locale,
-            `已完成子任务「${spec.title}」`,
-            `Completed sub-task "${spec.title}"`,
-          );
-        }
-        lane.status = 'DONE';
-        lane.phase = 'DONE';
-        lane.cursorZone = 'footer';
-        lane.liveAction = {
-          zh: '已完成绘制并落盘 ✓',
-          en: 'Screen rendered & saved ✓',
-        };
-        lane.completedAt = new Date().toISOString();
-        options.onLaneUpdate({ ...lane }, stripHeavyFieldsForLiveSse(lanes));
-        return;
-      }
-
       const hasExplicitElementIds = /\bEL-[A-Za-z0-9_-]+/.test(spec.instruction);
       const idRuleZh = hasExplicitElementIds
         ? `2. 严格沿用上述要求中指定的 \`EL-*\` / \`EV-*\` 锚点 ID，确保所有 <button>/<input>/<select>/<textarea> 具备唯一 \`data-element-id\` 与合法 \`data-element-type\`，严禁使用 alert/confirm/prompt。`
