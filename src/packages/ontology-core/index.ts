@@ -243,6 +243,7 @@ export {
 
 export {
   PROTOTYPE_BUILD_PHASES,
+  PROTOTYPE_BUILD_LOG_LIMIT,
   emptyPrototypeBuildState,
   applyPrototypeBuildEvent,
   isPrototypeBuildEvent,

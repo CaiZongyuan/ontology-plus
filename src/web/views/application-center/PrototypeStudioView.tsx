@@ -205,8 +205,9 @@ export function PrototypeStudioView({
       ? liveSessionDrafts[unboundLiveSession.id]
       : undefined;
   const activeRunningAnchor = resolveLiveRunningPrototypeAnchor(coDesignSession, liveDraft);
-  // The Build Plan as the latest build left it (#90): failed screens keep 「继续这一屏」 after the run.
-  const persistedBuild = latestPrototypeBuild(coDesignSession?.messages);
+  // The Build Plan as the latest build left it (#90): failed screens keep 「继续这一屏」 after the
+  // run, but only while the revision that build left is still the current one.
+  const persistedBuild = proto ? latestPrototypeBuild(coDesignSession?.messages, proto.currentRevisionId) : undefined;
   const postRunReview =
     activeRunningAnchor === null
       ? resolvePostRunPrototypeReview(proto, coDesignSession, dismissedRevisionByPrototype)

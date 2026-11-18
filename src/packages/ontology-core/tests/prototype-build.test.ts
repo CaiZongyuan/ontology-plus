@@ -194,3 +194,31 @@ describe('withdrawing a rejected screen write', () => {
     expect(tracker.withdrawScreen('SCR-R', doc)).toBeNull();
   });
 });
+
+describe('review fixes (#90)', () => {
+  it('a queued screen has no owner, even after a helper had it', () => {
+    const t = createPrototypeBuildTracker();
+    t.start();
+    t.screen('SCR-A', { status: 'writing', agent: 2 });
+    t.screen('SCR-A', { status: 'failed', agent: 2, failure: 'not_written' });
+    t.screen('SCR-A', { status: 'queued', agent: 2 });
+    expect(prototypeBuildScreen(t.state(), 'SCR-A').agent).toBeUndefined();
+  });
+
+  it('a saved plan is only found for the revision it left on screen', async () => {
+    const { latestPrototypeBuild } = await import('../index.js');
+    const t = createPrototypeBuildTracker();
+    t.start();
+    t.plan(PLAN, false);
+    const build = { ...t.state(), revisionId: 'rev-1' };
+    const messages = [{ prototypeBuild: build }, {}];
+    expect(latestPrototypeBuild(messages, 'rev-1')).toBe(build);
+    // After an undo, restore or edit the current revision is another one: no stale plan.
+    expect(latestPrototypeBuild(messages, 'rev-2')).toBeUndefined();
+    expect(latestPrototypeBuild([{ prototypeBuild: t.state() }], 'rev-1')).toBeUndefined();
+    // Restarting from a saved build does not carry the revision into the live build.
+    const again = createPrototypeBuildTracker();
+    again.start(build);
+    expect(again.state().revisionId).toBeUndefined();
+  });
+});

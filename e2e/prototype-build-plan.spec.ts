@@ -186,6 +186,15 @@ test.describe('Build Plan (#90): plan first, real per-screen states, continue on
     await page.waitForTimeout(600);
     await page.screenshot({ path: `${EVIDENCE}/e2e-screen-continued.png` });
 
+    // 5. Undo the continued screen (R3 = R1's content): the saved plan belonged to R2, so no
+    //    stale plan, phase bar or "done" states come back for the revision now on screen.
+    const resumeSummary = page.getByTestId('agent-panel').getByTestId('run-change-summary').last();
+    await resumeSummary.getByTestId('change-summary-undo-btn').click();
+    await expect(page.getByTestId('prototype-history-btn')).toContainText('R3', { timeout: 15_000 });
+    await expect(page.getByTestId('prototype-build-phases')).toHaveCount(0);
+    await expect(log.locator('[data-testid="prototype-build-log-entry"]')).toHaveCount(0);
+    await expect(card(page, FAILING)).not.toHaveAttribute('data-build-status', 'done');
+
     test.info().annotations.push({ type: 'plan-seconds', description: planSeconds.toFixed(1) });
   });
 });

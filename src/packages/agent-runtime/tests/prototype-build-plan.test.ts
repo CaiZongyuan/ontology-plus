@@ -11,8 +11,10 @@ import {
 import { createWorkspaceStore, type AgentSessionMessage } from '../../workspace-store/index.js';
 import {
   collectUnifiedAgentTurn,
+  alignShellArgsWithPlan,
   createPrototypeBuildRun,
   getToolsForAgentKind,
+  initPrototypeShell,
   runParallelSubagents,
   type UnifiedAgentSseEvent,
 } from '../index.js';
@@ -82,7 +84,7 @@ describe('Build Plan (#90): the lead declares the screens first, each screen rep
   });
 
   it('streams the plan item by item before anything is drawn, then fails one screen with a reason', async () => {
-    const { turn } = await firstBuild();
+    const { store, turn } = await firstBuild();
     const events = turn.events;
     expect(events.some((e) => e.event === 'run_error')).toBe(false);
 
@@ -134,9 +136,13 @@ describe('Build Plan (#90): the lead declares the screens first, each screen rep
     expect(build.log.at(-1)).toMatchObject({ kind: 'build_finished', count: 4, failedCount: 1 });
     expect(build.log.find((l) => l.kind === 'screen_done')!.count).toBeGreaterThan(0);
 
-    // What the browser folds is exactly what is persisted with the run.
+    // What the browser folds is exactly what is persisted with the run, bound to the revision
+    // the run saved (S2: a saved plan is only shown for that revision).
     const persisted = lastAssistant(turn.session.messages).prototypeBuild!;
-    expect(persisted).toEqual(build);
+    const { revisionId, ...persistedState } = persisted;
+    expect(persistedState).toEqual(build);
+    const savedProto = store.listPrototypes('proj-contract').find((p) => p.name === '施工计划原型')!;
+    expect(revisionId).toBe(savedProto.currentRevisionId);
 
     // The helper lane is failed, not falsely done.
     expect(lanes.find((l) => l.targetAnchor?.screenId === FAILING)).toMatchObject({
@@ -180,17 +186,36 @@ describe('Build Plan (#90): the lead declares the screens first, each screen rep
     expect(build.log.at(-1)).toMatchObject({ kind: 'build_finished', count: 5, failedCount: 0 });
     // The earlier lines are still there: one continuous log.
     expect(build.log.length).toBeGreaterThan(lastAssistant(turn.session.messages).prototypeBuild!.log.length);
-    expect(lastAssistant(resumed.session.messages).prototypeBuild).toEqual(build);
+    const { revisionId: resumedRevision, ...resumedState } = lastAssistant(resumed.session.messages).prototypeBuild!;
+    expect(resumedState).toEqual(build);
 
     // A new revision with the screen drawn; every other screen byte-for-byte unchanged.
     const after = store.listPrototypes('proj-contract').find((p) => p.id === proto.id)!;
     expect(after.revisions).toHaveLength(2);
+    expect(resumedRevision).toBe(after.currentRevisionId);
     const afterDoc = splitPrototypeDocument(after.htmlContent);
     expect(afterDoc.screens.map((s) => [s.screenId, s.status])).toEqual(SCREENS.map((s) => [s, 'ready']));
     for (const sid of SCREENS.filter((s) => s !== FAILING)) {
       expect(afterDoc.screens.find((s) => s.screenId === sid)!.html).toBe(before.screens.find((s) => s.screenId === sid)!.html);
     }
-    expect(lastAssistant(resumed.session.messages).content).toContain('退款审批');
+    // The closing words are checked against the document, not assumed (S3).
+    expect(lastAssistant(resumed.session.messages).content).toBe('「退款审批」画好了。其他屏没有改动。');
+  });
+});
+
+describe('「继续这一屏」 for a screen that is not there (S3)', () => {
+  it('changes nothing, runs no lead and no helper, and says so in business words', async () => {
+    const { store, session } = await firstBuild();
+    const proto = store.listPrototypes('proj-contract').find((p) => p.name === '施工计划原型')!;
+    const resumed = await collectUnifiedAgentTurn(store, {
+      sessionId: session.id,
+      prompt: `[ACTION:RESUME_PROTOTYPE_SCREEN ${JSON.stringify({ screenId: 'SCR-GONE' })}] 继续画「已删掉的屏」`,
+      mockMode: true,
+    });
+    expect(resumed.events.filter((e) => e.event === 'tool_call')).toHaveLength(0);
+    expect(resumed.events.some((e) => e.event === 'run_error')).toBe(false);
+    expect(lastAssistant(resumed.session.messages).content).toContain('找不到要继续的这一屏');
+    expect(store.listPrototypes('proj-contract').find((p) => p.id === proto.id)!.revisions).toHaveLength(1);
   });
 });
 
@@ -248,6 +273,87 @@ describe('createPrototypeBuildRun: from lane events to screen states', () => {
     expect(prototypeBuildScreen(state, 'SCR-B')).toMatchObject({ status: 'failed', agent: 2, failure: 'not_written' });
     expect(state.log.find((l) => l.kind === 'screen_done')).toMatchObject({ agent: 1, count: 3 });
     expect(events[0]!.kind).toBe('build_start');
+  });
+
+  it('S5: the owner is the helper that picks a screen up; queued screens have none', () => {
+    const { run, events } = setup();
+    run.commitPlan(PLAN_ARGS);
+    // The lane's queued guess (helper 3) is never shown; helper 1 picks it up.
+    run.observeLane(lane('SCR-A', 3, 'QUEUED'));
+    const queued = events.filter((e) => e.kind === 'build_screen' && e.screen.screenId === 'SCR-A');
+    expect(queued.at(-1)).toMatchObject({ screen: { status: 'queued' } });
+    expect((queued.at(-1) as { screen: { agent?: number } }).screen.agent).toBeUndefined();
+    run.observeLane(lane('SCR-A', 1, 'RUNNING'));
+    expect(prototypeBuildScreen(run.snapshot()!, 'SCR-A').agent).toBe(1);
+    // Cancelled before anyone picked it up: failed, with no owner and the lead in the log.
+    run.observeLane(lane('SCR-B', 2, 'QUEUED'));
+    run.observeLane(lane('SCR-B', 2, 'FAILED', { failureCode: 'cancelled' }));
+    expect(prototypeBuildScreen(run.snapshot()!, 'SCR-B').agent).toBeUndefined();
+    expect(run.snapshot()!.log.find((l) => l.kind === 'screen_failed')!.agent).toBe(0);
+  });
+
+  it('S1: a rejected plan is withdrawn; screens dispatched afterwards become the plan with real states', () => {
+    const { run } = setup();
+    run.observePlanStream({ screens: [{ screenId: 'SCR-A', screenName: '首页' }, { screenId: 'BAD ID', screenName: 'x' }] });
+    expect(run.snapshot()!.plan).toHaveLength(2);
+    expect(run.commitPlan({ screens: [{ screenId: 'SCR-A', screenName: '首页', purpose: 'p' }, { screenId: 'BAD ID', screenName: 'x', purpose: 'y' }] }).isError).toBe(true);
+    // Nothing of the rejected plan stays: no artboards, the plan phase failed, the log says so.
+    expect(run.active()).toBe(false);
+    expect(run.snapshot()).toBeUndefined();
+    expect(run.plannedScreens()).toBeNull();
+
+    const ordered = run.prepareDispatch([
+      { screenId: 'SCR-B', screenName: '审批', instruction: '批退款' },
+      { screenId: 'SCR-C', screenName: '报表', instruction: '看报表' },
+    ]);
+    expect(ordered.map((t) => t.screenId)).toEqual(['SCR-B', 'SCR-C']);
+    run.observeLane(lane('SCR-B', 1, 'QUEUED'));
+    run.observeLane(lane('SCR-B', 1, 'RUNNING'));
+    run.observeLane(lane('SCR-B', 1, 'DONE'));
+    run.finish('succeeded');
+    const state = run.snapshot()!;
+    expect(state.plan.map((p) => p.screenId)).toEqual(['SCR-B', 'SCR-C']);
+    expect(state.phases.plan.status).toBe('done');
+    expect(prototypeBuildScreen(state, 'SCR-B')).toMatchObject({ status: 'done', agent: 1 });
+    expect(prototypeBuildScreen(state, 'SCR-C')).toMatchObject({ status: 'failed', failure: 'not_written' });
+    expect(state.log.map((l) => l.kind).slice(0, 2)).toEqual(['plan_rejected', 'plan_from_dispatch']);
+  });
+
+  it('S1: screens dispatched beyond the plan join it, with a log line', () => {
+    const { run } = setup();
+    run.commitPlan(PLAN_ARGS);
+    run.prepareDispatch([
+      { screenId: 'SCR-A', instruction: 'a' },
+      { screenId: 'SCR-X', screenName: '额外', instruction: 'x' },
+    ]);
+    const state = run.snapshot()!;
+    expect(state.plan.map((p) => p.screenId)).toEqual(['SCR-A', 'SCR-B', 'SCR-X']);
+    expect(state.log.at(-1)).toMatchObject({ kind: 'screens_added', screenId: 'SCR-X' });
+    run.observeLane(lane('SCR-X', 2, 'RUNNING'));
+    expect(prototypeBuildScreen(run.snapshot()!, 'SCR-X').status).toBe('writing');
+  });
+
+  it('S4: the shared shell follows the committed plan, never its own screen list', () => {
+    const { run } = setup();
+    const shellArgs = { appTitle: 'x', screens: [{ screenId: 'SCR-OTHER', screenName: '别的' }] };
+    expect(alignShellArgsWithPlan(shellArgs, run.plannedScreens())).toBe(shellArgs);
+    run.observePlanStream(PLAN_ARGS);
+    expect(run.plannedScreens()).toBeNull(); // still streaming: not committed yet
+    run.commitPlan(PLAN_ARGS);
+    const aligned = alignShellArgsWithPlan(shellArgs, run.plannedScreens());
+    expect(aligned.appTitle).toBe('x');
+    expect((aligned.screens as { screenId: string }[]).map((s) => s.screenId)).toEqual(['SCR-A', 'SCR-B']);
+    expect(initPrototypeShell(aligned as never).nextHtml).not.toContain('SCR-OTHER');
+  });
+
+  it('the persisted state is bound to the revision on screen and keeps only the newest log lines', () => {
+    const { run } = setup();
+    run.commitPlan(PLAN_ARGS);
+    for (let i = 0; i < 250; i += 1) run.observeLane(lane(`SCR-A`, 1, i % 2 ? 'RUNNING' : 'QUEUED', { laneId: `l${i}` }));
+    const snap = run.snapshot({ revisionId: 'rev-9' })!;
+    expect(snap.revisionId).toBe('rev-9');
+    expect(snap.log.length).toBeLessThanOrEqual(200);
+    expect(snap.log.at(-1)!.id).toBe(run.snapshot()!.log.at(-1)!.id);
   });
 
   it('a planned screen nobody drew fails when the run ends; a cancelled run says so', () => {
@@ -364,6 +470,17 @@ describe('runParallelSubagents: a screen lane is done only when its screen was w
       { isError: true },
     );
     expect(lane).toMatchObject({ status: 'FAILED', failureCode: 'validation_failed' });
+  });
+
+  it('fails with not_written (not "did not pass the check") when only some other call failed', async () => {
+    const lane = await runOne(
+      (round) =>
+        round === 0
+          ? fauxAssistantMessage([fauxToolCall('read_prototype_anchor', { screenId: 'SCR-REFUND' })], { stopReason: 'toolUse' })
+          : fauxAssistantMessage([fauxText('算了。')]),
+      { isError: true },
+    );
+    expect(lane).toMatchObject({ status: 'FAILED', failureCode: 'not_written' });
   });
 
   it('is done when its own screen was written', async () => {

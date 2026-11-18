@@ -7,6 +7,7 @@
  */
 
 import {
+  PROTOTYPE_BUILD_LOG_LIMIT,
   countWrittenElements,
   createPrototypeBuildTracker,
   hasPrototypeBuildPlan,
@@ -58,6 +59,26 @@ export const PLAN_SCREENS_OPENAI_TOOL: OpenAiFunctionTool = {
   },
 };
 
+/**
+ * `init_prototype_shell` arguments with their screen list replaced by the committed plan's, so
+ * the shared shell's sections can never disagree with the plan. Without a plan: unchanged.
+ */
+export function alignShellArgsWithPlan(
+  args: Record<string, unknown>,
+  planned: readonly PrototypeBuildPlanItem[] | null,
+): Record<string, unknown> {
+  if (!planned || planned.length === 0) return args;
+  return {
+    ...args,
+    screens: planned.map((p) => ({
+      screenId: p.screenId,
+      screenName: p.screenName,
+      screenType: p.screenType ?? 'LIST',
+      summary: p.purpose,
+    })),
+  };
+}
+
 /** A Build Plan reconstructed from a saved document: its screens, the drawn ones done. */
 function planFromDocument(documentHtml: string): PrototypeBuildState | null {
   const { screens } = splitPrototypeDocument(documentHtml);
@@ -104,8 +125,13 @@ export interface PrototypeBuildRun {
   resumeScreen(screenId: string, documentHtml?: string): PrototypeBuildPlanItem | null;
   /** The run ended: unfinished screens fail with a reason; phases that did not happen are skipped. */
   finish(outcome: PrototypeBuildRunOutcome): void;
-  /** The state to persist with the run (undefined when this run had no plan). */
-  snapshot(): PrototypeBuildState | undefined;
+  /**
+   * The state to persist with the run (undefined when this run had no plan), bound to the
+   * revision the run left on screen, with only the newest log lines.
+   */
+  snapshot(options?: { revisionId?: string | undefined }): PrototypeBuildState | undefined;
+  /** The committed plan's screens, which the shared shell must follow (null without a plan). */
+  plannedScreens(): PrototypeBuildPlanItem[] | null;
 }
 
 const SCREEN_ID_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
@@ -123,6 +149,7 @@ export function createPrototypeBuildRun(options: {
     if (event) emit(event);
   };
   const startedScreens = new Set<string>();
+  const startedLanes = new Set<string>();
   let screensPhaseStarted = false;
 
   const ensureStarted = (base?: PrototypeBuildState | null) => {
@@ -169,6 +196,12 @@ export function createPrototypeBuildRun(options: {
             ? 'plan_screens needs at least one screen, each with screenId, screenName and purpose.'
             : `Invalid screenId: ${invalid.map((i) => i.screenId).join(', ')} (letters, digits, - and _ only).`,
         );
+        // A rejected plan is not the plan: what streamed onto the canvas is taken back.
+        if (tracker.started() && (tracker.state().plan.length > 0 || tracker.state().phases.plan.status === 'now')) {
+          send(tracker.plan([], false));
+          send(tracker.phase('plan', 'failed'));
+          send(tracker.log({ agent: 0, kind: 'plan_rejected' }));
+        }
         return { isError: true, content: JSON.stringify({ status: 'ERROR', diagnostic }), summary: diagnostic };
       }
       if (!tracker.started()) send(tracker.start());
@@ -195,22 +228,27 @@ export function createPrototypeBuildRun(options: {
     prepareDispatch(tasks) {
       const screenTasks = tasks.filter((t) => t.screenId?.trim());
       if (screenTasks.length === 0) return [...tasks];
+      const asItem = (t: (typeof tasks)[number]): PrototypeBuildPlanItem => ({
+        screenId: t.screenId!.trim(),
+        screenName: t.screenName?.trim() || t.screenId!.trim(),
+        purpose: t.instruction.split('\n')[0]!.slice(0, 120),
+        ...(t.screenType ? { screenType: t.screenType } : {}),
+      });
       if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) {
-        // The lead dispatched screens without declaring a plan: what it dispatched is the plan.
+        // The lead dispatched screens without an accepted plan: what it dispatched is the plan.
         ensureStarted();
-        send(
-          tracker.plan(
-            screenTasks.map((t) => ({
-              screenId: t.screenId!.trim(),
-              screenName: t.screenName?.trim() || t.screenId!.trim(),
-              purpose: t.instruction.split('\n')[0]!.slice(0, 120),
-              ...(t.screenType ? { screenType: t.screenType } : {}),
-            })),
-            false,
-          ),
-        );
+        send(tracker.plan(screenTasks.map(asItem), false));
         send(tracker.phase('plan', 'done'));
-        send(tracker.log({ agent: 0, kind: 'plan_ready', count: screenTasks.length }));
+        send(tracker.log({ agent: 0, kind: 'plan_from_dispatch', count: screenTasks.length }));
+      } else {
+        // Screens dispatched beyond the plan join it, and the log says so.
+        const extra = screenTasks.filter((t) => !planned(t.screenId!.trim()));
+        if (extra.length > 0) {
+          send(tracker.plan([...tracker.state().plan, ...extra.map(asItem)], false));
+          for (const t of extra) {
+            send(tracker.log({ agent: 0, kind: 'screens_added', screenId: t.screenId!.trim() }));
+          }
+        }
       }
       const order = new Map(tracker.state().plan.map((p, i) => [p.screenId, i]));
       const rank = (t: (typeof tasks)[number]) => order.get(t.screenId?.trim() ?? '') ?? Number.MAX_SAFE_INTEGER;
@@ -223,12 +261,14 @@ export function createPrototypeBuildRun(options: {
     observeLane(lane) {
       const screenId = lane.targetAnchor?.screenId?.trim();
       if (!screenId || !tracker.started() || !planned(screenId)) return;
+      // The owner is the helper that picked the screen up; a queued screen has none yet.
       const agent = lane.workerIndex;
       if (lane.status === 'QUEUED') {
-        send(tracker.screen(screenId, { status: 'queued', agent, writtenElements: 0 }));
+        send(tracker.screen(screenId, { status: 'queued', writtenElements: 0 }));
         return;
       }
       if (lane.status === 'RUNNING') {
+        startedLanes.add(lane.laneId);
         beginScreensPhase();
         send(tracker.screen(screenId, { status: 'writing', agent }));
         if (!startedScreens.has(lane.laneId)) {
@@ -250,11 +290,12 @@ export function createPrototypeBuildRun(options: {
         );
         return;
       }
-      // FAILED
+      // FAILED (a lane cancelled before any helper picked it up has no owner)
       if (prototypeBuildScreen(tracker.state(), screenId).status === 'failed') return;
       const failure = lane.failureCode ?? 'interrupted';
-      send(tracker.screen(screenId, { status: 'failed', agent, failure }));
-      send(tracker.log({ agent, kind: 'screen_failed', screenId, failure }));
+      const picked = startedLanes.has(lane.laneId);
+      send(tracker.screen(screenId, { status: 'failed', failure, ...(picked ? { agent } : {}) }));
+      send(tracker.log({ agent: picked ? agent : 0, kind: 'screen_failed', screenId, failure }));
     },
 
     observeScreenStream(screenId, partialHtml) {
@@ -324,8 +365,20 @@ export function createPrototypeBuildRun(options: {
       send(tracker.log({ agent: 0, kind: 'build_finished', count: done, failedCount: failed }));
     },
 
-    snapshot() {
-      return tracker.started() && hasPrototypeBuildPlan(tracker.state()) ? tracker.state() : undefined;
+    snapshot(snapOptions) {
+      if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) return undefined;
+      const state = tracker.state();
+      return {
+        ...state,
+        log: state.log.slice(-PROTOTYPE_BUILD_LOG_LIMIT),
+        ...(snapOptions?.revisionId ? { revisionId: snapOptions.revisionId } : {}),
+      };
+    },
+
+    plannedScreens() {
+      const state = tracker.state();
+      if (!tracker.started() || state.planStreaming || !hasPrototypeBuildPlan(state)) return null;
+      return state.plan.map((p) => ({ ...p }));
     },
   };
 }

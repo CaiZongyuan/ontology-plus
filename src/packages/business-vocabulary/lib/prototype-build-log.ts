@@ -93,6 +93,18 @@ export function describePrototypeBuildLogEntry(
         },
         locale,
       );
+    case 'plan_rejected':
+      return pick(
+        { zh: '这份施工计划不完整，没有采用', en: 'This build plan was incomplete and was not used' },
+        locale,
+      );
+    case 'plan_from_dispatch':
+      return pick(
+        { zh: `按派出的任务列施工计划：共 ${count} 屏`, en: `Build plan taken from the dispatched screens: ${count}` },
+        locale,
+      );
+    case 'screens_added':
+      return pick({ zh: `计划外加画「${name}」`, en: `"${name}" added beyond the plan` }, locale);
     case 'screen_resumed':
       return pick({ zh: `按你的要求继续画「${name}」`, en: `Continuing "${name}" as you asked` }, locale);
     case 'phase_skipped':

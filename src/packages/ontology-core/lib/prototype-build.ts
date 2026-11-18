@@ -50,6 +50,9 @@ export type PrototypeBuildLogKind =
   | 'screen_done'
   | 'screen_failed'
   | 'screen_resumed'
+  | 'plan_rejected'
+  | 'plan_from_dispatch'
+  | 'screens_added'
   | 'phase_skipped'
   | 'build_finished';
 
@@ -77,6 +80,12 @@ export interface PrototypeBuildState {
   screens: Record<string, PrototypeBuildScreen & { seq: number }>;
   phases: Record<PrototypeBuildPhaseId, { status: PrototypeBuildPhaseStatus; seq: number }>;
   log: PrototypeBuildLogEntry[];
+  /**
+   * The prototype revision this build left on screen (set when the run's state is persisted).
+   * A saved plan is shown only while that revision is the current one, so an undo, a restore
+   * or a later edit never brings back the states of screens that are no longer there.
+   */
+  revisionId?: string;
 }
 
 export type PrototypeBuildEvent =
@@ -200,6 +209,8 @@ export function createPrototypeBuildTracker(options: { now?: () => Date } = {}):
   return {
     start(base) {
       const from = base ? cloneBuildState(base) : emptyPrototypeBuildState();
+      // Which revision a persisted build belonged to is not part of the live build.
+      delete from.revisionId;
       seq = Math.max(seq, maxSeq(from)) + 1;
       logId = Math.max(logId, ...from.log.map((e) => e.id), 0);
       isStarted = true;
@@ -223,6 +234,8 @@ export function createPrototypeBuildTracker(options: { now?: () => Date } = {}):
       const prev = prototypeBuildScreen(state, screenId);
       const next: PrototypeBuildScreen = { ...prev, ...patch, screenId };
       if (next.status !== 'failed') delete next.failure;
+      // A screen nobody has picked up yet has no owner.
+      if (next.status === 'queued') delete next.agent;
       if (JSON.stringify(next) === JSON.stringify(prev) && state.screens[screenId]) return null;
       seq += 1;
       return fold({ kind: 'build_screen', seq, screen: next });
@@ -273,14 +286,24 @@ export function countWrittenElements(html: string): number {
   return (html.match(/\sdata-element-id\s*=/g) ?? []).length;
 }
 
-/** The latest Build Plan persisted with a session's runs (the newest message that carries one). */
+/**
+ * The latest Build Plan persisted with a session's runs. With `revisionId`, only a build that
+ * left exactly that revision on screen counts: once the prototype has moved on (undo, restore,
+ * a later edit) there is no saved plan to show.
+ */
 export function latestPrototypeBuild(
   messages: readonly { prototypeBuild?: PrototypeBuildState }[] | null | undefined,
+  revisionId?: string | null,
 ): PrototypeBuildState | undefined {
   const list = messages ?? [];
   for (let i = list.length - 1; i >= 0; i -= 1) {
     const build = list[i]!.prototypeBuild;
-    if (hasPrototypeBuildPlan(build)) return build;
+    if (!hasPrototypeBuildPlan(build)) continue;
+    if (revisionId === undefined) return build;
+    return build.revisionId && build.revisionId === revisionId ? build : undefined;
   }
   return undefined;
 }
+
+/** How many build log lines are kept with a run (the newest ones). */
+export const PROTOTYPE_BUILD_LOG_LIMIT = 200;

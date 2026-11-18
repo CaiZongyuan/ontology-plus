@@ -18,6 +18,9 @@ const ENTRIES: PrototypeBuildLogEntry[] = [
   { id: 5, at: '', agent: 0, kind: 'screen_resumed', screenId: 'SCR-REFUND' },
   { id: 6, at: '', agent: 0, kind: 'phase_skipped', phase: 'review' },
   { id: 7, at: '', agent: 0, kind: 'build_finished', count: 4, failedCount: 1 },
+  { id: 8, at: '', agent: 0, kind: 'plan_rejected' },
+  { id: 9, at: '', agent: 0, kind: 'plan_from_dispatch', count: 2 },
+  { id: 10, at: '', agent: 0, kind: 'screens_added', screenId: 'SCR-REFUND' },
 ];
 
 describe('prototype build log sentences', () => {

@@ -5,7 +5,7 @@ import type { PrototypeBuildScreenStatus } from '../../../../packages/ontology-c
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
-import { agentName, type ScreenBuildView } from './buildView.js';
+import { agentName, businessText, type ScreenBuildView } from './buildView.js';
 
 type T = (zh: string, en: string) => string;
 
@@ -34,8 +34,8 @@ export function ScreenStatusIcon({ status }: { status: PrototypeBuildScreenStatu
 
 /**
  * The progress bar of one screen. Nobody knows in advance how long a screen will be, so a
- * screen being written shows an open-ended bar plus the elements actually written, never a
- * made-up percentage.
+ * screen being written shows an empty track and the elements actually written, never a fill
+ * that would read as a percentage.
  */
 function ScreenProgress({ screen }: { screen: ScreenBuildView }) {
   const { t } = usePreferences();
@@ -44,9 +44,7 @@ function ScreenProgress({ screen }: { screen: ScreenBuildView }) {
       ? 'w-full bg-success'
       : screen.status === 'failed'
         ? 'w-full bg-destructive/60'
-        : screen.status === 'writing' || screen.status === 'reviewing'
-          ? 'w-2/3 animate-pulse bg-primary'
-          : 'w-0';
+        : null;
   return (
     <div className="flex items-center gap-2">
       <div
@@ -56,11 +54,13 @@ function ScreenProgress({ screen }: { screen: ScreenBuildView }) {
         {...(screen.status === 'done' ? { 'aria-valuenow': 100 } : {})}
         data-testid={`prototype-strip-progress-${screen.screenId}`}
       >
-        <div className={cn('h-full rounded-full', fill)} />
+        {fill && <div className={cn('h-full rounded-full', fill)} data-testid={`prototype-strip-fill-${screen.screenId}`} />}
       </div>
-      {screen.status === 'writing' && screen.writtenElements > 0 && (
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          {t(`已写 ${screen.writtenElements} 处`, `${screen.writtenElements} written`)}
+      {screen.status === 'writing' && (
+        <span className="shrink-0 text-[11px] text-muted-foreground" data-testid={`prototype-strip-written-${screen.screenId}`}>
+          {screen.writtenElements > 0
+            ? t(`已写 ${screen.writtenElements} 处`, `${screen.writtenElements} written`)
+            : t('正在写', 'Writing')}
         </span>
       )}
     </div>
@@ -115,7 +115,7 @@ export function ScreenStrip({
             )}
             data-testid={`prototype-strip-card-${screen.screenId}`}
             data-build-status={screen.status}
-            title={screen.purpose || undefined}
+            title={screen.purpose ? businessText(screen.purpose, locale) || undefined : undefined}
             onClick={() => onFocusScreen(screen.screenId)}
             onDoubleClick={() => onTryScreen(screen.screenId)}
           >

@@ -35,6 +35,7 @@ import {
   createPartialScreenThrottle,
   createPrototypeLiveTracker,
   latestPrototypeBuild,
+  splitPrototypeDocument,
   validateOntologySuite,
   type ModelCode,
   type OntologySuite,
@@ -113,6 +114,7 @@ import {
 import {
   PLAN_SCREENS_OPENAI_TOOL,
   PLAN_SCREENS_TOOL_NAME,
+  alignShellArgsWithPlan,
   createPrototypeBuildRun,
   parseResumePrototypeScreenAction,
   prototypeBuildSseEventName,
@@ -4766,6 +4768,12 @@ async function executeUnifiedTurnCore(
   let activeVisionFallbackNotice: string | undefined;
   let prototypeTurnDraft: PrototypeTurnDraft | undefined;
   let prototypeBuildRun: PrototypeBuildRun | undefined;
+  /** The revision now current for the prototype this run works on (what the user sees). */
+  const currentPrototypeRevisionId = (): string | undefined => {
+    // A first build has no prototype id in its draft; the session is bound to it once saved.
+    const id = prototypeTurnDraft?.prototypeId ?? (prototypeTurnDraft ? sessionState.targetId : undefined);
+    return id ? store.getPrototype(id)?.currentRevisionId || undefined : undefined;
+  };
   const resumeScreenAction =
     existing.agentKind === 'PROTOTYPE_CO_DESIGN' ? parseResumePrototypeScreenAction(synthesizedPrompt) : null;
 
@@ -5016,6 +5024,21 @@ async function executeUnifiedTurnCore(
       if (withdrawn) emitPrototypeLiveEvents([withdrawn]);
     };
 
+    /**
+     * The shared shell never declares its own screen list once a plan is committed: its
+     * sections follow the plan (S4), so the document and the plan cannot disagree.
+     */
+    const alignShellWithPlan = (call: ToolCall): ToolCall =>
+      call.name === 'init_prototype_shell'
+        ? {
+            ...call,
+            arguments: alignShellArgsWithPlan(
+              (call.arguments ?? {}) as Record<string, unknown>,
+              prototypeBuildRun?.plannedScreens() ?? null,
+            ) as JsonObject,
+          }
+        : call;
+
     const runSpawnSubagentsTool = async (
       parentCallId: string,
       rawArgs: Record<string, unknown>,
@@ -5111,7 +5134,7 @@ async function executeUnifiedTurnCore(
           const subExec = await executeUnifiedToolCall(
             store,
             sessionState,
-            subTc,
+            alignShellWithPlan(subTc),
             subHadErr,
             effectiveLocale,
             prototypeTurnDraft,
@@ -5214,48 +5237,64 @@ async function executeUnifiedTurnCore(
         }
         resetIdleTimer();
 
-        // 「继续这一屏」: redo exactly one planned screen with one helper; the lead does not run.
+        // 「继续这一屏」: redo exactly one planned screen with one helper; the lead does not run,
+        // not even when the screen cannot be found (then nothing is changed and the user is told).
         if (step === 0 && resumeScreenAction && prototypeBuildRun) {
-          const planned = prototypeBuildRun.resumeScreen(
-            resumeScreenAction.screenId,
-            prototypeTurnDraft?.workingHtml ?? '',
-          );
-          if (planned) {
-            const resumeCallId = `tc-resume-${Date.now().toString(36)}`;
-            const resumeArgs = {
-              tasks: [
-                {
-                  title: planned.screenName,
-                  screenId: planned.screenId,
-                  screenName: planned.screenName,
-                  ...(planned.screenType ? { screenType: planned.screenType } : {}),
-                  instruction: planned.purpose || planned.screenName,
-                },
-              ],
-            };
-            emit({
-              id: nextEventId(),
-              event: 'tool_call',
-              data: { id: resumeCallId, toolName: 'spawn_subagents', arguments: resumeArgs, step: 1 },
-            });
-            const resumed = await runSpawnSubagentsTool(resumeCallId, resumeArgs, 1);
-            allToolTraces.push(resumed.trace);
-            emit({ id: nextEventId(), event: 'tool_result', data: { trace: resumed.trace, step: 1 } });
-            syncPrototypeLiveDocument();
-            accumulatedText = resumed.isError
-              ? pickLocaleText(
-                  effectiveLocale,
-                  `「${planned.screenName}」这次还是没画完，可以在画布上再继续一次。`,
-                  `"${planned.screenName}" is still not finished; you can continue it again on the canvas.`,
-                )
-              : pickLocaleText(
-                  effectiveLocale,
-                  `「${planned.screenName}」画好了，其他屏没有改动。`,
-                  `"${planned.screenName}" is drawn; the other screens are unchanged.`,
-                );
+          const beforeHtml = prototypeTurnDraft?.workingHtml ?? '';
+          const planned = prototypeBuildRun.resumeScreen(resumeScreenAction.screenId, beforeHtml);
+          if (!planned) {
+            accumulatedText = pickLocaleText(
+              effectiveLocale,
+              '找不到要继续的这一屏（它可能已经被删掉或改了名），这次没有做任何改动。',
+              'The screen to continue could not be found (it may have been removed or renamed); nothing was changed.',
+            );
             emit({ id: nextEventId(), event: 'delta', data: { step: 1, text: accumulatedText } });
             break;
           }
+          const resumeCallId = `tc-resume-${Date.now().toString(36)}`;
+          const resumeArgs = {
+            tasks: [
+              {
+                title: planned.screenName,
+                screenId: planned.screenId,
+                screenName: planned.screenName,
+                ...(planned.screenType ? { screenType: planned.screenType } : {}),
+                instruction: planned.purpose || planned.screenName,
+              },
+            ],
+          };
+          emit({
+            id: nextEventId(),
+            event: 'tool_call',
+            data: { id: resumeCallId, toolName: 'spawn_subagents', arguments: resumeArgs, step: 1 },
+          });
+          const resumed = await runSpawnSubagentsTool(resumeCallId, resumeArgs, 1);
+          allToolTraces.push(resumed.trace);
+          emit({ id: nextEventId(), event: 'tool_result', data: { trace: resumed.trace, step: 1 } });
+          syncPrototypeLiveDocument();
+          // Say what really changed besides this screen, by comparing the document before and after.
+          const otherChanged = changedOtherScreens(beforeHtml, prototypeTurnDraft?.workingHtml ?? '', planned.screenId);
+          const othersText =
+            otherChanged.length === 0
+              ? pickLocaleText(effectiveLocale, '其他屏没有改动。', 'The other screens are unchanged.')
+              : pickLocaleText(
+                  effectiveLocale,
+                  `另外改动了：${otherChanged.map((n) => `「${n}」`).join('、')}。`,
+                  `Also changed: ${otherChanged.map((n) => `"${n}"`).join(', ')}.`,
+                );
+          accumulatedText = resumed.isError
+            ? pickLocaleText(
+                effectiveLocale,
+                `「${planned.screenName}」这次还是没画完，可以在画布上再继续一次。${othersText}`,
+                `"${planned.screenName}" is still not finished; you can continue it again on the canvas. ${othersText}`,
+              )
+            : pickLocaleText(
+                effectiveLocale,
+                `「${planned.screenName}」画好了。${othersText}`,
+                `"${planned.screenName}" is drawn. ${othersText}`,
+              );
+          emit({ id: nextEventId(), event: 'delta', data: { step: 1, text: accumulatedText } });
+          break;
         }
 
         const systemPrompt = buildSystemPromptForSession(
@@ -5507,12 +5546,12 @@ async function executeUnifiedTurnCore(
                             : await executeUnifiedToolCall(
                                 store,
                                 sessionState,
-                                {
+                                alignShellWithPlan({
                                   type: 'toolCall',
                                   id: nestedCallId,
                                   name: nestedToolName,
                                   arguments: nestedArgs as JsonObject,
-                                },
+                                }),
                                 hadValidatorError,
                                 effectiveLocale,
                                 prototypeTurnDraft,
@@ -5594,7 +5633,7 @@ async function executeUnifiedTurnCore(
                 : await executeUnifiedToolCall(
                     store,
                     sessionState,
-                    tc,
+                    alignShellWithPlan(tc),
                     hadValidatorError,
                     effectiveLocale,
                     prototypeTurnDraft,
@@ -5978,7 +6017,7 @@ async function executeUnifiedTurnCore(
     }
 
     prototypeBuildRun?.finish('succeeded');
-    const prototypeBuildSnapshot = prototypeBuildRun?.snapshot();
+    const prototypeBuildSnapshot = prototypeBuildRun?.snapshot({ revisionId: currentPrototypeRevisionId() });
     const assistantRecord: AgentSessionMessage = {
       id: assistantMsgId,
       runId: turnRunId,
@@ -6087,7 +6126,7 @@ async function executeUnifiedTurnCore(
 
     if (err instanceof SessionStreamAbortedError && err.kind === 'USER_ABORT') {
       prototypeBuildRun?.finish('cancelled');
-      const cancelledBuild = prototypeBuildRun?.snapshot();
+      const cancelledBuild = prototypeBuildRun?.snapshot({ revisionId: currentPrototypeRevisionId() });
       const cancelledAssistantMsg: AgentSessionMessage = {
         id: assistantMsgId,
         runId: turnRunId,
@@ -6267,7 +6306,7 @@ async function executeUnifiedTurnCore(
     }
 
     prototypeBuildRun?.finish('failed');
-    const failedBuild = prototypeBuildRun?.snapshot();
+    const failedBuild = prototypeBuildRun?.snapshot({ revisionId: currentPrototypeRevisionId() });
     const errorAssistantMsg: AgentSessionMessage = {
       id: nextAgentMessageId('err'),
       runId: turnRunId,
@@ -6541,6 +6580,21 @@ export async function* runUnifiedAgentSessionStream(
 
   const run = launchActiveRunInSlot(store, slot, input.sessionId, turnInput);
   yield* subscribeToBackgroundRun(run, clientSignal);
+}
+
+/** Names of the screens other than `exceptScreenId` that differ between two documents. */
+function changedOtherScreens(beforeHtml: string, afterHtml: string, exceptScreenId: string): string[] {
+  const before = new Map(splitPrototypeDocument(beforeHtml).screens.map((sc) => [sc.screenId, sc]));
+  const after = splitPrototypeDocument(afterHtml).screens;
+  const changed: string[] = [];
+  for (const sc of after) {
+    if (sc.screenId === exceptScreenId) continue;
+    if (before.get(sc.screenId)?.html !== sc.html) changed.push(sc.screenName);
+  }
+  for (const [id, sc] of before) {
+    if (id !== exceptScreenId && !after.some((a) => a.screenId === id)) changed.push(sc.screenName);
+  }
+  return changed;
 }
 
 function resolveEffectiveStructuredAction(

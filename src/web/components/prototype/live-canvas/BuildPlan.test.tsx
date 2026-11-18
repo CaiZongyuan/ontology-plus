@@ -17,7 +17,7 @@ import { PrototypeLiveCanvas, type PrototypeLiveCanvasProps } from './PrototypeL
 
 const PLAN = [
   { screenId: 'SCR-HOME', screenName: '工作台首页', purpose: '店长一进来就知道今天要处理什么' },
-  { screenId: 'SCR-ORDERS', screenName: '订货单列表', purpose: '查找和跟进订货单' },
+  { screenId: 'SCR-ORDERS', screenName: '订货单列表', purpose: '查找和跟进订货单（SCR-ORDERS）' },
   { screenId: 'SCR-REFUND', screenName: '退款审批', purpose: '店长决定是否同意退款' },
 ];
 
@@ -124,6 +124,24 @@ describe('Build Plan on the live canvas (#90)', () => {
     expect(q('artboard-retry-btn-SCR-ORDERS')).toBeNull();
     expect(q('prototype-build-log-resume-SCR-REFUND')).not.toBeNull();
     expect(checkBusinessViewMarkup(host.innerHTML, { ignoreTestIds: ['prototype-canvas-world'] })).toEqual([]);
+  });
+
+  it('a screen being written shows no fill that could read as a percentage; queued shows no owner', async () => {
+    const t = createPrototypeBuildTracker();
+    t.start();
+    t.plan(PLAN, false);
+    t.screen('SCR-HOME', { status: 'writing', agent: 1 });
+    t.screen('SCR-ORDERS', { status: 'writing', agent: 2, writtenElements: 3 });
+    t.screen('SCR-REFUND', { status: 'queued' });
+    await render({ documentHtml: '', build: t.state(), busy: true });
+    expect(q('prototype-strip-fill-SCR-HOME')).toBeNull();
+    expect(q('prototype-strip-fill-SCR-ORDERS')).toBeNull();
+    expect(q('prototype-strip-written-SCR-HOME')?.textContent).toBe('正在写');
+    expect(q('prototype-strip-written-SCR-ORDERS')?.textContent).toBe('已写 3 处');
+    expect(q('prototype-strip-status-SCR-REFUND')?.textContent).toBe('排队中');
+    expect(q('prototype-artboard-owner-SCR-REFUND')?.textContent).toBe('排队中');
+    // The purpose tooltip is business text too.
+    expect(q('prototype-strip-card-SCR-ORDERS')?.getAttribute('title')).not.toContain('SCR-');
   });
 
   it('「继续这一屏」 from the strip and from the log asks for exactly that screen; none while a run is going', async () => {

@@ -524,6 +524,7 @@ export async function runParallelSubagents(
       let subThinking = '';
       let subText = '';
       let hadValidatorError = false;
+      let ownWriteRejected = false;
       let lastEmitMs = 0;
       let lastPartialStreamLen = 0;
 
@@ -657,8 +658,9 @@ export async function runParallelSubagents(
         for (const tc of toolCalls) {
           options.onActivity();
           const exec = await options.executeSubagentToolCall(tc, lane, hadValidatorError);
-          if (!exec.isError && writesOwnScreen(tc, spec)) {
-            lane.wroteScreen = true;
+          if (writesOwnScreen(tc, spec)) {
+            if (exec.isError) ownWriteRejected = true;
+            else lane.wroteScreen = true;
           }
           if (exec.isError) {
             hadValidatorError = true;
@@ -693,7 +695,8 @@ export async function runParallelSubagents(
       lane.thinking = subThinking.slice(-4000);
       // A screen lane is finished only when its own screen was written and passed the check.
       if (spec.screenId?.trim() && !lane.wroteScreen) {
-        throw new ScreenNotFinishedError(hadValidatorError ? 'validation_failed' : 'not_written');
+        // "Did not pass the check" only when this lane's own screen write was rejected.
+        throw new ScreenNotFinishedError(ownWriteRejected ? 'validation_failed' : 'not_written');
       }
       lane.output =
         subText.trim() ||
@@ -724,12 +727,14 @@ export async function runParallelSubagents(
     }
   };
 
-  // Each task belongs to one helper from the start (task i → helper i mod n), so the owner the
-  // canvas shows for a queued screen is the helper that will really draw it.
+  // A shared pool: whichever helper is free picks up the next task (its owner from then on).
+  let cursor = 0;
   const workers = Array.from({ length: workerCount }, async (_, idx) => {
     const workerSlot = idx + 1;
-    for (let taskIdx = idx; taskIdx < tasks.length; taskIdx += workerCount) {
-      await runSingleTask(taskIdx, workerSlot);
+    while (cursor < tasks.length) {
+      const myTaskIdx = cursor;
+      cursor += 1;
+      await runSingleTask(myTaskIdx, workerSlot);
     }
   });
 
