@@ -233,3 +233,27 @@ export {
   type PrototypeCanvasArtboard,
   type PrototypeCanvasModel,
 } from './lib/prototype-live.js';
+
+export {
+  PROTOTYPE_BUILD_PHASES,
+  emptyPrototypeBuildState,
+  applyPrototypeBuildEvent,
+  isPrototypeBuildEvent,
+  hasPrototypeBuildPlan,
+  prototypeBuildScreen,
+  createPrototypeBuildTracker,
+  readStreamingBuildPlan,
+  countWrittenElements,
+  type PrototypeBuildScreenStatus,
+  type PrototypeBuildPhaseId,
+  type PrototypeBuildPhaseStatus,
+  type PrototypeBuildFailureCode,
+  type PrototypeBuildAgent,
+  type PrototypeBuildPlanItem,
+  type PrototypeBuildScreen,
+  type PrototypeBuildLogKind,
+  type PrototypeBuildLogEntry,
+  type PrototypeBuildState,
+  type PrototypeBuildEvent,
+  type PrototypeBuildTracker,
+} from './lib/prototype-build.js';

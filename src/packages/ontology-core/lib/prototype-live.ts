@@ -6,6 +6,14 @@
  * hand each artboard the body it should show). Nothing here touches the DOM.
  */
 
+import {
+  applyPrototypeBuildEvent,
+  emptyPrototypeBuildState,
+  isPrototypeBuildEvent,
+  type PrototypeBuildEvent,
+  type PrototypeBuildState,
+} from './prototype-build.js';
+
 export type PrototypeScreenStatus = 'queued' | 'streaming' | 'ready';
 
 export interface PrototypeScreenStub {
@@ -34,6 +42,7 @@ export interface PrototypeDocumentFrame {
 }
 
 export type PrototypeLiveEvent =
+  | PrototypeBuildEvent
   | { kind: 'frame'; seq: number; frame: PrototypeDocumentFrame }
   | {
       kind: 'screen';
@@ -531,6 +540,8 @@ export interface PrototypeLiveState {
   /** The screen the latest real event touched; the follow camera aims here. */
   focusScreenId?: string;
   focusSeq: number;
+  /** The run's Build Plan and per-screen build states (#90), once the run has a plan. */
+  build?: PrototypeBuildState;
 }
 
 export function emptyPrototypeLiveState(): PrototypeLiveState {
@@ -541,6 +552,11 @@ export function applyPrototypeLiveEvent(
   state: PrototypeLiveState,
   event: PrototypeLiveEvent,
 ): PrototypeLiveState {
+  if (isPrototypeBuildEvent(event)) {
+    const prevBuild = state.build ?? emptyPrototypeBuildState();
+    const build = applyPrototypeBuildEvent(prevBuild, event);
+    return build === state.build ? state : { ...state, build };
+  }
   if (event.kind === 'frame') {
     if (event.seq <= state.frameSeq) return state;
     return { ...state, frame: event.frame, frameSeq: event.seq };
@@ -588,10 +604,15 @@ export interface PrototypeCanvasModel {
   screens: PrototypeCanvasArtboard[];
 }
 
-/** Folds live per-screen state over a saved document into one artboard per screen. */
+/**
+ * Folds live per-screen state over a saved document into one artboard per screen. With a Build
+ * Plan, the planned screens come first in plan order, and a planned screen nothing has been
+ * written for yet is a blank artboard.
+ */
 export function buildPrototypeCanvasModel(
   documentHtml: string,
   live?: PrototypeLiveState | null,
+  build?: PrototypeBuildState | null,
 ): PrototypeCanvasModel {
   const saved = splitPrototypeDocument(documentHtml ?? '');
   const frame = live?.frame ?? saved.frame;
@@ -607,26 +628,31 @@ export function buildPrototypeCanvasModel(
   };
   // The frame lists the document's screens; beyond those, only screens still being written show
   // (a screen the latest frame dropped is gone, not a ghost).
+  const plan = build?.plan ?? [];
+  for (const item of plan) push(item.screenId);
   for (const stub of frame.screens) push(stub.screenId);
   for (const id of live?.arrival ?? []) {
     if (live?.screens[id]?.status === 'streaming') push(id);
   }
 
   const stubById = new Map(frame.screens.map((s) => [s.screenId, s]));
+  const planById = new Map(plan.map((p) => [p.screenId, p]));
   const screens: PrototypeCanvasArtboard[] = [];
   for (const id of order) {
     const liveScreen = live?.screens[id];
     const savedScreen = savedById.get(id);
     const stub = stubById.get(id);
+    const planned = planById.get(id);
     const html = liveScreen?.html ?? savedScreen?.html;
-    if (html === undefined && !stub) continue;
-    const base = liveScreen ?? savedScreen ?? stub!;
+    if (html === undefined && !stub && !planned) continue;
+    const base = liveScreen ?? savedScreen ?? stub;
     screens.push({
       screenId: id,
-      screenName: base.screenName,
-      screenType: base.screenType,
+      screenName: planned?.screenName || base?.screenName || id,
+      screenType: base?.screenType ?? planned?.screenType ?? 'LIST',
       status: liveScreen?.status ?? savedScreen?.status ?? stub?.status ?? 'queued',
-      bodyHtml: composeArtboardBody(frame, id, html ?? ''),
+      // Nothing written yet (or a failed write was taken back): a blank artboard.
+      bodyHtml: html ? composeArtboardBody(frame, id, html) : '',
       ...(liveScreen?.css ? { css: liveScreen.css } : {}),
     });
   }
