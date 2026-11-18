@@ -167,6 +167,11 @@ The single Prototype Revision in an Ontology Project that the user has approved 
 _Avoid_: Latest version, active prototype
 _Shown to business users as_: 已确认的原型 (Confirmed prototype)
 
+**Ontology Synthesis (本体合成)**:
+The derivation of an Ontology Project's Ontology Suite from its confirmed requirements specification and Confirmed Revision in the Business Model step, covering the full confirmed requirement scope while aligning UI bindings and interactions with the confirmed prototype.
+_Avoid_: 本体萃取, Ontology Extraction, 模板套用, 逆向工程
+_Shown to business users as_: 生成业务模型 (Generate business model)
+
 **Visual Reference (视觉参考)**:
 A screenshot of a real production interface that the user picks or supplies to show the agent the look they want.
 _Avoid_: Inspo, inspiration image, mockup
@@ -233,7 +238,7 @@ _Avoid_: Custom webhook, REST wrapper
 
 **Ontology Extraction (本体萃取 / 存量系统本体化)**:
 The process of distilling an Ontology Suite from an existing business system's documentation, schemas, and interfaces to upgrade legacy capabilities into Agent-native Skills, MCP tools, and intelligent workflows.
-_Avoid_: 逆向工程, 本体逆向, 逆向建模, Reverse engineering
+_Avoid_: 逆向工程, 本体逆向, 逆向建模, Reverse engineering, 本体合成, 生成业务模型
 
 **Extraction Candidate (萃取候选)**:
 A single model element proposed by an Ontology Extraction that has not yet entered the Ontology Suite.
