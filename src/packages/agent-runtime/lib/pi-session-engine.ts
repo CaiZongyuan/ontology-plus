@@ -34,6 +34,7 @@ import {
   checkSqlGrounding,
   createPartialScreenThrottle,
   createPrototypeLiveTracker,
+  latestPrototypeBuild,
   validateOntologySuite,
   type ModelCode,
   type OntologySuite,
@@ -113,7 +114,6 @@ import {
   PLAN_SCREENS_OPENAI_TOOL,
   PLAN_SCREENS_TOOL_NAME,
   createPrototypeBuildRun,
-  latestPersistedPrototypeBuild,
   parseResumePrototypeScreenAction,
   prototypeBuildSseEventName,
   type PrototypeBuildRun,
@@ -4972,7 +4972,7 @@ async function executeUnifiedTurnCore(
     prototypeBuildRun = prototypeTurnDraft
       ? createPrototypeBuildRun({
           locale: effectiveLocale,
-          base: resumeScreenAction ? latestPersistedPrototypeBuild(existing.messages) : null,
+          base: resumeScreenAction ? latestPrototypeBuild(existing.messages) : null,
           emit: (buildEvent) =>
             emit({
               id: nextEventId(),
@@ -5216,7 +5216,10 @@ async function executeUnifiedTurnCore(
 
         // 「继续这一屏」: redo exactly one planned screen with one helper; the lead does not run.
         if (step === 0 && resumeScreenAction && prototypeBuildRun) {
-          const planned = prototypeBuildRun.resumeScreen(resumeScreenAction.screenId);
+          const planned = prototypeBuildRun.resumeScreen(
+            resumeScreenAction.screenId,
+            prototypeTurnDraft?.workingHtml ?? '',
+          );
           if (planned) {
             const resumeCallId = `tc-resume-${Date.now().toString(36)}`;
             const resumeArgs = {

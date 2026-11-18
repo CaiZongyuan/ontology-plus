@@ -12,6 +12,7 @@ import {
   hasPrototypeBuildPlan,
   prototypeBuildScreen,
   readStreamingBuildPlan,
+  splitPrototypeDocument,
   type PrototypeBuildEvent,
   type PrototypeBuildPlanItem,
   type PrototypeBuildState,
@@ -57,6 +58,25 @@ export const PLAN_SCREENS_OPENAI_TOOL: OpenAiFunctionTool = {
   },
 };
 
+/** A Build Plan reconstructed from a saved document: its screens, the drawn ones done. */
+function planFromDocument(documentHtml: string): PrototypeBuildState | null {
+  const { screens } = splitPrototypeDocument(documentHtml);
+  if (screens.length === 0) return null;
+  const tracker = createPrototypeBuildTracker();
+  tracker.start();
+  tracker.plan(
+    screens.map((s) => ({ screenId: s.screenId, screenName: s.screenName, purpose: '', screenType: s.screenType })),
+    false,
+  );
+  tracker.phase('plan', 'done');
+  for (const s of screens) {
+    if (s.status === 'ready') {
+      tracker.screen(s.screenId, { status: 'done', writtenElements: countWrittenElements(s.html) });
+    }
+  }
+  return tracker.state();
+}
+
 export type PrototypeBuildRunOutcome = 'succeeded' | 'failed' | 'cancelled';
 
 export interface PrototypeBuildRun {
@@ -76,8 +96,12 @@ export interface PrototypeBuildRun {
   observeScreenStream(screenId: string, partialHtml: string): void;
   /** A screen was written and passed the anchor check. */
   observeScreenWritten(screenId: string, html: string): void;
-  /** The user asked to continue one screen; returns its plan entry, or null if it is not planned. */
-  resumeScreen(screenId: string): PrototypeBuildPlanItem | null;
+  /**
+   * The user asked to continue one screen; returns its plan entry, or null if neither the
+   * persisted plan nor the saved document has that screen. A prototype built before plans
+   * existed gets its plan from the screens its document already has.
+   */
+  resumeScreen(screenId: string, documentHtml?: string): PrototypeBuildPlanItem | null;
   /** The run ended: unfinished screens fail with a reason; phases that did not happen are skipped. */
   finish(outcome: PrototypeBuildRunOutcome): void;
   /** The state to persist with the run (undefined when this run had no plan). */
@@ -245,8 +269,9 @@ export function createPrototypeBuildRun(options: {
       send(tracker.screen(screenId, { writtenElements: countWrittenElements(html) }));
     },
 
-    resumeScreen(screenId) {
-      const base = options.base;
+    resumeScreen(screenId, documentHtml) {
+      const base =
+        options.base?.plan.some((p) => p.screenId === screenId) ? options.base : planFromDocument(documentHtml ?? '');
       const item = base?.plan.find((p) => p.screenId === screenId);
       if (!base || !item) return null;
       ensureStarted(base);
@@ -326,17 +351,6 @@ export function prototypeBuildSseEventName(event: PrototypeBuildEvent): Prototyp
     case 'build_log':
       return 'prototype_build_log';
   }
-}
-
-/** The latest Build Plan persisted in a session's messages, for continuing one screen. */
-export function latestPersistedPrototypeBuild(
-  messages: readonly { role: string; prototypeBuild?: PrototypeBuildState }[],
-): PrototypeBuildState | undefined {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const build = messages[i]!.prototypeBuild;
-    if (build && hasPrototypeBuildPlan(build)) return build;
-  }
-  return undefined;
 }
 
 /** `[ACTION:RESUME_PROTOTYPE_SCREEN {"screenId":"…"}]`: continue exactly one planned screen. */

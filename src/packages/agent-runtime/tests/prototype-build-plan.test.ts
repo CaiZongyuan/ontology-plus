@@ -377,3 +377,20 @@ describe('runParallelSubagents: a screen lane is done only when its screen was w
     expect(lane).toMatchObject({ status: 'DONE', wroteScreen: true });
   });
 });
+
+describe('「继续这一屏」 on a prototype built before Build Plans existed', () => {
+  it('derives the plan from the saved document and continues just that screen', () => {
+    const events: PrototypeBuildEvent[] = [];
+    const run = createPrototypeBuildRun({ locale: 'zh-CN', emit: (e) => events.push(e), base: null });
+    const doc = `<html><body><main>
+<section data-screen-id="SCR-A" data-screen-name="首页" data-screen-status="ready"><button data-element-id="EL-A">x</button></section>
+<section data-screen-id="SCR-B" data-screen-name="审批" data-screen-status="queued"></section>
+</main></body></html>`;
+    expect(run.resumeScreen('SCR-Z', doc)).toBeNull();
+    expect(run.resumeScreen('SCR-B', doc)).toMatchObject({ screenId: 'SCR-B', screenName: '审批' });
+    const state = run.snapshot()!;
+    expect(state.plan.map((p) => p.screenId)).toEqual(['SCR-A', 'SCR-B']);
+    expect(prototypeBuildScreen(state, 'SCR-A')).toMatchObject({ status: 'done', writtenElements: 1 });
+    expect(prototypeBuildScreen(state, 'SCR-B').status).toBe('queued');
+  });
+});

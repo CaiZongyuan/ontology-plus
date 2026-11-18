@@ -240,6 +240,7 @@ export {
   applyPrototypeBuildEvent,
   isPrototypeBuildEvent,
   hasPrototypeBuildPlan,
+  latestPrototypeBuild,
   prototypeBuildScreen,
   createPrototypeBuildTracker,
   readStreamingBuildPlan,

@@ -272,3 +272,15 @@ export function readStreamingBuildPlan(args: unknown): PrototypeBuildPlanItem[] 
 export function countWrittenElements(html: string): number {
   return (html.match(/\sdata-element-id\s*=/g) ?? []).length;
 }
+
+/** The latest Build Plan persisted with a session's runs (the newest message that carries one). */
+export function latestPrototypeBuild(
+  messages: readonly { prototypeBuild?: PrototypeBuildState }[] | null | undefined,
+): PrototypeBuildState | undefined {
+  const list = messages ?? [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const build = list[i]!.prototypeBuild;
+    if (hasPrototypeBuildPlan(build)) return build;
+  }
+  return undefined;
+}

@@ -2377,6 +2377,11 @@ function consumeAgentSessionSseBody(
           break;
         case 'prototype_frame':
         case 'prototype_screen':
+        case 'prototype_build_start':
+        case 'prototype_plan':
+        case 'prototype_build_screen':
+        case 'prototype_phase':
+        case 'prototype_build_log':
           callbacks.onPrototypeLive?.(parsed as unknown as PrototypeLiveEvent);
           break;
         case 'artifact':

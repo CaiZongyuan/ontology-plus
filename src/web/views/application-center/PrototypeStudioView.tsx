@@ -10,7 +10,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { BUSINESS_VOCABULARY } from '../../../packages/business-vocabulary/index.js';
-import { extractMuFromPrototypeHtml } from '../../../packages/ontology-core/index.js';
+import { extractMuFromPrototypeHtml, latestPrototypeBuild } from '../../../packages/ontology-core/index.js';
 import type { InteractivePrototype } from '../../../packages/workspace-store/index.js';
 import {
   apiConfirmPrototypeRevision,
@@ -205,6 +205,8 @@ export function PrototypeStudioView({
       ? liveSessionDrafts[unboundLiveSession.id]
       : undefined;
   const activeRunningAnchor = resolveLiveRunningPrototypeAnchor(coDesignSession, liveDraft);
+  // The Build Plan as the latest build left it (#90): failed screens keep 「继续这一屏」 after the run.
+  const persistedBuild = latestPrototypeBuild(coDesignSession?.messages);
   const postRunReview =
     activeRunningAnchor === null
       ? resolvePostRunPrototypeReview(proto, coDesignSession, dismissedRevisionByPrototype)
@@ -682,6 +684,7 @@ export function PrototypeStudioView({
           selectedPrototypeId={canvasProto.id}
           pendingLive={canvasProto === pendingLivePrototype}
           liveState={liveDraft?.prototypeLive ?? null}
+          persistedBuild={persistedBuild ?? null}
           confirmedRevision={confirmedRevision}
           onSelectPrototype={(id) => setSelectedProtoId(id)}
           onPrototypesUpdated={(payload) => {
@@ -768,14 +771,12 @@ export function PrototypeStudioView({
               const targetSession = await ensurePrototypeCoDesignSession(project.id, savedProtoId);
               setActiveSessionId(targetSession.id);
               useAgentPanelStore.getState().revealPanel();
+              // 「继续这一屏」 redoes exactly this planned screen with one helper (#90).
+              const said = locale === 'en-US' ? `Continue screen "${screenName}"` : `继续画「${screenName}」`;
               await startSessionAgentRun({
                 sessionId: targetSession.id,
-                prompt:
-                  locale === 'en-US'
-                    ? `Please complete screen "${screenName}" (${screenId}) using upsert_prototype_screen while keeping all other screens unchanged.`
-                    : `请单独补全并完善分屏「${screenName}」（${screenId}），保持其他已完成分屏不变。`,
-                displayTitle:
-                  locale === 'en-US' ? `Complete screen "${screenName}"` : `继续生成分屏「${screenName}」`,
+                prompt: `[ACTION:RESUME_PROTOTYPE_SCREEN ${JSON.stringify({ screenId })}] ${said}`,
+                displayTitle: said,
               });
             })();
           }}
