@@ -159,3 +159,10 @@ export {
   type SubagentTaskSpec,
   type CodemodeExecutionSummary,
 } from './lib/codemode-subagent.js';
+
+export {
+  createCoalescingRunEventBuffer,
+  prototypeLiveCoalesceKey,
+  type CoalescingRunEventBuffer,
+  type RunEventLike,
+} from './lib/run-event-buffer.js';

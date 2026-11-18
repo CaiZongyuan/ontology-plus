@@ -261,9 +261,24 @@ describe('Code Mode (QuickJS) & 3-Way Parallel Multi-Agent Prototype Co-Design',
       expect(peakSubagentConcurrency).toBeGreaterThanOrEqual(2);
       expect(peakSubagentConcurrency).toBeLessThanOrEqual(3);
 
-      // Emitted live prototype_preview and subagent_update events during streaming
-      const previewEvents = turn.events.filter((e) => e.event === 'prototype_preview');
-      expect(previewEvents.length).toBeGreaterThanOrEqual(2);
+      // Live building streams per-screen deltas (#89): each event carries exactly one screen,
+      // never the whole document, and every screen gets its own deltas.
+      expect(turn.events.some((e) => (e.event as string) === 'prototype_preview')).toBe(false);
+      const screenEvents = turn.events.filter((e) => e.event === 'prototype_screen');
+      expect(new Set(screenEvents.map((e) => e.data.screenId))).toEqual(
+        new Set(['SCR-S1', 'SCR-S2', 'SCR-S3', 'SCR-S4']),
+      );
+      for (const ev of screenEvents) {
+        const html = String(ev.data.html);
+        expect(html).not.toMatch(/<!DOCTYPE|<html|<head/i);
+        expect(html.match(/data-screen-id=/g)).toHaveLength(1);
+        expect(html).toContain(`data-screen-id="${String(ev.data.screenId)}"`);
+      }
+      const seqs = turn.events
+        .filter((e) => e.event === 'prototype_screen' || e.event === 'prototype_frame')
+        .map((e) => Number(e.data.seq));
+      expect(seqs).toEqual([...seqs].sort((x, y) => x - y));
+      expect(turn.events.some((e) => e.event === 'prototype_frame')).toBe(true);
       const subagentEvents = turn.events.filter((e) => e.event === 'subagent_update');
       expect(subagentEvents.length).toBeGreaterThanOrEqual(4);
 

@@ -32,9 +32,11 @@ import {
 import {
   MODEL_CODES,
   checkSqlGrounding,
+  createPrototypeLiveTracker,
   validateOntologySuite,
   type ModelCode,
   type OntologySuite,
+  type PrototypeLiveEvent,
 } from '../../ontology-core/index.js';
 import {
   handleOntologyMcpRequest,
@@ -83,7 +85,6 @@ import {
   editPrototypeAnchor,
   initPrototypeShell,
   listPrototypeAnchors,
-  previewPartialPrototypeScreen,
   readPrototypeAnchor,
   rewritePrototypePage,
   upsertPrototypeScreen,
@@ -102,6 +103,11 @@ import {
   runParallelSubagents,
   type SubagentTaskSpec,
 } from './codemode-subagent.js';
+import {
+  createCoalescingRunEventBuffer,
+  prototypeLiveCoalesceKey,
+  type CoalescingRunEventBuffer,
+} from './run-event-buffer.js';
 import {
   buildProjectDataGrounding,
   describeGroundingRefusal,
@@ -710,7 +716,7 @@ interface ActiveBackgroundSessionRun {
   readonly runId: string;
   readonly sessionId: string;
   readonly controller: AbortController;
-  readonly bufferedEvents: UnifiedAgentSseEvent[];
+  readonly bufferedEvents: CoalescingRunEventBuffer<UnifiedAgentSseEvent>;
   readonly subscribers: Set<() => void>;
   done: boolean;
   completionPromise: Promise<void>;
@@ -773,7 +779,7 @@ export function getLiveAgentSessionStatus(
     active: Boolean(activeRun),
     queuedCount: slot ? slot.queue.filter((q) => !q.cancelled).length : 0,
     ...(activeRun ? { runId: activeRun.runId } : {}),
-    bufferedEventCount: activeRun ? activeRun.bufferedEvents.length : 0,
+    bufferedEventCount: activeRun ? activeRun.bufferedEvents.size() : 0,
   };
 }
 
@@ -870,7 +876,8 @@ export type UnifiedAgentSseEventType =
   | 'tool_call'
   | 'tool_result'
   | 'subagent_update'
-  | 'prototype_preview'
+  | 'prototype_frame'
+  | 'prototype_screen'
   | 'artifact'
   | 'ask_user'
   | 'step_handoff'
@@ -4844,47 +4851,64 @@ async function executeUnifiedTurnCore(
       multiAgentConcurrency: effectiveConcurrency,
     });
     const resolvedMaxTokens = Math.min(built.selectedModel.maxTokens || 32768, 32768);
-    let lastEmittedPreviewHtml = prototypeTurnDraft?.workingHtml ?? '';
-    const livePartialScreens = new Map<string, PartialPrototypeScreenInput>();
-    let lastThrottledPreviewMs = 0;
+    // Live prototype building (spec #87): per-screen deltas, never the whole document. The
+    // tracker starts from what the client already shows (the saved revision being edited).
+    const prototypeLiveTracker = createPrototypeLiveTracker();
+    prototypeLiveTracker.reset(prototypeTurnDraft?.workingHtml ?? '');
+    const streamingPrototypeScreens = new Set<string>();
+    const lastPartialScreenEmitMs = new Map<string, number>();
+    const PARTIAL_SCREEN_THROTTLE_MS = 150;
 
-    const composeLivePreviewHtml = (): string => {
-      if (!prototypeTurnDraft) return '';
-      let composite = prototypeTurnDraft.workingHtml;
-      for (const partial of livePartialScreens.values()) {
-        composite = previewPartialPrototypeScreen(composite, partial, {
-          locale: effectiveLocale,
+    const emitPrototypeLiveEvents = (events: readonly PrototypeLiveEvent[]) => {
+      if (!prototypeTurnDraft) return;
+      for (const liveEvent of events) {
+        emit({
+          id: nextEventId(),
+          event: liveEvent.kind === 'frame' ? 'prototype_frame' : 'prototype_screen',
+          data: {
+            runId: turnRunId,
+            ...(prototypeTurnDraft.prototypeId ? { prototypeId: prototypeTurnDraft.prototypeId } : {}),
+            ...liveEvent,
+          },
         });
       }
-      return composite;
     };
 
-    const emitPrototypePreviewIfChanged = (
-      focusAnchor?: PrototypeTargetAnchor,
-      options?: { throttled?: boolean },
-    ) => {
+    /** After a tool changed the working document: send what changed, screen by screen. */
+    const syncPrototypeLiveDocument = () => {
       if (!prototypeTurnDraft) return;
-      if (options?.throttled) {
-        const now = Date.now();
-        if (now - lastThrottledPreviewMs < 280) return;
-        lastThrottledPreviewMs = now;
-      }
-      const curHtml = composeLivePreviewHtml();
-      if (!curHtml.trim() || curHtml === lastEmittedPreviewHtml) return;
-      lastEmittedPreviewHtml = curHtml;
-      const anchorSummary = listPrototypeAnchors(curHtml);
-      emit({
-        id: nextEventId(),
-        event: 'prototype_preview',
-        data: {
-          runId: turnRunId,
-          ...(prototypeTurnDraft.prototypeId ? { prototypeId: prototypeTurnDraft.prototypeId } : {}),
-          prototypeName: prototypeTurnDraft.prototypeName,
-          workingHtml: curHtml,
-          screenCount: anchorSummary.screens.length,
-          ...(focusAnchor ? { targetAnchor: focusAnchor } : {}),
-        },
+      emitPrototypeLiveEvents(
+        prototypeLiveTracker.observeDocument(prototypeTurnDraft.workingHtml, {
+          streamingScreenIds: streamingPrototypeScreens,
+        }),
+      );
+    };
+
+    /** While a screen's HTML streams in as tool-call arguments: heal and send that one screen. */
+    const streamPartialPrototypeScreen = (partial: PartialPrototypeScreenInput) => {
+      if (!prototypeTurnDraft) return;
+      const screenId = partial.screenId.trim();
+      if (!screenId) return;
+      streamingPrototypeScreens.add(screenId);
+      const nowMs = Date.now();
+      if (nowMs - (lastPartialScreenEmitMs.get(screenId) ?? 0) < PARTIAL_SCREEN_THROTTLE_MS) return;
+      lastPartialScreenEmitMs.set(screenId, nowMs);
+      const liveEvent = prototypeLiveTracker.observePartialScreen({
+        screenId,
+        ...(partial.screenName ? { screenName: partial.screenName } : {}),
+        ...(partial.screenType ? { screenType: partial.screenType } : {}),
+        partialHtml: partial.partialScreenHtml,
+        ...(partial.extraCss ? { css: partial.extraCss } : {}),
       });
+      if (liveEvent) emitPrototypeLiveEvents([liveEvent]);
+    };
+
+    /** A screen's write ended (landed or rejected): the document version is the truth again. */
+    const endPartialPrototypeScreen = (screenId: string | undefined) => {
+      const sid = screenId?.trim();
+      if (!sid) return;
+      streamingPrototypeScreens.delete(sid);
+      lastPartialScreenEmitMs.delete(sid);
     };
 
     const runSpawnSubagentsTool = async (
@@ -4959,12 +4983,8 @@ async function executeUnifiedTurnCore(
             },
           });
         },
-        onPartialScreenStream: (partial, lane) => {
-          livePartialScreens.set(partial.screenId, partial);
-          emitPrototypePreviewIfChanged(
-            lane.targetAnchor ?? { screenId: partial.screenId, label: partial.screenName },
-            { throttled: true },
-          );
+        onPartialScreenStream: (partial) => {
+          streamPartialPrototypeScreen(partial);
         },
         executeSubagentToolCall: async (subTc, lane, subHadErr) => {
           resetIdleTimer();
@@ -4994,13 +5014,11 @@ async function executeUnifiedTurnCore(
               ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
             },
           );
-          if (!subExec.isError && subTc.name === 'upsert_prototype_screen') {
-            const finishedSid =
+          if (subTc.name === 'upsert_prototype_screen') {
+            endPartialPrototypeScreen(
               (typeof subArgs.screenId === 'string' && subArgs.screenId.trim()) ||
-              lane.targetAnchor?.screenId;
-            if (finishedSid) {
-              livePartialScreens.delete(finishedSid);
-            }
+                lane.targetAnchor?.screenId,
+            );
           }
           allToolTraces.push(subExec.trace);
           emit({
@@ -5011,7 +5029,7 @@ async function executeUnifiedTurnCore(
               step: stepNum,
             },
           });
-          emitPrototypePreviewIfChanged(subExec.trace.targetAnchor ?? subAnchor);
+          syncPrototypeLiveDocument();
           if (subExec.artifact) {
             allArtifacts.push(subExec.artifact);
             emit({
@@ -5125,20 +5143,13 @@ async function executeUnifiedTurnCore(
               const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
               const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
               if (pSid && pHtml.length >= 24) {
-                livePartialScreens.set(pSid, {
+                streamPartialPrototypeScreen({
                   screenId: pSid,
                   ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
                   ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
                   partialScreenHtml: pHtml,
                   ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
                 });
-                emitPrototypePreviewIfChanged(
-                  {
-                    screenId: pSid,
-                    ...(typeof pArgs.screenName === 'string' ? { label: pArgs.screenName } : {}),
-                  },
-                  { throttled: true },
-                );
               }
             }
             if (nowMs - lastToolDeltaEmitMs >= 250) {
@@ -5339,7 +5350,7 @@ async function executeUnifiedTurnCore(
                           step: step + 1,
                         },
                       });
-                      emitPrototypePreviewIfChanged(nestedOut.trace.targetAnchor ?? nestedAnchor);
+                      syncPrototypeLiveDocument();
 
                       if (nestedOut.artifact) {
                         allArtifacts.push(nestedOut.artifact);
@@ -5408,14 +5419,10 @@ async function executeUnifiedTurnCore(
                 );
         if (executed.isError) {
           hadValidatorError = true;
-        } else if (tc.name === 'upsert_prototype_screen') {
-          const doneSid =
-            typeof (tc.arguments as Record<string, unknown> | undefined)?.screenId === 'string'
-              ? String((tc.arguments as Record<string, unknown>).screenId).trim()
-              : '';
-          if (doneSid) {
-            livePartialScreens.delete(doneSid);
-          }
+        }
+        if (tc.name === 'upsert_prototype_screen') {
+          const doneSid = (tc.arguments as Record<string, unknown> | undefined)?.screenId;
+          endPartialPrototypeScreen(typeof doneSid === 'string' ? doneSid : undefined);
         }
         allToolTraces.push(executed.trace);
 
@@ -5427,7 +5434,7 @@ async function executeUnifiedTurnCore(
             step: step + 1,
           },
         });
-        emitPrototypePreviewIfChanged(executed.trace.targetAnchor ?? tcAnchor);
+        syncPrototypeLiveDocument();
 
         if (executed.artifact) {
           allArtifacts.push(executed.artifact);
@@ -6157,7 +6164,7 @@ function launchActiveRunInSlot(
     runId: turnIdentity.runId,
     sessionId,
     controller,
-    bufferedEvents: [],
+    bufferedEvents: createCoalescingRunEventBuffer<UnifiedAgentSseEvent>(prototypeLiveCoalesceKey),
     subscribers: new Set(),
     done: false,
     completionPromise: Promise.resolve(),
@@ -6228,25 +6235,22 @@ async function* subscribeToBackgroundRun(
   signal?: AbortSignal,
   afterEventId?: string,
 ): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
-  let cursor = 0;
-  if (afterEventId) {
-    const idx = run.bufferedEvents.findIndex((e) => e.id === afterEventId);
-    if (idx >= 0) {
-      cursor = idx + 1;
-    }
-  }
+  // Superseded prototype screen deltas are skipped, so a reconnecting client catches up with
+  // each screen's current state instead of replaying every delta.
+  let cursor = run.bufferedEvents.startAfter(afterEventId);
 
   while (true) {
     if (signal?.aborted) {
       return;
     }
-    while (cursor < run.bufferedEvents.length) {
+    for (let next = run.bufferedEvents.read(cursor); next; next = run.bufferedEvents.read(cursor)) {
       if (signal?.aborted) {
         return;
       }
-      const ev = run.bufferedEvents[cursor++]!;
-      yield ev;
+      cursor = next.nextCursor;
+      yield next.event;
     }
+    cursor = Math.max(cursor, run.bufferedEvents.size());
     if (run.done) {
       return;
     }
@@ -6265,7 +6269,7 @@ async function* subscribeToBackgroundRun(
       };
       run.subscribers.add(onUpdate);
       signal?.addEventListener('abort', onAbort, { once: true });
-      if (cursor < run.bufferedEvents.length || run.done || signal?.aborted) {
+      if (cursor < run.bufferedEvents.size() || run.done || signal?.aborted) {
         cleanup();
         resolve();
       }
