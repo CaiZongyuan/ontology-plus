@@ -29,12 +29,15 @@ export function BuildLog({
   busy,
   onFocusScreen,
   onResumeScreen,
+  endEntry,
 }: {
   build: PrototypeBuildState;
   screens: readonly ScreenBuildView[];
   busy: boolean;
   onFocusScreen: (screenId: string) => void;
   onResumeScreen?: ((screenId: string, screenName: string) => void) | undefined;
+  /** A closing entry after the last line (#97's suggestion to try web mode). */
+  endEntry?: React.ReactNode;
 }) {
   const { locale, t } = usePreferences();
   const byId = new Map(screens.map((s) => [s.screenId, s]));
@@ -50,7 +53,7 @@ export function BuildLog({
   useEffect(() => {
     const el = listRef.current;
     if (el && stickToEnd.current) el.scrollTop = el.scrollHeight;
-  }, [count]);
+  }, [count, Boolean(endEntry)]);
 
   return (
     <ol
@@ -118,6 +121,7 @@ export function BuildLog({
           </li>
         );
       })}
+      {endEntry && <li data-testid="prototype-build-log-end">{endEntry}</li>}
     </ol>
   );
 }

@@ -1,5 +1,6 @@
 import {
   extractPrototypeArtboards,
+  prototypeNavigationRuntimeScript,
   type PrototypeArtboardSlice,
 } from '../../ontology-core/index.js';
 import type {
@@ -1448,23 +1449,7 @@ ${navItemsHtml}
 ${sectionsHtml}
     </main>
   </div>
-  <script id="proto-shell-script">
-    window.__selectProtoScreen = function(screenId) {
-      var screens = document.querySelectorAll('[data-screen-id]');
-      for (var i = 0; i < screens.length; i++) {
-        var el = screens[i];
-        var match = el.getAttribute('data-screen-id') === screenId;
-        if (match) el.classList.add('is-active');
-        else el.classList.remove('is-active');
-      }
-      var tabs = document.querySelectorAll('[data-nav-screen]');
-      for (var j = 0; j < tabs.length; j++) {
-        var tab = tabs[j];
-        if (tab.getAttribute('data-nav-screen') === screenId) tab.classList.add('is-active');
-        else tab.classList.remove('is-active');
-      }
-    };
-  </script>
+  ${prototypeNavigationRuntimeScript('proto-shell-script')}
 </body>
 </html>`;
 

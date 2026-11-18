@@ -210,6 +210,13 @@ export {
 } from './lib/prototype-artboards.js';
 
 export {
+  PROTOTYPE_NAVIGATION_RUNTIME,
+  PROTOTYPE_NAVIGATION_RUNTIME_ATTR,
+  prototypeNavigationRuntimeScript,
+  ensurePrototypeNavigationRuntime,
+} from './lib/prototype-navigation.js';
+
+export {
   healPartialHtml,
   healPartialScreenSection,
   splitPrototypeDocument,

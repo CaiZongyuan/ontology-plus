@@ -631,6 +631,34 @@ export interface PrototypeCanvasModel {
   /** Head scripts, run in each artboard once its screen has landed. */
   headScripts: string[];
   screens: PrototypeCanvasArtboard[];
+  /** The whole `<body>` inner HTML: the shell with every screen (web mode shows one at a time). */
+  pageBodyHtml: string;
+  /** Screen styles still being written, for every screen (web mode). */
+  pageCss: string;
+}
+
+/** The shell's body with each screen marker replaced by that screen's HTML (plus screens still being written). */
+function composeDocumentBody(
+  frame: PrototypeDocumentFrame,
+  htmlById: ReadonlyMap<string, string>,
+  live: PrototypeLiveState | null | undefined,
+): string {
+  const markerRe = new RegExp(`<!--${ARTBOARD_SCREEN_MARKER_PREFIX}([\\s\\S]*?)-->`, 'g');
+  const placed = new Set<string>();
+  let body = frame.bodyHtml.replace(markerRe, (_marker, rawId: string) => {
+    const id = rawId.replace(/- -/g, '--');
+    placed.add(id);
+    return htmlById.get(id) ?? '';
+  });
+  const extra = (live?.arrival ?? [])
+    .filter((id) => !placed.has(id) && live!.screens[id]?.status === 'streaming')
+    .map((id) => htmlById.get(id) ?? '')
+    .join('');
+  if (extra) {
+    const mainClose = body.search(/<\/main>/i);
+    body = mainClose >= 0 ? `${body.slice(0, mainClose)}${extra}${body.slice(mainClose)}` : `${body}${extra}`;
+  }
+  return body;
 }
 
 /**
@@ -686,7 +714,16 @@ export function buildPrototypeCanvasModel(
     });
   }
   const assets = prototypeFrameAssets(frame);
-  return { css: assets.css, links: assets.links, headScripts: assets.scripts, screens };
+  const htmlById = new Map(saved.screens.map((s) => [s.screenId, s.html]));
+  for (const [id, screen] of Object.entries(live?.screens ?? {})) htmlById.set(id, screen.html);
+  return {
+    css: assets.css,
+    links: assets.links,
+    headScripts: assets.scripts,
+    screens,
+    pageBodyHtml: composeDocumentBody(frame, htmlById, live),
+    pageCss: screens.map((s) => s.css ?? '').filter(Boolean).join('\n'),
+  };
 }
 
 /**
@@ -704,21 +741,7 @@ export function composePrototypeDocument(
   const frame = live!.frame ?? saved.frame;
   const htmlById = new Map(saved.screens.map((s) => [s.screenId, s.html]));
   for (const [id, screen] of Object.entries(live!.screens)) htmlById.set(id, screen.html);
-  const markerRe = new RegExp(`<!--${ARTBOARD_SCREEN_MARKER_PREFIX}([\\s\\S]*?)-->`, 'g');
-  const placed = new Set<string>();
-  let body = frame.bodyHtml.replace(markerRe, (_marker, rawId: string) => {
-    const id = rawId.replace(/- -/g, '--');
-    placed.add(id);
-    return htmlById.get(id) ?? '';
-  });
-  const extra = (live!.arrival ?? [])
-    .filter((id) => !placed.has(id) && live!.screens[id]?.status === 'streaming')
-    .map((id) => htmlById.get(id) ?? '')
-    .join('');
-  if (extra) {
-    const mainClose = body.search(/<\/main>/i);
-    body = mainClose >= 0 ? `${body.slice(0, mainClose)}${extra}${body.slice(mainClose)}` : `${body}${extra}`;
-  }
+  const body = composeDocumentBody(frame, htmlById, live);
   return `<!DOCTYPE html>\n<html${frame.htmlAttrs}>\n<head>${frame.headHtml}</head>\n<body${frame.bodyAttrs}>${body}</body>\n</html>`;
 }
 

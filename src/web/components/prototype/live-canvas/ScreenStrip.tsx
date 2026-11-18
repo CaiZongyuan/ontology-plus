@@ -116,22 +116,18 @@ export function ScreenStrip({
             data-testid={`prototype-strip-card-${screen.screenId}`}
             data-build-status={screen.status}
             title={screen.purpose || undefined}
-            tabIndex={0}
             onClick={() => onFocusScreen(screen.screenId)}
             onDoubleClick={() => onTryScreen(screen.screenId)}
-            onKeyDown={(event) => {
-              if (event.target !== event.currentTarget) return;
-              if (event.key === 'Enter') onTryScreen(screen.screenId);
-              else if (event.key === ' ') {
-                event.preventDefault();
-                onFocusScreen(screen.screenId);
-              }
-            }}
           >
-            <div className="flex min-w-0 items-center gap-1.5 text-foreground">
+            {/* The name is the card's button; its click reaches the card (focus, or open the page). */}
+            <button
+              type="button"
+              className="flex min-w-0 cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0 text-left text-foreground"
+              data-testid={`prototype-strip-open-${screen.screenId}`}
+            >
               <span className="font-mono text-[11px] text-muted-foreground">{String(idx + 1).padStart(2, '0')}</span>
               <span className="truncate font-medium">{screen.name}</span>
-            </div>
+            </button>
             <ScreenProgress screen={screen} />
             <div className="flex items-center justify-between gap-2">
               <span className="inline-flex min-w-0 items-center gap-1 text-muted-foreground" data-testid={`prototype-strip-status-${screen.screenId}`}>
