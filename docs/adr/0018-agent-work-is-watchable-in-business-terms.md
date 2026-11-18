@@ -15,3 +15,9 @@ The Prototype step is the first place this applies: an `Interactive Prototype` i
 - Narration lines are derived from what the agent writes (element and section notes, plan entries), not guessed from its reasoning text.
 - An Agent Run's plan is shown before its work starts, and each planned item reports its own state, including failure, in one business-language sentence with a way to continue.
 - Technical views (Technical Details, the `Context Inspector`) remain available on demand; this decision governs the default view, not what an expert may open.
+- Liveness comes from the model's own output stream: tool arguments are parsed while they stream, so a screen grows as the agent writes it, and short fields (which screen, the element's note) are ordered before long ones (the HTML) so the narration arrives before the content it describes.
+- When a provider cannot stream tool arguments, the real result may be played back progressively at a steady pace. Pacing may be smoothed; content and order are never invented.
+
+## Amendments
+
+- **2026-11-18: prototype review (#88) settled the Prototype step's presentation.** The Build Plan reads as a phase bar, a build log, and a strip of screens; each agent shows a cursor (an arrow by default, chosen per device) at the element it is really writing, with its narration beside it and in the log; Prototype Notes are handwritten with arrows in blank space and leave the prototype usable; the prototype can be viewed as artboards on a canvas or as a real web page, and opened on its own as a standalone page.
