@@ -24,10 +24,38 @@ export {
   type ContextCompositionSegmentKey,
 } from './ContextCompositionBar.js';
 export {
+  ModelCallTimeline,
+  computeTimelineViewModel,
+  formatCompactSignedTokenDelta,
+  formatModelCallDuration,
+  formatModelCallPurposeLabel,
+  formatSignedTokenDelta,
+  formatUsageSourceInlineLabel,
+  type ComputedTimelineViewModel,
+  type ModelCallTimelineMode,
+  type ModelCallTimelineProps,
+  type TimelineBarModel,
+  type TimelineDeltaSign,
+  type TimelineStackSlice,
+} from './ModelCallTimeline.js';
+export {
+  CONTEXT_BROWSER_INCLUDED_ORDER,
+  ContextBrowser,
+  createModelCallDetailCache,
+  formatContextCategoryLabel,
+  formatToolDefinitionSourceLabel,
+  groupContextBrowserItems,
+  type ContextBrowserCategoryGroup,
+  type ContextBrowserCategoryKind,
+  type ContextBrowserProps,
+  type ModelCallDetailCache,
+} from './ContextBrowser.js';
+export {
   CONTEXT_INSPECTOR_DRAWER_TEST_ID,
   ContextInspectorOverlay,
   resolveLatestTurnModelCall,
   resolveOverlayOffsetStyle,
+  resolveSelectedModelCall,
   shouldDismissContextInspectorKey,
   type ContextInspectorFocus,
   type ContextInspectorOverlayProps,

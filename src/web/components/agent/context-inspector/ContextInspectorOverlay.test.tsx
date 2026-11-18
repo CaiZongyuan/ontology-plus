@@ -218,4 +218,120 @@ describe('ContextInspectorOverlay (#82)', () => {
       expect(html.match(/data-testid="context-removed-item"/g)).toHaveLength(2);
     }
   });
+
+  it('mounts ModelCallTimeline in left column (above eventsSlot & lanesSlot) and syncs ContextBrowser in right column when selectedCallId changes (#83)', () => {
+    const call1 = makeSampleCallSummary({
+      id: 'call-sync-1',
+      seq: 1,
+      model: 'glm-5-flash',
+      usage: {
+        promptTokens: 3500,
+        inputTokens: 3500,
+        outputTokens: 240,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 3740,
+        source: 'PROVIDER',
+      },
+      excludedCount: 0,
+    });
+    const call2 = makeSampleCallSummary({
+      id: 'call-sync-2',
+      seq: 2,
+      model: 'glm-5-pro',
+      usage: {
+        promptTokens: 7200,
+        inputTokens: 5200,
+        outputTokens: 480,
+        cacheReadTokens: 2000,
+        cacheWriteTokens: 0,
+        totalTokens: 7680,
+        source: 'PROVIDER',
+      },
+      excludedCount: 0,
+    });
+
+    const detailsById: Record<string, ModelCallDetail> = {
+      'call-sync-1': {
+        ...call1,
+        included: [
+          {
+            blobId: 'b-c1-user',
+            kind: 'USER_MESSAGE',
+            tokens: 180,
+            content: '第一轮独有提示：定义供应商准入流程',
+          },
+        ],
+        excluded: [],
+        response: [],
+      },
+      'call-sync-2': {
+        ...call2,
+        included: [
+          {
+            blobId: 'b-c2-user',
+            kind: 'USER_MESSAGE',
+            tokens: 260,
+            content: '第二轮独有提示：补充违约金计算公式',
+          },
+        ],
+        excluded: [],
+        response: [],
+      },
+    };
+
+    stubLocale('zh-CN');
+    const htmlCall2 = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ContextInspectorOverlay
+          open={true}
+          onClose={noop}
+          modelCalls={[call1, call2]}
+          callDetailsById={detailsById}
+          defaultExpandedItemKeys={['*']}
+          eventsSlot={<div data-testid="wave5-events-slot">Events Slot</div>}
+          lanesSlot={<div data-testid="wave5-lanes-slot">Lanes Slot</div>}
+        />
+      </PreferencesProvider>,
+    );
+
+    // Left column order: composition -> timeline -> eventsSlot -> lanesSlot
+    const compIdx = htmlCall2.indexOf('data-testid="context-composition-bar"');
+    const tlIdx = htmlCall2.indexOf('data-testid="context-call-timeline"');
+    const evIdx = htmlCall2.indexOf('data-testid="wave5-events-slot"');
+    const lnIdx = htmlCall2.indexOf('data-testid="wave5-lanes-slot"');
+    const rightIdx = htmlCall2.indexOf('data-testid="context-inspector-right-col"');
+    const browserIdx = htmlCall2.indexOf('data-testid="context-browser"');
+
+    expect(compIdx).toBeGreaterThan(-1);
+    expect(tlIdx).toBeGreaterThan(compIdx);
+    expect(evIdx).toBeGreaterThan(tlIdx);
+    expect(lnIdx).toBeGreaterThan(evIdx);
+    expect(rightIdx).toBeGreaterThan(lnIdx);
+    expect(browserIdx).toBeGreaterThan(rightIdx);
+
+    // Defaults to latest TURN call (#2)
+    expect(htmlCall2).toContain('data-selected-call-id="call-sync-2"');
+    expect(htmlCall2).toContain('第二轮独有提示：补充违约金计算公式');
+    expect(htmlCall2).not.toContain('第一轮独有提示：定义供应商准入流程');
+
+    // Selecting call #1 syncs ContextBrowser to call #1
+    const htmlCall1 = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ContextInspectorOverlay
+          open={true}
+          onClose={noop}
+          modelCalls={[call1, call2]}
+          selectedCallId="call-sync-1"
+          callDetailsById={detailsById}
+          defaultExpandedItemKeys={['*']}
+        />
+      </PreferencesProvider>,
+    );
+
+    expect(htmlCall1).toContain('data-selected-call-id="call-sync-1"');
+    expect(htmlCall1).toContain('第 #1 次调用发送的内容');
+    expect(htmlCall1).toContain('第一轮独有提示：定义供应商准入流程');
+    expect(htmlCall1).not.toContain('第二轮独有提示：补充违约金计算公式');
+  });
 });

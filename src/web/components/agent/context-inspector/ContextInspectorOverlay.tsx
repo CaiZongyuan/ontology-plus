@@ -1,26 +1,25 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronRight, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { BUSINESS_VOCABULARY } from '../../../../packages/business-vocabulary/index.js';
 import type {
   ContextEventDetail,
   ContextEventSummary,
-  ContextItem,
-  ContextItemKind,
   ModelCallDetail,
   ModelCallSummary,
 } from '../../../../packages/workspace-store/index.js';
-import { apiGetContextEvent, apiGetModelCall } from '../../../api.js';
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import {
   AGENT_PANEL_DEFAULT_WIDTH,
   AGENT_PANEL_WIDE_CSS_WIDTH,
 } from '../agentPanelStore.js';
+import { ContextBrowser } from './ContextBrowser.js';
+import { ContextCompositionBar } from './ContextCompositionBar.js';
 import {
-  ContextCompositionBar,
-  formatTokenCount,
-} from './ContextCompositionBar.js';
+  ModelCallTimeline,
+  type ModelCallTimelineMode,
+} from './ModelCallTimeline.js';
 import './context-inspector.css';
 
 export const CONTEXT_INSPECTOR_DRAWER_TEST_ID = 'context-inspector-drawer' as const;
@@ -44,6 +43,22 @@ export function resolveLatestTurnModelCall(
   return modelCalls[modelCalls.length - 1] ?? null;
 }
 
+export function resolveSelectedModelCall(
+  modelCalls: readonly ModelCallSummary[],
+  selectedCallId: string | null | undefined,
+  fallbackCall: ModelCallSummary | null,
+): ModelCallSummary | null {
+  if (selectedCallId) {
+    const matched = modelCalls.find((c) => c.id === selectedCallId);
+    if (matched) return matched;
+  }
+  if (fallbackCall) {
+    const matchedFallback = modelCalls.find((c) => c.id === fallbackCall.id);
+    return matchedFallback ?? fallbackCall;
+  }
+  return modelCalls[modelCalls.length - 1] ?? null;
+}
+
 export function resolveOverlayOffsetStyle(opts: {
   side: 'left' | 'right';
   panelWidth: number;
@@ -63,91 +78,6 @@ export function shouldDismissContextInspectorKey(event: { key: string }): boolea
   return event.key === 'Escape';
 }
 
-function formatContextItemKindLabel(
-  kind: ContextItemKind,
-  t: (zh: string, en: string) => string,
-): string {
-  switch (kind) {
-    case 'USER_MESSAGE':
-      return t('用户消息', 'User message');
-    case 'ASSISTANT_MESSAGE':
-      return t('助手回复', 'Assistant reply');
-    case 'TOOL_CALL':
-      return t('工具调用', 'Tool call');
-    case 'TOOL_RESULT':
-      return t('工具结果', 'Tool result');
-    case 'REASONING':
-      return t('思考', 'Thinking');
-    case 'COMPACTED_SUMMARY':
-      return t('历史摘要', 'Compacted summary');
-    case 'BUSINESS_CONTEXT':
-      return t('业务上下文', 'Business context');
-    case 'TOOL_DEFINITION':
-      return t('工具定义', 'Tool definition');
-    case 'TOOL_GUIDE':
-      return t('工具说明', 'Tool guide');
-    case 'INSTRUCTIONS':
-      return 'system prompt';
-  }
-}
-
-function RemovedItemCard({
-  item,
-  origin,
-  defaultExpanded,
-}: {
-  item: ContextItem;
-  origin: 'trimmed' | 'compacted';
-  defaultExpanded: boolean;
-}) {
-  const { t } = usePreferences();
-  const [expanded, setExpanded] = useState<boolean>(defaultExpanded);
-
-  useEffect(() => {
-    if (defaultExpanded) setExpanded(true);
-  }, [defaultExpanded]);
-
-  const firstLine =
-    item.label ||
-    item.content
-      .split(/\r?\n/)
-      .find((line) => line.trim())
-      ?.trim()
-      .slice(0, 72) ||
-    t('（空内容）', '(empty)');
-
-  return (
-    <div
-      className="context-removed-item"
-      data-testid="context-removed-item"
-      data-removed-origin={origin}
-    >
-      <button
-        type="button"
-        className="context-removed-item-head"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((prev) => !prev)}
-      >
-        {expanded ? (
-          <ChevronDown size={13} aria-hidden="true" />
-        ) : (
-          <ChevronRight size={13} aria-hidden="true" />
-        )}
-        <span className="context-removed-item-badge">
-          {formatContextItemKindLabel(item.kind, t)}
-        </span>
-        <span className="context-removed-item-preview">{firstLine}</span>
-        <span className="context-removed-item-tokens">
-          ≈{formatTokenCount(item.tokens)}
-        </span>
-      </button>
-      {expanded && (
-        <pre className="context-removed-item-body">{item.content}</pre>
-      )}
-    </div>
-  );
-}
-
 export interface ContextInspectorOverlayProps {
   open: boolean;
   onClose: () => void;
@@ -161,10 +91,22 @@ export interface ContextInspectorOverlayProps {
   modelCalls?: readonly ModelCallSummary[];
   contextEvents?: readonly ContextEventSummary[];
   defaultContextWindow?: number;
-  /** Optional pre-loaded call detail (used by deterministic SSR tests or Wave 4 selection). */
+  /** Controlled / initial selected Model Call ID (exposed cleanly for Wave 4 #83 & Wave 5 #84). */
+  selectedCallId?: string | null;
+  defaultSelectedCallId?: string | null;
+  onSelectCallId?: (callId: string) => void;
+  /** Optional timeline mode control for deterministic SSR tests. */
+  timelineMode?: ModelCallTimelineMode;
+  defaultTimelineMode?: ModelCallTimelineMode;
+  onTimelineModeChange?: (mode: ModelCallTimelineMode) => void;
+  /** Optional pre-supplied call details keyed by callId (for synchronous SSR tests). */
+  callDetailsById?: Readonly<Record<string, ModelCallDetail>>;
+  /** Optional pre-loaded call detail (used by deterministic SSR tests from #82). */
   latestCallDetail?: ModelCallDetail | null;
   /** Optional pre-loaded compaction event details (used by deterministic SSR tests). */
   compactedEventDetails?: readonly ContextEventDetail[];
+  /** Optional item keys (`blobId`, `label`, or `'*'`) expanded on initial render in ContextBrowser. */
+  defaultExpandedItemKeys?: readonly string[];
   /** Modular Wave 4 (#83) & Wave 5 (#84) extension slots. */
   timelineSlot?: React.ReactNode;
   eventsSlot?: React.ReactNode;
@@ -173,7 +115,7 @@ export interface ContextInspectorOverlayProps {
 }
 
 /**
- * Wide two-column canvas overlay ("对话记忆 / Conversation memory", Prototype Variant B from #77, #82).
+ * Wide two-column canvas overlay ("对话记忆 / Conversation memory", Prototype Variant B from #77, #82, #83).
  * Overlays ONLY the canvas area beside AgentPanel so conversation stays visible and canvas width never squeezes.
  */
 export function ContextInspectorOverlay({
@@ -189,88 +131,64 @@ export function ContextInspectorOverlay({
   modelCalls,
   contextEvents,
   defaultContextWindow,
+  selectedCallId: controlledSelectedCallId,
+  defaultSelectedCallId = null,
+  onSelectCallId,
+  timelineMode,
+  defaultTimelineMode,
+  onTimelineModeChange,
+  callDetailsById,
   latestCallDetail: controlledCallDetail,
   compactedEventDetails: controlledCompactedDetails,
+  defaultExpandedItemKeys,
   timelineSlot,
   eventsSlot,
   lanesSlot,
   browserSlot,
 }: ContextInspectorOverlayProps) {
   const { t } = usePreferences();
-  const removedSectionRef = useRef<HTMLElement>(null);
 
   const effectiveLatestCall = useMemo(
     () => latestCall ?? resolveLatestTurnModelCall(modelCalls),
     [latestCall, modelCalls],
   );
 
-  const compactEventSummaries = useMemo(
-    () => (contextEvents ?? []).filter((e) => e.kind === 'COMPACT'),
-    [contextEvents],
-  );
-  const compactIdsKey = compactEventSummaries.map((e) => e.id).join(',');
+  const effectiveModelCalls = useMemo<readonly ModelCallSummary[]>(() => {
+    if (modelCalls && modelCalls.length > 0) return modelCalls;
+    return effectiveLatestCall ? [effectiveLatestCall] : [];
+  }, [modelCalls, effectiveLatestCall]);
 
-  const [fetchedCallDetail, setFetchedCallDetail] = useState<ModelCallDetail | null>(null);
-  const [fetchedCompactedDetails, setFetchedCompactedDetails] = useState<ContextEventDetail[]>(
-    [],
+  const [internalSelectedCallId, setInternalSelectedCallId] = useState<string | null>(
+    defaultSelectedCallId,
   );
-  const [loadingRemoved, setLoadingRemoved] = useState(false);
 
-  // Fetch latest call detail (when excludedCount > 0) and COMPACT event details when overlay opens
   useEffect(() => {
-    if (!open || !projectId || typeof fetch !== 'function') return;
-    if (controlledCallDetail !== undefined && controlledCompactedDetails !== undefined) return;
-
-    let cancelled = false;
-    const shouldFetchCall =
-      controlledCallDetail === undefined &&
-      Boolean(effectiveLatestCall && effectiveLatestCall.hasDetail && effectiveLatestCall.excludedCount > 0);
-    const shouldFetchEvents =
-      controlledCompactedDetails === undefined && compactEventSummaries.length > 0;
-
-    if (!shouldFetchCall && !shouldFetchEvents) {
-      setFetchedCallDetail(null);
-      setFetchedCompactedDetails([]);
-      setLoadingRemoved(false);
-      return;
+    if (!open && controlledSelectedCallId === undefined) {
+      setInternalSelectedCallId(defaultSelectedCallId);
     }
+  }, [open, controlledSelectedCallId, defaultSelectedCallId]);
 
-    setLoadingRemoved(true);
-    void Promise.all([
-      shouldFetchCall && effectiveLatestCall
-        ? apiGetModelCall(projectId, effectiveLatestCall.id)
-            .then((res) => res.modelCall)
-            .catch(() => null)
-        : Promise.resolve(null),
-      shouldFetchEvents
-        ? Promise.all(
-            compactEventSummaries.map((ev) =>
-              apiGetContextEvent(projectId, ev.id)
-                .then((res) => res.contextEvent)
-                .catch(() => null),
-            ),
-          ).then((list) => list.filter((item): item is ContextEventDetail => item !== null))
-        : Promise.resolve([]),
-    ]).then(([callDet, eventDets]) => {
-      if (cancelled) return;
-      if (controlledCallDetail === undefined) setFetchedCallDetail(callDet);
-      if (controlledCompactedDetails === undefined) setFetchedCompactedDetails(eventDets);
-      setLoadingRemoved(false);
-    });
+  const activeSelectedCallId =
+    controlledSelectedCallId !== undefined
+      ? controlledSelectedCallId
+      : internalSelectedCallId;
 
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    open,
-    projectId,
-    effectiveLatestCall?.id,
-    effectiveLatestCall?.excludedCount,
-    compactIdsKey,
-    controlledCallDetail,
-    controlledCompactedDetails,
-  ]);
+  const selectedCall = useMemo(
+    () =>
+      resolveSelectedModelCall(
+        effectiveModelCalls,
+        activeSelectedCallId,
+        effectiveLatestCall,
+      ),
+    [effectiveModelCalls, activeSelectedCallId, effectiveLatestCall],
+  );
+
+  const handleSelectCallId = (callId: string) => {
+    if (controlledSelectedCallId === undefined) {
+      setInternalSelectedCallId(callId);
+    }
+    onSelectCallId?.(callId);
+  };
 
   // Dismiss on Escape without collapsing underlying AgentPanel overlay
   useEffect(() => {
@@ -288,28 +206,7 @@ export function ContextInspectorOverlay({
     return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [open, onClose]);
 
-  useEffect(() => {
-    if (open && focus === 'removed') {
-      removedSectionRef.current?.scrollIntoView?.({ block: 'nearest' });
-    }
-  }, [open, focus]);
-
   if (!open) return null;
-
-  const resolvedCallDetail =
-    controlledCallDetail !== undefined ? controlledCallDetail : fetchedCallDetail;
-  const resolvedCompactedDetails =
-    controlledCompactedDetails !== undefined
-      ? controlledCompactedDetails
-      : fetchedCompactedDetails;
-
-  const excludedItems: readonly ContextItem[] = resolvedCallDetail?.excluded ?? [];
-  const totalCompactedCount =
-    resolvedCompactedDetails.length > 0
-      ? resolvedCompactedDetails.reduce((sum, d) => sum + d.removed.length, 0)
-      : compactEventSummaries.reduce((sum, s) => sum + s.removedCount, 0);
-  const totalRemovedCount = excludedItems.length + totalCompactedCount;
-  const isRemovedFocused = focus === 'removed';
 
   const offsetStyle = resolveOverlayOffsetStyle({
     side,
@@ -321,6 +218,10 @@ export function ContextInspectorOverlay({
   const title = t(
     BUSINESS_VOCABULARY.CONTEXT_INSPECTOR.zh,
     BUSINESS_VOCABULARY.CONTEXT_INSPECTOR.en,
+  );
+
+  const isLatestSelected = Boolean(
+    selectedCall && effectiveLatestCall && selectedCall.id === effectiveLatestCall.id,
   );
 
   const node = (
@@ -371,7 +272,23 @@ export function ContextInspectorOverlay({
               latestCall={effectiveLatestCall}
               {...(defaultContextWindow !== undefined ? { defaultContextWindow } : {})}
             />
-            {timelineSlot}
+            {timelineSlot !== undefined ? (
+              timelineSlot
+            ) : (
+              <ModelCallTimeline
+                modelCalls={effectiveModelCalls}
+                selectedCallId={selectedCall?.id ?? null}
+                onSelectCall={handleSelectCallId}
+                {...(contextEvents !== undefined ? { contextEvents } : {})}
+                {...(timelineMode !== undefined ? { mode: timelineMode } : {})}
+                {...(defaultTimelineMode !== undefined
+                  ? { defaultMode: defaultTimelineMode }
+                  : {})}
+                {...(onTimelineModeChange !== undefined
+                  ? { onModeChange: onTimelineModeChange }
+                  : {})}
+              />
+            )}
             {eventsSlot}
             {lanesSlot}
           </div>
@@ -380,106 +297,27 @@ export function ContextInspectorOverlay({
             className="context-inspector-right-col"
             data-testid="context-inspector-right-col"
           >
-            {browserSlot}
-            <section
-              ref={removedSectionRef}
-              className={cn(
-                'context-inspector-section context-removed-section',
-                isRemovedFocused && 'is-focused',
-              )}
-              data-testid="context-inspector-removed-section"
-              data-focused={isRemovedFocused ? 'true' : 'false'}
-            >
-              <div className="context-inspector-section-head">
-                <h3 className="context-inspector-section-title">
-                  {t('已移出（未原样发送）', 'Removed (not sent verbatim)')}
-                </h3>
-                <span className="context-inspector-section-meta">
-                  {t(`${totalRemovedCount} 条`, `${totalRemovedCount} items`)}
-                </span>
-              </div>
-
-              {loadingRemoved &&
-              excludedItems.length === 0 &&
-              resolvedCompactedDetails.length === 0 ? (
-                <p className="context-inspector-note">
-                  {t('正在读取已移出内容…', 'Loading removed messages…')}
-                </p>
-              ) : excludedItems.length === 0 && resolvedCompactedDetails.length === 0 ? (
-                <p className="context-inspector-note">
-                  {t(
-                    '当前对话没有被移出或概括的消息，所有历史消息均已完整带入。',
-                    'No messages have been summarized or left out yet — full conversation history is included.',
-                  )}
-                </p>
-              ) : (
-                <div className="context-removed-groups">
-                  {excludedItems.length > 0 && (
-                    <div className="context-removed-group">
-                      <div className="context-removed-group-head">
-                        <span>
-                          {t(
-                            `本次窗口未带入的消息 (${excludedItems.length})`,
-                            `Left out of current reply (${excludedItems.length})`,
-                          )}
-                        </span>
-                      </div>
-                      <div className="context-removed-item-list">
-                        {excludedItems.map((item, idx) => (
-                          <RemovedItemCard
-                            key={`${item.blobId}-${idx}`}
-                            item={item}
-                            origin="trimmed"
-                            defaultExpanded={isRemovedFocused && idx === 0}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {resolvedCompactedDetails.map((eventDetail) => (
-                    <div key={eventDetail.id} className="context-removed-group">
-                      <div className="context-removed-group-head">
-                        <span>
-                          {t(
-                            `已概括归档的早期消息 (${eventDetail.removed.length})`,
-                            `Summarized & archived (${eventDetail.removed.length})`,
-                          )}
-                        </span>
-                        <span className="context-removed-group-meta">
-                          {eventDetail.summarizedByModel
-                            ? t('模型概括', 'Model summary')
-                            : t('自动摘录', 'Structured summary')}
-                        </span>
-                      </div>
-                      {eventDetail.summary && (
-                        <div
-                          className="context-compacted-summary"
-                          data-testid="context-compacted-summary"
-                        >
-                          <div className="context-compacted-summary-label">
-                            {t('替代摘要（已带入上下文）', 'Replacing summary (included in context)')}
-                          </div>
-                          <pre className="context-removed-item-body">
-                            {eventDetail.summary.content}
-                          </pre>
-                        </div>
-                      )}
-                      <div className="context-removed-item-list">
-                        {eventDetail.removed.map((item, idx) => (
-                          <RemovedItemCard
-                            key={`${eventDetail.id}-${item.blobId}-${idx}`}
-                            item={item}
-                            origin="compacted"
-                            defaultExpanded={isRemovedFocused && idx === 0}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
+            {browserSlot !== undefined ? (
+              browserSlot
+            ) : (
+              <ContextBrowser
+                {...(projectId !== undefined ? { projectId } : {})}
+                selectedCall={selectedCall}
+                isLatestSelected={isLatestSelected}
+                focus={focus}
+                {...(contextEvents !== undefined ? { contextEvents } : {})}
+                {...(callDetailsById !== undefined ? { callDetailsById } : {})}
+                {...(controlledCallDetail !== undefined
+                  ? { fallbackCallDetail: controlledCallDetail }
+                  : {})}
+                {...(controlledCompactedDetails !== undefined
+                  ? { compactedEventDetails: controlledCompactedDetails }
+                  : {})}
+                {...(defaultExpandedItemKeys !== undefined
+                  ? { defaultExpandedItemKeys }
+                  : {})}
+              />
+            )}
           </div>
         </div>
       </section>

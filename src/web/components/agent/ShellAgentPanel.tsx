@@ -347,11 +347,12 @@ export interface ShellAgentPanelProps {
   closable?: boolean;
   resizable?: boolean;
   defaultHistoryOpen?: boolean;
-  /** Deterministic SSR / test hooks for Context Inspector (#82). */
+  /** Deterministic SSR / test hooks for Context Inspector (#82, #83). */
   defaultInspectorOpen?: boolean;
   defaultInspectorFocus?: ContextInspectorFocus;
   initialModelCalls?: readonly ModelCallSummary[];
   initialContextEvents?: readonly ContextEventSummary[];
+  initialCallDetailsById?: Readonly<Record<string, ModelCallDetail>>;
   initialLatestCallDetail?: ModelCallDetail | null;
   initialCompactedEventDetails?: readonly ContextEventDetail[];
   onClose: () => void;
@@ -371,6 +372,7 @@ export function ShellAgentPanel({
   defaultInspectorFocus = 'composition',
   initialModelCalls,
   initialContextEvents,
+  initialCallDetailsById,
   initialLatestCallDetail,
   initialCompactedEventDetails,
   onClose,
@@ -1333,6 +1335,9 @@ export function ShellAgentPanel({
         modelCalls={effectiveModelCalls}
         contextEvents={effectiveContextEvents}
         defaultContextWindow={activeProviderContextWindow}
+        {...(initialCallDetailsById !== undefined
+          ? { callDetailsById: initialCallDetailsById }
+          : {})}
         {...(initialLatestCallDetail !== undefined
           ? { latestCallDetail: initialLatestCallDetail }
           : {})}
