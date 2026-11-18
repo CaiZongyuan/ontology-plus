@@ -116,8 +116,17 @@ export function ScreenStrip({
             data-testid={`prototype-strip-card-${screen.screenId}`}
             data-build-status={screen.status}
             title={screen.purpose || undefined}
+            tabIndex={0}
             onClick={() => onFocusScreen(screen.screenId)}
             onDoubleClick={() => onTryScreen(screen.screenId)}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              if (event.key === 'Enter') onTryScreen(screen.screenId);
+              else if (event.key === ' ') {
+                event.preventDefault();
+                onFocusScreen(screen.screenId);
+              }
+            }}
           >
             <div className="flex min-w-0 items-center gap-1.5 text-foreground">
               <span className="font-mono text-[11px] text-muted-foreground">{String(idx + 1).padStart(2, '0')}</span>

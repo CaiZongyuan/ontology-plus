@@ -163,7 +163,6 @@ export {
   PLAN_SCREENS_OPENAI_TOOL,
   createPrototypeBuildRun,
   parseResumePrototypeScreenAction,
-  buildResumePrototypeScreenPrompt,
   type PrototypeBuildRun,
   type PrototypeBuildRunOutcome,
 } from './lib/prototype-build-run.js';

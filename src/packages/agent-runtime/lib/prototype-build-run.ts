@@ -354,11 +354,7 @@ export function prototypeBuildSseEventName(event: PrototypeBuildEvent): Prototyp
 }
 
 /** `[ACTION:RESUME_PROTOTYPE_SCREEN {"screenId":"…"}]`: continue exactly one planned screen. */
-export const RESUME_PROTOTYPE_SCREEN_ACTION = 'RESUME_PROTOTYPE_SCREEN';
-
-export function buildResumePrototypeScreenPrompt(screenId: string, displayText: string): string {
-  return `[ACTION:${RESUME_PROTOTYPE_SCREEN_ACTION} ${JSON.stringify({ screenId })}] ${displayText}`;
-}
+const RESUME_PROTOTYPE_SCREEN_ACTION = 'RESUME_PROTOTYPE_SCREEN';
 
 const RESUME_ACTION_RE = new RegExp(`^\\[ACTION:${RESUME_PROTOTYPE_SCREEN_ACTION}\\s+(\\{[^\\r\\n]*\\})\\]\\s*`);
 
