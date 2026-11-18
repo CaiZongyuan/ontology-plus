@@ -80,6 +80,23 @@ describe('prototype shell navigation works standalone', () => {
     expect(active(dom)).toEqual(['SCR-HOME']);
   });
 
+  it('going back to the first, hashless entry shows the first screen again', async () => {
+    const dom = open();
+    dom.window.document.querySelector<HTMLElement>('[data-nav-screen="SCR-ORDERS"]')!.click();
+    await hashSettled(dom);
+    expect(active(dom)).toEqual(['SCR-ORDERS']);
+    expect(dom.window.history.length).toBe(2);
+    dom.window.history.back();
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 20));
+    expect(dom.window.location.hash).toBe('');
+    expect(active(dom)).toEqual(['SCR-HOME']);
+    // restoring the first screen does not write a new entry (forward still works)
+    expect(dom.window.history.length).toBe(2);
+    dom.window.history.forward();
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 20));
+    expect(active(dom)).toEqual(['SCR-ORDERS']);
+  });
+
   it('opens on the page named in the URL hash', () => {
     const dom = open('https://prototype.test/#SCR-ORDERS');
     expect(active(dom)).toEqual(['SCR-ORDERS']);

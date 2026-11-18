@@ -236,7 +236,11 @@ describe('PrototypeVisualInspector helpers', () => {
     expect(res).not.toBeNull();
     expect(res?.blobUrl).toBe('blob:http://localhost:5173/clean-proto-1');
     expect(res?.cleanHtml).not.toContain('data-onto-visual-inspector');
-    expect(res?.cleanHtml.trim()).toBe(SAMPLE_PROTOTYPE_HTML.trim());
+    // the document as saved, plus the navigation runtime it lacked (added once, at the end of the body)
+    expect(res?.cleanHtml.replace(/<script data-proto-nav-runtime>[\s\S]*?<\/script>\n?/, '').trim()).toBe(
+      SAMPLE_PROTOTYPE_HTML.trim(),
+    );
+    expect(res?.cleanHtml.split('data-proto-nav-runtime')).toHaveLength(2);
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(capturedBlobs[0]?.type).toBe('text/html;charset=utf-8');
     expect(openSpy).toHaveBeenCalledWith(
@@ -244,6 +248,16 @@ describe('PrototypeVisualInspector helpers', () => {
       '_blank',
       'noopener,noreferrer',
     );
+
+    // web mode opens it on the page it shows
+    const again = openCleanPrototypeInNewTab(SAMPLE_PROTOTYPE_HTML, 'SCR-清单');
+    expect(again?.cleanHtml.split('data-proto-nav-runtime')).toHaveLength(2);
+    expect(openSpy).toHaveBeenLastCalledWith(
+      `blob:http://localhost:5173/clean-proto-1#${encodeURIComponent('SCR-清单')}`,
+      '_blank',
+      'noopener,noreferrer',
+    );
+    expect(openCleanPrototypeInNewTab('   ', 'SCR-X')).toBeNull();
   });
 
   it('renders PrototypeVisualPreviewStage across Desktop, Tablet, and Mobile viewports with auto-fit scaling', () => {

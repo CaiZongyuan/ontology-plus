@@ -1,5 +1,6 @@
 import {
   extractPrototypeArtboards,
+  prototypeNavigationRuntimeScript,
   type PrototypeArtboardSlice,
 } from '../../ontology-core/index.js';
 import type {
@@ -1511,46 +1512,7 @@ ${navItemsHtml}
 ${sectionsHtml}
     </main>
   </div>
-  <script id="proto-shell-script">
-    window.__selectProtoScreen = function(screenId) {
-      var screens = document.querySelectorAll('[data-screen-id]');
-      for (var i = 0; i < screens.length; i++) {
-        var el = screens[i];
-        var match = el.getAttribute('data-screen-id') === screenId;
-        if (match) el.classList.add('is-active');
-        else el.classList.remove('is-active');
-      }
-      var tabs = document.querySelectorAll('[data-nav-screen]');
-      for (var j = 0; j < tabs.length; j++) {
-        var tab = tabs[j];
-        if (tab.getAttribute('data-nav-screen') === screenId) tab.classList.add('is-active');
-        else tab.classList.remove('is-active');
-      }
-      // Opened on its own (not inside a frame), each page is a history entry: back/forward work.
-      if (window.parent === window && location.hash.slice(1) !== screenId) location.hash = screenId;
-      window.scrollTo(0, 0);
-    };
-    (function() {
-      function known(id) {
-        return !!id && !!document.querySelector('[data-screen-id="' + id.replace(/["\\\\]/g, '') + '"]');
-      }
-      function fromHash() {
-        var id = decodeURIComponent(location.hash.slice(1));
-        if (known(id)) window.__selectProtoScreen(id);
-      }
-      document.addEventListener('click', function(event) {
-        if (event.defaultPrevented) return;
-        var target = event.target;
-        var link = target && target.closest ? target.closest('[data-navigate-to]') : null;
-        var id = link && link.getAttribute('data-navigate-to');
-        if (!known(id)) return;
-        event.preventDefault();
-        window.__selectProtoScreen(id);
-      });
-      window.addEventListener('hashchange', fromHash);
-      if (location.hash) fromHash();
-    })();
-  </script>
+  ${prototypeNavigationRuntimeScript('proto-shell-script')}
 </body>
 </html>`;
 
