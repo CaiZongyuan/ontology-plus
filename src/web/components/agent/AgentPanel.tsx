@@ -148,6 +148,8 @@ export interface AgentPanelProps {
   composerHeaderSlot?: React.ReactNode;
   /** Optional slot right next to Stop/Send for Wave 3 (#82) Context Occupancy Ring. */
   composerRightAccessorySlot?: React.ReactNode;
+  /** Optional calm notice row at the top of ConversationThread (#82 RemovedMessagesNotice). */
+  conversationTopNoticeSlot?: React.ReactNode;
   /** Prompts queued behind the currently active run on this conversation. */
   queuedPrompts?: AgentPanelQueuedPrompt[];
   onRemoveQueuedPrompt?: (queueId: string) => void;
@@ -216,6 +218,7 @@ export function AgentPanel({
   composerDisabled = false,
   composerHeaderSlot,
   composerRightAccessorySlot,
+  conversationTopNoticeSlot,
   queuedPrompts,
   onRemoveQueuedPrompt,
   visionSupported,
@@ -628,6 +631,7 @@ export function AgentPanel({
               {...(handoffBusyById ? { handoffBusyById } : {})}
               {...(onTriggerWriteback ? { onTriggerWriteback } : {})}
               {...(renderRunFooter ? { renderRunFooter } : {})}
+              {...(conversationTopNoticeSlot ? { topNoticeSlot: conversationTopNoticeSlot } : {})}
               scrollToBottomSignal={composerScrollSignal}
             />
             <ConversationComposer

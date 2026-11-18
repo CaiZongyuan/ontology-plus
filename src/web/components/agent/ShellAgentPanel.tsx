@@ -6,11 +6,16 @@ import type {
   AgentSession,
   AgentSessionKind,
   ArtifactJumpTarget,
+  ContextEventDetail,
+  ContextEventSummary,
+  ModelCallDetail,
+  ModelCallSummary,
   WritebackInterface,
 } from '../../../packages/workspace-store/index.js';
 import {
   apiCreateAgentSession,
   apiDeleteAgentSession,
+  apiListSessionModelCalls,
   apiPatchAgentSession,
   apiPostJson,
   useWorkbenchStore,
@@ -49,6 +54,13 @@ import {
   type LocalizedText,
 } from './agentRun.js';
 import { resolveActiveVisionCapability } from './VisionAttachmentControls.js';
+import {
+  ContextInspectorOverlay,
+  ContextOccupancyRing,
+  RemovedMessagesNotice,
+  resolveLatestTurnModelCall,
+  type ContextInspectorFocus,
+} from './context-inspector/index.js';
 
 export {
   AGENT_PANEL_SURFACES,
@@ -335,6 +347,13 @@ export interface ShellAgentPanelProps {
   closable?: boolean;
   resizable?: boolean;
   defaultHistoryOpen?: boolean;
+  /** Deterministic SSR / test hooks for Context Inspector (#82). */
+  defaultInspectorOpen?: boolean;
+  defaultInspectorFocus?: ContextInspectorFocus;
+  initialModelCalls?: readonly ModelCallSummary[];
+  initialContextEvents?: readonly ContextEventSummary[];
+  initialLatestCallDetail?: ModelCallDetail | null;
+  initialCompactedEventDetails?: readonly ContextEventDetail[];
   onClose: () => void;
   onNavigate: (view: NavViewId) => void;
   composerHeaderSlot?: React.ReactNode;
@@ -348,6 +367,12 @@ export function ShellAgentPanel({
   closable = true,
   resizable,
   defaultHistoryOpen,
+  defaultInspectorOpen = false,
+  defaultInspectorFocus = 'composition',
+  initialModelCalls,
+  initialContextEvents,
+  initialLatestCallDetail,
+  initialCompactedEventDetails,
   onClose,
   onNavigate,
   composerHeaderSlot,
@@ -401,6 +426,17 @@ export function ShellAgentPanel({
   const [localConcurrency, setLocalConcurrency] = useState<number>(3);
   const [undoingEntryId, setUndoingEntryId] = useState<string | null>(null);
   const [handoffBusyById, setHandoffBusyById] = useState<Record<string, 'accept' | 'decline'>>({});
+  const [inspectorOpen, setInspectorOpen] = useState<boolean>(defaultInspectorOpen);
+  const [inspectorFocus, setInspectorFocus] = useState<ContextInspectorFocus>(defaultInspectorFocus);
+  const [sessionSnapshots, setSessionSnapshots] = useState<{
+    sessionId: string | undefined;
+    modelCalls: readonly ModelCallSummary[];
+    contextEvents: readonly ContextEventSummary[];
+  }>(() => ({
+    sessionId: undefined,
+    modelCalls: initialModelCalls ?? [],
+    contextEvents: initialContextEvents ?? [],
+  }));
 
   const {
     session: activeSession,
@@ -480,6 +516,75 @@ export function ShellAgentPanel({
         ...(activeSuite ? { suite: activeSuite } : {}),
       }),
     [activeSession, liveDraft, activeSuite],
+  );
+
+  const snapshotProjectId = activeSession?.projectId ?? activeProjectId;
+  const activeRunSettledSignature = `${runs.length}:${runs.some((r) => r.status === 'RUNNING') ? 'running' : 'idle'}:${activeSession?.updatedAt ?? ''}:${activeSession?.messages?.length ?? 0}:${Boolean(activeSession?.compactedSummary)}`;
+
+  useEffect(() => {
+    if (initialModelCalls !== undefined || initialContextEvents !== undefined) return;
+    if (!snapshotProjectId || !activeSession?.id || typeof fetch !== 'function') {
+      setSessionSnapshots((prev) =>
+        prev.sessionId === undefined &&
+        prev.modelCalls.length === 0 &&
+        prev.contextEvents.length === 0
+          ? prev
+          : { sessionId: undefined, modelCalls: [], contextEvents: [] },
+      );
+      return;
+    }
+
+    let cancelled = false;
+    const targetSessionId = activeSession.id;
+    void apiListSessionModelCalls(snapshotProjectId, targetSessionId)
+      .then((res) => {
+        if (cancelled) return;
+        setSessionSnapshots({
+          sessionId: targetSessionId,
+          modelCalls: res.modelCalls,
+          contextEvents: res.contextEvents,
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSessionSnapshots((prev) =>
+          prev.sessionId === targetSessionId
+            ? prev
+            : { sessionId: targetSessionId, modelCalls: [], contextEvents: [] },
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    snapshotProjectId,
+    activeSession?.id,
+    activeRunSettledSignature,
+    inspectorOpen,
+    initialModelCalls,
+    initialContextEvents,
+  ]);
+
+  const effectiveModelCalls =
+    initialModelCalls !== undefined
+      ? initialModelCalls
+      : sessionSnapshots.sessionId === activeSession?.id
+        ? sessionSnapshots.modelCalls
+        : [];
+  const effectiveContextEvents =
+    initialContextEvents !== undefined
+      ? initialContextEvents
+      : sessionSnapshots.sessionId === activeSession?.id
+        ? sessionSnapshots.contextEvents
+        : [];
+  const latestTurnCall = useMemo(
+    () => resolveLatestTurnModelCall(effectiveModelCalls),
+    [effectiveModelCalls],
+  );
+  const activeProviderContextWindow = useMemo(
+    () => data?.llmProviders?.find((p) => p.enabled)?.contextWindow ?? 128_000,
+    [data?.llmProviders],
   );
 
   const queuedPrompts = useMemo(
@@ -1116,80 +1221,125 @@ export function ShellAgentPanel({
   };
 
   return (
-    <AgentPanel
-      title={surface.title}
-      {...(surface.subtitle ? { subtitle: surface.subtitle } : {})}
-      runs={runs}
-      presentationMode={surface.sessionKind === 'REQUIREMENT' ? 'conversation' : 'run-cards'}
-      width={width}
-      wideMode={wideMode}
-      onToggleWideMode={toggleWideMode}
-      overlay={overlay}
-      side={side}
-      closable={closable}
-      {...(resizable !== undefined ? { resizable } : {})}
-      {...(defaultHistoryOpen !== undefined ? { defaultHistoryOpen } : {})}
-      onClose={onClose}
-      onResize={(next, opts) => setWidth(next, opts)}
-      onCancelRun={handleCancelRun}
-      onCancelActiveRun={handleCancelActiveRun}
-      onRetryRun={handleRetryRun}
-      onEditLatestTurn={handleEditLatestTurn}
-      onRetryLatestTurn={handleRetryLatestTurn}
-      onOpenRunArtifact={handleOpenArtifact}
-      onOpenPlatformSettings={() => onNavigate('llm-center')}
-      onOpenLlmCenter={() => onNavigate('llm-center')}
-      onHoverAnchor={setHoveredAnchor}
-      onAnswerAskUser={(runId, promptId, selectedAnswers, freeformText) =>
-        void handleAnswerAskUser(runId, promptId, selectedAnswers, freeformText)
-      }
-      onAcceptStepHandoff={(runId, handoffId) => void handleAcceptStepHandoff(runId, handoffId)}
-      onDeclineStepHandoff={(runId, handoffId) => void handleDeclineStepHandoff(runId, handoffId)}
-      onOpenHandoffTargetStep={handleOpenHandoffTargetStep}
-      handoffBusyById={handoffBusyById}
-      onTriggerWriteback={(writebackId, actionTitle) =>
-        void handleTriggerWriteback(writebackId, actionTitle)
-      }
-      renderRunFooter={renderRunFooter}
-      {...(sessionsOwnedByArtifact
-        ? {
-            sessions: sessionOptions,
-            sessionsOwnedByArtifact: true,
-            onSelectSession: handleSelectPrototypeSession,
-            onRenameSession: handleRenameSession,
-          }
-        : {
-            sessions: sessionOptions,
-            onSelectSession: setActiveSessionId,
-            onCreateSession: handleCreateSession,
-            onRenameSession: handleRenameSession,
-            onDeleteSession: handleDeleteSession,
-          })}
-      {...(surface.starters ? { starterPrompts: surface.starters } : {})}
-      {...(activeSession?.id ? { activeSessionId: activeSession.id } : {})}
-      draftFallbackKey={sessionScopeKey ?? surface.sessionKind}
-      isForkSession={Boolean(activeSession?.parentSessionId)}
-      {...(headerContextSlot ? { headerContextSlot } : {})}
-      onSubmitPrompt={handleSubmitPrompt}
-      {...(surface.placeholder ? { composerPlaceholder: surface.placeholder } : {})}
-      {...(effectiveComposerHeaderSlot
-        ? { composerHeaderSlot: effectiveComposerHeaderSlot }
-        : {})}
-      {...(queuedPrompts.length > 0 ? { queuedPrompts } : {})}
-      {...(activeSession
-        ? {
-            onRemoveQueuedPrompt: (queueId: string) =>
-              removeQueuedSessionPrompt(activeSession.id, queueId),
-          }
-        : {})}
-      composerVisionSupported={resolvedVision.visionSupported}
-      {...(resolvedVision.providerLabel ? { visionProviderLabel: resolvedVision.providerLabel } : {})}
-      {...(resolvedVision.modelLabel ? { visionModelLabel: resolvedVision.modelLabel } : {})}
-      {...(visionState
-        ? {
-            visionSupported: visionState.visionSupported,
-          }
-        : {})}
-    />
+    <>
+      <AgentPanel
+        title={surface.title}
+        {...(surface.subtitle ? { subtitle: surface.subtitle } : {})}
+        runs={runs}
+        presentationMode={surface.sessionKind === 'REQUIREMENT' ? 'conversation' : 'run-cards'}
+        width={width}
+        wideMode={wideMode}
+        onToggleWideMode={toggleWideMode}
+        overlay={overlay}
+        side={side}
+        closable={closable}
+        {...(resizable !== undefined ? { resizable } : {})}
+        {...(defaultHistoryOpen !== undefined ? { defaultHistoryOpen } : {})}
+        onClose={onClose}
+        onResize={(next, opts) => setWidth(next, opts)}
+        onCancelRun={handleCancelRun}
+        onCancelActiveRun={handleCancelActiveRun}
+        onRetryRun={handleRetryRun}
+        onEditLatestTurn={handleEditLatestTurn}
+        onRetryLatestTurn={handleRetryLatestTurn}
+        onOpenRunArtifact={handleOpenArtifact}
+        onOpenPlatformSettings={() => onNavigate('llm-center')}
+        onOpenLlmCenter={() => onNavigate('llm-center')}
+        onHoverAnchor={setHoveredAnchor}
+        onAnswerAskUser={(runId, promptId, selectedAnswers, freeformText) =>
+          void handleAnswerAskUser(runId, promptId, selectedAnswers, freeformText)
+        }
+        onAcceptStepHandoff={(runId, handoffId) => void handleAcceptStepHandoff(runId, handoffId)}
+        onDeclineStepHandoff={(runId, handoffId) => void handleDeclineStepHandoff(runId, handoffId)}
+        onOpenHandoffTargetStep={handleOpenHandoffTargetStep}
+        handoffBusyById={handoffBusyById}
+        onTriggerWriteback={(writebackId, actionTitle) =>
+          void handleTriggerWriteback(writebackId, actionTitle)
+        }
+        renderRunFooter={renderRunFooter}
+        {...(sessionsOwnedByArtifact
+          ? {
+              sessions: sessionOptions,
+              sessionsOwnedByArtifact: true,
+              onSelectSession: handleSelectPrototypeSession,
+              onRenameSession: handleRenameSession,
+            }
+          : {
+              sessions: sessionOptions,
+              onSelectSession: setActiveSessionId,
+              onCreateSession: handleCreateSession,
+              onRenameSession: handleRenameSession,
+              onDeleteSession: handleDeleteSession,
+            })}
+        {...(surface.starters ? { starterPrompts: surface.starters } : {})}
+        {...(activeSession?.id ? { activeSessionId: activeSession.id } : {})}
+        draftFallbackKey={sessionScopeKey ?? surface.sessionKind}
+        isForkSession={Boolean(activeSession?.parentSessionId)}
+        {...(headerContextSlot ? { headerContextSlot } : {})}
+        onSubmitPrompt={handleSubmitPrompt}
+        {...(surface.placeholder ? { composerPlaceholder: surface.placeholder } : {})}
+        {...(effectiveComposerHeaderSlot
+          ? { composerHeaderSlot: effectiveComposerHeaderSlot }
+          : {})}
+        composerRightAccessorySlot={
+          <ContextOccupancyRing
+            latestCall={latestTurnCall}
+            open={inspectorOpen}
+            onToggle={() => {
+              setInspectorFocus('composition');
+              setInspectorOpen((prev) => !prev);
+            }}
+          />
+        }
+        conversationTopNoticeSlot={
+          <RemovedMessagesNotice
+            latestCall={latestTurnCall}
+            contextEvents={effectiveContextEvents}
+            onOpenInspector={(focus) => {
+              setInspectorFocus(focus);
+              setInspectorOpen(true);
+            }}
+          />
+        }
+        {...(queuedPrompts.length > 0 ? { queuedPrompts } : {})}
+        {...(activeSession
+          ? {
+              onRemoveQueuedPrompt: (queueId: string) =>
+                removeQueuedSessionPrompt(activeSession.id, queueId),
+            }
+          : {})}
+        composerVisionSupported={resolvedVision.visionSupported}
+        {...(resolvedVision.providerLabel
+          ? { visionProviderLabel: resolvedVision.providerLabel }
+          : {})}
+        {...(resolvedVision.modelLabel ? { visionModelLabel: resolvedVision.modelLabel } : {})}
+        {...(visionState
+          ? {
+              visionSupported: visionState.visionSupported,
+            }
+          : {})}
+      />
+
+      <ContextInspectorOverlay
+        open={inspectorOpen}
+        onClose={() => setInspectorOpen(false)}
+        focus={inspectorFocus}
+        side={side}
+        panelWidth={width}
+        wideMode={wideMode}
+        overlay={overlay}
+        {...(snapshotProjectId ? { projectId: snapshotProjectId } : {})}
+        latestCall={latestTurnCall}
+        modelCalls={effectiveModelCalls}
+        contextEvents={effectiveContextEvents}
+        defaultContextWindow={activeProviderContextWindow}
+        {...(initialLatestCallDetail !== undefined
+          ? { latestCallDetail: initialLatestCallDetail }
+          : {})}
+        {...(initialCompactedEventDetails !== undefined
+          ? { compactedEventDetails: initialCompactedEventDetails }
+          : {})}
+      />
+    </>
   );
 }

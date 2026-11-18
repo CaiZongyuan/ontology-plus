@@ -44,6 +44,8 @@ export interface ConversationThreadProps {
   renderRunFooter?: (run: AgentRunView) => React.ReactNode;
   renderUserActions?: (run: AgentRunView, opts: { isLatestTurn: boolean }) => React.ReactNode;
   renderReplyActions?: (run: AgentRunView) => React.ReactNode;
+  /** Optional calm notice banner at the top of the message stream (e.g. #82 RemovedMessagesNotice). */
+  topNoticeSlot?: React.ReactNode;
   /** Incremented when the user submits a prompt from the composer so sticky scroll re-arms. */
   scrollToBottomSignal?: number;
 }
@@ -76,6 +78,7 @@ export function ConversationThread({
   renderRunFooter,
   renderUserActions,
   renderReplyActions,
+  topNoticeSlot,
   scrollToBottomSignal = 0,
 }: ConversationThreadProps) {
   const { t } = usePreferences();
@@ -222,6 +225,7 @@ export function ConversationThread({
         data-testid="conversation-thread"
         onScroll={handleScroll}
       >
+        {topNoticeSlot}
         {runs.length === 0 ? (
           <div className="agent-panel-empty" data-testid="agent-panel-empty">
             <span className="agent-panel-empty-mark" aria-hidden="true">

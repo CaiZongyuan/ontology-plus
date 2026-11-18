@@ -34,6 +34,10 @@ import {
   ChangeSummaryItemView,
   ChangeSummaryView,
   ConfirmedPrototypeRevision,
+  ContextEventDetail,
+  ContextEventSummary,
+  ContextItem,
+  ContextItemKind,
   CreatePrototypeInput,
   CrossSystemFlow,
   DataDocument,
@@ -52,6 +56,13 @@ import {
   LlmProviderConfig,
   McpServerConfig,
   MetricDefinition,
+  ModelCallDetail,
+  ModelCallEstimate,
+  ModelCallPurpose,
+  ModelCallStatus,
+  ModelCallSummary,
+  ModelCallUsage,
+  ModelCallUsageSource,
   PersistedArtifactHistoryKind,
   ProjectDetail,
   ProjectSnapshot,
@@ -69,6 +80,7 @@ import {
   StepHandoffProposal,
   SystemSettingsState,
   TechnologyProfile,
+  ToolDefinitionSource,
   WritebackInterface,
 } from '../packages/workspace-store/index.js';
 import type {
@@ -3483,6 +3495,74 @@ export async function apiTestLlmProvider(
   providerId: string,
 ): Promise<{ ping: LlmPingResult; llmProviders: LlmProviderConfig[] }> {
   return apiPostJson(`/api/llm/providers/${providerId}/test`, {});
+}
+
+// ─── Context Snapshots Client Helpers (ADR 0017, #82) ────────────────────────
+
+export type {
+  ContextEventDetail,
+  ContextEventSummary,
+  ContextItem,
+  ContextItemKind,
+  ModelCallDetail,
+  ModelCallEstimate,
+  ModelCallPurpose,
+  ModelCallStatus,
+  ModelCallSummary,
+  ModelCallUsage,
+  ModelCallUsageSource,
+  ToolDefinitionSource,
+} from '../packages/workspace-store/index.js';
+
+export async function apiListSessionModelCalls(
+  projectId: string,
+  sessionId: string,
+): Promise<{
+  modelCalls: ModelCallSummary[];
+  contextEvents: ContextEventSummary[];
+}> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/agent-sessions/${encodeURIComponent(sessionId)}/model-calls`,
+    { headers: buildLocaleHeaders() },
+  );
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to load session model calls');
+  }
+  return body as {
+    modelCalls: ModelCallSummary[];
+    contextEvents: ContextEventSummary[];
+  };
+}
+
+export async function apiGetModelCall(
+  projectId: string,
+  callId: string,
+): Promise<{ modelCall: ModelCallDetail }> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/model-calls/${encodeURIComponent(callId)}`,
+    { headers: buildLocaleHeaders() },
+  );
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to load model call detail');
+  }
+  return body as { modelCall: ModelCallDetail };
+}
+
+export async function apiGetContextEvent(
+  projectId: string,
+  eventId: string,
+): Promise<{ contextEvent: ContextEventDetail }> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/context-events/${encodeURIComponent(eventId)}`,
+    { headers: buildLocaleHeaders() },
+  );
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to load context event detail');
+  }
+  return body as { contextEvent: ContextEventDetail };
 }
 
 export function triggerBrowserDownload(
