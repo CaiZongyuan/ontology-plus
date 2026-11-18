@@ -20,6 +20,7 @@ import { useAgentPanelStore } from '../../components/agent/agentPanelStore.js';
 import { resolveActiveVisionCapability } from '../../components/agent/VisionAttachmentControls.js';
 import { Button } from '../../components/beautifui/index.js';
 import { ArtifactHistoryDrawer } from '../../components/history/index.js';
+import { PrototypeArtboardGrid } from '../../components/prototype/PrototypeArtboardGrid.js';
 import {
   PrototypeCanvasStage,
   runImportPrototypeHtml,
@@ -185,7 +186,21 @@ export function PrototypeStudioView({
     );
   }, [data, proto]);
 
-  const liveDraft = coDesignSession ? liveSessionDrafts[coDesignSession.id] : undefined;
+  const unboundLiveSession = useMemo(() => {
+    if (!data || prototypes.length > 0) return undefined;
+    return (data.agentSessions ?? []).find(
+      (s) =>
+        s.projectId === data.activeProject.id &&
+        s.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+        Boolean(liveSessionDrafts[s.id]),
+    );
+  }, [data, liveSessionDrafts, prototypes.length]);
+
+  const liveDraft = coDesignSession
+    ? liveSessionDrafts[coDesignSession.id]
+    : unboundLiveSession
+      ? liveSessionDrafts[unboundLiveSession.id]
+      : undefined;
   const activeRunningAnchor = resolveLiveRunningPrototypeAnchor(coDesignSession, liveDraft);
   const postRunReview =
     activeRunningAnchor === null
@@ -707,11 +722,34 @@ export function PrototypeStudioView({
               : (postRunReview?.revision.id ?? null)
           }
           htmlOverride={
-            postRunReview && beforeAfterMode === 'BEFORE'
-              ? postRunReview.previousRevision.htmlContent
-              : null
+            liveDraft?.livePreviewHtml
+              ? liveDraft.livePreviewHtml
+              : postRunReview && beforeAfterMode === 'BEFORE'
+                ? postRunReview.previousRevision.htmlContent
+                : null
           }
           busy={isBusyProto || Boolean(activeRunningAnchor)}
+          {...(liveDraft?.subagentLanes ? { subagentLanes: liveDraft.subagentLanes } : {})}
+          {...(liveDraft?.liveStreamedChars !== undefined
+            ? { liveStreamedChars: liveDraft.liveStreamedChars }
+            : {})}
+          {...(liveDraft?.reconnecting !== undefined ? { reconnecting: liveDraft.reconnecting } : {})}
+          onRetryScreen={(screenId, screenName) => {
+            void (async () => {
+              const targetSession = await ensurePrototypeCoDesignSession(project.id, proto.id);
+              setActiveSessionId(targetSession.id);
+              useAgentPanelStore.getState().revealPanel();
+              await startSessionAgentRun({
+                sessionId: targetSession.id,
+                prompt:
+                  locale === 'en-US'
+                    ? `Please complete screen "${screenName}" (${screenId}) using upsert_prototype_screen while keeping all other screens unchanged.`
+                    : `请单独补全并完善分屏「${screenName}」（${screenId}），保持其他已完成分屏不变。`,
+                displayTitle:
+                  locale === 'en-US' ? `Complete screen "${screenName}"` : `继续生成分屏「${screenName}」`,
+              });
+            })();
+          }}
           focusMode={canvasFocusMode}
           onFocusModeChange={setCanvasFocusMode}
           canvasBannerSlot={canvasBannerContent}
@@ -721,6 +759,49 @@ export function PrototypeStudioView({
           {...(renderRevisionHistory ? { renderRevisionHistory } : {})}
           {...(renderConfirmModal ? { renderConfirmModal } : {})}
         />
+      );
+    }
+
+    if (prototypes.length === 0 && unboundLiveSession && liveDraft && stageOverride !== 'BRIEFING') {
+      return (
+        <section
+          className="card flex flex-col overflow-hidden"
+          data-testid="prototype-initial-live-artboard-stage"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+            <div className="flex items-center gap-2 text-[13px] font-medium text-foreground">
+              <Loader2 size={14} className="animate-spin text-primary" aria-hidden="true" />
+              <span>
+                {t(
+                  `${project.name} · 正在并行构建首版界面原型`,
+                  `${project.name} · Building initial prototype live`,
+                )}
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="prototype-live-back-to-brief-btn"
+              onClick={() => setStageOverride('BRIEFING')}
+            >
+              <ArrowLeft size={13} aria-hidden="true" />
+              <span>{t('查看设计简报', 'View Design Brief')}</span>
+            </Button>
+          </div>
+          <PrototypeArtboardGrid
+            htmlContent={liveDraft.livePreviewHtml ?? ''}
+            projectName={project.name}
+            busy
+            {...(liveDraft.reconnecting !== undefined ? { reconnecting: liveDraft.reconnecting } : {})}
+            {...(liveDraft.liveStreamedChars !== undefined
+              ? { liveStreamedChars: liveDraft.liveStreamedChars }
+              : {})}
+            {...(liveDraft.subagentLanes ? { subagentLanes: liveDraft.subagentLanes } : {})}
+            activeRunningAnchor={liveDraft.activeAnchor ?? null}
+            viewMode={stageViewMode}
+          />
+        </section>
       );
     }
 

@@ -465,6 +465,37 @@ export interface AgentImageAttachmentRef {
   role?: AgentImageAttachmentRole;
 }
 
+export const DEFAULT_MULTI_AGENT_CONCURRENCY = 3;
+
+export type AgentSubagentPhase =
+  | 'QUEUED'
+  | 'THINKING'
+  | 'STREAMING'
+  | 'VALIDATING'
+  | 'DONE'
+  | 'FAILED';
+
+export type AgentSubagentCursorZone = 'header' | 'kpi' | 'toolbar' | 'body' | 'drawer' | 'footer';
+
+export interface AgentSubagentLaneTrace {
+  laneId: string;
+  workerIndex: number;
+  workerLabel: { zh: string; en: string };
+  taskTitle: { zh: string; en: string };
+  targetAnchor?: PrototypeTargetAnchor;
+  status: 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
+  phase?: AgentSubagentPhase;
+  liveAction?: { zh: string; en: string };
+  cursorZone?: AgentSubagentCursorZone;
+  streamedHtmlChars?: number;
+  progressChars?: number;
+  thinking?: string;
+  output?: string;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
 export interface AgentSessionMessage {
   id: string;
   /** Persistent Agent Run identifier shared by the turn's user message and its resulting assistant message. */
@@ -480,6 +511,8 @@ export interface AgentSessionMessage {
   visionFallbackUsed?: boolean;
   visionFallbackNotice?: string;
   toolCalls?: AgentToolCallTrace[];
+  subagentLanes?: AgentSubagentLaneTrace[];
+  codeModeScript?: string;
   askUser?: AgentAskUserPrompt;
   stepHandoff?: StepHandoffProposal;
   handoffFrom?: StepHandoffOrigin;
@@ -507,6 +540,10 @@ export interface AgentSession {
   providerId?: string;
   modelOverride?: string;
   reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+  /** Enables QuickJS Code Mode (`codemode` tool) so the agent can orchestrate batch/parallel calls in JS. Defaults to `true`. */
+  codeMode?: boolean;
+  /** Max concurrent subagents per turn (`1` = single-agent, default `3`). */
+  multiAgentConcurrency?: number;
   designBrief?: DesignBrief;
   compactedSummary?: string;
   tokenUsage?: {
@@ -1336,6 +1373,8 @@ export interface WorkspaceStore {
     providerId?: string;
     modelOverride?: string;
     reasoningMode?: AgentSession['reasoningMode'];
+    codeMode?: boolean;
+    multiAgentConcurrency?: number;
     initialMessages?: AgentSessionMessage[];
   }): AgentSession;
   saveAgentSession(session: AgentSession): AgentSession;

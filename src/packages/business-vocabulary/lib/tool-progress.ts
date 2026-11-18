@@ -222,6 +222,54 @@ const CATALOG_ENTRIES: readonly ToolProgressSpec[] = [
       en: `Generating ${PROTO_STEP.en.toLowerCase()} page`,
     },
   },
+  {
+    toolName: 'init_prototype_shell',
+    iconKind: 'screen',
+    label: {
+      zh: `搭建${PROTO_STEP.zh}分屏骨架`,
+      en: `Initialize ${PROTO_STEP.en.toLowerCase()} artboards`,
+    },
+    activeLabel: {
+      zh: `正在搭建${PROTO_STEP.zh}分屏骨架`,
+      en: `Initializing ${PROTO_STEP.en.toLowerCase()} artboards`,
+    },
+  },
+  {
+    toolName: 'upsert_prototype_screen',
+    iconKind: 'screen',
+    label: {
+      zh: `绘制${PROTO_STEP.zh}分屏`,
+      en: `Build ${PROTO_STEP.en.toLowerCase()} screen`,
+    },
+    activeLabel: {
+      zh: `正在绘制${PROTO_STEP.zh}分屏`,
+      en: `Building ${PROTO_STEP.en.toLowerCase()} screen`,
+    },
+  },
+  {
+    toolName: 'codemode',
+    iconKind: 'automation',
+    label: {
+      zh: '批量编排步骤动作',
+      en: 'Orchestrate batch steps',
+    },
+    activeLabel: {
+      zh: '正在批量编排步骤动作',
+      en: 'Orchestrating batch steps',
+    },
+  },
+  {
+    toolName: 'spawn_subagents',
+    iconKind: 'automation',
+    label: {
+      zh: '多路并行协同处理',
+      en: 'Run parallel assistants',
+    },
+    activeLabel: {
+      zh: '正在多路并行协同处理',
+      en: 'Running parallel assistants',
+    },
+  },
 
   // Domain run tools
   {
@@ -550,7 +598,7 @@ function formatToolTextPair(
     return base;
   }
 
-  // 4. Prototype read/edit with clean human label
+  // 4. Prototype read/edit/screen tools with clean human label
   if (canonical === 'read_prototype_anchor' || canonical === 'edit_prototype_anchor') {
     const isEdit = canonical === 'edit_prototype_anchor';
     const label = cleanCandidateString(
@@ -560,6 +608,19 @@ function formatToolTextPair(
       return {
         zh: `${active ? '正在' : ''}${isEdit ? '修改' : '查看'}${PROTO_STEP.zh}中的「${label}」`,
         en: `${active ? (isEdit ? 'Updating' : 'Reading') : isEdit ? 'Update' : 'Read'} '${label}' in ${PROTO_STEP.en.toLowerCase()}`,
+      };
+    }
+    return base;
+  }
+
+  if (canonical === 'upsert_prototype_screen') {
+    const label = cleanCandidateString(
+      options?.targetLabel ?? safeArgs.screenName ?? safeArgs.label ?? safeArgs.title,
+    );
+    if (label) {
+      return {
+        zh: `${active ? '正在绘制' : '绘制'}${PROTO_STEP.zh}分屏「${label}」`,
+        en: `${active ? 'Building' : 'Build'} ${PROTO_STEP.en.toLowerCase()} screen '${label}'`,
       };
     }
     return base;

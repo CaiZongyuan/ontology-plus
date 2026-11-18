@@ -19,6 +19,7 @@ import type {
   AgentImageAttachmentRef,
   AgentSession,
   AgentSessionMessage,
+  AgentSubagentLaneTrace,
   AgentToolCallTrace,
   PrototypeTargetAnchor,
   StepHandoffOrigin,
@@ -137,6 +138,14 @@ export interface AgentRunView {
   handoffFrom?: StepHandoffOrigin;
   /** Semantic anchors modified during this run (for canvas highlighting). */
   modifiedAnchors?: PrototypeTargetAnchor[];
+  /** Parallel subagent execution lanes (default concurrency = 3). */
+  subagentLanes?: AgentSubagentLaneTrace[];
+  /** QuickJS Code Mode orchestration script executed in this run (shown inside View details). */
+  codeModeScript?: string;
+  /** Live streamed character count (thinking + text + tool arguments) for pulse visibility. */
+  liveStreamedChars?: number;
+  /** True while SSE client is automatically re-attaching after a transient drop. */
+  reconnecting?: boolean;
   /** Immutable prototype revision created at the end of this run, when HTML changed. */
   prototypeRevision?: {
     prototypeId: string;
@@ -874,10 +883,33 @@ function buildCompletedSessionRun(
       .filter(
         (tc) =>
           !tc.isError &&
-          (tc.toolName === 'edit_prototype_anchor' || tc.toolName === 'rewrite_prototype_page') &&
+          (tc.toolName === 'edit_prototype_anchor' ||
+            tc.toolName === 'rewrite_prototype_page' ||
+            tc.toolName === 'init_prototype_shell' ||
+            tc.toolName === 'upsert_prototype_screen') &&
           tc.targetAnchor,
       )
       .map((tc) => tc.targetAnchor!);
+
+  const safeSubagentLanes = aMsg.subagentLanes?.map((lane) => ({
+    ...lane,
+    workerLabel: {
+      zh: sanitizeBusinessText(lane.workerLabel.zh, 'zh-CN'),
+      en: sanitizeBusinessText(lane.workerLabel.en, 'en-US'),
+    },
+    taskTitle: {
+      zh: sanitizeBusinessText(lane.taskTitle.zh, 'zh-CN'),
+      en: sanitizeBusinessText(lane.taskTitle.en, 'en-US'),
+    },
+    ...(lane.liveAction
+      ? {
+          liveAction: {
+            zh: sanitizeBusinessText(lane.liveAction.zh, 'zh-CN'),
+            en: sanitizeBusinessText(lane.liveAction.en, 'en-US'),
+          },
+        }
+      : {}),
+  }));
 
   const cleanAssistantText =
     session.agentKind === 'PROTOTYPE_CO_DESIGN' && aMsg.content
@@ -944,6 +976,10 @@ function buildCompletedSessionRun(
     ...(aMsg.askUser ? { askUser: aMsg.askUser } : {}),
     ...(aMsg.stepHandoff ? { stepHandoff: aMsg.stepHandoff } : {}),
     ...(modifiedAnchors.length > 0 ? { modifiedAnchors } : {}),
+    ...(safeSubagentLanes && safeSubagentLanes.length > 0
+      ? { subagentLanes: safeSubagentLanes }
+      : {}),
+    ...(aMsg.codeModeScript ? { codeModeScript: aMsg.codeModeScript } : {}),
     ...(revArtifact
       ? {
           prototypeRevision: {
@@ -1046,6 +1082,31 @@ function buildRunFromLiveDraft(
     ...(draft.askUser ? { askUser: draft.askUser } : {}),
     ...(draft.stepHandoff ? { stepHandoff: draft.stepHandoff } : {}),
     ...(draft.activeAnchor ? { modifiedAnchors: [draft.activeAnchor] } : {}),
+    ...(draft.subagentLanes && draft.subagentLanes.length > 0
+      ? {
+          subagentLanes: draft.subagentLanes.map((lane) => ({
+            ...lane,
+            workerLabel: {
+              zh: sanitizeBusinessText(lane.workerLabel.zh, 'zh-CN'),
+              en: sanitizeBusinessText(lane.workerLabel.en, 'en-US'),
+            },
+            taskTitle: {
+              zh: sanitizeBusinessText(lane.taskTitle.zh, 'zh-CN'),
+              en: sanitizeBusinessText(lane.taskTitle.en, 'en-US'),
+            },
+            ...(lane.liveAction
+              ? {
+                  liveAction: {
+                    zh: sanitizeBusinessText(lane.liveAction.zh, 'zh-CN'),
+                    en: sanitizeBusinessText(lane.liveAction.en, 'en-US'),
+                  },
+                }
+              : {}),
+          })),
+        }
+      : {}),
+    ...(draft.liveStreamedChars !== undefined ? { liveStreamedChars: draft.liveStreamedChars } : {}),
+    ...(draft.reconnecting ? { reconnecting: true } : {}),
     ...(revArtifact
       ? {
           prototypeRevision: {

@@ -58,6 +58,17 @@ module.exports = {
       to: { path: "^src/web/" },
     },
     {
+      name: "no-web-runtime-server-packages",
+      comment:
+        "Browser UI code under src/web/ (outside tests) may use `import type` from server-only packages (agent-runtime, package-compiler), never runtime value imports that pull Node builtins into the Vite client bundle.",
+      severity: "error",
+      from: { path: "^src/web/", pathNot: "\\.test\\.(ts|tsx)$" },
+      to: {
+        path: `^${R}/(agent-runtime|package-compiler)/`,
+        dependencyTypesNot: ["type-only"],
+      },
+    },
+    {
       name: "no-circular",
       comment: "No dependency cycles.",
       severity: "error",

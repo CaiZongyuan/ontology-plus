@@ -373,6 +373,7 @@ export function ShellAgentPanel({
     openArtifactHistoryDrawer,
     undoArtifactChange,
     ensureProjectAgentSession,
+    updateAgentSessionExecutionConfig,
     startSessionAgentRun,
     cancelSessionAgentRun,
     retrySessionAgentRun,
@@ -392,6 +393,8 @@ export function ShellAgentPanel({
   const [reasoningMode, setReasoningMode] = useState<'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY'>(
     'ASK_POLICY',
   );
+  const [localCodeMode, setLocalCodeMode] = useState<boolean>(true);
+  const [localConcurrency, setLocalConcurrency] = useState<number>(3);
   const [undoingEntryId, setUndoingEntryId] = useState<string | null>(null);
   const [handoffBusyById, setHandoffBusyById] = useState<Record<string, 'accept' | 'decline'>>({});
 
@@ -430,7 +433,38 @@ export function ShellAgentPanel({
     if (activeSession?.reasoningMode) {
       setReasoningMode(activeSession.reasoningMode);
     }
-  }, [activeSession?.id, activeSession?.reasoningMode]);
+    if (activeSession?.codeMode !== undefined) {
+      setLocalCodeMode(activeSession.codeMode);
+    }
+    if (activeSession?.multiAgentConcurrency !== undefined) {
+      setLocalConcurrency(activeSession.multiAgentConcurrency);
+    }
+  }, [
+    activeSession?.id,
+    activeSession?.reasoningMode,
+    activeSession?.codeMode,
+    activeSession?.multiAgentConcurrency,
+  ]);
+
+  const effectiveCodeMode = activeSession?.codeMode ?? localCodeMode;
+  const effectiveConcurrency = activeSession?.multiAgentConcurrency ?? localConcurrency;
+
+  const handleToggleCodeMode = () => {
+    const next = !effectiveCodeMode;
+    setLocalCodeMode(next);
+    if (activeSession) {
+      void updateAgentSessionExecutionConfig(activeSession.id, { codeMode: next });
+    }
+  };
+
+  const handleSelectConcurrency = (next: number) => {
+    setLocalConcurrency(next);
+    if (activeSession) {
+      void updateAgentSessionExecutionConfig(activeSession.id, {
+        multiAgentConcurrency: next,
+      });
+    }
+  };
 
   const liveDraft = activeSession ? liveSessionDrafts[activeSession.id] : undefined;
   const queuedItems = activeSession ? (sessionQueues[activeSession.id] ?? []) : [];
@@ -462,7 +496,7 @@ export function ShellAgentPanel({
     activePrototypeId ? s.attachmentsByPrototype[activePrototypeId] : undefined,
   );
 
-  const effectiveComposerHeaderSlot =
+  const selectionSlot =
     composerHeaderSlot ??
     (surface.sessionKind === 'PROTOTYPE_CO_DESIGN' &&
     activePrototypeId &&
@@ -470,6 +504,71 @@ export function ShellAgentPanel({
     prototypeSelectionAttachments.length > 0 ? (
       <SelectionAttachmentStrip prototypeId={activePrototypeId} />
     ) : undefined);
+
+  const executionModeBar = (
+    <div
+      className="flex flex-wrap items-center justify-between gap-1.5 text-[11.5px]"
+      data-testid="agent-execution-mode-bar"
+    >
+      <button
+        type="button"
+        data-testid="agent-codemode-toggle"
+        aria-pressed={effectiveCodeMode}
+        onClick={handleToggleCodeMode}
+        className={`inline-flex cursor-pointer items-center gap-1 rounded border px-2 py-0.5 font-medium transition ${
+          effectiveCodeMode
+            ? 'border-primary/50 bg-primary-soft text-primary'
+            : 'border-border bg-muted/40 text-muted-foreground hover:bg-accent'
+        }`}
+        title={t(
+          '开启后允许助手编写脚本批量并行编排步骤动作',
+          'Allow the assistant to write orchestration scripts for batch & parallel actions',
+        )}
+      >
+        <span>{t('代码模式', 'Code Mode')}</span>
+        <span className="font-mono text-[10.5px]">{effectiveCodeMode ? 'ON' : 'OFF'}</span>
+      </button>
+
+      <div
+        className="inline-flex items-center gap-0.5 rounded border border-border bg-muted/35 p-0.5"
+        role="group"
+        aria-label={t('并行协作路数', 'Parallel assistants count')}
+        data-testid="agent-concurrency-group"
+      >
+        <span className="px-1.5 text-[11px] text-muted-foreground">
+          {t('并行', 'Multi')}
+        </span>
+        {([1, 2, 3, 4] as const).map((n) => {
+          const active = effectiveConcurrency === n;
+          return (
+            <button
+              key={n}
+              type="button"
+              data-testid={`agent-concurrency-btn-${n}`}
+              aria-pressed={active}
+              onClick={() => handleSelectConcurrency(n)}
+              className={`cursor-pointer rounded px-1.5 py-0.2 font-mono text-[11px] transition ${
+                active
+                  ? 'bg-primary font-semibold text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              }`}
+            >
+              ×{n}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const effectiveComposerHeaderSlot = selectionSlot ? (
+    <div className="flex flex-col gap-1.5">
+      {selectionSlot}
+      {executionModeBar}
+    </div>
+  ) : (
+    executionModeBar
+  );
 
   const isProjectStepSurface =
     surface.sessionKind === 'REQUIREMENT' ||
@@ -751,6 +850,8 @@ export function ShellAgentPanel({
         await startSessionAgentRun({
           sessionId: targetSession.id,
           prompt,
+          codeMode: effectiveCodeMode,
+          multiAgentConcurrency: effectiveConcurrency,
         });
       }
       return;
@@ -786,6 +887,8 @@ export function ShellAgentPanel({
         surface.sessionKind === 'CODING' && !targetSession.targetId && codingTargetApp
           ? `[Target application ID: ${codingTargetApp.id}]\n${prompt}`
           : prompt,
+      codeMode: effectiveCodeMode,
+      multiAgentConcurrency: effectiveConcurrency,
       ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
       ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
     });

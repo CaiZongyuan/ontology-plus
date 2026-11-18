@@ -4,6 +4,7 @@ export {
 } from './lib/store.js';
 
 export {
+  DEFAULT_MULTI_AGENT_CONCURRENCY,
   SuiteValidationRejectedError,
   doesProviderSupportVision,
   resolveCurrentProjectStep,
@@ -67,6 +68,9 @@ export type {
   AgentSessionKind,
   PrototypeTargetAnchor,
   AgentToolCallTrace,
+  AgentSubagentPhase,
+  AgentSubagentCursorZone,
+  AgentSubagentLaneTrace,
   AgentAskUserPrompt,
   StepHandoffStatus,
   StepHandoffProposal,

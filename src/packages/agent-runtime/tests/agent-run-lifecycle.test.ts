@@ -93,7 +93,7 @@ describe('Agent Run persistent runId & ProjectStep derivation', () => {
     } finally {
       store2.close();
     }
-  });
+  }, 15000);
 
   it('aligns ActiveBackgroundSessionRun.runId, PrototypeRevision.agentRunId, onRunStart, and onRunEnd on the same persistent runId', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });

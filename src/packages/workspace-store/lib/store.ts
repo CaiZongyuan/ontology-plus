@@ -2543,6 +2543,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         providerId: input.providerId,
         modelOverride: input.modelOverride,
         reasoningMode: input.reasoningMode,
+        codeMode: input.codeMode ?? true,
+        multiAgentConcurrency:
+          typeof input.multiAgentConcurrency === 'number' &&
+          Number.isFinite(input.multiAgentConcurrency)
+            ? Math.max(1, Math.min(6, Math.round(input.multiAgentConcurrency)))
+            : 3,
         messages: input.initialMessages ?? [],
         createdAt: now,
         updatedAt: now,

@@ -17,6 +17,7 @@ import {
   AgentImageAttachmentRef,
   AgentSession,
   AgentSessionKind,
+  AgentSubagentLaneTrace,
   AgentToolCallTrace,
   AnalyticsQueryResult,
   AnalyticsReport,
@@ -218,6 +219,11 @@ export interface SessionLiveDraft {
   thinking: string;
   text: string;
   steps: SessionLiveStep[];
+  subagentLanes?: AgentSubagentLaneTrace[];
+  livePreviewHtml?: string;
+  liveStreamedChars?: number;
+  lastHeartbeatAt?: number;
+  reconnecting?: boolean;
   artifacts?: AgentDomainArtifact[];
   askUser?: AgentAskUserPrompt;
   stepHandoff?: StepHandoffProposal;
@@ -482,6 +488,10 @@ interface WorkbenchStoreState {
     projectId: string,
     prototypeId: string,
   ) => Promise<AgentSession>;
+  updateAgentSessionExecutionConfig: (
+    sessionId: string,
+    patch: { codeMode?: boolean; multiAgentConcurrency?: number },
+  ) => Promise<AgentSession | null>;
   attachLiveSessionStream: (sessionId: string) => Promise<void>;
   startSessionAgentRun: (input: {
     sessionId: string;
@@ -497,6 +507,8 @@ interface WorkbenchStoreState {
     prototypeName?: string;
     activeModelCode?: ModelCode;
     reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+    codeMode?: boolean;
+    multiAgentConcurrency?: number;
     mockMode?: boolean;
   }) => Promise<void>;
   startPrototypeBriefGenerationRun: (input: {
@@ -1191,6 +1203,47 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     return ensured.session;
   },
 
+  updateAgentSessionExecutionConfig: async (sessionId, patch) => {
+    const cur = get().data;
+    if (cur) {
+      set({
+        data: {
+          ...cur,
+          agentSessions: (cur.agentSessions ?? []).map((s) =>
+            s.id === sessionId
+              ? {
+                  ...s,
+                  ...(patch.codeMode !== undefined ? { codeMode: patch.codeMode } : {}),
+                  ...(patch.multiAgentConcurrency !== undefined
+                    ? { multiAgentConcurrency: patch.multiAgentConcurrency }
+                    : {}),
+                }
+              : s,
+          ),
+        },
+      });
+    }
+    try {
+      const res = await fetch(`/api/agent-sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'PATCH',
+        headers: buildJsonHeaders(),
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as {
+        session: AgentSession;
+        agentSessions?: AgentSession[];
+      };
+      const latest = get().data;
+      if (latest && body.agentSessions) {
+        set({ data: { ...latest, agentSessions: body.agentSessions } });
+      }
+      return body.session;
+    } catch {
+      return null;
+    }
+  },
+
   attachLiveSessionStream: async (sessionId) => {
     if (activeSessionStreamAborters.has(sessionId)) return;
     const controller = new AbortController();
@@ -1217,14 +1270,58 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       });
     }
 
+    let terminalSeen = false;
+    let lastEventId: string | undefined;
+    const baseCallbacks = buildStoreSessionStreamCallbacks(sessionId, set, get);
+    const trackedCallbacks: StreamAgentSessionCallbacks = {
+      ...baseCallbacks,
+      onEventId: (id) => {
+        lastEventId = id;
+      },
+      onRunError: (p) => {
+        terminalSeen = true;
+        baseCallbacks.onRunError?.(p);
+      },
+      onMessageEnd: (p) => {
+        terminalSeen = true;
+        baseCallbacks.onMessageEnd?.(p);
+      },
+    };
+
     try {
-      await attachAgentSessionLiveStream(
-        sessionId,
-        buildStoreSessionStreamCallbacks(sessionId, set, get),
-        { signal: controller.signal },
-      );
-    } catch {
-      // Ignore client SSE detach
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        if (controller.signal.aborted || terminalSeen) break;
+        if (attempt > 0) {
+          const curDraft = get().liveSessionDrafts[sessionId];
+          if (curDraft) {
+            set({
+              liveSessionDrafts: {
+                ...get().liveSessionDrafts,
+                [sessionId]: {
+                  ...curDraft,
+                  reconnecting: true,
+                  liveStatus: {
+                    zh: '连接闪断，正在自动接回后台进展…',
+                    en: 'Connection interrupted — reconnecting to live run…',
+                  },
+                },
+              },
+            });
+          }
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+        }
+        if (controller.signal.aborted || terminalSeen) break;
+        try {
+          await attachAgentSessionLiveStream(sessionId, trackedCallbacks, {
+            ...(lastEventId ? { afterEventId: lastEventId } : {}),
+            signal: controller.signal,
+          });
+          // Clean EOF from /live means the server intentionally ended the stream
+          break;
+        } catch {
+          // Retry on transient stream disconnect unless aborted
+        }
+      }
     } finally {
       if (activeSessionStreamAborters.get(sessionId) === controller) {
         activeSessionStreamAborters.delete(sessionId);
@@ -1305,22 +1402,88 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       },
     });
 
+    let terminalSeen = false;
+    let lastEventId: string | undefined;
+    const baseCallbacks = buildStoreSessionStreamCallbacks(sessionId, set, get);
+    const trackedCallbacks: StreamAgentSessionCallbacks = {
+      ...baseCallbacks,
+      onEventId: (id) => {
+        lastEventId = id;
+      },
+      onRunError: (p) => {
+        terminalSeen = true;
+        baseCallbacks.onRunError?.(p);
+      },
+      onMessageEnd: (p) => {
+        terminalSeen = true;
+        baseCallbacks.onMessageEnd?.(p);
+      },
+    };
+
     try {
-      await streamAgentSessionTurn(
-        sessionId,
-        {
-          ...(prompt.trim() ? { prompt } : {}),
-          ...(input.askUserAnswer ? { askUserAnswer: input.askUserAnswer } : {}),
-          ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
-          ...(input.designBrief ? { designBrief: input.designBrief } : {}),
-          ...(input.prototypeName ? { prototypeName: input.prototypeName } : {}),
-          ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
-          ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
-          ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
-        },
-        buildStoreSessionStreamCallbacks(sessionId, set, get),
-        controller.signal,
-      );
+      let streamDisconnected = false;
+      try {
+        await streamAgentSessionTurn(
+          sessionId,
+          {
+            ...(prompt.trim() ? { prompt } : {}),
+            ...(input.askUserAnswer ? { askUserAnswer: input.askUserAnswer } : {}),
+            ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+            ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+            ...(input.prototypeName ? { prototypeName: input.prototypeName } : {}),
+            ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
+            ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
+            ...(input.codeMode !== undefined ? { codeMode: input.codeMode } : {}),
+            ...(input.multiAgentConcurrency !== undefined
+              ? { multiAgentConcurrency: input.multiAgentConcurrency }
+              : {}),
+            ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
+          },
+          trackedCallbacks,
+          controller.signal,
+        );
+      } catch {
+        if (!controller.signal.aborted && !terminalSeen) {
+          streamDisconnected = true;
+        }
+      }
+
+      // If the initial POST stream broke mid-flight due to a transient disconnect, seamlessly attach to /live!
+      if (streamDisconnected) {
+        for (
+          let attempt = 1;
+          attempt <= 3 && !terminalSeen && !controller.signal.aborted;
+          attempt += 1
+        ) {
+          const curDraft = get().liveSessionDrafts[sessionId];
+          if (curDraft) {
+            set({
+              liveSessionDrafts: {
+                ...get().liveSessionDrafts,
+                [sessionId]: {
+                  ...curDraft,
+                  reconnecting: true,
+                  liveStatus: {
+                    zh: '连接闪断，正在自动接回后台进展…',
+                    en: 'Connection interrupted — reconnecting to live run…',
+                  },
+                },
+              },
+            });
+          }
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+          if (controller.signal.aborted || terminalSeen) break;
+          try {
+            await attachAgentSessionLiveStream(sessionId, trackedCallbacks, {
+              ...(lastEventId ? { afterEventId: lastEventId } : {}),
+              signal: controller.signal,
+            });
+            break;
+          } catch {
+            // Keep retrying up to 3 attempts on transient /live disconnect
+          }
+        }
+      }
     } catch {
       // Detaching client SSE reader does not abort server run
     } finally {
@@ -2063,6 +2226,7 @@ export async function apiDeclineStepHandoff(
 }
 
 export interface StreamAgentSessionCallbacks {
+  onEventId?: (id: string) => void;
   onSessionMeta?: (meta: {
     sessionId: string;
     title: string;
@@ -2071,9 +2235,23 @@ export interface StreamAgentSessionCallbacks {
     isMock: boolean;
     visionSupported?: boolean;
     visionFallbackNotice?: string;
+    codeMode?: boolean;
+    multiAgentConcurrency?: number;
+  }) => void;
+  onHeartbeat?: (hb: {
+    elapsedMs: number;
+    thinkingChars: number;
+    textChars: number;
+    toolArgChars: number;
+    activeSubagents: number;
   }) => void;
   onThinkingDelta?: (delta: string, step: number) => void;
   onTextDelta?: (delta: string, step: number) => void;
+  onToolDelta?: (delta: {
+    step: number;
+    toolName?: string;
+    streamedChars: number;
+  }) => void;
   onToolCall?: (call: {
     id: string;
     toolName: string;
@@ -2082,6 +2260,17 @@ export interface StreamAgentSessionCallbacks {
     targetAnchor?: PrototypeTargetAnchor;
   }) => void;
   onToolResult?: (trace: AgentToolCallTrace, step: number) => void;
+  onSubagentUpdate?: (payload: {
+    lane: AgentSubagentLaneTrace;
+    lanes: AgentSubagentLaneTrace[];
+  }) => void;
+  onPrototypePreview?: (preview: {
+    prototypeId?: string;
+    prototypeName: string;
+    workingHtml: string;
+    screenCount: number;
+    targetAnchor?: PrototypeTargetAnchor;
+  }) => void;
   onArtifact?: (artifact: AgentDomainArtifact) => void;
   onAskUser?: (askUser: AgentAskUserPrompt) => void;
   onStepHandoff?: (stepHandoff: StepHandoffProposal) => void;
@@ -2101,6 +2290,9 @@ export interface StreamAgentSessionCallbacks {
       remediation: string;
     };
     session?: AgentSession;
+    prototypes?: InteractivePrototype[];
+    artifactHistory?: ArtifactHistoryEntryView[];
+    requirementDocs?: RequirementDoc[];
   }) => void;
   onMessageEnd?: (payload: {
     session: AgentSession;
@@ -2132,14 +2324,20 @@ function consumeAgentSessionSseBody(
 
     const processBlock = (rawBlock: string) => {
       const lines = rawBlock.split(/\r?\n/);
+      let eventId = '';
       let eventName = '';
       const dataLines: string[] = [];
       for (const line of lines) {
-        if (line.startsWith('event:')) {
+        if (line.startsWith('id:')) {
+          eventId = line.slice(3).trim();
+        } else if (line.startsWith('event:')) {
           eventName = line.slice(6).trim();
         } else if (line.startsWith('data:')) {
           dataLines.push(line.slice(5).trim());
         }
+      }
+      if (eventId) {
+        callbacks.onEventId?.(eventId);
       }
       if (!eventName || dataLines.length === 0) return;
       let parsed: Record<string, unknown>;
@@ -2153,11 +2351,17 @@ function consumeAgentSessionSseBody(
         case 'session_meta':
           callbacks.onSessionMeta?.(parsed as never);
           break;
+        case 'heartbeat':
+          callbacks.onHeartbeat?.(parsed as never);
+          break;
         case 'thinking_delta':
           callbacks.onThinkingDelta?.(String(parsed.delta ?? ''), Number(parsed.step ?? 1));
           break;
         case 'delta':
           callbacks.onTextDelta?.(String(parsed.text ?? ''), Number(parsed.step ?? 1));
+          break;
+        case 'tool_delta':
+          callbacks.onToolDelta?.(parsed as never);
           break;
         case 'tool_call':
           callbacks.onToolCall?.(parsed as never);
@@ -2167,6 +2371,12 @@ function consumeAgentSessionSseBody(
             parsed.trace as AgentToolCallTrace,
             Number(parsed.step ?? 1),
           );
+          break;
+        case 'subagent_update':
+          callbacks.onSubagentUpdate?.(parsed as never);
+          break;
+        case 'prototype_preview':
+          callbacks.onPrototypePreview?.(parsed as never);
           break;
         case 'artifact':
           callbacks.onArtifact?.(parsed.artifact as AgentDomainArtifact);
@@ -2222,6 +2432,8 @@ export async function streamAgentSessionTurn(
     prototypeName?: string;
     activeModelCode?: ModelCode;
     reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+    codeMode?: boolean;
+    multiAgentConcurrency?: number;
     mockMode?: boolean;
     locale?: string;
   },
@@ -2403,6 +2615,8 @@ function buildStoreSessionStreamCallbacks(
     onSessionMeta: (meta) => {
       patchDraft((cur) => ({
         ...cur,
+        reconnecting: false,
+        lastHeartbeatAt: Date.now(),
         model: meta.model,
         providerName: meta.provider,
         ...(meta.visionSupported === false && cur.images && cur.images.length > 0
@@ -2415,20 +2629,80 @@ function buildStoreSessionStreamCallbacks(
           : {}),
       }));
     },
-    onThinkingDelta: (delta) => {
+    onHeartbeat: (hb) => {
       patchDraft((cur) => ({
         ...cur,
-        thinking: `${cur.thinking}${delta}`,
-        liveStatus: cur.steps.some((s) => s.status === 'RUNNING')
-          ? cur.liveStatus
-          : { zh: '正在思考…', en: 'Thinking…' },
+        reconnecting: false,
+        lastHeartbeatAt: Date.now(),
+        liveStreamedChars: hb.thinkingChars + hb.textChars + hb.toolArgChars,
       }));
     },
+    onThinkingDelta: (delta) => {
+      patchDraft((cur) => {
+        const nextThinking = `${cur.thinking}${delta}`;
+        return {
+          ...cur,
+          reconnecting: false,
+          lastHeartbeatAt: Date.now(),
+          thinking: nextThinking,
+          liveStreamedChars: Math.max(cur.liveStreamedChars ?? 0, nextThinking.length + cur.text.length),
+          liveStatus: cur.steps.some((s) => s.status === 'RUNNING')
+            ? cur.liveStatus
+            : { zh: '正在思考…', en: 'Thinking…' },
+        };
+      });
+    },
     onTextDelta: (delta) => {
+      patchDraft((cur) => {
+        const nextText = `${cur.text}${delta}`;
+        return {
+          ...cur,
+          reconnecting: false,
+          lastHeartbeatAt: Date.now(),
+          text: nextText,
+          liveStreamedChars: Math.max(cur.liveStreamedChars ?? 0, cur.thinking.length + nextText.length),
+          liveStatus: { zh: '正在回复…', en: 'Responding…' },
+        };
+      });
+    },
+    onToolDelta: (td) => {
       patchDraft((cur) => ({
         ...cur,
-        text: `${cur.text}${delta}`,
-        liveStatus: { zh: '正在回复…', en: 'Responding…' },
+        reconnecting: false,
+        lastHeartbeatAt: Date.now(),
+        liveStreamedChars: cur.thinking.length + cur.text.length + td.streamedChars,
+        liveStatus: td.toolName
+          ? formatVocabularyToolProgress(td.toolName, undefined)
+          : { zh: '正在持续生成内容…', en: 'Streaming generated content…' },
+      }));
+    },
+    onSubagentUpdate: (sub) => {
+      patchDraft((cur) => {
+        const runningLanes = sub.lanes.filter((l) => l.status === 'RUNNING');
+        const doneCount = sub.lanes.filter((l) => l.status === 'DONE').length;
+        return {
+          ...cur,
+          reconnecting: false,
+          lastHeartbeatAt: Date.now(),
+          subagentLanes: sub.lanes,
+          ...(sub.lane.targetAnchor ? { activeAnchor: sub.lane.targetAnchor } : {}),
+          liveStatus:
+            runningLanes.length > 0
+              ? {
+                  zh: `正在并行推进 ${runningLanes.length} 路子任务（已完成 ${doneCount}/${sub.lanes.length}）…`,
+                  en: `Running ${runningLanes.length} parallel tasks (${doneCount}/${sub.lanes.length} done)…`,
+                }
+              : cur.liveStatus,
+        };
+      });
+    },
+    onPrototypePreview: (preview) => {
+      patchDraft((cur) => ({
+        ...cur,
+        reconnecting: false,
+        lastHeartbeatAt: Date.now(),
+        livePreviewHtml: preview.workingHtml,
+        ...(preview.targetAnchor ? { activeAnchor: preview.targetAnchor } : {}),
       }));
     },
     onToolCall: (call) => {

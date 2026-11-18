@@ -116,6 +116,15 @@ function UserPromptBubble({ text }: { text: string }) {
  * tool call arguments/outputs, thinking, character/token usage, and ADR 0007 diagnostics
  * sit inside "查看细节" / "View details" by default.
  */
+const WORKER_DOT_VARS = [
+  'var(--model-mu)',
+  'var(--model-m1)',
+  'var(--model-m2)',
+  'var(--model-m4)',
+  'var(--model-m6)',
+  'var(--model-m7)',
+] as const;
+
 export function AgentRunCard({
   run,
   onCancel,
@@ -170,7 +179,11 @@ export function AgentRunCard({
   );
   const hasDiagnostics = Boolean(run.failure || run.visionFallback?.used);
   const hasDetails =
-    run.steps.length > 0 || Boolean(run.thinking) || hasUsageMeta || hasDiagnostics;
+    run.steps.length > 0 ||
+    Boolean(run.thinking) ||
+    Boolean(run.codeModeScript) ||
+    hasUsageMeta ||
+    hasDiagnostics;
 
   const failurePresentation =
     run.status === 'FAILED'
@@ -236,6 +249,22 @@ export function AgentRunCard({
           >
             {elapsed}
           </time>
+          {running && run.reconnecting && (
+            <span
+              className="rounded bg-warning-soft px-1.5 py-0.5 text-[11px] font-medium text-warning"
+              data-testid="agent-run-reconnecting-badge"
+            >
+              {t('自动重连中', 'Reconnecting')}
+            </span>
+          )}
+          {running && !run.reconnecting && (run.liveStreamedChars ?? 0) > 0 && (
+            <span
+              className="font-mono text-[11px] text-muted-foreground"
+              data-testid="agent-run-stream-chars"
+            >
+              {t(`已接收 ${run.liveStreamedChars} 字`, `${run.liveStreamedChars} chars`)}
+            </span>
+          )}
         </span>
         {running && onCancel && (
           <Button
@@ -266,6 +295,64 @@ export function AgentRunCard({
         <p className="agent-run-live" data-testid="agent-run-live" aria-live="polite">
           {t(run.liveStatus.zh, run.liveStatus.en)}
         </p>
+      )}
+
+      {run.subagentLanes && run.subagentLanes.length > 0 && (
+        <div
+          className="my-1.5 flex flex-col gap-1 rounded-md border border-border-subtle bg-muted/40 p-2"
+          data-testid="agent-run-subagent-lanes"
+          aria-label={t('并行协作进展', 'Parallel collaboration progress')}
+        >
+          {run.subagentLanes.map((lane) => {
+            const dotVar = WORKER_DOT_VARS[(Math.max(1, lane.workerIndex) - 1) % WORKER_DOT_VARS.length]!;
+            const laneStepStatus: AgentRunStepStatus =
+              lane.status === 'RUNNING'
+                ? 'RUNNING'
+                : lane.status === 'DONE'
+                  ? 'DONE'
+                  : lane.status === 'FAILED'
+                    ? 'FAILED'
+                    : 'STOPPED';
+            return (
+              <div
+                key={lane.laneId}
+                data-testid="agent-run-subagent-lane"
+                data-lane-status={lane.status}
+                className="flex items-center justify-between gap-2 rounded px-1.5 py-1 text-[12px] transition hover:bg-accent/50"
+                {...(onHoverAnchor && lane.targetAnchor
+                  ? {
+                      onMouseEnter: () => onHoverAnchor(lane.targetAnchor ?? null),
+                      onMouseLeave: () => onHoverAnchor(null),
+                    }
+                  : {})}
+              >
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: dotVar }}
+                    aria-hidden="true"
+                  />
+                  <span className="shrink-0 font-medium text-foreground">
+                    {t(lane.workerLabel.zh, lane.workerLabel.en)}
+                  </span>
+                  <span className="truncate text-muted-foreground">
+                    {lane.status === 'RUNNING' && lane.liveAction
+                      ? t(lane.liveAction.zh, lane.liveAction.en)
+                      : t(lane.taskTitle.zh, lane.taskTitle.en)}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                  {lane.progressChars ? (
+                    <span className="font-mono">
+                      {t(`${lane.progressChars} 字`, `${lane.progressChars}c`)}
+                    </span>
+                  ) : null}
+                  <StepGlyph status={laneStepStatus} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {visibleSteps.length > 0 && (
@@ -389,6 +476,15 @@ export function AgentRunCard({
                     );
                   })}
                 </ol>
+              </section>
+            )}
+
+            {run.codeModeScript && (
+              <section className="agent-run-details-section" data-testid="agent-run-codemode-script">
+                <div className="agent-run-details-label">
+                  {t('Code Mode 编排脚本', 'Code Mode Script')}
+                </div>
+                <pre className="agent-run-detail">{run.codeModeScript}</pre>
               </section>
             )}
 

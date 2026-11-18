@@ -203,3 +203,8 @@ export {
   type RolesAndPermissionsView,
   type TechnicalLocator,
 } from './lib/business-object-projection.js';
+
+export {
+  extractPrototypeArtboards,
+  type PrototypeArtboardSlice,
+} from './lib/prototype-artboards.js';

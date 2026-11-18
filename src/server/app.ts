@@ -258,6 +258,8 @@ export function createApiApp(
       providerId?: string;
       modelOverride?: string;
       reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+      codeMode?: boolean;
+      multiAgentConcurrency?: number;
     }>();
     if (!['REQUIREMENT', 'PROTOTYPE_CO_DESIGN', 'COPILOT', 'ARCHITECTURE', 'CODING', 'CAPABILITY', 'REASONING'].includes(body.agentKind)) {
       return c.json({ error: 'Unknown agent specialisation.', code: 'INVALID_AGENT_KIND' }, 400);
@@ -280,8 +282,14 @@ export function createApiApp(
       providerId?: string;
       modelOverride?: string;
       reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+      codeMode?: boolean;
+      multiAgentConcurrency?: number;
       clearMessages?: boolean;
     }>();
+    const clampedConcurrency =
+      typeof body.multiAgentConcurrency === 'number' && Number.isFinite(body.multiAgentConcurrency)
+        ? Math.max(1, Math.min(6, Math.round(body.multiAgentConcurrency)))
+        : undefined;
     const updated = store.saveAgentSession({
       ...existing,
       ...(body.title !== undefined ? { title: body.title.trim() || existing.title } : {}),
@@ -289,6 +297,8 @@ export function createApiApp(
       ...(body.providerId !== undefined ? { providerId: body.providerId } : {}),
       ...(body.modelOverride !== undefined ? { modelOverride: body.modelOverride } : {}),
       ...(body.reasoningMode !== undefined ? { reasoningMode: body.reasoningMode } : {}),
+      ...(body.codeMode !== undefined ? { codeMode: Boolean(body.codeMode) } : {}),
+      ...(clampedConcurrency !== undefined ? { multiAgentConcurrency: clampedConcurrency } : {}),
       ...(body.clearMessages
         ? { messages: [], compactedSummary: undefined, status: 'IDLE' as const }
         : {}),
@@ -386,6 +396,8 @@ export function createApiApp(
         prototypeName?: string;
         activeModelCode?: ModelCode;
         reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+        codeMode?: boolean;
+        multiAgentConcurrency?: number;
         mockMode?: boolean;
         locale?: string;
       }>()

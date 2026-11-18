@@ -27,6 +27,11 @@ export {
   readPrototypeAnchor,
   editPrototypeAnchor,
   rewritePrototypePage,
+  initPrototypeShell,
+  upsertPrototypeScreen,
+  previewPartialPrototypeScreen,
+  extractLatestHtmlWritingSignal,
+  extractPrototypeArtboards,
   ensurePrototypeCoDesignSession,
   type PrototypeAnchorToolName,
   type PrototypeScreenAnchorInfo,
@@ -36,6 +41,12 @@ export {
   type ReadPrototypeAnchorResult,
   type PrototypeAnchorEditOperation,
   type EditPrototypeAnchorInput,
+  type PrototypeShellScreenStub,
+  type InitPrototypeShellInput,
+  type UpsertPrototypeScreenInput,
+  type PartialPrototypeScreenInput,
+  type HtmlWritingSignal,
+  type PrototypeArtboardSlice,
   type PrototypeHtmlMutationResult,
 } from './lib/prototype-anchor-tools.js';
 
@@ -136,3 +147,15 @@ export {
 } from './lib/run-lifecycle.js';
 
 export { runAppCodingAgentTurn, type AppCodingAgentResult } from './lib/application-agent.js';
+
+export {
+  CODEMODE_OPENAI_TOOL,
+  SPAWN_SUBAGENTS_OPENAI_TOOL,
+  resolveSessionCodeModeEnabled,
+  resolveSessionMultiAgentConcurrency,
+  renderCodemodePromptSection,
+  runCodemodeScript,
+  runParallelSubagents,
+  type SubagentTaskSpec,
+  type CodemodeExecutionSummary,
+} from './lib/codemode-subagent.js';

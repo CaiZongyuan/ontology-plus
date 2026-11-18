@@ -9,6 +9,7 @@ import {
   ExternalLink,
   History,
   Laptop,
+  LayoutGrid,
   Maximize2,
   Minimize2,
   PanelRightOpen,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react';
 import type {
   AgentSession,
+  AgentSubagentLaneTrace,
   ArtifactHistoryEntryView,
   ConfirmedPrototypeRevision,
   InteractivePrototype,
@@ -62,6 +64,8 @@ import {
   type PrototypeVisualAnnotation,
   type PrototypeZoomMode,
 } from './PrototypeVisualInspector.js';
+import { extractPrototypeArtboards } from '../../../packages/ontology-core/index.js';
+import { PrototypeArtboardGrid } from './PrototypeArtboardGrid.js';
 import { resolveHighlightSelectorFromAnchor } from './prototypeSelectionStore.js';
 
 export interface RevisionHistorySlotProps {
@@ -129,6 +133,10 @@ export interface PrototypeCanvasStageProps {
   canvasBannerSlot?: React.ReactNode;
   htmlOverride?: string | null;
   busy?: boolean;
+  subagentLanes?: readonly AgentSubagentLaneTrace[];
+  liveStreamedChars?: number;
+  reconnecting?: boolean;
+  onRetryScreen?: (screenId: string, screenName: string) => void;
 
   // Viewport, Zoom & Focus Mode (controlled or uncontrolled)
   viewport?: PrototypeViewportPreset;
@@ -379,6 +387,10 @@ export function PrototypeCanvasStage({
   canvasBannerSlot,
   htmlOverride = null,
   busy = false,
+  subagentLanes,
+  liveStreamedChars,
+  reconnecting,
+  onRetryScreen,
   viewport: controlledViewport,
   defaultViewport = 'DESKTOP',
   onViewportChange,
@@ -525,6 +537,8 @@ export function PrototypeCanvasStage({
   const [importHtmlDraft, setImportHtmlDraft] = useState<string>('');
   const [deleteError, setDeleteError] = useState<string | null>(defaultDeleteError);
   const [actionBusy, setActionBusy] = useState<boolean>(false);
+  const [layoutOverride, setLayoutOverride] = useState<'ARTBOARDS' | 'SINGLE' | null>(null);
+  const [focusedScreenId, setFocusedScreenId] = useState<string | null>(null);
   const [measuredScale, setMeasuredScale] = useState<number>(() =>
     computeViewportFitScale(containerWidthOverride ?? 1200, viewport, zoomMode).scale,
   );
@@ -594,6 +608,23 @@ export function PrototypeCanvasStage({
 
   const isPreviewingHistorical = activeRevision.id !== currentRevision.id;
   const displayedHtml = htmlOverride ?? activeRevision.htmlContent ?? activePrototype.htmlContent;
+  const artboardCount = extractPrototypeArtboards(displayedHtml).length;
+  const hasMultiArtboardShell =
+    Boolean(subagentLanes && subagentLanes.length > 0) ||
+    /id="proto-screens-root"|data-screen-status=/i.test(displayedHtml);
+  const effectiveCanvasLayout: 'ARTBOARDS' | 'SINGLE' = inspectMode
+    ? 'SINGLE'
+    : (layoutOverride ?? (hasMultiArtboardShell ? 'ARTBOARDS' : 'SINGLE'));
+
+  const singleStageHtml = (() => {
+    if (!focusedScreenId) return displayedHtml;
+    const jsScreen = JSON.stringify(focusedScreenId);
+    const autoSelectScript = `<script data-focus-screen>(function(){window.addEventListener('DOMContentLoaded',function(){if(typeof window.__selectProtoScreen==='function'){try{window.__selectProtoScreen(${jsScreen});}catch(_){}}});})();</script>`;
+    const bodyEnd = displayedHtml.lastIndexOf('</body>');
+    return bodyEnd !== -1
+      ? `${displayedHtml.slice(0, bodyEnd)}${autoSelectScript}${displayedHtml.slice(bodyEnd)}`
+      : `${displayedHtml}${autoSelectScript}`;
+  })();
 
   const revStatus = resolveRevisionStatusSummary(
     activePrototype,
@@ -1279,6 +1310,27 @@ export function PrototypeCanvasStage({
           aria-label={t('预览设备尺寸与缩放', 'Preview viewport and zoom')}
           className="pcs-seg"
         >
+          {(artboardCount >= 2 || hasMultiArtboardShell) && (
+            <Button
+              type="button"
+              variant="toggle"
+              size="xs"
+              data-testid="prototype-artboards-toggle-btn"
+              aria-pressed={effectiveCanvasLayout === 'ARTBOARDS'}
+              title={t('切换多画板总览与单屏实操模式', 'Toggle multi-artboard overview vs single-screen interactive mode')}
+              onClick={() => {
+                if (effectiveCanvasLayout === 'ARTBOARDS') {
+                  setLayoutOverride('SINGLE');
+                } else {
+                  if (inspectMode) setInspectMode(false);
+                  setLayoutOverride('ARTBOARDS');
+                }
+              }}
+            >
+              <LayoutGrid size={12.5} aria-hidden="true" />
+              <span className="pcs-label-wide">{t('分屏画板', 'Artboards')}</span>
+            </Button>
+          )}
           <Button
             type="button"
             variant="toggle"
@@ -1497,31 +1549,51 @@ export function PrototypeCanvasStage({
       {/* ─── Main Canvas Body (Preview + Optional Revision History Drawer) ─── */}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <PrototypeVisualPreviewStage
-            htmlContent={displayedHtml}
-            inspectMode={inspectMode}
-            onInspectModeChange={setInspectMode}
-            {...(annotations ? { annotations } : {})}
-            {...(onAddAnnotation ? { onAddAnnotation } : {})}
-            {...(onApplyImmediate ? { onApplyImmediate } : {})}
-            {...(onSelectTarget ? { onSelectTarget } : {})}
-            {...(onSelectionCropUpgrade ? { onSelectionCropUpgrade } : {})}
-            {...(showInlineInspectorPopover !== undefined
-              ? { showInlinePopover: showInlineInspectorPopover }
-              : {})}
-            highlightedSelector={effectiveHighlightedSelector}
-            activeRunningAnchor={activeRunningAnchor}
-            {...(flashedAnchors ? { flashedAnchors } : {})}
-            flashKey={flashKey}
-            onEscape={focusMode ? () => setFocusMode(false) : undefined}
-            busy={busy}
-            allowInspectWhileBusy
-            viewport={viewport}
-            zoomMode={zoomMode}
-            {...(containerWidthOverride !== undefined ? { containerWidthOverride } : {})}
-            onScaleChange={({ scale }) => setMeasuredScale(scale)}
-            fillHeight
-          />
+          {effectiveCanvasLayout === 'ARTBOARDS' ? (
+            <PrototypeArtboardGrid
+              htmlContent={displayedHtml}
+              projectName={project.name}
+              busy={busy}
+              {...(reconnecting !== undefined ? { reconnecting } : {})}
+              {...(liveStreamedChars !== undefined ? { liveStreamedChars } : {})}
+              {...(subagentLanes ? { subagentLanes } : {})}
+              activeRunningAnchor={activeRunningAnchor}
+              highlightedScreenId={hoveredAnchor?.screenId ?? null}
+              highlightedSelector={effectiveHighlightedSelector}
+              onFocusScreen={(screenId) => {
+                setFocusedScreenId(screenId);
+                setLayoutOverride('SINGLE');
+              }}
+              {...(onRetryScreen ? { onRetryScreen } : {})}
+              viewMode={viewMode}
+            />
+          ) : (
+            <PrototypeVisualPreviewStage
+              htmlContent={singleStageHtml}
+              inspectMode={inspectMode}
+              onInspectModeChange={setInspectMode}
+              {...(annotations ? { annotations } : {})}
+              {...(onAddAnnotation ? { onAddAnnotation } : {})}
+              {...(onApplyImmediate ? { onApplyImmediate } : {})}
+              {...(onSelectTarget ? { onSelectTarget } : {})}
+              {...(onSelectionCropUpgrade ? { onSelectionCropUpgrade } : {})}
+              {...(showInlineInspectorPopover !== undefined
+                ? { showInlinePopover: showInlineInspectorPopover }
+                : {})}
+              highlightedSelector={effectiveHighlightedSelector}
+              activeRunningAnchor={activeRunningAnchor}
+              {...(flashedAnchors ? { flashedAnchors } : {})}
+              flashKey={flashKey}
+              onEscape={focusMode ? () => setFocusMode(false) : undefined}
+              busy={busy}
+              allowInspectWhileBusy
+              viewport={viewport}
+              zoomMode={zoomMode}
+              {...(containerWidthOverride !== undefined ? { containerWidthOverride } : {})}
+              onScaleChange={({ scale }) => setMeasuredScale(scale)}
+              fillHeight
+            />
+          )}
         </div>
 
         {historyOpen &&

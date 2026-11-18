@@ -27,14 +27,37 @@ function collectTsFiles(dir: string, rootDir: string): string[] {
   return results;
 }
 
-function extractImports(fileContent: string): string[] {
-  const specs: string[] = [];
+interface ExtractedImport {
+  spec: string;
+  typeOnly: boolean;
+}
+
+function isClauseTypeOnly(rawStatement: string): boolean {
+  if (/^\s*(?:import|export)\s+type\b/.test(rawStatement)) return true;
+  const braces = /\{([^}]+)\}/.exec(rawStatement);
+  if (!braces) return false;
+  const prefix = rawStatement.slice(0, braces.index).replace(/^\s*(?:import|export)\s*/, '').trim();
+  if (prefix.length > 0) return false;
+  const items = braces[1]!
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return items.length > 0 && items.every((item) => /^type\s+/.test(item));
+}
+
+function extractImports(fileContent: string): ExtractedImport[] {
+  const specs: ExtractedImport[] = [];
   const regex =
     /(?:import|export)\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(fileContent)) !== null) {
     const spec = match[1] || match[2];
-    if (spec) specs.push(spec);
+    if (spec) {
+      specs.push({
+        spec,
+        typeOnly: Boolean(match[1]) && isClauseTypeOnly(match[0]),
+      });
+    }
   }
   return specs;
 }
@@ -111,8 +134,8 @@ function runBoundaryCheck(): void {
     const imports = extractImports(content);
     const resolvedTargets: string[] = [];
 
-    for (const spec of imports) {
-      const target = resolveImportTarget(fromFile, spec, fileSet);
+    for (const imp of imports) {
+      const target = resolveImportTarget(fromFile, imp.spec, fileSet);
       if (!target) continue;
       if (fileSet.has(target)) {
         resolvedTargets.push(target);
@@ -120,6 +143,13 @@ function runBoundaryCheck(): void {
 
       for (const rule of config.forbidden ?? []) {
         if (!rule.to?.path) continue;
+        if (
+          Array.isArray(rule.to?.dependencyTypesNot) &&
+          rule.to.dependencyTypesNot.includes('type-only') &&
+          imp.typeOnly
+        ) {
+          continue;
+        }
 
         let groups: string[] = [];
         if (rule.from?.path) {
