@@ -95,6 +95,19 @@ _Avoid_: Background task, pipeline task, one-shot call
 The single place in the workbench where the user talks to agents and watches every Agent Run, showing the Agent Session that belongs to the module in view.
 _Avoid_: Chat drawer, task drawer, assistant sidebar
 
+**Model Call (模型调用)**:
+One request from an Agent Run to the language model and its response; a single Agent Run may contain many Model Calls, including those of its subagents.
+_Avoid_: Step (reserved for Project Step), turn, request, trace
+
+**Context Snapshot (上下文快照)**:
+The record of exactly what one Model Call sent to the model (instructions, tool definitions, injected business context, and the messages included or left out) together with the usage the model provider reported for it.
+_Avoid_: Prompt log, debug dump, trace
+
+**Context Inspector (上下文查看器)**:
+The part of the Agent Panel, closed by default, where anyone can examine the Context Snapshots of the conversation in view: what the AI Assistant remembers, what it has dropped, and how that changed from one Model Call to the next.
+_Avoid_: Debug panel, developer mode, expert mode, trace viewer
+_Shown to business users as_: 对话记忆 (Conversation memory)
+
 **Workbench Theme (工作台主题)**:
 A named look of the Ontology Plus workbench itself, covering both its light and dark appearance, that the user chooses independently of how any Interactive Prototype or generated application looks.
 _Avoid_: Skin, UI theme, style, Visual Reference (which describes the generated application, not the workbench)
