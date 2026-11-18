@@ -138,8 +138,16 @@ test.describe('Prototype web mode (#97)', () => {
     await expect(page.getByTestId('prototype-canvas-viewport')).toHaveAttribute('data-view', 'artboards', {
       timeout: 15_000,
     });
+    // The recorded build leaves one screen unfinished (#90); the suggestion waits until every
+    // screen is drawn, so continue that screen first.
+    await expect(page.getByTestId('prototype-history-btn')).toContainText('R1', { timeout: 60_000 });
     const hint = page.getByTestId('prototype-web-mode-hint');
-    await expect(hint).toBeVisible({ timeout: 60_000 });
+    await expect(hint).toHaveCount(0);
+    await page.getByTestId('artboard-retry-btn-SCR-REFUND').click();
+    await expect(page.getByTestId('prototype-history-btn')).toContainText('R2', { timeout: 60_000 });
+    await expect(hint).toBeVisible({ timeout: 15_000 });
+    // It is the build log's closing entry.
+    await expect(page.getByTestId('prototype-build-log-end')).toContainText('网页');
     await expect(page.getByTestId('prototype-build-log')).toContainText('网页');
     await page.getByTestId('prototype-web-mode-hint-try').click();
     await expect(page.getByTestId('prototype-canvas-viewport')).toHaveAttribute('data-view', 'web');

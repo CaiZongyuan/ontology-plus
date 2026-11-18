@@ -1,27 +1,22 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import {
-  CheckCircle2,
-  Crosshair,
-  Loader2,
-  Maximize,
-  Minus,
-  PenLine,
-  Plus,
-  RefreshCw,
-  WifiOff,
-} from 'lucide-react';
+import { Crosshair, Loader2, Maximize, Minus, Plus, WifiOff } from 'lucide-react';
 import { sanitizeBusinessText } from '../../../../packages/business-vocabulary/index.js';
 import {
   buildPrototypeCanvasModel,
   composePrototypeDocument,
+  hasPrototypeBuildPlan,
+  type PrototypeBuildState,
   type PrototypeCanvasArtboard,
   type PrototypeLiveState,
-  type PrototypeScreenStatus,
 } from '../../../../packages/ontology-core/index.js';
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
 import { ArtboardFrame } from './Artboard.js';
+import { BuildLog } from './BuildLog.js';
+import { BuildPhaseBar } from './BuildPhaseBar.js';
+import { agentName, screenBuildViews } from './buildView.js';
+import { ScreenStatusIcon, ScreenStrip, screenStatusLabel } from './ScreenStrip.js';
 import {
   ARTBOARD_H,
   ARTBOARD_W,
@@ -47,6 +42,12 @@ export interface PrototypeLiveCanvasProps {
   documentHtml: string;
   /** Per-screen deltas of the running Agent Run, folded over the saved document. */
   live?: PrototypeLiveState | null;
+  /**
+   * The Build Plan to show (#90): the running build's, or the one persisted with the latest
+   * build when nothing is running. Without a plan the bar, log and strip fall back to the
+   * saved document's screens.
+   */
+  build?: PrototypeBuildState | null;
   busy?: boolean;
   /** A first build is running: an empty canvas says the assistant is planning the screens. */
   building?: boolean;
@@ -65,18 +66,6 @@ interface Viewport {
   h: number;
 }
 
-function statusLabel(status: PrototypeScreenStatus, t: (zh: string, en: string) => string): string {
-  if (status === 'streaming') return t('正在画', 'Drawing');
-  if (status === 'queued') return t('排队中', 'Queued');
-  return t('已画好', 'Drawn');
-}
-
-function StatusIcon({ status }: { status: PrototypeScreenStatus }) {
-  if (status === 'streaming') return <PenLine size={12} className="text-primary" aria-hidden="true" />;
-  if (status === 'queued') return <Loader2 size={12} className="text-muted-foreground" aria-hidden="true" />;
-  return <CheckCircle2 size={12} className="text-success" aria-hidden="true" />;
-}
-
 /**
  * The prototype canvas (spec #87, layout D of #88): a phase bar on top, one pan/zoom canvas
  * with a follow camera in the middle, the build log on the right, and the screen strip at the
@@ -85,6 +74,7 @@ function StatusIcon({ status }: { status: PrototypeScreenStatus }) {
 export function PrototypeLiveCanvas({
   documentHtml,
   live,
+  build = null,
   busy = false,
   building = false,
   reconnecting = false,
@@ -96,7 +86,8 @@ export function PrototypeLiveCanvas({
 }: PrototypeLiveCanvasProps) {
   const { locale, t } = usePreferences();
   const isBusiness = viewMode === 'business';
-  const model = useMemo(() => buildPrototypeCanvasModel(documentHtml, live), [documentHtml, live]);
+  const plan = hasPrototypeBuildPlan(build) ? build : null;
+  const model = useMemo(() => buildPrototypeCanvasModel(documentHtml, live, plan), [documentHtml, live, plan]);
   const linksKey = model.links.join('\n');
   const headScriptsKey = model.headScripts.join('\n\u0000\n');
   const screens = model.screens;
@@ -122,6 +113,9 @@ export function PrototypeLiveCanvas({
     },
     [isBusiness, locale, t],
   );
+
+  const views = useMemo(() => screenBuildViews(screens, plan, cleanName), [screens, plan, cleanName]);
+  const viewById = new Map(views.map((v) => [v.screenId, v] as const));
 
   // ─── Camera ────────────────────────────────────────────────────────────────
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -238,6 +232,15 @@ export function PrototypeLiveCanvas({
     if (followingRef.current) setFollowing(false);
   }, []);
 
+  /** Bring one screen into view (a strip card or a log line was clicked). */
+  const focusScreen = useCallback(
+    (screenId: string) => {
+      takeManualControl();
+      frameScreen(screenId);
+    },
+    [frameScreen, takeManualControl],
+  );
+
   // Before anyone moves the camera, keep every artboard in view.
   useEffect(() => {
     if (userMoved.current || followState.current.target) return;
@@ -327,6 +330,23 @@ export function PrototypeLiveCanvas({
 
   useEffect(() => stopTween, []);
 
+  // A strip card or a log line shows its screen: web mode (#97) opens that page, the canvas
+  // frames the artboard. Trying a screen opens the page in web mode, try-out on the canvas.
+  const showScreen = (screenId: string) => {
+    if (view === 'web') webRef.current?.open(screenId);
+    else focusScreen(screenId);
+  };
+  const tryScreen = (screenId: string) => {
+    if (view === 'web') webRef.current?.open(screenId);
+    else enterTry(screenId);
+  };
+
+  // #97's end-of-build suggestion, shown as the last entry of the build log.
+  const webModeHint =
+    webHint && view === 'artboards' ? (
+      <WebModeHint onTry={() => setView('web')} onDismiss={() => setWebHint(false)} />
+    ) : null;
+
   // ─── Render ────────────────────────────────────────────────────────────────
   const counts = {
     total: screens.length,
@@ -349,7 +369,10 @@ export function PrototypeLiveCanvas({
         className="flex min-h-9 flex-wrap items-center gap-3 border-b border-border bg-card px-3 py-1.5 text-[12px]"
         data-testid="prototype-phase-bar"
       >
-        <div className="flex min-w-0 items-center gap-2" data-slot="build-phases" />
+        <div className="flex min-w-0 items-center gap-2" data-slot="build-phases">
+          {plan && <BuildPhaseBar build={plan} screens={views} />}
+        </div>
+        {!plan && (
         <span className="text-muted-foreground" data-testid="prototype-build-counts">
           {counts.total === 0
             ? building
@@ -360,6 +383,7 @@ export function PrototypeLiveCanvas({
                 `${counts.total} screens · ${counts.drawn} drawn${counts.drawing > 0 ? ` · ${counts.drawing} drawing` : ''}`,
               )}
         </span>
+        )}
         {reconnecting && (
           <span className="inline-flex items-center gap-1 text-warning">
             <WifiOff size={12} aria-hidden="true" />
@@ -457,15 +481,24 @@ export function PrototypeLiveCanvas({
           {/* Artboard names, in screen space so they stay readable at any zoom. */}
           {view === 'artboards' && screens.map((board, idx) => {
             const rect = artboardRect(idx);
+            const view = viewById.get(board.screenId)!;
+            const owner = agentName(view.agent, locale);
             return (
               <div
                 key={`label-${board.screenId}`}
                 className="pointer-events-none absolute flex max-w-[60%] items-center gap-1.5 truncate text-[12px] text-foreground"
                 style={{ left: cam.x + rect.x * cam.k, top: cam.y + rect.y * cam.k - 22 }}
                 data-testid={`prototype-artboard-label-${board.screenId}`}
+                data-build-status={view.status}
               >
-                <StatusIcon status={board.status} />
+                <ScreenStatusIcon status={view.status} />
                 <span className="truncate font-medium">{cleanName(board, idx)}</span>
+                {plan && (
+                  <span className="truncate text-muted-foreground" data-testid={`prototype-artboard-owner-${board.screenId}`}>
+                    {screenStatusLabel(view.status, t)}
+                    {owner ? ` · ${owner}` : ''}
+                  </span>
+                )}
                 {!isBusiness && <span className="font-mono text-[11px] text-muted-foreground">{board.screenId}</span>}
               </div>
             );
@@ -601,83 +634,33 @@ export function PrototypeLiveCanvas({
           <div className="border-b border-border px-3 py-2 text-[12px] font-medium text-foreground">
             {t('施工日志', 'Build log')}
           </div>
-          <div className="min-h-0 flex-1 overflow-auto px-3 py-2 text-[12px] text-muted-foreground" data-slot="build-log-entries" />
-          {/* #97: the end-of-build suggestion; #90's log can move it into its entries. */}
-          {webHint && view === 'artboards' && (
-            <WebModeHint onTry={() => setView('web')} onDismiss={() => setWebHint(false)} />
+          {plan ? (
+            <BuildLog
+              build={plan}
+              screens={views}
+              busy={busy}
+              onFocusScreen={showScreen}
+              onResumeScreen={onRetryScreen}
+              endEntry={webModeHint}
+            />
+          ) : (
+            <div className="min-h-0 flex-1 overflow-auto px-3 py-2 text-[12px] text-muted-foreground" data-slot="build-log-entries">
+              {webModeHint ?? t('生成原型时，这里会逐条记下每一屏的进展。', 'While a prototype is built, each screen’s progress is logged here.')}
+            </div>
           )}
         </aside>
       </div>
 
       {/* Screen strip */}
-      <div
-        className="flex min-h-14 items-stretch gap-2 overflow-x-auto border-t border-border bg-card px-3 py-2"
-        data-testid="prototype-screen-strip"
-      >
-        {screens.map((board, idx) => {
-          const name = cleanName(board, idx);
-          const canResume = !busy && board.status === 'queued' && Boolean(onRetryScreen);
-          return (
-            <div
-              key={board.screenId}
-              className={cn(
-                'flex min-w-[150px] shrink-0 flex-col gap-1 rounded-md border px-2.5 py-1.5 text-left text-[12px]',
-                (view === 'web'
-                  ? webScreenId === board.screenId
-                  : tryScreenId === board.screenId || followTarget === board.screenId)
-                  ? 'border-primary bg-primary-soft'
-                  : 'border-border bg-background',
-              )}
-              data-testid={`prototype-strip-card-${board.screenId}`}
-              data-screen-status={board.status}
-            >
-              <button
-                type="button"
-                className="flex min-w-0 cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0 text-left text-foreground"
-                onClick={() => {
-                  if (view === 'web') {
-                    webRef.current?.open(board.screenId);
-                    return;
-                  }
-                  takeManualControl();
-                  frameScreen(board.screenId);
-                }}
-              >
-                <span className="font-mono text-[11px] text-muted-foreground">{String(idx + 1).padStart(2, '0')}</span>
-                <span className="truncate font-medium">{name}</span>
-              </button>
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1 text-muted-foreground">
-                  <StatusIcon status={board.status} />
-                  {statusLabel(board.status, t)}
-                </span>
-                {canResume && (
-                  <Button
-                    type="button"
-                    variant="accent"
-                    size="xs"
-                    data-testid={`artboard-retry-btn-${board.screenId}`}
-                    onClick={() => onRetryScreen?.(board.screenId, name)}
-                  >
-                    <RefreshCw size={11} aria-hidden="true" />
-                    {t('继续这一屏', 'Continue this screen')}
-                  </Button>
-                )}
-                {!canResume && onOpenSingleScreen && board.status === 'ready' && !busy && (
-                  <button
-                    type="button"
-                    className="cursor-pointer border-0 bg-transparent p-0 text-[11px] text-primary"
-                    data-testid={`artboard-focus-btn-${board.screenId}`}
-                    onClick={() => onOpenSingleScreen(board.screenId)}
-                  >
-                    {t('单屏查看', 'Single view')}
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <ScreenStrip
+        screens={views}
+        highlightedScreenId={view === 'web' ? webScreenId : (tryScreenId ?? followTarget)}
+        busy={busy}
+        onFocusScreen={showScreen}
+        onTryScreen={tryScreen}
+        onResumeScreen={onRetryScreen}
+        onOpenSingleScreen={onOpenSingleScreen}
+      />
     </div>
   );
 }

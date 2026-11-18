@@ -160,6 +160,15 @@ export {
 } from './lib/codemode-subagent.js';
 
 export {
+  PLAN_SCREENS_OPENAI_TOOL,
+  createPrototypeBuildRun,
+  alignShellArgsWithPlan,
+  parseResumePrototypeScreenAction,
+  type PrototypeBuildRun,
+  type PrototypeBuildRunOutcome,
+} from './lib/prototype-build-run.js';
+
+export {
   createCoalescingRunEventBuffer,
   prototypeLiveCoalesceKey,
   type CoalescingRunEventBuffer,

@@ -131,7 +131,7 @@ describe('PrototypeLiveCanvas: artboards load once and are updated in place', ()
   it('shows the saved prototype with its screen strip, dock and build log in plain business language', async () => {
     await render({ documentHtml: SAVED, live: null, viewMode: 'business' });
     expect(host.querySelector('[data-testid="prototype-strip-card-SCR-A"]')?.textContent).toContain('工作台首页');
-    expect(host.querySelector('[data-testid="prototype-strip-card-SCR-B"]')?.getAttribute('data-screen-status')).toBe('ready');
+    expect(host.querySelector('[data-testid="prototype-strip-card-SCR-B"]')?.getAttribute('data-build-status')).toBe('done');
     expect(host.querySelector('[data-testid="prototype-canvas-dock"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="prototype-build-log"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="prototype-phase-bar"]')?.textContent).toContain('共 2 屏');

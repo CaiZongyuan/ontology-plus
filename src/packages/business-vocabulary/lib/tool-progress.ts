@@ -223,6 +223,18 @@ const CATALOG_ENTRIES: readonly ToolProgressSpec[] = [
     },
   },
   {
+    toolName: 'plan_screens',
+    iconKind: 'screen',
+    label: {
+      zh: '列出施工计划',
+      en: 'List the build plan',
+    },
+    activeLabel: {
+      zh: '正在列施工计划',
+      en: 'Listing the build plan',
+    },
+  },
+  {
     toolName: 'init_prototype_shell',
     iconKind: 'screen',
     label: {

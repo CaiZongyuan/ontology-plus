@@ -1305,34 +1305,16 @@ export function initPrototypeShell(
     })
     .join('\n');
 
+  // Each planned screen gets an empty section: nothing is drawn until a helper really writes
+  // it (no skeleton or "building" badge standing in for work that has not happened, ADR 0018).
   const sectionsHtml = screens
     .map((scr, idx) => {
       const sid = escapeHtmlAttr(scr.screenId.trim());
       const sname = escapeHtmlAttr(scr.screenName?.trim() || scr.screenId.trim());
       const stype = normalizeScreenType(scr.screenType);
-      const summary = escapeHtmlAttr(
-        scr.summary?.trim() ||
-          pickLocaleText(locale, '智能体正在并行绘制此屏幕内容…', 'Subagent is building this screen live…'),
-      );
-      return [
-        `      <section id="screen-${sid}" class="proto-screen${idx === 0 ? ' is-active' : ''}" data-screen-id="${sid}" data-screen-name="${sname}" data-screen-type="${stype}" data-screen-status="queued">`,
-        `        <div class="proto-skeleton-card">`,
-        `          <div class="proto-skeleton-head">`,
-        `            <span class="proto-skeleton-title">${sname}</span>`,
-        `            <span class="proto-skeleton-badge">${pickLocaleText(locale, '并行施工中', 'Building live')}</span>`,
-        `          </div>`,
-        `          <p class="proto-skeleton-desc">${summary}</p>`,
-        `          <div class="proto-skeleton-grid">`,
-        `            <div class="proto-shimmer-box"></div>`,
-        `            <div class="proto-shimmer-box"></div>`,
-        `            <div class="proto-shimmer-box"></div>`,
-        `          </div>`,
-        `          <div class="proto-shimmer-table"></div>`,
-        `        </div>`,
-        `      </section>`,
-      ].join('\n');
+      return `      <section id="screen-${sid}" class="proto-screen${idx === 0 ? ' is-active' : ''}" data-screen-id="${sid}" data-screen-name="${sname}" data-screen-type="${stype}" data-screen-status="queued"></section>`;
     })
-    .join('\n\n');
+    .join('\n');
 
   const appTitle = escapeHtmlAttr(input.appTitle?.trim() || 'Interactive Prototype');
   const subtitle = input.subtitle?.trim() ? escapeHtmlAttr(input.subtitle.trim()) : '';
@@ -1444,51 +1426,6 @@ export function initPrototypeShell(
       border: 1px solid var(--proto-border);
       border-radius: var(--proto-radius);
       padding: 18px;
-    }
-    .proto-skeleton-card {
-      background: var(--proto-card);
-      border: 1px dashed var(--proto-border);
-      border-radius: var(--proto-radius);
-      padding: 24px;
-    }
-    .proto-skeleton-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-    }
-    .proto-skeleton-title { font-size: 16px; font-weight: 600; }
-    .proto-skeleton-badge {
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 999px;
-      background: var(--proto-bg);
-      border: 1px solid var(--proto-border);
-      color: var(--proto-accent);
-    }
-    .proto-skeleton-desc {
-      margin: 0 0 16px;
-      font-size: 13px;
-      color: var(--proto-muted);
-    }
-    .proto-skeleton-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-    .proto-shimmer-box, .proto-shimmer-table {
-      border-radius: calc(var(--proto-radius) - 4px);
-      background: linear-gradient(90deg, var(--proto-bg) 25%, var(--proto-border) 50%, var(--proto-bg) 75%);
-      background-size: 200% 100%;
-      animation: protoShimmer 1.6s infinite linear;
-      opacity: 0.55;
-    }
-    .proto-shimmer-box { height: 74px; }
-    .proto-shimmer-table { height: 180px; }
-    @keyframes protoShimmer {
-      0% { background-position: 200% 0; }
-      100% { background-position: -200% 0; }
     }
     @media (max-width: 768px) {
       .proto-topbar { padding: 12px 16px; }

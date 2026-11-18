@@ -12,6 +12,8 @@ import type {
   KnowledgeGraphData,
   ModelCode,
   OntologySuite,
+  PrototypeBuildFailureCode,
+  PrototypeBuildState,
   SemanticAlignmentReport,
   ValidationDiagnostic,
   ValidationReport,
@@ -492,6 +494,10 @@ export interface AgentSubagentLaneTrace {
   thinking?: string;
   output?: string;
   error?: string;
+  /** Why a screen lane did not finish, for the business sentence on the Build Plan (#90). */
+  failureCode?: PrototypeBuildFailureCode;
+  /** True once the lane's own screen was written and passed the anchor check. */
+  wroteScreen?: boolean;
   startedAt: string;
   completedAt?: string;
 }
@@ -512,6 +518,8 @@ export interface AgentSessionMessage {
   visionFallbackNotice?: string;
   toolCalls?: AgentToolCallTrace[];
   subagentLanes?: AgentSubagentLaneTrace[];
+  /** The prototype Build Plan and per-screen build states as this run left them (#90). */
+  prototypeBuild?: PrototypeBuildState;
   codeModeScript?: string;
   askUser?: AgentAskUserPrompt;
   stepHandoff?: StepHandoffProposal;

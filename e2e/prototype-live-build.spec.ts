@@ -7,6 +7,8 @@ import { expect, test, type Page } from '@playwright/test';
  */
 
 const SCREENS = ['SCR-HOME', 'SCR-ORDERS', 'SCR-NEW-ORDER', 'SCR-ORDER-DETAIL', 'SCR-REFUND'];
+/** The recorded build gets this screen wrong (#90); prototype-build-plan.spec covers continuing it. */
+const FAILING = 'SCR-REFUND';
 
 async function setUpProjectWithConfirmedRequirements(request: import('@playwright/test').APIRequestContext) {
   const createdRes = await request.post('/api/projects', {
@@ -91,7 +93,10 @@ test.describe('Prototype live build (#89): per-screen streaming onto one canvas'
     ).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId('prototype-history-btn')).toContainText('R1', { timeout: 15_000 });
     for (const sid of SCREENS) {
-      await expect(page.getByTestId(`prototype-artboard-${sid}`)).toHaveAttribute('data-screen-status', 'ready');
+      await expect(page.getByTestId(`prototype-artboard-${sid}`)).toHaveAttribute(
+        'data-screen-status',
+        sid === FAILING ? 'queued' : 'ready',
+      );
     }
 
     // Same canvas element, every iframe loaded exactly once and still holds the marker.
@@ -180,7 +185,10 @@ test.describe('Prototype live build (#89): per-screen streaming onto one canvas'
       .toBe(true);
     await expect(page.getByTestId('prototype-history-btn')).toContainText('R1', { timeout: 60_000 });
     for (const sid of SCREENS) {
-      await expect(page.getByTestId(`prototype-artboard-${sid}`)).toHaveAttribute('data-screen-status', 'ready');
+      await expect(page.getByTestId(`prototype-artboard-${sid}`)).toHaveAttribute(
+        'data-screen-status',
+        sid === FAILING ? 'queued' : 'ready',
+      );
     }
   });
 });

@@ -68,6 +68,7 @@ import {
 import {
   composePrototypeDocument,
   extractPrototypeArtboards,
+  type PrototypeBuildState,
   type PrototypeLiveState,
 } from '../../../packages/ontology-core/index.js';
 import { PrototypeLiveCanvas } from './live-canvas/PrototypeLiveCanvas.js';
@@ -139,6 +140,8 @@ export interface PrototypeCanvasStageProps {
   htmlOverride?: string | null;
   /** Per-screen live state of the running Agent Run, folded over the shown revision (#89). */
   liveState?: PrototypeLiveState | null;
+  /** The Build Plan persisted with the latest build, shown when no build is running (#90). */
+  persistedBuild?: PrototypeBuildState | null;
   /**
    * The first build is still running and nothing is saved yet: the stage shows the same live
    * canvas it will keep after the save, but none of the revision actions.
@@ -408,6 +411,7 @@ export function PrototypeCanvasStage({
   canvasBannerSlot,
   htmlOverride = null,
   liveState = null,
+  persistedBuild = null,
   pendingLive = false,
   busy = false,
   subagentLanes,
@@ -640,6 +644,9 @@ export function PrototypeCanvasStage({
   const displayedHtml = htmlOverride ?? activeRevision.htmlContent ?? activePrototype.htmlContent;
   const artboardCount = extractPrototypeArtboards(displayedHtml).length;
   const canvasLiveState = isPreviewingHistorical || htmlOverride !== null ? null : liveState;
+  // The plan belongs to the current revision: an older revision or a before/after view shows none.
+  const canvasBuild =
+    isPreviewingHistorical || htmlOverride !== null ? null : (canvasLiveState?.build ?? persistedBuild);
   // The page as it stands during a run (the saved revision when nothing is running).
   const liveDocument = (): string => {
     const cached = liveDocumentCache.current;
@@ -1622,6 +1629,7 @@ export function PrototypeCanvasStage({
             <PrototypeLiveCanvas
               documentHtml={displayedHtml}
               live={canvasLiveState}
+              build={canvasBuild}
               busy={busy}
               building={pendingLive}
               {...(reconnecting !== undefined ? { reconnecting } : {})}
