@@ -18,6 +18,7 @@ import {
   BUSINESS_VOCABULARY,
   type ProjectStepId,
 } from '../../../packages/business-vocabulary/index.js';
+import type { AgentImageAttachmentRef } from '../../../packages/workspace-store/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { Button } from '../beautifui/index.js';
@@ -32,6 +33,13 @@ import {
 import type { AgentRunView, LocalizedText, PrototypeTargetAnchor } from './agentRun.js';
 import { ConversationComposer } from './conversation/ConversationComposer.js';
 import { ConversationThread } from './conversation/ConversationThread.js';
+import {
+  EMPTY_CONVERSATION_DRAFT,
+  clearSessionDraft,
+  readSessionDraft,
+  writeSessionDraft,
+  type ConversationSessionDraft,
+} from './conversation/draftStore.js';
 
 export type AgentPanelPresentationMode = 'conversation' | 'run-cards';
 
@@ -89,7 +97,10 @@ export interface AgentPanelProps {
   onClose: () => void;
   onResize: (width: number, opts: { commit: boolean }) => void;
   onCancelRun?: (runId: string) => void;
+  onCancelActiveRun?: () => void;
   onRetryRun?: (runId: string) => void;
+  onEditLatestTurn?: (runId: string, nextPrompt: string) => void | Promise<void>;
+  onRetryLatestTurn?: (runId: string) => void | Promise<void>;
   onOpenRunArtifact?: (runId: string) => void;
   onOpenPlatformSettings?: () => void;
   onOpenLlmCenter?: () => void;
@@ -125,20 +136,29 @@ export interface AgentPanelProps {
   /** Optional view-specific header context slot (e.g. Reasoning Mode pills, Capability selector). */
   headerContextSlot?: React.ReactNode;
   /** Interactive composer submission handler. When supplied, renders the composer footer. */
-  onSubmitPrompt?: (prompt: string) => void | Promise<void>;
+  onSubmitPrompt?: (
+    prompt: string,
+    attachments?: AgentImageAttachmentRef[],
+  ) => void | Promise<void>;
   composerValue?: string;
   onComposerValueChange?: (value: string) => void;
   composerPlaceholder?: LocalizedText;
   composerDisabled?: boolean;
   /** Optional slot above the textarea for selection chips (#28) or image attachments (#31). */
   composerHeaderSlot?: React.ReactNode;
+  /** Optional slot right next to Stop/Send for Wave 3 (#82) Context Occupancy Ring. */
+  composerRightAccessorySlot?: React.ReactNode;
   /** Prompts queued behind the currently active run on this conversation. */
   queuedPrompts?: AgentPanelQueuedPrompt[];
   onRemoveQueuedPrompt?: (queueId: string) => void;
   /** Whether the active provider/model supports multimodal vision input (`false` shows explicit fallback banner). */
   visionSupported?: boolean;
+  /** Vision capability for composer image attachments when panel-top banner is not pinned. */
+  composerVisionSupported?: boolean;
   visionProviderLabel?: string;
   visionModelLabel?: string;
+  /** Fallback key for unsent drafts before a session ID is created. */
+  draftFallbackKey?: string;
   /** Fixed clock passed through to the run cards for deterministic rendering. */
   now?: number;
 }
@@ -163,7 +183,10 @@ export function AgentPanel({
   onClose,
   onResize,
   onCancelRun,
+  onCancelActiveRun,
   onRetryRun,
+  onEditLatestTurn,
+  onRetryLatestTurn,
   onOpenRunArtifact,
   onOpenPlatformSettings,
   onOpenLlmCenter,
@@ -192,33 +215,117 @@ export function AgentPanel({
   composerPlaceholder,
   composerDisabled = false,
   composerHeaderSlot,
+  composerRightAccessorySlot,
   queuedPrompts,
   onRemoveQueuedPrompt,
   visionSupported,
+  composerVisionSupported,
   visionProviderLabel,
   visionModelLabel,
+  draftFallbackKey,
   now,
 }: AgentPanelProps) {
   const { t } = usePreferences();
   const panelRef = useRef<HTMLElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const [internalDraft, setInternalDraft] = useState('');
-  const draft = composerValue !== undefined ? composerValue : internalDraft;
-  const setDraft = (next: string) => {
-    if (composerValue === undefined) setInternalDraft(next);
-    onComposerValueChange?.(next);
-  };
-  const runningCount = runs.filter((r) => r.status === 'RUNNING').length;
-  const latestRunId = runs[runs.length - 1]?.id;
-  const canSend = !composerDisabled && draft.trim().length > 0;
   const sessionList = sessions ?? [];
   const activeSessionOption =
     sessionList.find((s) => s.id === activeSessionId) ?? sessionList[0];
+  const effectiveDraftKey =
+    activeSessionOption?.id ?? activeSessionId ?? draftFallbackKey ?? undefined;
+
+  const [draftState, setDraftState] = useState<{
+    key: string | undefined;
+    draft: ConversationSessionDraft;
+  }>(() => ({
+    key: effectiveDraftKey,
+    draft:
+      presentationMode === 'conversation' && composerValue === undefined
+        ? readSessionDraft(effectiveDraftKey)
+        : EMPTY_CONVERSATION_DRAFT,
+  }));
+  const [attachmentsByKey, setAttachmentsByKey] = useState<
+    Record<string, AgentImageAttachmentRef[]>
+  >({});
+
+  useEffect(() => {
+    if (draftState.key !== effectiveDraftKey) {
+      setDraftState({
+        key: effectiveDraftKey,
+        draft:
+          presentationMode === 'conversation' && composerValue === undefined
+            ? readSessionDraft(effectiveDraftKey)
+            : EMPTY_CONVERSATION_DRAFT,
+      });
+    }
+  }, [effectiveDraftKey, draftState.key, presentationMode, composerValue]);
+
+  const activePersistedDraft =
+    draftState.key === effectiveDraftKey
+      ? draftState.draft
+      : presentationMode === 'conversation' && composerValue === undefined
+        ? readSessionDraft(effectiveDraftKey)
+        : EMPTY_CONVERSATION_DRAFT;
+
+  const draft = composerValue !== undefined ? composerValue : activePersistedDraft.text;
+  const quotes = activePersistedDraft.quotes;
+  const attachmentScope = effectiveDraftKey ?? '__default__';
+  const composerAttachments = attachmentsByKey[attachmentScope] ?? [];
+
+  const setDraft = (next: string) => {
+    if (composerValue === undefined) {
+      const nextEntry: ConversationSessionDraft = {
+        text: next,
+        quotes: activePersistedDraft.quotes,
+      };
+      if (presentationMode === 'conversation') {
+        writeSessionDraft(effectiveDraftKey, nextEntry);
+      }
+      setDraftState({ key: effectiveDraftKey, draft: nextEntry });
+    }
+    onComposerValueChange?.(next);
+  };
+
+  const setQuotes = (nextQuotes: string[]) => {
+    const nextEntry: ConversationSessionDraft = {
+      text: composerValue !== undefined ? composerValue : activePersistedDraft.text,
+      quotes: nextQuotes,
+    };
+    if (presentationMode === 'conversation') {
+      writeSessionDraft(effectiveDraftKey, nextEntry);
+    }
+    setDraftState({ key: effectiveDraftKey, draft: nextEntry });
+  };
+
+  const setComposerAttachments = (nextAttachments: AgentImageAttachmentRef[]) => {
+    setAttachmentsByKey((prev) => {
+      const next = { ...prev };
+      if (nextAttachments.length > 0) {
+        next[attachmentScope] = nextAttachments;
+      } else {
+        delete next[attachmentScope];
+      }
+      return next;
+    });
+  };
+
+  const runningCount = runs.filter((r) => r.status === 'RUNNING').length;
+  const latestRunId = runs[runs.length - 1]?.id;
+  const canSend = !composerDisabled && draft.trim().length > 0;
   const showHistoryMenu = Boolean(
     onCreateSession || onSelectSession || sessionList.length > 0 || sessionsOwnedByArtifact,
   );
   const [historyOpen, setHistoryOpen] = useState<boolean>(defaultHistoryOpen);
   const [composerScrollSignal, setComposerScrollSignal] = useState(0);
+
+  const handleCancelActive =
+    onCancelActiveRun ??
+    (onCancelRun
+      ? () => {
+          const activeRun = [...runs].reverse().find((r) => r.status === 'RUNNING');
+          if (activeRun) onCancelRun(activeRun.id);
+        }
+      : undefined);
 
   // Close the History Menu when the active conversation changes externally (e.g. step switch).
   const prevActiveSessionRef = useRef(activeSessionId);
@@ -494,6 +601,22 @@ export function AgentPanel({
                 : {})}
               {...(onCancelRun ? { onCancelRun } : {})}
               {...(onRetryRun ? { onRetryRun } : {})}
+              {...(onEditLatestTurn
+                ? {
+                    onEditLatestTurn: (run: AgentRunView, nextPrompt: string) => {
+                      setComposerScrollSignal((n) => n + 1);
+                      return onEditLatestTurn(run.id, nextPrompt);
+                    },
+                  }
+                : {})}
+              {...(onRetryLatestTurn
+                ? {
+                    onRetryLatestTurn: (run: AgentRunView) => {
+                      setComposerScrollSignal((n) => n + 1);
+                      return onRetryLatestTurn(run.id);
+                    },
+                  }
+                : {})}
               {...(onOpenRunArtifact ? { onOpenRunArtifact } : {})}
               {...(onOpenPlatformSettings ? { onOpenPlatformSettings } : {})}
               {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
@@ -510,14 +633,32 @@ export function AgentPanel({
             <ConversationComposer
               draft={draft}
               onDraftChange={setDraft}
+              quotes={quotes}
+              onQuotesChange={setQuotes}
+              attachments={composerAttachments}
+              onAttachmentsChange={setComposerAttachments}
               {...(onSubmitPrompt ? { onSubmitPrompt } : {})}
-              onAfterSubmit={() => setComposerScrollSignal((n) => n + 1)}
+              onAfterSubmit={() => {
+                clearSessionDraft(effectiveDraftKey);
+                setDraftState({ key: effectiveDraftKey, draft: EMPTY_CONVERSATION_DRAFT });
+                setComposerScrollSignal((n) => n + 1);
+              }}
+              {...(handleCancelActive ? { onCancelActiveRun: handleCancelActive } : {})}
               {...(composerPlaceholder ? { placeholder: composerPlaceholder } : {})}
               disabled={composerDisabled}
               runningCount={runningCount}
               {...(composerHeaderSlot ? { headerSlot: composerHeaderSlot } : {})}
+              {...(composerRightAccessorySlot
+                ? { rightAccessorySlot: composerRightAccessorySlot }
+                : {})}
               {...(queuedPrompts ? { queuedPrompts } : {})}
               {...(onRemoveQueuedPrompt ? { onRemoveQueuedPrompt } : {})}
+              visionSupported={composerVisionSupported ?? visionSupported ?? true}
+              suppressVisionBanner={visionSupported === false}
+              {...(visionProviderLabel ? { visionProviderLabel } : {})}
+              {...(visionModelLabel ? { visionModelLabel } : {})}
+              {...(onOpenPlatformSettings ? { onOpenPlatformSettings } : {})}
+              {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
             />
           </>
         ) : (

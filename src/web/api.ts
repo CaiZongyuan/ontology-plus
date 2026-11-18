@@ -11,6 +11,7 @@ import type {
   OntologySuite,
 } from '../packages/ontology-core/index.js';
 import {
+  doesProviderSupportVision,
   resolveCurrentProjectStep,
   type AgentAskUserPrompt,
   AgentDomainArtifact,
@@ -84,6 +85,7 @@ import {
   agentSessionScopeKey,
   useAgentPanelStore,
 } from './components/agent/agentPanelStore.js';
+import { resolveTurnImagesForRequest } from './lib/localImageStore.js';
 import {
   DEFAULT_NAV_VIEW,
   STEP_SPECIALIST_AGENT_KINDS,
@@ -591,6 +593,16 @@ interface WorkbenchStoreState {
     runId?: string,
     fallbackPrompt?: string,
   ) => Promise<void>;
+  replaceLatestSessionTurnAndRun: (input: {
+    sessionId: string;
+    prompt?: string;
+    truncateFromUserMessageId?: string;
+    activeModelCode?: ModelCode;
+    reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+    codeMode?: boolean;
+    multiAgentConcurrency?: number;
+    mockMode?: boolean;
+  }) => Promise<void>;
   acceptStepHandoff: (
     sessionId: string,
     handoffId: string,
@@ -1339,8 +1351,15 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
           .filter(Boolean)
           .join(' · ')
       : '';
-    const effectivePrompt = prompt.trim() || answerSummary;
-    if (!effectivePrompt && !input.askUserAnswer) return;
+    const hasTurnImages = Boolean(input.images && input.images.length > 0);
+    const fallbackImagePrompt =
+      hasTurnImages && !prompt.trim() && !answerSummary
+        ? getCurrentClientLocale() === 'en-US'
+          ? `Please inspect the ${input.images!.length} attached reference image(s).`
+          : `请结合附带的 ${input.images!.length} 张参考图进行分析。`
+        : '';
+    const effectivePrompt = prompt.trim() || answerSummary || fallbackImagePrompt;
+    if (!effectivePrompt && !input.askUserAnswer && !hasTurnImages) return;
 
     if (activeSessionStreamAborters.has(sessionId) || Boolean(get().liveSessionDrafts[sessionId])) {
       const existingQueue = get().sessionQueues[sessionId] ?? [];
@@ -1937,6 +1956,90 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     });
   },
 
+  replaceLatestSessionTurnAndRun: async (input) => {
+    const { sessionId } = input;
+    if (activeSessionStreamAborters.has(sessionId) || Boolean(get().liveSessionDrafts[sessionId])) {
+      return;
+    }
+    const cur = get().data;
+    const sess = cur?.agentSessions.find((s) => s.id === sessionId);
+    let lastUserMsg: AgentSession['messages'][number] | undefined;
+    if (sess) {
+      for (let i = sess.messages.length - 1; i >= 0; i -= 1) {
+        const m = sess.messages[i]!;
+        if (m.role === 'user') {
+          lastUserMsg = m;
+          break;
+        }
+      }
+    }
+    const nextPrompt =
+      input.prompt !== undefined ? input.prompt.trim() : (lastUserMsg?.content ?? '').trim();
+    const preservedRefs = lastUserMsg?.images;
+    if (!nextPrompt && (!preservedRefs || preservedRefs.length === 0)) return;
+
+    let preservedTurnImages: TransientTurnImageInput[] | undefined;
+    if (preservedRefs && preservedRefs.length > 0) {
+      const providers = cur?.llmProviders ?? [];
+      const activeProvider = sess?.providerId
+        ? providers.find((p) => p.id === sess.providerId && p.enabled) ??
+          providers.find((p) => p.id === sess.providerId)
+        : providers.find((p) => p.enabled) ?? providers[0];
+      const visionSupported = activeProvider
+        ? doesProviderSupportVision(activeProvider, sess?.modelOverride)
+        : true;
+      if (visionSupported) {
+        preservedTurnImages = await resolveTurnImagesForRequest(preservedRefs);
+      } else {
+        preservedTurnImages = preservedRefs.map((ref) => ({
+          id: ref.id,
+          name: ref.name,
+          mimeType: ref.mimeType,
+          ...(ref.remoteUrl ? { remoteUrl: ref.remoteUrl } : {}),
+          ...(ref.width !== undefined ? { width: ref.width } : {}),
+          ...(ref.height !== undefined ? { height: ref.height } : {}),
+          role: ref.role ?? 'user_upload',
+          textFallbackNote: ref.name,
+        }));
+      }
+    }
+
+    const targetMessageId = input.truncateFromUserMessageId ?? lastUserMsg?.id;
+    try {
+      const patched = await apiPatchAgentSession(sessionId, {
+        dropLatestTurn: true,
+        ...(targetMessageId ? { truncateFromUserMessageId: targetMessageId } : {}),
+      });
+      const latestData = get().data;
+      if (latestData) {
+        set({
+          data: {
+            ...latestData,
+            agentSessions: patched.agentSessions,
+          },
+        });
+      }
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    await get().startSessionAgentRun({
+      sessionId,
+      prompt: nextPrompt,
+      ...(preservedTurnImages && preservedTurnImages.length > 0
+        ? { images: preservedTurnImages }
+        : {}),
+      ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
+      ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
+      ...(input.codeMode !== undefined ? { codeMode: input.codeMode } : {}),
+      ...(input.multiAgentConcurrency !== undefined
+        ? { multiAgentConcurrency: input.multiAgentConcurrency }
+        : {}),
+      ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
+    });
+  },
+
   acceptStepHandoff: async (sessionId, handoffId) => {
     const cur = get().data;
     const sourceSession = cur?.agentSessions.find((s) => s.id === sessionId);
@@ -2144,6 +2247,8 @@ export async function apiPatchAgentSession(
     modelOverride?: string;
     reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
     clearMessages?: boolean;
+    dropLatestTurn?: boolean;
+    truncateFromUserMessageId?: string;
   },
 ): Promise<{ session: AgentSession; agentSessions: AgentSession[] }> {
   const res = await fetch(`/api/agent-sessions/${sessionId}`, {
@@ -2151,7 +2256,15 @@ export async function apiPatchAgentSession(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   });
-  return res.json();
+  const payload = (await res.json()) as {
+    session: AgentSession;
+    agentSessions: AgentSession[];
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(payload.error || `Failed to update conversation (${res.status})`);
+  }
+  return payload;
 }
 
 export async function apiDeleteAgentSession(

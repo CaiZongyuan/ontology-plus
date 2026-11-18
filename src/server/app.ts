@@ -286,7 +286,52 @@ export function createApiApp(
       codeMode?: boolean;
       multiAgentConcurrency?: number;
       clearMessages?: boolean;
+      dropLatestTurn?: boolean;
+      truncateFromUserMessageId?: string;
     }>();
+
+    let truncatedMessages: typeof existing.messages | undefined;
+    if (body.dropLatestTurn || body.truncateFromUserMessageId) {
+      if (existing.status === 'RUNNING' || getLiveAgentSessionStatus(store, id).active) {
+        return c.json(
+          {
+            error: 'Cannot edit or retry the latest message while a run is active.',
+            code: 'SESSION_RUNNING',
+          },
+          409,
+        );
+      }
+      const msgs = existing.messages ?? [];
+      let lastUserIdx = -1;
+      for (let i = msgs.length - 1; i >= 0; i -= 1) {
+        if (msgs[i]?.role === 'user') {
+          lastUserIdx = i;
+          break;
+        }
+      }
+      if (body.truncateFromUserMessageId) {
+        const targetIdx = msgs.findIndex(
+          (m) => m.id === body.truncateFromUserMessageId && m.role === 'user',
+        );
+        if (targetIdx === -1) {
+          return c.json(
+            { error: 'Target user message not found.', code: 'TURN_NOT_FOUND' },
+            404,
+          );
+        }
+        if (targetIdx !== lastUserIdx) {
+          return c.json(
+            {
+              error: 'Only the latest user message can be edited or retried.',
+              code: 'ONLY_LATEST_TURN_ALLOWED',
+            },
+            400,
+          );
+        }
+      }
+      truncatedMessages = lastUserIdx >= 0 ? msgs.slice(0, lastUserIdx) : msgs;
+    }
+
     const clampedConcurrency =
       typeof body.multiAgentConcurrency === 'number' && Number.isFinite(body.multiAgentConcurrency)
         ? Math.max(1, Math.min(6, Math.round(body.multiAgentConcurrency)))
@@ -300,6 +345,9 @@ export function createApiApp(
       ...(body.reasoningMode !== undefined ? { reasoningMode: body.reasoningMode } : {}),
       ...(body.codeMode !== undefined ? { codeMode: Boolean(body.codeMode) } : {}),
       ...(clampedConcurrency !== undefined ? { multiAgentConcurrency: clampedConcurrency } : {}),
+      ...(truncatedMessages !== undefined
+        ? { messages: truncatedMessages, status: 'IDLE' as const }
+        : {}),
       ...(body.clearMessages
         ? { messages: [], compactedSummary: undefined, status: 'IDLE' as const }
         : {}),

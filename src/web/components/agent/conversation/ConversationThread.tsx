@@ -4,6 +4,7 @@ import type { ProjectStepId } from '../../../../packages/business-vocabulary/ind
 import { usePreferences } from '../../../i18n.js';
 import type { AgentRunView, LocalizedText, PrototypeTargetAnchor } from '../agentRun.js';
 import { AssistantReplyItem } from './AssistantReplyItem.js';
+import { ReplyActionsBar } from './ReplyActionsBar.js';
 import { UserMessageItem } from './UserMessageItem.js';
 import {
   deriveScrollPositionFromMetrics,
@@ -23,6 +24,8 @@ export interface ConversationThreadProps {
   onSubmitStarterPrompt?: (prompt: string) => void | Promise<void>;
   onCancelRun?: (runId: string) => void;
   onRetryRun?: (runId: string) => void;
+  onEditLatestTurn?: (run: AgentRunView, nextPrompt: string) => void | Promise<void>;
+  onRetryLatestTurn?: (run: AgentRunView) => void | Promise<void>;
   onOpenRunArtifact?: (runId: string) => void;
   onOpenPlatformSettings?: () => void;
   onOpenLlmCenter?: () => void;
@@ -58,6 +61,8 @@ export function ConversationThread({
   onSubmitStarterPrompt,
   onCancelRun,
   onRetryRun,
+  onEditLatestTurn,
+  onRetryLatestTurn,
   onOpenRunArtifact,
   onOpenPlatformSettings,
   onOpenLlmCenter,
@@ -195,6 +200,19 @@ export function ConversationThread({
   }, [activeSessionId, applyProgrammaticScrollTop]);
 
   const showJumpToLatest = runs.length > 0 && !atBottom;
+  const sessionRunning = runs.some((r) => r.status === 'RUNNING');
+  const turnEditingSupported = Boolean(onEditLatestTurn || onRetryLatestTurn);
+
+  const resolveDefaultReplyActions = (run: AgentRunView): React.ReactNode => {
+    if (run.status === 'RUNNING') return null;
+    const copyText =
+      run.text ??
+      (run.status === 'SUCCEEDED' && run.result && !run.stepHandoff
+        ? t(run.result.summary.zh, run.result.summary.en)
+        : '');
+    if (!copyText.trim()) return null;
+    return <ReplyActionsBar text={copyText} />;
+  };
 
   return (
     <div className="conversation-thread-wrap" data-testid="conversation-thread-wrap">
@@ -251,6 +269,14 @@ export function ConversationThread({
                   <UserMessageItem
                     run={run}
                     isLatestTurn={isLatestTurn}
+                    sessionRunning={sessionRunning}
+                    turnEditingSupported={turnEditingSupported}
+                    {...(isLatestTurn && onEditLatestTurn
+                      ? { onEditLatestTurn: (nextPrompt) => onEditLatestTurn(run, nextPrompt) }
+                      : {})}
+                    {...(isLatestTurn && onRetryLatestTurn
+                      ? { onRetryLatestTurn: () => onRetryLatestTurn(run) }
+                      : {})}
                     {...(renderUserActions
                       ? { actionsSlot: renderUserActions(run, { isLatestTurn }) }
                       : {})}
@@ -258,7 +284,7 @@ export function ConversationThread({
                   <AssistantReplyItem
                     run={run}
                     {...(onCancelRun ? { onCancel: () => onCancelRun(run.id) } : {})}
-                    {...(onRetryRun ? { onRetry: () => onRetryRun(run.id) } : {})}
+                    {...(onRetryRun && isLatestTurn ? { onRetry: () => onRetryRun(run.id) } : {})}
                     {...(onOpenRunArtifact
                       ? { onOpenArtifact: () => onOpenRunArtifact(run.id) }
                       : {})}
@@ -289,9 +315,9 @@ export function ConversationThread({
                       : {})}
                     {...(onTriggerWriteback ? { onTriggerWriteback } : {})}
                     {...(renderRunFooter ? { changeSummarySlot: renderRunFooter(run) } : {})}
-                    {...(renderReplyActions
-                      ? { replyActionsSlot: renderReplyActions(run) }
-                      : {})}
+                    replyActionsSlot={
+                      renderReplyActions ? renderReplyActions(run) : resolveDefaultReplyActions(run)
+                    }
                   />
                 </div>
               );

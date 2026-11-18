@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import type { TransientTurnImageInput } from '../../../packages/agent-runtime/index.js';
 import type { ProjectStepId } from '../../../packages/business-vocabulary/index.js';
 import type {
+  AgentImageAttachmentRef,
   AgentSession,
   AgentSessionKind,
   ArtifactJumpTarget,
@@ -16,6 +18,7 @@ import {
   type SessionLiveDraft,
 } from '../../api.js';
 import { usePreferences } from '../../i18n.js';
+import { resolveTurnImagesForRequest } from '../../lib/localImageStore.js';
 import {
   AGENT_PANEL_SURFACES,
   agentPanelSurfaceFor,
@@ -377,6 +380,7 @@ export function ShellAgentPanel({
     startSessionAgentRun,
     cancelSessionAgentRun,
     retrySessionAgentRun,
+    replaceLatestSessionTurnAndRun,
     acceptStepHandoff,
     declineStepHandoff,
     removeQueuedSessionPrompt,
@@ -487,10 +491,12 @@ export function ShellAgentPanel({
     [queuedItems, t],
   );
 
-  const visionState = useMemo(
-    () => (surface.usesVision ? resolveActiveVisionCapability(data) : undefined),
-    [data, surface.usesVision],
+  const resolvedVision = useMemo(
+    () =>
+      resolveActiveVisionCapability(data, activeSession?.providerId, activeSession?.modelOverride),
+    [data, activeSession?.providerId, activeSession?.modelOverride],
   );
+  const visionState = surface.usesVision ? resolvedVision : undefined;
 
   const prototypeSelectionAttachments = usePrototypeSelectionStore((s) =>
     activePrototypeId ? s.attachmentsByPrototype[activePrototypeId] : undefined,
@@ -831,16 +837,48 @@ export function ShellAgentPanel({
     }
   };
 
-  const handleSubmitPrompt = async (prompt: string) => {
+  const resolveComposerTurnImages = async (
+    imageRefs?: AgentImageAttachmentRef[],
+  ): Promise<TransientTurnImageInput[] | undefined> => {
+    if (!imageRefs || imageRefs.length === 0) return undefined;
+    if (resolvedVision.visionSupported) {
+      return resolveTurnImagesForRequest(imageRefs);
+    }
+    return imageRefs.map((ref) => ({
+      id: ref.id,
+      name: ref.name,
+      mimeType: ref.mimeType,
+      ...(ref.remoteUrl ? { remoteUrl: ref.remoteUrl } : {}),
+      ...(ref.width !== undefined ? { width: ref.width } : {}),
+      ...(ref.height !== undefined ? { height: ref.height } : {}),
+      role: ref.role ?? 'user_upload',
+      textFallbackNote: ref.name,
+    }));
+  };
+
+  const handleSubmitPrompt = async (
+    prompt: string,
+    imageRefs?: AgentImageAttachmentRef[],
+  ) => {
     if (!activeProjectId || !data) return;
+    const turnImages = await resolveComposerTurnImages(imageRefs);
     if (surface.sessionKind === 'PROTOTYPE_CO_DESIGN') {
       if (activePrototypeId) {
-        await submitPrototypeComposerTurnWithSelections({
-          projectId: activeProjectId,
-          prototypeId: activePrototypeId,
-          instruction: prompt,
-          visionSupported: visionState?.visionSupported ?? true,
-        });
+        if (turnImages && turnImages.length > 0 && (!prototypeSelectionAttachments || prototypeSelectionAttachments.length === 0)) {
+          await useWorkbenchStore.getState().startPrototypeRefinementRun({
+            projectId: activeProjectId,
+            prototypeId: activePrototypeId,
+            instruction: prompt,
+            images: turnImages,
+          });
+        } else {
+          await submitPrototypeComposerTurnWithSelections({
+            projectId: activeProjectId,
+            prototypeId: activePrototypeId,
+            instruction: prompt,
+            visionSupported: resolvedVision.visionSupported,
+          });
+        }
       } else {
         const targetSession =
           activeSession ??
@@ -850,6 +888,7 @@ export function ShellAgentPanel({
         await startSessionAgentRun({
           sessionId: targetSession.id,
           prompt,
+          ...(turnImages && turnImages.length > 0 ? { images: turnImages } : {}),
           codeMode: effectiveCodeMode,
           multiAgentConcurrency: effectiveConcurrency,
         });
@@ -887,6 +926,7 @@ export function ShellAgentPanel({
         surface.sessionKind === 'CODING' && !targetSession.targetId && codingTargetApp
           ? `[Target application ID: ${codingTargetApp.id}]\n${prompt}`
           : prompt,
+      ...(turnImages && turnImages.length > 0 ? { images: turnImages } : {}),
       codeMode: effectiveCodeMode,
       multiAgentConcurrency: effectiveConcurrency,
       ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
@@ -902,6 +942,14 @@ export function ShellAgentPanel({
     }
   };
 
+  const handleCancelActiveRun = () => {
+    const activeRun = [...runs].reverse().find((r) => r.status === 'RUNNING');
+    const sessionId = activeRun?.sourceSessionId ?? activeSession?.id;
+    if (sessionId) {
+      void cancelSessionAgentRun(sessionId);
+    }
+  };
+
   const handleRetryRun = (runId: string) => {
     const target = runs.find((r) => r.id === runId);
     const sessionId = target?.sourceSessionId ?? activeSession?.id;
@@ -912,6 +960,40 @@ export function ShellAgentPanel({
         target?.retryPrompt,
       );
     }
+  };
+
+  const handleEditLatestTurn = async (runId: string, nextPrompt: string) => {
+    const target = runs.find((r) => r.id === runId);
+    const sessionId = target?.sourceSessionId ?? activeSession?.id;
+    if (!sessionId) return;
+    await replaceLatestSessionTurnAndRun({
+      sessionId,
+      prompt: nextPrompt,
+      ...(target?.sourceUserMessageId
+        ? { truncateFromUserMessageId: target.sourceUserMessageId }
+        : {}),
+      codeMode: effectiveCodeMode,
+      multiAgentConcurrency: effectiveConcurrency,
+      ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
+      ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
+    });
+  };
+
+  const handleRetryLatestTurn = async (runId: string) => {
+    const target = runs.find((r) => r.id === runId);
+    const sessionId = target?.sourceSessionId ?? activeSession?.id;
+    if (!sessionId) return;
+    await replaceLatestSessionTurnAndRun({
+      sessionId,
+      ...(target?.retryPrompt !== undefined ? { prompt: target.retryPrompt } : {}),
+      ...(target?.sourceUserMessageId
+        ? { truncateFromUserMessageId: target.sourceUserMessageId }
+        : {}),
+      codeMode: effectiveCodeMode,
+      multiAgentConcurrency: effectiveConcurrency,
+      ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
+      ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
+    });
   };
 
   const handleOpenArtifact = (runId: string) => {
@@ -1050,7 +1132,10 @@ export function ShellAgentPanel({
       onClose={onClose}
       onResize={(next, opts) => setWidth(next, opts)}
       onCancelRun={handleCancelRun}
+      onCancelActiveRun={handleCancelActiveRun}
       onRetryRun={handleRetryRun}
+      onEditLatestTurn={handleEditLatestTurn}
+      onRetryLatestTurn={handleRetryLatestTurn}
       onOpenRunArtifact={handleOpenArtifact}
       onOpenPlatformSettings={() => onNavigate('llm-center')}
       onOpenLlmCenter={() => onNavigate('llm-center')}
@@ -1082,6 +1167,7 @@ export function ShellAgentPanel({
           })}
       {...(surface.starters ? { starterPrompts: surface.starters } : {})}
       {...(activeSession?.id ? { activeSessionId: activeSession.id } : {})}
+      draftFallbackKey={sessionScopeKey ?? surface.sessionKind}
       isForkSession={Boolean(activeSession?.parentSessionId)}
       {...(headerContextSlot ? { headerContextSlot } : {})}
       onSubmitPrompt={handleSubmitPrompt}
@@ -1096,11 +1182,12 @@ export function ShellAgentPanel({
               removeQueuedSessionPrompt(activeSession.id, queueId),
           }
         : {})}
+      composerVisionSupported={resolvedVision.visionSupported}
+      {...(resolvedVision.providerLabel ? { visionProviderLabel: resolvedVision.providerLabel } : {})}
+      {...(resolvedVision.modelLabel ? { visionModelLabel: resolvedVision.modelLabel } : {})}
       {...(visionState
         ? {
             visionSupported: visionState.visionSupported,
-            ...(visionState.providerLabel ? { visionProviderLabel: visionState.providerLabel } : {}),
-            ...(visionState.modelLabel ? { visionModelLabel: visionState.modelLabel } : {}),
           }
         : {})}
     />
