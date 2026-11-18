@@ -295,6 +295,25 @@ describe('#89 review fixes', () => {
     expect(prototypeFrameAssets(frame).scripts).toEqual(['<script id="head-js">window.ready = 1;</script>']);
     expect(composePrototypeDocument(saved, null)).toBe(saved);
   });
+
+  it('gives web mode the whole page body: the shell with every screen, live ones included', () => {
+    const tracker = createPrototypeLiveTracker();
+    tracker.reset(DOC);
+    let state = emptyPrototypeLiveState();
+    state = applyPrototypeLiveEvent(
+      state,
+      tracker.observePartialScreen({ screenId: 'SCR-B', partialHtml: '<p>新订单', css: '.b{color:red}' })!,
+    );
+    const model = buildPrototypeCanvasModel(DOC, state);
+    expect(model.pageBodyHtml).toContain('早上好');
+    expect(model.pageBodyHtml).toContain('<p>新订单</p>');
+    expect(model.pageBodyHtml).not.toContain('排队中');
+    expect(model.pageBodyHtml.indexOf('data-screen-id="SCR-A"')).toBeLessThan(model.pageBodyHtml.indexOf('data-screen-id="SCR-B"'));
+    // the same body the composed document carries
+    expect(composePrototypeDocument(DOC, state)).toContain(model.pageBodyHtml);
+    expect(model.pageCss).toContain('.b{color:red}');
+    expect(buildPrototypeCanvasModel(DOC, null).pageBodyHtml).toContain('排队中');
+  });
 });
 
 describe('createPartialScreenThrottle: about one update per screen per interval, and the last one always arrives', () => {

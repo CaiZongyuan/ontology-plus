@@ -22,7 +22,13 @@ function born(doc: Document, node: Node): Node {
   return imported;
 }
 
-export function morphChildren(from: Node, to: Node): void {
+/**
+ * `keep(live, target)` true leaves that live element and everything inside it exactly as it is
+ * (web mode keeps a screen whose source did not change, with whatever its scripts did to it).
+ */
+export type MorphKeep = (live: Element, target: Element) => boolean;
+
+export function morphChildren(from: Node, to: Node, keep?: MorphKeep): void {
   const doc = from.ownerDocument ?? (from as Document);
   const current = Array.from(from.childNodes);
   const target = Array.from(to.childNodes);
@@ -36,8 +42,9 @@ export function morphChildren(from: Node, to: Node): void {
     } else if (t.nodeType === 3 || t.nodeType === 8) {
       if (f.nodeValue !== t.nodeValue) f.nodeValue = t.nodeValue;
     } else if (t.nodeType === 1) {
+      if (keep?.(f as Element, t as Element)) continue;
       syncAttributes(f as Element, t as Element);
-      morphChildren(f, t);
+      morphChildren(f, t, keep);
     }
   }
   for (let i = current.length - 1; i >= target.length; i -= 1) {

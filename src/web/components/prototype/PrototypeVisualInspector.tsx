@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 
 import { Crosshair, Layers, Loader2, Plus, Sparkles, X } from 'lucide-react';
 import type { PrototypeRefinementSelection } from '../../../packages/agent-runtime/index.js';
 import type { PrototypeTargetAnchor } from '../../../packages/workspace-store/index.js';
+import { ensurePrototypeNavigationRuntime } from '../../../packages/ontology-core/index.js';
 import { Button } from '../beautifui/index.js';
 import { themeSelectionColor } from '../../../packages/workbench-theme/index.js';
 import { usePreferences } from '../../i18n.js';
@@ -87,18 +88,25 @@ export function mapIframeRectToStageRect(
   };
 }
 
+/**
+ * Opens a prototype document on its own in a new tab (the toolbar's open button and web mode's
+ * 「新标签页打开」): inspector scripts stripped, the navigation runtime ensured (documents saved
+ * before it existed get it), starting on `screenId` when given. Null: nothing to open.
+ */
 export function openCleanPrototypeInNewTab(
   rawHtml: string,
+  screenId?: string,
 ): { blobUrl: string; cleanHtml: string } | null {
-  const cleanHtml = stripVisualInspectorFromHtml(rawHtml);
-  if (!cleanHtml.trim()) return null;
+  const stripped = stripVisualInspectorFromHtml(rawHtml);
+  if (!stripped.trim()) return null;
   if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
     return null;
   }
+  const cleanHtml = ensurePrototypeNavigationRuntime(stripped);
   const blob = new Blob([cleanHtml], { type: 'text/html;charset=utf-8' });
   const blobUrl = URL.createObjectURL(blob);
   if (typeof window !== 'undefined' && typeof window.open === 'function') {
-    window.open(blobUrl, '_blank', 'noopener,noreferrer');
+    window.open(screenId ? `${blobUrl}#${encodeURIComponent(screenId)}` : blobUrl, '_blank', 'noopener,noreferrer');
   }
   if (typeof URL.revokeObjectURL === 'function') {
     setTimeout(() => {

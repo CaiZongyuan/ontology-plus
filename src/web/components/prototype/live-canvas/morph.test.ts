@@ -56,4 +56,16 @@ describe('morphChildren: update a live document in place', () => {
     expect(live.querySelector('p')).toBeNull();
     expect(live.querySelector('h2')?.textContent).toBe('x');
   });
+
+  it('leaves an element the keep rule names exactly as it is, and morphs the rest', () => {
+    const live = bodyOf('<section data-screen-id="A"><p>DH-1025</p></section><section data-screen-id="B"><p>新</p></section>');
+    live.querySelector('[data-screen-id="A"] p')!.textContent = '已点';
+    morphChildren(
+      live,
+      bodyOf('<section data-screen-id="A"><p>DH-1025</p></section><section data-screen-id="B"><p>新建订货单</p></section>'),
+      (el) => el.getAttribute('data-screen-id') === 'A',
+    );
+    expect(live.querySelector('[data-screen-id="A"] p')!.textContent).toBe('已点');
+    expect(live.querySelector('[data-screen-id="B"] p')!.textContent).toBe('新建订货单');
+  });
 });
