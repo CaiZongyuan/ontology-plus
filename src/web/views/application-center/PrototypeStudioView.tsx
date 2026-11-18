@@ -671,6 +671,8 @@ export function PrototypeStudioView({
           }
         : null;
     const canvasProto = currentStage === 'CANVAS' && proto ? proto : pendingLivePrototype;
+    // Nothing that reaches the server may carry the placeholder: those actions wait for the save.
+    const savedProtoId = canvasProto && canvasProto !== pendingLivePrototype ? canvasProto.id : null;
 
     if (canvasProto) {
       return (
@@ -715,10 +717,12 @@ export function PrototypeStudioView({
           showInlineInspectorPopover={false}
           onSelectTarget={(target, crop) => {
             useAgentPanelStore.getState().revealPanel();
-            void ingestSelectionTargetAsAttachment(canvasProto.id, target, { crop: crop ?? null });
+            if (!savedProtoId) return;
+            void ingestSelectionTargetAsAttachment(savedProtoId, target, { crop: crop ?? null });
           }}
           onSelectionCropUpgrade={(cssSelector, crop) => {
-            void upgradeSelectionAttachmentCrop(canvasProto.id, cssSelector, crop);
+            if (!savedProtoId) return;
+            void upgradeSelectionAttachmentCrop(savedProtoId, cssSelector, crop);
           }}
           annotations={combinedCanvasAnnotations}
           onAddAnnotation={handleAddVisualAnnotation}
@@ -759,8 +763,9 @@ export function PrototypeStudioView({
             : {})}
           {...(liveDraft?.reconnecting !== undefined ? { reconnecting: liveDraft.reconnecting } : {})}
           onRetryScreen={(screenId, screenName) => {
+            if (!savedProtoId) return;
             void (async () => {
-              const targetSession = await ensurePrototypeCoDesignSession(project.id, canvasProto.id);
+              const targetSession = await ensurePrototypeCoDesignSession(project.id, savedProtoId);
               setActiveSessionId(targetSession.id);
               useAgentPanelStore.getState().revealPanel();
               await startSessionAgentRun({

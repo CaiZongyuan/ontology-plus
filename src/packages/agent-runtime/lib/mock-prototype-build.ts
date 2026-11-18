@@ -26,6 +26,8 @@ export interface MockPrototypeBuildScreen {
   /** What the screen is for, in business language (the subagent's task). */
   purpose: string;
   html: string;
+  /** Screen behaviour, sent as upsert_prototype_screen's `extraJs`. */
+  extraJs?: string;
 }
 
 export interface MockPrototypeBuild {
@@ -43,6 +45,17 @@ export interface MockPrototypeBuild {
   sharedCss: string;
   screens: MockPrototypeBuildScreen[];
 }
+
+/** The order form's quantity steppers: + adds one box, − takes one away (never below zero). */
+const NEW_ORDER_JS = `document.addEventListener('click', function (event) {
+  var target = event.target;
+  var button = target && target.closest ? target.closest('.stepper button') : null;
+  if (!button) return;
+  var qty = button.parentElement ? button.parentElement.querySelector('[data-qty]') : null;
+  if (!qty) return;
+  var next = Number(qty.textContent || '0') + (button.hasAttribute('data-inc') ? 1 : -1);
+  qty.textContent = String(Math.max(0, next));
+});`;
 
 const SHARED_CSS = `:root {
   --c-bg: #f5f3ee; --c-card: #ffffff; --c-ink: #1d2621; --c-soft: #5b675f; --c-faint: #8a948d;
@@ -175,6 +188,7 @@ export const MOCK_PROTOTYPE_BUILD: MockPrototypeBuild = {
     },
     {
       screenId: "SCR-NEW-ORDER",
+      extraJs: NEW_ORDER_JS,
       screenName: "新建订货单",
       screenType: "FORM",
       purpose: "店长挑商品、填数量，提交给供应商",
@@ -343,6 +357,7 @@ export function createMockPrototypeBuildReplay(
               screenName: screen.screenName,
               screenType: screen.screenType,
               screenHtml: screen.html.split(BUSINESS_OBJECT_TOKEN).join(businessObject),
+              ...(screen.extraJs ? { extraJs: screen.extraJs } : {}),
             }),
           ],
           { stopReason: 'toolUse' },

@@ -2503,6 +2503,29 @@ export async function attachAgentSessionLiveStream(
   await consumeAgentSessionSseBody(res.body, callbacks);
 }
 
+/**
+ * Folds one live prototype delta into a run's draft. The draft's active anchor follows the
+ * screen being written and is released when that screen lands.
+ */
+export function applyPrototypeLiveEventToDraft(
+  cur: SessionLiveDraft,
+  event: PrototypeLiveEvent,
+): SessionLiveDraft {
+  const next: SessionLiveDraft = {
+    ...cur,
+    reconnecting: false,
+    lastHeartbeatAt: Date.now(),
+    prototypeLive: applyPrototypeLiveEvent(cur.prototypeLive ?? emptyPrototypeLiveState(), event),
+  };
+  if (event.kind !== 'screen') return next;
+  if (event.status === 'streaming') {
+    next.activeAnchor = { screenId: event.screenId, label: event.screenName };
+  } else if (cur.activeAnchor?.screenId === event.screenId) {
+    delete next.activeAnchor;
+  }
+  return next;
+}
+
 function buildStoreSessionStreamCallbacks(
   sessionId: string,
   set: (partial: Partial<WorkbenchStoreState>) => void,
@@ -2698,15 +2721,7 @@ function buildStoreSessionStreamCallbacks(
       });
     },
     onPrototypeLive: (event) => {
-      patchDraft((cur) => ({
-        ...cur,
-        reconnecting: false,
-        lastHeartbeatAt: Date.now(),
-        prototypeLive: applyPrototypeLiveEvent(cur.prototypeLive ?? emptyPrototypeLiveState(), event),
-        ...(event.kind === 'screen' && event.status === 'streaming'
-          ? { activeAnchor: { screenId: event.screenId, label: event.screenName } }
-          : {}),
-      }));
+      patchDraft((cur) => applyPrototypeLiveEventToDraft(cur, event));
     },
     onToolCall: (call) => {
       const progressLabel = formatVocabularyToolProgress(

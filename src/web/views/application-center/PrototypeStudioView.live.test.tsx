@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initPrototypeShell, upsertPrototypeScreen } from '../../../packages/agent-runtime/index.js';
 import {
   applyPrototypeLiveEvent,
@@ -15,7 +15,7 @@ import {
 import { createApiApp } from '../../../server/app.js';
 import { useWorkbenchStore, type BootstrapPayload, type SessionLiveDraft } from '../../api.js';
 import { PreferencesProvider } from '../../i18n.js';
-import { PrototypeStudioView } from './PrototypeStudioView.js';
+import { PENDING_LIVE_PROTOTYPE_ID, PrototypeStudioView } from './PrototypeStudioView.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -140,5 +140,74 @@ describe('PrototypeStudioView: one canvas from the running build to the saved pr
     expect(
       homeAfter.contentDocument!.body.querySelector('[data-screen-id="SCR-HOME"]')?.getAttribute('data-screen-status'),
     ).toBe('ready');
+  });
+
+  it('never sends the placeholder of an unsaved first build to the server', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const session = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      title: '首版原型生成',
+    });
+    const app = createApiApp(store);
+    const bootstrap = (await (
+      await app.request('http://localhost/api/bootstrap?projectId=proj-contract')
+    ).json()) as BootstrapPayload;
+    const shell = initPrototypeShell({
+      appTitle: '门店订货',
+      screens: [{ screenId: 'SCR-HOME', screenName: '工作台首页', screenType: 'DASHBOARD' }],
+    });
+    const tracker = createPrototypeLiveTracker();
+    let live = emptyPrototypeLiveState();
+    for (const ev of tracker.observeDocument(shell.nextHtml)) live = applyPrototypeLiveEvent(live, ev);
+
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown, init?: { body?: unknown }) => {
+        calls.push(`${String(url)} ${typeof init?.body === 'string' ? init.body : ''}`);
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }),
+    );
+    try {
+      useWorkbenchStore.setState({
+        data: { ...bootstrap, prototypes: [], confirmedPrototypeRevision: null, agentSessions: [{ ...session, status: 'RUNNING' }] },
+        liveSessionDrafts: {
+          [session.id]: {
+            runId: 'run-1',
+            sessionId: session.id,
+            userPrompt: '生成首版原型',
+            startedAt: Date.now(),
+            liveStatus: { zh: '正在画', en: 'Drawing' },
+            thinking: '',
+            text: '',
+            steps: [],
+            prototypeLive: live,
+          },
+        },
+      });
+      await act(async () => {
+        root.render(
+          <PreferencesProvider>
+            <PrototypeStudioView />
+          </PreferencesProvider>,
+        );
+      });
+      await settle();
+      const stage = host.querySelector('[data-testid="prototype-canvas-stage"]')!;
+      expect(stage).not.toBeNull();
+      // press everything the pending stage offers (except leaving it), and try the artboard
+      for (const button of Array.from(stage.querySelectorAll<HTMLButtonElement>('button'))) {
+        if (button.getAttribute('data-testid') === 'prototype-live-back-to-brief-btn' || button.disabled) continue;
+        await act(async () => button.click());
+      }
+      await act(async () => {
+        host.querySelector('[data-testid="prototype-artboard-SCR-HOME"]')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      });
+      await settle();
+      expect(calls.filter((c) => c.includes(PENDING_LIVE_PROTOTYPE_ID))).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

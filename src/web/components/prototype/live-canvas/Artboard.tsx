@@ -52,6 +52,10 @@ interface ArtboardFrameProps {
   extraCss?: string;
   /** Stylesheet hrefs joined with newlines (a string keeps memoisation simple). */
   linksKey: string;
+  /** Head scripts' HTML joined by `\n\u0000\n`. */
+  headScriptsKey: string;
+  /** The screen has landed (or is saved): its scripts run, once each. */
+  landed: boolean;
   interactive: boolean;
   onNavigate: (screenId: string) => void;
   onEscape: () => void;
@@ -70,6 +74,8 @@ export const ArtboardFrame = memo(function ArtboardFrame({
   css,
   extraCss,
   linksKey,
+  headScriptsKey,
+  landed,
   interactive,
   onNavigate,
   onEscape,
@@ -84,6 +90,10 @@ export const ArtboardFrame = memo(function ArtboardFrame({
   navigateRef.current = onNavigate;
   const escapeRef = useRef(onEscape);
   escapeRef.current = onEscape;
+  const selectRef = useRef<((screenId: string) => void) | null>(null);
+  /** Script element → the source it last ran with; a script runs once per source. */
+  const ranScripts = useRef(new WeakMap<Element, string>());
+  const ranHeadScripts = useRef(new Set<string>());
 
   const doc = (): Document | null => {
     const d = frameRef.current?.contentDocument ?? null;
@@ -129,6 +139,39 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     return () => clearTimeout(timer);
   }, [loadVersion, bodyHtml, screenId]);
 
+  // Scripts: parsed scripts never run, so once the screen has landed each one is recreated with
+  // createElement and runs exactly once, without reloading the iframe.
+  useLayoutEffect(() => {
+    const d = doc();
+    if (!d || loadVersion === 0 || !landed) return;
+    const recreate = (source: Element): HTMLScriptElement => {
+      const fresh = d.createElement('script');
+      for (const attr of Array.from(source.attributes)) fresh.setAttribute(attr.name, attr.value);
+      fresh.textContent = source.textContent;
+      return fresh;
+    };
+    for (const html of headScriptsKey ? headScriptsKey.split('\n\u0000\n') : []) {
+      if (ranHeadScripts.current.has(html)) continue;
+      ranHeadScripts.current.add(html);
+      const parsed = new DOMParser().parseFromString(`<!doctype html><html><head>${html}</head></html>`, 'text/html');
+      const source = parsed.head.querySelector('script');
+      if (!source) continue;
+      const fresh = recreate(source);
+      fresh.setAttribute('data-onto-head-script', '');
+      d.head.appendChild(fresh);
+    }
+    for (const script of Array.from(d.body.querySelectorAll('script'))) {
+      const source = `${script.getAttribute('src') ?? ''}\u0000${script.textContent ?? ''}`;
+      if (ranScripts.current.get(script) === source) continue;
+      const fresh = recreate(script);
+      ranScripts.current.set(fresh, source);
+      script.replaceWith(fresh);
+    }
+    // The prototype's own navigation helper must not replace the canvas's try-out navigation.
+    const win = d.defaultView as ProtoWindow | null;
+    if (win && selectRef.current) win.__selectProtoScreen = selectRef.current;
+  }, [loadVersion, bodyHtml, landed, headScriptsKey]);
+
   // Try-out wiring: navigation anchors and Esc inside the prototype.
   useEffect(() => {
     const d = doc();
@@ -137,6 +180,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     const go = (target: string) => {
       if (interactiveRef.current && target) navigateRef.current(target);
     };
+    selectRef.current = go;
     if (win) win.__selectProtoScreen = go;
     const onClick = (event: MouseEvent) => {
       if (!interactiveRef.current) return;

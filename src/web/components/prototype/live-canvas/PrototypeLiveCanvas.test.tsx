@@ -10,6 +10,7 @@ import {
   type PrototypeLiveState,
 } from '../../../../packages/ontology-core/index.js';
 import { checkBusinessViewMarkup } from '../../../../packages/business-vocabulary/index.js';
+import { initPrototypeShell, upsertPrototypeScreen } from '../../../../packages/agent-runtime/index.js';
 import { PreferencesProvider } from '../../../i18n.js';
 import { ARTBOARD_BOOTSTRAP } from './Artboard.js';
 import { PrototypeLiveCanvas, type PrototypeLiveCanvasProps } from './PrototypeLiveCanvas.js';
@@ -188,5 +189,129 @@ describe('PrototypeLiveCanvas: artboards load once and are updated in place', ()
     });
     expect(viewport.getAttribute('data-following')).toBe('true');
     expect(viewport.getAttribute('data-follow-target')).toBe('SCR-B');
+  });
+});
+
+describe('PrototypeLiveCanvas: #89 review fixes', () => {
+  it('runs a landed screen’s scripts once, without reloading, so script-defined handlers work in try-out', async () => {
+    const withScripts = SAVED.replace('</head>', '<script>window.__headRuns = (window.__headRuns || 0) + 1;</script></head>')
+      .replace(
+        '<h1>早上好</h1>',
+        '<h1>早上好</h1><button type="button" data-element-id="EL-OPEN" onclick="openDrawer()">打开</button>',
+      )
+      .replace(
+        '</main>',
+        '</main><script data-screen-js="SCR-A">window.__bodyRuns = (window.__bodyRuns || 0) + 1; window.openDrawer = function () { document.body.setAttribute("data-drawer", "open"); };</script>',
+      );
+    await render({ documentHtml: withScripts, live: null });
+    const frameA = frame('SCR-A');
+    const win = frameA.contentWindow as unknown as { __headRuns?: number; __bodyRuns?: number };
+    expect(win.__headRuns).toBe(1);
+    expect(win.__bodyRuns).toBe(1);
+
+    // a re-render with the same document runs nothing again
+    await render({ documentHtml: withScripts, live: null, highlightedScreenId: 'SCR-B' });
+    expect(win.__headRuns).toBe(1);
+    expect(win.__bodyRuns).toBe(1);
+    expect(frameA.getAttribute('data-load-count')).toBe('1');
+
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="prototype-artboard-SCR-A"]')!.dispatchEvent(
+        new MouseEvent('dblclick', { bubbles: true }),
+      );
+    });
+    const innerDoc = frameA.contentDocument!;
+    await act(async () => {
+      innerDoc.querySelector<HTMLElement>('[data-element-id="EL-OPEN"]')!.click();
+    });
+    expect(innerDoc.body.getAttribute('data-drawer')).toBe('open');
+  });
+
+  it('does not run scripts of a screen that is still being written', async () => {
+    const tracker = createPrototypeLiveTracker();
+    let state = emptyPrototypeLiveState();
+    for (const ev of tracker.observeDocument(doc('<p>排队中</p>', 'queued'))) state = applyPrototypeLiveEvent(state, ev);
+    state = applyPrototypeLiveEvent(
+      state,
+      tracker.observePartialScreen({ screenId: 'SCR-B', partialHtml: '<script>window.__early = 1;</script><p>订' })!,
+    );
+    await render({ documentHtml: '', live: state, busy: true, building: true });
+    expect((frame('SCR-B').contentWindow as unknown as { __early?: number }).__early).toBeUndefined();
+  });
+
+  it('keeps every node streamed before a screen lands (real upsert output), with no fade-in again', async () => {
+    const shell = initPrototypeShell({
+      appTitle: '门店订货',
+      screens: [{ screenId: 'SCR-HOME', screenName: '工作台首页', screenType: 'DASHBOARD' }],
+    }).nextHtml;
+    const fragment =
+      '<section class="page" data-element-id="EL-GREET"><h1>早上好</h1></section>\n<section class="page" data-element-id="EL-TODO"><p>今天要做的事</p></section>';
+    const tracker = createPrototypeLiveTracker();
+    let state = emptyPrototypeLiveState();
+    for (const ev of tracker.observeDocument(shell)) state = applyPrototypeLiveEvent(state, ev);
+    state = applyPrototypeLiveEvent(state, tracker.observePartialScreen({ screenId: 'SCR-HOME', partialHtml: fragment })!);
+    await render({ documentHtml: '', live: state, busy: true, building: true });
+
+    const body = frame('SCR-HOME').contentDocument!.body;
+    const greet = body.querySelector('[data-element-id="EL-GREET"]')!;
+    const todo = body.querySelector('[data-element-id="EL-TODO"]')!;
+    for (const el of Array.from(body.querySelectorAll('[data-onto-born]'))) el.removeAttribute('data-onto-born');
+
+    const landed = upsertPrototypeScreen(shell, { screenId: 'SCR-HOME', screenHtml: fragment });
+    expect(landed.isError).toBe(false);
+    for (const ev of tracker.observeDocument(landed.nextHtml)) state = applyPrototypeLiveEvent(state, ev);
+    await render({ documentHtml: '', live: state, busy: true, building: true });
+
+    expect(body.querySelector('[data-element-id="EL-GREET"]')).toBe(greet);
+    expect(body.querySelector('[data-element-id="EL-TODO"]')).toBe(todo);
+    expect(body.querySelectorAll('[data-onto-born]')).toHaveLength(0);
+    expect(body.querySelector('[data-screen-id="SCR-HOME"]')?.getAttribute('data-screen-status')).toBe('ready');
+  });
+
+  it('never moves an artboard in the DOM when the screen order changes', async () => {
+    await render({ documentHtml: SAVED, live: null });
+    const frameA = frame('SCR-A');
+    const frameB = frame('SCR-B');
+    const order = () =>
+      Array.from(host.querySelectorAll('[data-testid^="prototype-artboard-frame-"]')).map((f) => f.getAttribute('data-testid'));
+    const before = order();
+
+    const swapped = SAVED.replace(
+      /(<section class="proto-screen" data-screen-id="SCR-A"[\s\S]*?<\/section>)\s*(<section class="proto-screen" data-screen-id="SCR-B"[\s\S]*?<\/section>)/,
+      '$2\n$1',
+    );
+    expect(swapped.indexOf('SCR-B"')).toBeLessThan(swapped.indexOf('data-screen-id="SCR-A"'));
+    await render({ documentHtml: swapped, live: null });
+
+    expect(order()).toEqual(before);
+    expect(frame('SCR-A')).toBe(frameA);
+    expect(frame('SCR-B')).toBe(frameB);
+    expect(frameA.getAttribute('data-load-count')).toBe('1');
+    expect(frameB.getAttribute('data-load-count')).toBe('1');
+    // positions follow the new order
+    const left = (sid: string) => host.querySelector<HTMLElement>(`[data-testid="prototype-artboard-${sid}"]`)!.style.left;
+    expect(left('SCR-B')).toBe('0px');
+    expect(left('SCR-A')).not.toBe('0px');
+  });
+
+  it('says the assistant is planning only during a real build, and clears the follow ring when the screen lands', async () => {
+    await render({ documentHtml: '', live: null, busy: true });
+    expect(host.textContent).not.toContain('正在规划要画哪几屏');
+    expect(host.textContent).not.toContain('正在准备画布');
+    await render({ documentHtml: '', live: null, busy: true, building: true });
+    expect(host.textContent).toContain('正在规划要画哪几屏');
+
+    const tracker = createPrototypeLiveTracker();
+    let state = emptyPrototypeLiveState();
+    for (const ev of tracker.observeDocument(doc('<p>排队中</p>', 'queued'))) state = applyPrototypeLiveEvent(state, ev);
+    state = applyPrototypeLiveEvent(state, tracker.observePartialScreen({ screenId: 'SCR-B', partialHtml: '<h2>订货' })!);
+    await render({ documentHtml: '', live: state, busy: true, building: true });
+    const viewport = host.querySelector<HTMLElement>('[data-testid="prototype-canvas-viewport"]')!;
+    expect(viewport.getAttribute('data-follow-target')).toBe('SCR-B');
+
+    for (const ev of tracker.observeDocument(SAVED)) state = applyPrototypeLiveEvent(state, ev);
+    await render({ documentHtml: '', live: state, busy: true, building: true });
+    expect(viewport.getAttribute('data-follow-target')).toBe('');
+    expect(host.querySelector('[data-testid="prototype-strip-card-SCR-B"]')?.className).not.toContain('border-primary');
   });
 });

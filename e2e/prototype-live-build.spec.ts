@@ -133,6 +133,13 @@ test.describe('Prototype live build (#89): per-screen streaming onto one canvas'
       .first()
       .click();
     await expect(viewport).toHaveAttribute('data-trying', 'SCR-NEW-ORDER');
+    // The screen's own script (its extraJs) runs in the artboard: the + stepper adds a box.
+    const orderForm = page.frameLocator('[data-testid="prototype-artboard-frame-SCR-NEW-ORDER"]');
+    const firstQty = orderForm.locator('[data-element-id="EL-QTY-CROISSANT"] [data-qty]');
+    await expect(firstQty).toHaveText('0');
+    await orderForm.locator('[data-element-id="EL-NEW-ORDER-BUTTON-2"]').click();
+    await expect(firstQty).toHaveText('1');
+    expect(await page.getByTestId('prototype-artboard-frame-SCR-NEW-ORDER').getAttribute('data-load-count')).toBe('1');
     await page.waitForTimeout(700); // let the camera tween settle before the evidence screenshot
     await page.screenshot({ path: '.scratch/issue-89/e2e-try-mode.png' });
     await page.keyboard.press('Escape');
@@ -146,11 +153,31 @@ test.describe('Prototype live build (#89): per-screen streaming onto one canvas'
     await expect.poll(() => streamingCount(page), { timeout: 20_000, intervals: [50] }).toBeGreaterThanOrEqual(1);
 
     await page.reload();
-    // After reconnecting, the canvas shows the screens the run already has.
+    // While the build is still running, the reconnected canvas already shows all five screens,
+    // and every screen the run had started has its content (caught up, not replayed from zero).
     await expect(page.getByTestId('prototype-live-canvas')).toBeVisible({ timeout: 15_000 });
+    const snapshot = () =>
+      page.evaluate(() => {
+        const boards = Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="prototype-artboard-SCR-"]'));
+        const started = boards.filter((b) => b.getAttribute('data-screen-status') !== 'queued');
+        const hasOwnContent = (b: HTMLElement) => {
+          const section = b.querySelector('iframe')?.contentDocument?.querySelector('[data-screen-id]');
+          return Boolean(section && section.children.length > 0 && !section.querySelector('.proto-skeleton-card'));
+        };
+        return {
+          pending:
+            document.querySelector('[data-testid="prototype-canvas-toolbar"]')?.getAttribute('data-pending-live') === 'true',
+          boards: boards.length,
+          started: started.length,
+          startedWithContent: started.filter(hasOwnContent).length,
+        };
+      });
     await expect
-      .poll(() => page.locator('[data-testid^="prototype-artboard-SCR-"]').count(), { timeout: 15_000 })
-      .toBe(SCREENS.length);
+      .poll(async () => {
+        const s = await snapshot();
+        return s.pending && s.boards === SCREENS.length && s.started >= 1 && s.startedWithContent === s.started;
+      }, { timeout: 15_000, intervals: [100] })
+      .toBe(true);
     await expect(page.getByTestId('prototype-history-btn')).toContainText('R1', { timeout: 60_000 });
     for (const sid of SCREENS) {
       await expect(page.getByTestId(`prototype-artboard-${sid}`)).toHaveAttribute('data-screen-status', 'ready');

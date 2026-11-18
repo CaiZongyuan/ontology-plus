@@ -44,6 +44,8 @@ export interface PrototypeLiveCanvasProps {
   /** Per-screen deltas of the running Agent Run, folded over the saved document. */
   live?: PrototypeLiveState | null;
   busy?: boolean;
+  /** A first build is running: an empty canvas says the assistant is planning the screens. */
+  building?: boolean;
   reconnecting?: boolean;
   highlightedScreenId?: string | null;
   viewMode?: 'business' | 'technical';
@@ -78,6 +80,7 @@ export function PrototypeLiveCanvas({
   documentHtml,
   live,
   busy = false,
+  building = false,
   reconnecting = false,
   highlightedScreenId = null,
   viewMode = 'business',
@@ -88,7 +91,15 @@ export function PrototypeLiveCanvas({
   const isBusiness = viewMode === 'business';
   const model = useMemo(() => buildPrototypeCanvasModel(documentHtml, live), [documentHtml, live]);
   const linksKey = model.links.join('\n');
+  const headScriptsKey = model.headScripts.join('\n\u0000\n');
   const screens = model.screens;
+  // Artboards stay in the DOM in the order they first appeared: moving an iframe in the DOM
+  // reloads it, so a reordered model only changes positions (style), never DOM order.
+  const mountOrder = useRef<string[]>([]);
+  const screenById = new Map(screens.map((s) => [s.screenId, s] as const));
+  for (const s of screens) if (!mountOrder.current.includes(s.screenId)) mountOrder.current.push(s.screenId);
+  mountOrder.current = mountOrder.current.filter((id) => screenById.has(id));
+  const mountedScreens = mountOrder.current.map((id) => screenById.get(id)!);
   const indexById = useMemo(
     () => new Map(screens.map((s, i) => [s.screenId, i] as const)),
     [screens],
@@ -120,6 +131,7 @@ export function PrototypeLiveCanvas({
   const [followTick, setFollowTick] = useState(0);
   const [followedScreenId, setFollowedScreenId] = useState<string | undefined>(undefined);
   const [tryScreenId, setTryScreenId] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -283,7 +295,11 @@ export function PrototypeLiveCanvas({
     drawn: screens.filter((s) => s.status === 'ready').length,
     drawing: screens.filter((s) => s.status === 'streaming').length,
   };
-  const followTarget = following ? followedScreenId : undefined;
+  // The follow ring marks a screen only while it is being written.
+  const followTarget =
+    following && followedScreenId && screens.find((s) => s.screenId === followedScreenId)?.status === 'streaming'
+      ? followedScreenId
+      : undefined;
 
   return (
     <div
@@ -298,7 +314,7 @@ export function PrototypeLiveCanvas({
         <div className="flex min-w-0 items-center gap-2" data-slot="build-phases" />
         <span className="text-muted-foreground" data-testid="prototype-build-counts">
           {counts.total === 0
-            ? busy
+            ? building
               ? t('正在准备画布…', 'Preparing the canvas…')
               : t('还没有屏幕', 'No screens yet')
             : t(
@@ -320,7 +336,7 @@ export function PrototypeLiveCanvas({
           ref={hostRef}
           className={cn(
             'relative min-h-[420px] overflow-hidden touch-none select-none',
-            drag.current ? 'cursor-grabbing' : 'cursor-grab',
+            dragging ? 'cursor-grabbing' : 'cursor-grab',
           )}
           data-testid="prototype-canvas-viewport"
           data-following={following ? 'true' : 'false'}
@@ -336,6 +352,7 @@ export function PrototypeLiveCanvas({
             if (!d) return;
             if (!d.moved && Math.abs(event.clientX - d.x) + Math.abs(event.clientY - d.y) > 3) {
               d.moved = true;
+              setDragging(true);
               takeManualControl();
               // Capture only once it is a drag, so a double-click still reaches the artboard.
               event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -344,9 +361,11 @@ export function PrototypeLiveCanvas({
           }}
           onPointerUp={() => {
             drag.current = null;
+            setDragging(false);
           }}
           onPointerCancel={() => {
             drag.current = null;
+            setDragging(false);
           }}
         >
           <div
@@ -354,7 +373,8 @@ export function PrototypeLiveCanvas({
             data-testid="prototype-canvas-world"
             style={{ transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.k})` }}
           >
-            {screens.map((board, idx) => {
+            {mountedScreens.map((board) => {
+              const idx = indexById.get(board.screenId) ?? 0;
               const rect = artboardRect(idx);
               const isTrying = tryScreenId === board.screenId;
               const isHighlighted =
@@ -379,6 +399,8 @@ export function PrototypeLiveCanvas({
                     css={model.css}
                     {...(board.css ? { extraCss: board.css } : {})}
                     linksKey={linksKey}
+                    headScriptsKey={headScriptsKey}
+                    landed={board.status === 'ready'}
                     interactive={isTrying}
                     onNavigate={navigateFromPrototype}
                     onEscape={exitTry}
@@ -407,7 +429,7 @@ export function PrototypeLiveCanvas({
 
           {screens.length === 0 && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[13px] text-muted-foreground">
-              {busy ? (
+              {building ? (
                 <span className="inline-flex items-center gap-2">
                   <Loader2 size={14} className="animate-spin" aria-hidden="true" />
                   {t('助手正在规划要画哪几屏…', 'The assistant is planning the screens…')}

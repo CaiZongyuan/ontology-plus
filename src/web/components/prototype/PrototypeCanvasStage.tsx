@@ -66,6 +66,7 @@ import {
   type PrototypeZoomMode,
 } from './PrototypeVisualInspector.js';
 import {
+  composePrototypeDocument,
   extractPrototypeArtboards,
   type PrototypeLiveState,
 } from '../../../packages/ontology-core/index.js';
@@ -179,6 +180,15 @@ export interface PrototypeCanvasStageProps {
   ) => void;
   viewMode?: StepViewMode;
   primaryActionHandledAbove?: boolean;
+}
+
+/**
+ * Whether a document is laid out as artboards: it has the prototype shell (or per-screen
+ * status), or it is a first build that has not written anything yet.
+ */
+export function isPrototypeShellDocument(html: string, firstBuild = false): boolean {
+  if (firstBuild && !html.trim()) return true;
+  return /id="proto-screens-root"|data-screen-status=/i.test(html);
 }
 
 export function resolveRevisionStatusSummary(
@@ -623,23 +633,26 @@ export function PrototypeCanvasStage({
   const displayedHtml = htmlOverride ?? activeRevision.htmlContent ?? activePrototype.htmlContent;
   const artboardCount = extractPrototypeArtboards(displayedHtml).length;
   const canvasLiveState = isPreviewingHistorical || htmlOverride !== null ? null : liveState;
-  const hasMultiArtboardShell =
-    pendingLive ||
-    Boolean(canvasLiveState && (canvasLiveState.frame || canvasLiveState.arrival.length > 0)) ||
-    Boolean(subagentLanes && subagentLanes.length > 0) ||
-    /id="proto-screens-root"|data-screen-status=/i.test(displayedHtml);
+  // The page as it stands during a run (the saved revision when nothing is running).
+  const liveDocumentHtml = composePrototypeDocument(displayedHtml, canvasLiveState);
+  // The layout follows the document, never the run: a saved prototype keeps its layout while a
+  // run starts and ends; a first build is judged by what it has written so far.
+  const hasMultiArtboardShell = isPrototypeShellDocument(
+    pendingLive ? liveDocumentHtml : displayedHtml,
+    pendingLive,
+  );
   const effectiveCanvasLayout: 'ARTBOARDS' | 'SINGLE' = inspectMode
     ? 'SINGLE'
     : (layoutOverride ?? (hasMultiArtboardShell ? 'ARTBOARDS' : 'SINGLE'));
 
   const singleStageHtml = (() => {
-    if (!focusedScreenId) return displayedHtml;
+    if (!focusedScreenId) return liveDocumentHtml;
     const jsScreen = JSON.stringify(focusedScreenId);
     const autoSelectScript = `<script data-focus-screen>(function(){window.addEventListener('DOMContentLoaded',function(){if(typeof window.__selectProtoScreen==='function'){try{window.__selectProtoScreen(${jsScreen});}catch(_){}}});})();</script>`;
-    const bodyEnd = displayedHtml.lastIndexOf('</body>');
+    const bodyEnd = liveDocumentHtml.lastIndexOf('</body>');
     return bodyEnd !== -1
-      ? `${displayedHtml.slice(0, bodyEnd)}${autoSelectScript}${displayedHtml.slice(bodyEnd)}`
-      : `${displayedHtml}${autoSelectScript}`;
+      ? `${liveDocumentHtml.slice(0, bodyEnd)}${autoSelectScript}${liveDocumentHtml.slice(bodyEnd)}`
+      : `${liveDocumentHtml}${autoSelectScript}`;
   })();
 
   const revStatus = resolveRevisionStatusSummary(
@@ -1595,6 +1608,7 @@ export function PrototypeCanvasStage({
               documentHtml={displayedHtml}
               live={canvasLiveState}
               busy={busy}
+              building={pendingLive}
               {...(reconnecting !== undefined ? { reconnecting } : {})}
               highlightedScreenId={hoveredAnchor?.screenId ?? activeRunningAnchor?.screenId ?? null}
               {...(onRetryScreen ? { onRetryScreen } : {})}
