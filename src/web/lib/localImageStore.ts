@@ -439,3 +439,38 @@ export async function resolveTurnImagesForRequest(
 
   return resolved;
 }
+
+/**
+ * Resolve `AgentImageAttachmentRef[]` for an outgoing turn, automatically omitting binary
+ * `dataBase64` payloads while preserving fallback metadata when the active model lacks vision.
+ */
+export async function resolveTurnImagesWithFallback(
+  refs: readonly AgentImageAttachmentRef[],
+  options: {
+    visionSupported: boolean;
+    defaultRole?: AgentImageAttachmentRole;
+    fallbackNotesById?: Record<string, string | undefined>;
+    fallbackNoteToName?: boolean;
+  },
+): Promise<TransientTurnImageInput[]> {
+  if (refs.length === 0) return [];
+  if (options.visionSupported) {
+    return resolveTurnImagesForRequest(refs, options.fallbackNotesById);
+  }
+  const defaultRole = options.defaultRole ?? 'user_upload';
+  return refs.map((ref) => {
+    const note =
+      options.fallbackNotesById?.[ref.id] ??
+      (options.fallbackNoteToName ? ref.name : undefined);
+    return {
+      id: ref.id,
+      name: ref.name,
+      mimeType: ref.mimeType,
+      ...(ref.remoteUrl ? { remoteUrl: ref.remoteUrl } : {}),
+      ...(ref.width !== undefined ? { width: ref.width } : {}),
+      ...(ref.height !== undefined ? { height: ref.height } : {}),
+      role: ref.role ?? defaultRole,
+      ...(note ? { textFallbackNote: note } : {}),
+    };
+  });
+}

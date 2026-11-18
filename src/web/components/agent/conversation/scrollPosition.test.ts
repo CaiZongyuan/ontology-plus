@@ -109,4 +109,18 @@ describe('conversation scrollPosition seam (#79)', () => {
       scrollTop: 185,
     });
   });
+
+  it('keeps atBottom=false when restoring a non-bottom scroll position before async Mermaid content expands scrollHeight (#85)', () => {
+    // Before async Mermaid finishes rendering, scrollHeight (560) is only 60px taller than clientHeight (500).
+    // Even though clamped scrollTop (60) is within BOTTOM_STICKY_THRESHOLD_PX of pre-async bottom,
+    // saved.atBottom === false MUST stay false so ResizeObserver does not yank scroll to bottom on expansion!
+    const preAsync = resolveRestoredScrollMetrics(
+      { atBottom: false, scrollTop: 420 },
+      { clientHeight: 500, scrollHeight: 560 },
+    );
+    expect(preAsync).toEqual({
+      scrollTop: 60,
+      atBottom: false,
+    });
+  });
 });

@@ -113,4 +113,50 @@ describe('draftStore (#81)', () => {
     });
     expect(readSessionDraft('sess-any', corruptStorage)).toEqual(EMPTY_CONVERSATION_DRAFT);
   });
+
+  it('persists unsent image attachment refs per session across switches and reload, including attachment-only drafts (#85)', () => {
+    const storage = createMockStorage();
+    writeSessionDraft(
+      'sess-img-only',
+      {
+        text: '',
+        quotes: [],
+        attachments: [
+          {
+            id: 'limg-test-1',
+            name: 'contract-sketch.png',
+            mimeType: 'image/png',
+            source: 'local',
+            width: 800,
+            height: 600,
+            role: 'user_upload',
+          },
+        ],
+      },
+      storage,
+    );
+
+    clearConversationDraftMemoryForTests();
+
+    expect(readSessionDraft('sess-img-only', storage)).toEqual({
+      text: '',
+      quotes: [],
+      attachments: [
+        {
+          id: 'limg-test-1',
+          name: 'contract-sketch.png',
+          mimeType: 'image/png',
+          source: 'local',
+          width: 800,
+          height: 600,
+          role: 'user_upload',
+        },
+      ],
+    });
+
+    // Clearing all attachments when text & quotes are empty removes the persisted key cleanly
+    writeSessionDraft('sess-img-only', { text: '', quotes: [], attachments: [] }, storage);
+    clearConversationDraftMemoryForTests();
+    expect(readSessionDraft('sess-img-only', storage)).toEqual(EMPTY_CONVERSATION_DRAFT);
+  });
 });

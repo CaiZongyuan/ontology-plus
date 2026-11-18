@@ -67,6 +67,93 @@ export interface ConversationComposerProps {
   enableSelectionQuote?: boolean;
 }
 
+export interface SelectionQuotePortalProps {
+  enabled: boolean;
+  onQuoteText: (text: string) => void;
+}
+
+/**
+ * Shared floating "引用到对话 / Quote in reply" portal button watching document selection
+ * across assistant replies and step canvases (both split desktop and <1280px compact canvas pane).
+ */
+export function SelectionQuotePortal({ enabled, onQuoteText }: SelectionQuotePortalProps) {
+  const { t } = usePreferences();
+  const [activeSelection, setActiveSelection] = useState<ActiveQuotableSelection | null>(null);
+
+  const syncWindowSelection = useCallback(() => {
+    if (!enabled) {
+      setActiveSelection(null);
+      return;
+    }
+    setActiveSelection(readWindowQuotableSelection());
+  }, [enabled]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || !enabled) {
+      setActiveSelection(null);
+      return;
+    }
+    const handleSelectionChange = () => syncWindowSelection();
+    const handleDismissOnEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setActiveSelection(null);
+      }
+    };
+    document.addEventListener('selectionchange', handleSelectionChange);
+    document.addEventListener('mouseup', handleSelectionChange);
+    document.addEventListener('keyup', handleSelectionChange);
+    window.addEventListener('scroll', handleSelectionChange, true);
+    window.addEventListener('resize', handleSelectionChange);
+    window.addEventListener('keydown', handleDismissOnEscape);
+    return () => {
+      document.removeEventListener('selectionchange', handleSelectionChange);
+      document.removeEventListener('mouseup', handleSelectionChange);
+      document.removeEventListener('keyup', handleSelectionChange);
+      window.removeEventListener('scroll', handleSelectionChange, true);
+      window.removeEventListener('resize', handleSelectionChange);
+      window.removeEventListener('keydown', handleDismissOnEscape);
+    };
+  }, [enabled, syncWindowSelection]);
+
+  if (!activeSelection || typeof document === 'undefined' || !document.body) {
+    return null;
+  }
+
+  const handleClick = () => {
+    const selectedText = activeSelection.text;
+    setActiveSelection(null);
+    if (typeof window !== 'undefined') {
+      try {
+        window.getSelection()?.removeAllRanges();
+      } catch {
+        // Ignore selection clear errors
+      }
+    }
+    onQuoteText(selectedText);
+  };
+
+  return createPortal(
+    <button
+      type="button"
+      className="selection-quote-floating-btn"
+      data-testid="selection-quote-btn"
+      style={{
+        top: `${activeSelection.top}px`,
+        left: `${activeSelection.left}px`,
+      }}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onClick={handleClick}
+    >
+      <Quote size={12} aria-hidden="true" />
+      <span>{t('引用到对话', 'Quote in reply')}</span>
+    </button>,
+    document.body,
+  );
+}
+
 /**
  * Composer footer for the continuous desktop conversation stream (#81).
  * Supports per-session draft + quote chips, floating canvas/reply quote insertion,
@@ -106,7 +193,6 @@ export function ConversationComposer({
   const [busy, setBusy] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [activeSelection, setActiveSelection] = useState<ActiveQuotableSelection | null>(null);
 
   const effectiveQuotes = controlledQuotes ?? internalQuotes;
   const setQuotes = useCallback(
@@ -130,55 +216,14 @@ export function ConversationComposer({
     [controlledAttachments, onAttachmentsChange],
   );
 
-  const syncWindowSelection = useCallback(() => {
-    if (!enableSelectionQuote || !onSubmitPrompt || disabled) {
-      setActiveSelection(null);
-      return;
-    }
-    setActiveSelection(readWindowQuotableSelection());
-  }, [enableSelectionQuote, onSubmitPrompt, disabled]);
-
-  useEffect(() => {
-    if (typeof document === 'undefined' || !enableSelectionQuote || !onSubmitPrompt || disabled) {
-      setActiveSelection(null);
-      return;
-    }
-    const handleSelectionChange = () => syncWindowSelection();
-    const handleDismissOnEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setActiveSelection(null);
-      }
-    };
-    document.addEventListener('selectionchange', handleSelectionChange);
-    document.addEventListener('mouseup', handleSelectionChange);
-    document.addEventListener('keyup', handleSelectionChange);
-    window.addEventListener('scroll', handleSelectionChange, true);
-    window.addEventListener('resize', handleSelectionChange);
-    window.addEventListener('keydown', handleDismissOnEscape);
-    return () => {
-      document.removeEventListener('selectionchange', handleSelectionChange);
-      document.removeEventListener('mouseup', handleSelectionChange);
-      document.removeEventListener('keyup', handleSelectionChange);
-      window.removeEventListener('scroll', handleSelectionChange, true);
-      window.removeEventListener('resize', handleSelectionChange);
-      window.removeEventListener('keydown', handleDismissOnEscape);
-    };
-  }, [enableSelectionQuote, onSubmitPrompt, disabled, syncWindowSelection]);
-
-  const handleQuoteSelection = () => {
-    if (!activeSelection) return;
-    const nextQuotes = appendUniqueQuote(effectiveQuotes, activeSelection.text);
-    setQuotes(nextQuotes);
-    setActiveSelection(null);
-    if (typeof window !== 'undefined') {
-      try {
-        window.getSelection()?.removeAllRanges();
-      } catch {
-        // Ignore selection clear errors
-      }
-    }
-    textareaRef.current?.focus();
-  };
+  const handleQuoteSelection = useCallback(
+    (selectedText: string) => {
+      const nextQuotes = appendUniqueQuote(effectiveQuotes, selectedText);
+      setQuotes(nextQuotes);
+      textareaRef.current?.focus();
+    },
+    [effectiveQuotes, setQuotes],
+  );
 
   const handleRemoveQuote = (idx: number) => {
     setQuotes(effectiveQuotes.filter((_, i) => i !== idx));
@@ -193,11 +238,12 @@ export function ConversationComposer({
       if (added.length > 0) {
         setAttachments([...effectiveAttachments, ...added]);
       }
-    } catch (err) {
+    } catch {
       setInlineError(
-        err instanceof Error
-          ? err.message
-          : t('本地图片保存失败', 'Failed to store image locally'),
+        t(
+          '图片无法保存在当前浏览器，请检查浏览器存储空间后重试。',
+          'Could not save the image in this browser. Check available storage and try again.',
+        ),
       );
     } finally {
       setBusy(false);
@@ -278,33 +324,12 @@ export function ConversationComposer({
     }
   };
 
-  const floatingQuoteBtn =
-    activeSelection && typeof document !== 'undefined' && document.body
-      ? createPortal(
-          <button
-            type="button"
-            className="selection-quote-floating-btn"
-            data-testid="selection-quote-btn"
-            style={{
-              top: `${activeSelection.top}px`,
-              left: `${activeSelection.left}px`,
-            }}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            onClick={handleQuoteSelection}
-          >
-            <Quote size={12} aria-hidden="true" />
-            <span>{t('引用到对话', 'Quote in reply')}</span>
-          </button>,
-          document.body,
-        )
-      : null;
-
   return (
     <>
-      {floatingQuoteBtn}
+      <SelectionQuotePortal
+        enabled={Boolean(enableSelectionQuote && onSubmitPrompt && !disabled)}
+        onQuoteText={handleQuoteSelection}
+      />
       <footer className="agent-panel-composer" data-testid="agent-panel-composer">
         {queuedPrompts && queuedPrompts.length > 0 && (
           <div className="agent-panel-queue" data-testid="agent-panel-queue">

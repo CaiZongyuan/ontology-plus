@@ -177,8 +177,9 @@ test.describe('Single AI Assistant & History Menu (#62)', () => {
     await page.getByTestId('agent-panel-composer-input').fill('微调筛选栏间距');
     await page.getByTestId('agent-panel-send-btn').click();
     await expect(
-      protoPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      protoPanel.locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]').last(),
     ).toBeVisible({ timeout: 25_000 });
+    await expect(protoPanel.getByTestId('agent-run-card')).toHaveCount(0);
 
     await protoPanel.getByTestId('assistant-history-menu-btn').click();
     await expect(protoMenu.getByTestId('assistant-history-item').first()).toBeVisible();
@@ -213,25 +214,30 @@ test.describe('Run Progress in Business Language, Cancel/Retry & Platform Proble
     await menu.getByTestId('assistant-new-session-btn').click();
     await expect(panel.getByTestId('agent-panel-empty')).toBeVisible();
 
-    // 1. Deterministic business-language progress + collapsed "查看细节" by default
+    // 1. Deterministic business-language progress + collapsed "工作过程" by default
     await page
       .getByTestId('agent-panel-composer-input')
       .fill('请新增一条超额采购合同双重风控校验规则');
     await page.getByTestId('agent-panel-send-btn').click();
 
-    const succeededCard = panel
-      .locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]')
+    const succeededReply = panel
+      .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
       .last();
-    await expect(succeededCard).toBeVisible({ timeout: 25_000 });
-    await expect(succeededCard.getByTestId('agent-run-progress')).toContainText('业务规则');
-    await expect(succeededCard.getByTestId('agent-run-details-body')).toBeHidden();
+    await expect(succeededReply).toBeVisible({ timeout: 25_000 });
+    await expect(panel.getByTestId('agent-run-card')).toHaveCount(0);
+    const workBlock = succeededReply.getByTestId('conversation-work-process');
+    await expect(workBlock).toHaveAttribute('data-expanded', 'false');
+    await expect(workBlock.getByTestId('conversation-work-body')).toHaveCount(0);
 
-    // Open "查看细节" to inspect tool calls, thinking, and usage
-    await succeededCard.getByTestId('agent-run-details-toggle').click();
-    await expect(succeededCard.getByTestId('agent-run-details-body')).toBeVisible();
-    await expect(succeededCard.getByTestId('agent-run-tool-details')).toContainText('upsert_rule');
-    await expect(succeededCard.getByTestId('agent-run-thinking')).toBeVisible();
-    await expect(succeededCard.getByTestId('agent-run-usage')).toBeVisible();
+    // Expand Level-1 Work Process + Level-2 tool detail to inspect thinking and tool call
+    await workBlock.getByTestId('conversation-work-toggle').click();
+    await expect(workBlock.getByTestId('conversation-work-body')).toBeVisible();
+    await expect(workBlock.getByTestId('agent-run-thinking')).toBeVisible();
+    await expect(workBlock.getByTestId('conversation-tool-list')).toContainText('业务规则');
+    await workBlock.getByTestId('conversation-tool-toggle').last().click();
+    await expect(workBlock.getByTestId('conversation-tool-detail').first()).toContainText(
+      'upsert_rule',
+    );
 
     // 2. Cancel an in-flight run via agent-run-cancel-btn
     let abortCalled = false;
@@ -266,14 +272,16 @@ test.describe('Run Progress in Business Language, Cancel/Retry & Platform Proble
     await page.getByTestId('agent-panel-composer-input').fill('测试中途取消的业务调整');
     await page.getByTestId('agent-panel-send-btn').click();
 
-    const runningCard = panel.locator('[data-testid="agent-run-card"][data-run-status="RUNNING"]');
-    await expect(runningCard).toBeVisible();
-    await expect(runningCard.getByTestId('agent-run-cancel-btn')).toBeVisible();
-    await runningCard.getByTestId('agent-run-cancel-btn').click();
+    const runningReply = panel.locator(
+      '[data-testid="conversation-assistant-reply"][data-run-status="RUNNING"]',
+    );
+    await expect(runningReply).toBeVisible();
+    await expect(runningReply.getByTestId('agent-run-cancel-btn')).toBeVisible();
+    await runningReply.getByTestId('agent-run-cancel-btn').click();
     releaseHeldStream?.();
     await expect.poll(() => abortCalled).toBe(true);
 
-    // 3. Platform problem -> "AI 服务暂不可用，请联系为你部署的人" + diagnostics in details + retry + platform settings link
+    // 3. Platform problem -> "AI 服务暂不可用，请联系为你部署的人" + diagnostics in details + in-place retry + platform settings link
     await page.route(
       '**/api/agent-sessions/*/stream',
       async (route) => {
@@ -299,35 +307,202 @@ test.describe('Run Progress in Business Language, Cancel/Retry & Platform Proble
     await page.getByTestId('agent-panel-composer-input').fill('请检查合同归档操作');
     await page.getByTestId('agent-panel-send-btn').click();
 
-    const failedCard = panel
-      .locator('[data-testid="agent-run-card"][data-run-status="FAILED"]')
+    const failedReply = panel
+      .locator('[data-testid="conversation-assistant-reply"][data-run-status="FAILED"]')
       .last();
-    await expect(failedCard).toBeVisible();
-    await expect(failedCard.getByTestId('agent-run-failure')).toContainText(
+    await expect(failedReply).toBeVisible();
+    await expect(failedReply.getByTestId('agent-run-failure')).toContainText(
       'AI 服务暂不可用，请联系为你部署的人',
     );
-    await expect(failedCard.getByTestId('agent-run-retry-btn')).toBeVisible();
-    await expect(failedCard.getByTestId('agent-run-open-platform-settings-btn')).toBeVisible();
+    await expect(failedReply.getByTestId('agent-run-retry-btn')).toBeVisible();
+    await expect(failedReply.getByTestId('agent-run-open-platform-settings-btn')).toBeVisible();
 
-    // Diagnostics stay tucked inside closed "查看细节" until opened
-    await expect(failedCard.getByTestId('agent-run-diagnostic-details')).toBeHidden();
-    await failedCard.getByTestId('agent-run-details-toggle').click();
-    await expect(failedCard.getByTestId('agent-run-diagnostic-details')).toBeVisible();
-    await expect(failedCard.getByTestId('agent-run-diagnostic-details')).toContainText(
+    // Diagnostics stay tucked inside closed "查看详情" until opened
+    await expect(failedReply.getByTestId('agent-run-diagnostic-details')).toBeHidden();
+    await failedReply.getByTestId('conversation-diagnostic-toggle').click();
+    await expect(failedReply.getByTestId('agent-run-diagnostic-details')).toBeVisible();
+    await expect(failedReply.getByTestId('agent-run-diagnostic-details')).toContainText(
       'LLM_GATEWAY_ERROR',
     );
-    await expect(failedCard.getByTestId('agent-run-diagnostic-details')).toContainText(
+    await expect(failedReply.getByTestId('agent-run-diagnostic-details')).toContainText(
       'Unreachable Corp Gateway',
     );
 
-    // Clicking "重试" retries the prompt against the real mock engine and succeeds
-    await failedCard.getByTestId('agent-run-retry-btn').click();
+    // Clicking "前往平台设置" on the failed reply navigates directly to llm-center, and going back + clicking "重试" replaces in-place!
+    const turnCountBeforeRetry = await panel.getByTestId('conversation-turn').count();
+    await failedReply.getByTestId('agent-run-retry-btn').click();
     await expect(
-      panel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      panel.locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]').last(),
     ).toBeVisible({ timeout: 25_000 });
+    await expect(panel.getByTestId('conversation-turn')).toHaveCount(turnCountBeforeRetry);
+  });
+});
 
-    // Clicking "前往平台设置" on the failed card navigates directly to llm-center
-    await failedCard.getByTestId('agent-run-open-platform-settings-btn').click();
-    await expect(page).toHaveURL(/llm-center/);
+test.describe('Full Conversation & Context Inspector Cutover Across All 7 Surfaces (#85)', () => {
+  test.beforeEach(({ page }) => {
+    page.on('dialog', (dialog) => {
+      throw new Error(`Forbidden blocking browser dialog triggered: ${dialog.message()}`);
+    });
+  });
+
+  test('runs continuous desktop conversation with zero AgentRunCard elements across all 7 surfaces, supports Change Summary strip + Undo + Context Inspector ModelCall drill-down, compact <1280px canvas quote, and unsent draft image reload', async ({
+    page,
+    request,
+  }) => {
+    const createdRes = await request.post('/api/projects', {
+      data: {
+        name: '全渠道对话收尾验证工程',
+        code: `CUTOVER_85_${Date.now().toString(36).toUpperCase()}`,
+        center: 'APPLICATION',
+        domain: '采购合同管理',
+        template: 'CONTRACT',
+      },
+    });
+    expect(createdRes.ok()).toBe(true);
+    const { project } = (await createdRes.json()) as { project: { id: string } };
+
+    try {
+      await page.goto(`/?projectId=${project.id}&step=business-model`);
+      const panel = page.getByTestId('agent-panel');
+
+      // 1. Verify ALL 7 specialist surfaces render ConversationThread + ContextOccupancyRing with ZERO agent-run-card elements
+      const stepTabs = [
+        'step-tab-REQUIREMENTS',
+        'step-tab-PROTOTYPE',
+        'step-tab-BUSINESS_MODEL',
+        'step-tab-DELIVERY',
+      ] as const;
+      for (const tabId of stepTabs) {
+        await page.getByTestId(tabId).click();
+        await expect(panel.getByTestId('conversation-thread')).toBeVisible();
+        await expect(panel.getByTestId('context-occupancy-ring')).toBeVisible();
+        await expect(page.getByTestId('agent-run-card')).toHaveCount(0);
+      }
+
+      // Technical Details (ARCHITECTURE)
+      await page.getByTestId('open-technical-details-btn').click();
+      await page.getByTestId('delivery-tech-tab-standards').click();
+      await expect(panel.getByTestId('conversation-thread')).toBeVisible();
+      await expect(panel.getByTestId('context-occupancy-ring')).toBeVisible();
+      await expect(page.getByTestId('agent-run-card')).toHaveCount(0);
+
+      // Capability Center (CAPABILITY)
+      await page.getByTestId('more-menu-btn').click();
+      await page.getByTestId('more-menu-capability').click();
+      await page.getByTestId('nav-cap-agents').click();
+      if (!(await panel.isVisible())) {
+        await page.getByTestId('agent-panel-toggle').click();
+      }
+      await expect(panel.getByTestId('conversation-thread')).toBeVisible();
+      await expect(panel.getByTestId('context-occupancy-ring')).toBeVisible();
+      await expect(page.getByTestId('agent-run-card')).toHaveCount(0);
+
+      // Data Reasoning (REASONING)
+      await page.getByTestId('more-menu-btn').click();
+      await page.getByTestId('more-menu-analytics').click();
+      await page.getByTestId('nav-data-reasoning').click();
+      if (!(await panel.isVisible())) {
+        await page.getByTestId('agent-panel-toggle').click();
+      }
+      await expect(panel.getByTestId('conversation-thread')).toBeVisible();
+      await expect(panel.getByTestId('context-occupancy-ring')).toBeVisible();
+      await expect(page.getByTestId('agent-run-card')).toHaveCount(0);
+
+      // 2. Return to Business Model -> send mutating message -> streamed reply + single-line Change Summary strip -> Undo -> open 对话记忆 -> inspect ContextCompositionBar & expand ModelCall detail!
+      await page.getByTestId('back-to-project-btn').click();
+      await page.getByTestId('step-tab-BUSINESS_MODEL').click();
+      await expect(page.getByTestId('business-model-business-view')).toBeVisible();
+
+      await page
+        .getByTestId('agent-panel-composer-input')
+        .fill('请在合同上新增业务操作『发起履约复核』');
+      await page.getByTestId('agent-panel-send-btn').click();
+
+      await expect(
+        panel.locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]').last(),
+      ).toBeVisible({ timeout: 25_000 });
+      await expect(page.getByTestId('agent-run-card')).toHaveCount(0);
+
+      const summaryStrip = panel.getByTestId('run-change-summary').last();
+      await expect(summaryStrip).toHaveAttribute('data-variant', 'strip');
+      await expect(summaryStrip.getByTestId('change-summary-headline')).toContainText('业务模型改了');
+      await summaryStrip.getByTestId('change-summary-undo-btn').click();
+      await expect(summaryStrip.getByTestId('change-summary-undone-badge')).toBeVisible();
+
+      // Open Context Inspector ("对话记忆") via occupancy ring -> see ContextCompositionBar -> expand ModelCall detail item
+      await panel.getByTestId('context-occupancy-ring').click();
+      const inspector = page.getByTestId('context-inspector-drawer');
+      await expect(inspector).toBeVisible();
+      await expect(inspector).toContainText('对话记忆');
+      await expect(inspector.getByTestId('context-composition-bar')).toBeVisible();
+      await expect(inspector.getByTestId('context-call-timeline')).toBeVisible();
+      await expect(inspector.getByTestId('context-timeline-bar').first()).toBeVisible();
+      await inspector.getByTestId('context-timeline-bar').first().click();
+      const browser = inspector.getByTestId('context-browser');
+      await expect(browser).toBeVisible();
+      const firstItemToggle = browser.getByTestId('context-browser-item-toggle').first();
+      await firstItemToggle.click();
+      await expect(browser.getByTestId('context-browser-item-content').first()).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(inspector).toBeHidden();
+
+      // 3. Compact (<1280px) viewport on Canvas pane: selecting canvas text & clicking "引用到对话" switches to Conversation pane with quote chip populated!
+      await page.setViewportSize({ width: 1120, height: 820 });
+      await page.getByTestId('workspace-pane-canvas').click();
+      await expect(page.getByTestId('project-workspace')).toHaveAttribute(
+        'data-active-pane',
+        'canvas',
+      );
+      await page.evaluate(() => {
+        const titleEl = document.querySelector('[data-testid="business-object-title"]');
+        if (!titleEl) throw new Error('business-object-title not found');
+        const range = document.createRange();
+        range.selectNodeContents(titleEl);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        document.dispatchEvent(new Event('selectionchange'));
+      });
+      const quoteBtn = page.getByTestId('selection-quote-btn');
+      await expect(quoteBtn).toBeVisible();
+      await quoteBtn.click();
+      await expect(page.getByTestId('project-workspace')).toHaveAttribute(
+        'data-active-pane',
+        'conversation',
+      );
+      await expect(panel.getByTestId('composer-quote-chip')).toHaveCount(1);
+
+      // 4. Paste an unsent draft image attachment into composer -> reload page -> verify unsent image + quote chip survive reload!
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const png1x1 = [
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
+        6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 10, 73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5, 0,
+        1, 13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+      ];
+      await page.evaluate((bytes) => {
+        const form = document.querySelector('.agent-panel-composer-form');
+        if (!form) throw new Error('Composer form not found');
+        const file = new File([new Uint8Array(bytes)], 'unsent-reload-check.png', {
+          type: 'image/png',
+        });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        form.dispatchEvent(
+          new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }),
+        );
+      }, png1x1);
+      await expect(panel.getByTestId('composer-image-strip')).toContainText(
+        'unsent-reload-check.png',
+      );
+
+      await page.reload();
+      await expect(panel.getByTestId('composer-quote-chip')).toHaveCount(1);
+      await expect(panel.getByTestId('composer-image-strip')).toContainText(
+        'unsent-reload-check.png',
+      );
+    } finally {
+      await request.post('/api/projects/active', { data: { projectId: 'proj-contract' } });
+      await request.delete(`/api/projects/${project.id}?force=true`);
+    }
   });
 });

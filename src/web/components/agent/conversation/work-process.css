@@ -283,3 +283,79 @@
   border: 1px solid var(--border-subtle);
   background: var(--card);
 }
+
+.work-process-stream-chars {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint-foreground);
+}
+
+.work-process-subagent-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px 8px;
+  border-top: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.work-process-subagent-lane {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 3px 6px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.work-process-subagent-lane:hover {
+  background: var(--accent);
+}
+
+.work-process-subagent-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.work-process-subagent-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+}
+
+.work-process-subagent-worker {
+  flex-shrink: 0;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.work-process-subagent-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+}
+
+.work-process-subagent-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint-foreground);
+}
+
+.work-process-codemode {
+  margin: 2px 0 0;
+}

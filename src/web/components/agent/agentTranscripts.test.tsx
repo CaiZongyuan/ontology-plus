@@ -5,12 +5,16 @@ import { createWorkspaceStore, type AgentSession } from '../../../packages/works
 import { createApiApp } from '../../../server/app.js';
 import { useWorkbenchStore } from '../../api.js';
 import { PreferencesProvider } from '../../i18n.js';
-import { AgentRunCard } from './AgentRunCard.js';
+import { AssistantReplyItem } from './conversation/AssistantReplyItem.js';
 import { agentRunsFromSession, type AgentRunView } from './agentRun.js';
 import { agentPanelSurfaceFor, resolveActiveWorkspaceRuns, resolveSurfaceAgentSession } from './ShellAgentPanel.js';
 
 function renderRun(run: AgentRunView) {
-  return renderToStaticMarkup(<PreferencesProvider><AgentRunCard run={run} now={Date.now()} onRetry={() => {}} /></PreferencesProvider>);
+  return renderToStaticMarkup(
+    <PreferencesProvider>
+      <AssistantReplyItem run={run} now={Date.now()} onRetry={() => {}} />
+    </PreferencesProvider>,
+  );
 }
 
 afterEach(() => {
@@ -49,11 +53,13 @@ describe('assistant transcript streaming', () => {
     expect(liveHtml).toContain('<h1>Implementation specification</h1>');
     expect(liveHtml).toContain('<h2>Acceptance</h2>');
     expect(liveHtml).toContain('<li>Keep approved UI intent.</li>');
-    expect(liveHtml).toContain('<pre');
+    expect(liveHtml).toContain('whitespace-pre');
     expect(liveHtml).toContain('ready');
     expect(liveHtml).toContain('stream-caret is-streaming');
-    expect(liveHtml).not.toMatch(/<details[^>]*\sopen/);
-    expect(liveHtml.indexOf('data-testid="agent-run-text"')).toBeGreaterThan(liveHtml.lastIndexOf('</details>'));
+    expect(liveHtml).not.toContain('data-testid="conversation-work-body"');
+    expect(liveHtml.indexOf('data-testid="conversation-assistant-markdown"')).toBeGreaterThan(
+      liveHtml.indexOf('data-testid="conversation-work-process"'),
+    );
     expect(liveHtml).not.toContain('Analyzing instruction &amp; anchors');
 
     const completed: AgentSession = {
@@ -72,7 +78,7 @@ describe('assistant transcript streaming', () => {
     expect(finalHtml).toContain('<h1>Implementation specification</h1>');
     expect(finalHtml).toContain('<h2>Acceptance</h2>');
     expect(finalHtml.match(/<h1>/g)).toHaveLength(1);
-    expect(finalHtml).toContain('<pre');
+    expect(finalHtml).toContain('whitespace-pre');
     expect(finalHtml).not.toContain('stream-caret is-streaming');
   });
 

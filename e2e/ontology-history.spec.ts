@@ -40,12 +40,14 @@ test.describe('Ontology Suite Change Summary, Reload-Persistent Undo/Redo & Appe
     await page.getByTestId('agent-panel-send-btn').click();
 
     await expect(
-      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]'),
+      agentPanel.locator(
+        '[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]',
+      ),
     ).toHaveCount(1, { timeout: 25_000 });
     await expect(agentPanel.getByTestId('run-change-summary')).toHaveCount(0);
     await expect(agentPanel.getByTestId('change-summary-undo-btn')).toHaveCount(0);
 
-    // 2. Mutating Copilot turn -> adds Action "提交审批" on "合同" -> grouped Change Summary appears
+    // 2. Mutating Copilot turn -> adds Action "提交审批" on "合同" -> inline Change Summary strip appears
     await page
       .getByTestId('agent-panel-composer-input')
       .fill('请在合同上新增业务操作『提交审批』');
@@ -53,10 +55,11 @@ test.describe('Ontology Suite Change Summary, Reload-Persistent Undo/Redo & Appe
 
     const changeSummary = agentPanel.getByTestId('run-change-summary');
     await expect(changeSummary).toHaveCount(1, { timeout: 25_000 });
+    await expect(changeSummary.getByTestId('change-summary-undo-btn')).toBeVisible();
+    await changeSummary.getByTestId('change-summary-toggle-btn').click();
     await expect(changeSummary).toContainText('合同');
     await expect(changeSummary).toContainText('在『合同』上新增业务操作『提交审批』');
     await expect(changeSummary.getByTestId('change-summary-reason')).toBeVisible();
-    await expect(changeSummary.getByTestId('change-summary-undo-btn')).toBeVisible();
 
     // 3. Click Change Summary item -> jumps canvas from AGG-02 back to AGG-01 (合同) & flashes the new action!
     await changeSummary.getByTestId('change-summary-item').first().click();

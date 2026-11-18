@@ -15,8 +15,19 @@ const EXCLUDED_INTERACTIVE_SELECTOR = [
   '[role="button"]',
   '[contenteditable="true"]',
   '[contenteditable=""]',
+  '[contenteditable="plaintext-only"]',
   '[data-testid="agent-panel-composer"]',
   '[data-testid="selection-quote-btn"]',
+].join(', ');
+
+const ACTIVE_EDITABLE_SELECTOR = [
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable="true"]',
+  '[contenteditable=""]',
+  '[contenteditable="plaintext-only"]',
+  '[role="textbox"]',
 ].join(', ');
 
 const ASSISTANT_REPLY_SELECTOR = '[data-testid="conversation-assistant-markdown"]';
@@ -118,8 +129,45 @@ export function computeFloatingQuoteButtonPosition(
   return { top, left };
 }
 
+export function isEditableElementFocused(
+  doc: Pick<Document, 'activeElement'> | null | undefined = typeof document !== 'undefined'
+    ? document
+    : null,
+): boolean {
+  const active = doc?.activeElement as
+    | (Element & {
+        isContentEditable?: boolean;
+        tagName?: string;
+        selectionStart?: number | null;
+        selectionEnd?: number | null;
+      })
+    | null
+    | undefined;
+  if (!active) return false;
+
+  const isInsideComposer =
+    typeof active.closest === 'function' &&
+    Boolean(active.closest('[data-testid="agent-panel-composer"]'));
+  if (isInsideComposer) {
+    return (
+      typeof active.selectionStart === 'number' &&
+      typeof active.selectionEnd === 'number' &&
+      active.selectionStart !== active.selectionEnd
+    );
+  }
+
+  if (active.isContentEditable) return true;
+  const tag = typeof active.tagName === 'string' ? active.tagName.toLowerCase() : '';
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+  if (typeof active.closest === 'function' && active.closest(ACTIVE_EDITABLE_SELECTOR)) {
+    return true;
+  }
+  return false;
+}
+
 export function readWindowQuotableSelection(): ActiveQuotableSelection | null {
   if (typeof window === 'undefined' || typeof window.getSelection !== 'function') return null;
+  if (isEditableElementFocused()) return null;
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
 

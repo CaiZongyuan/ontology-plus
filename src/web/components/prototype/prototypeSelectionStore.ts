@@ -17,7 +17,7 @@ import {
   type SessionLiveDraft,
 } from '../../api.js';
 import {
-  resolveTurnImagesForRequest,
+  resolveTurnImagesWithFallback,
   storeUploadedOrPastedImage,
 } from '../../lib/localImageStore.js';
 import { useAgentPanelStore } from '../agent/agentPanelStore.js';
@@ -495,29 +495,14 @@ export async function buildRefinementPayloadFromAttachments(
       : att.semanticLabel;
   }
 
-  let images: TransientTurnImageInput[];
-  if (options.visionSupported) {
-    images = await resolveTurnImagesForRequest(
-      attachments.map((att) => att.imageRef),
+  const images = await resolveTurnImagesWithFallback(
+    attachments.map((att) => att.imageRef),
+    {
+      visionSupported: options.visionSupported,
+      defaultRole: 'selection_crop',
       fallbackNotesById,
-    );
-  } else {
-    // Active provider does not support vision: omit dataBase64 bytes on the wire while keeping
-    // lightweight metadata so the server records visionFallbackUsed without storing image bytes.
-    images = attachments.map((att) => {
-      const ref = att.imageRef;
-      const note = fallbackNotesById[ref.id];
-      return {
-        id: ref.id,
-        name: ref.name,
-        mimeType: ref.mimeType,
-        ...(ref.width !== undefined ? { width: ref.width } : {}),
-        ...(ref.height !== undefined ? { height: ref.height } : {}),
-        role: ref.role ?? 'selection_crop',
-        ...(note ? { textFallbackNote: note } : {}),
-      };
-    });
-  }
+    },
+  );
 
   return { selections, images };
 }
@@ -527,23 +512,37 @@ export async function submitPrototypeComposerTurnWithSelections(input: {
   prototypeId: string;
   instruction: string;
   visionSupported: boolean;
+  extraImages?: readonly TransientTurnImageInput[];
   additionalAnnotations?: PrototypeVisualAnnotation[];
   immediateDraft?: { target: PrototypeSelectionTarget; note: string } | null;
   mockMode?: boolean;
 }): Promise<{ sessionId: string }> {
   const consumed = usePrototypeSelectionStore.getState().consumeAttachments(input.prototypeId);
-  const { selections, images } = await buildRefinementPayloadFromAttachments(consumed, {
-    visionSupported: input.visionSupported,
-    ...(input.additionalAnnotations ? { additionalAnnotations: input.additionalAnnotations } : {}),
-    ...(input.immediateDraft !== undefined ? { immediateDraft: input.immediateDraft } : {}),
-  });
+  const { selections, images: selectionImages } = await buildRefinementPayloadFromAttachments(
+    consumed,
+    {
+      visionSupported: input.visionSupported,
+      ...(input.additionalAnnotations ? { additionalAnnotations: input.additionalAnnotations } : {}),
+      ...(input.immediateDraft !== undefined ? { immediateDraft: input.immediateDraft } : {}),
+    },
+  );
+
+  const seenIds = new Set(selectionImages.map((img) => img.id));
+  const mergedImages = [
+    ...selectionImages,
+    ...(input.extraImages ?? []).filter((img) => {
+      if (seenIds.has(img.id)) return false;
+      seenIds.add(img.id);
+      return true;
+    }),
+  ];
 
   const res = await useWorkbenchStore.getState().startPrototypeRefinementRun({
     projectId: input.projectId,
     prototypeId: input.prototypeId,
     instruction: input.instruction,
     ...(selections.length > 0 ? { selections } : {}),
-    ...(images.length > 0 ? { images } : {}),
+    ...(mergedImages.length > 0 ? { images: mergedImages } : {}),
     ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
   });
   Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());

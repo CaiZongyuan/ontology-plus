@@ -98,11 +98,12 @@ test.describe('Prototype Unified Change Summary, Reload-Persistent Undo & Append
 
     const changeSummary = agentPanel.getByTestId('run-change-summary');
     await expect(changeSummary).toHaveCount(1, { timeout: 25_000 });
+    await expect(changeSummary.getByTestId('change-summary-compare-btn')).toBeVisible();
+    await expect(changeSummary.getByTestId('change-summary-undo-btn')).toBeVisible();
+    await changeSummary.getByTestId('change-summary-toggle-btn').click();
     await expect(changeSummary).toContainText('合同归档台账');
     await expect(changeSummary).toContainText('增加借阅状态筛选框');
     await expect(changeSummary.getByTestId('change-summary-reason')).toBeVisible();
-    await expect(changeSummary.getByTestId('change-summary-compare-btn')).toBeVisible();
-    await expect(changeSummary.getByTestId('change-summary-undo-btn')).toBeVisible();
     await expect(page.getByTestId('prototype-history-btn')).toContainText('R2');
     await expect(page.getByTestId('step-status-PROTOTYPE')).toHaveText('有未确认的修改');
 

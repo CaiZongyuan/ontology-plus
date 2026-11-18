@@ -33,7 +33,7 @@ test.describe('Context Occupancy Ring, Removed Messages Notice & Context Composi
       await page.goto(`/?projectId=${project.id}&step=requirements`);
       const panel = page.getByTestId('agent-panel');
       await expect(panel).toBeVisible();
-      await expect(panel).toHaveAttribute('data-presentation-mode', 'conversation');
+      await expect(panel.getByTestId('conversation-thread')).toBeVisible();
 
       // 1. Before any call, ring is mounted beside Send button at 0% with SVG only (zero text)
       const composer = panel.getByTestId('agent-panel-composer');

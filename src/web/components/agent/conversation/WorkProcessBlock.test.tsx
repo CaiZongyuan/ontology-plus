@@ -8,7 +8,12 @@ import {
 } from '../../../../packages/business-vocabulary/index.js';
 import type { AgentSession } from '../../../../packages/workspace-store/index.js';
 import { PreferencesProvider } from '../../../i18n.js';
-import { agentRunsFromSession, type AgentRunView } from '../agentRun.js';
+import {
+  agentRunsFromSession,
+  summarizeToolStepBusinessOutcome,
+  type AgentRunView,
+  type SessionLiveDraft,
+} from '../agentRun.js';
 import {
   WorkProcessBlock,
   clearWorkProcessExpansionForTests,
@@ -82,7 +87,6 @@ describe('WorkProcessBlock (#80)', () => {
     expect(run!.steps[0]!.durationMs).toBe(420);
     expect(run!.steps[0]!.argsText).toContain('"modelCode": "M1"');
     expect(run!.steps[0]!.resultText).toBe('{"aggregates":["AGG-01"]}');
-    // Backward compatibility: legacy `detail` remains intact for AgentRunCard
     expect(run!.steps[0]!.detail).toContain('"modelCode": "M1"');
     expect(run!.steps[0]!.detail).toContain('{"aggregates":["AGG-01"]}');
 
@@ -364,5 +368,109 @@ describe('WorkProcessBlock (#80)', () => {
     expect(level2Html).toContain('&quot;elementId&quot;: &quot;EL-ACT-NEW&quot;');
     expect(level2Html).toContain('data-testid="conversation-tool-result"');
     expect(level2Html).toContain('Updated EL-ACT-NEW in 界面原型.html');
+  });
+
+  it('produces business-safe one-sentence summaries across all 7 specialist tool families and populates step summaries during live RUNNING drafts (#85)', () => {
+    const cases: Array<{
+      toolName: string;
+      arguments?: Record<string, unknown>;
+      output?: string;
+      expectedZh: string;
+      expectedEn: string;
+    }> = [
+      {
+        toolName: 'init_prototype_shell',
+        arguments: { screens: [{ screenId: 'SCR-1' }, { screenId: 'SCR-2' }, { screenId: 'SCR-3' }] },
+        expectedZh: '规划 3 个界面',
+        expectedEn: '3 screens planned',
+      },
+      {
+        toolName: 'upsert_prototype_screen',
+        arguments: {
+          screenHtml:
+            '<section><button data-element-id="EL-1">A</button><button data-element-id="EL-2">B</button></section>',
+        },
+        expectedZh: '包含 2 个交互元素',
+        expectedEn: '2 interactive elements',
+      },
+      {
+        toolName: 'upsert_behavior',
+        arguments: { preconditions: ['已初审'], postconditions: ['进入审批中'] },
+        expectedZh: '包含 2 项前后置条件',
+        expectedEn: '2 conditions',
+      },
+      {
+        toolName: 'compile_dev_package',
+        output: 'OK',
+        expectedZh: '已整理开发包内容',
+        expectedEn: 'Development package prepared',
+      },
+      {
+        toolName: 'save_architecture_asset',
+        output: 'OK',
+        expectedZh: '已保存技术标准内容',
+        expectedEn: 'Technical standard saved',
+      },
+      {
+        toolName: 'run_ontology_extraction',
+        output: JSON.stringify({ candidateCount: 6 }),
+        expectedZh: '提取 6 项候选内容',
+        expectedEn: '6 candidates extracted',
+      },
+      {
+        toolName: 'run_readonly_sql',
+        output: JSON.stringify({ rows: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }] }),
+        expectedZh: '返回 4 条数据记录',
+        expectedEn: '4 rows returned',
+      },
+    ];
+
+    for (const tc of cases) {
+      const summary = summarizeToolStepBusinessOutcome({
+        toolName: tc.toolName,
+        ...(tc.arguments ? { arguments: tc.arguments } : {}),
+        output: tc.output ?? '',
+      });
+      expect(summary).toEqual({ zh: tc.expectedZh, en: tc.expectedEn });
+      expect(checkBusinessViewMarkup(summary!.zh, { plainText: true })).toEqual([]);
+      expect(checkBusinessViewMarkup(summary!.en, { plainText: true })).toEqual([]);
+    }
+
+    // Live RUNNING draft populates step summaries both for completed steps in-flight and active step args
+    const liveDraft: SessionLiveDraft = {
+      runId: 'live-summary-1',
+      sessionId: 'sess-live-1',
+      userPrompt: '生成三屏原型',
+      startedAt: 10_000,
+      liveStatus: { zh: '正在绘制原型…', en: 'Building prototype…' },
+      thinking: '',
+      text: '',
+      steps: [
+        {
+          id: 'ls-1',
+          toolName: 'init_prototype_shell',
+          arguments: { screens: [{ screenId: 'SCR-1' }, { screenId: 'SCR-2' }] },
+          label: { zh: '搭建原型分屏骨架', en: 'Initialize prototype artboards' },
+          status: 'DONE',
+        },
+        {
+          id: 'ls-2',
+          toolName: 'edit_prototype_anchor',
+          arguments: { elementId: 'EL-1' },
+          label: { zh: '正在修改局部内容', en: 'Updating section' },
+          status: 'RUNNING',
+        },
+      ],
+    };
+
+    const [liveRun] = agentRunsFromSession(undefined, liveDraft);
+    expect(liveRun?.steps[0]?.summary).toEqual({
+      zh: '规划 2 个界面',
+      en: '2 screens planned',
+    });
+    expect(liveRun?.steps[1]?.summary).toEqual({
+      zh: '正在调整选中区域',
+      en: 'Adjusting selected section',
+    });
   });
 });

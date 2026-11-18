@@ -28,13 +28,21 @@ import { useWorkbenchStore, type BootstrapPayload } from './api.js';
 import {
   ShellAgentPanel,
   resolveActiveWorkspaceRuns,
+  resolveSurfaceAgentSession,
   useAgentPanelOverlayMode,
 } from './components/agent/ShellAgentPanel.js';
 import {
   AGENT_PANEL_WIDE_CSS_WIDTH,
+  agentSessionScopeKey,
   parseAgentPanelPrefs,
   useAgentPanelStore,
 } from './components/agent/agentPanelStore.js';
+import { SelectionQuotePortal } from './components/agent/conversation/ConversationComposer.js';
+import {
+  readSessionDraft,
+  writeSessionDraft,
+} from './components/agent/conversation/draftStore.js';
+import { appendUniqueQuote } from './components/agent/conversation/quotedSelection.js';
 import {
   SecondaryMoreMenu,
   StepCannotStartBanner,
@@ -471,6 +479,9 @@ export function WorkbenchShell({
     loading,
     toast,
     activeNav,
+    activeItemId,
+    activeSessionId,
+    activePrototypeIdByProject,
     liveSessionDrafts,
     liveAnnouncement,
     setActiveNav,
@@ -522,6 +533,7 @@ export function WorkbenchShell({
   const agentPanelOverlayOpen = useAgentPanelStore((s) => s.overlayOpen);
   const agentPanelWidth = useAgentPanelStore((s) => s.width);
   const agentPanelWideMode = useAgentPanelStore((s) => s.wideMode);
+  const sessionByScope = useAgentPanelStore((s) => s.sessionByScope);
 
   const secondaryAgentVisible =
     routeContext.kind === 'secondary' &&
@@ -533,6 +545,64 @@ export function WorkbenchShell({
     if (secondaryAgentOverlay) panel.setOverlayOpen(visible);
     else panel.setOpen(visible);
   };
+
+  const unmountedPanelQuoteEnabled = Boolean(
+    agentSurface &&
+      ((routeContext.kind === 'project' && isCompactWorkspace && workspacePane === 'canvas') ||
+        (routeContext.kind === 'secondary' && !secondaryAgentVisible)),
+  );
+
+  const handleQuoteWhenPanelUnmounted = useCallback(
+    (selectedText: string) => {
+      if (!agentSurface) return;
+      const resolved = resolveSurfaceAgentSession(agentSurface, data, {
+        activePrototypeIdByProject,
+        activeItemId,
+        activeSessionId,
+        rememberedSessionByScope: sessionByScope,
+      });
+      const activeProjectId = data?.activeProject?.id;
+      const scopeKey = activeProjectId
+        ? agentSessionScopeKey(
+            activeProjectId,
+            agentSurface.sessionKind,
+            agentSurface.sessionKind === 'CAPABILITY' ? resolved.activeCapabilityAgentId : undefined,
+          )
+        : undefined;
+      const draftKey = resolved.session?.id ?? scopeKey ?? agentSurface.sessionKind;
+      const prevDraft = readSessionDraft(draftKey);
+      writeSessionDraft(draftKey, {
+        ...prevDraft,
+        quotes: appendUniqueQuote(prevDraft.quotes, selectedText),
+      });
+      if (routeContext.kind === 'project' && isCompactWorkspace) {
+        setWorkspacePane('conversation');
+      } else if (routeContext.kind === 'secondary') {
+        const panel = useAgentPanelStore.getState();
+        if (secondaryAgentOverlay) panel.setOverlayOpen(true);
+        else panel.setOpen(true);
+      }
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => {
+          const input = document.querySelector<HTMLTextAreaElement>(
+            '[data-testid="agent-panel-composer-input"]',
+          );
+          input?.focus();
+        });
+      }
+    },
+    [
+      agentSurface,
+      data,
+      activePrototypeIdByProject,
+      activeItemId,
+      activeSessionId,
+      sessionByScope,
+      routeContext.kind,
+      isCompactWorkspace,
+      secondaryAgentOverlay,
+    ],
+  );
 
   // When a canvas button triggers `revealPanel()` while in compact (<1280px) project workspace, switch to Conversation.
   useEffect(() => {
@@ -945,6 +1015,10 @@ export function WorkbenchShell({
       </header>
 
       {/* ─── Shell Body ─── */}
+      <SelectionQuotePortal
+        enabled={unmountedPanelQuoteEnabled}
+        onQuoteText={handleQuoteWhenPanelUnmounted}
+      />
       <div className="wb-body">
         {routeContext.kind === 'home' && (
           <main className="wb-home-main">

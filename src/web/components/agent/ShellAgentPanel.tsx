@@ -23,7 +23,7 @@ import {
   type SessionLiveDraft,
 } from '../../api.js';
 import { usePreferences } from '../../i18n.js';
-import { resolveTurnImagesForRequest } from '../../lib/localImageStore.js';
+import { resolveTurnImagesWithFallback } from '../../lib/localImageStore.js';
 import {
   AGENT_PANEL_SURFACES,
   agentPanelSurfaceFor,
@@ -406,7 +406,6 @@ export function ShellAgentPanel({
     updateAgentSessionExecutionConfig,
     startSessionAgentRun,
     cancelSessionAgentRun,
-    retrySessionAgentRun,
     replaceLatestSessionTurnAndRun,
     acceptStepHandoff,
     declineStepHandoff,
@@ -736,8 +735,10 @@ export function ShellAgentPanel({
       });
       patchData({ agentSessions: created.agentSessions });
       setActiveSessionId(created.session.id);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
+    } catch {
+      showToast(
+        t('新建对话失败，请稍后重试。', 'Could not create conversation. Please try again.'),
+      );
     }
   };
 
@@ -746,7 +747,12 @@ export function ShellAgentPanel({
       const res = await apiPatchAgentSession(sessionId, { title });
       patchData({ agentSessions: res.agentSessions });
     } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
+      const code = (err as { code?: string } | null)?.code;
+      showToast(
+        code && err instanceof Error
+          ? err.message
+          : t('重命名对话失败，请稍后重试。', 'Could not rename conversation. Please try again.'),
+      );
     }
   };
 
@@ -760,8 +766,10 @@ export function ShellAgentPanel({
         if (sessionScopeKey) rememberSession(sessionScopeKey, next?.id ?? null);
       }
       showToast(t('对话已删除', 'Conversation deleted'));
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
+    } catch {
+      showToast(
+        t('删除对话失败，请稍后重试。', 'Could not delete conversation. Please try again.'),
+      );
     }
   };
 
@@ -889,8 +897,10 @@ export function ShellAgentPanel({
     setHandoffBusyById((prev) => ({ ...prev, [handoffId]: action }));
     try {
       await task(sessionId);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
+    } catch {
+      showToast(
+        t('步骤转交操作失败，请稍后重试。', 'Step hand-off failed. Please try again.'),
+      );
     } finally {
       setHandoffBusyById((prev) => {
         const next = { ...prev };
@@ -939,8 +949,10 @@ export function ShellAgentPanel({
           `Policy write-back executed [${res.writeback.id}]: ${res.writeback.name} (${res.writeback.executionCount} calls)`,
         ),
       );
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
+    } catch {
+      showToast(
+        t('业务动作回写失败，请稍后重试。', 'Policy write-back failed. Please try again.'),
+      );
     }
   };
 
@@ -948,19 +960,11 @@ export function ShellAgentPanel({
     imageRefs?: AgentImageAttachmentRef[],
   ): Promise<TransientTurnImageInput[] | undefined> => {
     if (!imageRefs || imageRefs.length === 0) return undefined;
-    if (resolvedVision.visionSupported) {
-      return resolveTurnImagesForRequest(imageRefs);
-    }
-    return imageRefs.map((ref) => ({
-      id: ref.id,
-      name: ref.name,
-      mimeType: ref.mimeType,
-      ...(ref.remoteUrl ? { remoteUrl: ref.remoteUrl } : {}),
-      ...(ref.width !== undefined ? { width: ref.width } : {}),
-      ...(ref.height !== undefined ? { height: ref.height } : {}),
-      role: ref.role ?? 'user_upload',
-      textFallbackNote: ref.name,
-    }));
+    return resolveTurnImagesWithFallback(imageRefs, {
+      visionSupported: resolvedVision.visionSupported,
+      defaultRole: 'user_upload',
+      fallbackNoteToName: true,
+    });
   };
 
   const handleSubmitPrompt = async (
@@ -971,21 +975,13 @@ export function ShellAgentPanel({
     const turnImages = await resolveComposerTurnImages(imageRefs);
     if (surface.sessionKind === 'PROTOTYPE_CO_DESIGN') {
       if (activePrototypeId) {
-        if (turnImages && turnImages.length > 0 && (!prototypeSelectionAttachments || prototypeSelectionAttachments.length === 0)) {
-          await useWorkbenchStore.getState().startPrototypeRefinementRun({
-            projectId: activeProjectId,
-            prototypeId: activePrototypeId,
-            instruction: prompt,
-            images: turnImages,
-          });
-        } else {
-          await submitPrototypeComposerTurnWithSelections({
-            projectId: activeProjectId,
-            prototypeId: activePrototypeId,
-            instruction: prompt,
-            visionSupported: resolvedVision.visionSupported,
-          });
-        }
+        await submitPrototypeComposerTurnWithSelections({
+          projectId: activeProjectId,
+          prototypeId: activePrototypeId,
+          instruction: prompt,
+          visionSupported: resolvedVision.visionSupported,
+          ...(turnImages && turnImages.length > 0 ? { extraImages: turnImages } : {}),
+        });
       } else {
         const targetSession =
           activeSession ??
@@ -1057,25 +1053,13 @@ export function ShellAgentPanel({
     }
   };
 
-  const handleRetryRun = (runId: string) => {
-    const target = runs.find((r) => r.id === runId);
-    const sessionId = target?.sourceSessionId ?? activeSession?.id;
-    if (sessionId) {
-      void retrySessionAgentRun(
-        sessionId,
-        target?.sourceUserMessageId ?? runId,
-        target?.retryPrompt,
-      );
-    }
-  };
-
-  const handleEditLatestTurn = async (runId: string, nextPrompt: string) => {
+  const handleRetryLatestTurn = async (runId: string) => {
     const target = runs.find((r) => r.id === runId);
     const sessionId = target?.sourceSessionId ?? activeSession?.id;
     if (!sessionId) return;
     await replaceLatestSessionTurnAndRun({
       sessionId,
-      prompt: nextPrompt,
+      ...(target?.retryPrompt !== undefined ? { prompt: target.retryPrompt } : {}),
       ...(target?.sourceUserMessageId
         ? { truncateFromUserMessageId: target.sourceUserMessageId }
         : {}),
@@ -1086,13 +1070,17 @@ export function ShellAgentPanel({
     });
   };
 
-  const handleRetryLatestTurn = async (runId: string) => {
+  const handleRetryRun = (runId: string) => {
+    void handleRetryLatestTurn(runId);
+  };
+
+  const handleEditLatestTurn = async (runId: string, nextPrompt: string) => {
     const target = runs.find((r) => r.id === runId);
     const sessionId = target?.sourceSessionId ?? activeSession?.id;
     if (!sessionId) return;
     await replaceLatestSessionTurnAndRun({
       sessionId,
-      ...(target?.retryPrompt !== undefined ? { prompt: target.retryPrompt } : {}),
+      prompt: nextPrompt,
       ...(target?.sourceUserMessageId
         ? { truncateFromUserMessageId: target.sourceUserMessageId }
         : {}),
@@ -1228,7 +1216,6 @@ export function ShellAgentPanel({
         title={surface.title}
         {...(surface.subtitle ? { subtitle: surface.subtitle } : {})}
         runs={runs}
-        presentationMode={surface.sessionKind === 'REQUIREMENT' ? 'conversation' : 'run-cards'}
         width={width}
         wideMode={wideMode}
         onToggleWideMode={toggleWideMode}

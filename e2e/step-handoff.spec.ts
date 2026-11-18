@@ -117,11 +117,15 @@ test.describe('Step Hand-off (#72): Cross-Step Proposal Card, Decline, Ready Acc
 
     // Request is delivered as a user turn and AI Assistant replies explaining Prototype confirmation is needed first
     await expect(
-      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      agentPanel
+        .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+        .last(),
     ).toBeVisible({ timeout: 25_000 });
     await expect(agentPanel.getByTestId('agent-turn-user').last()).toContainText(secondPrompt);
     await expect(agentPanel.getByTestId('agent-turn-handoff-origin').last()).toContainText('原型');
-    await expect(agentPanel.getByTestId('agent-run-text').last()).toContainText(/原型.*确认/);
+    await expect(agentPanel.getByTestId('conversation-assistant-markdown').last()).toContainText(
+      /原型.*确认/,
+    );
 
     // Zero downstream models were silently created while BUSINESS_MODEL cannot start yet
     const checkAfterBlockedAccept = await (
@@ -167,10 +171,12 @@ test.describe('Step Hand-off (#72): Cross-Step Proposal Card, Decline, Ready Acc
       'step',
     );
     await expect(
-      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      agentPanel
+        .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+        .last(),
     ).toBeVisible({ timeout: 25_000 });
     await expect(agentPanel.getByTestId('agent-turn-user').last()).toContainText(ruleRequest);
-    await expect(agentPanel.getByTestId('agent-run-text').last()).toBeVisible();
+    await expect(agentPanel.getByTestId('conversation-assistant-markdown').last()).toBeVisible();
 
     // Returning to Prototype shows the collapsed ACCEPTED 1-line summary
     await page.getByTestId('step-tab-PROTOTYPE').click();

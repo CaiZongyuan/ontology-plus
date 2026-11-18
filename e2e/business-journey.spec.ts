@@ -66,6 +66,7 @@ test.describe('Full End-to-End Business User Journey (#74)', () => {
 
       const reqChangeSummary = agentPanel.getByTestId('run-change-summary').last();
       await expect(reqChangeSummary).toBeVisible();
+      await reqChangeSummary.getByTestId('change-summary-toggle-btn').click();
       await expect(reqChangeSummary.getByTestId('change-summary-reason')).toBeVisible();
       await expect(reqChangeSummary.getByTestId('change-summary-undo-btn')).toBeVisible();
       await assertLiveBusinessViewClean(page, 'Requirements draft + Change Summary');
@@ -98,8 +99,11 @@ test.describe('Full End-to-End Business User Journey (#74)', () => {
       await page.getByTestId('confirm-brief-generate-btn').click();
       await expect(page.getByTestId('prototype-canvas-stage')).toBeVisible({ timeout: 30_000 });
       await expect(
-        agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+        agentPanel
+          .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+          .last(),
       ).toBeVisible({ timeout: 30_000 });
+      await expect(agentPanel.getByTestId('agent-run-card')).toHaveCount(0);
       await expect(page.getByTestId('step-status-PROTOTYPE')).toHaveText('进行中');
 
       // Refine prototype via AI Assistant -> creates R2 with computed Change Summary & Undo
@@ -182,6 +186,7 @@ test.describe('Full End-to-End Business User Journey (#74)', () => {
 
       const synthSummary = agentPanel.getByTestId('run-change-summary').last();
       await expect(synthSummary).toBeVisible();
+      await synthSummary.getByTestId('change-summary-toggle-btn').click();
       await expect(synthSummary).toContainText('合同');
       await assertLiveBusinessViewClean(page, 'Business Model synthesized');
 
@@ -198,6 +203,7 @@ test.describe('Full End-to-End Business User Journey (#74)', () => {
         timeout: 30_000,
       });
       const actionSummary = agentPanel.getByTestId('run-change-summary').last();
+      await actionSummary.getByTestId('change-summary-toggle-btn').click();
       await expect(actionSummary).toContainText('合同');
       await expect(actionSummary).toContainText('提交归档复核');
 

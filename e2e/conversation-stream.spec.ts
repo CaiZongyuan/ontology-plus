@@ -112,7 +112,7 @@ test.describe('Conversation Stream Skeleton (#79): Streaming Markdown, Sticky Sc
       await page.goto(`/?projectId=${project.id}&step=requirements`);
       const panel = page.getByTestId('agent-panel');
       await expect(panel).toBeVisible();
-      await expect(panel).toHaveAttribute('data-presentation-mode', 'conversation');
+      await expect(panel.getByTestId('conversation-thread')).toBeVisible();
 
       // Switch to Session A ("供应商准入长对话") via History Menu
       await panel.getByTestId('assistant-history-menu-btn').click();

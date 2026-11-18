@@ -9,7 +9,11 @@ import {
 } from '../../../../packages/business-vocabulary/index.js';
 import { createWorkspaceStore } from '../../../../packages/workspace-store/index.js';
 import { createApiApp } from '../../../../server/app.js';
-import { useWorkbenchStore, type BootstrapPayload } from '../../../api.js';
+import {
+  apiPatchAgentSession,
+  useWorkbenchStore,
+  type BootstrapPayload,
+} from '../../../api.js';
 import { PreferencesProvider } from '../../../i18n.js';
 import {
   resetLocalImageStoreForTests,
@@ -25,6 +29,7 @@ import {
   clearConversationDraftMemoryForTests,
   writeSessionDraft,
 } from './draftStore.js';
+import { isEditableElementFocused } from './quotedSelection.js';
 
 const noop = () => undefined;
 const FIXED_NOW = Date.UTC(2026, 10, 18, 10, 30, 0);
@@ -96,13 +101,20 @@ describe('ConversationComposer & AgentPanel conversation actions (#81)', () => {
     }
   });
 
-  it('restores per-session unsent text and quote chips from draftStore across session switch and simulated reload', () => {
+  it('restores per-session unsent text, quote chips, and image attachment refs from draftStore across session switch and simulated reload', async () => {
     const storage = stubStorage('zh-CN');
+    const blob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+    const { ref } = await storeUploadedOrPastedImage(blob, {
+      name: 'unsent-wireframe.png',
+      role: 'user_upload',
+    });
+
     writeSessionDraft(
       'sess-alpha',
       {
         text: '这是会话 Alpha 未发送的草稿',
         quotes: ['资质初审时限为 2 个工作日'],
+        attachments: [ref],
       },
       storage,
     );
@@ -125,7 +137,6 @@ describe('ConversationComposer & AgentPanel conversation actions (#81)', () => {
           runs={[]}
           activeSessionId="sess-alpha"
           width={AGENT_PANEL_DEFAULT_WIDTH}
-          presentationMode="conversation"
           onSubmitPrompt={noop}
           onClose={noop}
           onResize={noop}
@@ -135,6 +146,8 @@ describe('ConversationComposer & AgentPanel conversation actions (#81)', () => {
     expect(alphaHtml).toContain('这是会话 Alpha 未发送的草稿');
     expect(alphaHtml).toContain('data-testid="composer-quote-chip"');
     expect(alphaHtml).toContain('资质初审时限为 2 个工作日');
+    expect(alphaHtml).toContain('data-testid="composer-image-strip"');
+    expect(alphaHtml).toContain('unsent-wireframe.png');
 
     const betaHtml = renderToStaticMarkup(
       <PreferencesProvider>
@@ -143,7 +156,6 @@ describe('ConversationComposer & AgentPanel conversation actions (#81)', () => {
           runs={[]}
           activeSessionId="sess-beta"
           width={AGENT_PANEL_DEFAULT_WIDTH}
-          presentationMode="conversation"
           onSubmitPrompt={noop}
           onClose={noop}
           onResize={noop}
@@ -153,6 +165,7 @@ describe('ConversationComposer & AgentPanel conversation actions (#81)', () => {
     expect(betaHtml).toContain('这是会话 Beta 独立草稿');
     expect(betaHtml).not.toContain('这是会话 Alpha 未发送的草稿');
     expect(betaHtml).not.toContain('data-testid="composer-quote-chip"');
+    expect(betaHtml).not.toContain('data-testid="composer-image-strip"');
   });
 
   it('renders attached local image thumbnails and shows VisionCapabilityBanner when visionSupported is false', async () => {
@@ -190,25 +203,29 @@ describe('ConversationComposer & AgentPanel conversation actions (#81)', () => {
     }
   });
 
-  it('wires Copy Reply on all completed replies, Edit & Retry ONLY on latest user turn, and preserves PROTOTYPE_CO_DESIGN session guard across conversation and run-cards modes', () => {
+  it('wires Copy Reply on all completed replies, Edit & Retry ONLY on latest turn (including failed/cancelled replies), and preserves PROTOTYPE_CO_DESIGN session guard', () => {
     const runs: AgentRunView[] = [
       {
         id: 'turn-1',
         userPrompt: '第一轮：明确供应商资质初审角色',
         title: { zh: '资质初审', en: 'Qualification review' },
-        status: 'SUCCEEDED',
-        liveStatus: { zh: '已完成', en: 'Completed' },
+        status: 'FAILED',
+        liveStatus: { zh: '失败', en: 'Failed' },
         startedAt: FIXED_NOW - 10_000,
         completedAt: FIXED_NOW - 8_000,
         steps: [],
         text: '资质初审由**采购专员**在 2 个工作日内完成。',
+        failure: {
+          code: 'AGENT_RUNTIME_ERROR',
+          message: 'Upstream temporary error',
+        },
       },
       {
         id: 'turn-2',
         userPrompt: '第二轮：补充大额合同会签要求',
         title: { zh: '大额会签', en: 'Dual sign-off' },
-        status: 'SUCCEEDED',
-        liveStatus: { zh: '已完成', en: 'Completed' },
+        status: 'CANCELLED',
+        liveStatus: { zh: '已取消', en: 'Cancelled' },
         startedAt: FIXED_NOW - 4_000,
         completedAt: FIXED_NOW - 1_000,
         steps: [],
@@ -238,11 +255,11 @@ describe('ConversationComposer & AgentPanel conversation actions (#81)', () => {
             onDeleteSession={noop}
             onRenameSession={noop}
             onSelectSession={noop}
+            onRetryRun={noop}
             onEditLatestTurn={noop}
             onRetryLatestTurn={noop}
             onSubmitPrompt={noop}
             width={AGENT_PANEL_DEFAULT_WIDTH}
-            presentationMode="conversation"
             onClose={noop}
             onResize={noop}
             now={FIXED_NOW}
@@ -250,14 +267,15 @@ describe('ConversationComposer & AgentPanel conversation actions (#81)', () => {
         </PreferencesProvider>,
       );
 
-      // Copy button on BOTH completed assistant replies
+      // Copy button on BOTH completed assistant replies with text
       expect(convHtml.match(/data-testid="reply-copy-btn"/g)).toHaveLength(2);
-      // Edit & Retry ONLY once (on latest user message), and 1 earlier-msg-locked-hint (on first user message)
+      // Edit & Retry ONLY once (on latest user message), and ONLY ONE agent-run-retry-btn (on latest cancelled reply, NOT on earlier failed reply!)
       expect(convHtml.match(/data-testid="user-msg-edit-btn"/g)).toHaveLength(1);
       expect(convHtml.match(/data-testid="user-msg-retry-btn"/g)).toHaveLength(1);
+      expect(convHtml.match(/data-testid="agent-run-retry-btn"/g)).toHaveLength(1);
       expect(convHtml.match(/data-testid="earlier-msg-locked-hint"/g)).toHaveLength(1);
 
-      // PROTOTYPE_CO_DESIGN guard in conversation mode: NO manual create or delete buttons even if callbacks passed
+      // PROTOTYPE_CO_DESIGN guard: NO manual create or delete buttons even if callbacks passed
       expect(convHtml).toContain('data-testid="assistant-history-menu"');
       expect(convHtml).not.toContain('data-testid="assistant-new-session-btn"');
       expect(convHtml).not.toContain('data-testid="assistant-delete-session-btn"');
@@ -265,39 +283,6 @@ describe('ConversationComposer & AgentPanel conversation actions (#81)', () => {
 
       const convViolations = checkBusinessViewMarkup(convHtml);
       expect(convViolations, formatBusinessViewViolations(convViolations)).toEqual([]);
-
-      // PROTOTYPE_CO_DESIGN guard in run-cards mode as well
-      const cardsHtml = renderToStaticMarkup(
-        <PreferencesProvider>
-          <AgentPanel
-            title={BUSINESS_VOCABULARY.AI_ASSISTANT}
-            runs={runs}
-            activeSessionId="sess-proto-1"
-            sessions={[
-              {
-                id: 'sess-proto-1',
-                title: locale === 'en-US' ? 'Contract Prototype' : '合同管理原型',
-                turnCount: 2,
-              },
-            ]}
-            sessionsOwnedByArtifact={true}
-            defaultHistoryOpen={true}
-            onCreateSession={noop}
-            onDeleteSession={noop}
-            onRenameSession={noop}
-            onSelectSession={noop}
-            onSubmitPrompt={noop}
-            width={AGENT_PANEL_DEFAULT_WIDTH}
-            presentationMode="run-cards"
-            onClose={noop}
-            onResize={noop}
-            now={FIXED_NOW}
-          />
-        </PreferencesProvider>,
-      );
-      expect(cardsHtml).not.toContain('data-testid="assistant-new-session-btn"');
-      expect(cardsHtml).not.toContain('data-testid="assistant-delete-session-btn"');
-      expect(checkBusinessViewMarkup(cardsHtml)).toEqual([]);
     }
   });
 
@@ -403,8 +388,79 @@ describe('ConversationComposer & AgentPanel conversation actions (#81)', () => {
       const historyAfter = store.listArtifactHistoryViews('proj-contract');
       expect(historyAfter.length).toBeGreaterThanOrEqual(historyBefore.length);
       expect(historyAfter.some((h) => h.id === historyBefore[0]!.id)).toBe(true);
+
+      // Localized bilingual error messages on SESSION_RUNNING & ONLY_LATEST_TURN_ALLOWED
+      stubStorage('zh-CN');
+      await expect(
+        apiPatchAgentSession(sess.id, { truncateFromUserMessageId: 'u-int-1' }),
+      ).rejects.toThrow('仅支持修改或重发最后一条消息');
+
+      stubStorage('en-US');
+      await expect(
+        apiPatchAgentSession(sess.id, { truncateFromUserMessageId: 'u-int-1' }),
+      ).rejects.toThrow('Only the latest message can be edited or retried.');
     } finally {
       store.close();
     }
+  });
+
+  it('blocks selection quote activation whenever focus is inside input, textarea, select, or contenteditable (#85)', () => {
+    expect(isEditableElementFocused({ activeElement: null })).toBe(false);
+    expect(
+      isEditableElementFocused({
+        activeElement: { tagName: 'DIV', closest: () => null } as unknown as Element,
+      }),
+    ).toBe(false);
+    expect(
+      isEditableElementFocused({
+        activeElement: { tagName: 'INPUT', closest: () => null } as unknown as Element,
+      }),
+    ).toBe(true);
+    expect(
+      isEditableElementFocused({
+        activeElement: { tagName: 'TEXTAREA', closest: () => null } as unknown as Element,
+      }),
+    ).toBe(true);
+    expect(
+      isEditableElementFocused({
+        activeElement: {
+          tagName: 'DIV',
+          isContentEditable: true,
+          closest: () => null,
+        } as unknown as Element,
+      }),
+    ).toBe(true);
+    expect(
+      isEditableElementFocused({
+        activeElement: {
+          tagName: 'SPAN',
+          closest: (sel: string) => (sel.includes('[contenteditable="true"]') ? ({} as Element) : null),
+        } as unknown as Element,
+      }),
+    ).toBe(true);
+    // Composer textarea with collapsed caret (after quoting snippet #1) allows quoting snippet #2,
+    // while active text selection inside composer textarea blocks quote button:
+    expect(
+      isEditableElementFocused({
+        activeElement: {
+          tagName: 'TEXTAREA',
+          selectionStart: 0,
+          selectionEnd: 0,
+          closest: (sel: string) =>
+            sel === '[data-testid="agent-panel-composer"]' ? ({} as Element) : null,
+        } as unknown as Element,
+      }),
+    ).toBe(false);
+    expect(
+      isEditableElementFocused({
+        activeElement: {
+          tagName: 'TEXTAREA',
+          selectionStart: 0,
+          selectionEnd: 5,
+          closest: (sel: string) =>
+            sel === '[data-testid="agent-panel-composer"]' ? ({} as Element) : null,
+        } as unknown as Element,
+      }),
+    ).toBe(true);
   });
 });

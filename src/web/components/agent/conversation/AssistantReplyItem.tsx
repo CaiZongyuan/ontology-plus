@@ -121,6 +121,12 @@ export interface AssistantReplyItemProps {
   changeSummarySlot?: React.ReactNode;
   /** Optional reply-level action bar slot (for #81 copy reply action). */
   replyActionsSlot?: React.ReactNode;
+  /** Opens the Work Process block initially (useful for deterministic SSR tests). */
+  defaultWorkExpanded?: boolean;
+  /** Opens specific tool step rows initially (useful for deterministic SSR tests). */
+  defaultExpandedStepIds?: readonly string[];
+  /** Fixed clock for deterministic rendering; defaults to a live one-second tick while running. */
+  now?: number;
 }
 
 /**
@@ -145,6 +151,9 @@ export function AssistantReplyItem({
   onTriggerWriteback,
   changeSummarySlot,
   replyActionsSlot,
+  defaultWorkExpanded,
+  defaultExpandedStepIds,
+  now,
 }: AssistantReplyItemProps) {
   const { t } = usePreferences();
   const running = run.status === 'RUNNING';
@@ -171,6 +180,9 @@ export function AssistantReplyItem({
         run={run}
         {...(onCancel ? { onCancel } : {})}
         {...(onHoverAnchor ? { onHoverAnchor } : {})}
+        {...(defaultWorkExpanded !== undefined ? { defaultExpanded: defaultWorkExpanded } : {})}
+        {...(defaultExpandedStepIds ? { defaultExpandedStepIds } : {})}
+        {...(now !== undefined ? { now } : {})}
       />
 
       {run.status !== 'FAILED' && run.visionFallback?.used && (

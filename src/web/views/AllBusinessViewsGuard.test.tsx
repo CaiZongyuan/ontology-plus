@@ -27,7 +27,7 @@ import { createApiApp } from '../../server/app.js';
 import { WorkbenchShell } from '../App.js';
 import { useWorkbenchStore, type BootstrapPayload } from '../api.js';
 import { AgentPanel } from '../components/agent/AgentPanel.js';
-import { AgentRunCard } from '../components/agent/AgentRunCard.js';
+import { ConversationThread } from '../components/agent/conversation/ConversationThread.js';
 import {
   ShellAgentPanel,
   agentPanelSurfaceFor,
@@ -1262,31 +1262,33 @@ describe('All-Screens Business View Vocabulary Guard (#74)', () => {
         ));
       }
 
-      // AgentRunCard hosting handoff origin + VisionCapabilityBanner + VisionAttachmentControls
-      renderInBothLocales('AgentRunCard with handoffFrom origin', (locale) => (
-        <AgentRunCard
-          run={{
-            id: 'run-handoff-dest-74',
-            userPrompt:
-              locale === 'en-US'
-                ? 'Require General Manager approval for contracts over 500,000 CNY'
-                : '采购合同超过 50 万元需要总经理审批',
-            handoffFrom: {
-              handoffId: 'handoff-74',
-              sourceStep: 'PROTOTYPE',
-              sourceSessionId: 'sess-proto-74',
+      // ConversationThread hosting handoff origin + VisionCapabilityBanner + VisionAttachmentControls
+      renderInBothLocales('ConversationThread with handoffFrom origin', (locale) => (
+        <ConversationThread
+          runs={[
+            {
+              id: 'run-handoff-dest-74',
+              userPrompt:
+                locale === 'en-US'
+                  ? 'Require General Manager approval for contracts over 500,000 CNY'
+                  : '采购合同超过 50 万元需要总经理审批',
+              handoffFrom: {
+                handoffId: 'handoff-74',
+                sourceStep: 'PROTOTYPE',
+                sourceSessionId: 'sess-proto-74',
+              },
+              title: { zh: '新增审批规则', en: 'Add approval rule' },
+              status: 'SUCCEEDED',
+              liveStatus: { zh: '已完成', en: 'Done' },
+              startedAt: FIXED_NOW - 4_000,
+              completedAt: FIXED_NOW,
+              steps: [],
+              text:
+                locale === 'en-US'
+                  ? 'Added the approval rule on Contract.'
+                  : '已在「合同」上补充该条业务规则。',
             },
-            title: { zh: '新增审批规则', en: 'Add approval rule' },
-            status: 'SUCCEEDED',
-            liveStatus: { zh: '已完成', en: 'Done' },
-            startedAt: FIXED_NOW - 4_000,
-            completedAt: FIXED_NOW,
-            steps: [],
-            text:
-              locale === 'en-US'
-                ? 'Added the approval rule on Contract.'
-                : '已在「合同」上补充该条业务规则。',
-          }}
+          ]}
           now={FIXED_NOW}
         />
       ));

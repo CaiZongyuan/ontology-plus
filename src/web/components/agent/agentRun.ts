@@ -43,7 +43,7 @@ export {
 
 /**
  * The one shape every piece of agent work takes in the Agent Panel (ADR 0009).
- * Every Agent Session turn adapts into this view model; `AgentRunCard` renders nothing else.
+ * Every Agent Session turn adapts into this view model for `ConversationThread` / `AssistantReplyItem`.
  */
 export type AgentRunStatus = 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 
@@ -718,41 +718,79 @@ function formatToolArgsText(args: Record<string, unknown> | undefined): string |
   }
 }
 
-function summarizeToolStepBusinessOutcome(trace: AgentToolCallTrace): LocalizedText | undefined {
+function safeBusinessSummary(candidate: LocalizedText | undefined): LocalizedText | undefined {
+  if (!candidate) return undefined;
+  if (
+    checkBusinessViewMarkup(candidate.zh, { plainText: true }).length === 0 &&
+    checkBusinessViewMarkup(candidate.en, { plainText: true }).length === 0
+  ) {
+    return candidate;
+  }
+  return undefined;
+}
+
+function parseJsonRowCount(output: string | undefined): number {
+  if (!output) return 0;
+  try {
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    if (Array.isArray(parsed.rows)) return parsed.rows.length;
+    if (typeof parsed.rowCount === 'number' && parsed.rowCount >= 0) return parsed.rowCount;
+    if (typeof parsed.candidateCount === 'number' && parsed.candidateCount >= 0) {
+      return parsed.candidateCount;
+    }
+    if (Array.isArray(parsed.candidates)) return parsed.candidates.length;
+  } catch {
+    // Ignore non-JSON tool outputs
+  }
+  return 0;
+}
+
+export function summarizeToolStepBusinessOutcome(
+  trace: {
+    readonly toolName: string;
+    readonly arguments?: Record<string, unknown> | undefined;
+    readonly output?: string | undefined;
+    readonly isError?: boolean | undefined;
+  },
+  options?: { active?: boolean },
+): LocalizedText | undefined {
   if (trace.isError) {
     return { zh: '执行遇到问题', en: 'Step encountered an issue' };
   }
+  const active = Boolean(options?.active);
   const args = trace.arguments ?? {};
-  if (trace.toolName === 'record_requirement_insights') {
+  const toolName = trace.toolName;
+
+  // 1. Requirements tools
+  if (toolName === 'record_requirement_insights') {
     const aggCount = Array.isArray(args.aggregates) ? args.aggregates.length : 0;
     const ruleCount = Array.isArray(args.rules) ? args.rules.length : 0;
     const zhParts: string[] = [];
     const enParts: string[] = [];
     if (aggCount > 0) {
       zhParts.push(`${aggCount} 个${BUSINESS_VOCABULARY.M1.zh}`);
-      enParts.push(`${aggCount} ${aggCount === 1 ? BUSINESS_VOCABULARY.M1.singularEn.toLowerCase() : BUSINESS_VOCABULARY.M1.en.toLowerCase()}`);
+      enParts.push(
+        `${aggCount} ${aggCount === 1 ? BUSINESS_VOCABULARY.M1.singularEn.toLowerCase() : BUSINESS_VOCABULARY.M1.en.toLowerCase()}`,
+      );
     }
     if (ruleCount > 0) {
       zhParts.push(`${ruleCount} 条${BUSINESS_VOCABULARY.M3.zh}`);
-      enParts.push(`${ruleCount} ${ruleCount === 1 ? BUSINESS_VOCABULARY.M3.singularEn.toLowerCase() : BUSINESS_VOCABULARY.M3.en.toLowerCase()}`);
+      enParts.push(
+        `${ruleCount} ${ruleCount === 1 ? BUSINESS_VOCABULARY.M3.singularEn.toLowerCase() : BUSINESS_VOCABULARY.M3.en.toLowerCase()}`,
+      );
     }
     if (zhParts.length > 0) {
-      const candidate = {
-        zh: `整理 ${zhParts.join('、')}`,
-        en: `Captured ${enParts.join(', ')}`,
-      };
-      if (
-        checkBusinessViewMarkup(candidate.zh, { plainText: true }).length === 0 &&
-        checkBusinessViewMarkup(candidate.en, { plainText: true }).length === 0
-      ) {
-        return candidate;
-      }
+      return safeBusinessSummary({
+        zh: active ? `正在整理 ${zhParts.join('、')}` : `整理 ${zhParts.join('、')}`,
+        en: active ? `Capturing ${enParts.join(', ')}` : `Captured ${enParts.join(', ')}`,
+      });
     }
+    return active
+      ? undefined
+      : { zh: '已记录需求要点', en: 'Requirements points recorded' };
   }
-  if (
-    trace.toolName === 'save_synthesized_srs_doc' ||
-    trace.toolName === 'save_requirement_doc'
-  ) {
+
+  if (toolName === 'save_synthesized_srs_doc' || toolName === 'save_requirement_doc') {
     const content = typeof args.content === 'string' ? args.content : '';
     const sectionCount = (content.match(/^##\s+/gm) ?? []).length;
     if (sectionCount > 0) {
@@ -761,14 +799,240 @@ function summarizeToolStepBusinessOutcome(trace: AgentToolCallTrace): LocalizedT
         en: `${sectionCount} ${sectionCount === 1 ? 'section' : 'sections'}`,
       };
     }
+    return active
+      ? undefined
+      : { zh: '已保存需求文档', en: 'Requirements document saved' };
   }
-  if (trace.toolName === 'upsert_aggregate' && Array.isArray(args.fields) && args.fields.length > 0) {
-    const n = args.fields.length;
-    return {
-      zh: `包含 ${n} 个字段`,
-      en: `${n} ${n === 1 ? 'field' : 'fields'}`,
-    };
+
+  // 2. Prototype tools
+  if (toolName === 'init_prototype_shell') {
+    const n = Array.isArray(args.screens) ? args.screens.length : 0;
+    if (n > 0) {
+      return {
+        zh: `规划 ${n} 个界面`,
+        en: `${n} ${n === 1 ? 'screen' : 'screens'} planned`,
+      };
+    }
+    return active ? undefined : { zh: '已搭建分屏结构', en: 'Artboard layout initialized' };
   }
+
+  if (toolName === 'rewrite_prototype_page') {
+    const html =
+      typeof args.html === 'string'
+        ? args.html
+        : typeof args.htmlContent === 'string'
+          ? args.htmlContent
+          : '';
+    const screenCount = (html.match(/data-screen-id=/g) ?? []).length;
+    if (screenCount > 0) {
+      return {
+        zh: `共 ${screenCount} 个界面`,
+        en: `${screenCount} ${screenCount === 1 ? 'screen' : 'screens'}`,
+      };
+    }
+    return active ? undefined : { zh: '已更新界面布局', en: 'Prototype layout updated' };
+  }
+
+  if (toolName === 'upsert_prototype_screen') {
+    const html =
+      typeof args.screenHtml === 'string'
+        ? args.screenHtml
+        : typeof args.html === 'string'
+          ? args.html
+          : '';
+    const elementCount = (html.match(/data-element-id=/g) ?? []).length;
+    if (elementCount > 0) {
+      return {
+        zh: `包含 ${elementCount} 个交互元素`,
+        en: `${elementCount} interactive ${elementCount === 1 ? 'element' : 'elements'}`,
+      };
+    }
+    return active ? undefined : { zh: '已完成该界面绘制', en: 'Screen updated' };
+  }
+
+  if (toolName === 'edit_prototype_anchor') {
+    return active
+      ? { zh: '正在调整选中区域', en: 'Adjusting selected section' }
+      : { zh: '已完成局部调整', en: 'Section updated' };
+  }
+
+  if (toolName === 'list_prototype_anchors' || toolName === 'read_prototype_anchor') {
+    return active ? undefined : { zh: '已核对界面结构', en: 'Checked screen content' };
+  }
+
+  // 3. Business Model tools
+  if (toolName === 'upsert_aggregate') {
+    const n = Array.isArray(args.fields) ? args.fields.length : 0;
+    if (n > 0) {
+      return {
+        zh: `包含 ${n} 个字段`,
+        en: `${n} ${n === 1 ? 'field' : 'fields'}`,
+      };
+    }
+    return active ? undefined : { zh: '已更新业务对象', en: 'Business object updated' };
+  }
+
+  if (toolName === 'upsert_behavior' || toolName === 'upsert_command') {
+    const preCount = Array.isArray(args.preconditions) ? args.preconditions.length : 0;
+    const postCount = Array.isArray(args.postconditions) ? args.postconditions.length : 0;
+    const total = preCount + postCount;
+    if (total > 0) {
+      return {
+        zh: `包含 ${total} 项前后置条件`,
+        en: `${total} ${total === 1 ? 'condition' : 'conditions'}`,
+      };
+    }
+    return active ? undefined : { zh: '已更新业务操作', en: 'Action updated' };
+  }
+
+  if (toolName === 'upsert_rule') {
+    return active ? undefined : { zh: '已更新业务规则', en: 'Business rule updated' };
+  }
+
+  if (toolName === 'upsert_event') {
+    const n = Array.isArray(args.payload)
+      ? args.payload.length
+      : Array.isArray(args.fields)
+        ? args.fields.length
+        : 0;
+    if (n > 0) {
+      return {
+        zh: `包含 ${n} 项事件信息`,
+        en: `${n} event ${n === 1 ? 'field' : 'fields'}`,
+      };
+    }
+    return active ? undefined : { zh: '已更新业务事件', en: 'Business event updated' };
+  }
+
+  if (toolName === 'upsert_scenario') {
+    const n = Array.isArray(args.steps) ? args.steps.length : 0;
+    if (n > 0) {
+      return {
+        zh: `串联 ${n} 个动作`,
+        en: `${n} linked ${n === 1 ? 'step' : 'steps'}`,
+      };
+    }
+    return active ? undefined : { zh: '已更新自动联动', en: 'Automation updated' };
+  }
+
+  if (toolName === 'upsert_actor_role') {
+    const n = Array.isArray(args.permissions) ? args.permissions.length : 0;
+    if (n > 0) {
+      return {
+        zh: `配置 ${n} 项权限`,
+        en: `${n} ${n === 1 ? 'permission' : 'permissions'}`,
+      };
+    }
+    return active ? undefined : { zh: '已更新角色与权限', en: 'Role permissions updated' };
+  }
+
+  if (toolName === 'upsert_flow' || toolName === 'upsert_process') {
+    const n = Array.isArray(args.nodes)
+      ? args.nodes.length
+      : Array.isArray(args.tasks)
+        ? args.tasks.length
+        : 0;
+    if (n > 0) {
+      return {
+        zh: `包含 ${n} 个流程环节`,
+        en: `${n} flow ${n === 1 ? 'step' : 'steps'}`,
+      };
+    }
+    return active ? undefined : { zh: '已更新流程与审批', en: 'Flow updated' };
+  }
+
+  if (toolName === 'upsert_query_report') {
+    return active ? undefined : { zh: '已更新查询与报表', en: 'Query report updated' };
+  }
+
+  if (toolName === 'upsert_screen' || toolName === 'upsert_ui_screen') {
+    const n = Array.isArray(args.elements) ? args.elements.length : 0;
+    if (n > 0) {
+      return {
+        zh: `关联 ${n} 个界面元素`,
+        en: `${n} screen ${n === 1 ? 'element' : 'elements'}`,
+      };
+    }
+    return active ? undefined : { zh: '已更新界面绑定', en: 'Screen binding updated' };
+  }
+
+  if (toolName === 'upsert_mapping' || toolName === 'upsert_external_mapping') {
+    return active ? undefined : { zh: '已更新数据存储对应关系', en: 'Data storage updated' };
+  }
+
+  if (toolName === 'upsert_interface') {
+    return active ? undefined : { zh: '已更新对外接口说明', en: 'Integration updated' };
+  }
+
+  if (toolName === 'inspect_ontology_model' || toolName === 'read_ontology_model') {
+    return active ? undefined : { zh: '已读取当前业务模型', en: 'Checked current business model' };
+  }
+
+  if (toolName === 'synthesize_ontology_suite') {
+    return active ? undefined : { zh: '已汇总完整业务模型', en: 'Business model synthesized' };
+  }
+
+  // 4. Delivery & Architecture tools
+  if (toolName === 'read_application_inputs') {
+    return active ? undefined : { zh: '已核对交付输入项', en: 'Verified delivery inputs' };
+  }
+
+  if (toolName === 'save_application_instructions') {
+    return active ? undefined : { zh: '已保存开发补充说明', en: 'Development notes saved' };
+  }
+
+  if (toolName === 'compile_dev_package') {
+    return active ? undefined : { zh: '已整理开发包内容', en: 'Development package prepared' };
+  }
+
+  if (toolName === 'read_architecture_assets') {
+    return active ? undefined : { zh: '已读取现有技术标准', en: 'Checked technical standards' };
+  }
+
+  if (toolName === 'save_architecture_asset' || toolName === 'save_tech_architecture_spec') {
+    return active ? undefined : { zh: '已保存技术标准内容', en: 'Technical standard saved' };
+  }
+
+  // 5. Capability & Extraction tools
+  if (toolName === 'invoke_mcp_tool') {
+    return active ? undefined : { zh: '已完成业务能力调用', en: 'Capability call completed' };
+  }
+
+  if (toolName === 'run_ontology_extraction' || toolName === 'extract_ontology_candidates') {
+    const count = parseJsonRowCount(trace.output);
+    if (count > 0) {
+      return {
+        zh: `提取 ${count} 项候选内容`,
+        en: `${count} ${count === 1 ? 'candidate' : 'candidates'} extracted`,
+      };
+    }
+    return active ? undefined : { zh: '已生成候选列表', en: 'Candidates extracted' };
+  }
+
+  // 6. Data Reasoning tools
+  if (toolName === 'run_readonly_sql') {
+    const count = parseJsonRowCount(trace.output);
+    if (count > 0) {
+      return {
+        zh: `返回 ${count} 条数据记录`,
+        en: `${count} ${count === 1 ? 'row' : 'rows'} returned`,
+      };
+    }
+    return active ? undefined : { zh: '已完成业务数据查询', en: 'Data query completed' };
+  }
+
+  if (toolName === 'propose_policy_writeback') {
+    return active ? undefined : { zh: '已生成处理建议', en: 'Follow-up action proposed' };
+  }
+
+  if (toolName === 'save_metric_insight') {
+    return active ? undefined : { zh: '已保存指标分析结论', en: 'Metric analysis saved' };
+  }
+
+  if (toolName === 'save_scenario_attribution_report') {
+    return active ? undefined : { zh: '已保存归因分析报告', en: 'Attribution report saved' };
+  }
+
   return undefined;
 }
 
@@ -1126,8 +1390,9 @@ function buildRunFromLiveDraft(
         : undefined;
   const steps: AgentRunStep[] = draft.steps.map((step) => {
     if (!step.toolName) return step;
+    const isRunningStep = step.status === 'RUNNING';
     const label = formatRunToolProgress(step.toolName, step.arguments, {
-      active: step.status === 'RUNNING',
+      active: isRunningStep,
       ...(step.targetAnchor ? { targetAnchor: step.targetAnchor } : {}),
       ...(suite ? { suite } : {}),
     });
@@ -1141,9 +1406,19 @@ function buildRunFromLiveDraft(
         resultText = step.detail.trim() || undefined;
       }
     }
+    const summary = summarizeToolStepBusinessOutcome(
+      {
+        toolName: step.toolName,
+        arguments: step.arguments,
+        output: resultText,
+        isError: step.status === 'FAILED',
+      },
+      { active: isRunningStep },
+    );
     return {
       ...step,
       label: step.arguments || step.targetAnchor?.label ? label : step.label,
+      ...(summary ? { summary } : {}),
       ...(argsText ? { argsText } : {}),
       ...(resultText ? { resultText } : {}),
     };
@@ -1226,7 +1501,7 @@ export interface AgentRunsFromSessionOptions {
 
 /**
  * Adapts an `AgentSession` (and an optional in-flight `liveDraft` SSE state) into
- * chronological `AgentRunView` items for `AgentPanel` / `AgentRunCard`.
+ * chronological `AgentRunView` items for `AgentPanel` / `ConversationThread`.
  */
 export function agentRunsFromSession(
   session: AgentSession | undefined | null,

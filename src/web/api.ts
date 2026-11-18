@@ -97,7 +97,7 @@ import {
   agentSessionScopeKey,
   useAgentPanelStore,
 } from './components/agent/agentPanelStore.js';
-import { resolveTurnImagesForRequest } from './lib/localImageStore.js';
+import { resolveTurnImagesWithFallback } from './lib/localImageStore.js';
 import {
   DEFAULT_NAV_VIEW,
   STEP_SPECIALIST_AGENT_KINDS,
@@ -161,9 +161,14 @@ export interface BootstrapPayload {
 }
 
 export function getCurrentClientLocale(): 'zh-CN' | 'en-US' {
-  if (typeof window === 'undefined') return 'zh-CN';
   try {
-    return window.localStorage.getItem('onto_locale') === 'en-US' ? 'en-US' : 'zh-CN';
+    const storage =
+      typeof window !== 'undefined' && window.localStorage
+        ? window.localStorage
+        : typeof globalThis !== 'undefined' && 'localStorage' in globalThis
+          ? globalThis.localStorage
+          : undefined;
+    return storage?.getItem('onto_locale') === 'en-US' ? 'en-US' : 'zh-CN';
   } catch {
     return 'zh-CN';
   }
@@ -2000,40 +2005,54 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       const visionSupported = activeProvider
         ? doesProviderSupportVision(activeProvider, sess?.modelOverride)
         : true;
-      if (visionSupported) {
-        preservedTurnImages = await resolveTurnImagesForRequest(preservedRefs);
-      } else {
-        preservedTurnImages = preservedRefs.map((ref) => ({
-          id: ref.id,
-          name: ref.name,
-          mimeType: ref.mimeType,
-          ...(ref.remoteUrl ? { remoteUrl: ref.remoteUrl } : {}),
-          ...(ref.width !== undefined ? { width: ref.width } : {}),
-          ...(ref.height !== undefined ? { height: ref.height } : {}),
-          role: ref.role ?? 'user_upload',
-          textFallbackNote: ref.name,
-        }));
-      }
+      preservedTurnImages = await resolveTurnImagesWithFallback(preservedRefs, {
+        visionSupported,
+        defaultRole: 'user_upload',
+        fallbackNoteToName: true,
+      });
     }
 
+    const hasUserTurns = Boolean(sess?.messages.some((m) => m.role === 'user'));
     const targetMessageId = input.truncateFromUserMessageId ?? lastUserMsg?.id;
-    try {
-      const patched = await apiPatchAgentSession(sessionId, {
-        dropLatestTurn: true,
-        ...(targetMessageId ? { truncateFromUserMessageId: targetMessageId } : {}),
-      });
-      const latestData = get().data;
-      if (latestData) {
-        set({
-          data: {
-            ...latestData,
-            agentSessions: patched.agentSessions,
-          },
+    const hasTargetInSession = Boolean(
+      targetMessageId && sess?.messages.some((m) => m.id === targetMessageId && m.role === 'user'),
+    );
+    if (hasUserTurns || input.truncateFromUserMessageId !== undefined) {
+      try {
+        const patched = await apiPatchAgentSession(sessionId, {
+          dropLatestTurn: true,
+          ...(hasTargetInSession || input.truncateFromUserMessageId
+            ? { truncateFromUserMessageId: targetMessageId }
+            : {}),
         });
+        const latestData = get().data;
+        if (latestData) {
+          set({
+            data: {
+              ...latestData,
+              agentSessions: patched.agentSessions,
+            },
+          });
+        }
+      } catch (err) {
+        const locale = getCurrentClientLocale();
+        const code = (err as { code?: string } | null)?.code;
+        if (
+          code === 'SESSION_RUNNING' ||
+          code === 'ONLY_LATEST_TURN_ALLOWED' ||
+          code === 'TURN_NOT_FOUND' ||
+          code === 'SESSION_NOT_FOUND'
+        ) {
+          get().showToast((err as Error).message);
+        } else {
+          get().showToast(
+            locale === 'en-US'
+              ? 'Could not resend the latest message. Please try again.'
+              : '重发最后一条消息失败，请稍后重试。',
+          );
+        }
+        return;
       }
-    } catch (err) {
-      get().showToast(err instanceof Error ? err.message : String(err));
-      return;
     }
 
     await get().startSessionAgentRun({
@@ -2265,16 +2284,43 @@ export async function apiPatchAgentSession(
 ): Promise<{ session: AgentSession; agentSessions: AgentSession[] }> {
   const res = await fetch(`/api/agent-sessions/${sessionId}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildJsonHeaders(),
     body: JSON.stringify(patch),
   });
   const payload = (await res.json()) as {
     session: AgentSession;
     agentSessions: AgentSession[];
     error?: string;
+    code?: string;
   };
   if (!res.ok) {
-    throw new Error(payload.error || `Failed to update conversation (${res.status})`);
+    const locale = getCurrentClientLocale();
+    let message: string;
+    if (payload.code === 'SESSION_RUNNING') {
+      message =
+        locale === 'en-US'
+          ? 'Cannot edit or retry while a reply is still in progress.'
+          : '当前正在回复中，请稍候再修改或重发。';
+    } else if (payload.code === 'ONLY_LATEST_TURN_ALLOWED') {
+      message =
+        locale === 'en-US'
+          ? 'Only the latest message can be edited or retried.'
+          : '仅支持修改或重发最后一条消息。';
+    } else if (payload.code === 'TURN_NOT_FOUND' || payload.code === 'SESSION_NOT_FOUND') {
+      message =
+        locale === 'en-US'
+          ? 'This message or conversation is no longer available.'
+          : '未找到对应的消息或对话。';
+    } else {
+      message =
+        locale === 'en-US'
+          ? 'Could not update the conversation. Please try again.'
+          : '更新对话失败，请稍后重试。';
+    }
+    const err = new Error(message) as Error & { code?: string; status?: number };
+    if (payload.code) err.code = payload.code;
+    err.status = res.status;
+    throw err;
   }
   return payload;
 }

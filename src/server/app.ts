@@ -275,8 +275,17 @@ export function createApiApp(
 
   app.patch('/api/agent-sessions/:id', async (c) => {
     const id = c.req.param('id');
+    const isEn = c.req.header('X-Onto-Locale') === 'en-US';
     const existing = store.getAgentSession(id);
-    if (!existing) return c.json({ error: 'Agent session not found' }, 404);
+    if (!existing) {
+      return c.json(
+        {
+          error: isEn ? 'Conversation not found.' : '未找到对应的对话。',
+          code: 'SESSION_NOT_FOUND',
+        },
+        404,
+      );
+    }
     const body = await c.req.json<{
       title?: string;
       pinned?: boolean;
@@ -295,7 +304,9 @@ export function createApiApp(
       if (existing.status === 'RUNNING' || getLiveAgentSessionStatus(store, id).active) {
         return c.json(
           {
-            error: 'Cannot edit or retry the latest message while a run is active.',
+            error: isEn
+              ? 'Cannot edit or retry while a reply is still in progress.'
+              : '当前正在回复中，请稍候再修改或重发。',
             code: 'SESSION_RUNNING',
           },
           409,
@@ -315,14 +326,19 @@ export function createApiApp(
         );
         if (targetIdx === -1) {
           return c.json(
-            { error: 'Target user message not found.', code: 'TURN_NOT_FOUND' },
+            {
+              error: isEn ? 'Target message not found.' : '未找到对应的消息。',
+              code: 'TURN_NOT_FOUND',
+            },
             404,
           );
         }
         if (targetIdx !== lastUserIdx) {
           return c.json(
             {
-              error: 'Only the latest user message can be edited or retried.',
+              error: isEn
+                ? 'Only the latest message can be edited or retried.'
+                : '仅支持修改或重发最后一条消息。',
               code: 'ONLY_LATEST_TURN_ALLOWED',
             },
             400,

@@ -171,7 +171,11 @@ function WorkProcessToolRow({
       </button>
 
       {stepOpen && (
-        <div className="work-process-tool-detail" data-testid="conversation-tool-detail">
+        <div
+          className="work-process-tool-detail"
+          data-testid="conversation-tool-detail"
+          {...(step.toolName ? { 'data-tool-name': step.toolName } : {})}
+        >
           <div className="work-process-tool-detail-head">
             {step.toolName && (
               <span
@@ -186,6 +190,13 @@ function WorkProcessToolRow({
               <span
                 className="work-process-tool-anchor"
                 data-testid="agent-run-step-anchor"
+                {...(step.targetAnchor?.screenId
+                  ? { 'data-anchor-screen-id': step.targetAnchor.screenId }
+                  : {})}
+                {...(step.targetAnchor?.elementId
+                  ? { 'data-anchor-element-id': step.targetAnchor.elementId }
+                  : {})}
+                title={step.targetAnchor?.label || anchorBadge}
               >
                 {anchorBadge}
               </span>
@@ -215,6 +226,15 @@ function WorkProcessToolRow({
   );
 }
 
+const WORKER_DOT_VARS = [
+  'var(--model-mu)',
+  'var(--model-m1)',
+  'var(--model-m2)',
+  'var(--model-m4)',
+  'var(--model-m6)',
+  'var(--model-m7)',
+] as const;
+
 export interface WorkProcessBlockProps {
   run: AgentRunView;
   onCancel?: () => void;
@@ -238,12 +258,16 @@ export function WorkProcessBlock({
   const thinkingText = run.thinking?.trim() ?? '';
   const hasThinking = thinkingText.length > 0;
   const stepCount = run.steps.length;
+  const subagentLanes = run.subagentLanes ?? [];
+  const laneCount = subagentLanes.length;
+  const codeModeScript = run.codeModeScript?.trim() ?? '';
+  const hasCodeModeScript = codeModeScript.length > 0;
 
   const [open, setOpen] = useState<boolean>(
     () => defaultExpanded || isWorkBlockExpanded(run.id),
   );
 
-  if (!running && !hasThinking && stepCount === 0) {
+  if (!running && !hasThinking && stepCount === 0 && laneCount === 0 && !hasCodeModeScript) {
     return null;
   }
 
@@ -281,9 +305,12 @@ export function WorkProcessBlock({
       `${stepCount} 个步骤`,
       stepCount === 1 ? '1 step' : `${stepCount} steps`,
     );
+  } else if (laneCount > 0) {
+    metaLabel = t(`${laneCount} 路并行协作`, `${laneCount} parallel tasks`);
   }
 
   const hasFailedStep = run.steps.some((s) => s.status === 'FAILED');
+  const hasExpandableBody = hasThinking || stepCount > 0 || hasCodeModeScript;
 
   const handleToggle = () => {
     const next = !open;
@@ -338,6 +365,15 @@ export function WorkProcessBlock({
             </span>
           )}
 
+          {running && !run.reconnecting && (run.liveStreamedChars ?? 0) > 0 && (
+            <span
+              className="work-process-stream-chars"
+              data-testid="agent-run-stream-chars"
+            >
+              {t(`已接收 ${run.liveStreamedChars} 字`, `${run.liveStreamedChars} chars`)}
+            </span>
+          )}
+
           {running && run.reconnecting && (
             <span
               className="conversation-reconnecting-badge"
@@ -367,7 +403,64 @@ export function WorkProcessBlock({
         )}
       </div>
 
-      {open && (hasThinking || stepCount > 0) && (
+      {laneCount > 0 && (running || open) && (
+        <div
+          className="work-process-subagent-lanes"
+          data-testid="agent-run-subagent-lanes"
+          aria-label={t('并行协作进展', 'Parallel collaboration progress')}
+        >
+          {subagentLanes.map((lane) => {
+            const dotVar =
+              WORKER_DOT_VARS[(Math.max(1, lane.workerIndex) - 1) % WORKER_DOT_VARS.length]!;
+            const laneStepStatus: AgentRunStepStatus =
+              lane.status === 'RUNNING'
+                ? 'RUNNING'
+                : lane.status === 'DONE'
+                  ? 'DONE'
+                  : lane.status === 'FAILED'
+                    ? 'FAILED'
+                    : 'STOPPED';
+            return (
+              <div
+                key={lane.laneId}
+                data-testid="agent-run-subagent-lane"
+                data-lane-status={lane.status}
+                className="work-process-subagent-lane"
+                {...(onHoverAnchor && lane.targetAnchor
+                  ? {
+                      onMouseEnter: () => onHoverAnchor(lane.targetAnchor ?? null),
+                      onMouseLeave: () => onHoverAnchor(null),
+                    }
+                  : {})}
+              >
+                <div className="work-process-subagent-main">
+                  <span
+                    className="work-process-subagent-dot"
+                    style={{ backgroundColor: dotVar }}
+                    aria-hidden="true"
+                  />
+                  <span className="work-process-subagent-worker">
+                    {t(lane.workerLabel.zh, lane.workerLabel.en)}
+                  </span>
+                  <span className="work-process-subagent-task">
+                    {lane.status === 'RUNNING' && lane.liveAction
+                      ? t(lane.liveAction.zh, lane.liveAction.en)
+                      : t(lane.taskTitle.zh, lane.taskTitle.en)}
+                  </span>
+                </div>
+                <div className="work-process-subagent-meta">
+                  {lane.progressChars ? (
+                    <span>{t(`${lane.progressChars} 字`, `${lane.progressChars}c`)}</span>
+                  ) : null}
+                  <StepStatusIcon status={laneStepStatus} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {open && hasExpandableBody && (
         <div className="work-process-body" data-testid="conversation-work-body">
           {hasThinking && (
             <div className="work-process-thinking" data-testid="conversation-thinking-block">
@@ -393,6 +486,21 @@ export function WorkProcessBlock({
                 />
               ))}
             </ol>
+          )}
+
+          {hasCodeModeScript && (
+            <details
+              className="conversation-diagnostic-details work-process-codemode"
+              data-testid="agent-run-codemode-script"
+            >
+              <summary className="conversation-diagnostic-summary">
+                <ChevronRight size={12} className="agent-run-chevron" aria-hidden="true" />
+                <span>{t('查看编排脚本', 'View orchestration script')}</span>
+              </summary>
+              <div className="work-process-tool-detail">
+                <pre className="work-process-tool-pre">{codeModeScript}</pre>
+              </div>
+            </details>
           )}
         </div>
       )}

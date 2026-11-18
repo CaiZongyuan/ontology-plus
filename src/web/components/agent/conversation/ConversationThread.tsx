@@ -48,6 +48,8 @@ export interface ConversationThreadProps {
   topNoticeSlot?: React.ReactNode;
   /** Incremented when the user submits a prompt from the composer so sticky scroll re-arms. */
   scrollToBottomSignal?: number;
+  /** Fixed clock passed through to WorkProcessBlock for deterministic rendering. */
+  now?: number;
 }
 
 /**
@@ -80,11 +82,13 @@ export function ConversationThread({
   renderReplyActions,
   topNoticeSlot,
   scrollToBottomSignal = 0,
+  now,
 }: ConversationThreadProps) {
   const { t } = usePreferences();
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const lastProgrammaticTargetRef = useRef<number | null>(null);
+  const pendingRestoreScrollTopRef = useRef<number | null>(null);
 
   const readInitialAtBottom = (sessionId: string | undefined): boolean => {
     const saved = readSessionScrollPosition(sessionId);
@@ -125,6 +129,8 @@ export function ConversationThread({
       clientHeight: el.clientHeight,
       scrollHeight: el.scrollHeight,
     });
+    pendingRestoreScrollTopRef.current =
+      saved && !saved.atBottom && saved.scrollTop > resolved.scrollTop ? saved.scrollTop : null;
     atBottomRef.current = resolved.atBottom;
     setAtBottom(resolved.atBottom);
     applyProgrammaticScrollTop(el, resolved.scrollTop);
@@ -135,6 +141,7 @@ export function ConversationThread({
   useIsomorphicLayoutEffect(() => {
     if (prevSignalRef.current === scrollToBottomSignal) return;
     prevSignalRef.current = scrollToBottomSignal;
+    pendingRestoreScrollTopRef.current = null;
     atBottomRef.current = true;
     setAtBottom(true);
     writeSessionScrollPosition(activeSessionId, { atBottom: true });
@@ -156,7 +163,8 @@ export function ConversationThread({
     applyProgrammaticScrollTop(el, el.scrollHeight);
   }, [streamTickKey, applyProgrammaticScrollTop]);
 
-  // Also keep pinned if async rendered content (such as Mermaid diagrams or tables) resizes while at bottom.
+  // Also keep pinned if async rendered content (such as Mermaid diagrams or tables) resizes while at bottom,
+  // or finish restoring a mid-thread scroll offset that was clamped before async content expanded.
   useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return;
     const content = contentRef.current;
@@ -165,6 +173,15 @@ export function ConversationThread({
     const observer = new ResizeObserver(() => {
       if (atBottomRef.current) {
         applyProgrammaticScrollTop(el, el.scrollHeight);
+        return;
+      }
+      if (pendingRestoreScrollTopRef.current !== null) {
+        const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+        const nextTop = Math.min(maxScrollTop, pendingRestoreScrollTopRef.current);
+        applyProgrammaticScrollTop(el, nextTop);
+        if (maxScrollTop >= pendingRestoreScrollTopRef.current) {
+          pendingRestoreScrollTopRef.current = null;
+        }
       }
     });
     observer.observe(content);
@@ -182,6 +199,7 @@ export function ConversationThread({
       return;
     }
     lastProgrammaticTargetRef.current = null;
+    pendingRestoreScrollTopRef.current = null;
     const position = deriveScrollPositionFromMetrics({
       scrollTop: el.scrollTop,
       clientHeight: el.clientHeight,
@@ -194,6 +212,7 @@ export function ConversationThread({
 
   const handleJumpToLatest = useCallback(() => {
     const el = scrollRef.current;
+    pendingRestoreScrollTopRef.current = null;
     atBottomRef.current = true;
     setAtBottom(true);
     writeSessionScrollPosition(activeSessionId, { atBottom: true });
@@ -287,8 +306,16 @@ export function ConversationThread({
                   />
                   <AssistantReplyItem
                     run={run}
+                    {...(now !== undefined ? { now } : {})}
                     {...(onCancelRun ? { onCancel: () => onCancelRun(run.id) } : {})}
-                    {...(onRetryRun && isLatestTurn ? { onRetry: () => onRetryRun(run.id) } : {})}
+                    {...(isLatestTurn && !sessionRunning && (onRetryLatestTurn || onRetryRun)
+                      ? {
+                          onRetry: () =>
+                            onRetryLatestTurn
+                              ? void onRetryLatestTurn(run)
+                              : onRetryRun?.(run.id),
+                        }
+                      : {})}
                     {...(onOpenRunArtifact
                       ? { onOpenArtifact: () => onOpenRunArtifact(run.id) }
                       : {})}

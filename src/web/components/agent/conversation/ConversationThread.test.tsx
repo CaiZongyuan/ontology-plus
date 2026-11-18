@@ -58,7 +58,7 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
     Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
   });
 
-  it('renders one Agent Run as one continuous conversation turn without AgentRunCard chrome in conversation mode, while keeping run-cards mode on non-Requirements surfaces', async () => {
+  it('renders continuous conversation turns and ContextOccupancyRing across all 7 specialist surfaces (#79, #85)', async () => {
     const runs: AgentRunView[] = [
       {
         id: 'turn-1',
@@ -91,7 +91,6 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
           title={BUSINESS_VOCABULARY.AI_ASSISTANT}
           runs={runs}
           width={AGENT_PANEL_DEFAULT_WIDTH}
-          presentationMode="conversation"
           onSubmitPrompt={noop}
           renderRunFooter={(run) =>
             run.id === 'turn-2' ? (
@@ -105,8 +104,6 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
       </PreferencesProvider>,
     );
 
-    // Continuous conversation turns: zero AgentRunCard elements!
-    expect(conversationHtml).not.toContain('data-testid="agent-run-card"');
     expect(conversationHtml.match(/data-testid="conversation-turn"/g)).toHaveLength(2);
     expect(conversationHtml.match(/data-testid="conversation-user-message"/g)).toHaveLength(2);
     expect(conversationHtml.match(/data-testid="conversation-assistant-reply"/g)).toHaveLength(2);
@@ -120,7 +117,7 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
     // Run footer (Change Summary) renders on completed mutating turn
     expect(conversationHtml).toContain('data-testid="run-change-summary"');
 
-    // ShellAgentPanel automatically uses conversation mode on Requirements and keeps run-cards on Business Model
+    // ShellAgentPanel renders ConversationThread + ConversationComposer + ContextOccupancyRing across ALL 7 AgentSessionKind surfaces
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     const app = createApiApp(store);
     try {
@@ -130,35 +127,36 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
       useWorkbenchStore.setState({ loading: false, data: boot, activeSessionId: null });
       Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
 
-      const reqHtml = renderToStaticMarkup(
-        <PreferencesProvider>
-          <ShellAgentPanel
-            surface={agentPanelSurfaceFor('app-requirements')}
-            overlay={false}
-            side="left"
-            closable={false}
-            onClose={noop}
-            onNavigate={noop}
-          />
-        </PreferencesProvider>,
-      );
-      expect(reqHtml).toContain('data-testid="conversation-thread"');
-      expect(reqHtml).toContain('data-testid="conversation-turn"');
-      expect(reqHtml).not.toContain('data-testid="agent-run-card"');
+      const allSurfaceNavViews = [
+        'app-requirements',
+        'app-prototype',
+        'app-ontology',
+        'app-assembly-dev',
+        'app-four-layer-assets',
+        'cap-agents',
+        'data-reasoning',
+      ] as const;
 
-      const bmHtml = renderToStaticMarkup(
-        <PreferencesProvider>
-          <ShellAgentPanel
-            surface={agentPanelSurfaceFor('app-ontology')}
-            overlay={false}
-            side="left"
-            closable={false}
-            onClose={noop}
-            onNavigate={noop}
-          />
-        </PreferencesProvider>,
-      );
-      expect(bmHtml).not.toContain('data-testid="conversation-thread"');
+      for (const navId of allSurfaceNavViews) {
+        const html = renderToStaticMarkup(
+          <PreferencesProvider>
+            <ShellAgentPanel
+              surface={agentPanelSurfaceFor(navId)}
+              overlay={false}
+              side="left"
+              closable={false}
+              onClose={noop}
+              onNavigate={noop}
+            />
+          </PreferencesProvider>,
+        );
+        expect(html, `Expected conversation-thread on ${navId}`).toContain(
+          'data-testid="conversation-thread"',
+        );
+        expect(html, `Expected context-occupancy-ring on ${navId}`).toContain(
+          'data-testid="context-occupancy-ring"',
+        );
+      }
     } finally {
       store.close();
     }
@@ -194,7 +192,6 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
             runs={runs}
             activeSessionId="sess-scrolled-up"
             width={AGENT_PANEL_DEFAULT_WIDTH}
-            presentationMode="conversation"
             onSubmitPrompt={noop}
             onClose={noop}
             onResize={noop}
@@ -211,7 +208,6 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
             runs={runs}
             activeSessionId="sess-pinned-bottom"
             width={AGENT_PANEL_DEFAULT_WIDTH}
-            presentationMode="conversation"
             onSubmitPrompt={noop}
             onClose={noop}
             onResize={noop}
@@ -228,7 +224,6 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
             runs={[]}
             activeSessionId="sess-scrolled-up"
             width={AGENT_PANEL_DEFAULT_WIDTH}
-            presentationMode="conversation"
             onSubmitPrompt={noop}
             onClose={noop}
             onResize={noop}
@@ -307,7 +302,7 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
           </PreferencesProvider>,
         );
 
-        expect(shellHtml).toContain('data-presentation-mode="conversation"');
+        expect(shellHtml).toContain('data-testid="conversation-thread"');
         expect(shellHtml).toContain('data-testid="assistant-history-menu"');
         expect(shellHtml).toContain('data-testid="assistant-new-session-btn"');
         expect(shellHtml).toContain('data-testid="assistant-rename-session-btn"');
@@ -330,7 +325,6 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
               runs={[]}
               starterPrompts={surface.starters ?? []}
               width={AGENT_PANEL_DEFAULT_WIDTH}
-              presentationMode="conversation"
               onSubmitPrompt={noop}
               onClose={noop}
               onResize={noop}
@@ -447,7 +441,6 @@ describe('ConversationThread & AgentPanel conversation mode (#79)', () => {
               runs={richRuns}
               activeSessionId={sessA.id}
               width={AGENT_PANEL_DEFAULT_WIDTH}
-              presentationMode="conversation"
               onCancelRun={noop}
               onRetryRun={noop}
               onOpenPlatformSettings={noop}
