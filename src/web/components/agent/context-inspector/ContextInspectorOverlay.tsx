@@ -17,9 +17,15 @@ import {
 import { ContextBrowser } from './ContextBrowser.js';
 import { ContextCompositionBar } from './ContextCompositionBar.js';
 import {
+  ContextEventsList,
+  type ContextEventFilterKind,
+  type ContextInspectorRunTrace,
+} from './ContextEventsList.js';
+import {
   ModelCallTimeline,
   type ModelCallTimelineMode,
 } from './ModelCallTimeline.js';
+import { SubagentLanesPanel } from './SubagentLanesPanel.js';
 import './context-inspector.css';
 
 export const CONTEXT_INSPECTOR_DRAWER_TEST_ID = 'context-inspector-drawer' as const;
@@ -90,6 +96,7 @@ export interface ContextInspectorOverlayProps {
   latestCall?: ModelCallSummary | null;
   modelCalls?: readonly ModelCallSummary[];
   contextEvents?: readonly ContextEventSummary[];
+  runs?: readonly ContextInspectorRunTrace[];
   defaultContextWindow?: number;
   /** Controlled / initial selected Model Call ID (exposed cleanly for Wave 4 #83 & Wave 5 #84). */
   selectedCallId?: string | null;
@@ -99,6 +106,10 @@ export interface ContextInspectorOverlayProps {
   timelineMode?: ModelCallTimelineMode;
   defaultTimelineMode?: ModelCallTimelineMode;
   onTimelineModeChange?: (mode: ModelCallTimelineMode) => void;
+  /** Optional event filter control for deterministic SSR tests (#84). */
+  eventFilter?: ContextEventFilterKind;
+  defaultEventFilter?: ContextEventFilterKind;
+  onEventFilterChange?: (filter: ContextEventFilterKind) => void;
   /** Optional pre-supplied call details keyed by callId (for synchronous SSR tests). */
   callDetailsById?: Readonly<Record<string, ModelCallDetail>>;
   /** Optional pre-loaded call detail (used by deterministic SSR tests from #82). */
@@ -130,6 +141,7 @@ export function ContextInspectorOverlay({
   latestCall,
   modelCalls,
   contextEvents,
+  runs,
   defaultContextWindow,
   selectedCallId: controlledSelectedCallId,
   defaultSelectedCallId = null,
@@ -137,6 +149,9 @@ export function ContextInspectorOverlay({
   timelineMode,
   defaultTimelineMode,
   onTimelineModeChange,
+  eventFilter,
+  defaultEventFilter,
+  onEventFilterChange,
   callDetailsById,
   latestCallDetail: controlledCallDetail,
   compactedEventDetails: controlledCompactedDetails,
@@ -289,8 +304,36 @@ export function ContextInspectorOverlay({
                   : {})}
               />
             )}
-            {eventsSlot}
-            {lanesSlot}
+            {eventsSlot !== undefined ? (
+              eventsSlot
+            ) : (
+              <ContextEventsList
+                modelCalls={effectiveModelCalls}
+                selectedCallId={selectedCall?.id ?? null}
+                onSelectCall={handleSelectCallId}
+                focused={focus === 'events'}
+                {...(contextEvents !== undefined ? { contextEvents } : {})}
+                {...(runs !== undefined ? { runs } : {})}
+                {...(eventFilter !== undefined ? { filter: eventFilter } : {})}
+                {...(defaultEventFilter !== undefined
+                  ? { defaultFilter: defaultEventFilter }
+                  : {})}
+                {...(onEventFilterChange !== undefined
+                  ? { onFilterChange: onEventFilterChange }
+                  : {})}
+              />
+            )}
+            {lanesSlot !== undefined ? (
+              lanesSlot
+            ) : (
+              <SubagentLanesPanel
+                modelCalls={effectiveModelCalls}
+                selectedCallId={selectedCall?.id ?? null}
+                onSelectCall={handleSelectCallId}
+                focused={focus === 'lanes'}
+                {...(runs !== undefined ? { runs } : {})}
+              />
+            )}
           </div>
 
           <div

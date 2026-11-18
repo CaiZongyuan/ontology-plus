@@ -143,6 +143,8 @@ export interface ModelCallSummary {
   estimate: ModelCallEstimate;
   includedCount: number;
   excludedCount: number;
+  /** Tool names invoked in this call's response (`kind === 'TOOL_CALL'` with non-empty `label`). */
+  responseToolNames?: string[];
   hasDetail: boolean;
 }
 
@@ -326,9 +328,26 @@ function resolveUsage(
   };
 }
 
+function extractResponseToolNames(
+  response: readonly Pick<ContextItemRef, 'kind' | 'label'>[] | undefined,
+): string[] {
+  if (!response) return [];
+  const names: string[] = [];
+  for (const item of response) {
+    if (item.kind !== 'TOOL_CALL') continue;
+    const clean = item.label?.trim();
+    if (clean) names.push(clean);
+  }
+  return names;
+}
+
 function toSummary(call: StoredModelCall): ModelCallSummary {
   const { detail, ...rest } = call;
-  return { ...rest, hasDetail: Boolean(detail) };
+  return {
+    ...rest,
+    responseToolNames: rest.responseToolNames ?? extractResponseToolNames(detail?.response),
+    hasDetail: Boolean(detail),
+  };
 }
 
 function sortBySeq(calls: StoredModelCall[]): StoredModelCall[] {
@@ -407,6 +426,7 @@ export function recordModelCall(
     estimate,
     includedCount: included.length,
     excludedCount: excluded.length,
+    responseToolNames: extractResponseToolNames(response),
     detail: { included, excluded, response },
   };
   storage.put(CALLS, call.id, call, input.projectId);

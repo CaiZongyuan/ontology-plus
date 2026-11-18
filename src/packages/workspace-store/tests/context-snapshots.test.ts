@@ -221,4 +221,49 @@ describe('workspace-store: Context Snapshots (ADR 0017)', () => {
       expect(keptDetail?.included[0]?.content).toBe(SYSTEM_RULES);
     });
   });
+
+  it('exposes responseToolNames on ModelCallSummary from TOOL_CALL response items and preserves them after detail pruning', () => {
+    withStore({ maxFullModelCallsPerSession: 1 }, (store, projectId, sessionId) => {
+      const first = store.recordModelCall(
+        callInput(projectId, sessionId, {
+          response: [
+            { kind: 'REASONING', content: '先初始化原型骨架再并行派生子智能体。' },
+            { kind: 'TOOL_CALL', label: 'init_prototype_shell', content: '{"appTitle":"合同台账"}' },
+            { kind: 'TOOL_CALL', label: 'spawn_subagents', content: '{"tasks":[]}' },
+            { kind: 'TOOL_CALL', label: '   ', content: '{}' },
+            { kind: 'ASSISTANT_MESSAGE', label: 'ignored_non_tool', content: '正在执行…' },
+          ],
+        }),
+      );
+      expect(first.responseToolNames).toEqual(['init_prototype_shell', 'spawn_subagents']);
+
+      const second = store.recordModelCall(
+        callInput(projectId, sessionId, {
+          response: [
+            {
+              kind: 'TOOL_CALL',
+              label: 'propose_step_handoff',
+              content: '{"targetStep":"PROTOTYPE","request":"加一列"}',
+            },
+          ],
+        }),
+      );
+      expect(second.responseToolNames).toEqual(['propose_step_handoff']);
+
+      const third = store.recordModelCall(
+        callInput(projectId, sessionId, {
+          response: [{ kind: 'ASSISTANT_MESSAGE', content: '已完成全部总结。' }],
+        }),
+      );
+      expect(third.responseToolNames).toEqual([]);
+
+      const listed = store.listModelCalls(projectId, sessionId);
+      expect(listed.map((c) => c.hasDetail)).toEqual([false, false, true]);
+      expect(listed.map((c) => c.responseToolNames)).toEqual([
+        ['init_prototype_shell', 'spawn_subagents'],
+        ['propose_step_handoff'],
+        [],
+      ]);
+    });
+  });
 });

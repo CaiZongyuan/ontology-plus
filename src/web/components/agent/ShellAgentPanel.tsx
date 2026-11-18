@@ -1334,6 +1334,7 @@ export function ShellAgentPanel({
         latestCall={latestTurnCall}
         modelCalls={effectiveModelCalls}
         contextEvents={effectiveContextEvents}
+        runs={runs}
         defaultContextWindow={activeProviderContextWindow}
         {...(initialCallDetailsById !== undefined
           ? { callDetailsById: initialCallDetailsById }

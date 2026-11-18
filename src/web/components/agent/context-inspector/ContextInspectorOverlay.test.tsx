@@ -334,4 +334,137 @@ describe('ContextInspectorOverlay (#82)', () => {
     expect(htmlCall1).toContain('第一轮独有提示：定义供应商准入流程');
     expect(htmlCall1).not.toContain('第二轮独有提示：补充违约金计算公式');
   });
+
+  it('mounts ContextEventsList and SubagentLanesPanel by default in left column, highlights focus="events"/"lanes", and jumps ContextBrowser to event or subagent call (#84)', () => {
+    const call1Trim = makeSampleCallSummary({
+      id: 'call-84-1',
+      seq: 1,
+      runId: 'run-84-1',
+      purpose: 'TURN',
+      excludedCount: 2,
+    });
+    const call2Spawn = makeSampleCallSummary({
+      id: 'call-84-2',
+      seq: 2,
+      runId: 'run-84-2',
+      purpose: 'TURN',
+      excludedCount: 2,
+      responseToolNames: ['spawn_subagents'],
+    });
+    const call3Subagent = makeSampleCallSummary({
+      id: 'call-84-3',
+      seq: 3,
+      runId: 'run-84-2',
+      purpose: 'SUBAGENT',
+      parentCallId: 'call-84-2',
+      laneLabel: { zh: '合同台账子智能体', en: 'Contract Ledger Subagent' },
+      excludedCount: 0,
+      usage: {
+        promptTokens: 2900,
+        inputTokens: 2900,
+        outputTokens: 360,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 3260,
+        source: 'PROVIDER',
+      },
+    });
+
+    const detailsById: Record<string, ModelCallDetail> = {
+      'call-84-1': {
+        ...call1Trim,
+        included: [
+          {
+            blobId: 'b-84-1',
+            kind: 'USER_MESSAGE',
+            tokens: 150,
+            content: '裁剪发生时的第一轮调用快照内容',
+          },
+        ],
+        excluded: [],
+        response: [],
+      },
+      'call-84-2': {
+        ...call2Spawn,
+        included: [
+          {
+            blobId: 'b-84-2',
+            kind: 'USER_MESSAGE',
+            tokens: 180,
+            content: '主协调器发起并行派生的第二轮调用快照内容',
+          },
+        ],
+        excluded: [],
+        response: [],
+      },
+      'call-84-3': {
+        ...call3Subagent,
+        included: [
+          {
+            blobId: 'b-84-3',
+            kind: 'USER_MESSAGE',
+            tokens: 220,
+            content: '子智能体独立构建合同台账页面的专属上下文快照',
+          },
+        ],
+        excluded: [],
+        response: [],
+      },
+    };
+
+    stubLocale('zh-CN');
+    const htmlEventsFocused = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ContextInspectorOverlay
+          open={true}
+          onClose={noop}
+          focus="events"
+          modelCalls={[call1Trim, call2Spawn, call3Subagent]}
+          callDetailsById={detailsById}
+          defaultExpandedItemKeys={['*']}
+        />
+      </PreferencesProvider>,
+    );
+
+    const compIdx = htmlEventsFocused.indexOf('data-testid="context-composition-bar"');
+    const tlIdx = htmlEventsFocused.indexOf('data-testid="context-call-timeline"');
+    const evIdx = htmlEventsFocused.indexOf('data-testid="context-events-section"');
+    const lnIdx = htmlEventsFocused.indexOf('data-testid="context-subagent-lanes-section"');
+    const rightIdx = htmlEventsFocused.indexOf('data-testid="context-inspector-right-col"');
+
+    expect(compIdx).toBeGreaterThan(-1);
+    expect(tlIdx).toBeGreaterThan(compIdx);
+    expect(evIdx).toBeGreaterThan(tlIdx);
+    expect(lnIdx).toBeGreaterThan(evIdx);
+    expect(rightIdx).toBeGreaterThan(lnIdx);
+
+    expect(htmlEventsFocused).toContain('data-testid="context-events-section" data-focused="true"');
+    expect(htmlEventsFocused).toContain('data-event-kind="TRIM" data-target-call-id="call-84-1"');
+    expect(htmlEventsFocused).toContain('data-event-kind="SUBAGENT" data-target-call-id="call-84-2"');
+    expect(htmlEventsFocused).toContain('data-testid="context-subagent-lane"');
+    expect(htmlEventsFocused).toContain('data-target-call-id="call-84-3"');
+
+    // Selecting the subagent lane's target call ("call-84-3") loads the subagent's snapshot into ContextBrowser
+    const htmlSubagentSelected = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ContextInspectorOverlay
+          open={true}
+          onClose={noop}
+          focus="lanes"
+          modelCalls={[call1Trim, call2Spawn, call3Subagent]}
+          selectedCallId="call-84-3"
+          callDetailsById={detailsById}
+          defaultExpandedItemKeys={['*']}
+        />
+      </PreferencesProvider>,
+    );
+
+    expect(htmlSubagentSelected).toContain(
+      'data-testid="context-subagent-lanes-section" data-focused="true"',
+    );
+    expect(htmlSubagentSelected).toContain('data-selected-call-id="call-84-3"');
+    expect(htmlSubagentSelected).toContain('第 #3 次调用发送的内容');
+    expect(htmlSubagentSelected).toContain('子智能体 · 合同台账子智能体');
+    expect(htmlSubagentSelected).toContain('子智能体独立构建合同台账页面的专属上下文快照');
+  });
 });

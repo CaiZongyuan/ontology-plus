@@ -823,16 +823,19 @@ export function AgentPanel({
                             )
                           : t('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter newline')}
                       </span>
-                      <Button
-                        type="submit"
-                        variant="accent"
-                        size="xs"
-                        data-testid="agent-panel-send-btn"
-                        disabled={!canSend}
-                      >
-                        <Send size={11} aria-hidden="true" />
-                        {runningCount > 0 ? t('排队发送', 'Queue') : t('发送', 'Send')}
-                      </Button>
+                      <span className="inline-flex items-center gap-1.5">
+                        {composerRightAccessorySlot}
+                        <Button
+                          type="submit"
+                          variant="accent"
+                          size="xs"
+                          data-testid="agent-panel-send-btn"
+                          disabled={!canSend}
+                        >
+                          <Send size={11} aria-hidden="true" />
+                          {runningCount > 0 ? t('排队发送', 'Queue') : t('发送', 'Send')}
+                        </Button>
+                      </span>
                     </div>
                   </form>
                 )}

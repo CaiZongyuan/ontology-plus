@@ -51,6 +51,26 @@ export {
   type ModelCallDetailCache,
 } from './ContextBrowser.js';
 export {
+  CONTEXT_EVENT_FILTER_KINDS,
+  ContextEventsList,
+  deriveContextEventItems,
+  formatContextEventFilterLabel,
+  type ContextEventFilterKind,
+  type ContextEventsListProps,
+  type ContextInspectorRunTrace,
+  type DerivedContextEventItem,
+  type DerivedContextEventKind,
+} from './ContextEventsList.js';
+export {
+  SubagentLanesPanel,
+  deriveSubagentLanes,
+  formatSubagentLaneStatusLabel,
+  resolveNextSubagentLaneCallId,
+  type SubagentLaneDisplayStatus,
+  type SubagentLaneViewModel,
+  type SubagentLanesPanelProps,
+} from './SubagentLanesPanel.js';
+export {
   CONTEXT_INSPECTOR_DRAWER_TEST_ID,
   ContextInspectorOverlay,
   resolveLatestTurnModelCall,
