@@ -13,6 +13,7 @@ import {
 import { sanitizeBusinessText } from '../../../../packages/business-vocabulary/index.js';
 import {
   buildPrototypeCanvasModel,
+  composePrototypeDocument,
   type PrototypeCanvasArtboard,
   type PrototypeLiveState,
   type PrototypeScreenStatus,
@@ -33,6 +34,8 @@ import {
   type FollowState,
   type Rect,
 } from './camera.js';
+import { openPrototypeStandalone, readPrototypeView, writePrototypeView, type PrototypeView } from './prototypeView.js';
+import { PrototypeWebView, WebModeHint } from './PrototypeWebView.js';
 
 /** How long the follow camera stays on a screen before moving to another one. */
 export const FOLLOW_DWELL_MS = 1600;
@@ -52,6 +55,8 @@ export interface PrototypeLiveCanvasProps {
   onRetryScreen?: (screenId: string, screenName: string) => void;
   /** Open one screen in the single-screen view (where box-select and inspection live). */
   onOpenSingleScreen?: (screenId: string) => void;
+  /** Opens the composed document in a new tab (defaults to a blob URL; tests replace it). */
+  onOpenStandalone?: (documentHtml: string, screenId: string) => void;
 }
 
 interface Viewport {
@@ -86,6 +91,7 @@ export function PrototypeLiveCanvas({
   viewMode = 'business',
   onRetryScreen,
   onOpenSingleScreen,
+  onOpenStandalone = openPrototypeStandalone,
 }: PrototypeLiveCanvasProps) {
   const { locale, t } = usePreferences();
   const isBusiness = viewMode === 'business';
@@ -132,6 +138,28 @@ export function PrototypeLiveCanvas({
   const [followedScreenId, setFollowedScreenId] = useState<string | undefined>(undefined);
   const [tryScreenId, setTryScreenId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+
+  // ─── View: artboards or web page (#97), remembered per device ──────────────
+  const [view, setViewState] = useState<PrototypeView>(readPrototypeView);
+  const [webHint, setWebHint] = useState(false);
+  const setView = (next: PrototypeView) => {
+    setTryScreenId(null);
+    setWebHint(false);
+    setViewState(next);
+    writePrototypeView(next);
+  };
+  // A build that finishes suggests web mode once (the hint sits in the build log).
+  const sawLiveBuild = useRef(false);
+  useEffect(() => {
+    if (busy) {
+      if (live && Object.keys(live.screens).length > 0) sawLiveBuild.current = true;
+      return;
+    }
+    if (sawLiveBuild.current) {
+      sawLiveBuild.current = false;
+      setWebHint(true);
+    }
+  }, [busy, live]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -239,6 +267,7 @@ export function PrototypeLiveCanvas({
     const host = hostRef.current;
     if (!host) return;
     const onWheel = (event: WheelEvent) => {
+      if ((event.target as Element | null)?.closest?.('[data-canvas-ui]')) return;
       event.preventDefault();
       takeManualControl();
       const c = camRef.current;
@@ -343,6 +372,7 @@ export function PrototypeLiveCanvas({
           data-follow-target={followTarget ?? ''}
           data-trying={tryScreenId ?? ''}
           data-zoom={cam.k.toFixed(3)}
+          data-view={view}
           onPointerDown={(event) => {
             if ((event.target as HTMLElement).closest('[data-canvas-ui]')) return;
             drag.current = { x: event.clientX, y: event.clientY, cx: camRef.current.x, cy: camRef.current.y, moved: false };
@@ -368,10 +398,14 @@ export function PrototypeLiveCanvas({
             setDragging(false);
           }}
         >
+          {/* Hidden, not unmounted, in web mode: the artboards keep their loaded iframes. */}
           <div
             className="absolute left-0 top-0 origin-top-left"
             data-testid="prototype-canvas-world"
-            style={{ transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.k})` }}
+            style={{
+              transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.k})`,
+              ...(view === 'web' ? { visibility: 'hidden' as const } : {}),
+            }}
           >
             {mountedScreens.map((board) => {
               const idx = indexById.get(board.screenId) ?? 0;
@@ -411,7 +445,7 @@ export function PrototypeLiveCanvas({
           </div>
 
           {/* Artboard names, in screen space so they stay readable at any zoom. */}
-          {screens.map((board, idx) => {
+          {view === 'artboards' && screens.map((board, idx) => {
             const rect = artboardRect(idx);
             return (
               <div
@@ -427,7 +461,24 @@ export function PrototypeLiveCanvas({
             );
           })}
 
-          {screens.length === 0 && (
+          {view === 'web' && (
+            <PrototypeWebView
+              screens={screens}
+              css={model.css}
+              linksKey={linksKey}
+              headScriptsKey={headScriptsKey}
+              nameOf={cleanName}
+              initialScreenId={followTarget ?? focusScreenId ?? followedScreenId}
+              followScreenId={following ? followedScreenId : undefined}
+              onManualNavigate={takeManualControl}
+              busy={busy}
+              {...(onRetryScreen ? { onRetryScreen } : {})}
+              composeDocument={() => composePrototypeDocument(documentHtml, live)}
+              onOpenStandalone={onOpenStandalone}
+            />
+          )}
+
+          {view === 'artboards' && screens.length === 0 && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[13px] text-muted-foreground">
               {building ? (
                 <span className="inline-flex items-center gap-2">
@@ -457,17 +508,25 @@ export function PrototypeLiveCanvas({
             data-testid="prototype-canvas-dock"
           >
             <div className="flex items-center gap-0.5" role="group" aria-label={t('查看方式', 'View')}>
-              <Button type="button" variant="toggle" size="xs" aria-pressed="true" data-testid="prototype-dock-view-artboards">
+              <Button
+                type="button"
+                variant="toggle"
+                size="xs"
+                aria-pressed={view === 'artboards'}
+                data-testid="prototype-dock-view-artboards"
+                title={t('所有屏摆在一块画布上', 'Every screen on one canvas')}
+                onClick={() => setView('artboards')}
+              >
                 {t('画板', 'Artboards')}
               </Button>
               <Button
                 type="button"
                 variant="toggle"
                 size="xs"
-                aria-pressed="false"
-                disabled
-                title={t('网页模式即将提供', 'Web view is coming')}
+                aria-pressed={view === 'web'}
                 data-testid="prototype-dock-view-web"
+                title={t('按真实宽度像网站一样浏览', 'Browse it like a website, at its real width')}
+                onClick={() => setView('web')}
               >
                 {t('网页', 'Web')}
               </Button>
@@ -485,6 +544,8 @@ export function PrototypeLiveCanvas({
               <Crosshair size={12} aria-hidden="true" />
               {t('跟随', 'Follow')}
             </Button>
+            {view === 'artboards' && (
+              <>
             <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
             <Button type="button" variant="ghost" size="xs" aria-label={t('缩小', 'Zoom out')} data-testid="prototype-dock-zoom-out" onClick={() => zoomBy(1 / 1.25)}>
               <Minus size={12} aria-hidden="true" />
@@ -509,6 +570,8 @@ export function PrototypeLiveCanvas({
               <Maximize size={12} aria-hidden="true" />
               {t('全部', 'All')}
             </Button>
+              </>
+            )}
             {/* Cursor and design-notes controls arrive with #92 and #94. */}
             <span data-slot="dock-cursor" />
             <span data-slot="dock-design-notes" />
@@ -525,6 +588,10 @@ export function PrototypeLiveCanvas({
             {t('施工日志', 'Build log')}
           </div>
           <div className="min-h-0 flex-1 overflow-auto px-3 py-2 text-[12px] text-muted-foreground" data-slot="build-log-entries" />
+          {/* #97: the end-of-build suggestion; #90's log can move it into its entries. */}
+          {webHint && view === 'artboards' && (
+            <WebModeHint onTry={() => setView('web')} onDismiss={() => setWebHint(false)} />
+          )}
         </aside>
       </div>
 

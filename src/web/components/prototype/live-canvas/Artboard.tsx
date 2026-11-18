@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
 import { ARTBOARD_H, ARTBOARD_W } from './camera.js';
 import { BORN_ATTR, morphChildren } from './morph.js';
 
@@ -44,6 +44,31 @@ function syncLinks(doc: Document, hrefs: readonly string[]): void {
   }
 }
 
+/** A box in the frame's own viewport (CSS pixels, before any canvas zoom). */
+export interface ArtboardRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * What overlays drawn over a frame need from it (design notes #94, demo tours #95): where an
+ * anchored element is, and a way to bring one into view.
+ */
+export interface ArtboardHandle {
+  /** The frame's document, once loaded. */
+  document: () => Document | null;
+  /** The element's box in the frame's viewport, by its `data-element-id`. */
+  rectOf: (elementId: string) => ArtboardRect | null;
+  /** Scrolls the element into view (when it is off screen) and returns its new box. */
+  reveal: (elementId: string) => ArtboardRect | null;
+}
+
+function cssAttrValue(raw: string): string {
+  return raw.replace(/["\\]/g, '\\$&');
+}
+
 interface ArtboardFrameProps {
   screenId: string;
   title: string;
@@ -59,6 +84,10 @@ interface ArtboardFrameProps {
   interactive: boolean;
   onNavigate: (screenId: string) => void;
   onEscape: () => void;
+  /** Fill the parent at its real width (web mode) instead of the fixed artboard size. */
+  fill?: boolean;
+  /** Receives the frame's handle for overlays. */
+  handleRef?: MutableRefObject<ArtboardHandle | null>;
 }
 
 type ProtoWindow = Window & { __selectProtoScreen?: (screenId: string) => void };
@@ -79,6 +108,8 @@ export const ArtboardFrame = memo(function ArtboardFrame({
   interactive,
   onNavigate,
   onEscape,
+  fill = false,
+  handleRef,
 }: ArtboardFrameProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [loadVersion, setLoadVersion] = useState(0);
@@ -101,6 +132,40 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     const d = frameRef.current?.contentDocument ?? null;
     return d && d.head && d.body ? d : null;
   };
+  /** The screen the body last showed: a different one (web mode page change) starts at the top. */
+  const shownScreen = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!handleRef) return;
+    const find = (elementId: string): Element | null =>
+      doc()?.querySelector(`[data-element-id="${cssAttrValue(elementId)}"]`) ?? null;
+    const box = (el: Element | null): ArtboardRect | null => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height };
+    };
+    const handle: ArtboardHandle = {
+      document: doc,
+      rectOf: (elementId) => box(find(elementId)),
+      reveal: (elementId) => {
+        const el = find(elementId);
+        if (!el) return null;
+        const view = el.ownerDocument.defaultView;
+        const r = el.getBoundingClientRect();
+        const offScreen = view
+          ? r.top < 0 || r.bottom > view.innerHeight || r.left < 0 || r.right > view.innerWidth
+          : false;
+        if (offScreen) (el as HTMLElement).scrollIntoView?.({ block: 'center', inline: 'nearest' });
+        return box(el);
+      },
+    };
+    handleRef.current = handle;
+    return () => {
+      if (handleRef.current === handle) handleRef.current = null;
+    };
+    // `doc` reads the frame ref at call time, so the handle is installed once per ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleRef]);
 
   // Shared styles, this screen's in-progress styles, and the runtime rules.
   useLayoutEffect(() => {
@@ -130,6 +195,12 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       tab.classList.toggle('is-active', tab.getAttribute('data-nav-screen') === screenId);
     }
     morphChildren(d.body, parsed.body);
+    if (shownScreen.current !== null && shownScreen.current !== screenId) {
+      const scroller = d.scrollingElement ?? d.documentElement;
+      scroller.scrollTop = 0;
+      scroller.scrollLeft = 0;
+    }
+    shownScreen.current = screenId;
     const stamp = String(Date.now());
     for (const el of Array.from(d.querySelectorAll(`[${BORN_ATTR}=""]`))) el.setAttribute(BORN_ATTR, stamp);
     const timer = setTimeout(() => {
@@ -226,7 +297,11 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       data-testid={`prototype-artboard-frame-${screenId}`}
       tabIndex={interactive ? 0 : -1}
       className="block border-0 bg-background"
-      style={{ width: ARTBOARD_W, height: ARTBOARD_H, pointerEvents: interactive ? 'auto' : 'none' }}
+      style={{
+        width: fill ? '100%' : ARTBOARD_W,
+        height: fill ? '100%' : ARTBOARD_H,
+        pointerEvents: interactive ? 'auto' : 'none',
+      }}
       onLoad={(event) => {
         loadCount.current += 1;
         event.currentTarget.setAttribute('data-load-count', String(loadCount.current));

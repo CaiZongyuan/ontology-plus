@@ -1,4 +1,4 @@
-import { JSDOM } from 'jsdom';
+import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { initPrototypeShell } from '../index.js';
 
@@ -24,6 +24,18 @@ function shellHtml(): string {
   );
 }
 
+type ShellWindow = Window & typeof globalThis & { __selectProtoScreen: (screenId: string) => void };
+interface JSDOM {
+  window: ShellWindow;
+}
+// jsdom ships no type declarations in this repo; only its constructor is needed here.
+const { JSDOM } = createRequire(import.meta.url)('jsdom') as {
+  JSDOM: new (
+    html: string,
+    options: { runScripts: 'dangerously'; url: string; beforeParse: (window: ShellWindow) => void },
+  ) => JSDOM;
+};
+
 function open(url = 'https://prototype.test/'): JSDOM {
   return new JSDOM(shellHtml(), {
     runScripts: 'dangerously',
@@ -48,9 +60,9 @@ describe('prototype shell navigation works standalone', () => {
   it('follows in-screen data-navigate-to links and marks the matching tab', async () => {
     const dom = open();
     expect(active(dom)).toEqual(['SCR-HOME']);
-    dom.window.document.getElementById('go-orders-label')!.dispatchEvent(
-      new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }),
-    );
+    dom.window.document
+      .getElementById('go-orders-label')!
+      .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
     await hashSettled(dom);
     expect(active(dom)).toEqual(['SCR-ORDERS']);
     const tab = dom.window.document.querySelector('[data-nav-screen="SCR-ORDERS"]')!;
@@ -91,9 +103,3 @@ describe('prototype shell navigation works standalone', () => {
     expect(dom.window.location.hash).toBe('');
   });
 });
-
-declare module 'jsdom' {
-  interface DOMWindow {
-    __selectProtoScreen: (screenId: string) => void;
-  }
-}
