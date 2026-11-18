@@ -6,7 +6,7 @@ import { checkBusinessViewMarkup } from '../../../packages/business-vocabulary/i
 import { formatToolStepLabel } from '../../api.js';
 import { PreferencesProvider } from '../../i18n.js';
 import { ToolChips } from '../beautifui/ToolChips.js';
-import { AgentRunCard } from './AgentRunCard.js';
+import { WorkProcessBlock } from './conversation/WorkProcessBlock.js';
 import { agentRunsFromSession } from './agentRun.js';
 
 const noop = () => {};
@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe('consolidated business-vocabulary tool labels in web components (#56)', () => {
-  it('adapts session toolCalls into business-language step labels in AgentRunCard for zh-CN and en-US', () => {
+  it('adapts session toolCalls into business-language step labels in WorkProcessBlock for zh-CN and en-US', () => {
     const traces: AgentToolCallTrace[] = [
       {
         id: 'tc-1',
@@ -81,7 +81,11 @@ describe('consolidated business-vocabulary tool labels in web components (#56)',
 
     const zhHtml = renderToStaticMarkup(
       <PreferencesProvider>
-        <AgentRunCard run={run!} now={Date.parse('2026-11-17T08:00:10.000Z')} />
+        <WorkProcessBlock
+          run={run!}
+          defaultExpanded
+          now={Date.parse('2026-11-17T08:00:10.000Z')}
+        />
       </PreferencesProvider>,
     );
     expect(zhHtml).toContain('检查业务对象');
@@ -91,7 +95,11 @@ describe('consolidated business-vocabulary tool labels in web components (#56)',
     useLocale('en-US');
     const enHtml = renderToStaticMarkup(
       <PreferencesProvider>
-        <AgentRunCard run={run!} now={Date.parse('2026-11-17T08:00:10.000Z')} />
+        <WorkProcessBlock
+          run={run!}
+          defaultExpanded
+          now={Date.parse('2026-11-17T08:00:10.000Z')}
+        />
       </PreferencesProvider>,
     );
     expect(enHtml).toContain('Check Business Objects');

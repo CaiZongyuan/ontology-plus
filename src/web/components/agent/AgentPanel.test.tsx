@@ -17,7 +17,6 @@ import { useWorkbenchStore } from '../../api.js';
 import { NAV_ITEMS, PreferencesProvider } from '../../i18n.js';
 import { resetLocalImageStoreForTests } from '../../lib/localImageStore.js';
 import { AgentPanel, shouldSubmitComposerKey } from './AgentPanel.js';
-import { AgentRunCard, type AgentRunCardProps } from './AgentRunCard.js';
 import {
   AGENT_PANEL_DEFAULT_WIDTH,
   AGENT_PANEL_MAX_WIDTH,
@@ -37,6 +36,12 @@ import {
   type AgentRunView,
   type SessionLiveDraft,
 } from './agentRun.js';
+import {
+  AssistantReplyItem,
+  clearWorkProcessExpansionForTests,
+  type AssistantReplyItemProps,
+} from './conversation/AssistantReplyItem.js';
+import { ConversationThread } from './conversation/ConversationThread.js';
 import {
   ShellAgentPanel,
   agentPanelSurfaceFor,
@@ -83,10 +88,10 @@ function useLocale(locale: 'zh-CN' | 'en-US') {
   });
 }
 
-function renderCard(props: Partial<AgentRunCardProps> & { run: AgentRunView }): string {
+function renderReply(props: Partial<AssistantReplyItemProps> & { run: AgentRunView }): string {
   return renderToStaticMarkup(
     <PreferencesProvider>
-      <AgentRunCard
+      <AssistantReplyItem
         now={STARTED_AT + 84_000}
         onCancel={noop}
         onRetry={noop}
@@ -99,8 +104,11 @@ function renderCard(props: Partial<AgentRunCardProps> & { run: AgentRunView }): 
 }
 
 afterEach(() => {
+  clearWorkProcessExpansionForTests();
   for (const directory of architectureDirectories.splice(0)) {
-    if (path.dirname(directory) !== os.tmpdir()) throw new Error('Unexpected test catalog directory');
+    if (path.dirname(directory) !== os.tmpdir()) {
+      throw new Error('Unexpected test catalog directory');
+    }
     fs.rmSync(directory, { recursive: true, force: true });
   }
   vi.unstubAllGlobals();
@@ -123,37 +131,39 @@ afterEach(() => {
   Object.assign(useAgentPanelStore.getInitialState(), cleanPanel);
 });
 
-describe('AgentRunCard', () => {
-  it('shows live status, elapsed time, cancel and steps while running', () => {
-    const html = renderCard({ run: makeRun() });
+describe('AssistantReplyItem & WorkProcessBlock', () => {
+  it('shows live status, elapsed time, and cancel while running', () => {
+    const html = renderReply({ run: makeRun() });
 
     expect(html).toContain('data-run-status="RUNNING"');
-    expect(html).toContain('data-testid="agent-run-live"');
+    expect(html).toContain('data-testid="conversation-live-status"');
     expect(html).toContain('正在生成原型页面');
-    expect(html).toContain('01:24');
+    expect(html).toContain('84 秒 · 2 个步骤');
     expect(html).toContain('data-testid="agent-run-cancel-btn"');
-    expect(html).toContain('保存需求文档');
-    expect(html).toContain('data-step-status="RUNNING"');
-    expect(html).not.toContain('agent-run-result');
     expect(html).not.toContain('agent-run-failure');
     expect(html).not.toContain('agent-run-retry-btn');
     expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
-  it('keeps thinking and step detail collapsed inside "查看细节" by default', () => {
-    const html = renderCard({ run: makeRun() });
+  it('keeps thinking and tool details collapsed by default and reveals them on expansion', () => {
+    const collapsedHtml = renderReply({ run: makeRun() });
+    expect(collapsedHtml).toContain('data-testid="conversation-work-process"');
+    expect(collapsedHtml).toContain('data-expanded="false"');
+    expect(collapsedHtml).not.toContain('data-testid="conversation-work-body"');
+    expect(checkBusinessViewMarkup(collapsedHtml)).toEqual([]);
 
-    expect(html).toContain('data-testid="agent-run-details"');
-    expect(html).toContain('查看细节');
-    expect(html).toContain('data-testid="agent-run-thinking"');
-    expect(html).toContain('先确定屏幕清单，再逐屏输出。');
-    expect(html).toContain('SCR-1');
-    expect(html).not.toMatch(/<details[^>]*\sopen/);
-    expect(checkBusinessViewMarkup(html)).toEqual([]);
+    const expandedHtml = renderReply({
+      run: makeRun(),
+      defaultWorkExpanded: true,
+      defaultExpandedStepIds: ['s2'],
+    });
+    expect(expandedHtml).toContain('data-testid="agent-run-thinking"');
+    expect(expandedHtml).toContain('先确定屏幕清单，再逐屏输出。');
+    expect(expandedHtml).toContain('SCR-1');
   });
 
-  it('shows the result summary and a link to the artifact when it succeeded', () => {
-    const html = renderCard({
+  it('shows the result summary as prose and a button to open the artifact when succeeded', () => {
+    const html = renderReply({
       run: makeRun({
         status: 'SUCCEEDED',
         completedAt: STARTED_AT + 125_000,
@@ -165,18 +175,16 @@ describe('AgentRunCard', () => {
     });
 
     expect(html).toContain('data-run-status="SUCCEEDED"');
-    expect(html).toContain('data-testid="agent-run-result"');
     expect(html).toContain('已生成 6 个页面');
     expect(html).toContain('data-testid="agent-run-open-artifact-btn"');
     expect(html).toContain('查看原型');
-    expect(html).toContain('02:05');
     expect(html).not.toContain('agent-run-cancel-btn');
-    expect(html).not.toContain('agent-run-live');
+    expect(html).not.toContain('conversation-live-status');
     expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
   it('reports a platform timeout failure with unified copy, retry, platform settings link, and diagnostics tucked in details', () => {
-    const html = renderCard({
+    const html = renderReply({
       run: makeRun({
         status: 'FAILED',
         completedAt: STARTED_AT + 9_000,
@@ -199,21 +207,19 @@ describe('AgentRunCard', () => {
     expect(html).toContain('data-testid="agent-run-diagnostic-details"');
     expect(html).toContain('LLM gateway timed out after 60s');
     expect(html).toContain('检查网关地址或更换模型');
-    expect(html).not.toContain('agent-run-result');
     expect(html).not.toContain('agent-run-cancel-btn');
     expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
   it('says so when a failed run carries no reason instead of looking successful', () => {
-    const html = renderCard({ run: makeRun({ status: 'FAILED', completedAt: STARTED_AT }) });
+    const html = renderReply({ run: makeRun({ status: 'FAILED', completedAt: STARTED_AT }) });
 
     expect(html).toContain('运行失败，未返回原因。');
-    expect(html).not.toContain('agent-run-result');
     expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
   it('marks a cancelled run as cancelled and offers to run it again', () => {
-    const html = renderCard({
+    const html = renderReply({
       run: makeRun({ status: 'CANCELLED', completedAt: STARTED_AT + 3_000 }),
     });
 
@@ -222,21 +228,18 @@ describe('AgentRunCard', () => {
     expect(html).toContain('已在完成前取消。');
     expect(html).toContain('data-testid="agent-run-retry-btn"');
     expect(html).not.toContain('agent-run-cancel-btn');
-    expect(html).not.toContain('agent-run-result');
     expect(html).not.toContain('agent-run-failure');
     expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
   it('renders in English when the locale is en-US', () => {
     useLocale('en-US');
-    const html = renderCard({ run: makeRun() });
+    const html = renderReply({ run: makeRun(), defaultWorkExpanded: true });
 
-    expect(html).toContain('Generate prototype');
     expect(html).toContain('Generating prototype page');
     expect(html).toContain('Cancel');
-    expect(html).toContain('View details');
     expect(html).toContain('Thinking');
-    expect(html).not.toContain('生成界面原型');
+    expect(html).not.toContain('正在生成原型页面');
     expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 });
@@ -263,7 +266,7 @@ describe('AgentPanel', () => {
     expect(html).not.toContain('agent-panel-running');
   });
 
-  it('lists runs with a running count and exposes the width to assistive tech', () => {
+  it('lists conversation turns with a running count and exposes the width to assistive tech', () => {
     const html = renderToStaticMarkup(
       <PreferencesProvider>
         <AgentPanel
@@ -276,7 +279,7 @@ describe('AgentPanel', () => {
       </PreferencesProvider>,
     );
 
-    expect(html.match(/data-testid="agent-run-card"/g)).toHaveLength(2);
+    expect(html.match(/data-testid="conversation-turn"/g)).toHaveLength(2);
     expect(html).toContain('1 个运行中');
     expect(html).toContain(`aria-valuenow="${AGENT_PANEL_DEFAULT_WIDTH}"`);
   });
@@ -553,11 +556,15 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(runs[3]?.status).toBe('RUNNING');
     expect(runs[3]?.steps[0]?.targetAnchor?.elementId).toBe('EL-FILTER-DEPT');
 
-    // Render card with anchored steps and verify badge markup
-    const cardHtml = renderCard({ run: runs[0]! });
-    expect(cardHtml).toContain('data-testid="agent-run-step-anchor"');
-    expect(cardHtml).toContain('SCR-CONTRACT-LIST · EL-ACT-NEW');
-    expect(cardHtml).toContain('查看修订 v2');
+    // Render reply with expanded anchored step and verify badge markup
+    const replyHtml = renderReply({
+      run: runs[0]!,
+      defaultWorkExpanded: true,
+      defaultExpandedStepIds: ['tc-1'],
+    });
+    expect(replyHtml).toContain('data-testid="agent-run-step-anchor"');
+    expect(replyHtml).toContain('SCR-CONTRACT-LIST · EL-ACT-NEW');
+    expect(replyHtml).toContain('查看修订 v2');
   });
 
   it('renders interactive composer, header slot, queued prompts strip, and Enter key behavior in AgentPanel', () => {
@@ -646,7 +653,6 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
       ],
     });
 
-    // Wait for stream completion
     await vi.waitFor(() => {
       expect(useWorkbenchStore.getState().liveSessionDrafts[sessionId]).toBeUndefined();
       const s = useWorkbenchStore
@@ -655,13 +661,12 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
       expect(s?.messages.filter((m) => m.role === 'assistant').length).toBe(1);
     });
 
-    // Prototype revision v2 was created and synced into client store
     const updatedProto = useWorkbenchStore
       .getState()
       .data?.prototypes.find((p) => p.id === createdProto.prototype.id);
     expect(updatedProto?.revisions.length).toBe(2);
 
-    // ShellAgentPanel renders the completed PROTOTYPE_CO_DESIGN run card with targetAnchor badges & composer
+    // ShellAgentPanel renders the completed PROTOTYPE_CO_DESIGN conversation turn & composer
     const surface = agentPanelSurfaceFor('app-prototype')!;
     Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
     const shellHtml = renderToStaticMarkup(
@@ -669,10 +674,8 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
         <ShellAgentPanel surface={surface} overlay={false} onClose={noop} onNavigate={noop} />
       </PreferencesProvider>,
     );
-    expect(shellHtml).toContain('data-testid="agent-run-card"');
+    expect(shellHtml).toContain('data-testid="conversation-turn"');
     expect(shellHtml).toContain('data-run-status="SUCCEEDED"');
-    expect(shellHtml).toContain('data-testid="agent-run-step-anchor"');
-    expect(shellHtml).toContain('EL-ACT-NEW');
     expect(shellHtml).toContain('查看修订 v2');
     expect(shellHtml).toContain('data-testid="agent-panel-composer-input"');
 
@@ -713,19 +716,26 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(useWorkbenchStore.getState().sessionQueues[sessionId] ?? []).toHaveLength(0);
     expect(useWorkbenchStore.getState().liveSessionDrafts[sessionId]).toBeUndefined();
 
-    // Retry re-dispatches the prompt and completes cleanly
-    await useWorkbenchStore.getState().retrySessionAgentRun(sessionId);
+    // Latest-turn retry replaces the latest turn cleanly in-place
+    await useWorkbenchStore.getState().replaceLatestSessionTurnAndRun({
+      sessionId,
+      mockMode: true,
+    });
     const retriedSess = useWorkbenchStore
       .getState()
       .data?.agentSessions.find((item) => item.id === sessionId);
-    expect(retriedSess?.messages.filter((m) => m.role === 'assistant').length).toBe(2);
+    expect(retriedSess?.messages.filter((m) => m.role === 'assistant').length).toBe(1);
   });
 
   it('executes SRS synthesis, 11-model ontology synthesis, copilot, tech arch, metric insight, and scenario attribution as ShellAgentPanel runs', async () => {
     vi.stubEnv('ONTO_MOCK_LLM', '1');
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-panel-architecture-'));
     architectureDirectories.push(directory);
-    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false, architectureAssetsRoot: path.join(directory, 'catalog') });
+    const store = createWorkspaceStore({
+      dbPath: ':memory:',
+      enableFileMirror: false,
+      architectureAssetsRoot: path.join(directory, 'catalog'),
+    });
     store.updateSystemSettings({ mockLlmMode: true });
     const app = createApiApp(store);
     vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
@@ -741,7 +751,6 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
 
     await useWorkbenchStore.getState().bootstrap('proj-contract');
 
-    // Verify all 6 surfaces are registered in AGENT_PANEL_SURFACES
     expect(agentPanelSurfaceFor('app-requirements')?.sessionKind).toBe('REQUIREMENT');
     expect(agentPanelSurfaceFor('app-ontology')?.sessionKind).toBe('COPILOT');
     expect(agentPanelSurfaceFor('app-four-layer-assets')?.sessionKind).toBe('ARCHITECTURE');
@@ -859,7 +868,6 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
 
     await useWorkbenchStore.getState().bootstrap('proj-contract');
 
-    // Verify ALL active NavViewIds resolve to a valid AgentPanelSurface
     expect(NAV_ITEMS.length).toBeGreaterThanOrEqual(19);
     for (const navItem of NAV_ITEMS) {
       const surface = agentPanelSurfaceFor(navItem.id);
@@ -882,7 +890,6 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(agentPanelSurfaceFor('llm-center')?.sessionKind).toBe('COPILOT');
     expect(agentPanelSurfaceFor('system-settings')?.sessionKind).toBe('COPILOT');
 
-    // Render data-reasoning ShellAgentPanel and verify 3-stage mode selector pills
     Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
     const dataReasoningHtml = renderToStaticMarkup(
       <PreferencesProvider>
@@ -898,7 +905,6 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_DATA"');
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_WHY"');
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_POLICY"');
-    // Every specialised agent except Prototype Co-Design can hold several conversations in the History Menu (ADR 0009, amended).
     expect(dataReasoningHtml).toContain('data-testid="assistant-history-menu-btn"');
     expect(dataReasoningHtml).toContain('data-testid="assistant-new-session-btn"');
     const prototypePanelHtml = renderToStaticMarkup(
@@ -914,7 +920,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     );
     expect(prototypePanelHtml).not.toContain('assistant-new-session-btn');
 
-    // AgentRunView preserves user message images & renders "图片已不在本机" when missing from localImageStore, plus EXTRACTION_JOB chip
+    // ConversationThread preserves user message images & renders "图片已不在本机" when missing from localImageStore, plus EXTRACTION_JOB chip
     const extractionSession: AgentSession = {
       id: 'sess-cap-ext-1',
       projectId: 'proj-contract',
@@ -966,17 +972,21 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
         role: 'user_upload',
       },
     ]);
-    const extCardHtml = renderCard({ run: extRuns[0]! });
-    expect(extCardHtml).toContain('data-testid="agent-run-images"');
-    expect(extCardHtml).toContain('图片已不在本机');
-    expect(extCardHtml).toContain('legacy-schema-sketch.png');
-    expect(extCardHtml).toContain('data-testid="agent-run-extraction-chip"');
-    expect(extCardHtml).toContain('存量ERP系统');
-    expect(extCardHtml).toContain('6');
-    expect(extCardHtml).toContain('前往候选审查');
+    const extThreadHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ConversationThread runs={extRuns} onOpenRunArtifact={noop} />
+      </PreferencesProvider>,
+    );
+    expect(extThreadHtml).toContain('data-testid="agent-run-images"');
+    expect(extThreadHtml).toContain('图片已不在本机');
+    expect(extThreadHtml).toContain('legacy-schema-sketch.png');
+    expect(extThreadHtml).toContain('data-testid="agent-run-extraction-chip"');
+    expect(extThreadHtml).toContain('存量ERP系统');
+    expect(extThreadHtml).toContain('6');
+    expect(extThreadHtml).toContain('前往候选审查');
 
-    // Render AgentRunCard with askUser prompt & REASONING_POLICY write-back button (no generic fork button)
-    const interactiveCardHtml = renderCard({
+    // Render AssistantReplyItem with askUser prompt & REASONING_POLICY write-back button
+    const interactiveReplyHtml = renderReply({
       run: makeRun({
         status: 'SUCCEEDED',
         completedAt: STARTED_AT + 4_000,
@@ -1008,11 +1018,11 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
       onAnswerAskUser: noop,
       onTriggerWriteback: noop,
     });
-    expect(interactiveCardHtml).not.toContain('agent-fork-msg-btn');
-    expect(interactiveCardHtml).toContain('data-testid="agent-hitl-card"');
-    expect(interactiveCardHtml).toContain('强制法务总监会签');
-    expect(interactiveCardHtml).toContain('data-testid="trigger-policy-writeback-btn"');
-    expect(interactiveCardHtml).toContain('WB-01');
+    expect(interactiveReplyHtml).not.toContain('agent-fork-msg-btn');
+    expect(interactiveReplyHtml).toContain('data-testid="agent-hitl-card"');
+    expect(interactiveReplyHtml).toContain('强制法务总监会签');
+    expect(interactiveReplyHtml).toContain('data-testid="trigger-policy-writeback-btn"');
+    expect(interactiveReplyHtml).toContain('WB-01');
 
     // Verify resolveActiveWorkspaceRuns maps live drafts & running sessions to exact NavViewId jump targets
     const capAgent = useWorkbenchStore.getState().data!.capabilityAgents[0]!;
@@ -1228,7 +1238,6 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     );
     expect(maxSameSessionConcurrency).toBe(1);
 
-    // Release R1 -> R2 starts automatically while R3 stays queued
     pendingGates.find((g) => g.sessionId === sameSession.id && g.content === 'R1')!.release();
     await vi.waitFor(() => {
       expect(pendingGates.filter((g) => g.sessionId === sameSession.id)).toHaveLength(2);
@@ -1238,7 +1247,6 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     );
     expect(maxSameSessionConcurrency).toBe(1);
 
-    // Release R2 -> R3 starts automatically
     pendingGates.find((g) => g.sessionId === sameSession.id && g.content === 'R2')!.release();
     await vi.waitFor(() => {
       expect(pendingGates.filter((g) => g.sessionId === sameSession.id)).toHaveLength(3);
@@ -1246,7 +1254,6 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(useWorkbenchStore.getState().sessionQueues[sameSession.id] ?? []).toHaveLength(0);
     expect(maxSameSessionConcurrency).toBe(1);
 
-    // Release R3 -> all 3 drained in strict FIFO order
     pendingGates.find((g) => g.sessionId === sameSession.id && g.content === 'R3')!.release();
     await Promise.all([p1, p2, p3]);
     expect(executionOrderBySession.get(sameSession.id)).toEqual(['R1', 'R2', 'R3']);
@@ -1313,7 +1320,6 @@ describe('Business-language run progress, suite target resolution & platform pro
     const firstBehavior = suite.M2!.behaviors[0]!;
     const firstRule = suite.M3!.rules[0]!;
 
-    // 1. Raw IDs resolved from active project suite -> zero AGG-01 / BHV-01 / M2 leaked
     const runningAgg = formatRunToolProgress(
       'upsert_aggregate',
       { id: firstAggregate.id },
@@ -1343,13 +1349,16 @@ describe('Business-language run progress, suite target resolution & platform pro
     expect(checkBusinessViewMarkup(deletedRule.zh, { plainText: true })).toEqual([]);
     expect(checkBusinessViewMarkup(deletedRule.en, { plainText: true })).toEqual([]);
 
-    // 2. Prototype, SRS, and Delivery tools produce clean business language in both locales
     const protoEdit = formatRunToolProgress(
       'edit_prototype_anchor',
       { elementId: 'EL-ACT-NEW' },
       {
         active: true,
-        targetAnchor: { screenId: 'SCR-CONTRACT-LIST', elementId: 'EL-ACT-NEW', label: '新建合同按钮' },
+        targetAnchor: {
+          screenId: 'SCR-CONTRACT-LIST',
+          elementId: 'EL-ACT-NEW',
+          label: '新建合同按钮',
+        },
       },
     );
     expect(protoEdit).toEqual({
@@ -1373,7 +1382,6 @@ describe('Business-language run progress, suite target resolution & platform pro
       en: 'Generating development package',
     });
 
-    // 3. agentRunsFromSession preserves full ADR 0007 diagnostics, token usage, and vision fallback
     const session: AgentSession = {
       id: 'sess-diag-1',
       projectId: 'proj-contract',
@@ -1437,7 +1445,6 @@ describe('Business-language run progress, suite target resolution & platform pro
       remediation: 'Check LLM Center gateway configuration.',
     });
 
-    // 4. Platform problem classification covers unconfigured, unreachable/HTTP, timeout, vision-unsupported vs non-platform
     expect(
       classifyRunPlatformProblem({
         code: 'LLM_NOT_CONFIGURED',
@@ -1479,7 +1486,7 @@ describe('Business-language run progress, suite target resolution & platform pro
     expect(platformPres.summary.en).toContain(PLATFORM_UNAVAILABLE_COPY.en);
   });
 
-  it('renders deterministic Business View progress lines, tucks tool args/outputs, thinking, char counts & token usage inside closed "查看细节", supports changeSummarySlot, and passes checkBusinessViewMarkup in zh-CN and en-US', () => {
+  it('renders collapsed WorkProcessBlock + inline changeSummarySlot in AssistantReplyItem with 0 checkBusinessViewMarkup violations in zh-CN and en-US', () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     const suite = store.getProject('proj-contract')!.suite;
     const agg = suite.M1!.aggregates[0]!;
@@ -1575,7 +1582,7 @@ describe('Business-language run progress, suite target resolution & platform pro
 
     for (const locale of ['zh-CN', 'en-US'] as const) {
       useLocale(locale);
-      const html = renderCard({
+      const html = renderReply({
         run: run!,
         changeSummarySlot: (
           <div data-testid="mock-change-summary">
@@ -1584,40 +1591,27 @@ describe('Business-language run progress, suite target resolution & platform pro
         ),
       });
 
-      // 1. Default collapsed markup passes checkBusinessViewMarkup with ZERO violations!
       const violations = checkBusinessViewMarkup(html);
       expect(
         violations,
         `Expected 0 Business View violations in ${locale}:\n${formatBusinessViewViolations(violations)}`,
       ).toEqual([]);
 
-      // 2. Concise deterministic progress lines (<= 5 visible steps, never LLM thinking/free text)
-      expect(html).toContain('data-testid="agent-run-progress"');
-      const visibleStepMatches = html.match(/class="agent-run-step"/g) ?? [];
-      expect(visibleStepMatches.length).toBeLessThanOrEqual(5);
-      expect(html).toContain(
-        locale === 'en-US' ? 'View details' : '查看细节',
-      );
-
-      // 3. Closed <details> holds all 7 tool traces, raw JSON/HTML/DDL outputs, thinking, char counts, and token usage
-      expect(html).toContain('data-testid="agent-run-details"');
-      expect(html).not.toMatch(/<details[^>]*\sopen/);
-      expect(html).toContain('data-testid="agent-run-tool-details"');
-      expect(html).toContain('data-testid="agent-run-step-anchor"');
-      expect(html).toContain('SCR-CONTRACT-LIST · EL-ACT-SUBMIT');
-      expect(html).toContain('data-testid="agent-run-thinking"');
-      expect(html).toContain('Inspect M1 AGG-01 &amp; M2 BHV-01');
-      expect(html).toContain('data-testid="agent-run-usage"');
-      expect(html).toContain('1160');
-      expect(html).toContain('auto/glm-5.3-flash');
-
-      // 4. Hook point for #65/#67/#70 Change Summary & Undo footer renders cleanly
-      expect(html).toContain('data-testid="agent-run-change-slot"');
+      expect(html).toContain('data-testid="conversation-work-process"');
+      expect(html).toContain('data-expanded="false"');
+      expect(html).toContain('data-testid="conversation-change-slot"');
       expect(html).toContain('data-testid="mock-change-summary"');
 
-      // 5. When defaultDetailsOpen is true, <details open> opens for inspection
-      const openHtml = renderCard({ run: run!, defaultDetailsOpen: true });
-      expect(openHtml).toMatch(/<details[^>]*data-testid="agent-run-details"[^>]*\sopen/);
+      // Expanded Level 2 exposes anchor badge & raw thinking
+      const openHtml = renderReply({
+        run: run!,
+        defaultWorkExpanded: true,
+        defaultExpandedStepIds: ['tc-4'],
+      });
+      expect(openHtml).toContain('data-testid="agent-run-step-anchor"');
+      expect(openHtml).toContain('SCR-CONTRACT-LIST · EL-ACT-SUBMIT');
+      expect(openHtml).toContain('data-testid="agent-run-thinking"');
+      expect(openHtml).toContain('Inspect M1 AGG-01 &amp; M2 BHV-01');
     }
   });
 
@@ -1702,7 +1696,7 @@ describe('Business-language run progress, suite target resolution & platform pro
         locale === 'en-US' ? 'Open platform settings' : '前往平台设置';
 
       for (const tc of platformCases) {
-        const html = renderCard({ run: tc.run });
+        const html = renderReply({ run: tc.run });
         const violations = checkBusinessViewMarkup(html);
         expect(
           violations,
@@ -1720,8 +1714,7 @@ describe('Business-language run progress, suite target resolution & platform pro
         expect(html).toContain(tc.run.failure!.remediation!);
       }
 
-      // Vision fallback notice on an image-carrying run (non-failed fallback) also shows platform notice + settings link
-      const visionFallbackHtml = renderCard({
+      const visionFallbackHtml = renderReply({
         run: makeRun({
           status: 'SUCCEEDED',
           completedAt: STARTED_AT + 4_000,
@@ -1741,8 +1734,7 @@ describe('Business-language run progress, suite target resolution & platform pro
       expect(visionFallbackHtml).toContain('data-testid="agent-run-diagnostic-details"');
       expect(visionFallbackHtml).toContain('Text-Only Gateway');
 
-      // Non-platform failure: shows plain-language explanation + Retry, NO platform settings link, raw SQL/JSON error tucked in details
-      const nonPlatformHtml = renderCard({
+      const nonPlatformHtml = renderReply({
         run: makeRun({
           status: 'FAILED',
           steps: [],

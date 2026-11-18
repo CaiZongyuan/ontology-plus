@@ -95,6 +95,19 @@ _Avoid_: Background task, pipeline task, one-shot call
 The single place in the workbench where the user talks to agents and watches every Agent Run, showing the Agent Session that belongs to the module in view.
 _Avoid_: Chat drawer, task drawer, assistant sidebar
 
+**Model Call (模型调用)**:
+One request from an Agent Run to the language model and its response; a single Agent Run may contain many Model Calls, including those of its subagents.
+_Avoid_: Step (reserved for Project Step), turn, request, trace
+
+**Context Snapshot (上下文快照)**:
+The record of exactly what one Model Call sent to the model (instructions, tool definitions, injected business context, and the messages included or left out) together with the usage the model provider reported for it.
+_Avoid_: Prompt log, debug dump, trace
+
+**Context Inspector (上下文查看器)**:
+The part of the Agent Panel, closed by default, where anyone can examine the Context Snapshots of the conversation in view: what the AI Assistant remembers, what it has dropped, and how that changed from one Model Call to the next.
+_Avoid_: Debug panel, developer mode, expert mode, trace viewer
+_Shown to business users as_: 对话记忆 (Conversation memory)
+
 **Workbench Theme (工作台主题)**:
 A named look of the Ontology Plus workbench itself, covering both its light and dark appearance, that the user chooses independently of how any Interactive Prototype or generated application looks.
 _Avoid_: Skin, UI theme, style, Visual Reference (which describes the generated application, not the workbench)
@@ -153,6 +166,11 @@ _Avoid_: Version, clone, copy
 The single Prototype Revision in an Ontology Project that the user has approved as the source for UI Model extraction and Ontology Suite synthesis.
 _Avoid_: Latest version, active prototype
 _Shown to business users as_: 已确认的原型 (Confirmed prototype)
+
+**Ontology Synthesis (本体合成)**:
+The derivation of an Ontology Project's Ontology Suite from its confirmed requirements specification and Confirmed Revision in the Business Model step, covering the full confirmed requirement scope while aligning UI bindings and interactions with the confirmed prototype.
+_Avoid_: 本体萃取, Ontology Extraction, 模板套用, 逆向工程
+_Shown to business users as_: 生成业务模型 (Generate business model)
 
 **Visual Reference (视觉参考)**:
 A screenshot of a real production interface that the user picks or supplies to show the agent the look they want.
@@ -220,7 +238,7 @@ _Avoid_: Custom webhook, REST wrapper
 
 **Ontology Extraction (本体萃取 / 存量系统本体化)**:
 The process of distilling an Ontology Suite from an existing business system's documentation, schemas, and interfaces to upgrade legacy capabilities into Agent-native Skills, MCP tools, and intelligent workflows.
-_Avoid_: 逆向工程, 本体逆向, 逆向建模, Reverse engineering
+_Avoid_: 逆向工程, 本体逆向, 逆向建模, Reverse engineering, 本体合成, 生成业务模型
 
 **Extraction Candidate (萃取候选)**:
 A single model element proposed by an Ontology Extraction that has not yet entered the Ontology Suite.

@@ -32,6 +32,7 @@ import {
 import {
   MODEL_CODES,
   checkSqlGrounding,
+  extractMuFromPrototypeHtml,
   validateOntologySuite,
   type ModelCode,
   type OntologySuite,
@@ -137,6 +138,11 @@ import {
 // ─── Gateway Error & Explicit Mock Boundary (ADR-0007) ───────────────────────
 
 import { LlmGatewayError, isMockLlmActive } from './gateway-boundary.js';
+import {
+  recordModelCallStream,
+  sessionMessageItems,
+  type PromptMark,
+} from './model-call-recording.js';
 export { LlmGatewayError, isMockLlmActive };
 
 function resolveProjectDetail(
@@ -2440,7 +2446,7 @@ export function buildPiModelsForStore(
       input: doesProviderSupportVision(cfg, id) ? ['text', 'image'] : ['text'],
       cost: ZERO_MODEL_COST,
       reasoning: true,
-      contextWindow: 128000,
+      contextWindow: cfg.contextWindow && cfg.contextWindow > 0 ? cfg.contextWindow : 128000,
       maxTokens: 32768,
     }));
 
@@ -2606,6 +2612,105 @@ function latestUserPrompt(session: AgentSession): string | undefined {
   return undefined;
 }
 
+function buildCopilotUpstreamDigest(
+  store: WorkspaceStore,
+  projectId: string,
+  project: ReturnType<typeof resolveProjectDetail>,
+  locale: AgentLocale,
+): string {
+  const stepConfs = store.getProjectStepConfirmations(projectId);
+  const confirmedReq = stepConfs.requirements;
+  const confirmedProto = store.getConfirmedPrototypeRevision(projectId);
+  const sections: string[] = [];
+
+  const aggsSummary =
+    (project?.suite.M1?.aggregates ?? [])
+      .map(
+        (a) =>
+          `${a.name}(${a.id}:${a.alias}, fields=[${a.attributes.map((f) => f.name).join(', ')}])`,
+      )
+      .join('; ') || (locale === 'en-US' ? 'none' : '无');
+  const rulesSummary =
+    (project?.suite.M3?.rules ?? []).map((r) => `${r.id}:${r.alias}`).join('; ') ||
+    (locale === 'en-US' ? 'none' : '无');
+  const behaviorsSummary =
+    (project?.suite.M2?.behaviors ?? []).map((b) => `${b.id}:${b.alias}(${b.ownerEntity})`).join('; ') ||
+    (locale === 'en-US' ? 'none' : '无');
+  const activeErrors = (project?.validation.diagnostics ?? [])
+    .filter((d) => d.tier === 'ERROR')
+    .slice(0, 8)
+    .map(
+      (d) =>
+        `[${d.code}@${d.model}] (${d.elementId ?? 'root'}) ${locale === 'en-US' ? d.messageEn : d.messageZh}`,
+    );
+
+  if (locale === 'en-US') {
+    sections.push(
+      `Current Ontology Suite Summary: M1 aggregates=${aggsSummary}; M2 behaviors=${behaviorsSummary}; M3 rules (${project?.suite.M3?.rules.length ?? 0})=${rulesSummary}.`,
+    );
+    if (activeErrors.length > 0) {
+      sections.push(`Active Consistency Errors to fix:\n${activeErrors.join('\n')}`);
+    }
+    if (confirmedReq) {
+      sections.push(
+        `[Confirmed Requirements Specification: ${confirmedReq.title} ${confirmedReq.version}]\n${confirmedReq.content.slice(0, 12000)}`,
+      );
+    } else {
+      sections.push(`Confirmed Requirements Specification: NOT YET CONFIRMED.`);
+    }
+    if (confirmedProto) {
+      const extractedMu = extractMuFromPrototypeHtml(
+        confirmedProto.htmlContent,
+        project?.domain ?? '',
+      );
+      const screenLines = extractedMu.screens.map((s) => {
+        const bindings = s.elements
+          .filter((e) => e.dataBinding)
+          .map((e) => e.dataBinding!)
+          .join(', ');
+        const events = s.events.map((ev) => `${ev.eventId}(${ev.name})`).join(', ');
+        return `- ${s.screenId} (${s.name}, ${s.screenType}): bindings=[${bindings || 'none'}]; events=[${events || 'none'}]`;
+      });
+      sections.push(
+        `[Confirmed Prototype Revision Anchors (${confirmedProto.prototype.id} / ${confirmedProto.revisionId})]\n${screenLines.join('\n') || '(no screens)'}`,
+      );
+    }
+    return sections.join('\n\n');
+  }
+
+  sections.push(
+    `当前 M1 聚合根：${aggsSummary}；M2 行为：${behaviorsSummary}；M3 规则数（${project?.suite.M3?.rules.length ?? 0}）：${rulesSummary}。`,
+  );
+  if (activeErrors.length > 0) {
+    sections.push(`【当前待修复一致性错误】\n${activeErrors.join('\n')}`);
+  }
+  if (confirmedReq) {
+    sections.push(
+      `【已确认需求文档快照】（${confirmedReq.title} ${confirmedReq.version}）：\n${confirmedReq.content.slice(0, 12000)}`,
+    );
+  } else {
+    sections.push(`【已确认需求文档快照】：尚未确认。`);
+  }
+  if (confirmedProto) {
+    const extractedMu = extractMuFromPrototypeHtml(
+      confirmedProto.htmlContent,
+      project?.domain ?? '',
+    );
+    const screenLines = extractedMu.screens.map((s) => {
+      const bindings = s.elements
+        .filter((e) => e.dataBinding)
+        .map((e) => e.dataBinding!)
+        .join(', ');
+      const events = s.events.map((ev) => `${ev.eventId}(${ev.name})`).join(', ');
+      return `- ${s.screenId}（${s.name}，${s.screenType}）：数据绑定=[${bindings || '无'}]；交互事件=[${events || '无'}]`;
+    });
+    sections.push(
+      `【已确认原型锚点摘要】（${confirmedProto.prototype.id} / ${confirmedProto.revisionId}）：\n${screenLines.join('\n') || '（无屏幕锚点）'}`,
+    );
+  }
+  return sections.join('\n\n');
+}
+
 function buildSystemPromptForSession(
   store: WorkspaceStore,
   session: AgentSession,
@@ -2615,16 +2720,26 @@ function buildSystemPromptForSession(
     codeMode?: boolean;
     multiAgentConcurrency?: number;
     offeredTools?: readonly Tool[];
+    /** Collects the parts of the prompt that are not plain instructions (ADR 0017). */
+    marks?: PromptMark[];
   },
 ): string {
+  const mark = (kind: PromptMark['kind'], text: string): string => {
+    if (text && execOptions?.marks) execOptions.marks.push({ kind, text });
+    return text;
+  };
+  const biz = (text: string): string => mark('BUSINESS_CONTEXT', text);
   const withExecFooter = (corePrompt: string): string => {
     if (!execOptions?.codeMode || !execOptions.offeredTools) {
       return corePrompt;
     }
-    return `${corePrompt}\n\n${renderCodemodePromptSection(
-      execOptions.offeredTools,
-      locale,
-      execOptions.multiAgentConcurrency ?? 3,
+    return `${corePrompt}\n\n${mark(
+      'TOOL_GUIDE',
+      renderCodemodePromptSection(
+        execOptions.offeredTools,
+        locale,
+        execOptions.multiAgentConcurrency ?? 3,
+      ),
     )}`;
   };
   const project = resolveProjectDetail(store, session.projectId);
@@ -2660,18 +2775,18 @@ function buildSystemPromptForSession(
       `You are the Pi Durable Agent of the Ontology Plus workbench (session kind: ${session.agentKind}).`,
       `LANGUAGE RULE: Always respond in English (matching the user's English interface/input), unless the user explicitly writes in Chinese.`,
       project
-        ? `Active Ontology Project: ${project.name} (ID: ${project.id}, Domain: ${project.domain}, Present Models: ${project.validation.presentModels.join(', ')}, Consistency Errors: ${project.validation.errorCount}, Stage Warnings: ${project.validation.warningCount}).`
+        ? biz(`Active Ontology Project: ${project.name} (ID: ${project.id}, Domain: ${project.domain}, Present Models: ${project.validation.presentModels.join(', ')}, Consistency Errors: ${project.validation.errorCount}, Stage Warnings: ${project.validation.warningCount}).`)
         : '',
-      activeModelCode ? `Currently focused model tab: ${activeModelCode}.` : '',
-      session.compactedSummary ? `[Compacted Conversation Summary]\n${session.compactedSummary}` : '',
+      activeModelCode ? biz(`Currently focused model tab: ${activeModelCode}.`) : '',
+      session.compactedSummary ? mark('COMPACTED_SUMMARY', `[Compacted Conversation Summary]\n${session.compactedSummary}`) : '',
       `Execution Rules (YOLO + Scoped HITL):`,
       `1. Execute the routine tools provided to this specialist automatically. Never ask permission before calling routine tools.`,
       `2. ONLY call \`ask_user\` when required business parameters are missing or a Class-B business boundary ambiguity requires a human decision.`,
       `3. If an ontology mutation returns an 11-model consistency error (isError=true), read the diagnostics and self-repair in the same turn.`,
-      `4. Always use the term "Ontology Extraction" — never "reverse engineering".`,
+      `4. Use "Ontology Synthesis" for generating/updating the Business Model from confirmed requirements and prototype, and "Ontology Extraction" strictly for legacy system extraction — never "reverse engineering".`,
       `5. Step Isolation & Hand-off: NEVER execute mutations belonging to another Project Step (REQUIREMENTS=scope & requirements doc; PROTOTYPE=screen layout, table columns, buttons & visual styling; BUSINESS_MODEL=business objects, actions, business/approval rules, roles & permissions, flows, reports, storage & integrations; DELIVERY=application implementation specs & development package). When the user asks for work belonging to another step, explain briefly in plain business language and call \`propose_step_handoff\` with \`targetStep\`, \`request\`, and \`reason\`.`,
       getBlockedStepExplanation(store, session, 'en-US')
-        ? `[Current Step Status — Cannot Start Yet] ${getBlockedStepExplanation(store, session, 'en-US')} Do NOT call any mutation or synthesis tools until the upstream step is confirmed.`
+        ? biz(`[Current Step Status — Cannot Start Yet] ${getBlockedStepExplanation(store, session, 'en-US')} Do NOT call any mutation or synthesis tools until the upstream step is confirmed.`)
         : '',
     ]
       .filter(Boolean)
@@ -2681,8 +2796,8 @@ function buildSystemPromptForSession(
       return [
         baseHeaderEn,
         `Current reasoning mode: ${session.reasoningMode ?? 'ASK_DATA'} (ASK_DATA=data query, ASK_WHY=root-cause attribution, ASK_POLICY=policy writeback).`,
-        renderedGrounding,
-        writebacks ? `Registered writeback interfaces: ${writebacks}.` : '',
+        biz(renderedGrounding),
+        writebacks ? biz(`Registered writeback interfaces: ${writebacks}.`) : '',
         `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; every figure you state must come from a query result. When requested via [ACTION:METRIC_INSIGHT ...], MUST call save_metric_insight with live SQLite evidence. When requested via [ACTION:SCENARIO_ATTRIBUTION ...], MUST call save_scenario_attribution_report with causalBreakdown weights grounded in SQLite results. In ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
       ]
         .filter(Boolean)
@@ -2691,13 +2806,13 @@ function buildSystemPromptForSession(
     if (session.agentKind === 'CAPABILITY') {
       const caps = project ? inspectOntologyMcpCapabilities(project) : null;
       const toolNames = caps?.tools.map((t) => `${t.name}(${t.sourceModel})`).join(', ') ?? 'none';
-      return `${baseHeaderEn}\nCompiled Ontology MCP tools: ${toolNames}. Prefer calling invoke_mcp_tool to execute domain queries or behaviors; when asked to perform Ontology Extraction ([ACTION:RUN_ONTOLOGY_EXTRACTION ...] or DDL/OpenAPI/source extraction), MUST call run_ontology_extraction.`;
+      return `${baseHeaderEn}\n${biz(`Compiled Ontology MCP tools: ${toolNames}.`)} Prefer calling invoke_mcp_tool to execute domain queries or behaviors; when asked to perform Ontology Extraction ([ACTION:RUN_ONTOLOGY_EXTRACTION ...] or DDL/OpenAPI/source extraction), MUST call run_ontology_extraction.`;
     }
     if (session.agentKind === 'ARCHITECTURE') {
-      return `${baseHeaderEn}\nYou are the Architecture Asset Agent. Author and maintain reusable repository-owned UI, technical foundation and technical architecture standards. Write platform-generated development standards in English; conversation follows the user's language, and original business references retain their source language. Repository files are authoritative; use read_architecture_assets to inspect current sources and save_architecture_asset (or save_tech_architecture_spec for TECH_ARCH) to persist authored standards with the chosen technologyProfileId. Standards are shared assets; this session does not select or change a target application's inputs. Do not claim to implement code, run a build or execute tests.\nRepository standards catalog: ${architectureContext}`;
+      return `${baseHeaderEn}\nYou are the Architecture Asset Agent. Author and maintain reusable repository-owned UI, technical foundation and technical architecture standards. Write platform-generated development standards in English; conversation follows the user's language, and original business references retain their source language. Repository files are authoritative; use read_architecture_assets to inspect current sources and save_architecture_asset (or save_tech_architecture_spec for TECH_ARCH) to persist authored standards with the chosen technologyProfileId. Standards are shared assets; this session does not select or change a target application's inputs. Do not claim to implement code, run a build or execute tests.\n${biz(`Repository standards catalog: ${architectureContext}`)}`;
     }
     if (session.agentKind === 'CODING') {
-      return `${baseHeaderEn}\nYou are the Application Development Agent, helping refine an application implementation specification. Conversation follows the user's language. Author application implementation instructions saved via save_application_instructions in English; original Chinese business material may remain only as clearly quoted source. Target application ID: ${session.targetId ?? '(unselected)'}. Read read_application_inputs before recommending changes; inspect the requirements, confirmed prototype, Ontology Suite, selected Technology Profile and standards, and existing application instructions. Ontology defines business semantics, the confirmed prototype defines UI intent, and the selected standards define engineering constraints. Diagnose missing inputs and explicit contradictions, and ask_user for unresolved choices. Preserve Stage Warnings as non-blocking. Save the complete refined application-specific Markdown with save_application_instructions. Record unresolved explicit contradictions in developmentBlockers to block formal package generation; omission preserves the previous list, and [] is allowed only after resolving those contradictions with the user. An explicit application must belong to this session project; never substitute an unrelated application or standard. Shared standards are authored in the Architecture Asset Agent. Development Package generation is an ordinary explicit action after inputs are resolved. Your tools refine specifications; do not claim code implementation, build or test execution.\nSaved target inputs (use read_application_inputs for full references): ${applicationContext}`;
+      return `${baseHeaderEn}\nYou are the Application Development Agent, helping refine an application implementation specification. Conversation follows the user's language. Author application implementation instructions saved via save_application_instructions in English; original Chinese business material may remain only as clearly quoted source. Target application ID: ${session.targetId ?? '(unselected)'}. Read read_application_inputs before recommending changes; inspect the requirements, confirmed prototype, Ontology Suite, selected Technology Profile and standards, and existing application instructions. Ontology defines business semantics, the confirmed prototype defines UI intent, and the selected standards define engineering constraints. Diagnose missing inputs and explicit contradictions, and ask_user for unresolved choices. Preserve Stage Warnings as non-blocking. Save the complete refined application-specific Markdown with save_application_instructions. Record unresolved explicit contradictions in developmentBlockers to block formal package generation; omission preserves the previous list, and [] is allowed only after resolving those contradictions with the user. An explicit application must belong to this session project; never substitute an unrelated application or standard. Shared standards are authored in the Architecture Asset Agent. Development Package generation is an ordinary explicit action after inputs are resolved. Your tools refine specifications; do not claim code implementation, build or test execution.\n${biz(`Saved target inputs (use read_application_inputs for full references): ${applicationContext}`)}`;
     }
     if (session.agentKind === 'REQUIREMENT') {
       return `${baseHeaderEn}\nFollow progressive business requirement clarification: auto-complete standard defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], and when a business choice is needed, call ask_user to ask ONLY ONE question at a time with 2-4 plain business-language options (no model codes or IDs) and allowFreeform: true. Call record_requirement_insights to persist candidate business objects and rules, and when asked to synthesize the requirements document ([ACTION:SYNTHESIZE_SRS ...] or user request), MUST call save_synthesized_srs_doc with the complete 9-chapter Markdown specification (## 1. through ## 9., including ### 9.1 through ### 9.7).`;
@@ -2713,8 +2828,8 @@ function buildSystemPromptForSession(
         return withExecFooter(
           [
             baseHeaderEn,
-            confirmedReqSection,
-            `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
+            biz(confirmedReqSection),
+            biz(`Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`),
             `Initial Prototype Generation Rules:`,
             useParallel
               ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`init_prototype_shell\` with 3–4 screen artboards matching the requirements and Design Brief tokens so the user sees live artboards immediately; THEN call \`spawn_subagents\` (directly or inside \`codemode\`) so ${execOptions?.multiAgentConcurrency ?? 3} parallel subagents build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
@@ -2734,8 +2849,8 @@ function buildSystemPromptForSession(
       return withExecFooter(
         [
           baseHeaderEn,
-          `Target Interactive Prototype: ${proto.name} (ID: ${proto.id}, Version: ${proto.version}).`,
-          `Screens in prototype: ${screensDesc}.`,
+          biz(`Target Interactive Prototype: ${proto.name} (ID: ${proto.id}, Version: ${proto.version}).`),
+          biz(`Screens in prototype: ${screensDesc}.`),
           `Prototype Co-Design Rules:`,
           `1. Always call \`read_prototype_anchor\` (or \`list_prototype_anchors\`) first to inspect ONLY the targeted element or screen without reading unrelated screens.`,
           `2. For localized refinements, ALWAYS call \`edit_prototype_anchor\` (\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`) or \`upsert_prototype_screen\` so untouched screens stay intact.`,
@@ -2746,7 +2861,19 @@ function buildSystemPromptForSession(
       );
     }
     return withExecFooter(
-      `${baseHeaderEn}\nCurrent M1 aggregates: ${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || 'none'}; M3 rules count: ${project?.suite.M3?.rules.length ?? 0}. When asked to synthesize the 11-model Ontology Suite from the prototype ([ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...] or user request), MUST call synthesize_ontology_suite.`,
+      [
+        baseHeaderEn,
+        biz(buildCopilotUpstreamDigest(store, session.projectId, project, 'en-US')),
+        `Ontology Synthesis Guidelines (ADR 0018 — 4-Wave Progressive Authoring):`,
+        `1. Dual-Source Scope: Cover ALL business objects, actions, rules, flows, and reports in the Confirmed Requirements Specification (even modules without prototype screens), while aligning UI bindings with the Confirmed Prototype Revision anchors. Never fabricate features explicitly excluded in requirements.`,
+        `2. Four-Wave Order on [ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...]:`,
+        `   - Wave 1 (Foundation): Call \`upsert_aggregate\` for each domain aggregate (use PascalCase names aligned with prototype binding prefixes, e.g. \`Member\` for \`member.*\`; keep search/filter inputs like \`keyword\` out of M1 attributes) and \`upsert_actor_role\` for M5 actors/roles.`,
+        `   - Wave 2 (Capabilities & Rules): Call \`upsert_rule\` (M3), \`upsert_behavior\` (M2), and \`upsert_query_report\` (M7, declaring filter parameters).`,
+        `   - Wave 3 (Events, Automations & Flows): Call \`upsert_event\` (ME), \`upsert_scenario\` (M4, omit if no cross-aggregate event automation exists), and \`upsert_flow\` (M6, omit if no multi-role/approval workflow exists). Only call \`upsert_interface\` (MI) if external/inbound integrations exist in requirements.`,
+        `   - Wave 4 (Finalize & Align MU/MM): MUST call \`synthesize_ontology_suite\` (\`{}\` or \`{"mode":"update"}\`) as the final step to bind MU from the Confirmed Prototype Revision, derive MM table mappings, and pass the consistency gate.`,
+        `3. Incremental Updates (\`mode="update"\` or \`mode="fix_problems"\`): Preserve existing authored objects, rules, and manual edits; only add/adjust elements required by the updated upstream inputs or active diagnostics.`,
+        `4. Conflict Handling: Absorb benign prototype refinements naturally and ignore harmless UI navigation shortcuts; ONLY call \`ask_user\` or \`propose_step_handoff\` when an irreconcilable business rule contradiction exists between Confirmed Requirements and Confirmed Prototype.`,
+      ].join('\n'),
     );
   }
 
@@ -2754,18 +2881,18 @@ function buildSystemPromptForSession(
     `你是 Ontology Plus 工作台的 Pi Durable 智能体（会话类型：${session.agentKind}）。`,
     `语言准则：请始终与用户最新输入保持同一语言回复（中文提问用中文，英文提问用英文）。`,
     project
-      ? `当前激活本体工程：${project.name}（ID: ${project.id}，领域：${project.domain}，已建模型：${project.validation.presentModels.join(', ')}，一致性错误：${project.validation.errorCount}，阶段提示：${project.validation.warningCount}）。`
+      ? biz(`当前激活本体工程：${project.name}（ID: ${project.id}，领域：${project.domain}，已建模型：${project.validation.presentModels.join(', ')}，一致性错误：${project.validation.errorCount}，阶段提示：${project.validation.warningCount}）。`)
       : '',
-    activeModelCode ? `当前聚焦模型标签页：${activeModelCode}。` : '',
-    session.compactedSummary ? `【历史会话压缩摘要】\n${session.compactedSummary}` : '',
+    activeModelCode ? biz(`当前聚焦模型标签页：${activeModelCode}。`) : '',
+    session.compactedSummary ? mark('COMPACTED_SUMMARY', `【历史会话压缩摘要】\n${session.compactedSummary}`) : '',
     `执行准则（YOLO + Scoped HITL）：`,
     `1. 当前专职智能体可用的常规工具均直接自动调用，严禁在调用常规工具前向用户索要权限许可。`,
     `2. 仅当缺少必填业务参数或存在 B 类业务规则分歧需要用户拍板时，才调用 \`ask_user\` 工具弹出结构化单选/多选卡片。`,
     `3. 若本体变更工具返回 11 模型一致性错误（isError=true），请仔细阅读错误诊断并在本轮自动修正参数重试。`,
-    `4. 严禁使用“逆向”或“逆向工程”字眼，统一使用“本体萃取 (Ontology Extraction)”。`,
+    `4. 术语准则：从已确认需求与原型生成业务模型统称“本体合成 (Ontology Synthesis) / 生成业务模型”；存量系统提取才称“本体萃取 (Ontology Extraction)”；严禁使用“逆向”或“逆向工程”。`,
     `5. 跨步骤隔离与步骤转交准则：严禁在当前会话中执行其他步骤的改动（REQUIREMENTS=需求范围与需求文档；PROTOTYPE=页面布局、表格列、按钮与视觉样式；BUSINESS_MODEL=业务对象、业务操作、审批与校验等业务规则、角色权限、流程、报表、存储与接口；DELIVERY=应用实施说明与开发资料包）。当用户提出属于其他步骤的请求时，请用通俗业务语言简要说明原因，并调用 \`propose_step_handoff\` 工具（传入 \`targetStep\`、原样携带的 \`request\` 与 \`reason\`）生成转交卡片。`,
     getBlockedStepExplanation(store, session, 'zh-CN')
-      ? `【当前步骤状态：还不能开始】${getBlockedStepExplanation(store, session, 'zh-CN')} 在上游步骤确认前，严禁调用任何写入或合成工具。`
+      ? biz(`【当前步骤状态：还不能开始】${getBlockedStepExplanation(store, session, 'zh-CN')} 在上游步骤确认前，严禁调用任何写入或合成工具。`)
       : '',
   ]
     .filter(Boolean)
@@ -2775,8 +2902,8 @@ function buildSystemPromptForSession(
     return [
       baseHeader,
       `当前分析推理模式：${session.reasoningMode ?? 'ASK_DATA'}（ASK_DATA=智能问数，ASK_WHY=智能问因，ASK_POLICY=智能问策）。`,
-      renderedGrounding,
-      writebacks ? `当前已注册闭环回写接口：${writebacks}。` : '',
+      biz(renderedGrounding),
+      writebacks ? biz(`当前已注册闭环回写接口：${writebacks}。`) : '',
       `优先调用 run_readonly_sql 获取真实表数据后再输出结论，结论中的每个数字都必须来自查询结果；收到 [ACTION:METRIC_INSIGHT ...] 时必须结合实查结果调用 save_metric_insight 输出指标异动洞察；收到 [ACTION:SCENARIO_ATTRIBUTION ...] 时必须结合实查结果调用 save_scenario_attribution_report 归档场景归因报告；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
     ]
       .filter(Boolean)
@@ -2786,17 +2913,17 @@ function buildSystemPromptForSession(
     const caps = project ? inspectOntologyMcpCapabilities(project) : null;
     const toolNames = caps?.tools.map((t) => `${t.name}(${t.sourceModel})`).join(', ') ?? '无';
     return withExecFooter(
-      `${baseHeader}\n当前工程可用 Ontology MCP 工具：${toolNames}。优先调用 invoke_mcp_tool 执行业务动作或查询；当收到本体萃取请求（如 [ACTION:RUN_ONTOLOGY_EXTRACTION ...] 或 DDL/OpenAPI/文档本体萃取）时，必须调用 run_ontology_extraction 工具。`,
+      `${baseHeader}\n${biz(`当前工程可用 Ontology MCP 工具：${toolNames}。`)}优先调用 invoke_mcp_tool 执行业务动作或查询；当收到本体萃取请求（如 [ACTION:RUN_ONTOLOGY_EXTRACTION ...] 或 DDL/OpenAPI/文档本体萃取）时，必须调用 run_ontology_extraction 工具。`,
     );
   }
   if (session.agentKind === 'ARCHITECTURE') {
     return withExecFooter(
-      `${baseHeader}\n你是架构资产智能体，编写和维护仓库拥有的可复用 UI、技术底座和技术架构规范。平台生成的开发规范正文使用英文；对话跟随用户语言，原始业务参考保留来源语言。仓库文件是权威来源；先用 read_architecture_assets 读取规范与来源，再通过 save_architecture_asset 保存并声明选定的 technologyProfileId，TECH_ARCH 也可用 save_tech_architecture_spec。规范是共享资产，本会话不选择或修改目标应用的输入。不得声称已经实现代码、运行构建或执行测试。\n仓库规范目录：${architectureContext}`,
+      `${baseHeader}\n你是架构资产智能体，编写和维护仓库拥有的可复用 UI、技术底座和技术架构规范。平台生成的开发规范正文使用英文；对话跟随用户语言，原始业务参考保留来源语言。仓库文件是权威来源；先用 read_architecture_assets 读取规范与来源，再通过 save_architecture_asset 保存并声明选定的 technologyProfileId，TECH_ARCH 也可用 save_tech_architecture_spec。规范是共享资产，本会话不选择或修改目标应用的输入。不得声称已经实现代码、运行构建或执行测试。\n${biz(`仓库规范目录：${architectureContext}`)}`,
     );
   }
   if (session.agentKind === 'CODING') {
     return withExecFooter(
-      `${baseHeader}\n你是应用开发智能体，负责完善应用的实施规格。对话跟随用户语言。通过 save_application_instructions 编写并保存的应用实施指令必须使用英文；原始中文业务材料可保留为明确标注的引用来源。目标应用 ID：${session.targetId ?? '（未选择）'}。先通过 read_application_inputs 读取需求、已确认原型、本体套件、选定技术方案与规范、现有应用指令，再诊断缺项和明确冲突。本体定义业务语义，已确认原型定义 UI 意图，选定规范定义工程约束；存在未决选择时用 ask_user 澄清，阶段提示保持非阻断。通过 save_application_instructions 保存完整的应用专属 Markdown 实施指令；将未解决的明确矛盾写入 developmentBlockers，阻断正式开发包生成。省略该参数保留已有清单；只有与用户解决这些矛盾后才可传 [] 清空。明确应用必须属于当前会话工程，不得用其他应用或规范代替缺失输入。共享规范由架构资产智能体维护。开发包在输入问题解决后由普通显式生成操作产出。你的工具负责完善规格，不得声称已经实现代码、运行构建或执行测试。\n目标已保存输入（完整引用请调用 read_application_inputs）：${applicationContext}`,
+      `${baseHeader}\n你是应用开发智能体，负责完善应用的实施规格。对话跟随用户语言。通过 save_application_instructions 编写并保存的应用实施指令必须使用英文；原始中文业务材料可保留为明确标注的引用来源。目标应用 ID：${session.targetId ?? '（未选择）'}。先通过 read_application_inputs 读取需求、已确认原型、本体套件、选定技术方案与规范、现有应用指令，再诊断缺项和明确冲突。本体定义业务语义，已确认原型定义 UI 意图，选定规范定义工程约束；存在未决选择时用 ask_user 澄清，阶段提示保持非阻断。通过 save_application_instructions 保存完整的应用专属 Markdown 实施指令；将未解决的明确矛盾写入 developmentBlockers，阻断正式开发包生成。省略该参数保留已有清单；只有与用户解决这些矛盾后才可传 [] 清空。明确应用必须属于当前会话工程，不得用其他应用或规范代替缺失输入。共享规范由架构资产智能体维护。开发包在输入问题解决后由普通显式生成操作产出。你的工具负责完善规格，不得声称已经实现代码、运行构建或执行测试。\n${biz(`目标已保存输入（完整引用请调用 read_application_inputs）：${applicationContext}`)}`,
     );
   }
   if (session.agentKind === 'REQUIREMENT') {
@@ -2815,8 +2942,8 @@ function buildSystemPromptForSession(
       return withExecFooter(
         [
           baseHeader,
-          confirmedReqSection,
-          `当前共创目标交互原型：未绑定（按设计简报与已确认需求文档从零生成首版交互原型 Revision #1）。`,
+          biz(confirmedReqSection),
+          biz(`当前共创目标交互原型：未绑定（按设计简报与已确认需求文档从零生成首版交互原型 Revision #1）。`),
           `首版原型生成准则（快速上屏，禁止在 thinking 中默写整页长代码）：`,
           useParallel
             ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码，也严禁调用单次巨型 \`rewrite_prototype_page\`**！请立即在 \`codemode\` 中或分步执行：① 先调用 \`init_prototype_shell\` 声明共享视觉令牌与 3～4 个核心业务分屏骨架（使画布 0 秒点亮所有画板）；② 紧接着调用 \`spawn_subagents\` 派发分屏任务（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行子智能体，每个子智能体各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。`
@@ -2836,8 +2963,8 @@ function buildSystemPromptForSession(
     return withExecFooter(
       [
         baseHeader,
-        `当前共创目标交互原型：${proto.name}（ID: ${proto.id}，版本: ${proto.version}）。`,
-        `当前原型包含屏幕锚点：${screensDesc}。`,
+        biz(`当前共创目标交互原型：${proto.name}（ID: ${proto.id}，版本: ${proto.version}）。`),
+        biz(`当前原型包含屏幕锚点：${screensDesc}。`),
         `原型局部精修与分屏补全准则：`,
         `1. 针对尚未绘制完成的分屏（或单独重绘某一分屏），直接调用 \`upsert_prototype_screen\`（多屏调整可调用 \`spawn_subagents\` 并行处理），严禁无故重写其他无关屏幕。`,
         `2. 控件级局部改动一律先 \`read_prototype_anchor\` 再 \`edit_prototype_anchor\`（\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`），确保未选中的屏幕与兄弟控件保持逐字节一致。`,
@@ -2847,7 +2974,19 @@ function buildSystemPromptForSession(
     );
   }
   return withExecFooter(
-    `${baseHeader}\n当前 M1 聚合根：${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || '无'}；M3 规则数：${project?.suite.M3?.rules.length ?? 0}。当收到从确认原型合成 11 模型请求（如 [ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...]）时，必须调用 synthesize_ontology_suite 工具并交由两级一致性校验门禁落库。`,
+    [
+      baseHeader,
+      biz(buildCopilotUpstreamDigest(store, session.projectId, project, 'zh-CN')),
+      `本体合成准则（ADR 0018 · 四波渐进建模）：`,
+      `1. 双源融合边界：【已确认需求文档快照】决定全量业务范围（即使原型未画某模块页面，需求已确认的业务对象、操作、规则、报表也必须完整建模；需求明确排除的暂缓项严禁脑补）；【已确认原型锚点摘要】决定已绘界面的数据绑定与事件对齐。`,
+      `2. 收到生成/更新业务模型请求（如 [ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...]）时，严禁单次默写巨型蓝图或编造假模板，按依赖分 4 波推进（尽量直接并发调用常规工具而非编写复杂探针脚本）：`,
+      `   - 第 1 波（立骨架）：调用 \`upsert_aggregate\` 建立全部业务对象（大驼峰 \`name\` 对齐原型绑定前缀，如 \`member.*\` 对应 \`Member\`；搜索框 \`keyword\` 等筛选条件归入查询参数，不要塞进 M1 字段），并调用 \`upsert_actor_role\` 建立 M5 角色；`,
+      `   - 第 2 波（定能力与规则）：调用 \`upsert_rule\`（M3 跨对象/计算/校验规则）、\`upsert_behavior\`（M2 行为）与 \`upsert_query_report\`（M7 查询与经营报表）；`,
+      `   - 第 3 波（串联动与流程）：调用 \`upsert_event\`（ME 业务事件）；仅在业务确实存在跨对象自动联动时调用 \`upsert_scenario\`（M4），存在多角色协作/人工审批时调用 \`upsert_flow\`（M6），存在外部系统对接时调用 \`upsert_interface\`（MI）——业务中不存在的模型如实留空，绝不造假凑数；`,
+      `   - 第 4 波（对齐收口）：最后必须调用一次 \`synthesize_ontology_suite\`（传 \`{}\` 或 \`{"mode":"update"}\`），由系统同步已确认原型 MU、生成 MM 数据存储映射并完成一致性校验收口。`,
+      `3. 增量更新与修复准则（\`mode="update"\` 或 \`mode="fix_problems"\`）：默认保留已有的业务对象、规则及用户手动修改，仅新增或调整上游变更及待修复错误涉及的部分，严禁推倒重来。`,
+      `4. 冲突处理准则：原型的合理交互细化直接吸收，无关快捷跳转噪音自动忽略；仅当需求文档与原型出现正面业务规则矛盾时，才调用 \`ask_user\` 或 \`propose_step_handoff\` 请用户拍板。`,
+    ].join('\n'),
   );
 }
 
@@ -3119,15 +3258,55 @@ async function executeUnifiedToolCall(
         args,
         project.domain,
       );
+      const effectiveBaselineSuite: OntologySuite = {
+        ...workingSuite,
+        ...(!workingSuite.M1 && mutation.nextSuite.M1
+          ? {
+              M1: {
+                model_type: 'OBJECT',
+                version: '5.0',
+                domain: project.domain,
+                aggregates: [],
+                data_dictionaries: [],
+                aggregate_associations: [],
+              },
+            }
+          : {}),
+        ...(!workingSuite.M7 && mutation.nextSuite.M7
+          ? {
+              M7: {
+                model_type: 'QUERY_REPORT',
+                version: '5.0',
+                domain: project.domain,
+                query_reports: [],
+              },
+            }
+          : {}),
+      };
+      const effectiveBaselineReport =
+        effectiveBaselineSuite.M1 !== workingSuite.M1 || effectiveBaselineSuite.M7 !== workingSuite.M7
+          ? validateOntologySuite(effectiveBaselineSuite)
+          : baselineReport;
+      const effectiveBaselineErrorIds = new Set(
+        effectiveBaselineReport.diagnostics.filter((d) => d.tier === 'ERROR').map((d) => d.id),
+      );
       const candidateReport = validateOntologySuite(mutation.nextSuite);
+      const newlyIntroducedErrors = candidateReport.diagnostics.filter(
+        (d) => d.tier === 'ERROR' && !effectiveBaselineErrorIds.has(d.id),
+      );
 
-      if (candidateReport.errorCount > baselineReport.errorCount) {
-        const addedErrors = candidateReport.diagnostics
-          .filter((d) => d.tier === 'ERROR')
-          .map(
-            (d) =>
-              `[${d.code}@${d.model}] ${locale === 'en-US' ? d.messageEn : d.messageZh} (${d.elementId ?? 'root'})`,
-          );
+      if (
+        newlyIntroducedErrors.length > 0 ||
+        candidateReport.errorCount > effectiveBaselineReport.errorCount
+      ) {
+        const displayErrors =
+          newlyIntroducedErrors.length > 0
+            ? newlyIntroducedErrors
+            : candidateReport.diagnostics.filter((d) => d.tier === 'ERROR');
+        const addedErrors = displayErrors.map(
+          (d) =>
+            `[${d.code}@${d.model}] ${locale === 'en-US' ? d.messageEn : d.messageZh} (${d.elementId ?? 'root'})`,
+        );
 
         return {
           trace: {
@@ -3136,8 +3315,8 @@ async function executeUnifiedToolCall(
             arguments: args,
             output: pickLocaleText(
               locale,
-              `被 11 模型一致性门禁拦截（错误 ${baselineReport.errorCount} -> ${candidateReport.errorCount}）：${addedErrors[0] ?? '跨模型引用不一致'}`,
-              `Blocked by 11-model consistency gate (errors ${baselineReport.errorCount} -> ${candidateReport.errorCount}): ${addedErrors[0] ?? 'cross-model reference inconsistency'}`,
+              `被 11 模型一致性门禁拦截（错误 ${effectiveBaselineReport.errorCount} -> ${candidateReport.errorCount}）：${addedErrors.slice(0, 3).join('；') || '跨模型引用不一致'}`,
+              `Blocked by 11-model consistency gate (errors ${effectiveBaselineReport.errorCount} -> ${candidateReport.errorCount}): ${addedErrors.slice(0, 3).join('; ') || 'cross-model reference inconsistency'}`,
             ),
             isError: true,
             targetModelCode: mutation.modelCode,
@@ -3146,7 +3325,7 @@ async function executeUnifiedToolCall(
           },
           toolResultContent: JSON.stringify({
             status: 'REJECTED_BY_VALIDATOR',
-            baselineErrors: baselineReport.errorCount,
+            baselineErrors: effectiveBaselineReport.errorCount,
             candidateErrors: candidateReport.errorCount,
             diagnostics: addedErrors,
             hint: pickLocaleText(
@@ -4021,20 +4200,43 @@ async function executeUnifiedToolCall(
 
 // ─── Convert Stored AgentSession History into Pi-AI Transcript Messages ──────
 
-function buildInitialPiMessages(session: AgentSession): Message[] {
-  const recent = session.compactedSummary
-    ? session.messages.slice(-8)
-    : session.messages.slice(-18);
+/**
+ * The session messages replayed to the model: the last 8 (after compaction) or 18. The rest are
+ * left out of the call, and Context Snapshots record which (ADR 0017).
+ */
+function newModelCallId(): string {
+  return `mcall-${globalThis.crypto.randomUUID()}`;
+}
+
+function selectHistoryWindow(session: AgentSession): {
+  included: AgentSessionMessage[];
+  excluded: AgentSessionMessage[];
+} {
+  const size = session.compactedSummary ? 8 : 18;
+  const cut = Math.max(0, session.messages.length - size);
+  return { included: session.messages.slice(cut), excluded: session.messages.slice(0, cut) };
+}
+
+/** History replay plus, per replayed message, the session message it came from. */
+function buildHistoryPiMessages(session: AgentSession): {
+  messages: Message[];
+  sessionMessageIds: string[];
+  excluded: AgentSessionMessage[];
+} {
+  const { included: recent, excluded } = selectHistoryWindow(session);
 
   const result: Message[] = [];
+  const sessionMessageIds: string[] = [];
   for (const m of recent) {
     if (m.role === 'user') {
+      sessionMessageIds.push(m.id);
       result.push({
         role: 'user',
         content: m.content,
         timestamp: Date.parse(m.timestamp) || Date.now(),
       });
     } else if (m.role === 'assistant' && m.content.trim()) {
+      sessionMessageIds.push(m.id);
       result.push({
         role: 'assistant',
         content: [{ type: 'text', text: m.content }],
@@ -4054,17 +4256,59 @@ function buildInitialPiMessages(session: AgentSession): Message[] {
       });
     }
   }
-  return result;
+  return { messages: result, sessionMessageIds, excluded };
 }
 
-function estimateSessionTokens(session: AgentSession): number {
-  const chars =
-    (session.compactedSummary?.length ?? 0) +
-    session.messages.reduce(
-      (sum, m) => sum + m.content.length + (m.thinking?.length ?? 0),
-      0,
-    );
-  return Math.max(64, Math.ceil(chars / 2.6));
+/**
+ * The latest run's usage, summed from the Context Snapshots of its Model Calls (ADR 0017). The
+ * source is `PROVIDER` only when every call's figures were provider-reported.
+ */
+function summarizeRunUsage(
+  store: WorkspaceStore,
+  session: AgentSession,
+  runId: string,
+): AgentSession['tokenUsage'] {
+  const calls = store.listModelCalls(session.projectId, session.id).filter((c) => c.runId === runId);
+  if (calls.length === 0) return undefined;
+  const sum = (pick: (u: (typeof calls)[number]['usage']) => number) =>
+    calls.reduce((total, c) => total + pick(c.usage), 0);
+  const source: NonNullable<AgentSession['tokenUsage']>['source'] = calls.some(
+    (c) => c.usage.source === 'SIMULATED',
+  )
+    ? 'SIMULATED'
+    : calls.every((c) => c.usage.source === 'PROVIDER')
+      ? 'PROVIDER'
+      : 'ESTIMATED';
+  return {
+    inputTokens: sum((u) => u.inputTokens),
+    outputTokens: sum((u) => u.outputTokens),
+    cacheReadTokens: sum((u) => u.cacheReadTokens),
+    cacheWriteTokens: sum((u) => u.cacheWriteTokens),
+    totalTokens: sum((u) => u.totalTokens),
+    source,
+  };
+}
+
+/** Archives the messages a compaction removed so the Context Inspector can still show them. */
+function recordCompactionEvent(
+  store: WorkspaceStore,
+  session: AgentSession,
+  removed: AgentSessionMessage[],
+  summary: string,
+  summarizedByModel: boolean,
+): void {
+  try {
+    store.recordContextEvent({
+      projectId: session.projectId,
+      sessionId: session.id,
+      kind: 'COMPACT',
+      removed: sessionMessageItems(removed),
+      ...(summary ? { summary } : {}),
+      summarizedByModel,
+    });
+  } catch (error) {
+    console.warn('[context-snapshot] failed to record compaction:', error);
+  }
 }
 
 // ─── Session Compaction ──────────────────────────────────────────────────────
@@ -4134,13 +4378,9 @@ export function compactAgentSession(
     messages: kept,
     updatedAt: new Date().toISOString(),
   };
-  const estimated = estimateSessionTokens(updated);
-  updated.tokenUsage = {
-    inputTokens: Math.floor(estimated * 0.65),
-    outputTokens: Math.ceil(estimated * 0.35),
-    totalTokens: estimated,
-  };
-  return store.saveAgentSession(updated);
+  const saved = store.saveAgentSession(updated);
+  recordCompactionEvent(store, session, older, nextSummary, false);
+  return saved;
 }
 
 export async function compactAgentSessionWithLlm(
@@ -4184,9 +4424,7 @@ export async function compactAgentSessionWithLlm(
 
   try {
     const built = buildPiModelsForStore(store, session, { mockMode: false, locale });
-    const stream = built.models.streamSimple(
-      built.selectedModel,
-      {
+    const compactionContext: Context = {
         systemPrompt: pickLocaleText(
           locale,
           '你是 Ontology Plus 会话上下文压缩器。请将以下早期多轮对话提炼为高信息密度的结构化 Markdown 摘要（包含：1. 已确认业务目标与核心决策；2. 已识别领域对象/角色/业务规则；3. 已执行的工具变更与待推进事项）。严禁遗漏用户确认的具体业务参数，控制在 450 字以内。',
@@ -4214,11 +4452,24 @@ export async function compactAgentSessionWithLlm(
             timestamp: Date.now(),
           },
         ],
-      },
-      {
+      };
+    const stream = recordModelCallStream(
+      built.models.streamSimple(built.selectedModel, compactionContext, {
         timeoutMs: 90_000,
         temperature: 0.1,
         maxTokens: 2048,
+      }),
+      {
+        store,
+        projectId: session.projectId,
+        sessionId: session.id,
+        purpose: 'COMPACTION',
+        simulated: built.isMock,
+        providerLabel: built.providerLabel,
+        model: built.selectedModel,
+        maxOutputTokens: 2048,
+        systemPrompt: compactionContext.systemPrompt ?? '',
+        messages: compactionContext.messages,
       },
     );
 
@@ -4243,13 +4494,9 @@ export async function compactAgentSessionWithLlm(
       messages: kept,
       updatedAt: new Date().toISOString(),
     };
-    const estimated = estimateSessionTokens(updated);
-    updated.tokenUsage = {
-      inputTokens: Math.floor(estimated * 0.65),
-      outputTokens: Math.ceil(estimated * 0.35),
-      totalTokens: estimated,
-    };
-    return store.saveAgentSession(updated);
+    const saved = store.saveAgentSession(updated);
+    recordCompactionEvent(store, session, older, updated.compactedSummary ?? '', true);
+    return saved;
   } catch {
     return compactAgentSession(store, sessionId, locale);
   }
@@ -4611,6 +4858,8 @@ async function executeUnifiedTurnCore(
   });
   let built: ReturnType<typeof buildPiModelsForStore> | undefined;
   let accumulatedThinking = '';
+  let accumulatedThinkingDurationMs = 0;
+  let accumulatedToolWallMs = 0;
   let accumulatedText = '';
   let streamedToolArgChars = 0;
   let lastCodeModeScript: string | undefined;
@@ -4619,9 +4868,17 @@ async function executeUnifiedTurnCore(
   const allArtifacts: AgentDomainArtifact[] = [];
   let pendingAskUser: AgentAskUserPrompt | undefined;
   let pendingStepHandoff: StepHandoffProposal | undefined;
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
   let hadValidatorError = false;
+
+  const resolveTurnThinkingDurationMs = (): number => {
+    const summedTraceMs = allToolTraces.reduce((sum, t) => sum + (t.durationMs ?? 0), 0);
+    const effectiveToolMs = Math.max(accumulatedToolWallMs, summedTraceMs);
+    const netTurnMs = Math.max(1, Date.now() - turnStartMs - effectiveToolMs);
+    if (accumulatedThinkingDurationMs > 0) {
+      return Math.min(accumulatedThinkingDurationMs, netTurnMs);
+    }
+    return netTurnMs;
+  };
 
   const heartbeatInterval = setInterval(() => {
     if (controller.signal.aborted) return;
@@ -4768,7 +5025,10 @@ async function executeUnifiedTurnCore(
       },
     });
 
-    const piMessages: Message[] = buildInitialPiMessages(sessionState);
+    const history = buildHistoryPiMessages(sessionState);
+    const piMessages: Message[] = history.messages;
+    /** The Model Call whose response is being acted on; subagents it spawns name it as parent. */
+    let currentModelCallId: string | undefined;
 
     if (incomingImages.length > 0) {
       const lastPiUserIdx = (() => {
@@ -4926,12 +5186,15 @@ async function executeUnifiedTurnCore(
         };
       }
 
+      const subPromptMarks: PromptMark[] = [];
       const subBaseSystemPrompt = buildSystemPromptForSession(
         store,
         sessionState,
         input.activeModelCode,
         effectiveLocale,
+        { marks: subPromptMarks },
       );
+      const spawningCallId = currentModelCallId;
 
       const batchStartIdx = allSubagentLanes.length;
       const parallelRes = await runParallelSubagents({
@@ -4947,6 +5210,24 @@ async function executeUnifiedTurnCore(
         stepTimeoutMs,
         maxTokens: resolvedMaxTokens,
         onActivity: resetIdleTimer,
+        observeModelCall: (subStream, call) =>
+          recordModelCallStream(subStream, {
+            store,
+            projectId: sessionState.projectId,
+            sessionId: sessionState.id,
+            runId: turnRunId,
+            purpose: 'SUBAGENT',
+            ...(spawningCallId ? { parentCallId: spawningCallId } : {}),
+            laneLabel: call.lane.workerLabel,
+            simulated: built!.isMock,
+            providerLabel: built!.providerLabel,
+            model: built!.selectedModel,
+            maxOutputTokens: resolvedMaxTokens,
+            systemPrompt: call.context.systemPrompt ?? '',
+            promptMarks: subPromptMarks,
+            tools: call.context.tools ?? [],
+            messages: call.context.messages,
+          }),
         onLaneUpdate: (lane, batchLanes) => {
           allSubagentLanes.splice(batchStartIdx, batchLanes.length, ...batchLanes);
           emit({
@@ -5027,8 +5308,6 @@ async function executeUnifiedTurnCore(
         },
       });
 
-      totalInputTokens += parallelRes.inputTokens;
-      totalOutputTokens += parallelRes.outputTokens;
 
       return {
         trace: {
@@ -5060,6 +5339,7 @@ async function executeUnifiedTurnCore(
       }
       resetIdleTimer();
 
+      const promptMarks: PromptMark[] = [];
       const systemPrompt = buildSystemPromptForSession(
         store,
         sessionState,
@@ -5069,6 +5349,7 @@ async function executeUnifiedTurnCore(
           codeMode: effectiveCodeMode,
           multiAgentConcurrency: effectiveConcurrency,
           offeredTools: tools,
+          marks: promptMarks,
         },
       );
       const context: Context = {
@@ -5077,144 +5358,182 @@ async function executeUnifiedTurnCore(
         tools,
       };
 
-      const eventStream = built.models.streamSimple(built.selectedModel, context, {
-        signal: controller.signal,
-        timeoutMs: stepTimeoutMs,
-        temperature: 0.2,
-        maxTokens: resolvedMaxTokens,
-      });
+      const modelCallId = newModelCallId();
+      currentModelCallId = modelCallId;
+      const eventStream = recordModelCallStream(
+        built.models.streamSimple(built.selectedModel, context, {
+          signal: controller.signal,
+          timeoutMs: stepTimeoutMs,
+          temperature: 0.2,
+          maxTokens: resolvedMaxTokens,
+        }),
+        {
+          store,
+          projectId: sessionState.projectId,
+          sessionId: sessionState.id,
+          runId: turnRunId,
+          purpose: 'TURN',
+          simulated: built.isMock,
+          providerLabel: built.providerLabel,
+          model: built.selectedModel,
+          maxOutputTokens: resolvedMaxTokens,
+          systemPrompt,
+          promptMarks,
+          tools,
+          messages: piMessages,
+          sessionMessageIds: history.sessionMessageIds,
+          excluded: history.excluded,
+          callId: modelCallId,
+        },
+      );
 
       let finalMessage: AssistantMessage | undefined;
       const announcedToolCallIds = new Set<string>();
       let lastToolDeltaEmitMs = 0;
+      const stepStreamStartMs = Date.now();
+      let stepSawThinking = false;
+      let stepThinkingEndedMs: number | undefined;
 
-      for await (const ev of eventStream) {
-        if (ev.type !== 'error') {
-          resetIdleTimer();
-        }
+      try {
+        for await (const ev of eventStream) {
+          if (ev.type !== 'error') {
+            resetIdleTimer();
+          }
 
-        if (ev.type === 'thinking_delta') {
-          accumulatedThinking += ev.delta;
-          emit({
-            id: nextEventId(),
-            event: 'thinking_delta',
-            data: { step: step + 1, delta: ev.delta },
-          });
-        } else if (ev.type === 'text_delta') {
-          accumulatedText += ev.delta;
-          emit({
-            id: nextEventId(),
-            event: 'delta',
-            data: { step: step + 1, text: ev.delta },
-          });
-        } else if (
-          ev.type === 'toolcall_start' ||
-          ev.type === 'toolcall_delta' ||
-          ev.type === 'toolcall_end'
-        ) {
-          if (ev.type === 'toolcall_delta') {
-            streamedToolArgChars += ev.delta.length;
-            const nowMs = Date.now();
-            const partialCall = ev.partial.content[ev.contentIndex];
-            if (
-              partialCall?.type === 'toolCall' &&
-              partialCall.name === 'upsert_prototype_screen' &&
-              prototypeTurnDraft
-            ) {
-              const pArgs = (partialCall.arguments ?? {}) as Record<string, unknown>;
-              const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
-              const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
-              if (pSid && pHtml.length >= 24) {
-                livePartialScreens.set(pSid, {
-                  screenId: pSid,
-                  ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
-                  ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
-                  partialScreenHtml: pHtml,
-                  ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
-                });
-                emitPrototypePreviewIfChanged(
-                  {
-                    screenId: pSid,
-                    ...(typeof pArgs.screenName === 'string' ? { label: pArgs.screenName } : {}),
-                  },
-                  { throttled: true },
-                );
-              }
+          if (ev.type === 'thinking_delta') {
+            stepSawThinking = true;
+            accumulatedThinking += ev.delta;
+            emit({
+              id: nextEventId(),
+              event: 'thinking_delta',
+              data: { step: step + 1, delta: ev.delta },
+            });
+          } else {
+            if (stepSawThinking && stepThinkingEndedMs === undefined) {
+              stepThinkingEndedMs = Date.now();
             }
-            if (nowMs - lastToolDeltaEmitMs >= 250) {
-              lastToolDeltaEmitMs = nowMs;
+            if (ev.type === 'text_delta') {
+              accumulatedText += ev.delta;
               emit({
                 id: nextEventId(),
-                event: 'tool_delta',
-                data: {
-                  step: step + 1,
-                  toolName: partialCall?.type === 'toolCall' ? partialCall.name : undefined,
-                  streamedChars: streamedToolArgChars,
-                },
+                event: 'delta',
+                data: { step: step + 1, text: ev.delta },
+              });
+            } else if (
+              ev.type === 'toolcall_start' ||
+              ev.type === 'toolcall_delta' ||
+              ev.type === 'toolcall_end'
+            ) {
+              if (ev.type === 'toolcall_delta') {
+                streamedToolArgChars += ev.delta.length;
+                const nowMs = Date.now();
+                const partialCall = ev.partial.content[ev.contentIndex];
+                if (
+                  partialCall?.type === 'toolCall' &&
+                  partialCall.name === 'upsert_prototype_screen' &&
+                  prototypeTurnDraft
+                ) {
+                  const pArgs = (partialCall.arguments ?? {}) as Record<string, unknown>;
+                  const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
+                  const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
+                  if (pSid && pHtml.length >= 24) {
+                    livePartialScreens.set(pSid, {
+                      screenId: pSid,
+                      ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
+                      ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
+                      partialScreenHtml: pHtml,
+                      ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
+                    });
+                    emitPrototypePreviewIfChanged(
+                      {
+                        screenId: pSid,
+                        ...(typeof pArgs.screenName === 'string' ? { label: pArgs.screenName } : {}),
+                      },
+                      { throttled: true },
+                    );
+                  }
+                }
+                if (nowMs - lastToolDeltaEmitMs >= 250) {
+                  lastToolDeltaEmitMs = nowMs;
+                  emit({
+                    id: nextEventId(),
+                    event: 'tool_delta',
+                    data: {
+                      step: step + 1,
+                      toolName: partialCall?.type === 'toolCall' ? partialCall.name : undefined,
+                      streamedChars: streamedToolArgChars,
+                    },
+                  });
+                }
+              }
+              const candidate =
+                ev.type === 'toolcall_end'
+                  ? ev.toolCall
+                  : ev.partial.content[ev.contentIndex];
+              if (
+                candidate &&
+                candidate.type === 'toolCall' &&
+                candidate.id &&
+                candidate.name &&
+                !announcedToolCallIds.has(candidate.id)
+              ) {
+                announcedToolCallIds.add(candidate.id);
+                const candidateArgs = (candidate.arguments ?? {}) as Record<string, unknown>;
+                const candidateAnchor = extractTargetAnchorFromArgs(candidate.name, candidateArgs);
+                emit({
+                  id: nextEventId(),
+                  event: 'tool_call',
+                  data: {
+                    id: candidate.id,
+                    toolName: candidate.name,
+                    arguments: candidateArgs,
+                    ...(candidateAnchor ? { targetAnchor: candidateAnchor } : {}),
+                    step: step + 1,
+                  },
+                });
+              }
+            } else if (ev.type === 'done') {
+              finalMessage = ev.message;
+            } else if (ev.type === 'error') {
+              if (controller.signal.aborted) {
+                throw toAbortedError();
+              }
+              const errText =
+                ev.error.errorMessage ||
+                pickLocaleText(
+                  effectiveLocale,
+                  `网关流式请求失败 (reason=${ev.reason})`,
+                  `Gateway streaming request failed (reason=${ev.reason})`,
+                );
+              const isStepTimeout =
+                !/connect\s*timeout|connection\s*error/i.test(errText) &&
+                (ev.reason === 'aborted' ||
+                  (/timed?\s*out|timeout/i.test(errText) &&
+                    Date.now() - turnStartMs >= Math.min(idleTimeoutMs, stepTimeoutMs) * 0.5));
+              if (isStepTimeout) {
+                throw new SessionStreamAbortedError(
+                  'IDLE_TIMEOUT',
+                  pickLocaleText(
+                    effectiveLocale,
+                    `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
+                    `LLM single-step inference timed out (exceeded ${Math.round(stepTimeoutMs / 1000)}s)`,
+                  ),
+                );
+              }
+              throw new LlmGatewayError({
+                message: errText,
+                providerName: built.providerConfig?.name ?? built.providerLabel,
+                baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+                model: built.selectedModel.id,
+                locale: effectiveLocale,
               });
             }
           }
-          const candidate =
-            ev.type === 'toolcall_end'
-              ? ev.toolCall
-              : ev.partial.content[ev.contentIndex];
-          if (
-            candidate &&
-            candidate.type === 'toolCall' &&
-            candidate.id &&
-            candidate.name &&
-            !announcedToolCallIds.has(candidate.id)
-          ) {
-            announcedToolCallIds.add(candidate.id);
-            const candidateArgs = (candidate.arguments ?? {}) as Record<string, unknown>;
-            const candidateAnchor = extractTargetAnchorFromArgs(candidate.name, candidateArgs);
-            emit({
-              id: nextEventId(),
-              event: 'tool_call',
-              data: {
-                id: candidate.id,
-                toolName: candidate.name,
-                arguments: candidateArgs,
-                ...(candidateAnchor ? { targetAnchor: candidateAnchor } : {}),
-                step: step + 1,
-              },
-            });
-          }
-        } else if (ev.type === 'done') {
-          finalMessage = ev.message;
-        } else if (ev.type === 'error') {
-          if (controller.signal.aborted) {
-            throw toAbortedError();
-          }
-          const errText =
-            ev.error.errorMessage ||
-            pickLocaleText(
-              effectiveLocale,
-              `网关流式请求失败 (reason=${ev.reason})`,
-              `Gateway streaming request failed (reason=${ev.reason})`,
-            );
-          const isStepTimeout =
-            !/connect\s*timeout|connection\s*error/i.test(errText) &&
-            (ev.reason === 'aborted' ||
-              (/timed?\s*out|timeout/i.test(errText) &&
-                Date.now() - turnStartMs >= Math.min(idleTimeoutMs, stepTimeoutMs) * 0.5));
-          if (isStepTimeout) {
-            throw new SessionStreamAbortedError(
-              'IDLE_TIMEOUT',
-              pickLocaleText(
-                effectiveLocale,
-                `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
-                `LLM single-step inference timed out (exceeded ${Math.round(stepTimeoutMs / 1000)}s)`,
-              ),
-            );
-          }
-          throw new LlmGatewayError({
-            message: errText,
-            providerName: built.providerConfig?.name ?? built.providerLabel,
-            baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
-            model: built.selectedModel.id,
-            locale: effectiveLocale,
-          });
+        }
+      } finally {
+        if (stepSawThinking) {
+          const endMs = stepThinkingEndedMs ?? Date.now();
+          accumulatedThinkingDurationMs += Math.max(1, endMs - stepStreamStartMs);
         }
       }
 
@@ -5241,8 +5560,6 @@ async function executeUnifiedTurnCore(
         });
       }
 
-      totalInputTokens += finalMessage.usage?.input ?? 0;
-      totalOutputTokens += finalMessage.usage?.output ?? 0;
       piMessages.push(finalMessage);
 
       const toolCalls = finalMessage.content.filter(
@@ -5253,7 +5570,9 @@ async function executeUnifiedTurnCore(
         break;
       }
 
-      for (const tc of toolCalls) {
+      const toolRoundStartMs = Date.now();
+      try {
+        for (const tc of toolCalls) {
         if (controller.signal.aborted) {
           throw toAbortedError();
         }
@@ -5472,6 +5791,9 @@ async function executeUnifiedTurnCore(
         };
         piMessages.push(toolResultMsg);
       }
+      } finally {
+        accumulatedToolWallMs += Math.max(0, Date.now() - toolRoundStartMs);
+      }
 
       saveSessionCheckpointSafe(store, sessionState, {
         phase: 'STEP_PROGRESS',
@@ -5640,7 +5962,11 @@ async function executeUnifiedTurnCore(
         RUN_ONTOLOGY_EXTRACTION: 'EXTRACTION_JOB',
       };
       const expectedKind = expectedArtifactKindByAction[structuredTurnAction.kind];
-      if (!allArtifacts.some((a) => a.kind === expectedKind)) {
+      if (
+        !allArtifacts.some((a) => a.kind === expectedKind) &&
+        !pendingAskUser &&
+        !pendingStepHandoff
+      ) {
         const lastFailedTrace = [...allToolTraces].reverse().find((t) => t.isError);
         const detailSuffix = lastFailedTrace?.output ? ` — ${lastFailedTrace.output}` : '';
         throw new LlmGatewayError({
@@ -5782,7 +6108,7 @@ async function executeUnifiedTurnCore(
       role: 'assistant',
       content: accumulatedText,
       ...(accumulatedThinking
-        ? { thinking: accumulatedThinking, thinkingDurationMs: Date.now() - turnStartMs }
+        ? { thinking: accumulatedThinking, thinkingDurationMs: resolveTurnThinkingDurationMs() }
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(allSubagentLanes.length > 0 ? { subagentLanes: allSubagentLanes } : {}),
@@ -5826,15 +6152,12 @@ async function executeUnifiedTurnCore(
       messages: nextMessages,
       updatedAt: new Date().toISOString(),
     };
-    const estTotal =
-      totalInputTokens + totalOutputTokens > 0
-        ? totalInputTokens + totalOutputTokens
-        : estimateSessionTokens(completedSession);
-    completedSession.tokenUsage = {
-      inputTokens: totalInputTokens || Math.floor(estTotal * 0.65),
-      outputTokens: totalOutputTokens || Math.ceil(estTotal * 0.35),
-      totalTokens: estTotal,
-    };
+    const runUsage = summarizeRunUsage(store, completedSession, turnRunId);
+    if (runUsage) {
+      completedSession.tokenUsage = runUsage;
+    } else {
+      delete completedSession.tokenUsage;
+    }
 
     sessionState = store.saveAgentSession(completedSession);
 
@@ -5891,7 +6214,7 @@ async function executeUnifiedTurnCore(
         ...(accumulatedThinking
           ? {
               thinking: accumulatedThinking,
-              thinkingDurationMs: Date.now() - turnStartMs,
+              thinkingDurationMs: resolveTurnThinkingDurationMs(),
             }
           : {}),
         ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
@@ -6063,7 +6386,7 @@ async function executeUnifiedTurnCore(
       role: 'assistant',
       content: accumulatedText,
       ...(accumulatedThinking
-        ? { thinking: accumulatedThinking, thinkingDurationMs: Date.now() - turnStartMs }
+        ? { thinking: accumulatedThinking, thinkingDurationMs: resolveTurnThinkingDurationMs() }
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(allSubagentLanes.length > 0 ? { subagentLanes: allSubagentLanes } : {}),

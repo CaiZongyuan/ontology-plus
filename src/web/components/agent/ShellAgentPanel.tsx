@@ -1,14 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import type { TransientTurnImageInput } from '../../../packages/agent-runtime/index.js';
 import type { ProjectStepId } from '../../../packages/business-vocabulary/index.js';
 import type {
+  AgentImageAttachmentRef,
   AgentSession,
   AgentSessionKind,
   ArtifactJumpTarget,
+  ContextEventDetail,
+  ContextEventSummary,
+  ModelCallDetail,
+  ModelCallSummary,
   WritebackInterface,
 } from '../../../packages/workspace-store/index.js';
 import {
   apiCreateAgentSession,
   apiDeleteAgentSession,
+  apiListSessionModelCalls,
   apiPatchAgentSession,
   apiPostJson,
   useWorkbenchStore,
@@ -16,6 +23,7 @@ import {
   type SessionLiveDraft,
 } from '../../api.js';
 import { usePreferences } from '../../i18n.js';
+import { resolveTurnImagesWithFallback } from '../../lib/localImageStore.js';
 import {
   AGENT_PANEL_SURFACES,
   agentPanelSurfaceFor,
@@ -46,6 +54,13 @@ import {
   type LocalizedText,
 } from './agentRun.js';
 import { resolveActiveVisionCapability } from './VisionAttachmentControls.js';
+import {
+  ContextInspectorOverlay,
+  ContextOccupancyRing,
+  RemovedMessagesNotice,
+  resolveLatestTurnModelCall,
+  type ContextInspectorFocus,
+} from './context-inspector/index.js';
 
 export {
   AGENT_PANEL_SURFACES,
@@ -332,6 +347,14 @@ export interface ShellAgentPanelProps {
   closable?: boolean;
   resizable?: boolean;
   defaultHistoryOpen?: boolean;
+  /** Deterministic SSR / test hooks for Context Inspector (#82, #83). */
+  defaultInspectorOpen?: boolean;
+  defaultInspectorFocus?: ContextInspectorFocus;
+  initialModelCalls?: readonly ModelCallSummary[];
+  initialContextEvents?: readonly ContextEventSummary[];
+  initialCallDetailsById?: Readonly<Record<string, ModelCallDetail>>;
+  initialLatestCallDetail?: ModelCallDetail | null;
+  initialCompactedEventDetails?: readonly ContextEventDetail[];
   onClose: () => void;
   onNavigate: (view: NavViewId) => void;
   composerHeaderSlot?: React.ReactNode;
@@ -345,6 +368,13 @@ export function ShellAgentPanel({
   closable = true,
   resizable,
   defaultHistoryOpen,
+  defaultInspectorOpen = false,
+  defaultInspectorFocus = 'composition',
+  initialModelCalls,
+  initialContextEvents,
+  initialCallDetailsById,
+  initialLatestCallDetail,
+  initialCompactedEventDetails,
   onClose,
   onNavigate,
   composerHeaderSlot,
@@ -376,7 +406,7 @@ export function ShellAgentPanel({
     updateAgentSessionExecutionConfig,
     startSessionAgentRun,
     cancelSessionAgentRun,
-    retrySessionAgentRun,
+    replaceLatestSessionTurnAndRun,
     acceptStepHandoff,
     declineStepHandoff,
     removeQueuedSessionPrompt,
@@ -397,6 +427,17 @@ export function ShellAgentPanel({
   const [localConcurrency, setLocalConcurrency] = useState<number>(3);
   const [undoingEntryId, setUndoingEntryId] = useState<string | null>(null);
   const [handoffBusyById, setHandoffBusyById] = useState<Record<string, 'accept' | 'decline'>>({});
+  const [inspectorOpen, setInspectorOpen] = useState<boolean>(defaultInspectorOpen);
+  const [inspectorFocus, setInspectorFocus] = useState<ContextInspectorFocus>(defaultInspectorFocus);
+  const [sessionSnapshots, setSessionSnapshots] = useState<{
+    sessionId: string | undefined;
+    modelCalls: readonly ModelCallSummary[];
+    contextEvents: readonly ContextEventSummary[];
+  }>(() => ({
+    sessionId: undefined,
+    modelCalls: initialModelCalls ?? [],
+    contextEvents: initialContextEvents ?? [],
+  }));
 
   const {
     session: activeSession,
@@ -478,6 +519,75 @@ export function ShellAgentPanel({
     [activeSession, liveDraft, activeSuite],
   );
 
+  const snapshotProjectId = activeSession?.projectId ?? activeProjectId;
+  const activeRunSettledSignature = `${runs.length}:${runs.some((r) => r.status === 'RUNNING') ? 'running' : 'idle'}:${activeSession?.updatedAt ?? ''}:${activeSession?.messages?.length ?? 0}:${Boolean(activeSession?.compactedSummary)}`;
+
+  useEffect(() => {
+    if (initialModelCalls !== undefined || initialContextEvents !== undefined) return;
+    if (!snapshotProjectId || !activeSession?.id || typeof fetch !== 'function') {
+      setSessionSnapshots((prev) =>
+        prev.sessionId === undefined &&
+        prev.modelCalls.length === 0 &&
+        prev.contextEvents.length === 0
+          ? prev
+          : { sessionId: undefined, modelCalls: [], contextEvents: [] },
+      );
+      return;
+    }
+
+    let cancelled = false;
+    const targetSessionId = activeSession.id;
+    void apiListSessionModelCalls(snapshotProjectId, targetSessionId)
+      .then((res) => {
+        if (cancelled) return;
+        setSessionSnapshots({
+          sessionId: targetSessionId,
+          modelCalls: res.modelCalls,
+          contextEvents: res.contextEvents,
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSessionSnapshots((prev) =>
+          prev.sessionId === targetSessionId
+            ? prev
+            : { sessionId: targetSessionId, modelCalls: [], contextEvents: [] },
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    snapshotProjectId,
+    activeSession?.id,
+    activeRunSettledSignature,
+    inspectorOpen,
+    initialModelCalls,
+    initialContextEvents,
+  ]);
+
+  const effectiveModelCalls =
+    initialModelCalls !== undefined
+      ? initialModelCalls
+      : sessionSnapshots.sessionId === activeSession?.id
+        ? sessionSnapshots.modelCalls
+        : [];
+  const effectiveContextEvents =
+    initialContextEvents !== undefined
+      ? initialContextEvents
+      : sessionSnapshots.sessionId === activeSession?.id
+        ? sessionSnapshots.contextEvents
+        : [];
+  const latestTurnCall = useMemo(
+    () => resolveLatestTurnModelCall(effectiveModelCalls),
+    [effectiveModelCalls],
+  );
+  const activeProviderContextWindow = useMemo(
+    () => data?.llmProviders?.find((p) => p.enabled)?.contextWindow ?? 128_000,
+    [data?.llmProviders],
+  );
+
   const queuedPrompts = useMemo(
     () =>
       queuedItems.map((q) => {
@@ -487,10 +597,12 @@ export function ShellAgentPanel({
     [queuedItems, t],
   );
 
-  const visionState = useMemo(
-    () => (surface.usesVision ? resolveActiveVisionCapability(data) : undefined),
-    [data, surface.usesVision],
+  const resolvedVision = useMemo(
+    () =>
+      resolveActiveVisionCapability(data, activeSession?.providerId, activeSession?.modelOverride),
+    [data, activeSession?.providerId, activeSession?.modelOverride],
   );
+  const visionState = surface.usesVision ? resolvedVision : undefined;
 
   const prototypeSelectionAttachments = usePrototypeSelectionStore((s) =>
     activePrototypeId ? s.attachmentsByPrototype[activePrototypeId] : undefined,
@@ -623,8 +735,10 @@ export function ShellAgentPanel({
       });
       patchData({ agentSessions: created.agentSessions });
       setActiveSessionId(created.session.id);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
+    } catch {
+      showToast(
+        t('新建对话失败，请稍后重试。', 'Could not create conversation. Please try again.'),
+      );
     }
   };
 
@@ -633,7 +747,12 @@ export function ShellAgentPanel({
       const res = await apiPatchAgentSession(sessionId, { title });
       patchData({ agentSessions: res.agentSessions });
     } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
+      const code = (err as { code?: string } | null)?.code;
+      showToast(
+        code && err instanceof Error
+          ? err.message
+          : t('重命名对话失败，请稍后重试。', 'Could not rename conversation. Please try again.'),
+      );
     }
   };
 
@@ -647,8 +766,10 @@ export function ShellAgentPanel({
         if (sessionScopeKey) rememberSession(sessionScopeKey, next?.id ?? null);
       }
       showToast(t('对话已删除', 'Conversation deleted'));
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
+    } catch {
+      showToast(
+        t('删除对话失败，请稍后重试。', 'Could not delete conversation. Please try again.'),
+      );
     }
   };
 
@@ -776,8 +897,10 @@ export function ShellAgentPanel({
     setHandoffBusyById((prev) => ({ ...prev, [handoffId]: action }));
     try {
       await task(sessionId);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
+    } catch {
+      showToast(
+        t('步骤转交操作失败，请稍后重试。', 'Step hand-off failed. Please try again.'),
+      );
     } finally {
       setHandoffBusyById((prev) => {
         const next = { ...prev };
@@ -826,20 +949,38 @@ export function ShellAgentPanel({
           `Policy write-back executed [${res.writeback.id}]: ${res.writeback.name} (${res.writeback.executionCount} calls)`,
         ),
       );
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
+    } catch {
+      showToast(
+        t('业务动作回写失败，请稍后重试。', 'Policy write-back failed. Please try again.'),
+      );
     }
   };
 
-  const handleSubmitPrompt = async (prompt: string) => {
+  const resolveComposerTurnImages = async (
+    imageRefs?: AgentImageAttachmentRef[],
+  ): Promise<TransientTurnImageInput[] | undefined> => {
+    if (!imageRefs || imageRefs.length === 0) return undefined;
+    return resolveTurnImagesWithFallback(imageRefs, {
+      visionSupported: resolvedVision.visionSupported,
+      defaultRole: 'user_upload',
+      fallbackNoteToName: true,
+    });
+  };
+
+  const handleSubmitPrompt = async (
+    prompt: string,
+    imageRefs?: AgentImageAttachmentRef[],
+  ) => {
     if (!activeProjectId || !data) return;
+    const turnImages = await resolveComposerTurnImages(imageRefs);
     if (surface.sessionKind === 'PROTOTYPE_CO_DESIGN') {
       if (activePrototypeId) {
         await submitPrototypeComposerTurnWithSelections({
           projectId: activeProjectId,
           prototypeId: activePrototypeId,
           instruction: prompt,
-          visionSupported: visionState?.visionSupported ?? true,
+          visionSupported: resolvedVision.visionSupported,
+          ...(turnImages && turnImages.length > 0 ? { extraImages: turnImages } : {}),
         });
       } else {
         const targetSession =
@@ -850,6 +991,7 @@ export function ShellAgentPanel({
         await startSessionAgentRun({
           sessionId: targetSession.id,
           prompt,
+          ...(turnImages && turnImages.length > 0 ? { images: turnImages } : {}),
           codeMode: effectiveCodeMode,
           multiAgentConcurrency: effectiveConcurrency,
         });
@@ -887,6 +1029,7 @@ export function ShellAgentPanel({
         surface.sessionKind === 'CODING' && !targetSession.targetId && codingTargetApp
           ? `[Target application ID: ${codingTargetApp.id}]\n${prompt}`
           : prompt,
+      ...(turnImages && turnImages.length > 0 ? { images: turnImages } : {}),
       codeMode: effectiveCodeMode,
       multiAgentConcurrency: effectiveConcurrency,
       ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
@@ -902,16 +1045,50 @@ export function ShellAgentPanel({
     }
   };
 
-  const handleRetryRun = (runId: string) => {
+  const handleCancelActiveRun = () => {
+    const activeRun = [...runs].reverse().find((r) => r.status === 'RUNNING');
+    const sessionId = activeRun?.sourceSessionId ?? activeSession?.id;
+    if (sessionId) {
+      void cancelSessionAgentRun(sessionId);
+    }
+  };
+
+  const handleRetryLatestTurn = async (runId: string) => {
     const target = runs.find((r) => r.id === runId);
     const sessionId = target?.sourceSessionId ?? activeSession?.id;
-    if (sessionId) {
-      void retrySessionAgentRun(
-        sessionId,
-        target?.sourceUserMessageId ?? runId,
-        target?.retryPrompt,
-      );
-    }
+    if (!sessionId) return;
+    await replaceLatestSessionTurnAndRun({
+      sessionId,
+      ...(target?.retryPrompt !== undefined ? { prompt: target.retryPrompt } : {}),
+      ...(target?.sourceUserMessageId
+        ? { truncateFromUserMessageId: target.sourceUserMessageId }
+        : {}),
+      codeMode: effectiveCodeMode,
+      multiAgentConcurrency: effectiveConcurrency,
+      ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
+      ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
+    });
+  };
+
+  const handleRetryRun = (runId: string) => {
+    void handleRetryLatestTurn(runId);
+  };
+
+  const handleEditLatestTurn = async (runId: string, nextPrompt: string) => {
+    const target = runs.find((r) => r.id === runId);
+    const sessionId = target?.sourceSessionId ?? activeSession?.id;
+    if (!sessionId) return;
+    await replaceLatestSessionTurnAndRun({
+      sessionId,
+      prompt: nextPrompt,
+      ...(target?.sourceUserMessageId
+        ? { truncateFromUserMessageId: target.sourceUserMessageId }
+        : {}),
+      codeMode: effectiveCodeMode,
+      multiAgentConcurrency: effectiveConcurrency,
+      ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
+      ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
+    });
   };
 
   const handleOpenArtifact = (runId: string) => {
@@ -1034,74 +1211,129 @@ export function ShellAgentPanel({
   };
 
   return (
-    <AgentPanel
-      title={surface.title}
-      {...(surface.subtitle ? { subtitle: surface.subtitle } : {})}
-      runs={runs}
-      width={width}
-      wideMode={wideMode}
-      onToggleWideMode={toggleWideMode}
-      overlay={overlay}
-      side={side}
-      closable={closable}
-      {...(resizable !== undefined ? { resizable } : {})}
-      {...(defaultHistoryOpen !== undefined ? { defaultHistoryOpen } : {})}
-      onClose={onClose}
-      onResize={(next, opts) => setWidth(next, opts)}
-      onCancelRun={handleCancelRun}
-      onRetryRun={handleRetryRun}
-      onOpenRunArtifact={handleOpenArtifact}
-      onOpenPlatformSettings={() => onNavigate('llm-center')}
-      onOpenLlmCenter={() => onNavigate('llm-center')}
-      onHoverAnchor={setHoveredAnchor}
-      onAnswerAskUser={(runId, promptId, selectedAnswers, freeformText) =>
-        void handleAnswerAskUser(runId, promptId, selectedAnswers, freeformText)
-      }
-      onAcceptStepHandoff={(runId, handoffId) => void handleAcceptStepHandoff(runId, handoffId)}
-      onDeclineStepHandoff={(runId, handoffId) => void handleDeclineStepHandoff(runId, handoffId)}
-      onOpenHandoffTargetStep={handleOpenHandoffTargetStep}
-      handoffBusyById={handoffBusyById}
-      onTriggerWriteback={(writebackId, actionTitle) =>
-        void handleTriggerWriteback(writebackId, actionTitle)
-      }
-      renderRunFooter={renderRunFooter}
-      {...(sessionsOwnedByArtifact
-        ? {
-            sessions: sessionOptions,
-            sessionsOwnedByArtifact: true,
-            onSelectSession: handleSelectPrototypeSession,
-            onRenameSession: handleRenameSession,
-          }
-        : {
-            sessions: sessionOptions,
-            onSelectSession: setActiveSessionId,
-            onCreateSession: handleCreateSession,
-            onRenameSession: handleRenameSession,
-            onDeleteSession: handleDeleteSession,
-          })}
-      {...(surface.starters ? { starterPrompts: surface.starters } : {})}
-      {...(activeSession?.id ? { activeSessionId: activeSession.id } : {})}
-      isForkSession={Boolean(activeSession?.parentSessionId)}
-      {...(headerContextSlot ? { headerContextSlot } : {})}
-      onSubmitPrompt={handleSubmitPrompt}
-      {...(surface.placeholder ? { composerPlaceholder: surface.placeholder } : {})}
-      {...(effectiveComposerHeaderSlot
-        ? { composerHeaderSlot: effectiveComposerHeaderSlot }
-        : {})}
-      {...(queuedPrompts.length > 0 ? { queuedPrompts } : {})}
-      {...(activeSession
-        ? {
-            onRemoveQueuedPrompt: (queueId: string) =>
-              removeQueuedSessionPrompt(activeSession.id, queueId),
-          }
-        : {})}
-      {...(visionState
-        ? {
-            visionSupported: visionState.visionSupported,
-            ...(visionState.providerLabel ? { visionProviderLabel: visionState.providerLabel } : {}),
-            ...(visionState.modelLabel ? { visionModelLabel: visionState.modelLabel } : {}),
-          }
-        : {})}
-    />
+    <>
+      <AgentPanel
+        title={surface.title}
+        {...(surface.subtitle ? { subtitle: surface.subtitle } : {})}
+        runs={runs}
+        width={width}
+        wideMode={wideMode}
+        onToggleWideMode={toggleWideMode}
+        overlay={overlay}
+        side={side}
+        closable={closable}
+        {...(resizable !== undefined ? { resizable } : {})}
+        {...(defaultHistoryOpen !== undefined ? { defaultHistoryOpen } : {})}
+        onClose={onClose}
+        onResize={(next, opts) => setWidth(next, opts)}
+        onCancelRun={handleCancelRun}
+        onCancelActiveRun={handleCancelActiveRun}
+        onRetryRun={handleRetryRun}
+        onEditLatestTurn={handleEditLatestTurn}
+        onRetryLatestTurn={handleRetryLatestTurn}
+        onOpenRunArtifact={handleOpenArtifact}
+        onOpenPlatformSettings={() => onNavigate('llm-center')}
+        onOpenLlmCenter={() => onNavigate('llm-center')}
+        onHoverAnchor={setHoveredAnchor}
+        onAnswerAskUser={(runId, promptId, selectedAnswers, freeformText) =>
+          void handleAnswerAskUser(runId, promptId, selectedAnswers, freeformText)
+        }
+        onAcceptStepHandoff={(runId, handoffId) => void handleAcceptStepHandoff(runId, handoffId)}
+        onDeclineStepHandoff={(runId, handoffId) => void handleDeclineStepHandoff(runId, handoffId)}
+        onOpenHandoffTargetStep={handleOpenHandoffTargetStep}
+        handoffBusyById={handoffBusyById}
+        onTriggerWriteback={(writebackId, actionTitle) =>
+          void handleTriggerWriteback(writebackId, actionTitle)
+        }
+        renderRunFooter={renderRunFooter}
+        {...(sessionsOwnedByArtifact
+          ? {
+              sessions: sessionOptions,
+              sessionsOwnedByArtifact: true,
+              onSelectSession: handleSelectPrototypeSession,
+              onRenameSession: handleRenameSession,
+            }
+          : {
+              sessions: sessionOptions,
+              onSelectSession: setActiveSessionId,
+              onCreateSession: handleCreateSession,
+              onRenameSession: handleRenameSession,
+              onDeleteSession: handleDeleteSession,
+            })}
+        {...(surface.starters ? { starterPrompts: surface.starters } : {})}
+        {...(activeSession?.id ? { activeSessionId: activeSession.id } : {})}
+        draftFallbackKey={sessionScopeKey ?? surface.sessionKind}
+        isForkSession={Boolean(activeSession?.parentSessionId)}
+        {...(headerContextSlot ? { headerContextSlot } : {})}
+        onSubmitPrompt={handleSubmitPrompt}
+        {...(surface.placeholder ? { composerPlaceholder: surface.placeholder } : {})}
+        {...(effectiveComposerHeaderSlot
+          ? { composerHeaderSlot: effectiveComposerHeaderSlot }
+          : {})}
+        composerRightAccessorySlot={
+          <ContextOccupancyRing
+            latestCall={latestTurnCall}
+            open={inspectorOpen}
+            onToggle={() => {
+              setInspectorFocus('composition');
+              setInspectorOpen((prev) => !prev);
+            }}
+          />
+        }
+        conversationTopNoticeSlot={
+          <RemovedMessagesNotice
+            latestCall={latestTurnCall}
+            contextEvents={effectiveContextEvents}
+            onOpenInspector={(focus) => {
+              setInspectorFocus(focus);
+              setInspectorOpen(true);
+            }}
+          />
+        }
+        {...(queuedPrompts.length > 0 ? { queuedPrompts } : {})}
+        {...(activeSession
+          ? {
+              onRemoveQueuedPrompt: (queueId: string) =>
+                removeQueuedSessionPrompt(activeSession.id, queueId),
+            }
+          : {})}
+        composerVisionSupported={resolvedVision.visionSupported}
+        {...(resolvedVision.providerLabel
+          ? { visionProviderLabel: resolvedVision.providerLabel }
+          : {})}
+        {...(resolvedVision.modelLabel ? { visionModelLabel: resolvedVision.modelLabel } : {})}
+        {...(visionState
+          ? {
+              visionSupported: visionState.visionSupported,
+            }
+          : {})}
+      />
+
+      <ContextInspectorOverlay
+        open={inspectorOpen}
+        onClose={() => setInspectorOpen(false)}
+        focus={inspectorFocus}
+        side={side}
+        panelWidth={width}
+        wideMode={wideMode}
+        overlay={overlay}
+        fullWidth={resizable === false}
+        {...(snapshotProjectId ? { projectId: snapshotProjectId } : {})}
+        latestCall={latestTurnCall}
+        modelCalls={effectiveModelCalls}
+        contextEvents={effectiveContextEvents}
+        runs={runs}
+        defaultContextWindow={activeProviderContextWindow}
+        {...(initialCallDetailsById !== undefined
+          ? { callDetailsById: initialCallDetailsById }
+          : {})}
+        {...(initialLatestCallDetail !== undefined
+          ? { latestCallDetail: initialLatestCallDetail }
+          : {})}
+        {...(initialCompactedEventDetails !== undefined
+          ? { compactedEventDetails: initialCompactedEventDetails }
+          : {})}
+      />
+    </>
   );
 }

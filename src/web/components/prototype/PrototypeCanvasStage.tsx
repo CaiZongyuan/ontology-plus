@@ -268,6 +268,7 @@ export async function runDeletePrototypeSafely(
       prototypes: InteractivePrototype[];
       confirmedRevision: ConfirmedPrototypeRevision | null;
       artifactHistory?: ArtifactHistoryEntryView[];
+      agentSessions?: AgentSession[];
     }
   | {
       ok: false;
@@ -283,6 +284,7 @@ export async function runDeletePrototypeSafely(
       prototypes: res.prototypes,
       confirmedRevision: res.confirmedRevision,
       ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
+      ...(res.agentSessions ? { agentSessions: res.agentSessions } : {}),
     };
   } catch (err) {
     const errorMessage =
@@ -727,6 +729,7 @@ export function PrototypeCanvasStage({
         confirmedRevision: res.confirmedRevision,
         ...(nextSelected ? { selectedPrototypeId: nextSelected } : {}),
         ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
+        ...(res.agentSessions ? { agentSessions: res.agentSessions } : {}),
       });
       if (nextSelected) {
         onSelectPrototype(nextSelected);

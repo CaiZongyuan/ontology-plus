@@ -571,7 +571,7 @@ describe('Ticket 06 (#28): Box-Select Attachment Cards, Live Anchor Highlight, a
     expect(JSON.stringify(persistedSession)).not.toContain(cropBytesBase64);
   });
 
-  it('highlights matching canvas region bidirectionally when hovering an attachment card OR an AgentRunCard step anchor badge (#28)', async () => {
+  it('highlights matching canvas region bidirectionally when hovering an attachment card OR a WorkProcessBlock step anchor badge (#28)', async () => {
     stubLocale('zh-CN');
     const { proto, confirmedRevision } = makePrototypesFixture();
     setWorkbenchDataForTest({
@@ -604,7 +604,7 @@ describe('Ticket 06 (#28): Box-Select Attachment Cards, Live Anchor Highlight, a
     usePrototypeSelectionStore.getState().hoverAttachment(null);
     expect(useAgentPanelStore.getState().hoveredAnchor).toBeNull();
 
-    // 2. Hovering an AgentRunCard step anchor badge (via useAgentPanelStore.setHoveredAnchor) also highlights live canvas
+    // 2. Hovering a WorkProcessBlock step anchor badge (via useAgentPanelStore.setHoveredAnchor) also highlights live canvas
     useAgentPanelStore.getState().setHoveredAnchor({
       screenId: 'SCR-CONTRACT-LIST',
       elementId: 'EL-SEARCH',
@@ -886,6 +886,57 @@ describe('Ticket 06 (#28): Box-Select Attachment Cards, Live Anchor Highlight, a
       </PreferencesProvider>,
     );
     expect(standaloneBannerHtml).toContain('data-testid="prototype-post-run-dismiss-btn"');
+  });
+
+  it('merges composer extraImages alongside prototype element selection screenshots in submitPrototypeComposerTurnWithSelections (#85)', async () => {
+    stubLocale('zh-CN');
+    const { proto, confirmedRevision } = makePrototypesFixture();
+    setWorkbenchDataForTest({
+      prototypes: [{ ...proto, revisions: [proto.revisions[0]!], currentRevisionId: 'rev-1' }],
+      confirmedPrototypeRevision: confirmedRevision,
+    });
+
+    const { approveBtnTarget } = makeSampleTargets();
+    const att = await ingestSelectionTargetAsAttachment(proto.id, approveBtnTarget, {
+      note: '参考附图配色调整按钮',
+    });
+
+    let capturedInput: Parameters<
+      ReturnType<typeof useWorkbenchStore.getState>['startPrototypeRefinementRun']
+    >[0] | undefined;
+    const orig = useWorkbenchStore.getState().startPrototypeRefinementRun;
+    useWorkbenchStore.setState({
+      startPrototypeRefinementRun: async (payload) => {
+        capturedInput = payload;
+        return { sessionId: proto.coDesignSessionId! };
+      },
+    });
+
+    try {
+      await submitPrototypeComposerTurnWithSelections({
+        projectId: proto.projectId,
+        prototypeId: proto.id,
+        instruction: '结合粘贴的参考截图调整审批按钮风格',
+        visionSupported: true,
+        extraImages: [
+          {
+            id: 'composer-pasted-img-1',
+            name: 'brand-ref.png',
+            mimeType: 'image/png',
+            dataBase64: 'iVBORw0KGgo=',
+            role: 'user_upload',
+          },
+        ],
+      });
+    } finally {
+      useWorkbenchStore.setState({ startPrototypeRefinementRun: orig });
+    }
+
+    expect(capturedInput?.selections).toHaveLength(1);
+    expect(capturedInput?.images?.map((img) => img.id)).toEqual([
+      att.imageRef.id,
+      'composer-pasted-img-1',
+    ]);
   });
 
   it('enforces zero blocking browser dialogs across all Ticket 06 modules', () => {

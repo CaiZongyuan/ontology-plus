@@ -6,6 +6,15 @@ import {
   type ProjectStepStateId,
 } from '../../business-vocabulary/index.js';
 import type {
+  ContextEventDetail,
+  ContextEventInput,
+  ContextEventSummary,
+  ModelCallDetail,
+  ModelCallRecordInput,
+  ModelCallSummary,
+  ModelCallUsageSource,
+} from './context-snapshots.js';
+import type {
   CandidateDecision,
   ExtractionCandidate,
   ImpactAnalysisReport,
@@ -546,10 +555,15 @@ export interface AgentSession {
   multiAgentConcurrency?: number;
   designBrief?: DesignBrief;
   compactedSummary?: string;
+  /** Usage of the latest Agent Run, summed from its Model Calls' Context Snapshots (ADR 0017). */
   tokenUsage?: {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    /** Where the figures came from; absent on sessions recorded before ADR 0017. */
+    source?: ModelCallUsageSource;
   };
   messages: AgentSessionMessage[];
   createdAt: string;
@@ -1251,6 +1265,8 @@ export interface LlmProviderConfig {
   enabled: boolean;
   /** Whether this provider/model accepts multimodal image input (Visual References, uploads, selection crops). */
   supportsVision?: boolean;
+  /** Context window of the provider's models in tokens; the engine assumes 128000 when unset. */
+  contextWindow?: number;
   lastTestedStatus?: 'OK' | 'ERROR';
   lastTestedMessage?: string;
 }
@@ -1384,6 +1400,20 @@ export interface WorkspaceStore {
     newTitle?: string,
   ): AgentSession;
   deleteAgentSession(sessionId: string): void;
+
+  // Context Snapshots (ADR 0017)
+  recordModelCall(input: ModelCallRecordInput): ModelCallSummary;
+  listModelCalls(projectId: string, sessionId: string): ModelCallSummary[];
+  getModelCall(projectId: string, callId: string): ModelCallDetail | undefined;
+  deleteModelCallsByRunIds(
+    projectId: string,
+    sessionId: string,
+    runIds: readonly string[],
+  ): number;
+  deleteSessionContextSnapshots(projectId: string, sessionId: string): void;
+  recordContextEvent(input: ContextEventInput): ContextEventSummary;
+  listContextEvents(projectId: string, sessionId: string): ContextEventSummary[];
+  getContextEvent(projectId: string, eventId: string): ContextEventDetail | undefined;
 
   // Application Center
   listRequirementSessions(projectId: string): RequirementSession[];

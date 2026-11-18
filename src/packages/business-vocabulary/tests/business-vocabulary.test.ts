@@ -224,7 +224,11 @@ describe('business vocabulary & GLOSSARY.md alignment', () => {
   it('stays bidirectionally 1-to-1 consistent with every Shown-to-business-users-as and direct business term in GLOSSARY.md', () => {
     const glossary = parseGlossary(fs.readFileSync(glossaryPath, 'utf8'));
     const shownAsFromGlossary = glossary.filter((item) => item.shownAs !== undefined);
-    expect(shownAsFromGlossary.length).toBe(16);
+    expect(shownAsFromGlossary.length).toBe(18);
+    expect(BUSINESS_VOCABULARY.ONTOLOGY_SYNTHESIS).toMatchObject({
+      zh: '生成业务模型',
+      en: 'Generate business model',
+    });
 
     const vocabShownAs = Object.values(BUSINESS_VOCABULARY).filter((entry) => entry.shownAsInGlossary);
 

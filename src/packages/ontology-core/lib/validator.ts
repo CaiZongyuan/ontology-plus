@@ -179,16 +179,18 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
   // ─── Lookup Indexes across Present Models ──────────────────────────────────
   const aggregateIds = new Set<string>();
   const canonicalAggByKey = new Map<string, AggregateRoot>();
+  const canonicalAggByLowerKey = new Map<string, AggregateRoot>();
   const aggValidAttrPaths = new Map<string, Set<string>>();
   const dictionaryTypes = new Map<string, Map<string, Set<string>>>(); // dictId -> typeCode -> enabled item codes
   const associationIds = new Set<string>();
 
   const resolveCanonicalAgg = (ref: string | undefined): AggregateRoot | undefined => {
     if (!ref) return undefined;
-    const direct = canonicalAggByKey.get(ref);
+    const direct = canonicalAggByKey.get(ref) ?? canonicalAggByLowerKey.get(ref.toLowerCase());
     if (direct) return direct;
     if (ref.includes('.')) {
-      return canonicalAggByKey.get(ref.split('.')[0]);
+      const prefix = ref.split('.')[0];
+      return canonicalAggByKey.get(prefix) ?? canonicalAggByLowerKey.get(prefix.toLowerCase());
     }
     return undefined;
   };
@@ -264,6 +266,15 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
       if (!canonicalAggByKey.has(agg.id)) canonicalAggByKey.set(agg.id, agg);
       if (trimmedName && !canonicalAggByKey.has(agg.name)) canonicalAggByKey.set(agg.name, agg);
       if (trimmedAlias && !canonicalAggByKey.has(agg.alias)) canonicalAggByKey.set(agg.alias, agg);
+      if (trimmedId && !canonicalAggByLowerKey.has(trimmedId.toLowerCase())) {
+        canonicalAggByLowerKey.set(trimmedId.toLowerCase(), agg);
+      }
+      if (trimmedName && !canonicalAggByLowerKey.has(trimmedName.toLowerCase())) {
+        canonicalAggByLowerKey.set(trimmedName.toLowerCase(), agg);
+      }
+      if (trimmedAlias && !canonicalAggByLowerKey.has(trimmedAlias.toLowerCase())) {
+        canonicalAggByLowerKey.set(trimmedAlias.toLowerCase(), agg);
+      }
       for (const ent of agg.entities) {
         aggregateIds.add(`${agg.name}.${ent.name}`);
       }
@@ -2002,7 +2013,27 @@ export function validateOntologySuite(suite: OntologySuite): ValidationReport {
             const attrRest = normBind.slice(dotIdx + 1);
             const agg = resolveCanonicalAgg(aggPrefix);
             const validAttrs = agg ? aggValidAttrPaths.get(agg.id) : undefined;
-            if (!agg || (validAttrs && !validAttrs.has(attrRest) && !IMPLICIT_PERSISTENCE_ATTRS.has(attrRest))) {
+            const isQueryFilterParam = Boolean(
+              agg &&
+                ((suite.M7?.query_reports ?? []).some(
+                  (qr) =>
+                    resolveCanonicalAgg(qr.primarySource.aggregateRef)?.id === agg.id &&
+                    qr.parameters.some((p) => p.name === attrRest),
+                ) ||
+                  (suite.M2?.behaviors ?? []).some(
+                    (b) =>
+                      b.behaviorType === 'QUERY' &&
+                      resolveCanonicalAgg(b.ownerEntity)?.id === agg.id &&
+                      b.inputParameters.some((p) => p.name === attrRest),
+                  )),
+            );
+            if (
+              !agg ||
+              (validAttrs &&
+                !validAttrs.has(attrRest) &&
+                !IMPLICIT_PERSISTENCE_ATTRS.has(attrRest) &&
+                !isQueryFilterParam)
+            ) {
               diagnostics.push({
                 id: `MU-EL-BIND-${screen.screenId}-${el.elementId}`,
                 tier: 'ERROR',

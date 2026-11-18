@@ -89,7 +89,9 @@ test.describe('Prototype Step: Redesigned Shell, Business Screen Diff & Outdated
     await page.getByTestId('confirm-brief-generate-btn').click();
 
     await expect(
-      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      agentPanel
+        .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+        .last(),
     ).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('prototype-canvas-stage')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('step-status-PROTOTYPE')).toHaveText('进行中');
@@ -199,7 +201,7 @@ test.describe('Prototype Step: Redesigned Shell, Business Screen Diff & Outdated
     await expect(
       page
         .getByTestId('agent-panel')
-        .locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]')
+        .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
         .last(),
     ).toBeVisible({ timeout: 30_000 });
 

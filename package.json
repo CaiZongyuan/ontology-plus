@@ -15,7 +15,8 @@
     "themes:generate": "tsx scripts/generate-workbench-themes.ts",
     "check": "pnpm typecheck && pnpm lint:boundaries && pnpm lint:theme",
     "test": "vitest run src",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "smoke:context": "NODE_USE_ENV_PROXY=1 tsx scripts/smoke-context-snapshots.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",

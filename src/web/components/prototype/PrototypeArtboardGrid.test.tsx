@@ -13,7 +13,7 @@ import {
 } from '../../../packages/workspace-store/index.js';
 import { createApiApp } from '../../../server/app.js';
 import { PreferencesProvider } from '../../i18n.js';
-import { AgentRunCard } from '../agent/AgentRunCard.js';
+import { AssistantReplyItem } from '../agent/conversation/AssistantReplyItem.js';
 import { ShellAgentPanel } from '../agent/ShellAgentPanel.js';
 import { agentPanelSurfaceFor } from '../../navigation/index.js';
 import { useWorkbenchStore, type BootstrapPayload } from '../../api.js';
@@ -160,7 +160,7 @@ describe('Variant A Multi-Artboard Canvas & Pi Agent Code Mode / 3-Way Multi-Age
     }
   });
 
-  it('defaults Code Mode ON and Multi-Agent ×3 in ShellAgentPanel and renders parallel subagent lanes in AgentRunCard with 0 Business View violations', async () => {
+  it('defaults Code Mode ON and Multi-Agent ×3 in ShellAgentPanel and renders parallel subagent lanes & orchestration script in AssistantReplyItem with 0 Business View violations', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     const app = createApiApp(store);
     const resp = await app.request('http://localhost/api/bootstrap?projectId=proj-contract');
@@ -189,63 +189,76 @@ describe('Variant A Multi-Artboard Canvas & Pi Agent Code Mode / 3-Way Multi-Age
         </PreferencesProvider>,
       );
 
+      expect(panelHtml).toContain('data-testid="conversation-thread"');
       expect(panelHtml).toContain('data-testid="agent-execution-mode-bar"');
       expect(panelHtml).toContain('data-testid="agent-codemode-toggle"');
       expect(panelHtml).toMatch(/data-testid="agent-codemode-toggle"[^>]*aria-pressed="true"/);
       expect(panelHtml).toMatch(/data-testid="agent-concurrency-btn-3"[^>]*aria-pressed="true"/);
       expect(checkBusinessViewMarkup(panelHtml)).toHaveLength(0);
 
-      const cardHtml = renderToStaticMarkup(
+      const sampleParallelRun = {
+        id: 'run-parallel-1',
+        title: { zh: '生成咖啡店交互原型', en: 'Generate coffee shop prototype' },
+        status: 'RUNNING' as const,
+        liveStatus: { zh: '正在并行推进 3 路子任务…', en: 'Running 3 parallel tasks…' },
+        startedAt: 1_700_000_000_000,
+        liveStreamedChars: 2480,
+        codeModeScript: 'await Promise.all([tools.upsert_prototype_screen({ screenId: "SCR-1" })]);',
+        subagentLanes: [
+          {
+            laneId: 'l1',
+            workerIndex: 1,
+            workerLabel: { zh: '1 号助手', en: 'Assistant #1' },
+            taskTitle: { zh: '绘制会员储值台账', en: 'Build member ledger' },
+            status: 'RUNNING' as const,
+            progressChars: 920,
+            startedAt: '2026-11-18T04:00:00.000Z',
+          },
+          {
+            laneId: 'l2',
+            workerIndex: 2,
+            workerLabel: { zh: '2 号助手', en: 'Assistant #2' },
+            taskTitle: { zh: '绘制储值录入抽屉', en: 'Build top-up drawer' },
+            status: 'RUNNING' as const,
+            progressChars: 810,
+            startedAt: '2026-11-18T04:00:00.000Z',
+          },
+          {
+            laneId: 'l3',
+            workerIndex: 3,
+            workerLabel: { zh: '3 号助手', en: 'Assistant #3' },
+            taskTitle: { zh: '绘制现磨点单收银', en: 'Build POS screen' },
+            status: 'RUNNING' as const,
+            progressChars: 750,
+            startedAt: '2026-11-18T04:00:00.000Z',
+          },
+        ],
+        steps: [],
+      };
+
+      // Collapsed live reply shows subagent lanes & streamed chars with 0 Business View violations
+      const replyCollapsedHtml = renderToStaticMarkup(
         <PreferencesProvider>
-          <AgentRunCard
-            now={1_700_000_012_000}
-            run={{
-              id: 'run-parallel-1',
-              title: { zh: '生成咖啡店交互原型', en: 'Generate coffee shop prototype' },
-              status: 'RUNNING',
-              liveStatus: { zh: '正在并行推进 3 路子任务…', en: 'Running 3 parallel tasks…' },
-              startedAt: 1_700_000_000_000,
-              liveStreamedChars: 2480,
-              codeModeScript: 'await Promise.all([tools.upsert_prototype_screen({ screenId: "SCR-1" })]);',
-              subagentLanes: [
-                {
-                  laneId: 'l1',
-                  workerIndex: 1,
-                  workerLabel: { zh: '1 号助手', en: 'Assistant #1' },
-                  taskTitle: { zh: '绘制会员储值台账', en: 'Build member ledger' },
-                  status: 'RUNNING',
-                  progressChars: 920,
-                  startedAt: '2026-11-18T04:00:00.000Z',
-                },
-                {
-                  laneId: 'l2',
-                  workerIndex: 2,
-                  workerLabel: { zh: '2 号助手', en: 'Assistant #2' },
-                  taskTitle: { zh: '绘制储值录入抽屉', en: 'Build top-up drawer' },
-                  status: 'RUNNING',
-                  progressChars: 810,
-                  startedAt: '2026-11-18T04:00:00.000Z',
-                },
-                {
-                  laneId: 'l3',
-                  workerIndex: 3,
-                  workerLabel: { zh: '3 号助手', en: 'Assistant #3' },
-                  taskTitle: { zh: '绘制现磨点单收银', en: 'Build POS screen' },
-                  status: 'RUNNING',
-                  progressChars: 750,
-                  startedAt: '2026-11-18T04:00:00.000Z',
-                },
-              ],
-              steps: [],
-            }}
-          />
+          <AssistantReplyItem now={1_700_000_012_000} run={sampleParallelRun} />
         </PreferencesProvider>,
       );
 
-      expect(cardHtml).toContain('data-testid="agent-run-subagent-lanes"');
-      expect(cardHtml).toContain('data-testid="agent-run-stream-chars"');
-      expect(cardHtml).toContain('data-testid="agent-run-codemode-script"');
-      expect(checkBusinessViewMarkup(cardHtml)).toHaveLength(0);
+      expect(replyCollapsedHtml).toContain('data-testid="agent-run-subagent-lanes"');
+      expect(replyCollapsedHtml).toContain('data-testid="agent-run-stream-chars"');
+      expect(checkBusinessViewMarkup(replyCollapsedHtml)).toHaveLength(0);
+
+      // Expanded work process exposes the orchestration script details with 0 Business View violations
+      const replyExpandedHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <AssistantReplyItem
+            now={1_700_000_012_000}
+            defaultWorkExpanded
+            run={sampleParallelRun}
+          />
+        </PreferencesProvider>,
+      );
+      expect(replyExpandedHtml).toContain('data-testid="agent-run-codemode-script"');
+      expect(checkBusinessViewMarkup(replyExpandedHtml)).toHaveLength(0);
     }
   });
 });

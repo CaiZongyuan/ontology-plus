@@ -453,8 +453,15 @@ function findAggregate(suite: OntologySuite, ref?: string): AggregateRoot | unde
   const aggs = suite.M1?.aggregates ?? [];
   if (aggs.length === 0) return undefined;
   if (!ref) return aggs[0];
+  const refLower = ref.trim().toLowerCase();
   return (
     aggs.find((a) => a.id === ref || a.name === ref || a.alias === ref) ??
+    aggs.find(
+      (a) =>
+        a.id.toLowerCase() === refLower ||
+        a.name.toLowerCase() === refLower ||
+        a.alias.toLowerCase() === refLower,
+    ) ??
     aggs[0]
   );
 }
@@ -538,6 +545,44 @@ const VALID_ATTR_TYPES = new Set<Attribute['type']>([
   'DictionaryRef',
 ]);
 
+function normalizeScalarAttrType(raw: unknown): Attribute['type'] {
+  const direct = String(raw ?? 'String').trim();
+  if (
+    VALID_ATTR_TYPES.has(direct as Attribute['type']) &&
+    direct !== 'AggregateRootRef' &&
+    direct !== 'DictionaryRef' &&
+    direct !== 'ValueObject'
+  ) {
+    return direct as Attribute['type'];
+  }
+  switch (direct.toLowerCase()) {
+    case 'int':
+    case 'integer':
+      return 'Integer';
+    case 'decimal':
+    case 'number':
+    case 'float':
+    case 'double':
+      return 'Decimal';
+    case 'money':
+    case 'currency':
+    case 'amount':
+      return 'Money';
+    case 'bool':
+    case 'boolean':
+      return 'Boolean';
+    case 'date':
+      return 'Date';
+    case 'datetime':
+    case 'timestamp':
+      return 'DateTime';
+    case 'enum':
+      return 'Enum';
+    default:
+      return 'String';
+  }
+}
+
 const VALID_RULE_TYPES = new Set<RuleItem['ruleType']>([
   'VALIDATION',
   'CALCULATION',
@@ -617,14 +662,7 @@ export function applyOntologyToolCall(
       const attributes: Attribute[] =
         rawAttrs.length > 0
           ? rawAttrs.map((a, idx) => {
-              const candidateType = String(a.type ?? 'String') as Attribute['type'];
-              const safeType: Attribute['type'] =
-                VALID_ATTR_TYPES.has(candidateType) &&
-                candidateType !== 'AggregateRootRef' &&
-                candidateType !== 'DictionaryRef' &&
-                candidateType !== 'ValueObject'
-                  ? candidateType
-                  : 'String';
+              const safeType = normalizeScalarAttrType(a.type);
               return {
                 name: toCamelIdentifier(typeof a.name === 'string' ? a.name : undefined, 'field', idx + 1),
                 label: typeof a.label === 'string' && a.label.trim() ? a.label.trim() : `字段${idx + 1}`,
@@ -1044,13 +1082,52 @@ export function applyOntologyToolCall(
           targetRule.producedEvents.push(evId);
         }
       } else {
-        const targetBeh =
-          nextSuite.M2?.behaviors.find((b) => b.id === args.producerBehaviorRef) ??
-          nextSuite.M2?.behaviors.find((b) => b.behaviorType === 'COMMAND') ??
-          nextSuite.M2?.behaviors[0];
-        producerBehaviorRef = targetBeh?.id ?? '';
+        if (!nextSuite.M2) {
+          nextSuite.M2 = {
+            model_type: 'BEHAVIOR',
+            version: '5.0',
+            domain,
+            behaviors: [],
+          };
+        }
+        const refHint =
+          typeof args.producerBehaviorRef === 'string' ? args.producerBehaviorRef.trim() : '';
+        let targetBeh =
+          (refHint
+            ? nextSuite.M2.behaviors.find(
+                (b) => b.id === refHint || b.name === refHint || b.alias === refHint,
+              )
+            : undefined) ??
+          nextSuite.M2.behaviors.find(
+            (b) => b.behaviorType === 'COMMAND' && b.ownerEntity === sourceAggregate,
+          ) ??
+          nextSuite.M2.behaviors.find((b) => b.behaviorType === 'COMMAND') ??
+          nextSuite.M2.behaviors[0];
+        if (!targetBeh) {
+          const autoBehId =
+            refHint && /^BHV[-_]/i.test(refHint)
+              ? refHint
+              : `BHV-${pad2(nextSuite.M2.behaviors.length + 1)}`;
+          targetBeh = {
+            id: autoBehId,
+            name: `record${toPascalIdentifier(sourceAggregate, 'DomainEvent', nextIdx)}`,
+            alias: `触发${label}`,
+            ownerEntity: sourceAggregate,
+            behaviorType: 'COMMAND',
+            triggerType: 'SYSTEM',
+            description: `与事件 ${evId} 自动配对的产生行为`,
+            inputParameters: [{ name: 'targetId', label: '目标单据ID', type: 'String', required: true }],
+            outputParameters: [{ name: 'result', label: '执行结果', type: 'Boolean', required: true }],
+            preconditions: [],
+            stateChanges: [],
+            invokedRules: [],
+            producedEvents: [],
+            requiredPermissions: [],
+          };
+          nextSuite.M2.behaviors.push(targetBeh);
+        }
+        producerBehaviorRef = targetBeh.id;
         if (
-          targetBeh &&
           !targetBeh.producedEvents.some((pe) => (typeof pe === 'string' ? pe : pe.eventRef) === evId)
         ) {
           targetBeh.producedEvents.push(evId);
@@ -1272,7 +1349,11 @@ export function applyOntologyToolCall(
           inheritsFrom: [],
           permissions: nextSuite.M5.permissions.slice(0, 1).map((p) => p.id),
           dataScope:
-            args.dataScope === 'DEPARTMENT' || args.dataScope === 'SELF' ? args.dataScope : 'ALL',
+            args.dataScope === 'DEPARTMENT' || args.dataScope === 'DEPT'
+              ? 'DEPARTMENT'
+              : args.dataScope === 'SELF' || args.dataScope === 'OWN'
+                ? 'SELF'
+                : 'ALL',
           description:
             typeof args.description === 'string' ? args.description : `由 AI 本体助手维护的角色 ${roleName}`,
         };
@@ -1590,6 +1671,27 @@ export function applyOntologyToolCall(
           ? args.sql.trim()
           : `SELECT t.${colSnake} AS ${firstAttr} FROM ${tableSnake} t ORDER BY t.${colSnake} DESC LIMIT 50`;
 
+      const sqlParamNames = Array.from(
+        new Set(
+          Array.from(sql.matchAll(/(?<![:\w]):([A-Za-z_][A-Za-z0-9_]*)/g), (m) => m[1]!).filter(
+            Boolean,
+          ),
+        ),
+      );
+      const explicitParams = Array.isArray(args.parameters)
+        ? (args.parameters as Record<string, unknown>[])
+            .map((p) => (typeof p?.name === 'string' ? p.name.trim() : ''))
+            .filter(Boolean)
+        : [];
+      const mergedParamNames = Array.from(new Set(['keyword', ...explicitParams, ...sqlParamNames]));
+      const mergedParameters: QueryReportItem['parameters'] = mergedParamNames.map((pName) => ({
+        name: pName,
+        label: pName === 'keyword' ? '筛选词' : pName,
+        type: 'String',
+        required: false,
+      }));
+      pairedBeh.inputParameters = mergedParameters.map((p) => ({ ...p }));
+
       const newReport: QueryReportItem = {
         id: rptId,
         name: rptName,
@@ -1605,7 +1707,7 @@ export function applyOntologyToolCall(
           alias: 't',
         },
         joins: [],
-        parameters: [{ name: 'keyword', label: '筛选词', type: 'String', required: false }],
+        parameters: mergedParameters,
         conditions: [],
         resultColumns: [
           {
@@ -1630,7 +1732,7 @@ export function applyOntologyToolCall(
         referenceSql: {
           dialect: 'SQLite',
           sql,
-          parameterMappings: ['keyword'],
+          parameterMappings: mergedParamNames,
           resultMappings: [firstAttr],
         },
       };
@@ -1745,6 +1847,13 @@ export function applyOntologyToolCall(
         });
       }
 
+      const existingIdx = nextSuite.MU.screens.findIndex((s) => s.screenId === screenId);
+      const existingScreen = existingIdx >= 0 ? nextSuite.MU.screens[existingIdx] : undefined;
+      const effectiveElements =
+        existingScreen && !Array.isArray(args.elements) ? existingScreen.elements : elements;
+      const effectiveEvents =
+        existingScreen && !Array.isArray(args.events) ? existingScreen.events : events;
+
       const newScreen: ScreenItem = {
         screenId,
         name: screenName,
@@ -1752,16 +1861,15 @@ export function applyOntologyToolCall(
         route:
           typeof args.route === 'string' && args.route.trim()
             ? args.route.trim()
-            : `/${toSnakeCase(screenId).replace(/_/g, '-')}`,
-        roleRefs: firstRoleIds,
+            : existingScreen?.route || `/${toSnakeCase(screenId).replace(/_/g, '-')}`,
+        roleRefs: existingScreen?.roleRefs?.length ? existingScreen.roleRefs : firstRoleIds,
         description:
           typeof args.description === 'string' ? args.description : `由 AI 本体助手生成的屏幕 ${screenName}`,
-        layout: buildAsciiWireframeLayout(screenId, screenName, elements),
-        elements,
-        events,
+        layout: buildAsciiWireframeLayout(screenId, screenName, effectiveElements),
+        elements: effectiveElements,
+        events: effectiveEvents,
       };
 
-      const existingIdx = nextSuite.MU.screens.findIndex((s) => s.screenId === screenId);
       if (existingIdx >= 0) nextSuite.MU.screens[existingIdx] = newScreen;
       else nextSuite.MU.screens.push(newScreen);
 
@@ -1800,7 +1908,7 @@ export function applyOntologyToolCall(
           ? args.tableName.trim()
           : `t_${toSnakeCase(objectName)}`;
 
-      const columnMappings = (targetAgg?.attributes ?? []).slice(0, 8).map((attr) => ({
+      const columnMappings = (targetAgg?.attributes ?? []).map((attr) => ({
         attributeRef: `${objectName}.${attr.name}`,
         column: toSnakeCase(attr.name),
         columnType:

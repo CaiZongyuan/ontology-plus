@@ -70,7 +70,7 @@ test.describe('Home Screen: One-Sentence Project Creation & Step Status (#61)', 
     await expect(agentPanel).toBeVisible();
     await expect(agentPanel).toContainText(expectedSentence);
     await expect(
-      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      agentPanel.locator('[data-testid="conversation-turn"][data-run-status="SUCCEEDED"]').last(),
     ).toBeVisible({ timeout: 25_000 });
 
     // Capture new project ID from project selector

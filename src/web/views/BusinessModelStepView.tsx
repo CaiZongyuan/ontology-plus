@@ -920,6 +920,10 @@ export function BusinessModelStepView({
       (s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id])),
   );
 
+  const hasCoreBusinessModel =
+    projection.objects.length > 0 ||
+    validation.presentModels.some((m) => m !== 'MU' && m !== 'M1');
+
   /* ─── Technical Details Mode (`mode === 'technical'`) ─── */
   if (effectiveMode === 'technical') {
     const safeNavigate = onNavigate ?? (() => undefined);
@@ -967,6 +971,21 @@ export function BusinessModelStepView({
           </div>
 
           <div className="flex items-center gap-2">
+            {!hasCoreBusinessModel && lifecycle.hasConfirmedPrototype && !isCopilotBusy && (
+              <Button
+                type="button"
+                variant="accent"
+                size="sm"
+                data-testid="tech-bar-organize-btn"
+                onClick={() => {
+                  revealConversationPane();
+                  void startOntologySynthesisRun();
+                }}
+              >
+                <Sparkles size={13} aria-hidden="true" />
+                <span>{t('生成业务模型', 'Generate Business Model')}</span>
+              </Button>
+            )}
             {historyTriggerButton}
             <button
               type="button"
@@ -1014,7 +1033,6 @@ export function BusinessModelStepView({
   }
 
   /* ─── Business View Empty State (no core M1–MI models yet, including MU-only right after Prototype confirmation) ─── */
-  const hasCoreBusinessModel = validation.presentModels.some((m) => m !== 'MU');
   if (!hasCoreBusinessModel) {
     const canOrganizeFromPrototype = lifecycle.hasConfirmedPrototype;
     return (

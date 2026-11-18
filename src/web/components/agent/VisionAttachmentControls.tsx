@@ -348,11 +348,12 @@ export function VisionAttachmentControls({
       if (added.length > 0) {
         onAttachmentsChange([...attachments, ...added]);
       }
-    } catch (err) {
+    } catch {
       setInlineError(
-        err instanceof Error
-          ? err.message
-          : t('本地图片保存失败', 'Failed to store image locally'),
+        t(
+          '图片无法保存在当前浏览器，请检查浏览器存储空间后重试。',
+          'Could not save the image in this browser. Check available storage and try again.',
+        ),
       );
     } finally {
       setBusy(false);

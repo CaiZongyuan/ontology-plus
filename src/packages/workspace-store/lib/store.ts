@@ -32,6 +32,17 @@ import {
   type ValidationDiagnostic,
 } from '../../ontology-core/index.js';
 import { BOOTSTRAP_SQLITE_DDL } from './schema.js';
+import {
+  deleteModelCallsByRunIds,
+  deleteSessionContextSnapshots,
+  getContextEvent,
+  getModelCall,
+  listContextEvents,
+  listModelCalls,
+  recordContextEvent,
+  recordModelCall,
+  type ContextSnapshotStorage,
+} from './context-snapshots.js';
 import { sanitizeInspoCacheEntry, type InspoCacheEntry } from './inspo-cache.js';
 import {
   SEED_AGENT_SESSIONS,
@@ -191,6 +202,8 @@ export interface WorkspaceStoreOptions {
   onSuiteCommit?: (event: SuiteCommitEvent) => void;
   /** Maximum retained linear history entries per `(projectId, artifactKind)` (defaults to 50). */
   maxHistoryEntries?: number;
+  /** Model Calls per session that keep their full Context Snapshot (defaults to 200, ADR 0017). */
+  maxFullModelCallsPerSession?: number;
 }
 
 interface SqliteStatementLike {
@@ -1780,6 +1793,24 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     return `${prefix}-${Date.now().toString(36)}-${seqCounter.toString(36)}`;
   }
 
+  const contextSnapshotStorage: ContextSnapshotStorage = {
+    put(collection, itemId, payload, projectId) {
+      putItem(collection, itemId, payload, projectId);
+    },
+    get: getItem,
+    delete: deleteItem,
+    listBySession<T>(collection: string, projectId: string, sessionId: string): T[] {
+      const rows = db
+        .prepare(
+          `SELECT payload_json FROM workspace_entities WHERE collection = ? AND project_id = ? AND json_extract(payload_json, '$.sessionId') = ?`,
+        )
+        .all(collection, projectId, sessionId) as { payload_json: string }[];
+      return rows.map((r) => JSON.parse(r.payload_json) as T);
+    },
+    listByProject: listItems,
+    newId: nextUniqueId,
+  };
+
   function getProjectSuite(projectId: string): OntologySuite | undefined {
     const row = db.prepare(`SELECT * FROM projects WHERE id = ?`).get(projectId) as
       | Record<string, unknown>
@@ -2591,7 +2622,43 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     deleteAgentSession(sessionId) {
+      const existing = getItem<AgentSession>('agent_sessions', sessionId);
       deleteItem('agent_sessions', sessionId);
+      if (existing) {
+        deleteSessionContextSnapshots(contextSnapshotStorage, existing.projectId, sessionId);
+      }
+    },
+
+    recordModelCall(input) {
+      return recordModelCall(contextSnapshotStorage, input, options.maxFullModelCallsPerSession);
+    },
+
+    listModelCalls(projectId, sessionId) {
+      return listModelCalls(contextSnapshotStorage, projectId, sessionId);
+    },
+
+    getModelCall(projectId, callId) {
+      return getModelCall(contextSnapshotStorage, projectId, callId);
+    },
+
+    deleteModelCallsByRunIds(projectId, sessionId, runIds) {
+      return deleteModelCallsByRunIds(contextSnapshotStorage, projectId, sessionId, runIds);
+    },
+
+    deleteSessionContextSnapshots(projectId, sessionId) {
+      deleteSessionContextSnapshots(contextSnapshotStorage, projectId, sessionId);
+    },
+
+    recordContextEvent(input) {
+      return recordContextEvent(contextSnapshotStorage, input);
+    },
+
+    listContextEvents(projectId, sessionId) {
+      return listContextEvents(contextSnapshotStorage, projectId, sessionId);
+    },
+
+    getContextEvent(projectId, eventId) {
+      return getContextEvent(contextSnapshotStorage, projectId, eventId);
     },
 
     listRequirementSessions(projectId) {
@@ -3711,6 +3778,24 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         }
       }
       deleteItem('prototypes', protoId);
+      if (existing) {
+        const remainingCoDesignSessionIds = new Set(
+          this.listPrototypes(existing.projectId)
+            .map((p) => p.coDesignSessionId)
+            .filter((sid): sid is string => Boolean(sid)),
+        );
+        const orphanedSessions = this.listAgentSessions({
+          projectId: existing.projectId,
+          agentKind: 'PROTOTYPE_CO_DESIGN',
+        }).filter(
+          (s) =>
+            (s.id === existing.coDesignSessionId || s.targetId === existing.id) &&
+            !remainingCoDesignSessionIds.has(s.id),
+        );
+        for (const sess of orphanedSessions) {
+          this.deleteAgentSession(sess.id);
+        }
+      }
     },
 
     listFourLayerAssets(layer) {
