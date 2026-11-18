@@ -29,7 +29,6 @@ export {
   rewritePrototypePage,
   initPrototypeShell,
   upsertPrototypeScreen,
-  previewPartialPrototypeScreen,
   extractLatestHtmlWritingSignal,
   extractPrototypeArtboards,
   ensurePrototypeCoDesignSession,

@@ -5,10 +5,14 @@ import {
   type ProjectStepId,
   type ProjectStepStateId,
 } from '../packages/business-vocabulary/index.js';
-import type {
-  ImpactAnalysisReport,
-  ModelCode,
-  OntologySuite,
+import {
+  applyPrototypeLiveEvent,
+  emptyPrototypeLiveState,
+  type ImpactAnalysisReport,
+  type ModelCode,
+  type OntologySuite,
+  type PrototypeLiveEvent,
+  type PrototypeLiveState,
 } from '../packages/ontology-core/index.js';
 import {
   resolveCurrentProjectStep,
@@ -220,7 +224,8 @@ export interface SessionLiveDraft {
   text: string;
   steps: SessionLiveStep[];
   subagentLanes?: AgentSubagentLaneTrace[];
-  livePreviewHtml?: string;
+  /** Per-screen live prototype state of this run, folded from prototype_frame/prototype_screen. */
+  prototypeLive?: PrototypeLiveState;
   liveStreamedChars?: number;
   lastHeartbeatAt?: number;
   reconnecting?: boolean;
@@ -2264,13 +2269,8 @@ export interface StreamAgentSessionCallbacks {
     lane: AgentSubagentLaneTrace;
     lanes: AgentSubagentLaneTrace[];
   }) => void;
-  onPrototypePreview?: (preview: {
-    prototypeId?: string;
-    prototypeName: string;
-    workingHtml: string;
-    screenCount: number;
-    targetAnchor?: PrototypeTargetAnchor;
-  }) => void;
+  /** One per-screen (or frame) delta of a prototype being built live (#89). */
+  onPrototypeLive?: (event: PrototypeLiveEvent) => void;
   onArtifact?: (artifact: AgentDomainArtifact) => void;
   onAskUser?: (askUser: AgentAskUserPrompt) => void;
   onStepHandoff?: (stepHandoff: StepHandoffProposal) => void;
@@ -2375,8 +2375,9 @@ function consumeAgentSessionSseBody(
         case 'subagent_update':
           callbacks.onSubagentUpdate?.(parsed as never);
           break;
-        case 'prototype_preview':
-          callbacks.onPrototypePreview?.(parsed as never);
+        case 'prototype_frame':
+        case 'prototype_screen':
+          callbacks.onPrototypeLive?.(parsed as unknown as PrototypeLiveEvent);
           break;
         case 'artifact':
           callbacks.onArtifact?.(parsed.artifact as AgentDomainArtifact);
@@ -2696,13 +2697,15 @@ function buildStoreSessionStreamCallbacks(
         };
       });
     },
-    onPrototypePreview: (preview) => {
+    onPrototypeLive: (event) => {
       patchDraft((cur) => ({
         ...cur,
         reconnecting: false,
         lastHeartbeatAt: Date.now(),
-        livePreviewHtml: preview.workingHtml,
-        ...(preview.targetAnchor ? { activeAnchor: preview.targetAnchor } : {}),
+        prototypeLive: applyPrototypeLiveEvent(cur.prototypeLive ?? emptyPrototypeLiveState(), event),
+        ...(event.kind === 'screen' && event.status === 'streaming'
+          ? { activeAnchor: { screenId: event.screenId, label: event.screenName } }
+          : {}),
       }));
     },
     onToolCall: (call) => {

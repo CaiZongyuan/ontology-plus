@@ -10,6 +10,7 @@ import {
   History,
   Laptop,
   LayoutGrid,
+  Loader2,
   Maximize2,
   Minimize2,
   PanelRightOpen,
@@ -64,8 +65,11 @@ import {
   type PrototypeVisualAnnotation,
   type PrototypeZoomMode,
 } from './PrototypeVisualInspector.js';
-import { extractPrototypeArtboards } from '../../../packages/ontology-core/index.js';
-import { PrototypeArtboardGrid } from './PrototypeArtboardGrid.js';
+import {
+  extractPrototypeArtboards,
+  type PrototypeLiveState,
+} from '../../../packages/ontology-core/index.js';
+import { PrototypeLiveCanvas } from './live-canvas/PrototypeLiveCanvas.js';
 import { resolveHighlightSelectorFromAnchor } from './prototypeSelectionStore.js';
 
 export interface RevisionHistorySlotProps {
@@ -132,6 +136,13 @@ export interface PrototypeCanvasStageProps {
   showInlineInspectorPopover?: boolean;
   canvasBannerSlot?: React.ReactNode;
   htmlOverride?: string | null;
+  /** Per-screen live state of the running Agent Run, folded over the shown revision (#89). */
+  liveState?: PrototypeLiveState | null;
+  /**
+   * The first build is still running and nothing is saved yet: the stage shows the same live
+   * canvas it will keep after the save, but none of the revision actions.
+   */
+  pendingLive?: boolean;
   busy?: boolean;
   subagentLanes?: readonly AgentSubagentLaneTrace[];
   liveStreamedChars?: number;
@@ -386,6 +397,8 @@ export function PrototypeCanvasStage({
   showInlineInspectorPopover,
   canvasBannerSlot,
   htmlOverride = null,
+  liveState = null,
+  pendingLive = false,
   busy = false,
   subagentLanes,
   liveStreamedChars,
@@ -609,7 +622,10 @@ export function PrototypeCanvasStage({
   const isPreviewingHistorical = activeRevision.id !== currentRevision.id;
   const displayedHtml = htmlOverride ?? activeRevision.htmlContent ?? activePrototype.htmlContent;
   const artboardCount = extractPrototypeArtboards(displayedHtml).length;
+  const canvasLiveState = isPreviewingHistorical || htmlOverride !== null ? null : liveState;
   const hasMultiArtboardShell =
+    pendingLive ||
+    Boolean(canvasLiveState && (canvasLiveState.frame || canvasLiveState.arrival.length > 0)) ||
     Boolean(subagentLanes && subagentLanes.length > 0) ||
     /id="proto-screens-root"|data-screen-status=/i.test(displayedHtml);
   const effectiveCanvasLayout: 'ARTBOARDS' | 'SINGLE' = inspectMode
@@ -891,6 +907,30 @@ export function PrototypeCanvasStage({
       />
 
       {/* ─── Single Top Toolbar ─── */}
+      {pendingLive ? (
+        <header
+          data-testid="prototype-canvas-toolbar"
+          data-pending-live="true"
+          className="pcs-toolbar flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-border bg-card px-3 py-2 shrink-0"
+        >
+          <div className="flex min-w-0 items-center gap-2 text-[13px] font-medium text-foreground">
+            <Loader2 size={14} className="animate-spin text-primary" aria-hidden="true" />
+            <span className="truncate">
+              {t(`${project.name} · 正在生成首版原型`, `${project.name} · Building the first prototype`)}
+            </span>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-testid="prototype-live-back-to-brief-btn"
+            onClick={onBackToBrief}
+          >
+            <ArrowLeft size={13} aria-hidden="true" />
+            <span>{t('查看设计简报', 'View Design Brief')}</span>
+          </Button>
+        </header>
+      ) : (
       <header
         data-testid="prototype-canvas-toolbar"
         className="pcs-toolbar flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-border bg-card px-3 py-2 shrink-0"
@@ -1508,6 +1548,7 @@ export function PrototypeCanvasStage({
           </Button>
         </div>
       </header>
+      )}
 
       {/* Historical revision preview notice */}
       {isPreviewingHistorical && (
@@ -1550,21 +1591,17 @@ export function PrototypeCanvasStage({
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {effectiveCanvasLayout === 'ARTBOARDS' ? (
-            <PrototypeArtboardGrid
-              htmlContent={displayedHtml}
-              projectName={project.name}
+            <PrototypeLiveCanvas
+              documentHtml={displayedHtml}
+              live={canvasLiveState}
               busy={busy}
               {...(reconnecting !== undefined ? { reconnecting } : {})}
-              {...(liveStreamedChars !== undefined ? { liveStreamedChars } : {})}
-              {...(subagentLanes ? { subagentLanes } : {})}
-              activeRunningAnchor={activeRunningAnchor}
-              highlightedScreenId={hoveredAnchor?.screenId ?? null}
-              highlightedSelector={effectiveHighlightedSelector}
-              onFocusScreen={(screenId) => {
+              highlightedScreenId={hoveredAnchor?.screenId ?? activeRunningAnchor?.screenId ?? null}
+              {...(onRetryScreen ? { onRetryScreen } : {})}
+              onOpenSingleScreen={(screenId) => {
                 setFocusedScreenId(screenId);
                 setLayoutOverride('SINGLE');
               }}
-              {...(onRetryScreen ? { onRetryScreen } : {})}
               viewMode={viewMode}
             />
           ) : (
