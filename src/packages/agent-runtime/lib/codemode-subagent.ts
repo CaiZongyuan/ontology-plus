@@ -1,6 +1,7 @@
 import type {
   Api,
   AssistantMessage,
+  AssistantMessageEvent,
   Context,
   JsonObject,
   Message,
@@ -305,6 +306,11 @@ export interface RunParallelSubagentsOptions {
     toolResultContent: string;
     isError: boolean;
   }>;
+  /** Wraps each subagent Model Call's event stream, e.g. to record its Context Snapshot. */
+  observeModelCall?: (
+    stream: AsyncIterable<AssistantMessageEvent>,
+    call: { context: Context; lane: AgentSubagentLaneTrace },
+  ) => AsyncIterable<AssistantMessageEvent>;
 }
 
 function defaultWorkerLabel(slotIndex: number, roleHint?: string): { zh: string; en: string } {
@@ -614,13 +620,16 @@ export async function runParallelSubagents(
           tools: [...options.subagentTools],
         };
 
-        const stream = options.models.streamSimple(options.selectedModel, ctx, {
+        const rawStream = options.models.streamSimple(options.selectedModel, ctx, {
           signal,
           timeoutMs: options.stepTimeoutMs,
           temperature: 0.2,
           reasoning: 'low',
           maxTokens: options.maxTokens,
         });
+        const stream = options.observeModelCall
+          ? options.observeModelCall(rawStream, { context: ctx, lane: { ...lane } })
+          : rawStream;
 
         let finalMsg: AssistantMessage | undefined;
         let streamedArgChars = 0;

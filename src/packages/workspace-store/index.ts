@@ -53,6 +53,29 @@ export {
   toRequirementDocSnapshot,
   type BuildPrototypeChangeSummaryOptions,
 } from './lib/artifact-history.js';
+export {
+  CONTEXT_ITEM_KINDS,
+  DEFAULT_MAX_FULL_MODEL_CALLS_PER_SESSION,
+  estimateTextTokens,
+  type ContextEventDetail,
+  type ContextEventInput,
+  type ContextEventKind,
+  type ContextEventSummary,
+  type ContextItem,
+  type ContextItemInput,
+  type ContextItemKind,
+  type ContextItemRef,
+  type ModelCallDetail,
+  type ModelCallEstimate,
+  type ModelCallPurpose,
+  type ModelCallRecordInput,
+  type ModelCallStatus,
+  type ModelCallSummary,
+  type ModelCallUsage,
+  type ModelCallUsageSource,
+  type ProviderReportedUsage,
+  type ToolDefinitionSource,
+} from './lib/context-snapshots.js';
 export { DEFAULT_TECHNOLOGY_PROFILE_ID } from '../architecture-assets/index.js';
 
 export type {

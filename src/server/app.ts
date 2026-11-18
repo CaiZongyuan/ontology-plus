@@ -64,6 +64,7 @@ import {
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
 import { registerArtifactHistoryRoutes } from './artifact-history.js';
+import { registerContextSnapshotRoutes } from './context-snapshots.js';
 import { registerBusinessModelEditRoutes } from './business-model-edits.js';
 import {
   deriveProjectStepsForStoreProject,
@@ -1174,6 +1175,7 @@ export function createApiApp(
 
   registerApplicationDeliveryRoutes(app, store);
   registerArtifactHistoryRoutes(app, store);
+  registerContextSnapshotRoutes(app, store);
   registerBusinessModelEditRoutes(app, store);
   registerStepConfirmationRoutes(app, store);
   registerStepHandoffRoutes(app, store);

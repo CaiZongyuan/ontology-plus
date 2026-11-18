@@ -30,7 +30,8 @@ export type WorkspaceConceptKey =
   | 'OUTDATED'
   | 'CHANGE_SUMMARY'
   | 'BUSINESS_VIEW'
-  | 'TECHNICAL_DETAILS';
+  | 'TECHNICAL_DETAILS'
+  | 'CONTEXT_INSPECTOR';
 
 export type BusinessConceptKey = ModelCode | WorkspaceConceptKey;
 
@@ -298,6 +299,16 @@ export const BUSINESS_VOCABULARY: Readonly<Record<BusinessConceptKey, BusinessVo
     en: 'Technical Details',
     singularZh: '技术细节',
     singularEn: 'Technical Details',
+  },
+  CONTEXT_INSPECTOR: {
+    key: 'CONTEXT_INSPECTOR',
+    glossaryTermEn: 'Context Inspector',
+    glossaryTermZh: '上下文查看器',
+    shownAsInGlossary: true,
+    zh: '对话记忆',
+    en: 'Conversation memory',
+    singularZh: '对话记忆',
+    singularEn: 'Conversation memory',
   },
 };
 
