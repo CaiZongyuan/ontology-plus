@@ -3312,6 +3312,7 @@ export async function apiDeletePrototype(
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
   artifactHistory?: ArtifactHistoryEntryView[];
+  agentSessions?: AgentSession[];
 }> {
   return apiDeleteResource(
     `/api/prototypes/${encodeURIComponent(prototypeId)}?projectId=${encodeURIComponent(projectId)}`,

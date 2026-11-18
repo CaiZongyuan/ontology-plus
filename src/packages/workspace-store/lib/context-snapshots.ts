@@ -521,6 +521,36 @@ export function getContextEvent(
   };
 }
 
+/** Deletes Model Calls of a session matching any of `runIds` (plus child subagent calls), then collects unreferenced blobs. */
+export function deleteModelCallsByRunIds(
+  storage: ContextSnapshotStorage,
+  projectId: string,
+  sessionId: string,
+  runIds: readonly string[],
+): number {
+  const targetRunIds = new Set(runIds.map((id) => id.trim()).filter(Boolean));
+  if (targetRunIds.size === 0) return 0;
+  const sessionCalls = storage.listBySession<StoredModelCall>(CALLS, projectId, sessionId);
+  const deletedCallIds = new Set<string>();
+  for (const call of sessionCalls) {
+    if (call.runId && targetRunIds.has(call.runId)) {
+      deletedCallIds.add(call.id);
+    }
+  }
+  for (const call of sessionCalls) {
+    if (call.parentCallId && deletedCallIds.has(call.parentCallId)) {
+      deletedCallIds.add(call.id);
+    }
+  }
+  for (const callId of deletedCallIds) {
+    storage.delete(CALLS, callId);
+  }
+  if (deletedCallIds.size > 0) {
+    collectGarbage(storage, projectId);
+  }
+  return deletedCallIds.size;
+}
+
 /** Removes every Model Call and context event of a session, then the content nothing references. */
 export function deleteSessionContextSnapshots(
   storage: ContextSnapshotStorage,

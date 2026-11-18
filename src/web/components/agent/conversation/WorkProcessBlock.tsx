@@ -61,19 +61,41 @@ function useLiveClock(running: boolean, fixedNow: number | undefined): number {
 }
 
 export function computeThinkingSeconds(run: AgentRunView): number {
+  const stepMs = run.steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
+  const firstStepAtMs = run.steps[0]?.at ? Date.parse(run.steps[0].at) : Number.NaN;
+  const elapsedMs =
+    run.completedAt !== undefined && run.completedAt > run.startedAt
+      ? run.completedAt - run.startedAt
+      : undefined;
+
   if (
     typeof run.thinkingDurationMs === 'number' &&
     Number.isFinite(run.thinkingDurationMs) &&
     run.thinkingDurationMs > 0
   ) {
-    return Math.max(1, Math.round(run.thinkingDurationMs / 1000));
+    const adjustedMs =
+      stepMs > 0 &&
+      elapsedMs !== undefined &&
+      run.thinkingDurationMs + stepMs > elapsedMs + 250
+        ? Math.max(1, run.thinkingDurationMs - stepMs)
+        : run.thinkingDurationMs;
+    return Math.max(1, Math.round(adjustedMs / 1000));
   }
-  if (run.completedAt !== undefined && run.completedAt > run.startedAt) {
-    const elapsedMs = run.completedAt - run.startedAt;
-    const stepMs = run.steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
-    const netMs = stepMs > 0 && elapsedMs > stepMs ? elapsedMs - stepMs : elapsedMs;
-    return Math.max(1, Math.round(netMs / 1000));
+
+  if (elapsedMs !== undefined) {
+    if (stepMs > 0) {
+      return Math.max(1, Math.round(Math.max(0, elapsedMs - stepMs) / 1000));
+    }
+    if (
+      Number.isFinite(firstStepAtMs) &&
+      firstStepAtMs > run.startedAt &&
+      (run.completedAt === undefined || firstStepAtMs <= run.completedAt)
+    ) {
+      return Math.max(1, Math.round((firstStepAtMs - run.startedAt) / 1000));
+    }
+    return Math.max(1, Math.round(elapsedMs / 1000));
   }
+
   return 1;
 }
 

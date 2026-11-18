@@ -1405,6 +1405,12 @@ export interface WorkspaceStore {
   recordModelCall(input: ModelCallRecordInput): ModelCallSummary;
   listModelCalls(projectId: string, sessionId: string): ModelCallSummary[];
   getModelCall(projectId: string, callId: string): ModelCallDetail | undefined;
+  deleteModelCallsByRunIds(
+    projectId: string,
+    sessionId: string,
+    runIds: readonly string[],
+  ): number;
+  deleteSessionContextSnapshots(projectId: string, sessionId: string): void;
   recordContextEvent(input: ContextEventInput): ContextEventSummary;
   listContextEvents(projectId: string, sessionId: string): ContextEventSummary[];
   getContextEvent(projectId: string, eventId: string): ContextEventDetail | undefined;

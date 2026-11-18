@@ -102,4 +102,175 @@ describe('PATCH /api/agent-sessions/:id latest-turn replacement guard (#81, ADR 
       store.close();
     }
   });
+
+  it('prunes discarded turn ModelCall snapshots on dropLatestTurn / clearMessages and deletes bound coDesignSessionId (+ snapshots) on deletePrototype (#78, #81)', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const app = createApiApp(store);
+    try {
+      const session = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'REQUIREMENT',
+        title: '快照清理测试',
+        initialMessages: [
+          {
+            id: 'u-snap-1',
+            runId: 'u-snap-1',
+            role: 'user',
+            content: '第一轮消息',
+            timestamp: '2026-11-18T09:00:00.000Z',
+          },
+          {
+            id: 'a-snap-1',
+            runId: 'u-snap-1',
+            role: 'assistant',
+            content: '第一轮回复',
+            timestamp: '2026-11-18T09:00:04.000Z',
+          },
+          {
+            id: 'u-snap-2',
+            runId: 'u-snap-2',
+            role: 'user',
+            content: '第二轮待修改消息',
+            timestamp: '2026-11-18T09:02:00.000Z',
+          },
+          {
+            id: 'a-snap-2',
+            runId: 'u-snap-2',
+            role: 'assistant',
+            content: '第二轮待丢弃回复',
+            timestamp: '2026-11-18T09:02:05.000Z',
+          },
+        ],
+      });
+
+      const call1 = store.recordModelCall({
+        projectId: 'proj-contract',
+        sessionId: session.id,
+        runId: 'u-snap-1',
+        purpose: 'TURN',
+        provider: 'Mock',
+        model: 'mock-v1',
+        contextWindow: 128_000,
+        maxOutputTokens: 4096,
+        startedAt: '2026-11-18T09:00:00.000Z',
+        endedAt: '2026-11-18T09:00:03.000Z',
+        status: 'COMPLETED',
+        simulated: true,
+        included: [{ kind: 'USER_MESSAGE', content: '第一轮消息' }],
+        excluded: [],
+        response: [{ kind: 'ASSISTANT_MESSAGE', content: '第一轮回复' }],
+      });
+      const call2 = store.recordModelCall({
+        projectId: 'proj-contract',
+        sessionId: session.id,
+        runId: 'u-snap-2',
+        purpose: 'TURN',
+        provider: 'Mock',
+        model: 'mock-v1',
+        contextWindow: 128_000,
+        maxOutputTokens: 4096,
+        startedAt: '2026-11-18T09:02:00.000Z',
+        endedAt: '2026-11-18T09:02:02.000Z',
+        status: 'COMPLETED',
+        simulated: true,
+        included: [{ kind: 'USER_MESSAGE', content: '第二轮待修改消息' }],
+        excluded: [],
+        response: [{ kind: 'TOOL_CALL', label: 'spawn_subagents', content: '{}' }],
+      });
+      store.recordModelCall({
+        projectId: 'proj-contract',
+        sessionId: session.id,
+        runId: 'u-snap-2',
+        parentCallId: call2.id,
+        laneLabel: { zh: '子任务 1', en: 'Subagent 1' },
+        purpose: 'SUBAGENT',
+        provider: 'Mock',
+        model: 'mock-v1',
+        contextWindow: 128_000,
+        maxOutputTokens: 4096,
+        startedAt: '2026-11-18T09:02:02.000Z',
+        endedAt: '2026-11-18T09:02:04.000Z',
+        status: 'COMPLETED',
+        simulated: true,
+        included: [{ kind: 'USER_MESSAGE', content: '子任务上下文' }],
+        excluded: [],
+        response: [{ kind: 'ASSISTANT_MESSAGE', content: '子任务结果' }],
+      });
+      store.recordContextEvent({
+        projectId: 'proj-contract',
+        sessionId: session.id,
+        kind: 'COMPACT',
+        removed: [{ kind: 'USER_MESSAGE', content: '已归档早期内容' }],
+        summary: '早期摘要',
+      });
+
+      expect(store.listModelCalls('proj-contract', session.id)).toHaveLength(3);
+
+      // 1. dropLatestTurn removes Turn 2's TURN + SUBAGENT ModelCalls, keeping Turn 1's ModelCall intact
+      const dropRes = await app.request(`/api/agent-sessions/${session.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dropLatestTurn: true, truncateFromUserMessageId: 'u-snap-2' }),
+      });
+      expect(dropRes.status).toBe(200);
+      expect(store.listModelCalls('proj-contract', session.id).map((c) => c.id)).toEqual([call1.id]);
+      expect(store.getModelCall('proj-contract', call2.id)).toBeUndefined();
+
+      // 2. clearMessages wipes the session's remaining ModelCalls and ContextEvents
+      const clearRes = await app.request(`/api/agent-sessions/${session.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clearMessages: true }),
+      });
+      expect(clearRes.status).toBe(200);
+      expect(store.listModelCalls('proj-contract', session.id)).toEqual([]);
+      expect(store.listContextEvents('proj-contract', session.id)).toEqual([]);
+
+      // 3. Deleting an unconfirmed prototype also deletes its bound coDesignSessionId AgentSession + snapshots
+      const coDesignSess = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'PROTOTYPE_CO_DESIGN',
+        title: '临时原型共创会话',
+      });
+      const draftProto = store.createPrototype('proj-contract', {
+        name: '待删除探索原型',
+        htmlContent: '<section data-screen-id="SCR-TMP" data-screen-name="探索页"></section>',
+        coDesignSessionId: coDesignSess.id,
+      });
+      store.saveAgentSession({
+        ...coDesignSess,
+        targetId: draftProto.prototype.id,
+      });
+      store.recordModelCall({
+        projectId: 'proj-contract',
+        sessionId: coDesignSess.id,
+        purpose: 'TURN',
+        provider: 'Mock',
+        model: 'mock-v1',
+        contextWindow: 128_000,
+        maxOutputTokens: 4096,
+        startedAt: '2026-11-18T09:10:00.000Z',
+        endedAt: '2026-11-18T09:10:02.000Z',
+        status: 'COMPLETED',
+        simulated: true,
+        included: [{ kind: 'USER_MESSAGE', content: '生成探索页' }],
+        excluded: [],
+        response: [{ kind: 'ASSISTANT_MESSAGE', content: '已生成探索页' }],
+      });
+
+      expect(store.getAgentSession(coDesignSess.id)).toBeDefined();
+      expect(store.listModelCalls('proj-contract', coDesignSess.id)).toHaveLength(1);
+
+      const delProtoRes = await app.request(
+        `/api/prototypes/${draftProto.prototype.id}?projectId=proj-contract`,
+        { method: 'DELETE' },
+      );
+      expect(delProtoRes.status).toBe(200);
+      expect(store.getPrototype(draftProto.prototype.id)).toBeUndefined();
+      expect(store.getAgentSession(coDesignSess.id)).toBeUndefined();
+      expect(store.listModelCalls('proj-contract', coDesignSess.id)).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
 });

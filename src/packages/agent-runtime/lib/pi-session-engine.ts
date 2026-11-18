@@ -4694,6 +4694,8 @@ async function executeUnifiedTurnCore(
   });
   let built: ReturnType<typeof buildPiModelsForStore> | undefined;
   let accumulatedThinking = '';
+  let accumulatedThinkingDurationMs = 0;
+  let accumulatedToolWallMs = 0;
   let accumulatedText = '';
   let streamedToolArgChars = 0;
   let lastCodeModeScript: string | undefined;
@@ -4703,6 +4705,16 @@ async function executeUnifiedTurnCore(
   let pendingAskUser: AgentAskUserPrompt | undefined;
   let pendingStepHandoff: StepHandoffProposal | undefined;
   let hadValidatorError = false;
+
+  const resolveTurnThinkingDurationMs = (): number => {
+    const summedTraceMs = allToolTraces.reduce((sum, t) => sum + (t.durationMs ?? 0), 0);
+    const effectiveToolMs = Math.max(accumulatedToolWallMs, summedTraceMs);
+    const netTurnMs = Math.max(1, Date.now() - turnStartMs - effectiveToolMs);
+    if (accumulatedThinkingDurationMs > 0) {
+      return Math.min(accumulatedThinkingDurationMs, netTurnMs);
+    }
+    return netTurnMs;
+  };
 
   const heartbeatInterval = setInterval(() => {
     if (controller.signal.aborted) return;
@@ -5214,134 +5226,150 @@ async function executeUnifiedTurnCore(
       let finalMessage: AssistantMessage | undefined;
       const announcedToolCallIds = new Set<string>();
       let lastToolDeltaEmitMs = 0;
+      const stepStreamStartMs = Date.now();
+      let stepSawThinking = false;
+      let stepThinkingEndedMs: number | undefined;
 
-      for await (const ev of eventStream) {
-        if (ev.type !== 'error') {
-          resetIdleTimer();
-        }
+      try {
+        for await (const ev of eventStream) {
+          if (ev.type !== 'error') {
+            resetIdleTimer();
+          }
 
-        if (ev.type === 'thinking_delta') {
-          accumulatedThinking += ev.delta;
-          emit({
-            id: nextEventId(),
-            event: 'thinking_delta',
-            data: { step: step + 1, delta: ev.delta },
-          });
-        } else if (ev.type === 'text_delta') {
-          accumulatedText += ev.delta;
-          emit({
-            id: nextEventId(),
-            event: 'delta',
-            data: { step: step + 1, text: ev.delta },
-          });
-        } else if (
-          ev.type === 'toolcall_start' ||
-          ev.type === 'toolcall_delta' ||
-          ev.type === 'toolcall_end'
-        ) {
-          if (ev.type === 'toolcall_delta') {
-            streamedToolArgChars += ev.delta.length;
-            const nowMs = Date.now();
-            const partialCall = ev.partial.content[ev.contentIndex];
-            if (
-              partialCall?.type === 'toolCall' &&
-              partialCall.name === 'upsert_prototype_screen' &&
-              prototypeTurnDraft
-            ) {
-              const pArgs = (partialCall.arguments ?? {}) as Record<string, unknown>;
-              const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
-              const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
-              if (pSid && pHtml.length >= 24) {
-                livePartialScreens.set(pSid, {
-                  screenId: pSid,
-                  ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
-                  ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
-                  partialScreenHtml: pHtml,
-                  ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
-                });
-                emitPrototypePreviewIfChanged(
-                  {
-                    screenId: pSid,
-                    ...(typeof pArgs.screenName === 'string' ? { label: pArgs.screenName } : {}),
-                  },
-                  { throttled: true },
-                );
-              }
+          if (ev.type === 'thinking_delta') {
+            stepSawThinking = true;
+            accumulatedThinking += ev.delta;
+            emit({
+              id: nextEventId(),
+              event: 'thinking_delta',
+              data: { step: step + 1, delta: ev.delta },
+            });
+          } else {
+            if (stepSawThinking && stepThinkingEndedMs === undefined) {
+              stepThinkingEndedMs = Date.now();
             }
-            if (nowMs - lastToolDeltaEmitMs >= 250) {
-              lastToolDeltaEmitMs = nowMs;
+            if (ev.type === 'text_delta') {
+              accumulatedText += ev.delta;
               emit({
                 id: nextEventId(),
-                event: 'tool_delta',
-                data: {
-                  step: step + 1,
-                  toolName: partialCall?.type === 'toolCall' ? partialCall.name : undefined,
-                  streamedChars: streamedToolArgChars,
-                },
+                event: 'delta',
+                data: { step: step + 1, text: ev.delta },
+              });
+            } else if (
+              ev.type === 'toolcall_start' ||
+              ev.type === 'toolcall_delta' ||
+              ev.type === 'toolcall_end'
+            ) {
+              if (ev.type === 'toolcall_delta') {
+                streamedToolArgChars += ev.delta.length;
+                const nowMs = Date.now();
+                const partialCall = ev.partial.content[ev.contentIndex];
+                if (
+                  partialCall?.type === 'toolCall' &&
+                  partialCall.name === 'upsert_prototype_screen' &&
+                  prototypeTurnDraft
+                ) {
+                  const pArgs = (partialCall.arguments ?? {}) as Record<string, unknown>;
+                  const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
+                  const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
+                  if (pSid && pHtml.length >= 24) {
+                    livePartialScreens.set(pSid, {
+                      screenId: pSid,
+                      ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
+                      ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
+                      partialScreenHtml: pHtml,
+                      ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
+                    });
+                    emitPrototypePreviewIfChanged(
+                      {
+                        screenId: pSid,
+                        ...(typeof pArgs.screenName === 'string' ? { label: pArgs.screenName } : {}),
+                      },
+                      { throttled: true },
+                    );
+                  }
+                }
+                if (nowMs - lastToolDeltaEmitMs >= 250) {
+                  lastToolDeltaEmitMs = nowMs;
+                  emit({
+                    id: nextEventId(),
+                    event: 'tool_delta',
+                    data: {
+                      step: step + 1,
+                      toolName: partialCall?.type === 'toolCall' ? partialCall.name : undefined,
+                      streamedChars: streamedToolArgChars,
+                    },
+                  });
+                }
+              }
+              const candidate =
+                ev.type === 'toolcall_end'
+                  ? ev.toolCall
+                  : ev.partial.content[ev.contentIndex];
+              if (
+                candidate &&
+                candidate.type === 'toolCall' &&
+                candidate.id &&
+                candidate.name &&
+                !announcedToolCallIds.has(candidate.id)
+              ) {
+                announcedToolCallIds.add(candidate.id);
+                const candidateArgs = (candidate.arguments ?? {}) as Record<string, unknown>;
+                const candidateAnchor = extractTargetAnchorFromArgs(candidate.name, candidateArgs);
+                emit({
+                  id: nextEventId(),
+                  event: 'tool_call',
+                  data: {
+                    id: candidate.id,
+                    toolName: candidate.name,
+                    arguments: candidateArgs,
+                    ...(candidateAnchor ? { targetAnchor: candidateAnchor } : {}),
+                    step: step + 1,
+                  },
+                });
+              }
+            } else if (ev.type === 'done') {
+              finalMessage = ev.message;
+            } else if (ev.type === 'error') {
+              if (controller.signal.aborted) {
+                throw toAbortedError();
+              }
+              const errText =
+                ev.error.errorMessage ||
+                pickLocaleText(
+                  effectiveLocale,
+                  `网关流式请求失败 (reason=${ev.reason})`,
+                  `Gateway streaming request failed (reason=${ev.reason})`,
+                );
+              const isStepTimeout =
+                !/connect\s*timeout|connection\s*error/i.test(errText) &&
+                (ev.reason === 'aborted' ||
+                  (/timed?\s*out|timeout/i.test(errText) &&
+                    Date.now() - turnStartMs >= Math.min(idleTimeoutMs, stepTimeoutMs) * 0.5));
+              if (isStepTimeout) {
+                throw new SessionStreamAbortedError(
+                  'IDLE_TIMEOUT',
+                  pickLocaleText(
+                    effectiveLocale,
+                    `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
+                    `LLM single-step inference timed out (exceeded ${Math.round(stepTimeoutMs / 1000)}s)`,
+                  ),
+                );
+              }
+              throw new LlmGatewayError({
+                message: errText,
+                providerName: built.providerConfig?.name ?? built.providerLabel,
+                baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+                model: built.selectedModel.id,
+                locale: effectiveLocale,
               });
             }
           }
-          const candidate =
-            ev.type === 'toolcall_end'
-              ? ev.toolCall
-              : ev.partial.content[ev.contentIndex];
-          if (
-            candidate &&
-            candidate.type === 'toolCall' &&
-            candidate.id &&
-            candidate.name &&
-            !announcedToolCallIds.has(candidate.id)
-          ) {
-            announcedToolCallIds.add(candidate.id);
-            const candidateArgs = (candidate.arguments ?? {}) as Record<string, unknown>;
-            const candidateAnchor = extractTargetAnchorFromArgs(candidate.name, candidateArgs);
-            emit({
-              id: nextEventId(),
-              event: 'tool_call',
-              data: {
-                id: candidate.id,
-                toolName: candidate.name,
-                arguments: candidateArgs,
-                ...(candidateAnchor ? { targetAnchor: candidateAnchor } : {}),
-                step: step + 1,
-              },
-            });
-          }
-        } else if (ev.type === 'done') {
-          finalMessage = ev.message;
-        } else if (ev.type === 'error') {
-          if (controller.signal.aborted) {
-            throw toAbortedError();
-          }
-          const errText =
-            ev.error.errorMessage ||
-            pickLocaleText(
-              effectiveLocale,
-              `网关流式请求失败 (reason=${ev.reason})`,
-              `Gateway streaming request failed (reason=${ev.reason})`,
-            );
-          const isStepTimeout =
-            !/connect\s*timeout|connection\s*error/i.test(errText) &&
-            (ev.reason === 'aborted' ||
-              (/timed?\s*out|timeout/i.test(errText) &&
-                Date.now() - turnStartMs >= Math.min(idleTimeoutMs, stepTimeoutMs) * 0.5));
-          if (isStepTimeout) {
-            throw new SessionStreamAbortedError(
-              'IDLE_TIMEOUT',
-              pickLocaleText(
-                effectiveLocale,
-                `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
-                `LLM single-step inference timed out (exceeded ${Math.round(stepTimeoutMs / 1000)}s)`,
-              ),
-            );
-          }
-          throw new LlmGatewayError({
-            message: errText,
-            providerName: built.providerConfig?.name ?? built.providerLabel,
-            baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
-            model: built.selectedModel.id,
-            locale: effectiveLocale,
-          });
+        }
+      } finally {
+        if (stepSawThinking) {
+          const endMs = stepThinkingEndedMs ?? Date.now();
+          accumulatedThinkingDurationMs += Math.max(1, endMs - stepStreamStartMs);
         }
       }
 
@@ -5378,7 +5406,9 @@ async function executeUnifiedTurnCore(
         break;
       }
 
-      for (const tc of toolCalls) {
+      const toolRoundStartMs = Date.now();
+      try {
+        for (const tc of toolCalls) {
         if (controller.signal.aborted) {
           throw toAbortedError();
         }
@@ -5596,6 +5626,9 @@ async function executeUnifiedTurnCore(
           timestamp: Date.now(),
         };
         piMessages.push(toolResultMsg);
+      }
+      } finally {
+        accumulatedToolWallMs += Math.max(0, Date.now() - toolRoundStartMs);
       }
 
       saveSessionCheckpointSafe(store, sessionState, {
@@ -5907,7 +5940,7 @@ async function executeUnifiedTurnCore(
       role: 'assistant',
       content: accumulatedText,
       ...(accumulatedThinking
-        ? { thinking: accumulatedThinking, thinkingDurationMs: Date.now() - turnStartMs }
+        ? { thinking: accumulatedThinking, thinkingDurationMs: resolveTurnThinkingDurationMs() }
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(allSubagentLanes.length > 0 ? { subagentLanes: allSubagentLanes } : {}),
@@ -6013,7 +6046,7 @@ async function executeUnifiedTurnCore(
         ...(accumulatedThinking
           ? {
               thinking: accumulatedThinking,
-              thinkingDurationMs: Date.now() - turnStartMs,
+              thinkingDurationMs: resolveTurnThinkingDurationMs(),
             }
           : {}),
         ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
@@ -6185,7 +6218,7 @@ async function executeUnifiedTurnCore(
       role: 'assistant',
       content: accumulatedText,
       ...(accumulatedThinking
-        ? { thinking: accumulatedThinking, thinkingDurationMs: Date.now() - turnStartMs }
+        ? { thinking: accumulatedThinking, thinkingDurationMs: resolveTurnThinkingDurationMs() }
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(allSubagentLanes.length > 0 ? { subagentLanes: allSubagentLanes } : {}),

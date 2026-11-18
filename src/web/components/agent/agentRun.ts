@@ -1219,6 +1219,18 @@ function buildCompletedSessionRun(
   const steps = (aMsg.toolCalls ?? []).map((tc) =>
     mapToolTraceToStep(tc, aMsg.cancelled, opts?.suite),
   );
+  const stepDurationMs = steps.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
+  const turnElapsedMs = Math.max(0, completedAt - startedAt);
+  const effectiveThinkingDurationMs =
+    typeof aMsg.thinkingDurationMs === 'number' &&
+    Number.isFinite(aMsg.thinkingDurationMs) &&
+    aMsg.thinkingDurationMs >= 0
+      ? stepDurationMs > 0 &&
+        turnElapsedMs > 0 &&
+        aMsg.thinkingDurationMs + stepDurationMs > turnElapsedMs + 250
+        ? Math.max(1, aMsg.thinkingDurationMs - stepDurationMs)
+        : aMsg.thinkingDurationMs
+      : undefined;
   const thinking = aMsg.thinking?.trim();
   const revArtifact = extractRevisionArtifact(aMsg.artifacts);
   const primaryArtifact = selectPrimaryDomainArtifact(aMsg.artifacts);
@@ -1312,10 +1324,8 @@ function buildCompletedSessionRun(
       : {}),
     steps,
     ...(thinking ? { thinking } : {}),
-    ...(typeof aMsg.thinkingDurationMs === 'number' &&
-    Number.isFinite(aMsg.thinkingDurationMs) &&
-    aMsg.thinkingDurationMs >= 0
-      ? { thinkingDurationMs: aMsg.thinkingDurationMs }
+    ...(effectiveThinkingDurationMs !== undefined
+      ? { thinkingDurationMs: effectiveThinkingDurationMs }
       : {}),
     ...(userPrompt ? { userPrompt } : {}),
     ...(cleanAssistantText ? { text: cleanAssistantText } : {}),

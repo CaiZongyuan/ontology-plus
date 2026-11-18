@@ -91,7 +91,7 @@ export function formatModelCallPurposeLabel(
   if (purpose === 'COMPACTION') {
     return t('压缩', 'Compaction');
   }
-  return t('回复', 'Turn');
+  return t('回复', 'Reply');
 }
 
 export function formatUsageSourceInlineLabel(
@@ -149,27 +149,62 @@ export function computeTimelineViewModel(
     0,
   );
 
-  const deltas = modelCalls.map((call, idx) => {
-    const prevPrompt = idx > 0 ? modelCalls[idx - 1]!.usage.promptTokens : 0;
-    return call.usage.promptTokens - prevPrompt;
+  let prevTurnPromptTokens: number | undefined;
+  let prevTurnSeq = 0;
+  let prevTurnExcludedCount = 0;
+  const prevSubagentPromptByLane = new Map<string, number>();
+
+  const perCallMeta = modelCalls.map((call, idx) => {
+    const promptTokens = Math.max(0, call.usage.promptTokens);
+    const prevImmediateCall = idx > 0 ? modelCalls[idx - 1] : undefined;
+    let baselinePrompt = 0;
+    let hasPrecedingCompactOrTrim = false;
+
+    if (call.purpose === 'TURN') {
+      baselinePrompt = prevTurnPromptTokens ?? 0;
+      const hadCompactSincePrevTurn = (contextEvents ?? []).some(
+        (ev) =>
+          ev.kind === 'COMPACT' &&
+          ev.afterCallSeq >= Math.max(1, prevTurnSeq) &&
+          ev.afterCallSeq < call.seq,
+      );
+      hasPrecedingCompactOrTrim = Boolean(
+        hadCompactSincePrevTurn ||
+          (prevImmediateCall && compactAfterSeqSet.has(prevImmediateCall.seq)) ||
+          call.excludedCount > prevTurnExcludedCount,
+      );
+      prevTurnPromptTokens = promptTokens;
+      prevTurnSeq = call.seq;
+      prevTurnExcludedCount = call.excludedCount;
+    } else if (call.purpose === 'SUBAGENT') {
+      const laneKey = `${call.parentCallId ?? ''}::${call.laneLabel?.zh ?? ''}::${call.laneLabel?.en ?? ''}`;
+      baselinePrompt = prevSubagentPromptByLane.get(laneKey) ?? 0;
+      prevSubagentPromptByLane.set(laneKey, promptTokens);
+    } else {
+      // COMPACTION: isolated model call, diff against 0
+      baselinePrompt = 0;
+    }
+
+    return {
+      deltaTokens: promptTokens - baselinePrompt,
+      hasPrecedingCompactOrTrim,
+    };
   });
 
-  const maxAbsDelta = deltas.reduce((max, d) => Math.max(max, Math.abs(d)), 0);
+  const maxAbsDelta = perCallMeta.reduce(
+    (max, meta) => Math.max(max, Math.abs(meta.deltaTokens)),
+    0,
+  );
 
   const bars: TimelineBarModel[] = modelCalls.map((call, idx) => {
     const promptTokens = Math.max(0, call.usage.promptTokens);
-    const prevCall = idx > 0 ? modelCalls[idx - 1] : undefined;
-    const deltaTokens = deltas[idx]!;
+    const { deltaTokens, hasPrecedingCompactOrTrim } = perCallMeta[idx]!;
     const deltaSign: TimelineDeltaSign =
       deltaTokens > 0 ? 'positive' : deltaTokens < 0 ? 'negative' : 'zero';
     const cumulativeRatio =
       maxPromptTokens > 0 ? Math.min(1, Math.max(0, promptTokens / maxPromptTokens)) : 0;
     const deltaRatio =
       maxAbsDelta > 0 ? Math.min(1, Math.max(0, Math.abs(deltaTokens) / maxAbsDelta)) : 0;
-    const hasPrecedingCompactOrTrim = Boolean(
-      (prevCall && compactAfterSeqSet.has(prevCall.seq)) ||
-        call.excludedCount > (prevCall?.excludedCount ?? 0),
-    );
 
     return {
       call,

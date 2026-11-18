@@ -109,7 +109,7 @@ describe('ContextInspectorOverlay (#82)', () => {
     expect(resolveLatestTurnModelCall([])).toBeNull();
   });
 
-  it('computes canvas-only overlay offsets for left/right/wide/overlay modes and Escape key dismissal', () => {
+  it('computes canvas-only overlay offsets for left/right/wide/overlay/compact-fullWidth modes and Escape key dismissal', () => {
     expect(
       resolveOverlayOffsetStyle({ side: 'left', panelWidth: 384, wideMode: false, overlay: false }),
     ).toEqual({ left: '384px', right: '0px' });
@@ -122,6 +122,32 @@ describe('ContextInspectorOverlay (#82)', () => {
     expect(
       resolveOverlayOffsetStyle({ side: 'left', panelWidth: 384, wideMode: true, overlay: true }),
     ).toEqual({ left: '0px', right: '0px' });
+    // Compact <1280px workspace where ShellAgentPanel is non-resizable full-width (overlay=false, fullWidth=true)
+    expect(
+      resolveOverlayOffsetStyle({
+        side: 'left',
+        panelWidth: 384,
+        wideMode: false,
+        overlay: false,
+        fullWidth: true,
+      }),
+    ).toEqual({ left: '0px', right: '0px' });
+
+    stubLocale('zh-CN');
+    const compactHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ContextInspectorOverlay
+          open={true}
+          onClose={noop}
+          side="left"
+          panelWidth={384}
+          overlay={false}
+          fullWidth={true}
+          latestCall={makeSampleCallSummary()}
+        />
+      </PreferencesProvider>,
+    );
+    expect(compactHtml).toContain('style="left:0px;right:0px"');
 
     expect(shouldDismissContextInspectorKey({ key: 'Escape' })).toBe(true);
     expect(shouldDismissContextInspectorKey({ key: 'Enter' })).toBe(false);

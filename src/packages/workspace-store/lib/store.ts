@@ -33,6 +33,7 @@ import {
 } from '../../ontology-core/index.js';
 import { BOOTSTRAP_SQLITE_DDL } from './schema.js';
 import {
+  deleteModelCallsByRunIds,
   deleteSessionContextSnapshots,
   getContextEvent,
   getModelCall,
@@ -2640,6 +2641,14 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       return getModelCall(contextSnapshotStorage, projectId, callId);
     },
 
+    deleteModelCallsByRunIds(projectId, sessionId, runIds) {
+      return deleteModelCallsByRunIds(contextSnapshotStorage, projectId, sessionId, runIds);
+    },
+
+    deleteSessionContextSnapshots(projectId, sessionId) {
+      deleteSessionContextSnapshots(contextSnapshotStorage, projectId, sessionId);
+    },
+
     recordContextEvent(input) {
       return recordContextEvent(contextSnapshotStorage, input);
     },
@@ -3769,6 +3778,24 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         }
       }
       deleteItem('prototypes', protoId);
+      if (existing) {
+        const remainingCoDesignSessionIds = new Set(
+          this.listPrototypes(existing.projectId)
+            .map((p) => p.coDesignSessionId)
+            .filter((sid): sid is string => Boolean(sid)),
+        );
+        const orphanedSessions = this.listAgentSessions({
+          projectId: existing.projectId,
+          agentKind: 'PROTOTYPE_CO_DESIGN',
+        }).filter(
+          (s) =>
+            (s.id === existing.coDesignSessionId || s.targetId === existing.id) &&
+            !remainingCoDesignSessionIds.has(s.id),
+        );
+        for (const sess of orphanedSessions) {
+          this.deleteAgentSession(sess.id);
+        }
+      }
     },
 
     listFourLayerAssets(layer) {

@@ -1317,6 +1317,7 @@ export function ShellAgentPanel({
         panelWidth={width}
         wideMode={wideMode}
         overlay={overlay}
+        fullWidth={resizable === false}
         {...(snapshotProjectId ? { projectId: snapshotProjectId } : {})}
         latestCall={latestTurnCall}
         modelCalls={effectiveModelCalls}

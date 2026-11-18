@@ -300,6 +300,7 @@ export function createApiApp(
     }>();
 
     let truncatedMessages: typeof existing.messages | undefined;
+    const droppedRunIds: string[] = [];
     if (body.dropLatestTurn || body.truncateFromUserMessageId) {
       if (existing.status === 'RUNNING' || getLiveAgentSessionStatus(store, id).active) {
         return c.json(
@@ -345,7 +346,19 @@ export function createApiApp(
           );
         }
       }
-      truncatedMessages = lastUserIdx >= 0 ? msgs.slice(0, lastUserIdx) : msgs;
+      if (lastUserIdx >= 0) {
+        for (const dropped of msgs.slice(lastUserIdx)) {
+          if (dropped.role === 'user' && dropped.id) {
+            droppedRunIds.push(dropped.id);
+          }
+          if (dropped.runId) {
+            droppedRunIds.push(dropped.runId);
+          }
+        }
+        truncatedMessages = msgs.slice(0, lastUserIdx);
+      } else {
+        truncatedMessages = msgs;
+      }
     }
 
     const clampedConcurrency =
@@ -369,6 +382,11 @@ export function createApiApp(
         : {}),
       updatedAt: new Date().toISOString(),
     });
+    if (body.clearMessages) {
+      store.deleteSessionContextSnapshots(existing.projectId, existing.id);
+    } else if (droppedRunIds.length > 0) {
+      store.deleteModelCallsByRunIds(existing.projectId, existing.id, droppedRunIds);
+    }
     return c.json({
       session: updated,
       agentSessions: store.listAgentSessions(),
@@ -1003,12 +1021,16 @@ export function createApiApp(
       store.listProjects()[0]?.id ||
       'proj-contract';
     try {
+      if (existing?.coDesignSessionId) {
+        abortActiveAgentSession(existing.coDesignSessionId, 'USER_ABORT', store);
+      }
       store.deletePrototype(id);
       return c.json({
         deletedId: id,
         prototypes: store.listPrototypes(projectId),
         confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
         artifactHistory: store.listArtifactHistoryViews(projectId),
+        agentSessions: store.listAgentSessions(),
       });
     } catch (err) {
       if (

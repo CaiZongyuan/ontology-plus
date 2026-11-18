@@ -70,8 +70,9 @@ export function resolveOverlayOffsetStyle(opts: {
   panelWidth: number;
   wideMode: boolean;
   overlay: boolean;
+  fullWidth?: boolean;
 }): React.CSSProperties {
-  if (opts.overlay) {
+  if (opts.overlay || opts.fullWidth) {
     return { left: '0px', right: '0px' };
   }
   const offsetCss = opts.wideMode ? AGENT_PANEL_WIDE_CSS_WIDTH : `${opts.panelWidth}px`;
@@ -92,6 +93,8 @@ export interface ContextInspectorOverlayProps {
   panelWidth?: number;
   wideMode?: boolean;
   overlay?: boolean;
+  /** True when AgentPanel occupies full width in compact (<1280px) workspace mode. */
+  fullWidth?: boolean;
   projectId?: string;
   latestCall?: ModelCallSummary | null;
   modelCalls?: readonly ModelCallSummary[];
@@ -137,6 +140,7 @@ export function ContextInspectorOverlay({
   panelWidth = AGENT_PANEL_DEFAULT_WIDTH,
   wideMode = false,
   overlay = false,
+  fullWidth = false,
   projectId,
   latestCall,
   modelCalls,
@@ -228,6 +232,7 @@ export function ContextInspectorOverlay({
     panelWidth,
     wideMode,
     overlay,
+    fullWidth,
   });
 
   const title = t(

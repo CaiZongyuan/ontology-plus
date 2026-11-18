@@ -62,19 +62,20 @@ export function UserMessageItem({
 
   const isRunning = sessionRunning || run.status === 'RUNNING';
   const canMutateTurn = isLatestTurn && !isRunning;
+  const canEditTurn = canMutateTurn && !isStructuredAction && Boolean(onEditLatestTurn);
 
-  const [editing, setEditing] = useState<boolean>(() => Boolean(defaultEditing && canMutateTurn));
+  const [editing, setEditing] = useState<boolean>(() => Boolean(defaultEditing && canEditTurn));
   const [editDraft, setEditDraft] = useState<string>(displayText);
   const [hintPinned, setHintPinned] = useState<boolean>(false);
 
   useEffect(() => {
-    if (!canMutateTurn && editing) {
+    if (!canEditTurn && editing) {
       setEditing(false);
     }
-  }, [canMutateTurn, editing]);
+  }, [canEditTurn, editing]);
 
   const handleOpenEdit = () => {
-    if (!canMutateTurn || !onEditLatestTurn) return;
+    if (!canEditTurn || !onEditLatestTurn) return;
     setEditDraft(displayText);
     setEditing(true);
   };
@@ -87,13 +88,13 @@ export function UserMessageItem({
   const handleSubmitEdit = (e?: React.FormEvent) => {
     e?.preventDefault();
     const trimmed = editDraft.trim();
-    if (!canMutateTurn || !onEditLatestTurn || !trimmed) return;
+    if (!canEditTurn || !onEditLatestTurn || !trimmed) return;
     setEditing(false);
     void onEditLatestTurn(trimmed);
   };
 
   const showLatestActions =
-    canMutateTurn && !editing && Boolean(onEditLatestTurn || onRetryLatestTurn);
+    canMutateTurn && !editing && Boolean(canEditTurn || onRetryLatestTurn);
   const showEarlierHint =
     !isLatestTurn &&
     (turnEditingSupported ?? Boolean(onEditLatestTurn || onRetryLatestTurn));
@@ -207,7 +208,7 @@ export function UserMessageItem({
 
       {(showLatestActions || actionsSlot) && (
         <div className="conversation-user-actions" data-testid="conversation-user-actions">
-          {showLatestActions && onEditLatestTurn && (
+          {showLatestActions && canEditTurn && (
             <button
               type="button"
               className="conversation-msg-action-btn"

@@ -17,6 +17,7 @@ import {
 import {
   WorkProcessBlock,
   clearWorkProcessExpansionForTests,
+  computeThinkingSeconds,
   setToolStepExpanded,
   setWorkBlockExpanded,
 } from './WorkProcessBlock.js';
@@ -472,5 +473,113 @@ describe('WorkProcessBlock (#80)', () => {
       zh: '正在调整选中区域',
       en: 'Adjusting selected section',
     });
+  });
+
+  it('excludes tool execution duration from thinking duration on tool-heavy turns (1s thinking + 20s tool execution reports 1s, not 21s)', () => {
+    // 1. Persisted session turn where legacy thinkingDurationMs was recorded as total turn wall-clock (21_000ms) with 20_000ms tool calls
+    const toolHeavySession: AgentSession = {
+      id: 'sess-wp-tool-heavy',
+      projectId: 'proj-contract',
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      title: '多屏原型绘制',
+      status: 'IDLE',
+      createdAt: '2026-11-18T11:00:00.000Z',
+      updatedAt: '2026-11-18T11:00:21.000Z',
+      messages: [
+        {
+          id: 'u-th-1',
+          role: 'user',
+          content: '生成三屏采购合同管理原型',
+          timestamp: '2026-11-18T11:00:00.000Z',
+        },
+        {
+          id: 'a-th-1',
+          role: 'assistant',
+          content: '已完成三屏原型绘制。',
+          thinking: '先规划分屏骨架，再并行绘制三个核心业务页面。',
+          thinkingDurationMs: 21_000,
+          timestamp: '2026-11-18T11:00:21.000Z',
+          toolCalls: [
+            {
+              id: 'tc-th-1',
+              toolName: 'init_prototype_shell',
+              arguments: { screens: [{ screenId: 'SCR-1' }, { screenId: 'SCR-2' }, { screenId: 'SCR-3' }] },
+              output: 'OK',
+              durationMs: 2_000,
+            },
+            {
+              id: 'tc-th-2',
+              toolName: 'spawn_subagents',
+              arguments: { tasks: [{ title: 'Page 1' }, { title: 'Page 2' }, { title: 'Page 3' }] },
+              output: 'OK',
+              durationMs: 18_000,
+            },
+          ],
+        },
+      ],
+    };
+
+    const [adaptedRun] = agentRunsFromSession(toolHeavySession);
+    expect(adaptedRun).toBeDefined();
+    expect(adaptedRun!.thinkingDurationMs).toBe(1_000);
+    expect(computeThinkingSeconds(adaptedRun!)).toBe(1);
+
+    stubLocale('zh-CN');
+    const zhHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <WorkProcessBlock run={adaptedRun!} />
+      </PreferencesProvider>,
+    );
+    expect(zhHtml).toContain('思考 1 秒 · 2 个步骤');
+    expect(zhHtml).not.toContain('思考 21 秒');
+
+    stubLocale('en-US');
+    const enHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <WorkProcessBlock run={adaptedRun!} />
+      </PreferencesProvider>,
+    );
+    expect(enHtml).toContain('Thought for 1s · 2 steps');
+    expect(enHtml).not.toContain('Thought for 21s');
+
+    // 2. Timestamp-derived turn without explicit thinkingDurationMs (1s thinking + 20s step durationMs -> 1s)
+    const timestampRun: AgentRunView = {
+      id: 'run-th-ts',
+      title: { zh: '生成模型', en: 'Generate model' },
+      status: 'SUCCEEDED',
+      liveStatus: { zh: '已完成', en: 'Completed' },
+      startedAt: 100_000,
+      completedAt: 121_000,
+      thinking: '先核对已确认的界面原型绑定。',
+      steps: [
+        {
+          id: 's-1',
+          label: { zh: '生成业务模型包', en: 'Generate business model' },
+          status: 'DONE',
+          durationMs: 20_000,
+        },
+      ],
+    };
+    expect(computeThinkingSeconds(timestampRun)).toBe(1);
+
+    // 3. Step without durationMs clamps to firstStepStartedAt - startedAt when steps[0].at is valid
+    const atClampedRun: AgentRunView = {
+      id: 'run-th-at',
+      title: { zh: '查询数据', en: 'Query data' },
+      status: 'SUCCEEDED',
+      liveStatus: { zh: '已完成', en: 'Completed' },
+      startedAt: Date.parse('2026-11-18T11:10:00.000Z'),
+      completedAt: Date.parse('2026-11-18T11:10:21.000Z'),
+      thinking: '构造只读分析查询。',
+      steps: [
+        {
+          id: 's-at-1',
+          label: { zh: '执行数据查询', en: 'Run query' },
+          status: 'DONE',
+          at: '2026-11-18T11:10:01.200Z',
+        },
+      ],
+    };
+    expect(computeThinkingSeconds(atClampedRun)).toBe(1);
   });
 });

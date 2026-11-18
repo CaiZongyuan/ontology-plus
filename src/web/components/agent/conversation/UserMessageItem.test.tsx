@@ -140,4 +140,40 @@ describe('UserMessageItem & ReplyActionsBar (#81)', () => {
       expect(replyViolations, formatBusinessViewViolations(replyViolations)).toEqual([]);
     }
   });
+
+  it('keeps Retry visible on structured-action turns (!run.userPrompt) while hiding Edit so [ACTION:...] payloads are never overwritten by display titles', () => {
+    const structuredRun: AgentRunView = {
+      id: 'u-action-1',
+      title: { zh: '合成 9 章节需求规格书', en: 'Synthesize 9-Chapter SRS' },
+      retryPrompt: '[ACTION:SYNTHESIZE_SRS]',
+      status: 'SUCCEEDED',
+      liveStatus: { zh: '已完成', en: 'Completed' },
+      startedAt: FIXED_NOW - 5_000,
+      completedAt: FIXED_NOW - 1_000,
+      steps: [],
+      text: '已生成 9 章节需求规格书。',
+    };
+
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      stubLocale(locale);
+      const html = renderToStaticMarkup(
+        <PreferencesProvider>
+          <UserMessageItem
+            run={structuredRun}
+            isLatestTurn={true}
+            sessionRunning={false}
+            defaultEditing={true}
+            onEditLatestTurn={noop}
+            onRetryLatestTurn={noop}
+          />
+        </PreferencesProvider>,
+      );
+
+      expect(html).toContain('data-testid="user-msg-retry-btn"');
+      expect(html).not.toContain('data-testid="user-msg-edit-btn"');
+      expect(html).not.toContain('data-testid="user-msg-edit-input"');
+      const violations = checkBusinessViewMarkup(html);
+      expect(violations, formatBusinessViewViolations(violations)).toEqual([]);
+    }
+  });
 });
