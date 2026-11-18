@@ -405,6 +405,36 @@ describe('#97 review fixes', () => {
     expect(boardC.getAttribute('data-load-count')).toBe('1');
   });
 
+  it('during a build, another screen’s update leaves script-made state on a finished page alone', async () => {
+    localStorage.setItem(PROTOTYPE_VIEW_STORAGE_KEY, 'web');
+    const tracker = createPrototypeLiveTracker();
+    let state: PrototypeLiveState = emptyPrototypeLiveState();
+    for (const ev of tracker.observeDocument(doc('<p>排队中</p>', 'queued'))) state = applyPrototypeLiveEvent(state, ev);
+    state = applyPrototypeLiveEvent(state, tracker.observePartialScreen({ screenId: 'SCR-C', partialHtml: '<h2>新' })!);
+    await render({ documentHtml: '', live: state, busy: true });
+    await selectPage('SCR-B');
+    const inner = webFrame().contentDocument!;
+    // what a doc-level script on finished SCR-B would do
+    const row = inner.querySelector<HTMLElement>('[data-element-id="EL-ROW"]')!;
+    row.textContent = '已点';
+    row.classList.add('picked');
+    const made = inner.createElement('div');
+    made.id = 'js-made';
+    inner.querySelector('[data-screen-id="SCR-B"]')!.appendChild(made);
+
+    state = applyPrototypeLiveEvent(
+      state,
+      tracker.observePartialScreen({ screenId: 'SCR-C', partialHtml: '<h2>新建订货单</h2><p>挑选商品</p>' })!,
+    );
+    await render({ documentHtml: '', live: state, busy: true });
+    expect(inner.querySelector('[data-screen-id="SCR-C"]')!.textContent).toContain('挑选商品');
+    expect(inner.querySelector('[data-element-id="EL-ROW"]')).toBe(row);
+    expect(row.textContent).toBe('已点');
+    expect(row.classList.contains('picked')).toBe(true);
+    expect(inner.getElementById('js-made')).toBe(made);
+    expect(shown()).toEqual(['SCR-B']);
+  });
+
   it('says so when there is nothing to open in a new tab', async () => {
     localStorage.setItem(PROTOTYPE_VIEW_STORAGE_KEY, 'web');
     await render({ documentHtml: SAVED, live: null, onOpenStandalone: () => false });

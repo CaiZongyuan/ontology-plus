@@ -1,6 +1,6 @@
 import React, { memo, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
 import { ARTBOARD_H, ARTBOARD_W } from './camera.js';
-import { BORN_ATTR, morphChildren } from './morph.js';
+import { BORN_ATTR, morphChildren, type MorphKeep } from './morph.js';
 
 /**
  * The document every artboard iframe loads, exactly once. After that, content arrives by
@@ -146,6 +146,8 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     const d = frameRef.current?.contentDocument ?? null;
     return d && d.head && d.body ? d : null;
   };
+  /** Web mode: each screen's source as last applied (load version → screen id → section HTML). */
+  const sectionSources = useRef<{ version: number; html: Map<string, string> }>({ version: 0, html: new Map() });
   /** The screen the body last showed: a different one (web mode page change) starts at the top. */
   const shownScreen = useRef<string | null>(null);
 
@@ -231,8 +233,31 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       `<!doctype html><html><head></head><body>${bodyHtml}</body></html>`,
       'text/html',
     );
+    let keep: MorphKeep | undefined;
+    if (page) {
+      // Only screens whose source changed are morphed: a finished page keeps what its scripts
+      // did while another screen streams in. (Sources are read before `is-active` is set.)
+      const before = sectionSources.current.version === loadVersion ? sectionSources.current.html : new Map<string, string>();
+      const now = new Map<string, string>();
+      for (const section of Array.from(parsed.querySelectorAll('[data-screen-id]'))) {
+        if (section.parentElement?.closest('[data-screen-id]')) continue;
+        now.set(section.getAttribute('data-screen-id') ?? '', section.outerHTML);
+      }
+      sectionSources.current = { version: loadVersion, html: now };
+      keep = (live, target) => {
+        const id = target.getAttribute('data-screen-id');
+        return (
+          id !== null &&
+          live.getAttribute('data-screen-id') === id &&
+          before.has(id) &&
+          before.get(id) === now.get(id)
+        );
+      };
+    }
     markActive(parsed);
-    morphChildren(d.body, parsed.body);
+    morphChildren(d.body, parsed.body, keep);
+    // Kept screens were not touched, so their `is-active` is set in the live document.
+    if (page) markActive(d);
     toTop();
     const stamp = String(Date.now());
     for (const el of Array.from(d.querySelectorAll(`[${BORN_ATTR}=""]`))) el.setAttribute(BORN_ATTR, stamp);
