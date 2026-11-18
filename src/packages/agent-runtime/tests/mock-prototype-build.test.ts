@@ -16,6 +16,8 @@ import {
 } from '../index.js';
 
 const SCREENS = ['SCR-HOME', 'SCR-ORDERS', 'SCR-NEW-ORDER', 'SCR-ORDER-DETAIL', 'SCR-REFUND'];
+/** The recording gets this screen wrong the first time (#90): the anchor check rejects it. */
+const FAILING = 'SCR-REFUND';
 
 describe('Mock mode replays a recorded multi-screen prototype build through the real engine (#89)', () => {
   it('streams every screen from tool-call arguments, several lanes at once, as per-screen deltas', async () => {
@@ -38,13 +40,16 @@ describe('Mock mode replays a recorded multi-screen prototype build through the 
     // The lead lays out the shell and hands the screens to parallel subagents.
     const toolCalls = turn.events.filter((e) => e.event === 'tool_call');
     const names = toolCalls.map((e) => String(e.data.toolName));
+    expect(names[0]).toBe('plan_screens');
     expect(names).toContain('init_prototype_shell');
     expect(names).toContain('spawn_subagents');
     const upserts = turn.events.filter(
       (e) => e.event === 'tool_result' && (e.data.trace as { toolName: string }).toolName === 'upsert_prototype_screen',
     );
     expect(upserts).toHaveLength(SCREENS.length);
-    expect(upserts.every((e) => !(e.data.trace as { isError: boolean }).isError)).toBe(true);
+    expect(
+      upserts.map((e) => [(e.data.trace as { arguments: { screenId: string } }).arguments.screenId, (e.data.trace as { isError: boolean }).isError]),
+    ).toEqual(expect.arrayContaining(SCREENS.map((sid) => [sid, sid === FAILING])));
 
     // Several lanes were running at the same time (real lane bookkeeping, not a browser trick).
     const peakRunning = Math.max(
@@ -61,7 +66,8 @@ describe('Mock mode replays a recorded multi-screen prototype build through the 
         .filter((e) => e.event === 'prototype_screen' && e.data.screenId === sid)
         .map((e) => e.data.status);
       expect(statuses, sid).toContain('streaming');
-      expect(statuses.at(-1), sid).toBe('ready');
+      // The rejected screen falls back to the document's version: still empty, still queued.
+      expect(statuses.at(-1), sid).toBe(sid === FAILING ? 'queued' : 'ready');
     }
     // More than one screen was in flight before the first one landed.
     const firstReady = live.findIndex((e) => e.event === 'prototype_screen' && e.data.status === 'ready' && SCREENS.includes(String(e.data.screenId)));
@@ -87,14 +93,16 @@ describe('Mock mode replays a recorded multi-screen prototype build through the 
     const created = store.listPrototypes('proj-contract').find((p) => p.name === '门店订货原型')!;
     expect(created.revisions).toHaveLength(1);
     const saved = splitPrototypeDocument(created.htmlContent);
-    expect(saved.screens.map((s) => [s.screenId, s.status])).toEqual(SCREENS.map((s) => [s, 'ready']));
+    expect(saved.screens.map((s) => [s.screenId, s.status])).toEqual(
+      SCREENS.map((s) => [s, s === FAILING ? 'queued' : 'ready']),
+    );
     const fromEvents = buildPrototypeCanvasModel('', state);
     const fromSaved = buildPrototypeCanvasModel(created.htmlContent);
     expect(fromEvents.screens.map((s) => s.bodyHtml)).toEqual(fromSaved.screens.map((s) => s.bodyHtml));
 
     // The lead's closing words are business language.
     const lastAssistant = turn.session.messages.filter((m) => m.role === 'assistant').at(-1)!;
-    expect(lastAssistant.content).toContain('工作台首页');
+    expect(lastAssistant.content).toContain('退款审批');
     expect(checkBusinessViewMarkup(lastAssistant.content, { plainText: true })).toHaveLength(0);
   });
 });

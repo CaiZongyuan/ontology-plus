@@ -266,10 +266,23 @@ function firstUserText(context: Context): string {
 export interface MockPrototypeBuildReplay {
   /** How many faux responses to queue: every later call of this turn is answered by `respond`. */
   responseBudget: number;
-  /** The lead's first message: lay out the shell, then hand one screen to each subagent. */
+  /** The lead's first message: declare the Build Plan. */
   leadOpening(requirementsTitle: string, primaryObjectLabel?: string): AssistantMessage;
-  /** Answers a subagent (stream its screen) or the lead (close the build). */
+  /** Answers a subagent (stream its screen) or the lead (shell and dispatch, then close the build). */
   respond(context: Context): AssistantMessage;
+}
+
+/** The screen whose first attempt the recording gets wrong (an unlabelled button). */
+export const MOCK_PROTOTYPE_BUILD_FAILING_SCREEN = 'SCR-REFUND';
+
+/** True for the opening prompt the engine gives a screen helper. */
+export function isMockPrototypeSubagentPrompt(prompt: string): boolean {
+  return SUBAGENT_PROMPT_RE.test(prompt.trim());
+}
+
+/** The recorded first attempt of the failing screen: the reject button lost its anchor id. */
+function brokenFirstAttempt(html: string): string {
+  return html.replace(/ data-element-id="EL-REFUND-BUTTON-1"/, '');
 }
 
 /** Placeholder in the recorded screens' data bindings for the project's business object. */
@@ -277,9 +290,15 @@ const BUSINESS_OBJECT_TOKEN = '{{OBJECT}}';
 
 export function createMockPrototypeBuildReplay(
   locale: AgentLocale,
-  options: { businessObject?: string } = {},
+  options: {
+    businessObject?: string;
+    /** The screen whose first attempt fails the anchor check; null when continuing a screen. */
+    failScreenId?: string | null;
+  } = {},
 ): MockPrototypeBuildReplay {
   const build = MOCK_PROTOTYPE_BUILD;
+  const failScreenId =
+    options.failScreenId === undefined ? MOCK_PROTOTYPE_BUILD_FAILING_SCREEN : options.failScreenId;
   // The recorded screens bind their fields to the project's own business object, so the
   // Business Model synthesised from a replayed prototype stays about this project.
   const businessObject = /^[A-Za-z][A-Za-z0-9_]*$/.test(options.businessObject ?? '')
@@ -287,13 +306,14 @@ export function createMockPrototypeBuildReplay(
     : 'StoreOrder';
   const byId = new Map(build.screens.map((s) => [s.screenId, s]));
   const names = build.screens.map((s) => `「${s.screenName}」`).join('、');
+  let subtitle = '';
 
   return {
-    responseBudget: build.screens.length * 3 + 4,
+    responseBudget: build.screens.length * 3 + 6,
     leadOpening(requirementsTitle, primaryObjectLabel) {
       // The replayed screens are a recorded demo; the subtitle says so and names what the
       // confirmed requirements are about, so a replay is never mistaken for a real design.
-      const subtitle = pickLocaleText(
+      subtitle = pickLocaleText(
         locale,
         `离线演示回放 · 依据已确认需求：${primaryObjectLabel ?? requirementsTitle}`,
         `Offline demo replay · based on confirmed requirements: ${primaryObjectLabel ?? requirementsTitle}`,
@@ -303,29 +323,17 @@ export function createMockPrototypeBuildReplay(
           fauxThinking(
             pickLocaleText(
               locale,
-              `根据已确认的需求文档「${requirementsTitle}」，原型分成 ${build.screens.length} 屏：${names}。先搭好共用的外壳和配色，再请几位助手同时各画一屏。`,
-              `Following the confirmed requirements "${requirementsTitle}", the prototype has ${build.screens.length} screens: ${names}. Set up the shared shell and colours first, then have several assistants draw one screen each at the same time.`,
+              `根据已确认的需求文档「${requirementsTitle}」，原型分成 ${build.screens.length} 屏：${names}。先列出施工计划。`,
+              `Following the confirmed requirements "${requirementsTitle}", the prototype has ${build.screens.length} screens: ${names}. First, the Build Plan.`,
             ),
           ),
-          fauxToolCall('init_prototype_shell', {
-            appTitle: build.appTitle,
-            subtitle,
-            themeTokens: build.themeTokens,
+          // Short fields first, so each screen's artboard appears as soon as its entry is written.
+          fauxToolCall('plan_screens', {
             screens: build.screens.map((s) => ({
               screenId: s.screenId,
               screenName: s.screenName,
+              purpose: s.purpose,
               screenType: s.screenType,
-              summary: s.purpose,
-            })),
-            sharedCss: build.sharedCss,
-          }),
-          fauxToolCall('spawn_subagents', {
-            tasks: build.screens.map((s) => ({
-              title: s.screenName,
-              screenId: s.screenId,
-              screenName: s.screenName,
-              screenType: s.screenType,
-              instruction: s.purpose,
             })),
           }),
         ],
@@ -334,14 +342,27 @@ export function createMockPrototypeBuildReplay(
     },
     respond(context) {
       const prompt = firstUserText(context);
+      const last = context.messages[context.messages.length - 1];
       if (SUBAGENT_PROMPT_RE.test(prompt)) {
         const screen = byId.get(SUBAGENT_SCREEN_RE.exec(prompt)?.[1] ?? '');
-        const last = context.messages[context.messages.length - 1];
+        if (last?.role === 'toolResult' && last.isError) {
+          // The recorded helper does not repair its screen: it stops, and the screen fails.
+          return fauxAssistantMessage([
+            fauxText(
+              pickLocaleText(
+                locale,
+                '这一屏没通过检查，我先停下，等你决定是否继续。',
+                'This screen did not pass the check; stopping here until you decide to continue.',
+              ),
+            ),
+          ]);
+        }
         if (!screen || last?.role === 'toolResult') {
           return fauxAssistantMessage([
             fauxText(pickLocaleText(locale, '这一屏已经画好。', 'This screen is done.')),
           ]);
         }
+        const html = screen.html.split(BUSINESS_OBJECT_TOKEN).join(businessObject);
         return fauxAssistantMessage(
           [
             fauxThinking(
@@ -356,20 +377,62 @@ export function createMockPrototypeBuildReplay(
               screenId: screen.screenId,
               screenName: screen.screenName,
               screenType: screen.screenType,
-              screenHtml: screen.html.split(BUSINESS_OBJECT_TOKEN).join(businessObject),
+              screenHtml: screen.screenId === failScreenId ? brokenFirstAttempt(html) : html,
               ...(screen.extraJs ? { extraJs: screen.extraJs } : {}),
             }),
           ],
           { stopReason: 'toolUse' },
         );
       }
+      if (last?.role === 'toolResult' && last.toolName === 'plan_screens') {
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                locale,
+                '计划已列好。先搭好共用的外壳和配色，再请几位助手同时各画一屏。',
+                'The plan is ready. Set up the shared shell and colours, then have several helpers draw one screen each at the same time.',
+              ),
+            ),
+            fauxToolCall('init_prototype_shell', {
+              appTitle: build.appTitle,
+              subtitle,
+              themeTokens: build.themeTokens,
+              screens: build.screens.map((s) => ({
+                screenId: s.screenId,
+                screenName: s.screenName,
+                screenType: s.screenType,
+                summary: s.purpose,
+              })),
+              sharedCss: build.sharedCss,
+            }),
+            fauxToolCall('spawn_subagents', {
+              tasks: build.screens.map((s) => ({
+                title: s.screenName,
+                screenId: s.screenId,
+                screenName: s.screenName,
+                screenType: s.screenType,
+                instruction: s.purpose,
+              })),
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+      const failed = failScreenId ? byId.get(failScreenId) : undefined;
       return fauxAssistantMessage([
         fauxText(
-          pickLocaleText(
-            locale,
-            `原型的 ${build.screens.length} 屏都画好了：${names}。可以在画布上平移、缩放查看，双击任意一屏试着点一点。`,
-            `All ${build.screens.length} screens of the prototype are drawn: ${names}. Pan and zoom the canvas to look around, and double-click any screen to try it.`,
-          ),
+          failed
+            ? pickLocaleText(
+                locale,
+                `原型画好了 ${build.screens.length - 1} 屏；「${failed.screenName}」没通过检查，可以在画布上点「继续这一屏」单独重画。双击任意一屏可以试着点一点。`,
+                `${build.screens.length - 1} screens of the prototype are drawn; "${failed.screenName}" did not pass the check — use "Continue this screen" on the canvas to redo just that one. Double-click any screen to try it.`,
+              )
+            : pickLocaleText(
+                locale,
+                `原型的 ${build.screens.length} 屏都画好了：${names}。可以在画布上平移、缩放查看，双击任意一屏试着点一点。`,
+                `All ${build.screens.length} screens of the prototype are drawn: ${names}. Pan and zoom the canvas to look around, and double-click any screen to try it.`,
+              ),
         ),
       ]);
     },

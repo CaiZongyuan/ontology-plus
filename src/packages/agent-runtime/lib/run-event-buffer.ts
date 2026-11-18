@@ -63,9 +63,22 @@ export function createCoalescingRunEventBuffer<E extends RunEventLike>(
   };
 }
 
-/** Prototype live deltas coalesce per screen; the frame coalesces with itself. */
+/**
+ * Prototype live deltas coalesce per screen; the frame coalesces with itself. Build Plan events
+ * (#90) coalesce the same way — the plan with itself, each screen's build state per screen, each
+ * phase per phase — while build log lines are all kept.
+ */
 export function prototypeLiveCoalesceKey(event: RunEventLike): string | undefined {
   if (event.event === 'prototype_frame') return 'prototype_frame';
+  if (event.event === 'prototype_build_start') return 'prototype_build_start';
+  if (event.event === 'prototype_plan') return 'prototype_plan';
+  if (event.event === 'prototype_phase' && typeof event.data.phase === 'string') {
+    return `prototype_phase:${event.data.phase}`;
+  }
+  if (event.event === 'prototype_build_screen') {
+    const screen = event.data.screen as { screenId?: unknown } | undefined;
+    if (typeof screen?.screenId === 'string') return `prototype_build_screen:${screen.screenId}`;
+  }
   if (event.event === 'prototype_screen' && typeof event.data.screenId === 'string') {
     return `prototype_screen:${event.data.screenId}`;
   }

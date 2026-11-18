@@ -24,6 +24,7 @@ import {
   type AgentSubagentLaneTrace,
   type PrototypeTargetAnchor,
 } from '../../workspace-store/index.js';
+import type { PrototypeBuildFailureCode } from '../../ontology-core/index.js';
 import { type AgentLocale, pickLocaleText } from './locale.js';
 import {
   extractLatestHtmlWritingSignal,
@@ -155,7 +156,7 @@ export function renderCodemodePromptSection(
       `[Code Mode & Parallel Multi-Agent Execution]`,
       `- \`codemode\` is ENABLED: you can call \`codemode\` with an async JS body using \`await tools.<tool_name>(args)\` and \`await Promise.all([...])\` to batch multiple tool operations in one round-trip.`,
       concurrency > 1
-        ? `- \`spawn_subagents\` is ENABLED (concurrency = ${concurrency} parallel subagents): for multi-screen prototype generation or multi-module modeling, initialize the shared shell first (\`init_prototype_shell\`), then call \`spawn_subagents\` (directly or inside \`codemode\`) so ${concurrency} subagents build screens simultaneously without hitting single-call output limits.`
+        ? `- \`spawn_subagents\` is ENABLED (concurrency = ${concurrency} parallel subagents): for multi-screen prototype generation or multi-module modeling, declare the Build Plan first (\`plan_screens\`), set up the shared look (\`init_prototype_shell\`), then call \`spawn_subagents\` (directly or inside \`codemode\`) so ${concurrency} subagents build screens simultaneously without hitting single-call output limits.`
         : `- Running in single-agent mode (concurrency = 1).`,
       `<codemode_declarations>\n${renderedTypes}\n</codemode_declarations>`,
     ].join('\n');
@@ -165,7 +166,7 @@ export function renderCodemodePromptSection(
     `【Code Mode 代码编排与多智能体并行执行（已开启）】`,
     `- \`codemode\` 已启用：你可以调用 \`codemode\` 工具编写异步 JS 脚本，通过 \`await tools.<工具名>(参数)\` 与 \`await Promise.all([...])\` 在单轮内批量组合多个工具调用，减少往返等待。`,
     concurrency > 1
-      ? `- \`spawn_subagents\` 多智能体并行已启用（默认同时运行 **${concurrency}** 个子智能体）：生成首版多屏原型或整页重做时，**严禁把所有屏幕塞进单次巨型 HTML 调用**；请先调用 \`init_prototype_shell\` 搭建应用外壳与 3～4 个分屏骨架，立即让用户看到画板，然后调用 \`spawn_subagents\` 将各分屏并行交给子智能体分别调用 \`upsert_prototype_screen\` 完成！`
+      ? `- \`spawn_subagents\` 多智能体并行已启用（默认同时运行 **${concurrency}** 个子智能体）：生成首版多屏原型或整页重做时，**严禁把所有屏幕塞进单次巨型 HTML 调用**；请先调用 \`plan_screens\` 列出施工计划（画布随之放好空白画板），再调用 \`init_prototype_shell\` 设定共享外观，然后调用 \`spawn_subagents\` 将各分屏并行交给子智能体分别调用 \`upsert_prototype_screen\` 完成！`
       : `- 当前并发度设为 1（单智能体串行模式）。`,
     `<codemode_declarations>\n${renderedTypes}\n</codemode_declarations>`,
   ].join('\n');
@@ -377,6 +378,31 @@ function stripHeavyFieldsForLiveSse(lanes: readonly AgentSubagentLaneTrace[]): A
   return lanes.map(({ thinking: _omitThinking, ...rest }) => ({ ...rest }));
 }
 
+/** A screen lane ended without its own screen written and checked. */
+class ScreenNotFinishedError extends Error {
+  constructor(readonly code: 'validation_failed' | 'not_written') {
+    super(code === 'validation_failed' ? 'Screen did not pass the anchor check' : 'Screen was not written');
+  }
+}
+
+const SCREEN_WRITE_TOOLS = new Set(['upsert_prototype_screen']);
+
+function writesOwnScreen(tc: ToolCall, spec: SubagentTaskSpec): boolean {
+  if (!SCREEN_WRITE_TOOLS.has(tc.name)) return false;
+  const target = spec.screenId?.trim();
+  const written = (tc.arguments as Record<string, unknown> | undefined)?.screenId;
+  return !target || (typeof written === 'string' && written.trim() === target);
+}
+
+function classifySubagentFailure(err: unknown, signal: AbortSignal): PrototypeBuildFailureCode {
+  if (err instanceof ScreenNotFinishedError) return err.code;
+  if (signal.aborted) return 'cancelled';
+  const text = err instanceof Error ? err.message : String(err);
+  // The run was not cancelled, so a stream that stopped on its own clock timed out.
+  if (/timed?\s*out|timeout|aborted/i.test(text)) return 'timeout';
+  return 'model_error';
+}
+
 export async function runParallelSubagents(
   options: RunParallelSubagentsOptions,
 ): Promise<{
@@ -389,8 +415,9 @@ export async function runParallelSubagents(
   const { tasks, concurrency, locale, signal } = options;
   const nowIso = new Date().toISOString();
 
+  const workerCount = Math.min(Math.max(1, concurrency), Math.max(1, tasks.length));
   const lanes: AgentSubagentLaneTrace[] = tasks.map((task, idx) => {
-    const workerSlot = (idx % concurrency) + 1;
+    const workerSlot = (idx % workerCount) + 1;
     const targetAnchor: PrototypeTargetAnchor | undefined = task.screenId?.trim()
       ? {
           screenId: task.screenId.trim(),
@@ -427,7 +454,6 @@ export async function runParallelSubagents(
 
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
-  let cursor = 0;
 
   const runSingleTask = async (taskIdx: number, workerSlot: number): Promise<void> => {
     const spec = tasks[taskIdx]!;
@@ -631,6 +657,9 @@ export async function runParallelSubagents(
         for (const tc of toolCalls) {
           options.onActivity();
           const exec = await options.executeSubagentToolCall(tc, lane, hadValidatorError);
+          if (!exec.isError && writesOwnScreen(tc, spec)) {
+            lane.wroteScreen = true;
+          }
           if (exec.isError) {
             hadValidatorError = true;
             roundAllOk = false;
@@ -662,6 +691,10 @@ export async function runParallelSubagents(
       }
 
       lane.thinking = subThinking.slice(-4000);
+      // A screen lane is finished only when its own screen was written and passed the check.
+      if (spec.screenId?.trim() && !lane.wroteScreen) {
+        throw new ScreenNotFinishedError(hadValidatorError ? 'validation_failed' : 'not_written');
+      }
       lane.output =
         subText.trim() ||
         pickLocaleText(
@@ -684,19 +717,19 @@ export async function runParallelSubagents(
       lane.status = 'FAILED';
       lane.phase = 'FAILED';
       lane.error = err instanceof Error ? err.message : String(err);
+      lane.failureCode = classifySubagentFailure(err, signal);
       lane.completedAt = new Date().toISOString();
       const { thinking: _tf, ...slimFailed } = lane;
       options.onLaneUpdate(slimFailed, stripHeavyFieldsForLiveSse(lanes));
     }
   };
 
-  const workerCount = Math.min(Math.max(1, concurrency), Math.max(1, tasks.length));
+  // Each task belongs to one helper from the start (task i → helper i mod n), so the owner the
+  // canvas shows for a queued screen is the helper that will really draw it.
   const workers = Array.from({ length: workerCount }, async (_, idx) => {
     const workerSlot = idx + 1;
-    while (cursor < tasks.length) {
-      const myTaskIdx = cursor;
-      cursor += 1;
-      await runSingleTask(myTaskIdx, workerSlot);
+    for (let taskIdx = idx; taskIdx < tasks.length; taskIdx += workerCount) {
+      await runSingleTask(taskIdx, workerSlot);
     }
   });
 

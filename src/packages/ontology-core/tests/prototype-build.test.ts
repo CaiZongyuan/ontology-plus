@@ -5,6 +5,7 @@ import {
   buildPrototypeCanvasModel,
   countWrittenElements,
   createPrototypeBuildTracker,
+  createPrototypeLiveTracker,
   emptyPrototypeBuildState,
   emptyPrototypeLiveState,
   hasPrototypeBuildPlan,
@@ -163,5 +164,33 @@ describe('countWrittenElements', () => {
   it('counts anchored elements', () => {
     expect(countWrittenElements('<div data-element-id="A"><button data-element-id="B">x</button></div>')).toBe(2);
     expect(countWrittenElements('<div>')).toBe(0);
+  });
+});
+
+describe('withdrawing a rejected screen write', () => {
+  it('takes back what was streamed for a screen the document does not have', () => {
+    const tracker = createPrototypeLiveTracker();
+    tracker.reset('');
+    expect(tracker.withdrawScreen('SCR-R', '')).toBeNull();
+    const partial = tracker.observePartialScreen({ screenId: 'SCR-R', screenName: '退款', partialHtml: '<div>退' })!;
+    const withdrawn = tracker.withdrawScreen('SCR-R', '');
+    expect(withdrawn).toMatchObject({ kind: 'screen', screenId: 'SCR-R', status: 'queued', html: '', screenName: '退款' });
+    expect(withdrawn!.seq).toBeGreaterThan(partial.seq);
+    expect(tracker.withdrawScreen('SCR-R', '')).toBeNull();
+
+    let live = applyPrototypeLiveEvent(emptyPrototypeLiveState(), partial);
+    live = applyPrototypeLiveEvent(live, withdrawn!);
+    const build = createPrototypeBuildTracker();
+    build.start();
+    build.plan([{ screenId: 'SCR-R', screenName: '退款', purpose: '' }], false);
+    expect(buildPrototypeCanvasModel('', live, build.state()).screens[0]!.bodyHtml).toBe('');
+  });
+
+  it('keeps a screen the document already has', () => {
+    const doc = '<html><body><main><section data-screen-id="SCR-R" data-screen-status="ready"><p>旧</p></section></main></body></html>';
+    const tracker = createPrototypeLiveTracker();
+    tracker.reset(doc);
+    tracker.observePartialScreen({ screenId: 'SCR-R', partialHtml: '<p>新' });
+    expect(tracker.withdrawScreen('SCR-R', doc)).toBeNull();
   });
 });

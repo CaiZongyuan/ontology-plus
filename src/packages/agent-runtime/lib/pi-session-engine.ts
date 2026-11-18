@@ -107,7 +107,17 @@ import {
 import {
   MOCK_PROTOTYPE_BUILD_TOKENS_PER_SECOND,
   createMockPrototypeBuildReplay,
+  isMockPrototypeSubagentPrompt,
 } from './mock-prototype-build.js';
+import {
+  PLAN_SCREENS_OPENAI_TOOL,
+  PLAN_SCREENS_TOOL_NAME,
+  createPrototypeBuildRun,
+  latestPersistedPrototypeBuild,
+  parseResumePrototypeScreenAction,
+  prototypeBuildSseEventName,
+  type PrototypeBuildRun,
+} from './prototype-build-run.js';
 import {
   createCoalescingRunEventBuffer,
   prototypeLiveCoalesceKey,
@@ -894,6 +904,11 @@ export type UnifiedAgentSseEventType =
   | 'subagent_update'
   | 'prototype_frame'
   | 'prototype_screen'
+  | 'prototype_build_start'
+  | 'prototype_plan'
+  | 'prototype_build_screen'
+  | 'prototype_phase'
+  | 'prototype_build_log'
   | 'artifact'
   | 'ask_user'
   | 'step_handoff'
@@ -1180,6 +1195,21 @@ function buildFauxMockModels(
       const parsedAction = resolveEffectiveStructuredAction(session.messages, userPrompt);
       const lower = userPrompt.toLowerCase();
       const loc = resolveEffectiveLocale(store, explicitLocale, parsedAction?.cleanPrompt || userPrompt);
+
+      // 「继续这一屏」 runs one screen helper without the lead: its first call lands here, and
+      // the recorded build answers it (this time without the recorded mistake).
+      if (session.agentKind === 'PROTOTYPE_CO_DESIGN' && isMockPrototypeSubagentPrompt(userPrompt)) {
+        const confirmedReqForResume = store.getProjectStepConfirmations(session.projectId).requirements;
+        const resumeReplay = createMockPrototypeBuildReplay(loc, {
+          businessObject:
+            project?.suite.M1?.aggregates?.[0]?.name ||
+            (confirmedReqForResume ? extractPrimaryObjectFromRequirements(confirmedReqForResume.content).name : '') ||
+            inferPrimaryObjectFromProject(project).name,
+          failScreenId: null,
+        });
+        faux.setResponses(Array.from({ length: resumeReplay.responseBudget }, () => resumeReplay.respond));
+        return resumeReplay.respond(context);
+      }
 
       // Explicit Scoped HITL ask_user trigger when ambiguous choice is requested
       const hasResolvedChoice =
@@ -2638,6 +2668,10 @@ export function getToolsForAgentKind(
   if (!options) return baseTools;
 
   const extras: Tool[] = [];
+  // The Build Plan is the lead's alone; helpers never see it (they get the tools without options).
+  if (kind === 'PROTOTYPE_CO_DESIGN') {
+    extras.push(toPiTool(PLAN_SCREENS_OPENAI_TOOL));
+  }
   if ((options.multiAgentConcurrency ?? 1) > 1) {
     extras.push(toPiTool(SPAWN_SUBAGENTS_OPENAI_TOOL));
   }
@@ -2766,8 +2800,8 @@ function buildSystemPromptForSession(
             `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
             `Initial Prototype Generation Rules:`,
             useParallel
-              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`init_prototype_shell\` with 3–4 screen artboards matching the requirements and Design Brief tokens so the user sees live artboards immediately; THEN call \`spawn_subagents\` (directly or inside \`codemode\`) so ${execOptions?.multiAgentConcurrency ?? 3} parallel subagents build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
-              : `1. Call \`rewrite_prototype_page\` with \`allowAnchorReset: true\` (or \`init_prototype_shell\` + \`upsert_prototype_screen\`) ONLY when a Confirmed Requirements Document is present above.`,
+              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`plan_screens\` with the Build Plan — 3–5 screens, each with screenId, a business name and a one-sentence business purpose — so the user sees one blank artboard per screen within seconds; THEN call \`init_prototype_shell\` with the Design Brief tokens and shared CSS (it draws no screens); THEN call \`spawn_subagents\` with one task per planned screen, in plan order, (directly or inside \`codemode\`) so ${execOptions?.multiAgentConcurrency ?? 3} parallel subagents build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
+              : `1. Call \`plan_screens\` first, then \`init_prototype_shell\` + \`upsert_prototype_screen\` per planned screen (or \`rewrite_prototype_page\` with \`allowAnchorReset: true\`) ONLY when a Confirmed Requirements Document is present above.`,
             `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, interactive motion specifications, and the Confirmed Requirements Document scope (never unconfirmed drafts).`,
             `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
             `4. Ensure clean responsive layout across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
@@ -2868,8 +2902,8 @@ function buildSystemPromptForSession(
           `当前共创目标交互原型：未绑定（按设计简报与已确认需求文档从零生成首版交互原型 Revision #1）。`,
           `首版原型生成准则（快速上屏，禁止在 thinking 中默写整页长代码）：`,
           useParallel
-            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码，也严禁调用单次巨型 \`rewrite_prototype_page\`**！请立即在 \`codemode\` 中或分步执行：① 先调用 \`init_prototype_shell\` 声明共享视觉令牌与 3～4 个核心业务分屏骨架（使画布 0 秒点亮所有画板）；② 紧接着调用 \`spawn_subagents\` 派发分屏任务（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行子智能体，每个子智能体各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。`
-            : `1. 仅在已存在【已确认需求文档快照】时，调用 \`init_prototype_shell\` + \`upsert_prototype_screen\`（或 \`rewrite_prototype_page\` 携带 \`allowAnchorReset: true\`）输出可运行 HTML5 原型。`,
+            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码，也严禁调用单次巨型 \`rewrite_prototype_page\`**！请立即在 \`codemode\` 中或分步执行：① 先调用 \`plan_screens\` 列出施工计划：3～5 屏，每屏给出 screenId、业务名称和一句业务用途（画布会随之放好空白画板）；② 再调用 \`init_prototype_shell\` 声明共享视觉令牌与共享样式（它不画任何屏幕）；③ 然后调用 \`spawn_subagents\` 按计划顺序每屏一个任务派发（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行子智能体，每个子智能体各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。`
+            : `1. 仅在已存在【已确认需求文档快照】时，先调用 \`plan_screens\` 列出施工计划，再调用 \`init_prototype_shell\` + 按计划逐屏 \`upsert_prototype_screen\`（或 \`rewrite_prototype_page\` 携带 \`allowAnchorReset: true\`）输出可运行 HTML5 原型。`,
           `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、交互动效约束与【已确认需求文档快照】（严禁读取未确认草稿）。`,
           `3. 每个业务屏幕必须声明合法 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`，所有 <button>/<input>/<select>/<textarea> 必须携带全局唯一合法 \`data-element-id\` 与 \`data-element-type\`（并合理挂载 \`data-binding\` 与 \`data-event-id\`），严禁使用 window.alert/confirm/prompt。`,
           `4. 页面必须原生支持响应式布局，在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 视口下均排版整洁无溢出。`,
@@ -4731,6 +4765,9 @@ async function executeUnifiedTurnCore(
   let usedVisionFallback = false;
   let activeVisionFallbackNotice: string | undefined;
   let prototypeTurnDraft: PrototypeTurnDraft | undefined;
+  let prototypeBuildRun: PrototypeBuildRun | undefined;
+  const resumeScreenAction =
+    existing.agentKind === 'PROTOTYPE_CO_DESIGN' ? parseResumePrototypeScreenAction(synthesizedPrompt) : null;
 
   try {
     didInvokeRunStart = true;
@@ -4931,6 +4968,24 @@ async function executeUnifiedTurnCore(
       }
     };
 
+    // The Build Plan (#90): the plan, each screen's state and the build log, from real events.
+    prototypeBuildRun = prototypeTurnDraft
+      ? createPrototypeBuildRun({
+          locale: effectiveLocale,
+          base: resumeScreenAction ? latestPersistedPrototypeBuild(existing.messages) : null,
+          emit: (buildEvent) =>
+            emit({
+              id: nextEventId(),
+              event: prototypeBuildSseEventName(buildEvent),
+              data: {
+                runId: turnRunId,
+                ...(prototypeTurnDraft?.prototypeId ? { prototypeId: prototypeTurnDraft.prototypeId } : {}),
+                ...buildEvent,
+              },
+            }),
+        })
+      : undefined;
+
     /** After a tool changed the working document: send what changed, screen by screen. */
     const syncPrototypeLiveDocument = () => {
       if (!prototypeTurnDraft) return;
@@ -4956,6 +5011,9 @@ async function executeUnifiedTurnCore(
       if (!sid) return;
       streamingPrototypeScreens.delete(sid);
       partialScreenThrottle.end(sid);
+      // A rejected write of a screen the document does not have is taken back off the canvas.
+      const withdrawn = prototypeLiveTracker.withdrawScreen(sid, prototypeTurnDraft?.workingHtml ?? '');
+      if (withdrawn) emitPrototypeLiveEvents([withdrawn]);
     };
 
     const runSpawnSubagentsTool = async (
@@ -4976,8 +5034,9 @@ async function executeUnifiedTurnCore(
           ...(typeof item.screenType === 'string' ? { screenType: item.screenType } : {}),
         }))
         .filter((t) => Boolean(t.title && t.instruction));
+      const orderedTasks = prototypeBuildRun ? prototypeBuildRun.prepareDispatch(parsedTasks) : parsedTasks;
 
-      if (parsedTasks.length === 0) {
+      if (orderedTasks.length === 0) {
         const msg = pickLocaleText(
           effectiveLocale,
           'spawn_subagents 需要提供非空的 tasks 子任务数组。',
@@ -5006,7 +5065,7 @@ async function executeUnifiedTurnCore(
 
       const batchStartIdx = allSubagentLanes.length;
       const parallelRes = await runParallelSubagents({
-        tasks: parsedTasks,
+        tasks: orderedTasks,
         concurrency: effectiveConcurrency,
         locale: effectiveLocale,
         models: built!.models,
@@ -5019,6 +5078,7 @@ async function executeUnifiedTurnCore(
         onActivity: resetIdleTimer,
         onLaneUpdate: (lane, batchLanes) => {
           allSubagentLanes.splice(batchStartIdx, batchLanes.length, ...batchLanes);
+          prototypeBuildRun?.observeLane(lane);
           emit({
             id: nextEventId(),
             event: 'subagent_update',
@@ -5031,6 +5091,7 @@ async function executeUnifiedTurnCore(
         },
         onPartialScreenStream: (partial) => {
           streamPartialPrototypeScreen(partial);
+          prototypeBuildRun?.observeScreenStream(partial.screenId, partial.partialScreenHtml);
         },
         executeSubagentToolCall: async (subTc, lane, subHadErr) => {
           resetIdleTimer();
@@ -5061,10 +5122,12 @@ async function executeUnifiedTurnCore(
             },
           );
           if (subTc.name === 'upsert_prototype_screen') {
-            endPartialPrototypeScreen(
-              (typeof subArgs.screenId === 'string' && subArgs.screenId.trim()) ||
-                lane.targetAnchor?.screenId,
-            );
+            const writtenSid =
+              (typeof subArgs.screenId === 'string' && subArgs.screenId.trim()) || lane.targetAnchor?.screenId;
+            endPartialPrototypeScreen(writtenSid);
+            if (!subExec.isError && writtenSid && typeof subArgs.screenHtml === 'string') {
+              prototypeBuildRun?.observeScreenWritten(writtenSid, subArgs.screenHtml);
+            }
           }
           allToolTraces.push(subExec.trace);
           emit({
@@ -5117,6 +5180,32 @@ async function executeUnifiedTurnCore(
       };
     };
 
+    const runPlanScreensTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
+      const started = Date.now();
+      const result = prototypeBuildRun
+        ? prototypeBuildRun.commitPlan(rawArgs)
+        : (() => {
+            const msg = pickLocaleText(
+              effectiveLocale,
+              'plan_screens 只在生成原型时可用。',
+              'plan_screens is only available while building a prototype.',
+            );
+            return { isError: true, content: JSON.stringify({ status: 'ERROR', diagnostic: msg }), summary: msg };
+          })();
+      return {
+        trace: {
+          id: callId,
+          toolName: PLAN_SCREENS_TOOL_NAME,
+          arguments: rawArgs,
+          output: result.summary,
+          isError: result.isError,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: result.content,
+        isError: result.isError,
+      };
+    };
+
     try {
       const MAX_TOOL_ROUNDS = 24;
       for (let step = 0; step < MAX_TOOL_ROUNDS; step += 1) {
@@ -5124,6 +5213,47 @@ async function executeUnifiedTurnCore(
           throw toAbortedError();
         }
         resetIdleTimer();
+
+        // 「继续这一屏」: redo exactly one planned screen with one helper; the lead does not run.
+        if (step === 0 && resumeScreenAction && prototypeBuildRun) {
+          const planned = prototypeBuildRun.resumeScreen(resumeScreenAction.screenId);
+          if (planned) {
+            const resumeCallId = `tc-resume-${Date.now().toString(36)}`;
+            const resumeArgs = {
+              tasks: [
+                {
+                  title: planned.screenName,
+                  screenId: planned.screenId,
+                  screenName: planned.screenName,
+                  ...(planned.screenType ? { screenType: planned.screenType } : {}),
+                  instruction: planned.purpose || planned.screenName,
+                },
+              ],
+            };
+            emit({
+              id: nextEventId(),
+              event: 'tool_call',
+              data: { id: resumeCallId, toolName: 'spawn_subagents', arguments: resumeArgs, step: 1 },
+            });
+            const resumed = await runSpawnSubagentsTool(resumeCallId, resumeArgs, 1);
+            allToolTraces.push(resumed.trace);
+            emit({ id: nextEventId(), event: 'tool_result', data: { trace: resumed.trace, step: 1 } });
+            syncPrototypeLiveDocument();
+            accumulatedText = resumed.isError
+              ? pickLocaleText(
+                  effectiveLocale,
+                  `「${planned.screenName}」这次还是没画完，可以在画布上再继续一次。`,
+                  `"${planned.screenName}" is still not finished; you can continue it again on the canvas.`,
+                )
+              : pickLocaleText(
+                  effectiveLocale,
+                  `「${planned.screenName}」画好了，其他屏没有改动。`,
+                  `"${planned.screenName}" is drawn; the other screens are unchanged.`,
+                );
+            emit({ id: nextEventId(), event: 'delta', data: { step: 1, text: accumulatedText } });
+            break;
+          }
+        }
 
         const systemPrompt = buildSystemPromptForSession(
           store,
@@ -5181,6 +5311,9 @@ async function executeUnifiedTurnCore(
               streamedToolArgChars += ev.delta.length;
               const nowMs = Date.now();
               const partialCall = ev.partial.content[ev.contentIndex];
+              if (partialCall?.type === 'toolCall' && partialCall.name === PLAN_SCREENS_TOOL_NAME) {
+                prototypeBuildRun?.observePlanStream(partialCall.arguments);
+              }
               if (
                 partialCall?.type === 'toolCall' &&
                 partialCall.name === 'upsert_prototype_screen' &&
@@ -5333,6 +5466,8 @@ async function executeUnifiedTurnCore(
           const executed: ExecutedToolStep =
             tc.name === 'spawn_subagents'
               ? await runSpawnSubagentsTool(tc.id, tcArgs, step + 1)
+              : tc.name === PLAN_SCREENS_TOOL_NAME
+                ? runPlanScreensTool(tc.id, tcArgs)
               : tc.name === 'codemode'
                 ? await (async (): Promise<ExecutedToolStep> => {
                     const startedCm = Date.now();
@@ -5364,6 +5499,8 @@ async function executeUnifiedTurnCore(
                         const nestedOut =
                           nestedToolName === 'spawn_subagents'
                             ? await runSpawnSubagentsTool(nestedCallId, nestedArgs, step + 1)
+                            : nestedToolName === PLAN_SCREENS_TOOL_NAME
+                              ? runPlanScreensTool(nestedCallId, nestedArgs)
                             : await executeUnifiedToolCall(
                                 store,
                                 sessionState,
@@ -5739,7 +5876,9 @@ async function executeUnifiedTurnCore(
     }
 
     if (prototypeTurnDraft && !controller.signal.aborted) {
-      const cleanRevisionNote = stripSelectionBlockFromPrompt(synthesizedPrompt);
+      const cleanRevisionNote = stripSelectionBlockFromPrompt(
+        resumeScreenAction?.cleanPrompt || synthesizedPrompt,
+      );
       if (
         !prototypeTurnDraft.prototypeId &&
         prototypeTurnDraft.workingHtml.trim().length > 0
@@ -5835,11 +5974,14 @@ async function executeUnifiedTurnCore(
       });
     }
 
+    prototypeBuildRun?.finish('succeeded');
+    const prototypeBuildSnapshot = prototypeBuildRun?.snapshot();
     const assistantRecord: AgentSessionMessage = {
       id: assistantMsgId,
       runId: turnRunId,
       role: 'assistant',
       content: accumulatedText,
+      ...(prototypeBuildSnapshot ? { prototypeBuild: prototypeBuildSnapshot } : {}),
       ...(accumulatedThinking
         ? { thinking: accumulatedThinking, thinkingDurationMs: Date.now() - turnStartMs }
         : {}),
@@ -5941,12 +6083,15 @@ async function executeUnifiedTurnCore(
     }
 
     if (err instanceof SessionStreamAbortedError && err.kind === 'USER_ABORT') {
+      prototypeBuildRun?.finish('cancelled');
+      const cancelledBuild = prototypeBuildRun?.snapshot();
       const cancelledAssistantMsg: AgentSessionMessage = {
         id: assistantMsgId,
         runId: turnRunId,
         role: 'assistant',
         content: accumulatedText,
         cancelled: true,
+        ...(cancelledBuild ? { prototypeBuild: cancelledBuild } : {}),
         ...(accumulatedThinking
           ? {
               thinking: accumulatedThinking,
@@ -6074,7 +6219,9 @@ async function executeUnifiedTurnCore(
       prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml &&
       /data-screen-id=/i.test(prototypeTurnDraft.workingHtml)
     ) {
-      const cleanRevisionNote = stripSelectionBlockFromPrompt(synthesizedPrompt);
+      const cleanRevisionNote = stripSelectionBlockFromPrompt(
+        resumeScreenAction?.cleanPrompt || synthesizedPrompt,
+      );
       if (!prototypeTurnDraft.prototypeId) {
         const savedPartial = store.createPrototype(sessionState.projectId, {
           name: prototypeTurnDraft.prototypeName,
@@ -6116,11 +6263,14 @@ async function executeUnifiedTurnCore(
       }
     }
 
+    prototypeBuildRun?.finish('failed');
+    const failedBuild = prototypeBuildRun?.snapshot();
     const errorAssistantMsg: AgentSessionMessage = {
       id: nextAgentMessageId('err'),
       runId: turnRunId,
       role: 'assistant',
       content: accumulatedText,
+      ...(failedBuild ? { prototypeBuild: failedBuild } : {}),
       ...(accumulatedThinking
         ? { thinking: accumulatedThinking, thinkingDurationMs: Date.now() - turnStartMs }
         : {}),

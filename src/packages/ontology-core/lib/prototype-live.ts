@@ -439,6 +439,11 @@ export interface PrototypeLiveTracker {
   ): PrototypeLiveEvent[];
   /** A delta for one screen whose HTML is still being written; null when nothing changed. */
   observePartialScreen(input: PartialPrototypeScreenStream): PrototypeLiveEvent | null;
+  /**
+   * A screen's write was rejected: if the document does not have that screen, what was streamed
+   * for it is taken back (an empty queued screen); null when there is nothing to take back.
+   */
+  withdrawScreen(screenId: string, documentHtml: string): PrototypeLiveEvent | null;
 }
 
 /**
@@ -502,6 +507,14 @@ export function createPrototypeLiveTracker(): PrototypeLiveTracker {
       if (!screenId) return null;
       const known = knownStubs.get(screenId);
       const healed = healPartialScreenSection(input, known);
+      if (!known) {
+        knownStubs.set(screenId, {
+          screenId,
+          screenName: healed.screenName,
+          screenType: healed.screenType,
+          status: 'streaming',
+        });
+      }
       const css = healPartialCss(input.css);
       const candidate = {
         status: 'streaming' as const,
@@ -515,6 +528,22 @@ export function createPrototypeLiveTracker(): PrototypeLiveTracker {
       sentScreens.set(screenId, key);
       seq += 1;
       return { kind: 'screen', seq, screenId, ...candidate };
+    },
+    withdrawScreen(screenId, documentHtml) {
+      const sid = screenId.trim();
+      const sent = sentScreens.get(sid);
+      if (!sent || !sent.startsWith('streaming\u0000')) return null;
+      if (splitPrototypeDocument(documentHtml).screens.some((s) => s.screenId === sid)) return null;
+      const known = knownStubs.get(sid);
+      const candidate = {
+        status: 'queued' as const,
+        html: '',
+        screenName: known?.screenName ?? sid,
+        screenType: known?.screenType ?? 'LIST',
+      };
+      sentScreens.set(sid, screenKey(candidate));
+      seq += 1;
+      return { kind: 'screen', seq, screenId: sid, ...candidate };
     },
   };
 }
