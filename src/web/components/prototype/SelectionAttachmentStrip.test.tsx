@@ -689,7 +689,7 @@ describe('Ticket 06 (#28): Box-Select Attachment Cards, Live Anchor Highlight, a
 
     // Live modifying badge is shown for the active anchor AND Box-Select toggle button is NOT disabled
     expect(liveCanvasHtml).toContain('data-testid="prototype-live-modifying-badge"');
-    expect(liveCanvasHtml).toContain('Agent 正在修改');
+    expect(liveCanvasHtml).toContain('AI 助手正在修改');
     expect(liveCanvasHtml).toContain('SCR-CONTRACT-LIST · EL-SEARCH');
     const inspectBtnMatch = /<button[^>]*data-testid="prototype-inspect-toggle-btn"[^>]*>/.exec(
       liveCanvasHtml,

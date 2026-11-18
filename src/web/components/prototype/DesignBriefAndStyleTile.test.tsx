@@ -709,9 +709,10 @@ describe('Ticket 09 (Issue #31): Briefing Stage — Design Brief & Style Tile', 
       projectId: e2eProject.id,
       title: '采购合同与付款结算SRS',
       version: 'v1.0',
-      status: 'CONFIRMED',
+      status: 'DRAFT',
       content: '围绕**采购合同**（Purchase Contract）与**付款结算单**（Payment Settlement）管理多级审批。',
     });
+    store.confirmRequirementsStep(e2eProject.id, { docId: 'rdoc-brief-e2e-1' });
     expect(store.listPrototypes(e2eProject.id)).toHaveLength(0);
 
     const app = createApiApp(store);

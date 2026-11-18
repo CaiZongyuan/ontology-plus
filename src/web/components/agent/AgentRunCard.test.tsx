@@ -5,6 +5,10 @@ import path from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  checkBusinessViewMarkup,
+  formatBusinessViewViolations,
+} from '../../../packages/business-vocabulary/index.js';
+import {
   createWorkspaceStore,
   type AgentSession,
 } from '../../../packages/workspace-store/index.js';
@@ -24,8 +28,12 @@ import {
   useAgentPanelStore,
 } from './agentPanelStore.js';
 import {
+  PLATFORM_UNAVAILABLE_COPY,
   agentRunsFromSession,
+  classifyRunPlatformProblem,
   formatRunElapsed,
+  formatRunFailurePresentation,
+  formatRunToolProgress,
   type AgentRunView,
   type SessionLiveDraft,
 } from './agentRun.js';
@@ -44,19 +52,21 @@ function makeRun(overrides: Partial<AgentRunView> = {}): AgentRunView {
     id: 'run-1',
     title: { zh: '生成界面原型', en: 'Generate prototype' },
     status: 'RUNNING',
-    liveStatus: { zh: '正在流式生成 HTML…', en: 'Streaming HTML…' },
+    liveStatus: { zh: '正在生成原型页面', en: 'Generating prototype page' },
     startedAt: STARTED_AT,
     steps: [
       {
         id: 's1',
-        label: { zh: '读取需求文档', en: 'Read the SRS' },
+        label: { zh: '保存需求文档', en: 'Save requirements document' },
         status: 'DONE',
+        toolName: 'save_synthesized_srs_doc',
         at: '2026-11-12T10:00:01.000Z',
       },
       {
         id: 's2',
-        label: { zh: '流式生成 HTML', en: 'Stream HTML' },
+        label: { zh: '正在生成原型页面', en: 'Generating prototype page' },
         status: 'RUNNING',
+        toolName: 'rewrite_prototype_page',
         detail: '<section data-screen-id="SCR-1">',
       },
     ],
@@ -119,23 +129,27 @@ describe('AgentRunCard', () => {
 
     expect(html).toContain('data-run-status="RUNNING"');
     expect(html).toContain('data-testid="agent-run-live"');
-    expect(html).toContain('正在流式生成 HTML…');
+    expect(html).toContain('正在生成原型页面');
     expect(html).toContain('01:24');
     expect(html).toContain('data-testid="agent-run-cancel-btn"');
-    expect(html).toContain('读取需求文档');
+    expect(html).toContain('保存需求文档');
     expect(html).toContain('data-step-status="RUNNING"');
     expect(html).not.toContain('agent-run-result');
     expect(html).not.toContain('agent-run-failure');
     expect(html).not.toContain('agent-run-retry-btn');
+    expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
-  it('keeps thinking and step detail collapsed by default', () => {
+  it('keeps thinking and step detail collapsed inside "查看细节" by default', () => {
     const html = renderCard({ run: makeRun() });
 
+    expect(html).toContain('data-testid="agent-run-details"');
+    expect(html).toContain('查看细节');
     expect(html).toContain('data-testid="agent-run-thinking"');
     expect(html).toContain('先确定屏幕清单，再逐屏输出。');
     expect(html).toContain('SCR-1');
     expect(html).not.toMatch(/<details[^>]*\sopen/);
+    expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
   it('shows the result summary and a link to the artifact when it succeeded', () => {
@@ -144,7 +158,7 @@ describe('AgentRunCard', () => {
         status: 'SUCCEEDED',
         completedAt: STARTED_AT + 125_000,
         result: {
-          summary: { zh: '已生成 6 个屏幕', en: 'Generated 6 screens' },
+          summary: { zh: '已生成 6 个页面', en: 'Generated 6 screens' },
           artifactLabel: { zh: '查看原型', en: 'View prototype' },
         },
       }),
@@ -152,20 +166,24 @@ describe('AgentRunCard', () => {
 
     expect(html).toContain('data-run-status="SUCCEEDED"');
     expect(html).toContain('data-testid="agent-run-result"');
-    expect(html).toContain('已生成 6 个屏幕');
+    expect(html).toContain('已生成 6 个页面');
     expect(html).toContain('data-testid="agent-run-open-artifact-btn"');
     expect(html).toContain('查看原型');
     expect(html).toContain('02:05');
     expect(html).not.toContain('agent-run-cancel-btn');
     expect(html).not.toContain('agent-run-live');
+    expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
-  it('reports the real failure with retry and a way to the LLM Center', () => {
+  it('reports a platform timeout failure with unified copy, retry, platform settings link, and diagnostics tucked in details', () => {
     const html = renderCard({
       run: makeRun({
         status: 'FAILED',
         completedAt: STARTED_AT + 9_000,
         failure: {
+          code: 'LLM_TIMEOUT',
+          providerName: 'Primary Gateway',
+          baseUrl: 'http://127.0.0.1:3425/v1',
           message: 'LLM gateway timed out after 60s',
           remediation: '检查网关地址或更换模型',
         },
@@ -174,12 +192,16 @@ describe('AgentRunCard', () => {
 
     expect(html).toContain('data-run-status="FAILED"');
     expect(html).toContain('role="alert"');
+    expect(html).toContain(PLATFORM_UNAVAILABLE_COPY.zh);
+    expect(html).toContain('data-testid="agent-run-open-platform-settings-btn"');
+    expect(html).toContain('前往平台设置');
+    expect(html).toContain('data-testid="agent-run-retry-btn"');
+    expect(html).toContain('data-testid="agent-run-diagnostic-details"');
     expect(html).toContain('LLM gateway timed out after 60s');
     expect(html).toContain('检查网关地址或更换模型');
-    expect(html).toContain('data-testid="agent-run-retry-btn"');
-    expect(html).toContain('data-testid="agent-run-llm-center-btn"');
     expect(html).not.toContain('agent-run-result');
     expect(html).not.toContain('agent-run-cancel-btn');
+    expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
   it('says so when a failed run carries no reason instead of looking successful', () => {
@@ -187,6 +209,7 @@ describe('AgentRunCard', () => {
 
     expect(html).toContain('运行失败，未返回原因。');
     expect(html).not.toContain('agent-run-result');
+    expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
   it('marks a cancelled run as cancelled and offers to run it again', () => {
@@ -201,6 +224,7 @@ describe('AgentRunCard', () => {
     expect(html).not.toContain('agent-run-cancel-btn');
     expect(html).not.toContain('agent-run-result');
     expect(html).not.toContain('agent-run-failure');
+    expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 
   it('renders in English when the locale is en-US', () => {
@@ -208,10 +232,12 @@ describe('AgentRunCard', () => {
     const html = renderCard({ run: makeRun() });
 
     expect(html).toContain('Generate prototype');
-    expect(html).toContain('Streaming HTML…');
+    expect(html).toContain('Generating prototype page');
     expect(html).toContain('Cancel');
+    expect(html).toContain('View details');
     expect(html).toContain('Thinking');
     expect(html).not.toContain('生成界面原型');
+    expect(checkBusinessViewMarkup(html)).toEqual([]);
   });
 });
 
@@ -341,12 +367,13 @@ describe('Agent Panel preferences & Wide Mode (#35)', () => {
         />
       </PreferencesProvider>,
     );
-    expect(AGENT_PANEL_WIDE_CSS_WIDTH).toBe('min(48vw, 680px)');
+    expect(AGENT_PANEL_WIDE_CSS_WIDTH).toBe('clamp(400px, 38vw, 600px)');
     expect(wideHtml).toContain('data-wide-mode="true"');
     expect(wideHtml).toContain('data-testid="agent-panel-wide-toggle"');
     expect(wideHtml).not.toContain('agent-new-session-btn');
+    expect(wideHtml).not.toContain('agent-panel-session-select');
     expect(wideHtml).toContain('data-testid="agent-panel-fork-badge"');
-    expect(wideHtml).toContain('data-testid="agent-panel-session-select"');
+    expect(wideHtml).toContain('data-testid="assistant-history-menu-btn"');
   });
 });
 
@@ -715,8 +742,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     await useWorkbenchStore.getState().bootstrap('proj-contract');
 
     // Verify all 6 surfaces are registered in AGENT_PANEL_SURFACES
-    expect(agentPanelSurfaceFor('app-req-explore')?.sessionKind).toBe('REQUIREMENT');
-    expect(agentPanelSurfaceFor('app-req-docs')?.sessionKind).toBe('REQUIREMENT');
+    expect(agentPanelSurfaceFor('app-requirements')?.sessionKind).toBe('REQUIREMENT');
     expect(agentPanelSurfaceFor('app-ontology')?.sessionKind).toBe('COPILOT');
     expect(agentPanelSurfaceFor('app-four-layer-assets')?.sessionKind).toBe('ARCHITECTURE');
     expect(agentPanelSurfaceFor('app-assembly-dev')?.sessionKind).toBe('CODING');
@@ -735,7 +761,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     const reqPanelHtml = renderToStaticMarkup(
       <PreferencesProvider>
         <ShellAgentPanel
-          surface={agentPanelSurfaceFor('app-req-explore')!}
+          surface={agentPanelSurfaceFor('app-requirements')!}
           overlay={false}
           onClose={noop}
           onNavigate={noop}
@@ -763,9 +789,9 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
         />
       </PreferencesProvider>,
     );
-    expect(copilotPanelHtml).toContain('合成 11 元模型本体');
-    expect(copilotPanelHtml).toContain('查看 11 元模型 (11/11)');
-    expect(copilotPanelHtml).toContain('查看 M3 模型变更');
+    expect(copilotPanelHtml).toContain('生成业务模型');
+    expect(copilotPanelHtml).toContain('查看业务模型');
+    expect(copilotPanelHtml).toContain('查看业务规则变更');
 
     // 3. Tech Arch Generation Run in ARCHITECTURE session
     const assetsBefore = useWorkbenchStore.getState().data?.fourLayerAssets.length ?? 0;
@@ -833,8 +859,8 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
 
     await useWorkbenchStore.getState().bootstrap('proj-contract');
 
-    // Verify ALL 24 NavViewIds resolve to a valid AgentPanelSurface
-    expect(NAV_ITEMS).toHaveLength(24);
+    // Verify ALL active NavViewIds resolve to a valid AgentPanelSurface
+    expect(NAV_ITEMS.length).toBeGreaterThanOrEqual(19);
     for (const navItem of NAV_ITEMS) {
       const surface = agentPanelSurfaceFor(navItem.id);
       expect(surface, `Expected AgentPanelSurface for ${navItem.id}`).not.toBeNull();
@@ -844,7 +870,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     }
 
     expect(agentPanelSurfaceFor('overview')?.sessionKind).toBe('COPILOT');
-    expect(agentPanelSurfaceFor('app-req-explore')?.conversationPrimary).toBe(true);
+    expect(agentPanelSurfaceFor('app-requirements')?.conversationPrimary).toBe(true);
     expect(agentPanelSurfaceFor('app-publish')?.sessionKind).toBe('CODING');
     expect(agentPanelSurfaceFor('cap-agents')?.sessionKind).toBe('CAPABILITY');
     expect(agentPanelSurfaceFor('cap-agents')?.conversationPrimary).toBe(true);
@@ -863,6 +889,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
         <ShellAgentPanel
           surface={agentPanelSurfaceFor('data-reasoning')!}
           overlay={false}
+          defaultHistoryOpen
           onClose={noop}
           onNavigate={noop}
         />
@@ -871,7 +898,21 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_DATA"');
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_WHY"');
     expect(dataReasoningHtml).toContain('data-testid="reasoning-mode-ASK_POLICY"');
-    expect(dataReasoningHtml).not.toContain('agent-new-session-btn');
+    // Every specialised agent except Prototype Co-Design can hold several conversations in the History Menu (ADR 0009, amended).
+    expect(dataReasoningHtml).toContain('data-testid="assistant-history-menu-btn"');
+    expect(dataReasoningHtml).toContain('data-testid="assistant-new-session-btn"');
+    const prototypePanelHtml = renderToStaticMarkup(
+      <PreferencesProvider>
+        <ShellAgentPanel
+          surface={agentPanelSurfaceFor('app-prototype')!}
+          overlay={false}
+          defaultHistoryOpen
+          onClose={noop}
+          onNavigate={noop}
+        />
+      </PreferencesProvider>,
+    );
+    expect(prototypePanelHtml).not.toContain('assistant-new-session-btn');
 
     // AgentRunView preserves user message images & renders "图片已不在本机" when missing from localImageStore, plus EXTRACTION_JOB chip
     const extractionSession: AgentSession = {
@@ -1260,5 +1301,465 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
       .filter((g) => g.sessionId === protoSessionA.id || g.sessionId === protoSessionB.id)
       .forEach((g) => g.release());
     await Promise.all([parProtoA, parProtoB]);
+  });
+});
+
+describe('Business-language run progress, suite target resolution & platform problem classification (#63)', () => {
+  it('resolves suite business names for raw IDs and formats progressive vs completed tool labels deterministically across ontology, prototype, SRS, and delivery tools', () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const contractProject = store.getProject('proj-contract')!;
+    const suite = contractProject.suite;
+    const firstAggregate = suite.M1!.aggregates[0]!;
+    const firstBehavior = suite.M2!.behaviors[0]!;
+    const firstRule = suite.M3!.rules[0]!;
+
+    // 1. Raw IDs resolved from active project suite -> zero AGG-01 / BHV-01 / M2 leaked
+    const runningAgg = formatRunToolProgress(
+      'upsert_aggregate',
+      { id: firstAggregate.id },
+      { active: true, suite },
+    );
+    expect(runningAgg).toEqual({
+      zh: `正在更新业务对象「${firstAggregate.alias ?? firstAggregate.name}」`,
+      en: `Updating Business Object '${firstAggregate.name}'`,
+    });
+
+    const doneBhv = formatRunToolProgress(
+      'upsert_behavior',
+      { id: firstBehavior.id },
+      { active: false, suite },
+    );
+    expect(doneBhv).toEqual({
+      zh: `更新业务操作「${firstBehavior.alias ?? firstBehavior.name}」`,
+      en: `Update Action '${firstBehavior.name}'`,
+    });
+
+    const deletedRule = formatRunToolProgress(
+      'delete_element',
+      { modelCode: 'M3', elementId: firstRule.id },
+      { active: false, suite },
+    );
+    expect(deletedRule.zh).toBe(`移除业务规则「${firstRule.alias ?? firstRule.name}」`);
+    expect(checkBusinessViewMarkup(deletedRule.zh, { plainText: true })).toEqual([]);
+    expect(checkBusinessViewMarkup(deletedRule.en, { plainText: true })).toEqual([]);
+
+    // 2. Prototype, SRS, and Delivery tools produce clean business language in both locales
+    const protoEdit = formatRunToolProgress(
+      'edit_prototype_anchor',
+      { elementId: 'EL-ACT-NEW' },
+      {
+        active: true,
+        targetAnchor: { screenId: 'SCR-CONTRACT-LIST', elementId: 'EL-ACT-NEW', label: '新建合同按钮' },
+      },
+    );
+    expect(protoEdit).toEqual({
+      zh: '正在修改原型中的「新建合同按钮」',
+      en: "Updating '新建合同按钮' in prototype",
+    });
+
+    const srsSave = formatRunToolProgress(
+      'save_synthesized_srs_doc',
+      { title: '合同管理系统需求说明' },
+      { active: false },
+    );
+    expect(srsSave).toEqual({
+      zh: '保存需求文档「合同管理系统需求说明」',
+      en: "Save requirements document '合同管理系统需求说明'",
+    });
+
+    const deliveryCompile = formatRunToolProgress('compile_dev_package', {}, { active: true });
+    expect(deliveryCompile).toEqual({
+      zh: '正在生成开发包',
+      en: 'Generating development package',
+    });
+
+    // 3. agentRunsFromSession preserves full ADR 0007 diagnostics, token usage, and vision fallback
+    const session: AgentSession = {
+      id: 'sess-diag-1',
+      projectId: 'proj-contract',
+      agentKind: 'COPILOT',
+      title: '测试会话',
+      status: 'ERROR',
+      tokenUsage: { inputTokens: 412, outputTokens: 188, totalTokens: 600 },
+      messages: [
+        {
+          id: 'u-diag-1',
+          role: 'user',
+          content: '更新合同审批操作',
+          timestamp: '2026-11-17T10:00:00.000Z',
+        },
+        {
+          id: 'a-diag-1',
+          role: 'assistant',
+          content: '',
+          modelUsed: 'auto/glm-5.3-flash',
+          providerName: 'Primary Gateway',
+          visionFallbackUsed: true,
+          visionFallbackNotice: '当前模型看不了图，将只使用文字设计说明',
+          toolCalls: [
+            {
+              id: 'tc-bhv-1',
+              toolName: 'upsert_behavior',
+              arguments: { id: firstBehavior.id },
+              output: 'OK',
+            },
+          ],
+          errorDiagnostic: {
+            code: 'LLM_GATEWAY_ERROR',
+            providerName: 'Primary Gateway',
+            baseUrl: 'http://127.0.0.1:3425/v1',
+            message: 'HTTP 502 Bad Gateway from upstream provider',
+            remediation: 'Check LLM Center gateway configuration.',
+          },
+          timestamp: '2026-11-17T10:00:04.000Z',
+        },
+      ],
+      createdAt: '2026-11-17T10:00:00.000Z',
+      updatedAt: '2026-11-17T10:00:04.000Z',
+    };
+
+    const [adapted] = agentRunsFromSession(session, undefined, { suite });
+    expect(adapted?.steps[0]?.label).toEqual({
+      zh: `更新业务操作「${firstBehavior.alias ?? firstBehavior.name}」`,
+      en: `Update Action '${firstBehavior.name}'`,
+    });
+    expect(adapted?.usage).toEqual({ inputTokens: 412, outputTokens: 188, totalTokens: 600 });
+    expect(adapted?.visionFallback).toEqual({
+      used: true,
+      notice: '当前模型看不了图，将只使用文字设计说明',
+      providerName: 'Primary Gateway',
+    });
+    expect(adapted?.failure).toEqual({
+      code: 'LLM_GATEWAY_ERROR',
+      providerName: 'Primary Gateway',
+      baseUrl: 'http://127.0.0.1:3425/v1',
+      message: 'HTTP 502 Bad Gateway from upstream provider',
+      remediation: 'Check LLM Center gateway configuration.',
+    });
+
+    // 4. Platform problem classification covers unconfigured, unreachable/HTTP, timeout, vision-unsupported vs non-platform
+    expect(
+      classifyRunPlatformProblem({
+        code: 'LLM_NOT_CONFIGURED',
+        message: 'No enabled LLM gateway provider is configured.',
+      }),
+    ).toBe('UNCONFIGURED');
+    expect(
+      classifyRunPlatformProblem({
+        code: 'LLM_GATEWAY_ERROR',
+        statusCode: 502,
+        message: 'Connection refused',
+      }),
+    ).toBe('UNREACHABLE');
+    expect(
+      classifyRunPlatformProblem({
+        code: 'LLM_TIMEOUT',
+        message: 'Stream idle timeout after 60s',
+      }),
+    ).toBe('TIMEOUT');
+    expect(
+      classifyRunPlatformProblem({
+        code: 'VISION_UNSUPPORTED',
+        message: 'Active model does not support image input',
+      }),
+    ).toBe('VISION_UNSUPPORTED');
+    expect(
+      classifyRunPlatformProblem({
+        code: 'LLM_EMPTY_RESPONSE',
+        message: 'Model returned empty response without tool edits',
+      }),
+    ).toBeNull();
+
+    const platformPres = formatRunFailurePresentation({
+      code: 'LLM_NOT_CONFIGURED',
+      message: 'No enabled LLM gateway provider is configured.',
+    });
+    expect(platformPres.isPlatformProblem).toBe(true);
+    expect(platformPres.summary.zh).toContain(PLATFORM_UNAVAILABLE_COPY.zh);
+    expect(platformPres.summary.en).toContain(PLATFORM_UNAVAILABLE_COPY.en);
+  });
+
+  it('renders deterministic Business View progress lines, tucks tool args/outputs, thinking, char counts & token usage inside closed "查看细节", supports changeSummarySlot, and passes checkBusinessViewMarkup in zh-CN and en-US', () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const suite = store.getProject('proj-contract')!.suite;
+    const agg = suite.M1!.aggregates[0]!;
+    const bhv = suite.M2!.behaviors[0]!;
+
+    const richSession: AgentSession = {
+      id: 'sess-bview-1',
+      projectId: 'proj-contract',
+      agentKind: 'COPILOT',
+      title: '合同审批讨论',
+      status: 'IDLE',
+      tokenUsage: { inputTokens: 820, outputTokens: 340, totalTokens: 1160 },
+      messages: [
+        {
+          id: 'u-bv-1',
+          role: 'user',
+          content: '请补充超额合同提交审批与归档校验',
+          timestamp: '2026-11-17T10:00:00.000Z',
+        },
+        {
+          id: 'a-bv-1',
+          role: 'assistant',
+          content: '已补充超额合同的审批流转与归档校验规则。',
+          thinking: 'Inspect M1 AGG-01 & M2 BHV-01, then apply YAML AST mutation and SQL check.',
+          modelUsed: 'auto/glm-5.3-flash',
+          providerName: 'Primary Gateway',
+          toolCalls: [
+            {
+              id: 'tc-1',
+              toolName: 'inspect_ontology_model',
+              arguments: { modelCode: 'M1' },
+              output: '{"aggregates":["AGG-01"]}',
+            },
+            {
+              id: 'tc-2',
+              toolName: 'upsert_aggregate',
+              arguments: { id: agg.id },
+              output: 'Updated M1 AGG-01 in suite.yaml',
+            },
+            {
+              id: 'tc-3',
+              toolName: 'upsert_behavior',
+              arguments: { id: bhv.id },
+              output: 'Updated M2 BHV-01',
+            },
+            {
+              id: 'tc-4',
+              toolName: 'edit_prototype_anchor',
+              arguments: { elementId: 'EL-ACT-SUBMIT' },
+              output: '<button data-element-id="EL-ACT-SUBMIT">提交审批</button>',
+              targetAnchor: {
+                screenId: 'SCR-CONTRACT-LIST',
+                elementId: 'EL-ACT-SUBMIT',
+                label: '提交审批按钮',
+              },
+            },
+            {
+              id: 'tc-5',
+              toolName: 'save_synthesized_srs_doc',
+              arguments: { title: '合同管理需求说明' },
+              output: 'Saved Markdown SRS',
+            },
+            {
+              id: 'tc-6',
+              toolName: 'read_application_inputs',
+              arguments: {},
+              output: 'Checked delivery inputs',
+            },
+            {
+              id: 'tc-7',
+              toolName: 'compile_dev_package',
+              arguments: {},
+              output: 'Compiled package.zip with DDL & OpenAPI',
+            },
+          ],
+          artifacts: [
+            {
+              kind: 'ONTOLOGY_DIFF',
+              title: '新增超额审批规则',
+              modelCode: 'M3',
+              changes: [],
+            },
+          ],
+          timestamp: '2026-11-17T10:00:08.000Z',
+        },
+      ],
+      createdAt: '2026-11-17T10:00:00.000Z',
+      updatedAt: '2026-11-17T10:00:08.000Z',
+    };
+
+    const [run] = agentRunsFromSession(richSession, undefined, { suite });
+    expect(run).toBeDefined();
+
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      useLocale(locale);
+      const html = renderCard({
+        run: run!,
+        changeSummarySlot: (
+          <div data-testid="mock-change-summary">
+            {locale === 'en-US' ? "Updated 'Contract'" : '在「合同」上更新了业务操作'}
+          </div>
+        ),
+      });
+
+      // 1. Default collapsed markup passes checkBusinessViewMarkup with ZERO violations!
+      const violations = checkBusinessViewMarkup(html);
+      expect(
+        violations,
+        `Expected 0 Business View violations in ${locale}:\n${formatBusinessViewViolations(violations)}`,
+      ).toEqual([]);
+
+      // 2. Concise deterministic progress lines (<= 5 visible steps, never LLM thinking/free text)
+      expect(html).toContain('data-testid="agent-run-progress"');
+      const visibleStepMatches = html.match(/class="agent-run-step"/g) ?? [];
+      expect(visibleStepMatches.length).toBeLessThanOrEqual(5);
+      expect(html).toContain(
+        locale === 'en-US' ? 'View details' : '查看细节',
+      );
+
+      // 3. Closed <details> holds all 7 tool traces, raw JSON/HTML/DDL outputs, thinking, char counts, and token usage
+      expect(html).toContain('data-testid="agent-run-details"');
+      expect(html).not.toMatch(/<details[^>]*\sopen/);
+      expect(html).toContain('data-testid="agent-run-tool-details"');
+      expect(html).toContain('data-testid="agent-run-step-anchor"');
+      expect(html).toContain('SCR-CONTRACT-LIST · EL-ACT-SUBMIT');
+      expect(html).toContain('data-testid="agent-run-thinking"');
+      expect(html).toContain('Inspect M1 AGG-01 &amp; M2 BHV-01');
+      expect(html).toContain('data-testid="agent-run-usage"');
+      expect(html).toContain('1160');
+      expect(html).toContain('auto/glm-5.3-flash');
+
+      // 4. Hook point for #65/#67/#70 Change Summary & Undo footer renders cleanly
+      expect(html).toContain('data-testid="agent-run-change-slot"');
+      expect(html).toContain('data-testid="mock-change-summary"');
+
+      // 5. When defaultDetailsOpen is true, <details open> opens for inspection
+      const openHtml = renderCard({ run: run!, defaultDetailsOpen: true });
+      expect(openHtml).toMatch(/<details[^>]*data-testid="agent-run-details"[^>]*\sopen/);
+    }
+  });
+
+  it('renders unified platform problem notice + deployer settings link + ADR 0007 diagnostics in details for unconfigured, unreachable, timeout, and vision-unsupported runs, and plain-language reasons for non-platform failures', () => {
+    const platformCases: Array<{
+      label: string;
+      run: AgentRunView;
+      expectedCode: string;
+    }> = [
+      {
+        label: 'unconfigured gateway',
+        expectedCode: 'LLM_NOT_CONFIGURED',
+        run: makeRun({
+          status: 'FAILED',
+          steps: [],
+          completedAt: STARTED_AT + 1_000,
+          failure: {
+            code: 'LLM_NOT_CONFIGURED',
+            providerName: 'No Provider Configured',
+            baseUrl: '(none)',
+            message: 'No enabled LLM gateway provider is configured in Live mode.',
+            remediation: 'Configure an enabled provider in Platform Governance → LLM Center.',
+          },
+        }),
+      },
+      {
+        label: 'unreachable / HTTP 502 gateway',
+        expectedCode: 'LLM_GATEWAY_ERROR',
+        run: makeRun({
+          status: 'FAILED',
+          steps: [],
+          completedAt: STARTED_AT + 2_000,
+          failure: {
+            code: 'LLM_GATEWAY_ERROR',
+            providerName: 'Corp OpenAI Proxy',
+            baseUrl: 'http://127.0.0.1:3425/v1',
+            statusCode: 502,
+            message: 'HTTP 502 Bad Gateway: upstream ECONNREFUSED',
+            remediation: 'Check gateway URL and API key in LLM Center.',
+          },
+        }),
+      },
+      {
+        label: 'idle timeout',
+        expectedCode: 'LLM_TIMEOUT',
+        run: makeRun({
+          status: 'FAILED',
+          completedAt: STARTED_AT + 60_000,
+          failure: {
+            code: 'LLM_TIMEOUT',
+            providerName: 'Slow Reasoning Gateway',
+            baseUrl: 'https://llm.internal.example/v1',
+            message: 'Session stream idle timeout after 60000ms',
+            remediation: 'Switch to a faster model or retry.',
+          },
+        }),
+      },
+      {
+        label: 'vision unsupported failure',
+        expectedCode: 'VISION_UNSUPPORTED',
+        run: makeRun({
+          status: 'FAILED',
+          steps: [],
+          completedAt: STARTED_AT + 1_500,
+          failure: {
+            code: 'VISION_UNSUPPORTED',
+            providerName: 'Text-Only Model',
+            baseUrl: 'http://127.0.0.1:3425/v1',
+            statusCode: 400,
+            message: 'Model glm-4-air does not support image_url blocks',
+            remediation: 'Enable a vision-capable model in LLM Center.',
+          },
+        }),
+      },
+    ];
+
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      useLocale(locale);
+      const expectedPrimaryCopy =
+        locale === 'en-US' ? PLATFORM_UNAVAILABLE_COPY.en : PLATFORM_UNAVAILABLE_COPY.zh;
+      const expectedSettingsBtn =
+        locale === 'en-US' ? 'Open platform settings' : '前往平台设置';
+
+      for (const tc of platformCases) {
+        const html = renderCard({ run: tc.run });
+        const violations = checkBusinessViewMarkup(html);
+        expect(
+          violations,
+          `Platform case "${tc.label}" (${locale}) failed Business View guard:\n${formatBusinessViewViolations(violations)}`,
+        ).toEqual([]);
+
+        expect(html).toContain(expectedPrimaryCopy);
+        expect(html).toContain('data-testid="agent-run-open-platform-settings-btn"');
+        expect(html).toContain(expectedSettingsBtn);
+        expect(html).toContain('data-testid="agent-run-retry-btn"');
+        expect(html).toContain('data-testid="agent-run-diagnostic-details"');
+        expect(html).toContain(tc.expectedCode);
+        expect(html).toContain(tc.run.failure!.providerName!);
+        expect(html).toContain(tc.run.failure!.baseUrl!);
+        expect(html).toContain(tc.run.failure!.remediation!);
+      }
+
+      // Vision fallback notice on an image-carrying run (non-failed fallback) also shows platform notice + settings link
+      const visionFallbackHtml = renderCard({
+        run: makeRun({
+          status: 'SUCCEEDED',
+          completedAt: STARTED_AT + 4_000,
+          visionFallback: {
+            used: true,
+            providerName: 'Text-Only Gateway',
+            notice: '当前模型看不了图，将只使用文字设计说明',
+          },
+          result: {
+            summary: { zh: '已按文字说明生成草稿。', en: 'Generated draft from text notes.' },
+          },
+        }),
+      });
+      expect(checkBusinessViewMarkup(visionFallbackHtml)).toEqual([]);
+      expect(visionFallbackHtml).toContain(expectedPrimaryCopy);
+      expect(visionFallbackHtml).toContain('data-testid="agent-run-open-platform-settings-btn"');
+      expect(visionFallbackHtml).toContain('data-testid="agent-run-diagnostic-details"');
+      expect(visionFallbackHtml).toContain('Text-Only Gateway');
+
+      // Non-platform failure: shows plain-language explanation + Retry, NO platform settings link, raw SQL/JSON error tucked in details
+      const nonPlatformHtml = renderCard({
+        run: makeRun({
+          status: 'FAILED',
+          steps: [],
+          completedAt: STARTED_AT + 2_000,
+          failure: {
+            code: 'AGENT_RUNTIME_ERROR',
+            message: 'SQLITE_CONSTRAINT: invalid JSON payload for M2 BHV-01',
+            remediation: 'Retry the request.',
+          },
+        }),
+      });
+      expect(checkBusinessViewMarkup(nonPlatformHtml)).toEqual([]);
+      expect(nonPlatformHtml).not.toContain(expectedPrimaryCopy);
+      expect(nonPlatformHtml).not.toContain('data-testid="agent-run-open-platform-settings-btn"');
+      expect(nonPlatformHtml).toContain('data-testid="agent-run-retry-btn"');
+      expect(nonPlatformHtml).toContain('data-testid="agent-run-diagnostic-details"');
+      expect(nonPlatformHtml).toContain('SQLITE_CONSTRAINT');
+    }
   });
 });

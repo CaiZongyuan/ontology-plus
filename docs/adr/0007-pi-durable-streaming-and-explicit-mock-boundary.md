@@ -5,3 +5,7 @@ All five domain agent workflows (Requirement Exploration, Ontology Copilot, Appl
 In normal operation, `agent-runtime` never falls back silently to deterministic regex mutations or hardcoded template strings when an LLM gateway is unconfigured, unreachable, or times out; instead, it surfaces actionable provider diagnostics with direct navigation to the LLM Center, isolating deterministic `faux`/mock responses strictly behind automated test suites and an explicit Demo/Mock mode flag.
 
 Ontology Extraction's structural scan is not such a fallback. It is the deterministic first round of every extraction and its result is true whether or not an LLM is reachable, so when semantic alignment cannot run the scan's Extraction Candidates are still returned — explicitly labelled "structural scan only" and accompanied by the provider diagnostics — rather than withheld or passed off as an LLM result. A source with no structure to scan has no such result, and its extraction fails with the diagnostics.
+
+## Amendments
+
+- **2026-11-17: the undo safeguard becomes run-level and visible (ADR 0016).** Autonomous execution is unchanged. In the `Business View` a provider problem is worded for a person who cannot configure a gateway, and the navigation to the LLM Center is kept as a link.

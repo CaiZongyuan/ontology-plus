@@ -3,6 +3,7 @@ import { Crosshair, Layers, Loader2, Plus, Sparkles, X } from 'lucide-react';
 import type { PrototypeRefinementSelection } from '../../../packages/agent-runtime/index.js';
 import type { PrototypeTargetAnchor } from '../../../packages/workspace-store/index.js';
 import { Button } from '../beautifui/index.js';
+import { themeSelectionColor } from '../../../packages/workbench-theme/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 
@@ -389,6 +390,11 @@ export function toRefinementSelections(
   return list;
 }
 
+/**
+ * The script runs inside the prototype's own document, which does not load the workbench
+ * stylesheet, so its overlay and capture colours cannot read Workbench Theme tokens. They
+ * are drawn over, and sampled from, the app being designed: not workbench appearance.
+ */
 export function injectVisualInspectorIntoHtml(
   rawHtml: string,
   options: {
@@ -396,6 +402,8 @@ export function injectVisualInspectorIntoHtml(
     targetOrigin: string;
     initialActive: boolean;
     locale: 'zh-CN' | 'en-US';
+    /** Hover, selection, and pin colour: the workbench theme's light `primary`. */
+    selectionColor: string;
   },
 ): string {
   const cleanHtml = stripVisualInspectorFromHtml(rawHtml);
@@ -407,6 +415,7 @@ export function injectVisualInspectorIntoHtml(
     targetOrigin: options.targetOrigin,
     initialActive: options.initialActive,
     locale: options.locale,
+    selectionColor: options.selectionColor,
   }).replace(/</g, '\\u003c');
 
   const scriptTag = `<script data-onto-visual-inspector="1">
@@ -441,20 +450,26 @@ export function injectVisualInspectorIntoHtml(
     window.parent.postMessage(payload, CFG.targetOrigin || '*');
   }
 
+  // The workbench theme's selection colour, drawn over the designed app (see above).
+  var SELECTION = CFG.selectionColor;
+  function selectionTint(amount) {
+    return 'color-mix(in srgb, ' + SELECTION + ' ' + amount + ', transparent)';
+  }
+
   var styleEl = document.createElement('style');
   styleEl.setAttribute('data-onto-inspector-ignore', '1');
   styleEl.textContent = [
     'html[data-onto-inspecting="1"], html[data-onto-inspecting="1"] * { cursor: crosshair !important; user-select: none !important; -webkit-user-select: none !important; }',
     '.onto-vi-root { position: fixed; inset: 0; pointer-events: none; z-index: 2147483640; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "IBM Plex Sans", "Noto Sans SC", sans-serif; }',
-    '.onto-vi-hover { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 1.5px dashed #4c50c4; background: rgba(76, 80, 196, 0.06); border-radius: 5px; box-sizing: border-box; display: none; transition: all 60ms cubic-bezier(0.22, 1, 0.36, 1); }',
-    '.onto-vi-selected { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid #4c50c4; background: rgba(76, 80, 196, 0.10); box-shadow: 0 0 0 3px rgba(76, 80, 196, 0.16); border-radius: 6px; box-sizing: border-box; display: none; }',
-    '.onto-vi-marquee { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 1.5px solid #4c50c4; background: rgba(76, 80, 196, 0.13); border-radius: 4px; box-sizing: border-box; display: none; }',
-    '.onto-vi-highlight { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid #4c50c4; background: rgba(76, 80, 196, 0.09); border-radius: 6px; box-sizing: border-box; display: none; pointer-events: none; }',
-    '.onto-vi-running { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid #4c50c4; background: rgba(76, 80, 196, 0.12); box-shadow: 0 0 0 4px rgba(76, 80, 196, 0.22); border-radius: 6px; box-sizing: border-box; display: none; pointer-events: none; animation: onto-vi-running-pulse 1.3s ease-in-out infinite; }',
+    '.onto-vi-hover { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 1.5px dashed ' + SELECTION + '; background: ' + selectionTint('6%') + '; border-radius: 5px; box-sizing: border-box; display: none; transition: all 60ms cubic-bezier(0.22, 1, 0.36, 1); }',
+    '.onto-vi-selected { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid ' + SELECTION + '; background: ' + selectionTint('10%') + '; box-shadow: 0 0 0 3px ' + selectionTint('16%') + '; border-radius: 6px; box-sizing: border-box; display: none; }',
+    '.onto-vi-marquee { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 1.5px solid ' + SELECTION + '; background: ' + selectionTint('13%') + '; border-radius: 4px; box-sizing: border-box; display: none; }',
+    '.onto-vi-highlight { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid ' + SELECTION + '; background: ' + selectionTint('9%') + '; border-radius: 6px; box-sizing: border-box; display: none; pointer-events: none; }',
+    '.onto-vi-running { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid ' + SELECTION + '; background: ' + selectionTint('12%') + '; box-shadow: 0 0 0 4px ' + selectionTint('22%') + '; border-radius: 6px; box-sizing: border-box; display: none; pointer-events: none; animation: onto-vi-running-pulse 1.3s ease-in-out infinite; }',
     '.onto-vi-flash { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); width: var(--vi-w, 0px); height: var(--vi-h, 0px); border: 2px solid #2e7d5b; background: rgba(46, 125, 91, 0.16); border-radius: 6px; box-sizing: border-box; pointer-events: none; animation: onto-vi-flash-once 1.7s cubic-bezier(0.22, 1, 0.36, 1) 1 forwards; }',
-    '.onto-vi-tag { position: absolute; left: -1px; top: -22px; max-width: 320px; padding: 2px 6px; border-radius: 4px; background: #4c50c4; color: #ffffff; font-size: 10.5px; font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 6px rgba(26, 26, 24, 0.18); }',
+    '.onto-vi-tag { position: absolute; left: -1px; top: -22px; max-width: 320px; padding: 2px 6px; border-radius: 4px; background: ' + SELECTION + '; color: #ffffff; font-size: 10.5px; font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 6px rgba(26, 26, 24, 0.18); }',
     '.onto-vi-tag.is-inside { top: 4px; left: 4px; }',
-    '.onto-vi-pin { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: #4c50c4; color: #ffffff; border: 2px solid #fdfdfb; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(26, 26, 24, 0.25); transform: translate(-35%, -35%); }',
+    '.onto-vi-pin { position: fixed; left: var(--vi-x, 0px); top: var(--vi-y, 0px); min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: ' + SELECTION + '; color: #ffffff; border: 2px solid #fdfdfb; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(26, 26, 24, 0.25); transform: translate(-35%, -35%); }',
     '@keyframes onto-vi-running-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.48; } }',
     '@keyframes onto-vi-flash-once { 0% { opacity: 0.96; box-shadow: 0 0 0 0 rgba(46, 125, 91, 0.42); } 45% { opacity: 1; box-shadow: 0 0 0 8px rgba(46, 125, 91, 0.16); } 100% { opacity: 0; box-shadow: 0 0 0 12px rgba(46, 125, 91, 0); } }',
     '@media (prefers-reduced-motion: reduce) { .onto-vi-hover { transition: none; } .onto-vi-running, .onto-vi-flash { animation: none; } }'
@@ -1299,7 +1314,8 @@ export function PrototypeVisualPreviewStage({
   onScaleChange,
   fillHeight = false,
 }: PrototypeVisualPreviewStageProps) {
-  const { locale, t } = usePreferences();
+  const { locale, t, workbenchTheme } = usePreferences();
+  const selectionColor = useMemo(() => themeSelectionColor(workbenchTheme), [workbenchTheme]);
   const popoverInputId = useId();
   const stageRef = useRef<HTMLDivElement | null>(null);
   const viewportHostRef = useRef<HTMLDivElement | null>(null);
@@ -1340,7 +1356,7 @@ export function PrototypeVisualPreviewStage({
 
   const inspectorActive = inspectMode && (!busy || allowInspectWhileBusy);
 
-  // Stable preview srcDoc: only recomputes when htmlContent or locale changes so toggling
+  // Stable preview srcDoc: only recomputes when htmlContent, locale, or the theme changes so toggling
   // inspectMode never reloads the iframe or resets multi-screen prototype state!
   const initialInspectRef = useRef(inspectorActive);
   initialInspectRef.current = inspectorActive;
@@ -1352,8 +1368,9 @@ export function PrototypeVisualPreviewStage({
         targetOrigin: resolveParentTargetOrigin(),
         initialActive: initialInspectRef.current,
         locale,
+        selectionColor,
       }),
-    [htmlContent, channelToken, locale],
+    [htmlContent, channelToken, locale, selectionColor],
   );
 
   const syncIframeInspectorState = useCallback(
@@ -1600,20 +1617,28 @@ export function PrototypeVisualPreviewStage({
           data-testid="prototype-live-modifying-badge"
           role="status"
           aria-live="polite"
-          className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-accent-tint/55 px-3 py-1.5 text-[12px] text-ink shrink-0"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-primary-soft/55 px-3 py-1.5 text-[12px] text-foreground shrink-0"
         >
           <div className="flex items-center gap-2 min-w-0">
-            <Loader2 size={13} className="agent-run-spin text-accent shrink-0" aria-hidden="true" />
-            <span className="font-medium text-ink">
-              {t('Agent 正在修改', 'Modifying...')}
+            <Loader2 size={13} className="agent-run-spin text-primary shrink-0" aria-hidden="true" />
+            <span className="font-medium text-foreground">
+              {t('AI 助手正在修改', 'AI Assistant is updating...')}
             </span>
-            {runningAnchorSummary && (
-              <span className="badge badge-accent font-mono text-[10.5px]">
-                {runningAnchorSummary}
+            {activeRunningAnchor.label && (
+              <span className="badge badge-accent text-[12px]">
+                {activeRunningAnchor.label}
               </span>
             )}
+            {runningAnchorSummary && runningAnchorSummary !== activeRunningAnchor.label && (
+              <details className="text-[12px] text-muted-foreground">
+                <summary className="cursor-pointer select-none">
+                  {t('查看细节', 'View details')}
+                </summary>
+                <span className="ml-1 font-mono">{runningAnchorSummary}</span>
+              </details>
+            )}
           </div>
-          <span className="text-[11px] text-muted">
+          <span className="text-[12px] text-muted-foreground">
             {t('修改期间仍可自由浏览或框选下一轮目标', 'You can keep browsing or box-selecting for the next queued turn')}
           </span>
         </div>
@@ -1623,10 +1648,10 @@ export function PrototypeVisualPreviewStage({
         <div className="proto-inspector-banner shrink-0" data-testid="visual-select-banner">
           <div className="flex flex-wrap items-center gap-2">
             <span className="proto-inspector-dot" aria-hidden="true" />
-            <span className="font-medium text-ink">
+            <span className="font-medium text-foreground">
               {t('框选精修已开启', 'Visual Select Active')}
             </span>
-            <span className="text-muted">
+            <span className="text-muted-foreground">
               {t(
                 '单击点选任意控件，或按住鼠标拖拽框选一块区域；支持打多个批注点一次性交给 AI',
                 'Click any control or drag a box around a region; pin multiple spots or refine immediately',
@@ -1654,14 +1679,14 @@ export function PrototypeVisualPreviewStage({
       <div
         ref={viewportHostRef}
         className={cn(
-          'relative flex w-full justify-center bg-ground/60',
+          'relative flex w-full justify-center',
           zoomMode === 'ACTUAL' ? 'overflow-auto p-3' : 'overflow-x-hidden overflow-y-auto p-2',
           fillHeight && 'min-h-0 flex-1',
         )}
       >
         <div
           data-testid="prototype-viewport-frame"
-          className="relative shrink-0 overflow-hidden rounded-[6px] border border-line bg-surface shadow-xs"
+          className="relative shrink-0 overflow-hidden rounded-sm border border-border bg-card shadow-xs"
           style={{
             width: `${fitMetrics.scaledWidth}px`,
             height: `${visualHeight}px`,
@@ -1669,10 +1694,10 @@ export function PrototypeVisualPreviewStage({
         >
           <iframe
             ref={iframeRef}
-            title={t('交互式 HTML 原型沙箱预览', 'Interactive Prototype Sandbox')}
+            title={t('交互式原型预览', 'Interactive Prototype Preview')}
             sandbox="allow-scripts"
             srcDoc={previewSrcDoc}
-            className="block border-0 bg-surface"
+            className="block border-0 bg-card"
             style={{
               width: `${fitMetrics.targetWidth}px`,
               height: `${unscaledIframeHeight}px`,
@@ -1739,7 +1764,7 @@ export function PrototypeVisualPreviewStage({
             </button>
           </div>
 
-          <div className="truncate font-mono text-[11px] text-muted">
+          <div className="truncate font-mono text-[11px] text-muted-foreground">
             {activeSelection.label}
             {activeSelection.matchedElementsSummary &&
               activeSelection.matchedElementsSummary.length > 0 &&

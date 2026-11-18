@@ -3,6 +3,11 @@ import {
   CONTRACT_PROTOTYPE_HTML,
   MFT_ENTERPRISE_SUITE,
 } from '../../ontology-core/index.js';
+import {
+  computeOntologySuiteHash,
+  computeStepContentHash,
+  listPresentModelCodes,
+} from './step-confirmations.js';
 import type {
   AgentSession,
   AnalyticsReport,
@@ -27,6 +32,7 @@ import type {
   ReasoningSession,
   RequirementDoc,
   RequirementSession,
+  StepConfirmationRecord,
   SystemSettingsState,
   WritebackInterface,
 } from './types.js';
@@ -240,7 +246,7 @@ export const SEED_PROJECTS = [
     center: 'APPLICATION' as const,
     domain: '合同全生命周期管理系统',
     description:
-      '覆盖合同起草、相对方资信准入、金额分级法务会签、电子签章与首期履约结算联动的全套 11 模型标杆工程。',
+      '覆盖合同起草、相对方资信准入、金额分级法务会签、电子签章与首期履约结算联动。',
     currentStage: 11,
     suite: CONTRACT_LIFECYCLE_SUITE,
     changelog: [
@@ -259,7 +265,7 @@ export const SEED_PROJECTS = [
     center: 'CAPABILITY' as const,
     domain: '企业文件安全传输系统 (MFT)',
     description:
-      '通过存量系统本体萃取（Ontology Extraction）从既有 MFT 跨网文件传输系统 DDL 与接口规范提炼的领域本体工程。',
+      '从既有跨网文件传输系统提炼业务规则、传输工单与安全域权限管控的文件传输项目。',
     currentStage: 5,
     suite: MFT_ENTERPRISE_SUITE,
     changelog: [
@@ -334,25 +340,60 @@ export const SEED_REQUIREMENT_DOCS: RequirementDoc[] = [
   {
     id: 'req-doc-contract-srs',
     projectId: 'proj-contract',
-    title: '合同全生命周期管理系统软件需求说明书 (SRS v5.0)',
+    title: '合同全生命周期管理系统需求文档',
     version: 'v5.0',
     status: 'CONFIRMED',
-    content: `# 合同全生命周期管理系统 — 软件需求说明书 (SRS)
+    content: `# 合同全生命周期管理系统需求文档
 
 ## 1. 业务目标与范围
-构建基于 **11 元模型业务本体** 的企业级合同全生命周期管理系统（CLM），实现从相对方资信核验、合同起草、风险定级会签、CA 电子签章到首期履约结算的端到端闭环。
+面向企业采购、销售与外包业务，建立从相对方资信准入、合同起草、按金额分级法务会签到电子签章及首期履约结算的全流程管理闭环。
 
-## 2. 核心领域对象 (对应 M1 对象模型)
-- **合同 (\`Contract\` / \`AGG-01\`)**：包含合同编号、名称、合同类型、相对方引用、合同总金额、状态、履约有效期（\`SignPeriod\`）及风险等级；下辖子实体 \`ContractLineItem\`（标的明细）与 \`PaymentMilestone\`（收付款里程碑）。
-- **签约相对方 (\`Counterparty\` / \`AGG-02\`)**：维护统一社会信用代码、企业全称、资信等级（AAA~C）与准入状态。
-- **履约结算单 (\`SettlementOrder\` / \`AGG-03\`)**：关联执行中合同，记录每期结算金额与核销状态。
+## 2. 核心业务对象
+- **合同**：记录合同编号、合同标题、合同类型、签约相对方、合同总金额、履约状态、履约有效期及风险等级；包含标的明细与收付款里程碑。
+- **签约相对方**：维护统一社会信用代码、企业全称、资信等级与准入状态。
+- **履约结算单**：关联执行中的合同与收付款里程碑，记录每期结算金额、逾期天数与核销状态。
 
-## 3. 关键业务行为与规则 (对应 M2 / M3 / ME / M4)
-1. **起草合同 (\`BHV-01\`)**：前置检查相对方状态必须为 \`ACTIVE\`，调用 \`RULE-01\` 校验百万级合同资信门槛，发布 \`EVT-01 (Contract.DraftCreated)\`。
-2. **提交合同审批 (\`BHV-02\`)**：调用 \`RULE-02\` 按金额阈值（50万/200万）自动判定风险等级，发布 \`EVT-02 (Contract.SubmittedForApproval)\`。
-3. **法务终审与结算联动 (\`BHV-03\` / \`SCN-01\`)**：法务审批放行后发布 \`EVT-03 (Contract.ApprovedAndSigned)\`，触发 \`RULE-03\` 结算总额守恒校验并调用 \`BHV-04\` 自动生成首期结算单。
+## 3. 关键业务操作与业务规则
+1. **起草合同**：起草前核验签约相对方必须处于正常准入状态；百万级及以上合同要求相对方具备优良资信等级。
+2. **提交合同审批**：按合同金额自动划分风险等级（50 万元与 200 万元分档），进入对应的部门、财务及法务会签流程。
+3. **法务终审与结算联动**：审批放行并完成签章后，自动核对各期收付款里程碑总额与合同总金额一致，并生成首期履约结算单。
 `,
     updatedAt: '2026-11-10T08:30:00.000Z',
+  },
+];
+
+export const SEED_STEP_CONFIRMATIONS: StepConfirmationRecord[] = [
+  {
+    id: 'sconf-req-contract-v1',
+    projectId: 'proj-contract',
+    step: 'REQUIREMENTS',
+    docId: 'req-doc-contract-srs',
+    title: SEED_REQUIREMENT_DOCS[0]!.title,
+    version: SEED_REQUIREMENT_DOCS[0]!.version,
+    content: SEED_REQUIREMENT_DOCS[0]!.content,
+    contentHash: computeStepContentHash(SEED_REQUIREMENT_DOCS[0]!.content),
+    basedOnConfirmationId: null,
+    confirmedAt: '2026-11-10T08:30:00.000Z',
+  },
+  {
+    id: 'sconf-proto-contract-v1',
+    projectId: 'proj-contract',
+    step: 'PROTOTYPE',
+    prototypeId: 'proto-contract-v1',
+    revisionId: 'proto-contract-v1::rev-1',
+    basedOnConfirmationId: 'sconf-req-contract-v1',
+    confirmedAt: '2026-11-10T08:45:00.000Z',
+  },
+  {
+    id: 'sconf-model-contract-v1',
+    projectId: 'proj-contract',
+    step: 'BUSINESS_MODEL',
+    suite: CONTRACT_LIFECYCLE_SUITE,
+    suiteSnapshot: CONTRACT_LIFECYCLE_SUITE,
+    suiteHash: computeOntologySuiteHash(CONTRACT_LIFECYCLE_SUITE),
+    presentModels: listPresentModelCodes(CONTRACT_LIFECYCLE_SUITE),
+    basedOnConfirmationId: 'sconf-proto-contract-v1',
+    confirmedAt: '2026-11-10T09:00:00.000Z',
   },
 ];
 
@@ -1138,13 +1179,13 @@ export const SEED_AGENT_SESSIONS: AgentSession[] = [
         thinking: '识别合同全生命周期核心聚合根（Contract, Counterparty, SettlementOrder）与关键准入/里程碑校验规则。',
         thinkingDurationMs: 1240,
         content:
-          '已完成首轮领域实体与规则收敛：\n\n1. **M1 领域聚合根**：`Contract`（含 `ContractLineItem`、`PaymentMilestone`）、`Counterparty`、`SettlementOrder`\n2. **M3 刚性业务规则**：大额合同资信准入（`RULE-01`）、里程碑收款比例守恒 100%（`RULE-02`）\n\n您可以继续补充多币种折算、印章用印策略或直接生成 **结构化 SRS 需求规格书**。',
+          '已完成首轮核心业务对象与规则整理：\n\n1. **核心业务对象**：合同（含合同标的明细、付款里程碑）、签约相对方、履约结算单\n2. **核心业务规则**：大额合同资信准入规则、里程碑收款比例守恒 100% 规则\n\n您可以继续补充多币种折算、印章用印要求，或直接整理生成 **需求文档**。',
         timestamp: '2026-11-10T09:06:00.000Z',
         artifacts: [
           {
             kind: 'REQUIREMENT_HINTS',
             aggregates: ['Contract', 'Counterparty', 'SettlementOrder'],
-            rules: ['RULE-01 大额合同资信准入', 'RULE-02 里程碑收款比例守恒 100%'],
+            rules: ['大额合同资信准入规则', '里程碑收款比例守恒 100% 规则'],
             openQuestions: ['跨境合同汇率锁定基准日采取签约日还是结算日？'],
           },
         ],
@@ -1155,7 +1196,7 @@ export const SEED_AGENT_SESSIONS: AgentSession[] = [
     id: 'asess-copilot-01',
     projectId: 'proj-contract',
     agentKind: 'COPILOT',
-    title: '11 元模型本体建模助手主会话',
+    title: '合同业务模型主对话',
     pinned: true,
     status: 'IDLE',
     createdAt: '2026-11-10T09:15:00.000Z',
@@ -1165,7 +1206,7 @@ export const SEED_AGENT_SESSIONS: AgentSession[] = [
         id: 'amsg-cop-1',
         role: 'assistant',
         content:
-          '您好！我是 **AI 本体助手 (Ontology Copilot)**。所有工具调用默认自动执行并通过 `ontology-core` 双层一致性校验器守门。您可以直接要求：\n- 为 `Contract` 新增字段或业务不变量\n- 在 `M3` 新增业务规则并关联 `M2` 行为\n- 检查跨模型引用完整性或执行级联重命名',
+          '您好！我是 **AI 助手**。每次调整都会自动检查业务模型的一致性并生成变更说明。您可以直接要求：\n- 为「合同」补充字段或约束条件\n- 新增业务规则并关联对应的业务操作\n- 检查跨对象关联或同步调整名称',
         timestamp: '2026-11-10T09:15:00.000Z',
       },
     ],

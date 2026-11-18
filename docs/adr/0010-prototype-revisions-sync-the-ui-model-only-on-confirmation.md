@@ -15,3 +15,7 @@ Restoring an older revision appends a new revision with the same content instead
 - Confirming a newer revision after the suite has been synthesized re-extracts `MU` only. Re-synthesizing the other models stays a separate explicit action, because it could overwrite manual edits made in the ontology workbench.
 - A prototype that holds the `Confirmed Revision` cannot be deleted until another revision is confirmed.
 - Application development may preview and select the project's prototypes and historical revisions, but a selected revision becomes an input for a newly generated package only after confirmation and `MU` synchronisation. Selecting an unconfirmed revision first presents the `MU` changes for confirmation, preserving one confirmed UI source for the project.
+
+## Amendments
+
+- **2026-11-17: generalised to every `Project Step` by ADR 0016.** Each step ends with a `Step Confirmation`, and a change upstream marks later results `Outdated` without rewriting them.

@@ -221,11 +221,13 @@ export function buildStoredPrototypeOnCreate(params: {
       revisionNumber: 1,
       version: baseVersion,
     }),
+    ...(params.input.instruction?.trim() ? { instruction: params.input.instruction.trim() } : {}),
     ...(params.input.starred !== undefined ? { starred: params.input.starred } : {}),
     htmlContent: params.input.htmlContent,
     extractedScreenCount: countPrototypeScreens(params.input.htmlContent),
     source,
     ...(params.input.agentRunId ? { agentRunId: params.input.agentRunId } : {}),
+    ...(params.input.agentReason?.trim() ? { agentReason: params.input.agentReason.trim() } : {}),
     createdAt: params.now,
   };
 
@@ -290,6 +292,7 @@ export function buildStoredPrototypeOnAppend(params: {
       revisionNumber: nextRevisionNumber,
       version: nextVersion,
     }),
+    ...(params.input.instruction?.trim() ? { instruction: params.input.instruction.trim() } : {}),
     ...(params.input.starred !== undefined ? { starred: params.input.starred } : {}),
     htmlContent: params.input.htmlContent,
     extractedScreenCount: countPrototypeScreens(params.input.htmlContent),
@@ -297,7 +300,14 @@ export function buildStoredPrototypeOnAppend(params: {
     ...(params.input.restoredFromRevisionId
       ? { restoredFromRevisionId: params.input.restoredFromRevisionId }
       : {}),
+    ...(params.input.restoredBeforeRevisionId
+      ? { restoredBeforeRevisionId: params.input.restoredBeforeRevisionId }
+      : {}),
+    ...(params.input.undoneRevisionId
+      ? { undoneRevisionId: params.input.undoneRevisionId }
+      : {}),
     ...(params.input.agentRunId ? { agentRunId: params.input.agentRunId } : {}),
+    ...(params.input.agentReason?.trim() ? { agentReason: params.input.agentReason.trim() } : {}),
     createdAt: params.now,
   };
 
@@ -365,6 +375,29 @@ export function applyRevisionMetadataPatch(
   };
 }
 
+export function applyPrototypeRunReason(
+  stored: StoredInteractivePrototype,
+  runId: string,
+  reason: string,
+): StoredInteractivePrototype | null {
+  const trimmedRunId = runId.trim();
+  const trimmedReason = reason.trim();
+  if (!trimmedRunId || !trimmedReason) return null;
+  let mutated = false;
+  const nextRevisions = stored.revisions.map((rev) => {
+    if (rev.agentRunId === trimmedRunId && rev.agentReason !== trimmedReason) {
+      mutated = true;
+      return { ...rev, agentReason: trimmedReason };
+    }
+    return rev;
+  });
+  if (!mutated) return null;
+  return {
+    ...stored,
+    revisions: nextRevisions,
+  };
+}
+
 export function hydrateConfirmedPrototypeRevision(
   record: ConfirmedPrototypeRevisionRecord,
   storedPrototype: StoredInteractivePrototype,
@@ -373,9 +406,13 @@ export function hydrateConfirmedPrototypeRevision(
   const revision = hydratedProto.revisions.find((r) => r.id === record.revisionId);
   if (!revision) return undefined;
   return {
+    ...(record.id ? { id: record.id } : {}),
     projectId: record.projectId,
     prototypeId: record.prototypeId,
     revisionId: record.revisionId,
+    ...(record.basedOnConfirmationId !== undefined
+      ? { basedOnConfirmationId: record.basedOnConfirmationId }
+      : {}),
     confirmedAt: record.confirmedAt,
     prototype: hydratedProto,
     revision,

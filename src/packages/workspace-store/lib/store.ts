@@ -5,10 +5,16 @@ import path from 'node:path';
 import yaml from 'js-yaml';
 import { createArchitectureAssetCatalog } from '../../architecture-assets/index.js';
 import {
+  isReservedIdentifierPrefix,
+  type ProjectStepId,
+  type ProjectStepStateId,
+} from '../../business-vocabulary/index.js';
+import {
   CONTRACT_LIFECYCLE_SUITE,
   MFT_ENTERPRISE_SUITE,
   MODEL_CODES,
   MODEL_FILE_NAMES,
+  OntologySuiteSchema,
   analyzeImpact,
   buildKnowledgeGraph,
   extractMuFromPrototypeHtml,
@@ -23,6 +29,7 @@ import {
   type ExtractionCandidate,
   type ModelCode,
   type OntologySuite,
+  type ValidationDiagnostic,
 } from '../../ontology-core/index.js';
 import { BOOTSTRAP_SQLITE_DDL } from './schema.js';
 import { sanitizeInspoCacheEntry, type InspoCacheEntry } from './inspo-cache.js';
@@ -57,11 +64,25 @@ import {
   SEED_REQUIREMENT_SESSIONS,
   SEED_SETTLEMENT_ORDER_ROWS,
   SEED_SKILLS,
+  SEED_STEP_CONFIRMATIONS,
   SEED_SYSTEM_SETTINGS,
   SEED_WRITEBACK_INTERFACES,
 } from './seed-data.js';
 import {
+  BusinessModelConfirmError,
+  RequirementsConfirmError,
+  computeOntologySuiteHash,
+  computeStepContentHash,
+  isPackageSnapshotOutdatedForApp,
+  listPresentModelCodes,
+  normalizeBusinessModelConfirmation,
+  normalizeStepMarkdown,
+  resolveCurrentStepConfirmations,
+} from './step-confirmations.js';
+import {
+  SuiteValidationRejectedError,
   doesProviderSupportVision,
+  resolveCurrentProjectStep,
   type AgentCheckpointRecord,
   type AgentImageAttachmentRef,
   type AgentImageAttachmentRole,
@@ -70,9 +91,16 @@ import {
   type AnalyticsQueryResult,
   AnalyticsReport,
   AnalyticsScenario,
+  ArtifactHistoryEntry,
+  ArtifactHistoryEntryView,
+  ArtifactHistorySource,
+  ArtifactHistorySurfaceKind,
   AssembledApplication,
+  BusinessModelStepConfirmationRecord,
   CapabilityAgent,
   CapabilityChatSession,
+  CommitSuiteOptions,
+  ConfirmableProjectStepId,
   ConfirmedPrototypeRevisionRecord,
   CrossSystemFlow,
   DataDocument,
@@ -89,19 +117,41 @@ import {
   LlmProviderConfig,
   McpServerConfig,
   MetricDefinition,
+  OntologySuiteHistoryEntry,
+  PersistedArtifactHistoryKind,
   ProjectDetail,
   ProjectSnapshot,
+  ProjectStepConfirmations,
   ProjectSummary,
   PrototypeArtifact,
+  PrototypeStepConfirmationRecord,
   ReasoningSession,
   RequirementDoc,
+  RequirementDocHistoryState,
   RequirementSession,
+  RequirementsDocHistoryEntry,
+  RequirementsStepConfirmationRecord,
+  StepConfirmationRecord,
+  SuiteCommitEvent,
   SystemSettingsState,
   WorkspaceStore,
   WritebackInterface,
 } from './types.js';
 import {
+  ArtifactHistoryConflictError,
+  ArtifactHistoryNotFoundError,
+  DEFAULT_MAX_ARTIFACT_HISTORY_ENTRIES,
+  areOntologySuitesEqual,
+  areRequirementDocStatesEqual,
+  buildArtifactHistoryViews,
+  buildPrototypeArtifactHistoryViews,
+  captureRequirementDocState,
+  isInitialGeneratedPrototypeRevision,
+  isPreExistingPrototypeBaselineRevision,
+} from './artifact-history.js';
+import {
   PrototypeConfirmedDeleteError,
+  applyPrototypeRunReason,
   applyRevisionMetadataPatch,
   buildStoredPrototypeOnAppend,
   buildStoredPrototypeOnCreate,
@@ -131,10 +181,16 @@ export interface WorkspaceStoreOptions {
   dbPath?: string;
   workspaceRoot?: string;
   enableFileMirror?: boolean;
+  /** Set false to initialize a clean first-use workspace with zero seeded demo projects. */
+  seedProjects?: boolean;
   d1Database?: D1DatabaseBinding;
   /** Alternate source root, primarily for isolated tests. A new directory receives the bundled catalog. */
   architectureAssetsRoot?: string;
   architectureAssetsWritable?: boolean;
+  /** Invoked synchronously whenever an existing project's OntologySuite is committed. */
+  onSuiteCommit?: (event: SuiteCommitEvent) => void;
+  /** Maximum retained linear history entries per `(projectId, artifactKind)` (defaults to 50). */
+  maxHistoryEntries?: number;
 }
 
 interface SqliteStatementLike {
@@ -354,12 +410,6 @@ function createEdgeMemoryFallbackDb(): SqliteDbLike {
                   changelog,
                   updated_at,
                 });
-              }
-            } else if (params.length === 4) {
-              const [suite_json, changelog, updated_at, id] = params;
-              const cur = projectsMap.get(String(id));
-              if (cur) {
-                projectsMap.set(String(id), { ...cur, suite_json, changelog, updated_at });
               }
             }
             return;
@@ -804,6 +854,111 @@ function sanitizeAgentSessionForPersistence(session: AgentSession): AgentSession
   };
 }
 
+const CODE_STOP_WORDS = new Set([
+  'A',
+  'AN',
+  'AND',
+  'APP',
+  'APPLICATION',
+  'BUILD',
+  'CREATE',
+  'DESIGN',
+  'DEVELOP',
+  'FOR',
+  'HELP',
+  'I',
+  'IN',
+  'MAKE',
+  'ME',
+  'NEED',
+  'OF',
+  'ON',
+  'PLEASE',
+  'PORTAL',
+  'SYSTEM',
+  'THE',
+  'TO',
+  'WANT',
+  'WE',
+  'WITH',
+]);
+
+const CJK_CODE_PREFIX_RULES: readonly [RegExp, string][] = [
+  [/合同|法务|签约/, 'CONTRACT'],
+  [/供应商|采购|询价|准入/, 'SUPPLIER'],
+  [/报销|费用|发票|财务|预算/, 'EXPENSE'],
+  [/售后|工单|报修|客服/, 'SERVICE'],
+  [/库存|仓储|出入库|盘点/, 'INVENTORY'],
+  [/订单|销售|客户|线索/, 'ORDER'],
+  [/员工|考勤|招聘|人事/, 'PEOPLE'],
+];
+
+function deriveProjectNameFromDescription(description: string): string {
+  const collapsed = description.trim().replace(/\s+/g, ' ');
+  const firstClause =
+    collapsed.split(/[：:，,。；;！!？?\n]|\.\s+/)[0]?.replace(/\.+$/, '').trim() || collapsed;
+
+  let cleaned = firstClause
+    .replace(
+      /^(?:我想|我要|帮我|请帮我|我们需要|我们想|想|要)?(?:做一个|做一套|做个|搭建一个|搭建一套|搭建|开发一个|开发一套|开发|设计一个|设计一套|设计|建立一个|建立)\s*/,
+      '',
+    )
+    .replace(
+      /^(?:(?:i|we)\s+(?:want|need|would\s+like)\s+to\s+|help\s+(?:me|us)\s+|please\s+)?(?:build|create|design|make|develop)\s+(?:a|an|the)\s+/i,
+      '',
+    )
+    .trim();
+
+  if (cleaned.length < 2) {
+    cleaned = firstClause || collapsed;
+  }
+
+  if (/^[a-z]/.test(cleaned)) {
+    cleaned = `${cleaned[0]!.toUpperCase()}${cleaned.slice(1)}`;
+  }
+
+  const hasCjk = /[\u4e00-\u9fff]/.test(cleaned);
+  const maxLen = hasCjk ? 24 : 36;
+  if (cleaned.length <= maxLen) return cleaned;
+  if (!hasCjk) {
+    const cut = cleaned.slice(0, maxLen);
+    const lastSpace = cut.lastIndexOf(' ');
+    if (lastSpace >= 12) return cut.slice(0, lastSpace).trim();
+  }
+  return cleaned.slice(0, maxLen).trim();
+}
+
+function deriveUniqueProjectCode(
+  sourceText: string,
+  existingCodes: ReadonlySet<string>,
+): string {
+  const asciiTokens = (sourceText.toUpperCase().match(/[A-Z0-9]{2,}/g) ?? [])
+    .filter((tok) => !CODE_STOP_WORDS.has(tok) && !isReservedIdentifierPrefix(tok))
+    .slice(0, 2);
+
+  let basePrefix = asciiTokens.length > 0 ? asciiTokens.join('-').slice(0, 18) : '';
+  if (!basePrefix) {
+    const matched = CJK_CODE_PREFIX_RULES.find(([re]) => re.test(sourceText));
+    basePrefix = matched ? matched[1] : 'PROJ';
+  }
+  basePrefix = basePrefix.replace(/-+$/, '') || 'PROJ';
+
+  if (asciiTokens.length >= 2 && !existingCodes.has(basePrefix)) {
+    return basePrefix;
+  }
+
+  let n = 1;
+  while (n < 10_000) {
+    const suffix = String(n).padStart(2, '0');
+    const candidate = `${basePrefix}-${suffix}`;
+    if (!existingCodes.has(candidate)) {
+      return candidate;
+    }
+    n += 1;
+  }
+  return `${basePrefix}-${Date.now().toString(36).toUpperCase()}`;
+}
+
 export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): WorkspaceStore {
   const envWorkspaceRoot =
     typeof process !== 'undefined' ? process.env.ONTOLOGY_WORKSPACE_ROOT?.trim() : undefined;
@@ -1206,9 +1361,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     }
   }
 
-  // Idempotent seed on first startup
+  // Idempotent seed on first startup (can be disabled via options.seedProjects=false or ONTOLOGY_SEED_PROJECTS=0)
+  const envSeedProjects =
+    typeof process !== 'undefined' ? process.env.ONTOLOGY_SEED_PROJECTS?.trim().toLowerCase() : undefined;
+  const shouldSeedProjects =
+    options.seedProjects ?? (envSeedProjects !== '0' && envSeedProjects !== 'false');
   const countRow = db.prepare(`SELECT COUNT(*) AS cnt FROM projects`).get() as { cnt: number };
-  if (countRow.cnt === 0) {
+  if (countRow.cnt === 0 && shouldSeedProjects) {
     const now = '2026-11-10T09:00:00.000Z';
     const insertProj = db.prepare(`
       INSERT INTO projects (id, name, code, center, domain, description, current_stage, suite_json, changelog, created_at, updated_at)
@@ -1233,7 +1392,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     }
 
     for (const s of SEED_REQUIREMENT_SESSIONS) putItem('req_sessions', s.id, s, s.projectId);
-    for (const d of SEED_REQUIREMENT_DOCS) putItem('req_docs', d.id, d, d.projectId);
+    for (const d of SEED_REQUIREMENT_DOCS) putItem('req_docs', d.id, d, d.projectId, d.updatedAt);
+    for (const sc of SEED_STEP_CONFIRMATIONS) {
+      putItem('step_confirmations', sc.id, sc, sc.projectId, sc.confirmedAt);
+    }
     for (const pr of SEED_PROTOTYPES) {
       const storedSeed: StoredInteractivePrototype = {
         id: pr.id,
@@ -1250,13 +1412,21 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       };
       putItem('prototypes', pr.id, storedSeed, pr.projectId);
       if (pr.isConfirmed && pr.confirmedRevisionId) {
+        const seedProtoStepConf = SEED_STEP_CONFIRMATIONS.find(
+          (sc): sc is PrototypeStepConfirmationRecord =>
+            sc.step === 'PROTOTYPE' && sc.projectId === pr.projectId,
+        );
         const confirmation: ConfirmedPrototypeRevisionRecord = {
+          ...(seedProtoStepConf ? { id: seedProtoStepConf.id } : {}),
           projectId: pr.projectId,
           prototypeId: pr.id,
           revisionId: pr.confirmedRevisionId,
+          ...(seedProtoStepConf
+            ? { basedOnConfirmationId: seedProtoStepConf.basedOnConfirmationId }
+            : {}),
           confirmedAt: pr.updatedAt,
         };
-        putItem('prototype_confirmations', pr.projectId, confirmation, pr.projectId);
+        putItem('prototype_confirmations', pr.projectId, confirmation, pr.projectId, pr.updatedAt);
       }
     }
     for (const app of SEED_ASSEMBLED_APPS) putItem('assembled_apps', app.id, app, app.projectId);
@@ -1289,6 +1459,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     for (const llm of discoveredProviders) putItem('llm_providers', llm.id, llm);
 
     putItem('system_settings', 'global', SEED_SYSTEM_SETTINGS);
+  } else if (countRow.cnt === 0 && !shouldSeedProjects) {
+    const discoveredProviders = discoverPiModelsJsonProviders(workspaceRoot, SEED_LLM_PROVIDERS);
+    for (const llm of discoveredProviders) putItem('llm_providers', llm.id, llm);
+    putItem('system_settings', 'global', SEED_SYSTEM_SETTINGS);
   } else {
     if (listItems<AgentSession>('agent_sessions').length === 0) {
       for (const asess of SEED_AGENT_SESSIONS) {
@@ -1302,18 +1476,216 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     }
   }
 
+  interface ProjectStepContextCollections {
+    reqSessionsByProject: Map<string, RequirementSession[]>;
+    reqDocsByProject: Map<string, RequirementDoc[]>;
+    prototypesByProject: Map<string, StoredInteractivePrototype[]>;
+    confirmationsByProject: Map<string, ConfirmedPrototypeRevisionRecord>;
+    stepConfirmationsByProject: Map<string, StepConfirmationRecord[]>;
+    agentSessionsByProject: Map<string, AgentSession[]>;
+    appsByProject: Map<string, AssembledApplication[]>;
+    packageSnapshotsById: Map<string, DevelopmentPackageSnapshot>;
+    skillsByProject: Map<string, GeneratedSkill[]>;
+  }
+
+  function loadProjectStepCollections(singleProjectId?: string): ProjectStepContextCollections {
+    const groupByProject = <T extends { projectId: string }>(items: T[]): Map<string, T[]> => {
+      const map = new Map<string, T[]>();
+      for (const item of items) {
+        if (!item?.projectId) continue;
+        const list = map.get(item.projectId);
+        if (list) list.push(item);
+        else map.set(item.projectId, [item]);
+      }
+      return map;
+    };
+
+    const rawProtos = listItems<AnyStoredPrototype>('prototypes', singleProjectId);
+    const upgradedProtos: StoredInteractivePrototype[] = rawProtos
+      .filter((p): p is AnyStoredPrototype => Boolean(p?.projectId))
+      .map((p) => (isLegacyStoredPrototype(p) ? upgradeLegacyPrototype(p) : p));
+
+    const confirmations = listItems<ConfirmedPrototypeRevisionRecord>(
+      'prototype_confirmations',
+      singleProjectId,
+    );
+    const confirmationsByProject = new Map<string, ConfirmedPrototypeRevisionRecord>();
+    for (const conf of confirmations) {
+      if (conf?.projectId && !confirmationsByProject.has(conf.projectId)) {
+        confirmationsByProject.set(conf.projectId, conf);
+      }
+    }
+
+    const packageSnapshotsById = new Map<string, DevelopmentPackageSnapshot>();
+    for (const snap of listItems<DevelopmentPackageSnapshot>(
+      'development_package_snapshots',
+    )) {
+      if (snap?.snapshotId && (!singleProjectId || snap.projectId === singleProjectId)) {
+        packageSnapshotsById.set(snap.snapshotId, snap);
+      }
+    }
+
+    return {
+      reqSessionsByProject: groupByProject(
+        listItems<RequirementSession>('req_sessions', singleProjectId),
+      ),
+      reqDocsByProject: groupByProject(listItems<RequirementDoc>('req_docs', singleProjectId)),
+      prototypesByProject: groupByProject(upgradedProtos),
+      confirmationsByProject,
+      stepConfirmationsByProject: groupByProject(
+        listItems<StepConfirmationRecord>('step_confirmations', singleProjectId),
+      ),
+      agentSessionsByProject: groupByProject(
+        listItems<AgentSession>('agent_sessions', singleProjectId),
+      ),
+      appsByProject: groupByProject(
+        listItems<AssembledApplication>('assembled_apps', singleProjectId),
+      ),
+      packageSnapshotsById,
+      skillsByProject: groupByProject(listItems<GeneratedSkill>('skills', singleProjectId)),
+    };
+  }
+
+  function deriveProjectStepSummaryFromCollections(
+    projectId: string,
+    suite: OntologySuite,
+    validation: { presentModels: readonly ModelCode[]; errorCount: number },
+    collections: ProjectStepContextCollections,
+  ): {
+    currentStep: ProjectStepId;
+    currentStepState: ProjectStepStateId;
+    stepStates: Record<ProjectStepId, ProjectStepStateId>;
+  } {
+    const reqSessions = collections.reqSessionsByProject.get(projectId) ?? [];
+    const reqDocs = collections.reqDocsByProject.get(projectId) ?? [];
+    const agentSessions = collections.agentSessionsByProject.get(projectId) ?? [];
+    const prototypes = collections.prototypesByProject.get(projectId) ?? [];
+    const rawProtoConf = collections.confirmationsByProject.get(projectId) ?? null;
+    const confirmedProto = rawProtoConf
+      ? prototypes.find((p) => p.id === rawProtoConf.prototypeId)
+      : undefined;
+    const validProtoConf =
+      confirmedProto && confirmedProto.revisions.some((rev) => rev.id === rawProtoConf!.revisionId)
+        ? rawProtoConf
+        : null;
+    const stepConfs = resolveCurrentStepConfirmations(
+      collections.stepConfirmationsByProject.get(projectId) ?? [],
+      validProtoConf ?? undefined,
+    );
+    const reqConf = stepConfs.requirements;
+    const protoConf = stepConfs.prototype;
+    const modelConf = stepConfs.businessModel;
+
+    // 1. REQUIREMENTS
+    const hasReqAgentWork = agentSessions.some(
+      (s) => s.agentKind === 'REQUIREMENT' && (s.messages?.length ?? 0) > 0,
+    );
+    const hasAnyRequirementWork = reqSessions.length > 0 || hasReqAgentWork || reqDocs.length > 0;
+    let requirementsState: ProjectStepStateId;
+    if (!reqConf) {
+      requirementsState = hasAnyRequirementWork ? 'IN_PROGRESS' : 'NOT_STARTED';
+    } else {
+      const latestDoc = reqDocs[0];
+      const matchedDoc = reqDocs.find((d) => d.id === reqConf.docId);
+      const hasNewerDifferentDoc = Boolean(latestDoc && latestDoc.id !== reqConf.docId);
+      const contentChanged =
+        !matchedDoc ||
+        (computeStepContentHash(matchedDoc.content) !== reqConf.contentHash &&
+          normalizeStepMarkdown(matchedDoc.content) !== normalizeStepMarkdown(reqConf.content));
+      requirementsState =
+        hasNewerDifferentDoc || contentChanged ? 'UNCONFIRMED_CHANGES' : 'CONFIRMED';
+    }
+
+    // 2. PROTOTYPE
+    let prototypeState: ProjectStepStateId;
+    if (!protoConf) {
+      prototypeState = prototypes.length > 0 ? 'IN_PROGRESS' : 'NOT_STARTED';
+    } else if (reqConf && protoConf.basedOnConfirmationId !== reqConf.id) {
+      prototypeState = 'OUTDATED';
+    } else {
+      const protoEntity = prototypes.find((p) => p.id === protoConf.prototypeId);
+      const hasUnconfirmedProtoChanges = Boolean(
+        protoEntity?.currentRevisionId && protoEntity.currentRevisionId !== protoConf.revisionId,
+      );
+      prototypeState = hasUnconfirmedProtoChanges ? 'UNCONFIRMED_CHANGES' : 'CONFIRMED';
+    }
+
+    // 3. BUSINESS_MODEL
+    const hasOntology = validation.presentModels.length > 0;
+    let businessModelState: ProjectStepStateId;
+    if (!modelConf) {
+      businessModelState = hasOntology ? 'IN_PROGRESS' : 'NOT_STARTED';
+    } else if (protoConf && modelConf.basedOnConfirmationId !== protoConf.id) {
+      businessModelState = 'OUTDATED';
+    } else {
+      businessModelState =
+        computeOntologySuiteHash(suite) !== modelConf.suiteHash
+          ? 'UNCONFIRMED_CHANGES'
+          : 'CONFIRMED';
+    }
+
+    // 4. DELIVERY (#48 Decision #4)
+    const projectApps = collections.appsByProject.get(projectId) ?? [];
+    const appsWithSnapshot = projectApps.filter((app) => Boolean(app.latestPackageSnapshotId));
+    let deliveryState: ProjectStepStateId;
+    if (!modelConf) {
+      deliveryState = 'NOT_STARTED';
+    } else if (appsWithSnapshot.length === 0) {
+      deliveryState = 'IN_PROGRESS';
+    } else {
+      const resolvedEntries = appsWithSnapshot
+        .map((app) => {
+          const snapshot = collections.packageSnapshotsById.get(app.latestPackageSnapshotId!);
+          return snapshot ? { app, snapshot } : null;
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        .sort((a, b) => b.snapshot.compiledAt.localeCompare(a.snapshot.compiledAt));
+      const latestEntry = resolvedEntries[0];
+      if (
+        latestEntry &&
+        isPackageSnapshotOutdatedForApp(latestEntry.snapshot, latestEntry.app, modelConf.id)
+      ) {
+        deliveryState = 'OUTDATED';
+      } else {
+        deliveryState = 'CONFIRMED';
+      }
+    }
+
+    const stepStates: Record<ProjectStepId, ProjectStepStateId> = {
+      REQUIREMENTS: requirementsState,
+      PROTOTYPE: prototypeState,
+      BUSINESS_MODEL: businessModelState,
+      DELIVERY: deliveryState,
+    };
+    const currentStep = resolveCurrentProjectStep(stepStates);
+
+    return {
+      currentStep,
+      currentStepState: stepStates[currentStep],
+      stepStates,
+    };
+  }
+
   function hydrateProject(row: Record<string, unknown>): ProjectDetail {
+    const id = String(row.id);
     const suite = JSON.parse(String(row.suite_json)) as OntologySuite;
     const validation = validateOntologySuite(suite);
     const knowledgeGraph = buildKnowledgeGraph(suite);
+    const stepSummary = deriveProjectStepSummaryFromCollections(
+      id,
+      suite,
+      validation,
+      loadProjectStepCollections(id),
+    );
     return {
-      id: String(row.id),
+      id,
       name: String(row.name),
       code: String(row.code),
       center: row.center as ProjectSummary['center'],
       domain: String(row.domain),
       description: String(row.description),
       currentStage: Number(row.current_stage),
+      ...stepSummary,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       suite,
@@ -1415,6 +1787,129 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     return row ? (JSON.parse(String(row.suite_json)) as OntologySuite) : undefined;
   }
 
+  const maxHistoryEntries = Math.max(
+    1,
+    options.maxHistoryEntries ?? DEFAULT_MAX_ARTIFACT_HISTORY_ENTRIES,
+  );
+
+  type ActiveArtifactRunCapture =
+    | {
+        projectId: string;
+        artifactKind: 'REQUIREMENTS_DOC';
+        runId: string;
+        sessionId?: string;
+        beforeState: RequirementDocHistoryState;
+      }
+    | {
+        projectId: string;
+        artifactKind: 'ONTOLOGY_SUITE';
+        runId: string;
+        sessionId?: string;
+        beforeState: OntologySuite;
+      };
+
+  const activeRunCaptures = new Map<string, ActiveArtifactRunCapture>();
+  let suppressSuiteHistoryDepth = 0;
+
+  function runCaptureKey(
+    projectId: string,
+    artifactKind: PersistedArtifactHistoryKind,
+    runId: string,
+  ): string {
+    return `${projectId}::${artifactKind}::${runId}`;
+  }
+
+  function hasActiveArtifactRunCapture(
+    projectId: string,
+    artifactKind: PersistedArtifactHistoryKind,
+  ): boolean {
+    const prefix = `${projectId}::${artifactKind}::`;
+    for (const key of activeRunCaptures.keys()) {
+      if (key.startsWith(prefix)) return true;
+    }
+    return false;
+  }
+
+  function listChronologicalArtifactHistory(
+    projectId: string,
+    artifactKind?: PersistedArtifactHistoryKind,
+  ): ArtifactHistoryEntry[] {
+    const rows = listItems<ArtifactHistoryEntry>('artifact_history', projectId);
+    const filtered = artifactKind ? rows.filter((r) => r.artifactKind === artifactKind) : rows;
+    return filtered.sort(
+      (a, b) => a.sequence - b.sequence || a.createdAt.localeCompare(b.createdAt),
+    );
+  }
+
+  function appendArtifactHistoryEntry(
+    entryWithoutIdAndSeq:
+      | Omit<RequirementsDocHistoryEntry, 'id' | 'sequence' | 'createdAt'>
+      | Omit<OntologySuiteHistoryEntry, 'id' | 'sequence' | 'createdAt'>,
+  ): ArtifactHistoryEntry {
+    const existing = listChronologicalArtifactHistory(
+      entryWithoutIdAndSeq.projectId,
+      entryWithoutIdAndSeq.artifactKind,
+    );
+    const nextSequence =
+      existing.length > 0 ? existing[existing.length - 1]!.sequence + 1 : 1;
+    const now = new Date().toISOString();
+    const id = nextUniqueId('ahist');
+    const entry: ArtifactHistoryEntry =
+      entryWithoutIdAndSeq.artifactKind === 'REQUIREMENTS_DOC'
+        ? {
+            ...entryWithoutIdAndSeq,
+            id,
+            sequence: nextSequence,
+            createdAt: now,
+          }
+        : {
+            ...entryWithoutIdAndSeq,
+            id,
+            sequence: nextSequence,
+            createdAt: now,
+          };
+
+    putItem('artifact_history', entry.id, entry, entry.projectId, now);
+
+    const nextTotal = existing.length + 1;
+    if (nextTotal > maxHistoryEntries) {
+      const toPrune = existing.slice(0, nextTotal - maxHistoryEntries);
+      for (const oldEntry of toPrune) {
+        deleteItem('artifact_history', oldEntry.id);
+      }
+    }
+
+    return entry;
+  }
+
+  function applyRequirementDocHistoryState(
+    projectId: string,
+    state: RequirementDocHistoryState,
+  ): void {
+    const existingDocs = listItems<RequirementDoc>('req_docs', projectId);
+    const targetIds = new Set(state.docs.map((d) => d.id));
+    for (const doc of existingDocs) {
+      if (!targetIds.has(doc.id)) {
+        deleteItem('req_docs', doc.id);
+      }
+    }
+    const baseMs = Date.now() - Math.max(0, state.docs.length - 1);
+    const oldestFirst = [...state.docs].reverse();
+    oldestFirst.forEach((snap, idx) => {
+      const updatedAt = new Date(baseMs + idx).toISOString();
+      const restoredDoc: RequirementDoc = {
+        id: snap.id,
+        projectId,
+        title: snap.title,
+        version: snap.version,
+        status: snap.status,
+        content: snap.content,
+        updatedAt,
+      };
+      putItem('req_docs', restoredDoc.id, restoredDoc, projectId, updatedAt);
+    });
+  }
+
   function getUpgradedExtractionJob(jobId: string): ExtractionJob | undefined {
     const stored = getItem<StoredExtractionJob>('extraction_jobs', jobId);
     if (!stored) return undefined;
@@ -1432,21 +1927,35 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     listProjects(): ProjectSummary[] {
       const rows = db
-        .prepare(
-          `SELECT id, name, code, center, domain, description, current_stage, created_at, updated_at FROM projects ORDER BY created_at ASC`,
-        )
+        .prepare(`SELECT * FROM projects ORDER BY created_at ASC`)
         .all() as Record<string, unknown>[];
-      return rows.map((row) => ({
-        id: String(row.id),
-        name: String(row.name),
-        code: String(row.code),
-        center: row.center as ProjectSummary['center'],
-        domain: String(row.domain),
-        description: String(row.description),
-        currentStage: Number(row.current_stage),
-        createdAt: String(row.created_at),
-        updatedAt: String(row.updated_at),
-      }));
+      if (rows.length === 0) return [];
+      const collections = loadProjectStepCollections();
+      return rows.map((row) => {
+        const id = String(row.id);
+        const suite = row.suite_json
+          ? (JSON.parse(String(row.suite_json)) as OntologySuite)
+          : ({} as OntologySuite);
+        const validation = validateOntologySuite(suite);
+        const stepSummary = deriveProjectStepSummaryFromCollections(
+          id,
+          suite,
+          validation,
+          collections,
+        );
+        return {
+          id,
+          name: String(row.name),
+          code: String(row.code),
+          center: row.center as ProjectSummary['center'],
+          domain: String(row.domain),
+          description: String(row.description),
+          currentStage: Number(row.current_stage),
+          ...stepSummary,
+          createdAt: String(row.created_at),
+          updatedAt: String(row.updated_at),
+        };
+      });
     },
 
     getProject(projectId: string): ProjectDetail | undefined {
@@ -1457,6 +1966,23 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     createProject(input): ProjectDetail {
+      const trimmedDesc = input.description?.trim() ?? '';
+      const explicitName = input.name?.trim() ?? '';
+      if (!explicitName && !trimmedDesc) {
+        throw new Error('Project description or name is required.');
+      }
+
+      const derivedName = explicitName || deriveProjectNameFromDescription(trimmedDesc);
+      const derivedDomain = input.domain?.trim() || derivedName;
+      const existingCodes = new Set(
+        (
+          db.prepare(`SELECT code FROM projects`).all() as { code?: unknown }[]
+        ).map((r) => String(r.code ?? '').toUpperCase()),
+      );
+      const derivedCode =
+        input.code?.trim() ||
+        deriveUniqueProjectCode(trimmedDesc || derivedName, existingCodes);
+
       const id = nextUniqueId('proj');
       const now = new Date().toISOString();
       let baseSuite: OntologySuite;
@@ -1467,8 +1993,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       } else {
         baseSuite = {};
       }
-      const changelog = `# Ontology Change Log - ${input.name}\n\n## [${now}] Project Created\n- Domain: ${input.domain}\n`;
-      const desc = input.description ?? `${input.domain}本体工程`;
+      const changelog = `# Ontology Change Log - ${derivedName}\n\n## [${now}] Project Created\n- Domain: ${derivedDomain}\n`;
+      const desc = trimmedDesc || `${derivedDomain}项目`;
       const stage = Object.keys(baseSuite).length;
       const suiteJson = JSON.stringify(baseSuite);
       db.prepare(`
@@ -1476,10 +2002,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
-        input.name,
-        input.code,
+        derivedName,
+        derivedCode,
         input.center ?? 'APPLICATION',
-        input.domain,
+        derivedDomain,
         desc,
         stage,
         suiteJson,
@@ -1490,10 +2016,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       replicateToD1(
         `INSERT INTO projects (id, name, code, center, domain, description, current_stage, suite_json, changelog, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
-        input.name,
-        input.code,
+        derivedName,
+        derivedCode,
         input.center ?? 'APPLICATION',
-        input.domain,
+        derivedDomain,
         desc,
         stage,
         suiteJson,
@@ -1502,7 +2028,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         now,
       );
       syncEaRelations(id, baseSuite);
-      mirrorProjectFiles(id, input.domain, baseSuite, changelog);
+      mirrorProjectFiles(id, derivedDomain, baseSuite, changelog);
       return this.getProject(id)!;
     },
 
@@ -1578,14 +2104,44 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       mirrorProjectFiles(id, source.domain, clonedSuite, changelog);
 
       // Clone SRS docs and Prototypes attached to the project
+      const sourceStepConfirmations = this.getProjectStepConfirmations(projectId);
+      const docIdMap = new Map<string, string>();
       for (const doc of this.listRequirementDocs(projectId)) {
-        this.saveRequirementDoc({
-          ...doc,
-          id: nextUniqueId('rdoc'),
-          projectId: id,
-          title: `${doc.title} (副本)`,
-        });
+        const newDocId = nextUniqueId('rdoc');
+        docIdMap.set(doc.id, newDocId);
+        putItem<RequirementDoc>(
+          'req_docs',
+          newDocId,
+          {
+            ...doc,
+            id: newDocId,
+            projectId: id,
+            title: `${doc.title} (副本)`,
+            updatedAt: now,
+          },
+          id,
+          now,
+        );
       }
+      let clonedReqConfId: string | null = null;
+      if (sourceStepConfirmations.requirements) {
+        const srcReq = sourceStepConfirmations.requirements;
+        clonedReqConfId = nextUniqueId('sconf-req');
+        const clonedReqConf: RequirementsStepConfirmationRecord = {
+          id: clonedReqConfId,
+          projectId: id,
+          step: 'REQUIREMENTS',
+          docId: docIdMap.get(srcReq.docId) ?? srcReq.docId,
+          title: `${srcReq.title} (副本)`,
+          version: srcReq.version,
+          content: srcReq.content,
+          contentHash: srcReq.contentHash,
+          basedOnConfirmationId: null,
+          confirmedAt: now,
+        };
+        putItem('step_confirmations', clonedReqConf.id, clonedReqConf, id, now);
+      }
+      let clonedProtoConfId: string | null = null;
       for (const proto of this.listPrototypes(projectId)) {
         const newProtoId = nextUniqueId('proto');
         const revisionIdMap = new Map<string, string>();
@@ -1623,18 +2179,48 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         putItem('prototypes', clonedStored.id, clonedStored, id);
         if (proto.isConfirmed && proto.confirmedRevisionId) {
           const mappedRevId = revisionIdMap.get(proto.confirmedRevisionId) ?? newCurrentRevId;
+          clonedProtoConfId = nextUniqueId('sconf-proto');
           putItem<ConfirmedPrototypeRevisionRecord>(
             'prototype_confirmations',
             id,
             {
+              id: clonedProtoConfId,
               projectId: id,
               prototypeId: newProtoId,
               revisionId: mappedRevId,
+              basedOnConfirmationId: clonedReqConfId,
               confirmedAt: now,
             },
             id,
+            now,
           );
+          const clonedProtoStepConf: PrototypeStepConfirmationRecord = {
+            id: clonedProtoConfId,
+            projectId: id,
+            step: 'PROTOTYPE',
+            prototypeId: newProtoId,
+            revisionId: mappedRevId,
+            basedOnConfirmationId: clonedReqConfId,
+            confirmedAt: now,
+          };
+          putItem('step_confirmations', clonedProtoStepConf.id, clonedProtoStepConf, id, now);
         }
+      }
+      if (sourceStepConfirmations.businessModel) {
+        const srcModel = sourceStepConfirmations.businessModel;
+        const clonedSnapshot = structuredClone(srcModel.suiteSnapshot ?? srcModel.suite);
+        const clonedModelConf: BusinessModelStepConfirmationRecord = {
+          id: nextUniqueId('sconf-model'),
+          projectId: id,
+          step: 'BUSINESS_MODEL',
+          suite: clonedSnapshot,
+          suiteSnapshot: structuredClone(clonedSnapshot),
+          suiteHash: srcModel.suiteHash,
+          presentModels: [...srcModel.presentModels],
+          basedOnConfirmationId: clonedProtoConfId,
+          confirmedAt: now,
+        };
+        putItem('step_confirmations', clonedModelConf.id, clonedModelConf, id, now);
       }
 
       return this.getProject(id)!;
@@ -1642,9 +2228,6 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     deleteProject(projectId, force) {
       const allProjects = this.listProjects();
-      if (allProjects.length <= 1) {
-        throw new Error('Cannot delete the last remaining ontology project in the workspace.');
-      }
       const target = allProjects.find((p) => p.id === projectId);
       if (!target) {
         throw new Error(`Project not found: ${projectId}`);
@@ -1676,7 +2259,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const remaining = this.listProjects();
       return {
         deletedId: projectId,
-        remainingProjectId: remaining[0].id,
+        remainingProjectId: remaining[0]?.id ?? '',
       };
     },
 
@@ -1710,11 +2293,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         throw new Error(`Project snapshot not found: ${snapshotId}`);
       }
       const restoredSuite: OntologySuite = JSON.parse(JSON.stringify(snap.suite));
-      return this.updateSuite(
-        projectId,
-        restoredSuite,
-        `Restored project snapshot "${snap.label}" (${snap.id})`,
-      );
+      return this.commitSuite(projectId, restoredSuite, {
+        source: { kind: 'SNAPSHOT_RESTORE', snapshotId: snap.id },
+        note: `Restored project snapshot "${snap.label}" (${snap.id})`,
+      });
     },
 
     deleteProjectSnapshot(snapshotId) {
@@ -1728,18 +2310,87 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         ...current.suite,
         [modelCode]: modelData,
       };
-      return this.updateSuite(projectId, nextSuite, `Updated ${modelCode} model`);
+      return this.commitSuite(projectId, nextSuite, {
+        source: { kind: 'MANUAL', modelCode },
+        note: `Updated ${modelCode} model`,
+      });
     },
 
-    updateSuite(projectId, suite, changelogNote): ProjectDetail {
+    commitSuite(projectId, suite, commitOptions: CommitSuiteOptions): ProjectDetail {
       const current = this.getProject(projectId);
       if (!current) throw new Error(`Project not found: ${projectId}`);
+
+      let effectiveSuite = suite;
+      if (commitOptions.rejectOnNewErrors) {
+        const schemaCheck = OntologySuiteSchema.safeParse(suite);
+        if (!schemaCheck.success) {
+          const schemaErrors: ValidationDiagnostic[] = schemaCheck.error.issues.map(
+            (issue, idx) => {
+              const firstSeg = String(issue.path[0] ?? 'M1');
+              const model: ModelCode = MODEL_CODES.includes(firstSeg as ModelCode)
+                ? (firstSeg as ModelCode)
+                : 'M1';
+              return {
+                id: `SCHEMA-INVALID-${idx}`,
+                tier: 'ERROR',
+                code: 'SCHEMA_INVALID',
+                model,
+                path: issue.path.join('.'),
+                messageZh: `模型结构不符合规范：${issue.message}`,
+                messageEn: `Invalid suite structure: ${issue.message}`,
+              };
+            },
+          );
+          throw new SuiteValidationRejectedError(
+            `Suite rejected: ${schemaErrors.length} schema consistency error(s).`,
+            schemaErrors,
+            {
+              valid: false,
+              errorCount: schemaErrors.length,
+              warningCount: current.validation.warningCount,
+              diagnostics: schemaErrors,
+              presentModels: current.validation.presentModels,
+              missingModels: current.validation.missingModels,
+            },
+          );
+        }
+        effectiveSuite = schemaCheck.data;
+
+        const prevValidation = current.validation;
+        const nextValidation = validateOntologySuite(effectiveSuite);
+        const prevErrorIds = new Set(
+          prevValidation.diagnostics.filter((d) => d.tier === 'ERROR').map((d) => d.id),
+        );
+        const nextErrors = nextValidation.diagnostics.filter((d) => d.tier === 'ERROR');
+        const newErrors = nextErrors.filter((d) => !prevErrorIds.has(d.id));
+        if (newErrors.length > 0 || nextValidation.errorCount > prevValidation.errorCount) {
+          const blocking = newErrors.length > 0 ? newErrors : nextErrors;
+          throw new SuiteValidationRejectedError(
+            `Suite rejected: introduced ${blocking.length} new consistency error(s).`,
+            blocking,
+            nextValidation,
+          );
+        }
+      }
+
       const now = new Date().toISOString();
-      const validation = validateOntologySuite(suite);
-      const nextChangelog = changelogNote
-        ? `${current.changelog}\n## [${now}] ${changelogNote}\n- Present Models: ${validation.presentModels.join(', ')}\n- Consistency Errors: ${validation.errorCount}, Stage Warnings: ${validation.warningCount}\n`
-        : current.changelog;
-      const suiteJson = JSON.stringify(suite);
+      const validation = validateOntologySuite(effectiveSuite);
+      let nextChangelog = current.changelog;
+      if (commitOptions.changelogEntry !== undefined) {
+        if (commitOptions.changelogEntry) {
+          nextChangelog = `${current.changelog}\n${commitOptions.changelogEntry}`;
+        }
+      } else if (commitOptions.note) {
+        nextChangelog = `${current.changelog}\n## [${now}] ${commitOptions.note}\n- Present Models: ${validation.presentModels.join(', ')}\n- Consistency Errors: ${validation.errorCount}, Stage Warnings: ${validation.warningCount}\n`;
+      }
+      const suiteJson = JSON.stringify(effectiveSuite);
+
+      const shouldRecordHistory =
+        suppressSuiteHistoryDepth === 0 &&
+        !hasActiveArtifactRunCapture(projectId, 'ONTOLOGY_SUITE');
+      const beforeSuiteForHistory = shouldRecordHistory
+        ? structuredClone(current.suite)
+        : undefined;
 
       db.prepare(`
         UPDATE projects
@@ -1754,24 +2405,65 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         now,
         projectId,
       );
-      syncEaRelations(projectId, suite);
-      mirrorProjectFiles(projectId, current.domain, suite, nextChangelog);
-      return this.getProject(projectId)!;
+      syncEaRelations(projectId, effectiveSuite);
+      mirrorProjectFiles(projectId, current.domain, effectiveSuite, nextChangelog);
+      const updated = this.getProject(projectId)!;
+
+      if (beforeSuiteForHistory && !areOntologySuitesEqual(beforeSuiteForHistory, updated.suite)) {
+        const historySource: ArtifactHistorySource =
+          commitOptions.source.kind === 'AGENT_RUN'
+            ? {
+                kind: 'AGENT_RUN',
+                runId: commitOptions.source.runId,
+                ...(commitOptions.source.sessionId
+                  ? { sessionId: commitOptions.source.sessionId }
+                  : {}),
+              }
+            : {
+                kind: 'MANUAL',
+                origin: commitOptions.source.kind,
+              };
+        appendArtifactHistoryEntry({
+          projectId,
+          artifactKind: 'ONTOLOGY_SUITE',
+          targetId: projectId,
+          source: historySource,
+          beforeState: beforeSuiteForHistory,
+          afterState: structuredClone(updated.suite),
+        });
+      }
+
+      options.onSuiteCommit?.({
+        projectId,
+        previousSuite: current.suite,
+        nextSuite: updated.suite,
+        source: commitOptions.source,
+        ...(commitOptions.note !== undefined ? { note: commitOptions.note } : {}),
+        committedAt: now,
+      });
+      return updated;
+    },
+
+    updateSuite(projectId, suite, changelogNote): ProjectDetail {
+      return this.commitSuite(projectId, suite, {
+        source: { kind: 'MANUAL' },
+        ...(changelogNote !== undefined ? { note: changelogNote } : {}),
+      });
     },
 
     importYamlFiles(projectId, files) {
       const current = this.getProject(projectId);
       if (!current) throw new Error(`Project not found: ${projectId}`);
       const { suite: parsedPartial, parseErrors } = parseSuiteFromYamlFiles(files);
+      const importedModels = Object.keys(parsedPartial) as ModelCode[];
       const mergedSuite: OntologySuite = {
         ...current.suite,
         ...parsedPartial,
       };
-      const updated = this.updateSuite(
-        projectId,
-        mergedSuite,
-        `Imported YAML files (${Object.keys(parsedPartial).join(', ')})`,
-      );
+      const updated = this.commitSuite(projectId, mergedSuite, {
+        source: { kind: 'YAML_IMPORT', models: importedModels },
+        note: `Imported YAML files (${importedModels.join(', ')})`,
+      });
       return { project: updated, parseErrors };
     },
 
@@ -1797,23 +2489,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const current = this.getProject(projectId);
       if (!current) throw new Error(`Project not found: ${projectId}`);
       const result = renameOntologySymbol(current.suite, oldId, newId);
-      const nextChangelog = `${current.changelog}\n${result.changelogEntry}`;
-      const now = new Date().toISOString();
-      const suiteJson = JSON.stringify(result.suite);
-      db.prepare(`
-        UPDATE projects SET suite_json = ?, changelog = ?, updated_at = ? WHERE id = ?
-      `).run(suiteJson, nextChangelog, now, projectId);
-      replicateToD1(
-        `UPDATE projects SET suite_json = ?, changelog = ?, updated_at = ? WHERE id = ?`,
-        suiteJson,
-        nextChangelog,
-        now,
-        projectId,
-      );
-      syncEaRelations(projectId, result.suite);
-      mirrorProjectFiles(projectId, current.domain, result.suite, nextChangelog);
+      const project = this.commitSuite(projectId, result.suite, {
+        source: { kind: 'SYMBOL_RENAME', oldId, newId },
+        note: `Cascade Rename \`${oldId}\` -> \`${newId}\``,
+        changelogEntry: result.changelogEntry,
+      });
       return {
-        project: this.getProject(projectId)!,
+        project,
         changedCount: result.changedReferences.length,
         changelogEntry: result.changelogEntry,
       };
@@ -1861,6 +2543,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         providerId: input.providerId,
         modelOverride: input.modelOverride,
         reasoningMode: input.reasoningMode,
+        codeMode: input.codeMode ?? true,
+        multiAgentConcurrency:
+          typeof input.multiAgentConcurrency === 'number' &&
+          Number.isFinite(input.multiAgentConcurrency)
+            ? Math.max(1, Math.min(6, Math.round(input.multiAgentConcurrency)))
+            : 3,
         messages: input.initialMessages ?? [],
         createdAt: now,
         updatedAt: now,
@@ -1964,11 +2652,31 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     saveRequirementDoc(doc) {
+      const shouldRecordManual = !hasActiveArtifactRunCapture(doc.projectId, 'REQUIREMENTS_DOC');
+      const beforeState = shouldRecordManual
+        ? captureRequirementDocState(listItems<RequirementDoc>('req_docs', doc.projectId))
+        : undefined;
       const full: RequirementDoc = {
         ...doc,
         updatedAt: new Date().toISOString(),
       };
-      return putItem('req_docs', full.id, full, full.projectId);
+      const saved = putItem('req_docs', full.id, full, full.projectId);
+      if (beforeState) {
+        const afterState = captureRequirementDocState(
+          listItems<RequirementDoc>('req_docs', doc.projectId),
+        );
+        if (!areRequirementDocStatesEqual(beforeState, afterState)) {
+          appendArtifactHistoryEntry({
+            projectId: doc.projectId,
+            artifactKind: 'REQUIREMENTS_DOC',
+            targetId: saved.id,
+            source: { kind: 'MANUAL' },
+            beforeState,
+            afterState,
+          });
+        }
+      }
+      return saved;
     },
 
     cloneRequirementDoc(docId) {
@@ -1983,7 +2691,30 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     deleteRequirementDoc(docId) {
+      const existing = getItem<RequirementDoc>('req_docs', docId);
+      const shouldRecordManual = Boolean(
+        existing && !hasActiveArtifactRunCapture(existing.projectId, 'REQUIREMENTS_DOC'),
+      );
+      const beforeState =
+        shouldRecordManual && existing
+          ? captureRequirementDocState(listItems<RequirementDoc>('req_docs', existing.projectId))
+          : undefined;
       deleteItem('req_docs', docId);
+      if (beforeState && existing) {
+        const afterState = captureRequirementDocState(
+          listItems<RequirementDoc>('req_docs', existing.projectId),
+        );
+        if (!areRequirementDocStatesEqual(beforeState, afterState)) {
+          appendArtifactHistoryEntry({
+            projectId: existing.projectId,
+            artifactKind: 'REQUIREMENTS_DOC',
+            targetId: afterState.doc?.id ?? existing.id,
+            source: { kind: 'MANUAL' },
+            beforeState,
+            afterState,
+          });
+        }
+      }
     },
 
     listPrototypes(projectId) {
@@ -2148,22 +2879,46 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       }
 
       const extractedMu = extractMuFromPrototypeHtml(matchedRevision.htmlContent, current.domain);
-      const updatedProject = this.updateSuite(
+      const updatedProject = this.commitSuite(
         projectId,
         {
           ...current.suite,
           MU: extractedMu,
         },
-        `Confirmed prototype revision "${matchedRevision.title}" (${matchedRevision.id}) and extracted MU UI Model`,
+        {
+          source: {
+            kind: 'PROTOTYPE_CONFIRM',
+            prototypeId: matchedProto.id,
+            revisionId: matchedRevision.id,
+          },
+          note: `Confirmed prototype revision "${matchedRevision.title}" (${matchedRevision.id}) and extracted MU UI Model`,
+        },
       );
 
+      const now = new Date().toISOString();
+      const confirmationId = nextUniqueId('sconf-proto');
+      const currentReqConfirmation = this.getProjectStepConfirmations(projectId).requirements;
+      const basedOnConfirmationId = currentReqConfirmation?.id ?? null;
+
       const record: ConfirmedPrototypeRevisionRecord = {
+        id: confirmationId,
         projectId,
         prototypeId: matchedProto.id,
         revisionId: matchedRevision.id,
-        confirmedAt: new Date().toISOString(),
+        basedOnConfirmationId,
+        confirmedAt: now,
       };
-      putItem('prototype_confirmations', projectId, record, projectId);
+      putItem('prototype_confirmations', projectId, record, projectId, now);
+      const stepRecord: PrototypeStepConfirmationRecord = {
+        id: confirmationId,
+        projectId,
+        step: 'PROTOTYPE',
+        prototypeId: matchedProto.id,
+        revisionId: matchedRevision.id,
+        basedOnConfirmationId,
+        confirmedAt: now,
+      };
+      putItem('step_confirmations', stepRecord.id, stepRecord, projectId, now);
       const confirmed = hydrateConfirmedPrototypeRevision(record, matchedProto)!;
       return {
         confirmed,
@@ -2182,6 +2937,683 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       const storedProto = getStoredPrototype(record.prototypeId);
       if (!storedProto) return undefined;
       return hydrateConfirmedPrototypeRevision(record, storedProto);
+    },
+
+    listStepConfirmations(projectId, step) {
+      const all = listItems<StepConfirmationRecord>('step_confirmations', projectId).map((rec) =>
+        rec.step === 'BUSINESS_MODEL' ? normalizeBusinessModelConfirmation(rec) : rec,
+      );
+      return step ? all.filter((rec) => rec.step === step) : all;
+    },
+
+    getProjectStepConfirmations(projectId): ProjectStepConfirmations {
+      const records = listItems<StepConfirmationRecord>('step_confirmations', projectId);
+      const fallbackProto = getItem<ConfirmedPrototypeRevisionRecord>(
+        'prototype_confirmations',
+        projectId,
+      );
+      return resolveCurrentStepConfirmations(records, fallbackProto);
+    },
+
+    confirmRequirementsStep(projectId, options) {
+      const project = this.getProject(projectId);
+      if (!project) throw new Error(`Project not found: ${projectId}`);
+      const docs = this.listRequirementDocs(projectId);
+      const targetDoc = options?.docId
+        ? docs.find((d) => d.id === options.docId)
+        : docs[0];
+      if (!targetDoc) {
+        throw new RequirementsConfirmError({
+          code: 'NO_REQUIREMENT_DOC',
+          messageZh: '当前项目还没有可确认的需求文档，请先与 AI 助手梳理并生成需求文档。',
+          messageEn:
+            'No requirements document exists for this project yet. Generate or write a requirements document first.',
+        });
+      }
+      const normalizedContent = normalizeStepMarkdown(targetDoc.content);
+      if (!normalizedContent) {
+        throw new RequirementsConfirmError({
+          code: 'EMPTY_REQUIREMENT_DOC',
+          messageZh: '需求文档内容为空，无法确认。请先补充需求内容后再确认。',
+          messageEn:
+            'The requirements document is empty and cannot be confirmed. Add requirement content first.',
+        });
+      }
+      const confirmedAt = new Date().toISOString();
+      const updatedDoc = putItem<RequirementDoc>(
+        'req_docs',
+        targetDoc.id,
+        {
+          ...targetDoc,
+          status: 'CONFIRMED',
+          updatedAt: confirmedAt,
+        },
+        projectId,
+        confirmedAt,
+      );
+      const confirmation: RequirementsStepConfirmationRecord = {
+        id: nextUniqueId('sconf-req'),
+        projectId,
+        step: 'REQUIREMENTS',
+        docId: updatedDoc.id,
+        title: updatedDoc.title,
+        version: updatedDoc.version,
+        content: updatedDoc.content,
+        contentHash: computeStepContentHash(updatedDoc.content),
+        basedOnConfirmationId: null,
+        confirmedAt,
+      };
+      putItem('step_confirmations', confirmation.id, confirmation, projectId, confirmedAt);
+      return {
+        confirmation,
+        doc: updatedDoc,
+        stepConfirmations: this.getProjectStepConfirmations(projectId),
+      };
+    },
+
+    confirmBusinessModelStep(projectId) {
+      const project = this.getProject(projectId);
+      if (!project) throw new Error(`Project not found: ${projectId}`);
+      const currentProtoConfirmation = this.getProjectStepConfirmations(projectId).prototype;
+      if (!currentProtoConfirmation) {
+        throw new BusinessModelConfirmError({
+          code: 'PROTOTYPE_NOT_CONFIRMED',
+          messageZh: '当前项目还没有已确认的原型，请先确认界面原型后再确认业务模型。',
+          messageEn:
+            'No confirmed prototype exists yet; confirm an interactive prototype first before confirming the Business Model.',
+        });
+      }
+      if (project.validation.presentModels.length === 0) {
+        throw new BusinessModelConfirmError({
+          code: 'EMPTY_BUSINESS_MODEL',
+          messageZh: '当前项目还没有生成任何业务模型内容，无法确认。',
+          messageEn: 'The Business Model has no content yet and cannot be confirmed.',
+        });
+      }
+      if (project.validation.errorCount > 0) {
+        const count = project.validation.errorCount;
+        throw new BusinessModelConfirmError({
+          code: 'CONSISTENCY_ERRORS_PRESENT',
+          errorCount: count,
+          messageZh: `业务模型还有 ${count} 个需要修正的问题，修正后才能确认。`,
+          messageEn: `The Business Model still has ${count} ${count === 1 ? 'problem to fix' : 'problems to fix'} before it can be confirmed.`,
+        });
+      }
+      const confirmedAt = new Date().toISOString();
+      const basedOnConfirmationId = currentProtoConfirmation.id;
+      const suiteSnapshot = structuredClone(project.suite);
+      const confirmation: BusinessModelStepConfirmationRecord = {
+        id: nextUniqueId('sconf-model'),
+        projectId,
+        step: 'BUSINESS_MODEL',
+        suite: suiteSnapshot,
+        suiteSnapshot: structuredClone(suiteSnapshot),
+        suiteHash: computeOntologySuiteHash(suiteSnapshot),
+        presentModels: listPresentModelCodes(suiteSnapshot),
+        basedOnConfirmationId,
+        confirmedAt,
+      };
+      putItem('step_confirmations', confirmation.id, confirmation, projectId, confirmedAt);
+      return {
+        confirmation: normalizeBusinessModelConfirmation(confirmation),
+        project,
+        stepConfirmations: this.getProjectStepConfirmations(projectId),
+      };
+    },
+
+    beginArtifactRunCapture(input) {
+      const project = this.getProject(input.projectId);
+      if (!project) return;
+      const key = runCaptureKey(input.projectId, input.artifactKind, input.runId);
+      if (input.artifactKind === 'REQUIREMENTS_DOC') {
+        activeRunCaptures.set(key, {
+          projectId: input.projectId,
+          artifactKind: 'REQUIREMENTS_DOC',
+          runId: input.runId,
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+          beforeState: captureRequirementDocState(
+            listItems<RequirementDoc>('req_docs', input.projectId),
+          ),
+        });
+      } else {
+        activeRunCaptures.set(key, {
+          projectId: input.projectId,
+          artifactKind: 'ONTOLOGY_SUITE',
+          runId: input.runId,
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+          beforeState: structuredClone(project.suite),
+        });
+      }
+    },
+
+    finishArtifactRunCapture(input) {
+      const key = runCaptureKey(input.projectId, input.artifactKind, input.runId);
+      const active = activeRunCaptures.get(key);
+      activeRunCaptures.delete(key);
+      if (!active) return null;
+
+      const source: ArtifactHistorySource = {
+        kind: 'AGENT_RUN',
+        runId: input.runId,
+        ...(input.sessionId || active.sessionId
+          ? { sessionId: input.sessionId ?? active.sessionId! }
+          : {}),
+        ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
+      };
+
+      if (active.artifactKind === 'REQUIREMENTS_DOC') {
+        const afterState = captureRequirementDocState(
+          listItems<RequirementDoc>('req_docs', input.projectId),
+        );
+        if (areRequirementDocStatesEqual(active.beforeState, afterState)) {
+          return null;
+        }
+        return appendArtifactHistoryEntry({
+          projectId: input.projectId,
+          artifactKind: 'REQUIREMENTS_DOC',
+          targetId: afterState.doc?.id ?? active.beforeState.doc?.id ?? input.projectId,
+          source,
+          beforeState: active.beforeState,
+          afterState,
+        });
+      }
+
+      const afterSuite = structuredClone(getProjectSuite(input.projectId) ?? {});
+      if (areOntologySuitesEqual(active.beforeState, afterSuite)) {
+        return null;
+      }
+      return appendArtifactHistoryEntry({
+        projectId: input.projectId,
+        artifactKind: 'ONTOLOGY_SUITE',
+        targetId: input.projectId,
+        source,
+        beforeState: active.beforeState,
+        afterState: afterSuite,
+      });
+    },
+
+    recordPrototypeRunReason(projectId, runId, reason) {
+      ensurePrototypesMigrated(projectId);
+      const storedList = listItems<StoredInteractivePrototype>('prototypes', projectId);
+      for (const stored of storedList) {
+        const updated = applyPrototypeRunReason(stored, runId, reason);
+        if (updated) {
+          putItem('prototypes', updated.id, updated, updated.projectId, updated.updatedAt);
+        }
+      }
+    },
+
+    listArtifactHistory(projectId, filter) {
+      const chronological = listChronologicalArtifactHistory(projectId, filter?.artifactKind);
+      return [...chronological].reverse();
+    },
+
+    listArtifactHistoryViews(projectId, filter) {
+      const project = this.getProject(projectId);
+      const domain = project?.domain;
+      const locale = filter?.locale;
+
+      if (filter?.artifactKind === 'PROTOTYPE') {
+        const protos = this.listPrototypes(projectId);
+        if (protos.length === 0) return [];
+        if (filter.prototypeId) {
+          const target = protos.find((p) => p.id === filter.prototypeId);
+          return target
+            ? buildPrototypeArtifactHistoryViews(target, {
+                ...(domain ? { domain } : {}),
+                ...(locale ? { locale } : {}),
+                maxEntries: maxHistoryEntries,
+              })
+            : [];
+        }
+        const confirmed = this.getConfirmedPrototypeRevision(projectId);
+        const withHistory = protos.find(
+          (p) =>
+            p.revisions.length >= 2 ||
+            (p.revisions[0] && !isPreExistingPrototypeBaselineRevision(p.revisions[0])),
+        );
+        const activeProto =
+          withHistory ??
+          (confirmed ? protos.find((p) => p.id === confirmed.prototypeId) : undefined) ??
+          protos[0]!;
+        return buildPrototypeArtifactHistoryViews(activeProto, {
+          ...(domain ? { domain } : {}),
+          ...(locale ? { locale } : {}),
+          maxEntries: maxHistoryEntries,
+        });
+      }
+
+      if (
+        filter?.artifactKind === 'REQUIREMENTS_DOC' ||
+        filter?.artifactKind === 'ONTOLOGY_SUITE'
+      ) {
+        const chronological = listChronologicalArtifactHistory(projectId, filter.artifactKind);
+        return buildArtifactHistoryViews(
+          chronological,
+          locale ? { locale } : undefined,
+        );
+      }
+
+      const persistedViews = buildArtifactHistoryViews(
+        listChronologicalArtifactHistory(projectId),
+        locale ? { locale } : undefined,
+      );
+      const protos = this.listPrototypes(projectId);
+      if (protos.length === 0) {
+        return persistedViews;
+      }
+      const protoViews = protos.flatMap((proto) =>
+        buildPrototypeArtifactHistoryViews(proto, {
+          ...(domain ? { domain } : {}),
+          ...(locale ? { locale } : {}),
+          maxEntries: maxHistoryEntries,
+        }),
+      );
+      if (protoViews.length === 0) {
+        return persistedViews;
+      }
+      return [...persistedViews, ...protoViews].sort(
+        (a, b) => b.createdAt.localeCompare(a.createdAt) || b.sequence - a.sequence,
+      );
+    },
+
+    undoLatestArtifactChange(
+      projectId: string,
+      artifactKind: ArtifactHistorySurfaceKind,
+      undoOptions?: { expectedEntryId?: string; prototypeId?: string },
+    ): never {
+      const currentProject = this.getProject(projectId);
+      if (!currentProject) throw new Error(`Project not found: ${projectId}`);
+
+      if (artifactKind === 'PROTOTYPE') {
+        ensurePrototypesMigrated(projectId);
+        const storedList = listItems<StoredInteractivePrototype>('prototypes', projectId);
+        if (storedList.length === 0) {
+          throw new ArtifactHistoryConflictError({
+            code: 'NOTHING_TO_UNDO',
+            messageZh: '当前项目还没有可撤销的原型改动记录。',
+            messageEn: 'There is no prototype change to undo yet.',
+          });
+        }
+
+        const confirmedRecord = getItem<ConfirmedPrototypeRevisionRecord>(
+          'prototype_confirmations',
+          projectId,
+        );
+
+        let targetStored: StoredInteractivePrototype | undefined;
+        if (undoOptions?.prototypeId) {
+          targetStored = storedList.find((p) => p.id === undoOptions.prototypeId);
+        } else if (undoOptions?.expectedEntryId) {
+          targetStored = storedList.find((p) =>
+            p.revisions.some((r) => r.id === undoOptions.expectedEntryId),
+          );
+          if (!targetStored) {
+            const hasAnyHistory = storedList.some(
+              (p) =>
+                p.revisions.length >= 2 ||
+                (p.revisions[0] && !isPreExistingPrototypeBaselineRevision(p.revisions[0])),
+            );
+            throw new ArtifactHistoryConflictError(
+              hasAnyHistory
+                ? {
+                    code: 'STALE_LATEST_ENTRY',
+                    messageZh:
+                      '在此改动之后已有新的修改，一键撤销只适用于最近一次改动；请在历史记录中恢复到更早状态。',
+                    messageEn:
+                      'Newer edits exist after this change. One-click undo applies only to the latest change; open History to restore an earlier state.',
+                  }
+                : {
+                    code: 'NOTHING_TO_UNDO',
+                    messageZh: '当前项目还没有可撤销的原型改动记录。',
+                    messageEn: 'There is no prototype change to undo yet.',
+                  },
+            );
+          }
+        } else {
+          targetStored =
+            storedList.find((p) => p.revisions.length >= 2) ??
+            storedList.find(
+              (p) =>
+                p.revisions.length === 1 &&
+                p.revisions[0] &&
+                isInitialGeneratedPrototypeRevision(p.revisions[0]) &&
+                confirmedRecord?.revisionId !== p.revisions[0].id,
+            ) ??
+            (confirmedRecord
+              ? storedList.find((p) => p.id === confirmedRecord.prototypeId)
+              : undefined) ??
+            storedList[0];
+        }
+
+        if (!targetStored) {
+          throw new ArtifactHistoryConflictError({
+            code: 'NOTHING_TO_UNDO',
+            messageZh: '当前项目还没有可撤销的原型改动记录。',
+            messageEn: 'There is no prototype change to undo yet.',
+          });
+        }
+
+        const ordered = [...targetStored.revisions].sort(
+          (a, b) => a.revisionNumber - b.revisionNumber,
+        );
+        const latestRev = ordered[ordered.length - 1];
+        if (!latestRev) {
+          throw new ArtifactHistoryConflictError({
+            code: 'NOTHING_TO_UNDO',
+            messageZh: '当前项目还没有可撤销的原型改动记录。',
+            messageEn: 'There is no prototype change to undo yet.',
+          });
+        }
+
+        if (undoOptions?.expectedEntryId && latestRev.id !== undoOptions.expectedEntryId) {
+          throw new ArtifactHistoryConflictError({
+            code: 'STALE_LATEST_ENTRY',
+            messageZh:
+              '在此改动之后已有新的修改，一键撤销只适用于最近一次改动；请在历史记录中恢复到更早状态。',
+            messageEn:
+              'Newer edits exist after this change. One-click undo applies only to the latest change; open History to restore an earlier state.',
+          });
+        }
+
+        if (ordered.length < 2) {
+          const isConfirmedLatest = Boolean(
+            confirmedRecord &&
+              confirmedRecord.prototypeId === targetStored.id &&
+              confirmedRecord.revisionId === latestRev.id,
+          );
+          if (!isInitialGeneratedPrototypeRevision(latestRev) || isConfirmedLatest) {
+            throw new ArtifactHistoryConflictError({
+              code: 'NOTHING_TO_UNDO',
+              messageZh: '当前原型处于首版状态，之前没有更早的原型版本可撤销退回。',
+              messageEn:
+                'This prototype is on its initial version; there is no earlier prototype revision to revert to.',
+            });
+          }
+
+          // Initial AI-generated R1 that has not been confirmed yet:
+          // remove the unconfirmed 1-revision prototype back to the pre-R1 Briefing stage
+          // while preserving its coDesignSession (unlinked) and designBrief cleanly.
+          const preservedBrief = targetStored.designBrief
+            ? structuredClone(targetStored.designBrief)
+            : undefined;
+          const projectSessions = this.listAgentSessions({ projectId });
+          const linkedSessions = projectSessions.filter(
+            (s) =>
+              s.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+              (s.id === targetStored.coDesignSessionId || s.targetId === targetStored.id),
+          );
+          if (linkedSessions.length > 0) {
+            for (const sess of linkedSessions) {
+              const { targetId: _removedTargetId, ...restSess } = sess;
+              this.saveAgentSession({
+                ...restSess,
+                ...(preservedBrief ? { designBrief: preservedBrief } : {}),
+              });
+            }
+          } else if (preservedBrief) {
+            const unbound = projectSessions.find(
+              (s) => s.agentKind === 'PROTOTYPE_CO_DESIGN' && !s.targetId,
+            );
+            if (unbound) {
+              this.saveAgentSession({
+                ...unbound,
+                designBrief: preservedBrief,
+              });
+            } else {
+              const createdSess = this.createAgentSession({
+                projectId,
+                agentKind: 'PROTOTYPE_CO_DESIGN',
+                title: '原型共创对话',
+              });
+              this.saveAgentSession({
+                ...createdSess,
+                designBrief: preservedBrief,
+              });
+            }
+          }
+
+          deleteItem('prototypes', targetStored.id);
+
+          const now = new Date().toISOString();
+          const undoEntryId = nextUniqueId('prev-undo');
+          const entryView: ArtifactHistoryEntryView = {
+            id: undoEntryId,
+            projectId,
+            artifactKind: 'PROTOTYPE',
+            targetId: targetStored.id,
+            sequence: latestRev.revisionNumber + 1,
+            createdAt: now,
+            source: { kind: 'UNDO', undoneEntryId: latestRev.id },
+            title: {
+              zh: '撤销上一次改动',
+              en: 'Undid latest change',
+            },
+            changeSummary: {
+              entryId: undoEntryId,
+              artifactKind: 'PROTOTYPE',
+              targetId: targetStored.id,
+              items: [
+                {
+                  id: `${undoEntryId}-proto-r1-reverted`,
+                  changeType: 'REMOVED',
+                  label: {
+                    zh: '撤回首版界面原型，回到生成前的设计简报阶段',
+                    en: 'Reverted the initial prototype back to the pre-generation design brief stage',
+                  },
+                },
+              ],
+              canUndo: false,
+            },
+            canRestoreBefore: false,
+          };
+
+          return {
+            entryView,
+            undoneEntryId: latestRev.id,
+          } as never;
+        }
+
+        const priorRev = ordered[ordered.length - 2]!;
+        const undoDepthById = new Map<string, number>();
+        for (const rev of ordered) {
+          undoDepthById.set(
+            rev.id,
+            rev.undoneRevisionId ? (undoDepthById.get(rev.undoneRevisionId) ?? 0) + 1 : 0,
+          );
+        }
+        const nextDepth = (undoDepthById.get(latestRev.id) ?? 0) + 1;
+        const isRedo = nextDepth % 2 === 0;
+
+        const appendedProto = this.appendPrototypeRevision(targetStored.id, {
+          title: isRedo ? '重做上一次改动' : '撤销上一次改动',
+          htmlContent: priorRev.htmlContent,
+          source: 'RESTORED',
+          restoredFromRevisionId: priorRev.id,
+          undoneRevisionId: latestRev.id,
+        });
+
+        const views = this.listArtifactHistoryViews(projectId, {
+          artifactKind: 'PROTOTYPE',
+          prototypeId: targetStored.id,
+        });
+        const entryView = views.find((v) => v.id === appendedProto.revision.id) ?? views[0]!;
+        return {
+          revision: appendedProto.revision,
+          prototype: appendedProto.prototype,
+          entryView,
+          undoneEntryId: latestRev.id,
+        } as never;
+      }
+
+      const chronological = listChronologicalArtifactHistory(projectId, artifactKind);
+      const latest = chronological[chronological.length - 1];
+      if (!latest) {
+        throw new ArtifactHistoryConflictError({
+          code: 'NOTHING_TO_UNDO',
+          messageZh: '当前成果还没有可撤销的改动记录。',
+          messageEn: 'There is no recorded change to undo yet.',
+        });
+      }
+      if (undoOptions?.expectedEntryId && latest.id !== undoOptions.expectedEntryId) {
+        throw new ArtifactHistoryConflictError({
+          code: 'STALE_LATEST_ENTRY',
+          messageZh: '在此改动之后已有新的修改，一键撤销只适用于最近一次改动；请在历史记录中恢复到更早状态。',
+          messageEn:
+            'Newer edits exist after this change. One-click undo applies only to the latest change; open History to restore an earlier state.',
+        });
+      }
+
+      let appended: ArtifactHistoryEntry;
+      if (latest.artifactKind === 'REQUIREMENTS_DOC') {
+        const currentState = captureRequirementDocState(
+          listItems<RequirementDoc>('req_docs', projectId),
+        );
+        const restoredState = structuredClone(latest.beforeState);
+        applyRequirementDocHistoryState(projectId, restoredState);
+        appended = appendArtifactHistoryEntry({
+          projectId,
+          artifactKind: 'REQUIREMENTS_DOC',
+          targetId: restoredState.doc?.id ?? currentState.doc?.id ?? latest.targetId,
+          source: { kind: 'UNDO', undoneEntryId: latest.id },
+          beforeState: currentState,
+          afterState: restoredState,
+        });
+      } else {
+        const currentSuite = structuredClone(currentProject.suite);
+        const restoredSuite = structuredClone(latest.beforeState);
+        suppressSuiteHistoryDepth += 1;
+        try {
+          this.commitSuite(projectId, restoredSuite, {
+            source: { kind: 'MANUAL' },
+            note: `Undid change ${latest.id}`,
+          });
+        } finally {
+          suppressSuiteHistoryDepth -= 1;
+        }
+        appended = appendArtifactHistoryEntry({
+          projectId,
+          artifactKind: 'ONTOLOGY_SUITE',
+          targetId: projectId,
+          source: { kind: 'UNDO', undoneEntryId: latest.id },
+          beforeState: currentSuite,
+          afterState: restoredSuite,
+        });
+      }
+
+      const views = this.listArtifactHistoryViews(projectId, { artifactKind });
+      const entryView = views.find((v) => v.id === appended.id) ?? views[0]!;
+      return {
+        entry: appended,
+        entryView,
+        undoneEntryId: latest.id,
+      } as never;
+    },
+
+    restoreArtifactBeforeEntry(
+      projectId: string,
+      artifactKind: ArtifactHistorySurfaceKind,
+      entryId: string,
+    ): never {
+      const currentProject = this.getProject(projectId);
+      if (!currentProject) throw new Error(`Project not found: ${projectId}`);
+
+      if (artifactKind === 'PROTOTYPE') {
+        ensurePrototypesMigrated(projectId);
+        const storedList = listItems<StoredInteractivePrototype>('prototypes', projectId);
+        const matchedStored = storedList.find((p) =>
+          p.revisions.some((r) => r.id === entryId),
+        );
+        if (!matchedStored) {
+          throw new ArtifactHistoryNotFoundError(entryId);
+        }
+        const ordered = [...matchedStored.revisions].sort(
+          (a, b) => a.revisionNumber - b.revisionNumber,
+        );
+        const targetIdx = ordered.findIndex((r) => r.id === entryId);
+        if (targetIdx < 0) {
+          throw new ArtifactHistoryNotFoundError(entryId);
+        }
+        if (targetIdx === 0) {
+          throw new ArtifactHistoryConflictError({
+            code: 'NOTHING_TO_UNDO',
+            messageZh: '首版原型之前没有更早的原型状态可恢复。',
+            messageEn: 'There is no earlier prototype state before the initial prototype revision.',
+          });
+        }
+
+        const beforeRev = ordered[targetIdx - 1]!;
+        const appendedProto = this.appendPrototypeRevision(matchedStored.id, {
+          title: `恢复自修订 #${beforeRev.revisionNumber}（${beforeRev.title}）`,
+          htmlContent: beforeRev.htmlContent,
+          source: 'RESTORED',
+          restoredFromRevisionId: beforeRev.id,
+          restoredBeforeRevisionId: entryId,
+        });
+
+        const views = this.listArtifactHistoryViews(projectId, {
+          artifactKind: 'PROTOTYPE',
+          prototypeId: matchedStored.id,
+        });
+        const entryView = views.find((v) => v.id === appendedProto.revision.id) ?? views[0]!;
+        return {
+          revision: appendedProto.revision,
+          prototype: appendedProto.prototype,
+          entryView,
+          restoredBeforeEntryId: entryId,
+        } as never;
+      }
+
+      const chronological = listChronologicalArtifactHistory(projectId, artifactKind);
+      const target = chronological.find((item) => item.id === entryId);
+      if (!target) {
+        throw new ArtifactHistoryNotFoundError(entryId);
+      }
+
+      let appended: ArtifactHistoryEntry;
+      if (target.artifactKind === 'REQUIREMENTS_DOC') {
+        const currentState = captureRequirementDocState(
+          listItems<RequirementDoc>('req_docs', projectId),
+        );
+        const restoredState = structuredClone(target.beforeState);
+        applyRequirementDocHistoryState(projectId, restoredState);
+        appended = appendArtifactHistoryEntry({
+          projectId,
+          artifactKind: 'REQUIREMENTS_DOC',
+          targetId: restoredState.doc?.id ?? currentState.doc?.id ?? target.targetId,
+          source: { kind: 'RESTORE', restoredFromEntryId: target.id },
+          beforeState: currentState,
+          afterState: restoredState,
+        });
+      } else {
+        const currentSuite = structuredClone(currentProject.suite);
+        const restoredSuite = structuredClone(target.beforeState);
+        suppressSuiteHistoryDepth += 1;
+        try {
+          this.commitSuite(projectId, restoredSuite, {
+            source: { kind: 'MANUAL' },
+            note: `Restored suite to before ${target.id}`,
+          });
+        } finally {
+          suppressSuiteHistoryDepth -= 1;
+        }
+        appended = appendArtifactHistoryEntry({
+          projectId,
+          artifactKind: 'ONTOLOGY_SUITE',
+          targetId: projectId,
+          source: { kind: 'RESTORE', restoredFromEntryId: target.id },
+          beforeState: currentSuite,
+          afterState: restoredSuite,
+        });
+      }
+
+      const views = this.listArtifactHistoryViews(projectId, { artifactKind });
+      const entryView = views.find((v) => v.id === appended.id) ?? views[0]!;
+      return {
+        entry: appended,
+        entryView,
+        restoredBeforeEntryId: target.id,
+      } as never;
     },
 
     savePrototypeAndSyncMu(projectId, input) {
@@ -2544,11 +3976,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
       job.appliedToProject = true;
       job.appliedCandidateCount = preview.acceptedCount;
       putItem('extraction_jobs', job.id, job, input.projectId);
-      const merged = this.updateSuite(
-        input.projectId,
-        preview.suite,
-        `Applied ontology extraction job: ${input.title}`,
-      );
+      const merged = this.commitSuite(input.projectId, preview.suite, {
+        source: input.source ?? { kind: 'EXTRACTION_APPLY', jobId: job.id },
+        note: `Applied ontology extraction job: ${input.title}`,
+      });
       return { job, project: merged, blockedBy: [] };
     },
 
@@ -2594,11 +4025,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         return { job: existing, project: currentProject, blockedBy: preview.newErrors };
       }
 
-      const updatedProject = this.updateSuite(
-        existing.projectId,
-        preview.suite,
-        `Applied reviewed extraction job (${existing.id}): ${existing.title}`,
-      );
+      const updatedProject = this.commitSuite(existing.projectId, preview.suite, {
+        source: { kind: 'EXTRACTION_APPLY', jobId: existing.id },
+        note: `Applied reviewed extraction job (${existing.id}): ${existing.title}`,
+      });
       const updatedJob: ExtractionJob = {
         ...existing,
         status: 'REVIEWED',

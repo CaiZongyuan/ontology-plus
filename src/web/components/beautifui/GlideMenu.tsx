@@ -105,7 +105,7 @@ export function GlideMenu({
             : undefined
         }
         className={cn(
-          'pointer-events-none absolute left-0 top-0 rounded-control bg-hover',
+          'pointer-events-none absolute left-0 top-0 rounded-md bg-accent',
           visible ? 'opacity-100' : 'opacity-0',
           warmRef.current
             ? 'transition-[transform,width,height,opacity] duration-150 ease-out-strong'

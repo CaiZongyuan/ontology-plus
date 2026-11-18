@@ -1,11 +1,29 @@
+import {
+  BUSINESS_VOCABULARY,
+  checkBusinessViewMarkup,
+  formatToolProgress as formatVocabularyToolProgress,
+  formatToolProgressLine,
+  formatToolStepLabel as formatVocabularyToolStepLabel,
+  getModelBusinessName,
+  resolveToolProgressSpec,
+  sanitizeBusinessText,
+} from '../../../packages/business-vocabulary/index.js';
+import {
+  MODEL_CODES,
+  type ModelCode,
+  type OntologySuite,
+} from '../../../packages/ontology-core/index.js';
 import type {
   AgentAskUserPrompt,
   AgentDomainArtifact,
   AgentImageAttachmentRef,
   AgentSession,
   AgentSessionMessage,
+  AgentSubagentLaneTrace,
   AgentToolCallTrace,
   PrototypeTargetAnchor,
+  StepHandoffOrigin,
+  StepHandoffProposal,
 } from '../../../packages/workspace-store/index.js';
 import {
   formatAnchorBadgeLabel,
@@ -16,6 +34,7 @@ import {
 
 export {
   formatAnchorBadgeLabel,
+  formatToolProgressLine,
   formatToolStepLabel,
   type PrototypeTargetAnchor,
   type QueuedSessionPromptItem,
@@ -49,6 +68,40 @@ export interface AgentRunStep {
   toolName?: string;
 }
 
+export interface AgentRunFailure {
+  message: string;
+  remediation?: string;
+  code?: string;
+  providerName?: string;
+  baseUrl?: string;
+  model?: string;
+  statusCode?: number;
+}
+
+export interface AgentRunUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface AgentRunVisionFallback {
+  used: boolean;
+  notice?: string;
+  providerName?: string;
+}
+
+export type PlatformProblemKind =
+  | 'UNCONFIGURED'
+  | 'UNREACHABLE'
+  | 'TIMEOUT'
+  | 'VISION_UNSUPPORTED'
+  | 'GATEWAY';
+
+export const PLATFORM_UNAVAILABLE_COPY: LocalizedText = {
+  zh: 'AI 服务暂不可用，请联系为你部署的人',
+  en: 'The AI service is temporarily unavailable. Please contact the person who set this up for you.',
+};
+
 export interface AgentRunView {
   id: string;
   title: LocalizedText;
@@ -58,8 +111,16 @@ export interface AgentRunView {
   startedAt: number;
   completedAt?: number;
   model?: string;
+  providerName?: string;
+  usage?: AgentRunUsage;
+  visionFallback?: AgentRunVisionFallback;
   steps: AgentRunStep[];
   thinking?: string;
+  /**
+   * What the user actually sent, shown as their side of the conversation.
+   * Absent for structured action prompts, where `title` already says it all.
+   */
+  userPrompt?: string;
   /** Assistant Markdown, available during streaming and after completion. */
   text?: string;
   /** Source session metadata when adapted from an `AgentSession` turn. */
@@ -71,8 +132,20 @@ export interface AgentRunView {
   images?: AgentImageAttachmentRef[];
   /** Structured Scoped HITL question emitted by `ask_user` during this run. */
   askUser?: AgentAskUserPrompt;
+  /** Structured cross-step hand-off proposal emitted by `propose_step_handoff` during this run. */
+  stepHandoff?: StepHandoffProposal;
+  /** Provenance when this turn's user message was delivered via an accepted Step Hand-off. */
+  handoffFrom?: StepHandoffOrigin;
   /** Semantic anchors modified during this run (for canvas highlighting). */
   modifiedAnchors?: PrototypeTargetAnchor[];
+  /** Parallel subagent execution lanes (default concurrency = 3). */
+  subagentLanes?: AgentSubagentLaneTrace[];
+  /** QuickJS Code Mode orchestration script executed in this run (shown inside View details). */
+  codeModeScript?: string;
+  /** Live streamed character count (thinking + text + tool arguments) for pulse visibility. */
+  liveStreamedChars?: number;
+  /** True while SSE client is automatically re-attaching after a transient drop. */
+  reconnecting?: boolean;
   /** Immutable prototype revision created at the end of this run, when HTML changed. */
   prototypeRevision?: {
     prototypeId: string;
@@ -88,11 +161,7 @@ export interface AgentRunView {
     artifactLabel?: LocalizedText;
   };
   /** Present once the run has failed. Always the real cause, never a substitute result. */
-  failure?: {
-    message: string;
-    remediation?: string;
-    code?: string;
-  };
+  failure?: AgentRunFailure;
 }
 
 export function formatRunElapsed(startedAt: number, endedAt: number): string {
@@ -109,14 +178,25 @@ export function formatStepClock(iso: string | undefined): string {
   return Number.isNaN(d.getTime()) ? '' : d.toTimeString().slice(0, 8);
 }
 
+const TARGET_APP_PREFIX_RE = /^\[Target application ID:[^\r\n]*\]\s*\n*/i;
+const BRIEF_GENERATION_PROMPT_RE = /^【已确认设计简报|^===\s*CONFIRMED DESIGN BRIEF/i;
+const BRIEF_RESTYLE_PROMPT_RE = /^\[PROTOTYPE_BRIEF_RESTYLE\]/i;
+
 export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: string): LocalizedText {
   if (explicitTitle?.trim()) {
     const clean = explicitTitle.trim();
     return { zh: clean, en: clean };
   }
-  const trimmed = rawPrompt.trim();
+  const trimmed = rawPrompt.replace(TARGET_APP_PREFIX_RE, '').trim();
   if (!trimmed) {
-    return { zh: '智能体运行', en: 'Agent run' };
+    return { zh: '对话请求', en: 'Assistant request' };
+  }
+
+  if (BRIEF_GENERATION_PROMPT_RE.test(trimmed)) {
+    return { zh: '确认设计简报并生成原型', en: 'Confirm Brief & Generate Prototype' };
+  }
+  if (BRIEF_RESTYLE_PROMPT_RE.test(trimmed)) {
+    return { zh: '按新简报重做风格', en: 'Restyle from updated brief' };
   }
 
   const actionMatch = /^\[ACTION:([A-Z_]+)(?:\s+(\{[^\r\n]*\}))?\]/.exec(trimmed);
@@ -133,8 +213,31 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
     switch (actionKind) {
       case 'SYNTHESIZE_SRS':
         return { zh: '合成 9 章节需求规格书', en: 'Synthesize 9-Chapter SRS' };
-      case 'SYNTHESIZE_ONTOLOGY_SUITE':
-        return { zh: '合成 11 元模型本体', en: 'Synthesize 11-Model Ontology' };
+      case 'SYNTHESIZE_ONTOLOGY_SUITE': {
+        const mode = typeof params.mode === 'string' ? params.mode : '';
+        if (mode === 'update') {
+          return {
+            zh: `根据已确认的原型更新${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh}`,
+            en: `Update ${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en} from confirmed prototype`,
+          };
+        }
+        if (mode === 'fix_problems') {
+          return {
+            zh: `处理${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh}中${BUSINESS_VOCABULARY.CONSISTENCY_ERROR.zh}`,
+            en: `Fix problems in ${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en}`,
+          };
+        }
+        if (mode === 'complete_missing') {
+          return {
+            zh: `补全${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh}中${BUSINESS_VOCABULARY.STAGE_WARNING.zh}`,
+            en: `Complete missing ${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en} parts`,
+          };
+        }
+        return {
+          zh: `生成${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh}`,
+          en: `Generate ${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en}`,
+        };
+      }
       case 'GENERATE_TECH_ARCH': {
         const name = typeof params.name === 'string' && params.name.trim() ? params.name.trim() : '';
         return name
@@ -142,10 +245,14 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
           : { zh: '生成四层技术架构规范', en: 'Generate Tech Architecture Spec' };
       }
       case 'METRIC_INSIGHT': {
-        const label =
+        const rawLabel =
           (typeof params.metricName === 'string' && params.metricName.trim()) ||
           (typeof params.metricCode === 'string' && params.metricCode.trim()) ||
           '';
+        const label =
+          rawLabel && checkBusinessViewMarkup(rawLabel, { plainText: true }).length === 0
+            ? rawLabel
+            : '';
         return label
           ? { zh: `AI 指标洞察：${label}`, en: `AI Metric Insight: ${label}` }
           : { zh: 'AI 指标异动洞察', en: 'AI Metric Insight' };
@@ -191,10 +298,405 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
   return { zh: short, en: short };
 }
 
+const STRUCTURED_PROMPT_PATTERN =
+  /^\[ACTION:[A-Z_]+|^【已确认设计简报|^===\s*CONFIRMED DESIGN BRIEF|^\[PROTOTYPE_BRIEF_RESTYLE\]|\[(?:全局补充精修要求|Additional Global Refinement Instruction)\]|(?:^|\n)(?:修改要求|Instruction):\s/;
+
+/**
+ * The user's own words for a turn, or `undefined` when the prompt is a compiled
+ * instruction (canvas action, design brief generation/restyle, selection refinement)
+ * that reads as noise in a conversation.
+ */
+export function resolveUserPromptDisplay(
+  rawPrompt: string | undefined,
+  explicitTitle?: string,
+): string | undefined {
+  const trimmed = rawPrompt?.replace(TARGET_APP_PREFIX_RE, '').trim();
+  if (!trimmed || explicitTitle?.trim()) return undefined;
+  if (STRUCTURED_PROMPT_PATTERN.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+/** Compact "how long ago" label for session lists. */
+export function formatRelativeTime(iso: string | undefined, now: number = Date.now()): LocalizedText {
+  const at = iso ? Date.parse(iso) : Number.NaN;
+  if (Number.isNaN(at)) return { zh: '', en: '' };
+  const sec = Math.max(0, Math.floor((now - at) / 1000));
+  if (sec < 60) return { zh: '刚刚', en: 'just now' };
+  const min = Math.floor(sec / 60);
+  if (min < 60) return { zh: `${min} 分钟前`, en: `${min}m ago` };
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return { zh: `${hr} 小时前`, en: `${hr}h ago` };
+  const day = Math.floor(hr / 24);
+  if (day < 30) return { zh: `${day} 天前`, en: `${day}d ago` };
+  const d = new Date(at);
+  const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return { zh: label, en: label };
+}
+
 function parseIsoMs(iso: string | undefined, fallback: number): number {
   if (!iso) return fallback;
   const parsed = Date.parse(iso);
   return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+interface SuiteElementLabelEntry {
+  alias?: string;
+  name?: string;
+}
+
+function collectSuiteElementsForModel(
+  suite: OntologySuite,
+  modelCode: ModelCode,
+): Array<Record<string, unknown>> {
+  switch (modelCode) {
+    case 'M1':
+      return [
+        ...(suite.M1?.aggregates ?? []),
+        ...(suite.M1?.data_dictionaries ?? []),
+        ...(suite.M1?.aggregate_associations ?? []),
+      ] as unknown as Array<Record<string, unknown>>;
+    case 'M2':
+      return (suite.M2?.behaviors ?? []) as unknown as Array<Record<string, unknown>>;
+    case 'M3':
+      return (suite.M3?.rules ?? []) as unknown as Array<Record<string, unknown>>;
+    case 'ME':
+      return (suite.ME?.events ?? []) as unknown as Array<Record<string, unknown>>;
+    case 'M4':
+      return (suite.M4?.event_scenarios ?? []) as unknown as Array<Record<string, unknown>>;
+    case 'M5':
+      return [
+        ...(suite.M5?.roles ?? []),
+        ...(suite.M5?.actors ?? []),
+        ...(suite.M5?.permissionGroups ?? []),
+        ...(suite.M5?.permissions ?? []),
+      ] as unknown as Array<Record<string, unknown>>;
+    case 'M6':
+      return (suite.M6?.flows ?? []) as unknown as Array<Record<string, unknown>>;
+    case 'M7':
+      return (suite.M7?.query_reports ?? []) as unknown as Array<Record<string, unknown>>;
+    case 'MU':
+      return [
+        ...(suite.MU?.screens ?? []),
+        ...(suite.MU?.navigation_edges ?? []),
+        ...(suite.MU?.cross_cutting_ui ?? []),
+      ] as unknown as Array<Record<string, unknown>>;
+    case 'MM':
+      return (suite.MM?.mappings ?? []) as unknown as Array<Record<string, unknown>>;
+    case 'MI':
+      return (suite.MI?.interfaces ?? []) as unknown as Array<Record<string, unknown>>;
+  }
+}
+
+function lookupSuiteElementById(
+  suite: OntologySuite,
+  targetId: string,
+  preferredModel?: ModelCode,
+): SuiteElementLabelEntry | undefined {
+  const orderedModels = preferredModel
+    ? [preferredModel, ...MODEL_CODES.filter((m) => m !== preferredModel)]
+    : MODEL_CODES;
+
+  for (const code of orderedModels) {
+    for (const item of collectSuiteElementsForModel(suite, code)) {
+      const itemId =
+        (typeof item.id === 'string' && item.id) ||
+        (typeof item.screenId === 'string' && item.screenId) ||
+        (typeof item.interfaceId === 'string' && item.interfaceId) ||
+        '';
+      if (itemId !== targetId) continue;
+      const alias =
+        (typeof item.alias === 'string' && item.alias.trim()) ||
+        (typeof item.label === 'string' && item.label.trim()) ||
+        undefined;
+      const name = (typeof item.name === 'string' && item.name.trim()) || undefined;
+      if (alias || name) {
+        return {
+          ...(alias ? { alias } : {}),
+          ...(name ? { name } : {}),
+        };
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolves human-friendly `alias` / `name` from the active project's Ontology Suite when
+ * a tool call only carries raw element IDs (such as `AGG-01` or `BHV-02`).
+ */
+export function enrichToolArgsFromSuite(
+  toolName: string,
+  args: Record<string, unknown> | undefined,
+  suite: OntologySuite | undefined,
+): Record<string, unknown> | undefined {
+  if (!args || !suite) return args;
+  if (typeof args.alias === 'string' && args.alias.trim() && typeof args.name === 'string' && args.name.trim()) {
+    return args;
+  }
+
+  const candidateId =
+    (typeof args.id === 'string' && args.id.trim()) ||
+    (typeof args.elementId === 'string' && args.elementId.trim()) ||
+    (typeof args.screenId === 'string' && args.screenId.trim()) ||
+    (typeof args.interfaceId === 'string' && args.interfaceId.trim()) ||
+    '';
+  if (!candidateId) return args;
+
+  const spec = resolveToolProgressSpec(toolName);
+  const preferredModel =
+    spec.modelCode ??
+    (typeof args.modelCode === 'string' && MODEL_CODES.includes(args.modelCode as ModelCode)
+      ? (args.modelCode as ModelCode)
+      : undefined);
+
+  const found = lookupSuiteElementById(suite, candidateId, preferredModel);
+  if (!found) return args;
+
+  return {
+    ...args,
+    ...(!args.alias && found.alias ? { alias: found.alias } : {}),
+    ...(!args.name && found.name ? { name: found.name } : {}),
+  };
+}
+
+/**
+ * Deterministically formats a single tool call into bilingual Business View progress copy
+ * (`正在更新业务操作「提交审批」` while active, `更新业务操作「提交审批」` once done).
+ * Never uses LLM free-text narration.
+ */
+export function formatRunToolProgress(
+  toolName: string,
+  args?: Record<string, unknown>,
+  opts?: {
+    active?: boolean;
+    targetAnchor?: PrototypeTargetAnchor;
+    suite?: OntologySuite;
+  },
+): LocalizedText {
+  const enrichedArgs = enrichToolArgsFromSuite(toolName, args, opts?.suite);
+  const formatOptions = opts?.targetAnchor?.label
+    ? { targetLabel: opts.targetAnchor.label }
+    : undefined;
+  const pair = opts?.active
+    ? formatVocabularyToolProgress(toolName, enrichedArgs, formatOptions)
+    : formatVocabularyToolStepLabel(toolName, enrichedArgs, formatOptions);
+  return { zh: pair.zh, en: pair.en };
+}
+
+export const MAX_VISIBLE_PROGRESS_LINES = 5;
+
+/**
+ * Selects a concise slice of progress steps for the Business View surface, deduplicating
+ * consecutive identical labels while keeping all raw tool traces available for "查看细节".
+ */
+export function selectVisibleProgressSteps(
+  steps: readonly AgentRunStep[],
+  status: AgentRunStatus,
+  maxLines: number = MAX_VISIBLE_PROGRESS_LINES,
+): {
+  visibleSteps: AgentRunStep[];
+  hiddenStepCount: number;
+} {
+  if (steps.length === 0) {
+    return { visibleSteps: [], hiddenStepCount: 0 };
+  }
+  const deduped: AgentRunStep[] = [];
+  for (const step of steps) {
+    const prev = deduped[deduped.length - 1];
+    if (
+      prev &&
+      prev.label.zh === step.label.zh &&
+      prev.label.en === step.label.en &&
+      prev.status === step.status
+    ) {
+      deduped[deduped.length - 1] = step;
+    } else {
+      deduped.push(step);
+    }
+  }
+  if (deduped.length <= maxLines) {
+    return {
+      visibleSteps: deduped,
+      hiddenStepCount: Math.max(0, steps.length - deduped.length),
+    };
+  }
+  const visibleSteps =
+    status === 'RUNNING' ? deduped.slice(-maxLines) : [...deduped.slice(0, maxLines - 1), deduped[deduped.length - 1]!];
+  return {
+    visibleSteps,
+    hiddenStepCount: Math.max(0, steps.length - visibleSteps.length),
+  };
+}
+
+const VISION_ERROR_RE =
+  /不支持.*(?:看图|图片|图像|视觉)|看不了图|does\s+not\s+support\s+(?:vision|image)|cannot\s+view\s+images|vision\s+(?:is\s+)?not\s+supported|image_url.*not\s+supported/i;
+
+const UNCONFIGURED_ERROR_RE =
+  /没有已启用.*网关|未配置.*(?:网关|模型|提供商|密钥)|未声明可用模型|no\s+enabled\s+llm|not\s+configured|no\s+declared\s+models|missing\s+api\s*key/i;
+
+const TIMEOUT_ERROR_RE = /timed?\s*out|timeout|超时/i;
+
+const UNREACHABLE_HOST_RE =
+  /econnrefused|enotfound|ehostunreach|fetch\s+failed|connection\s+refused|unreachable|不可达|连接失败|连接被拒绝/i;
+
+const UNREACHABLE_OR_GATEWAY_RE =
+  /econnrefused|enotfound|ehostunreach|etimedout|fetch\s+failed|network\s*error|connection\s+refused|gateway|unreachable|不可达|连接失败|连接被拒绝|网关|api\s*key|unauthorized|forbidden|\bhttp\s*(?:401|403|404|429|5\d\d)\b|\bstatus\s*(?:code\s*)?[=:]?\s*(?:401|403|404|429|5\d\d)\b/i;
+
+/**
+ * Classifies whether a run failure (or vision capability fallback) is a platform-level
+ * AI service problem that requires deployer configuration rather than business user troubleshooting.
+ */
+export function classifyRunPlatformProblem(
+  failure?: AgentRunFailure,
+  visionFallback?: AgentRunVisionFallback,
+): PlatformProblemKind | null {
+  if (!failure && visionFallback?.used) {
+    return 'VISION_UNSUPPORTED';
+  }
+  if (!failure) return null;
+
+  const code = (failure.code ?? '').trim().toUpperCase();
+  const message = failure.message ?? '';
+  const statusCode = failure.statusCode;
+
+  if (
+    code === 'VISION_UNSUPPORTED' ||
+    code === 'LLM_VISION_UNSUPPORTED' ||
+    VISION_ERROR_RE.test(message)
+  ) {
+    return 'VISION_UNSUPPORTED';
+  }
+
+  if (
+    code === 'LLM_NOT_CONFIGURED' ||
+    failure.baseUrl === '(none)' ||
+    UNCONFIGURED_ERROR_RE.test(message) ||
+    (failure.providerName && /未配置|no\s+provider\s+configured/i.test(failure.providerName))
+  ) {
+    return 'UNCONFIGURED';
+  }
+
+  if (
+    code === 'LLM_TIMEOUT' ||
+    statusCode === 408 ||
+    statusCode === 504 ||
+    TIMEOUT_ERROR_RE.test(message)
+  ) {
+    return 'TIMEOUT';
+  }
+
+  if (
+    code === 'LLM_UNREACHABLE' ||
+    code === 'LLM_GATEWAY_ERROR' ||
+    code === 'HTTP_ERROR' ||
+    code === 'GATEWAY' ||
+    code === 'GATEWAY_ERROR' ||
+    code === 'PROVIDER_ERROR' ||
+    (statusCode !== undefined &&
+      (statusCode === 401 ||
+        statusCode === 403 ||
+        statusCode === 404 ||
+        statusCode === 429 ||
+        statusCode >= 500)) ||
+    UNREACHABLE_OR_GATEWAY_RE.test(message)
+  ) {
+    return code === 'LLM_UNREACHABLE' ||
+      (statusCode !== undefined && statusCode >= 500) ||
+      UNREACHABLE_HOST_RE.test(message)
+      ? 'UNREACHABLE'
+      : 'GATEWAY';
+  }
+
+  return null;
+}
+
+/**
+ * Builds the Business View one-sentence failure explanation while keeping all technical
+ * ADR 0007 diagnostics intact for the "查看细节" / "View details" disclosure.
+ */
+export function formatRunFailurePresentation(
+  failure?: AgentRunFailure,
+  visionFallback?: AgentRunVisionFallback,
+): {
+  isPlatformProblem: boolean;
+  platformKind: PlatformProblemKind | null;
+  summary: LocalizedText;
+} {
+  const platformKind = classifyRunPlatformProblem(failure, visionFallback);
+  if (platformKind === 'VISION_UNSUPPORTED') {
+    return {
+      isPlatformProblem: true,
+      platformKind,
+      summary: {
+        zh: `${PLATFORM_UNAVAILABLE_COPY.zh}（当前模型不支持查看图片）。`,
+        en: `${PLATFORM_UNAVAILABLE_COPY.en} (the current model cannot view images).`,
+      },
+    };
+  }
+  if (platformKind) {
+    return {
+      isPlatformProblem: true,
+      platformKind,
+      summary: {
+        zh: `${PLATFORM_UNAVAILABLE_COPY.zh}。`,
+        en: PLATFORM_UNAVAILABLE_COPY.en,
+      },
+    };
+  }
+
+  if (!failure || !failure.message.trim()) {
+    return {
+      isPlatformProblem: false,
+      platformKind: null,
+      summary: {
+        zh: '运行失败，未返回原因。',
+        en: 'The run failed without a reason.',
+      },
+    };
+  }
+
+  const code = (failure.code ?? '').trim().toUpperCase();
+  if (code === 'AGENT_RUN_INTERRUPTED') {
+    return {
+      isPlatformProblem: false,
+      platformKind: null,
+      summary: {
+        zh: '上次处理意外中断，请点击重试继续。',
+        en: 'Processing was interrupted before finishing. Click Retry to continue.',
+      },
+    };
+  }
+  if (code === 'LLM_EMPTY_RESPONSE') {
+    return {
+      isPlatformProblem: false,
+      platformKind: null,
+      summary: {
+        zh: 'AI 助手这次没有生成有效内容，请重试。',
+        en: 'The AI Assistant returned an empty reply. Please retry.',
+      },
+    };
+  }
+
+  const cleanMsg = failure.message.replace(/\s+/g, ' ').trim();
+  if (
+    cleanMsg.length <= 120 &&
+    checkBusinessViewMarkup(cleanMsg, { plainText: true }).length === 0
+  ) {
+    return {
+      isPlatformProblem: false,
+      platformKind: null,
+      summary: { zh: cleanMsg, en: cleanMsg },
+    };
+  }
+
+  return {
+    isPlatformProblem: false,
+    platformKind: null,
+    summary: {
+      zh: '处理过程中遇到问题，请重试。',
+      en: 'Something went wrong while processing your request. Please retry.',
+    },
+  };
 }
 
 function formatToolTraceDetail(trace: AgentToolCallTrace): string | undefined {
@@ -212,13 +714,21 @@ function formatToolTraceDetail(trace: AgentToolCallTrace): string | undefined {
   return parts.length > 0 ? parts.join('\n\n') : undefined;
 }
 
-function mapToolTraceToStep(trace: AgentToolCallTrace, parentCancelled?: boolean): AgentRunStep {
+function mapToolTraceToStep(
+  trace: AgentToolCallTrace,
+  parentCancelled?: boolean,
+  suite?: OntologySuite,
+): AgentRunStep {
   const status: AgentRunStepStatus =
     trace.isError ? 'FAILED' : parentCancelled ? 'STOPPED' : 'DONE';
   const detail = formatToolTraceDetail(trace);
   return {
     id: trace.id,
-    label: formatToolStepLabel(trace.toolName),
+    label: formatRunToolProgress(trace.toolName, trace.arguments, {
+      active: false,
+      ...(trace.targetAnchor ? { targetAnchor: trace.targetAnchor } : {}),
+      ...(suite ? { suite } : {}),
+    }),
     status,
     toolName: trace.toolName,
     ...(trace.targetAnchor ? { targetAnchor: trace.targetAnchor } : {}),
@@ -275,14 +785,21 @@ function formatDomainArtifactLabel(artifact: AgentDomainArtifact): LocalizedText
       };
     case 'ONTOLOGY_SUITE':
       return {
-        zh: `查看 11 元模型 (${artifact.modelCount}/11)`,
-        en: `Open 11-Model Suite (${artifact.modelCount}/11)`,
+        zh: `查看${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh}`,
+        en: `Open ${BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en}`,
       };
-    case 'ONTOLOGY_DIFF':
+    case 'ONTOLOGY_DIFF': {
+      const zhModel = artifact.modelCode
+        ? getModelBusinessName(artifact.modelCode, 'zh-CN')
+        : BUSINESS_VOCABULARY.ONTOLOGY_SUITE.zh;
+      const enModel = artifact.modelCode
+        ? getModelBusinessName(artifact.modelCode, 'en-US')
+        : BUSINESS_VOCABULARY.ONTOLOGY_SUITE.en;
       return {
-        zh: `查看 ${artifact.modelCode} 模型变更`,
-        en: `Inspect ${artifact.modelCode} change`,
+        zh: `查看${zhModel}变更`,
+        en: `Inspect ${enModel} change`,
       };
+    }
     case 'TECH_ARCH_ASSET':
       return {
         zh: `查看技术架构 (${artifact.version})`,
@@ -293,11 +810,22 @@ function formatDomainArtifactLabel(artifact: AgentDomainArtifact): LocalizedText
         zh: `查看开发包 (${artifact.files.length} 文件)`,
         en: `Open Dev Package (${artifact.files.length} files)`,
       };
-    case 'METRIC_INSIGHT':
-      return {
-        zh: `查看指标洞察 (${artifact.metricCode})`,
-        en: `View Insight (${artifact.metricCode})`,
-      };
+    case 'METRIC_INSIGHT': {
+      const cleanMetric =
+        artifact.metricCode &&
+        checkBusinessViewMarkup(artifact.metricCode, { plainText: true }).length === 0
+          ? artifact.metricCode
+          : '';
+      return cleanMetric
+        ? {
+            zh: `查看指标洞察 (${cleanMetric})`,
+            en: `View Insight (${cleanMetric})`,
+          }
+        : {
+            zh: '查看指标洞察',
+            en: 'View Metric Insight',
+          };
+    }
     case 'ANALYTICS_REPORT':
       return {
         zh: '打开归因分析报告',
@@ -310,8 +838,8 @@ function formatDomainArtifactLabel(artifact: AgentDomainArtifact): LocalizedText
       };
     case 'SQL_PREVIEW':
       return {
-        zh: `查看 SQL 结果 (${artifact.rows.length} 行)`,
-        en: `View SQL preview (${artifact.rows.length} rows)`,
+        zh: `查看查询结果 (${artifact.rows.length} 行)`,
+        en: `View query results (${artifact.rows.length} rows)`,
       };
     case 'EXTRACTION_JOB':
       return {
@@ -327,10 +855,12 @@ function buildCompletedSessionRun(
   session: AgentSession,
   uMsg: AgentSessionMessage,
   aMsg: AgentSessionMessage,
+  opts?: { suite?: OntologySuite; isLatestTurn?: boolean },
 ): AgentRunView {
   const startedAt = parseIsoMs(uMsg.timestamp, Date.now());
   const completedAt = parseIsoMs(aMsg.timestamp, startedAt);
   const title = summarizeUserPromptTitle(uMsg.content);
+  const userPrompt = resolveUserPromptDisplay(uMsg.content);
 
   let status: AgentRunStatus = 'SUCCEEDED';
   if (aMsg.cancelled) {
@@ -339,7 +869,9 @@ function buildCompletedSessionRun(
     status = 'FAILED';
   }
 
-  const steps = (aMsg.toolCalls ?? []).map((tc) => mapToolTraceToStep(tc, aMsg.cancelled));
+  const steps = (aMsg.toolCalls ?? []).map((tc) =>
+    mapToolTraceToStep(tc, aMsg.cancelled, opts?.suite),
+  );
   const thinking = aMsg.thinking?.trim();
   const revArtifact = extractRevisionArtifact(aMsg.artifacts);
   const primaryArtifact = selectPrimaryDomainArtifact(aMsg.artifacts);
@@ -351,10 +883,61 @@ function buildCompletedSessionRun(
       .filter(
         (tc) =>
           !tc.isError &&
-          (tc.toolName === 'edit_prototype_anchor' || tc.toolName === 'rewrite_prototype_page') &&
+          (tc.toolName === 'edit_prototype_anchor' ||
+            tc.toolName === 'rewrite_prototype_page' ||
+            tc.toolName === 'init_prototype_shell' ||
+            tc.toolName === 'upsert_prototype_screen') &&
           tc.targetAnchor,
       )
       .map((tc) => tc.targetAnchor!);
+
+  const safeSubagentLanes = aMsg.subagentLanes?.map((lane) => ({
+    ...lane,
+    workerLabel: {
+      zh: sanitizeBusinessText(lane.workerLabel.zh, 'zh-CN'),
+      en: sanitizeBusinessText(lane.workerLabel.en, 'en-US'),
+    },
+    taskTitle: {
+      zh: sanitizeBusinessText(lane.taskTitle.zh, 'zh-CN'),
+      en: sanitizeBusinessText(lane.taskTitle.en, 'en-US'),
+    },
+    ...(lane.liveAction
+      ? {
+          liveAction: {
+            zh: sanitizeBusinessText(lane.liveAction.zh, 'zh-CN'),
+            en: sanitizeBusinessText(lane.liveAction.en, 'en-US'),
+          },
+        }
+      : {}),
+  }));
+
+  const cleanAssistantText =
+    session.agentKind === 'PROTOTYPE_CO_DESIGN' && aMsg.content
+      ? sanitizeBusinessText(aMsg.content, /[\u4e00-\u9fff]/.test(aMsg.content) ? 'zh-CN' : 'en-US', {
+          elementDisplayMap: new Map(
+            [...modifiedAnchors, ...(aMsg.toolCalls ?? []).map((tc) => tc.targetAnchor).filter(Boolean)]
+              .flatMap((anc) => {
+                const lbl = anc?.label?.trim();
+                if (!lbl || checkBusinessViewMarkup(lbl, { plainText: true }).length > 0) return [];
+                const pairs: [string, string][] = [];
+                if (anc?.elementId) pairs.push([anc.elementId, lbl]);
+                if (anc?.screenId) pairs.push([anc.screenId, lbl]);
+                return pairs;
+              }),
+          ),
+          elementIdFallback: { zh: '目标区域', en: 'target area' },
+        }).replace(/[`]/g, '')
+      : aMsg.content;
+  const effectiveSummaryText = cleanAssistantText.trim();
+
+  const visionUsed = Boolean(aMsg.visionFallbackUsed || uMsg.visionFallbackUsed);
+  const visionNotice = aMsg.visionFallbackNotice ?? uMsg.visionFallbackNotice;
+  const diag = aMsg.errorDiagnostic as
+    | (NonNullable<AgentSessionMessage['errorDiagnostic']> & {
+        model?: string;
+        statusCode?: number;
+      })
+    | undefined;
 
   return {
     id: uMsg.id,
@@ -369,16 +952,34 @@ function buildCompletedSessionRun(
     startedAt,
     completedAt,
     ...(aMsg.modelUsed ? { model: aMsg.modelUsed } : {}),
+    ...(aMsg.providerName ? { providerName: aMsg.providerName } : {}),
+    ...(opts?.isLatestTurn && session.tokenUsage ? { usage: session.tokenUsage } : {}),
+    ...(visionUsed
+      ? {
+          visionFallback: {
+            used: true,
+            ...(visionNotice ? { notice: visionNotice } : {}),
+            ...(aMsg.providerName ? { providerName: aMsg.providerName } : {}),
+          },
+        }
+      : {}),
     steps,
     ...(thinking ? { thinking } : {}),
-    ...(aMsg.content ? { text: aMsg.content } : {}),
+    ...(userPrompt ? { userPrompt } : {}),
+    ...(cleanAssistantText ? { text: cleanAssistantText } : {}),
     sourceSessionId: session.id,
     sourceUserMessageId: uMsg.id,
     sourceAssistantMessageId: aMsg.id,
     retryPrompt: uMsg.content,
     ...(uMsg.images && uMsg.images.length > 0 ? { images: uMsg.images } : {}),
+    ...(uMsg.handoffFrom ? { handoffFrom: uMsg.handoffFrom } : {}),
     ...(aMsg.askUser ? { askUser: aMsg.askUser } : {}),
+    ...(aMsg.stepHandoff ? { stepHandoff: aMsg.stepHandoff } : {}),
     ...(modifiedAnchors.length > 0 ? { modifiedAnchors } : {}),
+    ...(safeSubagentLanes && safeSubagentLanes.length > 0
+      ? { subagentLanes: safeSubagentLanes }
+      : {}),
+    ...(aMsg.codeModeScript ? { codeModeScript: aMsg.codeModeScript } : {}),
     ...(revArtifact
       ? {
           prototypeRevision: {
@@ -392,9 +993,9 @@ function buildCompletedSessionRun(
     ...(status === 'SUCCEEDED'
       ? {
           result: {
-            summary: summaryText
-              ? { zh: summaryText, en: summaryText }
-              : { zh: '已完成本轮运行。', en: 'Completed agent run.' },
+            summary: effectiveSummaryText
+              ? { zh: effectiveSummaryText, en: effectiveSummaryText }
+              : { zh: '已完成处理。', en: 'Completed.' },
             ...(primaryArtifact
               ? {
                   artifactLabel: formatDomainArtifactLabel(primaryArtifact),
@@ -403,14 +1004,16 @@ function buildCompletedSessionRun(
           },
         }
       : {}),
-    ...(status === 'FAILED' && aMsg.errorDiagnostic
+    ...(status === 'FAILED' && diag
       ? {
           failure: {
-            message: aMsg.errorDiagnostic.message,
-            ...(aMsg.errorDiagnostic.remediation
-              ? { remediation: aMsg.errorDiagnostic.remediation }
-              : {}),
-            ...(aMsg.errorDiagnostic.code ? { code: aMsg.errorDiagnostic.code } : {}),
+            message: diag.message,
+            ...(diag.remediation ? { remediation: diag.remediation } : {}),
+            ...(diag.code ? { code: diag.code } : {}),
+            ...(diag.providerName ? { providerName: diag.providerName } : {}),
+            ...(diag.baseUrl ? { baseUrl: diag.baseUrl } : {}),
+            ...(diag.model ? { model: diag.model } : {}),
+            ...(diag.statusCode !== undefined ? { statusCode: diag.statusCode } : {}),
           },
         }
       : {}),
@@ -420,9 +1023,11 @@ function buildCompletedSessionRun(
 function buildRunFromLiveDraft(
   draft: SessionLiveDraft,
   uMsg?: AgentSessionMessage,
+  suite?: OntologySuite,
 ): AgentRunView {
   const startedAt = uMsg ? parseIsoMs(uMsg.timestamp, draft.startedAt) : draft.startedAt;
   const thinking = draft.thinking.trim();
+  const userPrompt = resolveUserPromptDisplay(uMsg?.content ?? draft.userPrompt, draft.displayTitle);
   const revArtifact = extractRevisionArtifact(draft.artifacts);
   const primaryArtifact = selectPrimaryDomainArtifact(draft.artifacts);
   const images =
@@ -431,22 +1036,77 @@ function buildRunFromLiveDraft(
       : draft.images && draft.images.length > 0
         ? draft.images
         : undefined;
+  const steps: AgentRunStep[] = draft.steps.map((step) => {
+    if (!step.toolName) return step;
+    const label = formatRunToolProgress(step.toolName, step.arguments, {
+      active: step.status === 'RUNNING',
+      ...(step.targetAnchor ? { targetAnchor: step.targetAnchor } : {}),
+      ...(suite ? { suite } : {}),
+    });
+    return {
+      ...step,
+      label: step.arguments || step.targetAnchor?.label ? label : step.label,
+    };
+  });
+  const activeStep = steps.find((s) => s.status === 'RUNNING');
+  const liveStatus =
+    activeStep && activeStep.toolName ? activeStep.label : draft.liveStatus;
+
   return {
     id: uMsg?.id ?? draft.runId,
     title: summarizeUserPromptTitle(uMsg?.content ?? draft.userPrompt, draft.displayTitle),
     status: 'RUNNING',
-    liveStatus: draft.liveStatus,
+    liveStatus,
     startedAt,
     ...(draft.model ? { model: draft.model } : {}),
-    steps: draft.steps,
+    ...(draft.providerName ? { providerName: draft.providerName } : {}),
+    ...(draft.usage ? { usage: draft.usage } : {}),
+    ...(draft.visionFallbackUsed
+      ? {
+          visionFallback: {
+            used: true,
+            ...(draft.visionFallbackNotice ? { notice: draft.visionFallbackNotice } : {}),
+            ...(draft.providerName ? { providerName: draft.providerName } : {}),
+          },
+        }
+      : {}),
+    steps,
     ...(thinking ? { thinking } : {}),
+    ...(userPrompt ? { userPrompt } : {}),
     ...(draft.text ? { text: draft.text } : {}),
     sourceSessionId: draft.sessionId,
     ...(uMsg ? { sourceUserMessageId: uMsg.id } : {}),
     retryPrompt: uMsg?.content ?? draft.userPrompt,
     ...(images ? { images } : {}),
+    ...(uMsg?.handoffFrom ? { handoffFrom: uMsg.handoffFrom } : {}),
     ...(draft.askUser ? { askUser: draft.askUser } : {}),
+    ...(draft.stepHandoff ? { stepHandoff: draft.stepHandoff } : {}),
     ...(draft.activeAnchor ? { modifiedAnchors: [draft.activeAnchor] } : {}),
+    ...(draft.subagentLanes && draft.subagentLanes.length > 0
+      ? {
+          subagentLanes: draft.subagentLanes.map((lane) => ({
+            ...lane,
+            workerLabel: {
+              zh: sanitizeBusinessText(lane.workerLabel.zh, 'zh-CN'),
+              en: sanitizeBusinessText(lane.workerLabel.en, 'en-US'),
+            },
+            taskTitle: {
+              zh: sanitizeBusinessText(lane.taskTitle.zh, 'zh-CN'),
+              en: sanitizeBusinessText(lane.taskTitle.en, 'en-US'),
+            },
+            ...(lane.liveAction
+              ? {
+                  liveAction: {
+                    zh: sanitizeBusinessText(lane.liveAction.zh, 'zh-CN'),
+                    en: sanitizeBusinessText(lane.liveAction.en, 'en-US'),
+                  },
+                }
+              : {}),
+          })),
+        }
+      : {}),
+    ...(draft.liveStreamedChars !== undefined ? { liveStreamedChars: draft.liveStreamedChars } : {}),
+    ...(draft.reconnecting ? { reconnecting: true } : {}),
     ...(revArtifact
       ? {
           prototypeRevision: {
@@ -460,6 +1120,10 @@ function buildRunFromLiveDraft(
   };
 }
 
+export interface AgentRunsFromSessionOptions {
+  suite?: OntologySuite;
+}
+
 /**
  * Adapts an `AgentSession` (and an optional in-flight `liveDraft` SSE state) into
  * chronological `AgentRunView` items for `AgentPanel` / `AgentRunCard`.
@@ -467,9 +1131,11 @@ function buildRunFromLiveDraft(
 export function agentRunsFromSession(
   session: AgentSession | undefined | null,
   liveDraft?: SessionLiveDraft | null,
+  options?: AgentRunsFromSessionOptions,
 ): AgentRunView[] {
+  const suite = options?.suite;
   if (!session) {
-    return liveDraft ? [buildRunFromLiveDraft(liveDraft)] : [];
+    return liveDraft ? [buildRunFromLiveDraft(liveDraft, undefined, suite)] : [];
   }
 
   const runs: AgentRunView[] = [];
@@ -479,17 +1145,22 @@ export function agentRunsFromSession(
   for (let i = 0; i < msgs.length; i += 1) {
     const msg = msgs[i]!;
     if (msg.role !== 'user') continue;
+    const isTrailingUser = !msgs.slice(i + 1).some((m) => m.role === 'user');
 
     const nextMsg = msgs[i + 1];
     if (nextMsg && nextMsg.role === 'assistant') {
-      runs.push(buildCompletedSessionRun(session, msg, nextMsg));
+      runs.push(
+        buildCompletedSessionRun(session, msg, nextMsg, {
+          ...(suite ? { suite } : {}),
+          isLatestTurn: isTrailingUser && !liveDraft,
+        }),
+      );
       i += 1;
       continue;
     }
 
-    const isTrailingUser = !msgs.slice(i + 1).some((m) => m.role === 'user');
     if (isTrailingUser && liveDraft) {
-      runs.push(buildRunFromLiveDraft(liveDraft, msg));
+      runs.push(buildRunFromLiveDraft(liveDraft, msg, suite));
       consumedLiveDraft = true;
       continue;
     }
@@ -514,15 +1185,19 @@ export function agentRunsFromSession(
       startedAt,
       ...(fallbackStatus !== 'RUNNING' ? { completedAt: startedAt } : {}),
       steps: [],
+      ...(resolveUserPromptDisplay(msg.content)
+        ? { userPrompt: resolveUserPromptDisplay(msg.content)! }
+        : {}),
       sourceSessionId: session.id,
       sourceUserMessageId: msg.id,
       retryPrompt: msg.content,
+      ...(msg.handoffFrom ? { handoffFrom: msg.handoffFrom } : {}),
       ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
     });
   }
 
   if (liveDraft && !consumedLiveDraft) {
-    runs.push(buildRunFromLiveDraft(liveDraft));
+    runs.push(buildRunFromLiveDraft(liveDraft, undefined, suite));
   }
 
   return runs;

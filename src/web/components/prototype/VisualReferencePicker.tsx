@@ -20,6 +20,10 @@ import {
   X,
 } from 'lucide-react';
 import {
+  checkBusinessViewMarkup,
+  sanitizeBusinessText,
+} from '../../../packages/business-vocabulary/index.js';
+import {
   CURATED_INSPO_CATALOG,
   INSPO_CDN_BASE,
   deriveSourceSiteFromSlug,
@@ -274,7 +278,51 @@ export interface FetchVisualReferenceParams {
   industry?: string;
   vibe?: string;
   style?: string;
+  macrostructure?: string;
 }
+
+/**
+ * Live-archive queries behind "load more", a few per look so each press brings
+ * in different sites (the archive search has no paging of its own).
+ */
+export const VIBE_LIVE_QUERIES: Record<
+  VisualReferenceVibeGroup,
+  Omit<FetchVisualReferenceParams, 'action'>[]
+> = {
+  'clean-saas': [
+    { query: 'clean minimalist light saas productivity workspace', mode: 'light', industry: 'saas' },
+    { query: 'project management crm dashboard light clean', mode: 'light' },
+    { query: 'calendar notes collaboration app airy white', mode: 'light' },
+  ],
+  fintech: [
+    { query: 'enterprise fintech banking ledger serious', industry: 'fintech' },
+    { query: 'payments billing invoicing platform precise', industry: 'fintech', mode: 'light' },
+    { query: 'accounting expense treasury dashboard tabular' },
+  ],
+  'warm-paper': [
+    { query: 'warm paper editorial calm knowledge documentation', mode: 'light', vibe: 'warm' },
+    { query: 'earthy serif magazine reading long-form', mode: 'light' },
+    { query: 'notes wiki knowledge base warm soft', mode: 'light', vibe: 'soft' },
+  ],
+  'dark-tech': [
+    { query: 'dark developer analytics console monitoring', mode: 'dark' },
+    { query: 'observability infrastructure cloud dark technical', mode: 'dark', industry: 'developer-tools' },
+    { query: 'ai data platform dark dashboard', mode: 'dark', industry: 'ai' },
+  ],
+  bento: [
+    { query: 'modular bento grid dashboard cards', macrostructure: 'bento-grid' },
+    { query: 'bento feature grid product overview light', macrostructure: 'bento-grid', mode: 'light' },
+    { query: 'bento cards dark product', macrostructure: 'bento-grid', mode: 'dark' },
+  ],
+};
+
+const VIBE_GROUP_ORDER: VisualReferenceVibeGroup[] = [
+  'clean-saas',
+  'fintech',
+  'warm-paper',
+  'dark-tech',
+  'bento',
+];
 
 export interface FetchVisualReferenceResult {
   items: VisualReferenceItem[];
@@ -384,13 +432,27 @@ const VIBE_FILTERS: {
   labelEn: string;
   emoji: string;
 }[] = [
-  { key: 'ALL', labelZh: '全部精选参考', labelEn: 'All References', emoji: '✨' },
-  { key: 'clean-saas', labelZh: '清爽白底办公', labelEn: 'Clean Light SaaS', emoji: '☀️' },
-  { key: 'fintech', labelZh: '严谨台账/金融', labelEn: 'Crisp Ledger', emoji: '📊' },
-  { key: 'warm-paper', labelZh: '温润纸感文档', labelEn: 'Warm Paper', emoji: '📜' },
-  { key: 'dark-tech', labelZh: '深色监控驾驶舱', labelEn: 'Dark Cockpit', emoji: '🌙' },
-  { key: 'bento', labelZh: '模块卡片看板', labelEn: 'Bento Cards', emoji: '🍱' },
+  { key: 'ALL', labelZh: '全部', labelEn: 'All', emoji: '✨' },
+  { key: 'clean-saas', labelZh: '清爽白底', labelEn: 'Clean Light', emoji: '☀️' },
+  { key: 'fintech', labelZh: '严谨台账', labelEn: 'Crisp Ledger', emoji: '📊' },
+  { key: 'warm-paper', labelZh: '温润纸感', labelEn: 'Warm Paper', emoji: '📜' },
+  { key: 'dark-tech', labelZh: '深色驾驶舱', labelEn: 'Dark Cockpit', emoji: '🌙' },
+  { key: 'bento', labelZh: '模块卡片', labelEn: 'Bento Cards', emoji: '🍱' },
 ];
+
+/**
+ * A two-tone chip per look (surface, then accent): reads at a glance and needs no emoji font.
+ * These swatches, like the fallback card for a reference whose image fails to load, show a
+ * reference style the designed app can borrow. They are not workbench colours and stay
+ * literal whatever Workbench Theme is active.
+ */
+const VIBE_SWATCH: Record<VisualReferenceVibeGroup, string> = {
+  'clean-saas': 'linear-gradient(135deg, #ffffff 50%, #1c74ec 50%)',
+  fintech: 'linear-gradient(135deg, #f5f7fb 50%, #4f46b8 50%)',
+  'warm-paper': 'linear-gradient(135deg, #fcf6ea 50%, #b8642c 50%)',
+  'dark-tech': 'linear-gradient(135deg, #0a0c0d 50%, #5fe08a 50%)',
+  bento: 'linear-gradient(135deg, #eef3f8 50%, #3494f4 50%)',
+};
 
 const INDUSTRY_FILTER_OPTIONS: { value: string; zh: string; en: string }[] = [
   { value: '', zh: '不限行业大类', en: 'Any Industry' },
@@ -549,16 +611,16 @@ function VisualReferenceLightboxDialog({
     >
       {item && (
         <>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-3.5">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h2 id={headingId} className="m-0 font-serif text-[18px] font-semibold text-ink">
+              <h2 id={headingId} className="m-0 font-title text-[18px] font-semibold text-foreground">
                 {item.title}
               </h2>
               <a
                 href={item.sourceUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded-full border border-line bg-inset px-2.5 py-0.5 font-mono text-[11.5px] text-ink-2 hover:border-accent hover:text-accent"
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2.5 py-0.5 font-mono text-[11.5px] text-foreground-soft hover:border-primary hover:text-primary"
               >
                 <span>{item.sourceDomain}</span>
                 <ExternalLink size={11} />
@@ -607,14 +669,14 @@ function VisualReferenceLightboxDialog({
                 type="button"
                 onClick={() => dialogRef.current?.close()}
                 aria-label={t('关闭大图预览', 'Close preview')}
-                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-control text-ink-3 hover:bg-inset hover:text-ink"
+                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-faint-foreground hover:bg-muted hover:text-foreground"
               >
                 <X size={16} />
               </button>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-inset/50 px-5 py-2 text-[12px]">
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-muted/50 px-5 py-2 text-[12px]">
             <Button
               type="button"
               variant="toggle"
@@ -653,28 +715,28 @@ function VisualReferenceLightboxDialog({
               onClick={() => setTab('DESIGN_MD')}
             >
               <FileText size={12} />
-              {t('提取设计令牌', 'Extracted DESIGN.md')}
+              {t('提取设计配色与字号', 'Extracted design tokens')}
             </Button>
           </div>
 
-          <div className="flex-1 overflow-y-auto bg-inset p-5">
+          <div className="flex-1 overflow-y-auto bg-muted p-5">
             {tab === 'DESIGN_MD' ? (
               loadingMd ? (
-                <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-ink-3">
+                <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-faint-foreground">
                   <Loader2 size={16} className="animate-spin" />
-                  {t('正在拉取站点 DESIGN.md 令牌…', 'Fetching DESIGN.md tokens…')}
+                  {t('正在拉取站点设计令牌…', 'Fetching site design tokens…')}
                 </div>
               ) : (
-                <pre className="overflow-x-auto rounded-card border border-line bg-surface p-4 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink">
+                <pre className="overflow-x-auto rounded-card border border-border bg-card p-4 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-foreground">
                   {designMd}
                 </pre>
               )
             ) : tab === 'MOBILE' ? (
-              <div className="mx-auto max-w-[390px] overflow-hidden rounded-[22px] border-4 border-ink/20 bg-surface shadow-lg">
+              <div className="mx-auto max-w-[390px] overflow-hidden rounded-[22px] border-4 border-foreground/20 bg-card shadow-lg">
                 <VisualReferenceImage item={item} variant="mobile" className="h-auto" />
               </div>
             ) : (
-              <div className="overflow-hidden rounded-card border border-line bg-surface shadow-sm">
+              <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
                 <VisualReferenceImage
                   item={item}
                   variant={tab === 'FULL' ? 'full' : 'hero'}
@@ -698,6 +760,19 @@ export interface VisualReferencePickerProps {
   onContinue?: () => void;
   continueLabelZh?: string;
   continueLabelEn?: string;
+  businessView?: boolean;
+}
+
+function isSafeVisualReferenceForBusinessView(item: VisualReferenceItem): boolean {
+  const combined = [
+    item.title,
+    item.sourceDomain,
+    item.plainLabelZh,
+    item.plainLabelEn,
+    item.plainDescZh,
+    item.plainDescEn,
+  ].join(' ');
+  return checkBusinessViewMarkup(combined, { plainText: true }).length === 0;
 }
 
 export function VisualReferencePicker({
@@ -709,8 +784,9 @@ export function VisualReferencePicker({
   onContinue,
   continueLabelZh = '以此主参考继续 →',
   continueLabelEn = 'Continue with Primary Reference →',
+  businessView = false,
 }: VisualReferencePickerProps) {
-  const { t } = usePreferences();
+  const { locale, t } = usePreferences();
   const primaryNoteId = useId();
 
   const [catalog, setCatalog] = useState<VisualReferenceItem[]>(
@@ -722,7 +798,14 @@ export function VisualReferencePicker({
   const [filterIndustry, setFilterIndustry] = useState('');
   const [galleryColumns, setGalleryColumns] = useState<'2-UP' | '1-UP'>('2-UP');
   const [captureVariant, setCaptureVariant] = useState<'hero' | 'full'>('hero');
-  const [loadingAction, setLoadingAction] = useState<'recommend' | 'search' | null>(null);
+  const [loadingAction, setLoadingAction] = useState<'recommend' | 'search' | 'more' | null>(
+    null,
+  );
+  /** How many live queries each look has already spent, so "load more" keeps moving forward. */
+  const [liveCursor, setLiveCursor] = useState<Record<string, number>>({});
+  const [loadMoreNote, setLoadMoreNote] = useState<{ added: number; offline: boolean } | null>(
+    null,
+  );
   const [catalogSourceNote, setCatalogSourceNote] = useState<'curated' | 'live' | 'cache'>(
     'curated',
   );
@@ -745,6 +828,62 @@ export function VisualReferencePicker({
       return [...bySlug.values()];
     });
   };
+
+  const liveCursorKey = vibe;
+  const liveQueriesForVibe = (group: 'ALL' | VisualReferenceVibeGroup) =>
+    group === 'ALL'
+      ? // "All" walks the looks round-robin, so the wall grows evenly.
+        VIBE_LIVE_QUERIES['clean-saas'].flatMap((_, round) =>
+          VIBE_GROUP_ORDER.map((g) => ({ group: g, params: VIBE_LIVE_QUERIES[g][round]! })),
+        )
+      : VIBE_LIVE_QUERIES[group].map((params) => ({ group, params }));
+  const liveQueries = liveQueriesForVibe(vibe);
+  const liveQueriesSpent = liveCursor[liveCursorKey] ?? 0;
+  const canLoadMore = liveQueriesSpent < liveQueries.length;
+
+  /** Appends more real sites of the look in view, keeping what is already on the wall in place. */
+  const handleLoadMore = async () => {
+    const next = liveQueries[liveQueriesSpent];
+    if (!next) return;
+    setLoadingAction('more');
+    try {
+      const result = await fetchVisualReferenceCatalog({
+        action: 'search',
+        ...next.params,
+        ...(filterMode && !next.params.mode ? { mode: filterMode } : {}),
+      });
+      setLiveCursor((prev) => ({ ...prev, [liveCursorKey]: liveQueriesSpent + 1 }));
+      if (result.fallback) {
+        setLoadMoreNote({ added: 0, offline: true });
+        return;
+      }
+      const known = new Set(catalog.map((item) => item.slug));
+      // Asked for one look, so file the answers under it; otherwise they would land in another tab.
+      const fresh = result.items
+        .filter((item) => !known.has(item.slug))
+        .map((item) => ({ ...item, vibeGroup: next.group }));
+      if (fresh.length > 0) setCatalog((prev) => [...prev, ...fresh]);
+      setCatalogSourceNote(result.source);
+      setLoadMoreNote({ added: fresh.length, offline: false });
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const effectiveCatalog = useMemo(
+    () => (businessView ? catalog.filter(isSafeVisualReferenceForBusinessView) : catalog),
+    [businessView, catalog],
+  );
+
+  const vibeCounts = useMemo(() => {
+    const counts: Record<string, number> = { ALL: 0 };
+    for (const item of effectiveCatalog) {
+      if (filterMode && item.mode !== filterMode) continue;
+      counts.ALL = (counts.ALL ?? 0) + 1;
+      counts[item.vibeGroup] = (counts[item.vibeGroup] ?? 0) + 1;
+    }
+    return counts;
+  }, [effectiveCatalog, filterMode]);
 
   const handleRecommend = async () => {
     setLoadingAction('recommend');
@@ -782,19 +921,26 @@ export function VisualReferencePicker({
   };
 
   const visibleItems = useMemo(() => {
-    return catalog.filter((item) => {
+    return effectiveCatalog.filter((item) => {
       if (vibe !== 'ALL' && item.vibeGroup !== vibe) return false;
       if (filterMode && item.mode !== filterMode) return false;
       return true;
     });
-  }, [catalog, vibe, filterMode]);
+  }, [effectiveCatalog, vibe, filterMode]);
 
   const canAddMoreBorrowed = selection.borrowed.length < MAX_BORROWED_REFERENCES;
 
   const borrowedCandidates = useMemo(
-    () => catalog.filter((item) => item.slug !== selection.primary.slug),
-    [catalog, selection.primary.slug],
+    () => effectiveCatalog.filter((item) => item.slug !== selection.primary.slug),
+    [effectiveCatalog, selection.primary.slug],
   );
+
+  const primaryTitle = businessView
+    ? sanitizeBusinessText(selection.primary.title, locale)
+    : selection.primary.title;
+  const primaryDomain = businessView
+    ? sanitizeBusinessText(selection.primary.sourceDomain, locale)
+    : selection.primary.sourceDomain;
 
   const inspectingBorrowed = useMemo(
     () =>
@@ -805,43 +951,47 @@ export function VisualReferencePicker({
   );
 
   return (
-    <div className="card flex flex-col gap-4" data-testid="visual-reference-picker">
-      {/* Header + Privacy-Safe Recommend + Inspo Attribution */}
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3.5">
-        <div className="max-w-[720px]">
+    <div className="vrp card flex flex-col gap-3.5" data-testid="visual-reference-picker">
+      {/* Header: what this step is, where the references come from, and the one smart shortcut */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-[1_1_320px]">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="m-0 font-serif text-[18px] font-semibold text-ink">
-              {t(
-                '选择视觉参考：点选 1 张主参考即可继续',
-                'Pick Visual References: Click 1 Primary Reference to Proceed',
-              )}
+            <h3 className="m-0 font-title text-[17px] font-semibold text-foreground">
+              {t('选一张主参考', 'Pick a Primary Reference')}
             </h3>
             <span
               data-testid="inspo-attribution"
-              className="inline-flex items-center gap-1 rounded-full border border-line bg-inset px-2.5 py-0.5 text-[11.5px] text-ink-2"
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2.5 py-0.5 text-[12px] text-foreground-soft"
             >
-              <Sparkles size={11} className="text-accent" />
+              <Sparkles size={11} className="text-primary" />
               <span>{t('推荐由 Inspo 提供', 'Recommendations powered by Inspo')}</span>
               <a
                 href="https://inspomcp.dev"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-0.5 font-mono text-[11px] text-accent hover:underline"
+                className="inline-flex items-center gap-0.5 font-mono text-[12px] text-primary hover:underline"
               >
                 <span>inspo</span>
                 <ExternalLink size={10} />
               </a>
             </span>
           </div>
-          <p className="m-0 mt-1 text-[13px] leading-relaxed text-ink-2">
+          <p className="m-0 mt-1 max-w-[68ch] text-[12.5px] leading-relaxed text-faint-foreground">
             {t(
-              '点击任意真实产品界面即设为主参考（整体视觉语言跟随它）；如需从其他界面单独借用配色或排版，可展开下方可选项添加最多 2 张借鉴参考。内置精选在离线环境同样可用。',
-              'Click any real production capture to set it as your Primary Reference. Optionally expand below to add up to 2 Borrowed References (1 specific aspect each). Curated picks work offline.',
+              '点击任意真实产品界面，原型的整体视觉语言就会跟随它。内置精选离线可用，也可以继续从实时图库加载更多。',
+              'Click any real product screen and the prototype follows its visual language. Curated picks work offline; load more from the live archive any time.',
             )}
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {catalogSourceNote !== 'curated' && (
+            <span className="rounded-full border border-border bg-muted px-2.5 py-0.5 font-mono text-[12px] text-faint-foreground">
+              {catalogSourceNote === 'cache'
+                ? t('已命中本地缓存', 'Cached')
+                : t('实时推荐', 'Live References')}
+            </span>
+          )}
           <Button
             type="button"
             variant="secondary"
@@ -857,32 +1007,25 @@ export function VisualReferencePicker({
             )}
             {t('按工程风格智能推荐', 'Recommend for Domain')}
           </Button>
-          {catalogSourceNote !== 'curated' && (
-            <span className="rounded-full border border-line bg-inset px-2.5 py-0.5 font-mono text-[11px] text-ink-3">
-              {catalogSourceNote === 'cache'
-                ? t('已命中本地缓存', 'Cached')
-                : t('实时推荐', 'Live References')}
-            </span>
-          )}
         </div>
       </div>
 
       {/* Active Primary Reference Bar — Ready Immediately with 1 Pick */}
       <div
         data-testid="primary-reference-summary"
-        className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-accent/35 bg-accent-tint/30 px-4 py-3"
+        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-card border border-primary/35 bg-primary-soft/30 px-3.5 py-2.5"
       >
-        <div className="flex flex-wrap items-center gap-2.5 text-[13px]">
-          <Palette size={15} className="text-accent" />
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-[13px]">
+          <Palette size={15} className="shrink-0 text-primary" />
           <span className="badge badge-accent">{t('主参考', 'Primary Reference')}</span>
-          <strong className="text-ink">{selection.primary.title}</strong>
+          <strong className="text-foreground">{primaryTitle}</strong>
           <a
             href={selection.primary.sourceUrl}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1 font-mono text-[12px] text-ink-2 hover:text-accent hover:underline"
+            className="inline-flex items-center gap-1 font-mono text-[12px] text-foreground-soft hover:text-primary hover:underline"
           >
-            <span>{selection.primary.sourceDomain}</span>
+            <span>{primaryDomain}</span>
             <ExternalLink size={11} />
           </a>
           <div className="flex items-center gap-1">
@@ -898,7 +1041,7 @@ export function VisualReferencePicker({
             )}
           </div>
           {selection.borrowed.length > 0 && (
-            <span className="text-[12px] text-ink-2">
+            <span className="text-[12px] text-foreground-soft">
               ·{' '}
               {t(
                 `另含 ${selection.borrowed.length} 张借鉴参考`,
@@ -911,7 +1054,7 @@ export function VisualReferencePicker({
         {onContinue && (
           <Button
             type="button"
-            variant="accent"
+            variant={businessView ? 'secondary' : 'accent'}
             size="sm"
             data-testid="visual-ref-continue-btn"
             disabled={!selection.primary}
@@ -923,44 +1066,30 @@ export function VisualReferencePicker({
         )}
       </div>
 
-      {/* Quick Vibe Tabs */}
-      <div className="flex flex-wrap items-center gap-1 rounded-control border border-line bg-inset/50 p-1">
-        {VIBE_FILTERS.map((vf) => (
-          <Button
-            key={vf.key}
-            type="button"
-            variant="toggle"
-            size="xs"
-            aria-pressed={vibe === vf.key}
-            onClick={() => setVibe(vf.key)}
-          >
-            <span>{vf.emoji}</span>
-            <span>{t(vf.labelZh, vf.labelEn)}</span>
-          </Button>
-        ))}
-      </div>
-
       {/* Collapsed-by-Default Disclosure #1: Optional Borrowed References (max 2, single aspect each) & Primary Note */}
       <details
         data-testid="visual-ref-borrowed-disclosure"
-        className="rounded-card border border-line bg-inset/40 px-3.5 py-2.5 text-[12.5px]"
+        className="rounded-card border border-border bg-muted/40 px-3.5 py-2.5 text-[12.5px]"
       >
-        <summary className="flex cursor-pointer items-center justify-between gap-2 font-medium text-ink select-none">
+        <summary className="flex cursor-pointer items-center justify-between gap-2 font-medium text-foreground select-none">
           <span>
             {t(
-              `可选细项：添加借鉴参考（已选 ${selection.borrowed.length}/${MAX_BORROWED_REFERENCES} 张，每张只借 1 个方面）或补充说明`,
-              `Optional Fine-Tuning: Borrowed References (${selection.borrowed.length}/${MAX_BORROWED_REFERENCES}, 1 aspect each) & Notes`,
+              `可选：借鉴其他界面的某一处，或给主参考加备注`,
+              `Optional: borrow one aspect from another site, or annotate the primary`,
             )}
           </span>
-          <span className="font-mono text-[11px] text-ink-3">
-            {t('默认折叠 · 不选也可直接继续', 'Optional · Collapsed by default')}
+          <span className="font-mono text-[12px] text-faint-foreground">
+            {t(
+              `借鉴 ${selection.borrowed.length}/${MAX_BORROWED_REFERENCES}`,
+              `Borrowed ${selection.borrowed.length}/${MAX_BORROWED_REFERENCES}`,
+            )}
           </span>
         </summary>
 
-        <div className="mt-3 flex flex-col gap-3 border-t border-line pt-3">
+        <div className="mt-3 flex flex-col gap-3 border-t border-border pt-3">
           {/* Optional plain-language note on Primary Reference */}
           <div className="flex flex-col gap-1">
-            <label htmlFor={primaryNoteId} className="text-[12px] font-medium text-ink-2">
+            <label htmlFor={primaryNoteId} className="text-[12px] font-medium text-foreground-soft">
               {t(
                 `对主参考「${selection.primary.title}」的补充备注（选填）：`,
                 `Optional note for Primary Reference "${selection.primary.title}":`,
@@ -969,7 +1098,7 @@ export function VisualReferencePicker({
             <input
               id={primaryNoteId}
               type="text"
-              className="input bg-surface text-[12.5px]"
+              className="input bg-card text-[12.5px]"
               placeholder={t(
                 '例如：喜欢它整体清爽的留白，但字号稍微大一点方便财务核对…',
                 'e.g., Love the overall airy canvas, keep font sizes slightly larger for dense review…',
@@ -984,21 +1113,21 @@ export function VisualReferencePicker({
           {/* Active Borrowed References (0..2), each enforcing strictly ONE aspect */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <span className="font-semibold text-ink">
+              <span className="font-semibold text-foreground">
                 {t(
                   `借鉴参考（${selection.borrowed.length} / ${MAX_BORROWED_REFERENCES}）— 每张严格单选 1 个借鉴方面`,
                   `Borrowed References (${selection.borrowed.length} / ${MAX_BORROWED_REFERENCES}) — Strictly 1 aspect each`,
                 )}
               </span>
               {!canAddMoreBorrowed && (
-                <span className="font-mono text-[11px] text-ink-3">
+                <span className="font-mono text-[11px] text-faint-foreground">
                   {t('已达上限（最多 2 张借鉴参考）', 'Maximum of 2 borrowed references reached')}
                 </span>
               )}
             </div>
 
             {selection.borrowed.length === 0 ? (
-              <p className="m-0 text-[12px] text-ink-3">
+              <p className="m-0 text-[12px] text-faint-foreground">
                 {t(
                   '尚未添加借鉴参考。如果您希望在主参考之外，单独借用另一张界面的某个局部特质（如按钮强调色或表格清晰度），可从下方点选添加。',
                   'No Borrowed References yet. Pick up to 2 cards below if you want to borrow a single specific aspect (such as accent color or table clarity) from another site.',
@@ -1010,19 +1139,19 @@ export function VisualReferencePicker({
                   <div
                     key={borrowed.item.slug}
                     data-testid={`borrowed-ref-card-${borrowed.item.slug}`}
-                    className="flex flex-col gap-2 rounded-control border border-accent/35 bg-surface p-3"
+                    className="flex flex-col gap-2 rounded-md border border-primary/35 bg-card p-3"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="badge">{t('借鉴参考', 'Borrowed Reference')}</span>
-                        <strong className="truncate text-[13px] text-ink">
+                        <strong className="truncate text-[13px] text-foreground">
                           {borrowed.item.title}
                         </strong>
                         <a
                           href={borrowed.item.sourceUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-0.5 font-mono text-[11px] text-ink-3 hover:text-accent"
+                          className="inline-flex items-center gap-0.5 font-mono text-[11px] text-faint-foreground hover:text-primary"
                         >
                           <span>{borrowed.item.sourceDomain}</span>
                           <ExternalLink size={10} />
@@ -1036,7 +1165,7 @@ export function VisualReferencePicker({
                             removeBorrowedReference(selection, borrowed.item.slug),
                           )
                         }
-                        className="inline-flex cursor-pointer items-center gap-1 rounded-control px-2 py-0.5 text-[11.5px] text-ink-3 hover:bg-inset hover:text-red"
+                        className="inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-0.5 text-[11.5px] text-faint-foreground hover:bg-muted hover:text-destructive"
                       >
                         <Trash2 size={12} />
                         <span>{t('移除', 'Remove')}</span>
@@ -1087,7 +1216,7 @@ export function VisualReferencePicker({
 
             {/* Quick Candidate Strip to Add Borrowed Reference */}
             <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              <span className="text-[11.5px] text-ink-3">
+              <span className="text-[11.5px] text-faint-foreground">
                 {t('从目录添加借鉴参考：', 'Add Borrowed Reference:')}
               </span>
               {borrowedCandidates.map((cand) => {
@@ -1120,74 +1249,110 @@ export function VisualReferencePicker({
         </div>
       </details>
 
-      {/* Collapsed-by-Default Disclosure #2: Advanced Search & View Controls */}
+      {/* One browse bar: look tabs with live counts, keyword search, light/dark */}
+      <div className="vrp-browse">
+        <div
+          role="group"
+          aria-label={t('按视觉气质筛选', 'Filter by look')}
+          className="vrp-vibes"
+        >
+          {VIBE_FILTERS.map((vf) => (
+            <Button
+              key={vf.key}
+              type="button"
+              variant="toggle"
+              size="xs"
+              aria-pressed={vibe === vf.key}
+              onClick={() => {
+                setVibe(vf.key);
+                setLoadMoreNote(null);
+              }}
+            >
+              {vf.key !== 'ALL' && (
+                <span
+                  aria-hidden="true"
+                  className="vrp-vibe-dot"
+                  style={{ background: VIBE_SWATCH[vf.key] }}
+                />
+              )}
+              <span>{t(vf.labelZh, vf.labelEn)}</span>
+              <span className="font-mono text-[12px] tabular-nums opacity-70">
+                {vibeCounts[vf.key] ?? 0}
+              </span>
+            </Button>
+          ))}
+        </div>
+
+        <form
+          className="vrp-search"
+          role="search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleSearch(searchQuery);
+          }}
+        >
+          <Search size={13} className="shrink-0 text-faint-foreground" aria-hidden="true" />
+          <input
+            data-testid="visual-ref-search-input"
+            placeholder={t('搜风格：深色大屏 / 温暖纸感…', 'Search a look: dark console, warm paper…')}
+            aria-label={t('搜索实时参考图库', 'Search the live reference archive')}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          <Button
+            type="submit"
+            variant="ghost"
+            size="xs"
+            disabled={loadingAction !== null}
+            aria-label={t('检索图库', 'Search')}
+          >
+            {loadingAction === 'search' ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              t('搜索', 'Search')
+            )}
+          </Button>
+        </form>
+      </div>
+
+      {/* Collapsed-by-Default Disclosure #2: rarely needed filters and view options */}
       <details
         data-testid="visual-ref-advanced-filters"
-        className="rounded-card border border-line bg-inset/40 px-3.5 py-2.5 text-[12.5px]"
+        className="vrp-advanced text-[12.5px]"
       >
-        <summary className="flex cursor-pointer items-center justify-between gap-2 font-medium text-ink select-none">
-          <span className="inline-flex items-center gap-1.5">
-            <SlidersHorizontal size={13} className="text-ink-2" />
-            {t('浏览全部视觉参考', 'Browse All Visual References')}
-          </span>
-          <span className="font-mono text-[11px] text-ink-3">
-            {t('按关键词 / 行业 / 明暗筛选', 'Keyword · Industry · Light/Dark')}
-          </span>
+        <summary className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-faint-foreground select-none hover:text-foreground">
+          <SlidersHorizontal size={12} />
+          {t('更多筛选与视图', 'More filters & view')}
         </summary>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5 border-t border-line pt-3">
-          <form
-            className="flex flex-wrap items-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void handleSearch(searchQuery);
-            }}
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-card border border-border bg-muted/40 px-3 py-2.5">
+          <select
+            className="input bg-card text-[12.5px]"
+            style={{ width: 'auto' }}
+            aria-label={t('行业大类筛选', 'Industry filter')}
+            value={filterIndustry}
+            onChange={(e) => setFilterIndustry(e.target.value)}
           >
-            <input
-              className="input w-[220px] bg-surface"
-              placeholder={t('搜风格：如 深色大屏 / 温暖纸感…', 'Browse visual references…')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            <select
-              className="input bg-surface text-[12.5px]"
-              aria-label={t('行业大类筛选', 'Industry filter')}
-              value={filterIndustry}
-              onChange={(e) => setFilterIndustry(e.target.value)}
-            >
-              {INDUSTRY_FILTER_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {t(opt.zh, opt.en)}
-                </option>
-              ))}
-            </select>
-            <select
-              className="input bg-surface text-[12.5px]"
-              aria-label={t('明暗模式筛选', 'Color mode filter')}
-              value={filterMode}
-              onChange={(e) => setFilterMode(e.target.value as '' | 'light' | 'dark')}
-            >
-              <option value="">{t('全部明暗', 'All Modes')}</option>
-              <option value="light">{t('浅色底', 'Light Mode')}</option>
-              <option value="dark">{t('深色底', 'Dark Mode')}</option>
-            </select>
-            <Button
-              type="submit"
-              variant="secondary"
-              size="sm"
-              disabled={loadingAction !== null}
-            >
-              {loadingAction === 'search' ? (
-                <Loader2 size={13} className="animate-spin" />
-              ) : (
-                <Search size={13} />
-              )}
-              {t('检索图库', 'Search')}
-            </Button>
-          </form>
+            {INDUSTRY_FILTER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {t(opt.zh, opt.en)}
+              </option>
+            ))}
+          </select>
+          <select
+            className="input bg-card text-[12.5px]"
+            style={{ width: 'auto' }}
+            aria-label={t('明暗模式筛选', 'Color mode filter')}
+            value={filterMode}
+            onChange={(e) => setFilterMode(e.target.value as '' | 'light' | 'dark')}
+          >
+            <option value="">{t('全部明暗', 'All Modes')}</option>
+            <option value="light">{t('浅色底', 'Light Mode')}</option>
+            <option value="dark">{t('深色底', 'Dark Mode')}</option>
+          </select>
 
-          <div className="flex flex-wrap items-center gap-1.5">
-            <div className="inline-flex items-center gap-0.5 rounded-control border border-line bg-inset/50 p-0.5">
+          <div className="ml-auto flex flex-wrap items-center gap-1.5">
+            <div className="inline-flex items-center gap-0.5 rounded-md border border-border bg-muted/50 p-0.5">
               <Button
                 type="button"
                 variant="toggle"
@@ -1196,7 +1361,7 @@ export function VisualReferencePicker({
                 onClick={() => setGalleryColumns('2-UP')}
               >
                 <Columns2 size={12} />
-                {t('大图双列', 'Large 2-Up')}
+                {t('网格', 'Grid')}
               </Button>
               <Button
                 type="button"
@@ -1226,12 +1391,10 @@ export function VisualReferencePicker({
         </div>
       </details>
 
-      {/* Main Reference Cards Grid */}
+      {/* Reference wall: as many columns as the stage has room for */}
       <div
-        className={cn(
-          'grid gap-5',
-          galleryColumns === '1-UP' ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2',
-        )}
+        className={cn('vrp-grid', galleryColumns === '1-UP' && 'is-cinema')}
+        data-testid="visual-ref-grid"
       >
         {visibleItems.map((item) => {
           const isPrimary = selection.primary.slug === item.slug;
@@ -1245,58 +1408,16 @@ export function VisualReferencePicker({
               key={item.slug}
               data-testid={`visual-ref-card-${item.slug}`}
               className={cn(
-                'group flex flex-col overflow-hidden rounded-window border bg-surface transition-opacity duration-200',
-                isPrimary
-                  ? 'border-accent ring-2 ring-accent/30 shadow-sm'
-                  : borrowedEntry
-                    ? 'border-accent/60 shadow-xs'
-                    : 'border-line hover:border-accent/55 hover:shadow-xs',
+                'vrp-card group',
+                isPrimary && 'is-primary',
+                !isPrimary && borrowedEntry && 'is-borrowed',
               )}
             >
-              {/* Browser Header Bar with Source Website Domain + External Link */}
-              <div className="flex items-center justify-between gap-2 border-b border-line bg-inset/70 px-3.5 py-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="flex items-center gap-1" aria-hidden="true">
-                    <span className="h-2.5 w-2.5 rounded-full bg-ink/18" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-ink/18" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-ink/18" />
-                  </span>
-                  <span className="truncate font-semibold text-[13.5px] text-ink">
-                    {item.title}
-                  </span>
-                  <a
-                    data-testid={`visual-ref-source-link-${item.slug}`}
-                    href={item.sourceUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-ink-2 hover:border-accent hover:text-accent"
-                  >
-                    <span>{item.sourceDomain}</span>
-                    <ExternalLink size={10} />
-                  </a>
-                </div>
-
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="rounded-full border border-line bg-surface px-2 py-0.5 text-[11px] text-ink-2">
-                    {item.mode === 'dark' ? t('🌙 深色', 'Dark') : t('☀️ 浅色', 'Light')}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setInspectingItem(item)}
-                    className="inline-flex cursor-pointer items-center gap-1 rounded-control border border-line bg-surface px-2.5 py-1 text-[11.5px] font-medium text-ink-2 hover:border-accent hover:text-accent"
-                  >
-                    <Maximize2 size={11.5} />
-                    {t('全屏看原图', 'Full Lightbox')}
-                  </button>
-                </div>
-              </div>
-
-              {/* Screenshot Viewport — Clicking selects as Primary Reference immediately */}
+              {/* Screenshot — clicking selects as Primary Reference immediately */}
               <div
                 onClick={() => onSelectionChange(selectPrimaryReference(selection, item))}
                 className={cn(
-                  'relative w-full cursor-pointer overflow-hidden bg-inset',
+                  'relative w-full cursor-pointer overflow-hidden bg-muted',
                   galleryColumns === '1-UP' ? 'aspect-[16/9]' : 'aspect-[16/10]',
                 )}
               >
@@ -1305,15 +1426,27 @@ export function VisualReferencePicker({
                   variant={captureVariant}
                   className="h-full w-full transition-transform duration-300 group-hover:scale-[1.015]"
                 />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setInspectingItem(item);
+                  }}
+                  title={t('全屏看原图', 'Full Lightbox')}
+                  aria-label={t(`全屏查看 ${item.title} 原图`, `Open ${item.title} in lightbox`)}
+                  className="vrp-card-zoom"
+                >
+                  <Maximize2 size={12.5} />
+                </button>
                 {isPrimary && (
-                  <div className="absolute right-3 bottom-3 inline-flex items-center gap-1.5 rounded-full bg-accent px-3 py-1 text-[12px] font-semibold text-white shadow-md">
-                    <Check size={13} strokeWidth={2.5} />
+                  <div className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[12px] font-semibold text-white shadow-md">
+                    <Check size={12} strokeWidth={2.5} />
                     {t('当前主参考', 'Primary Reference')}
                   </div>
                 )}
                 {!isPrimary && borrowedEntry && (
-                  <div className="absolute right-3 bottom-3 inline-flex items-center gap-1.5 rounded-full border border-accent bg-surface/95 px-3 py-1 text-[12px] font-semibold text-ink shadow-sm">
-                    <Check size={12} className="text-accent" />
+                  <div className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1.5 rounded-full border border-primary bg-card/95 px-2.5 py-1 text-[12px] font-semibold text-foreground shadow-sm">
+                    <Check size={12} className="text-primary" />
                     {t(
                       `借鉴参考 · ${borrowedAspectMeta?.labelZh ?? ''}`,
                       `Borrowed · ${borrowedAspectMeta?.labelEn ?? ''}`,
@@ -1322,20 +1455,33 @@ export function VisualReferencePicker({
                 )}
               </div>
 
-              {/* Card Footer */}
-              <div className="flex flex-wrap items-center justify-between gap-2.5 p-4">
-                <div className="min-w-[200px] flex-1">
-                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                    <span className="badge badge-accent">
-                      {t(item.plainLabelZh, item.plainLabelEn)}
-                    </span>
-                  </div>
-                  <p className="m-0 text-[12.5px] leading-relaxed text-ink-2">
-                    {t(item.plainDescZh, item.plainDescEn)}
-                  </p>
+              <div className="flex flex-1 flex-col gap-2 p-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-[13.5px] font-semibold text-foreground">{item.title}</span>
+                  <a
+                    data-testid={`visual-ref-source-link-${item.slug}`}
+                    href={item.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="inline-flex min-w-0 items-center gap-1 font-mono text-[12px] text-faint-foreground hover:text-primary"
+                  >
+                    <span className="truncate">{item.sourceDomain}</span>
+                    <ExternalLink size={10} className="shrink-0" />
+                  </a>
+                  <span className="ml-auto shrink-0 text-[12px] text-faint-foreground">
+                    {item.mode === 'dark' ? t('深色', 'Dark') : t('浅色', 'Light')}
+                  </span>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="min-w-0">
+                  <div className="text-[12px] font-medium text-primary">
+                    {t(item.plainLabelZh, item.plainLabelEn)}
+                  </div>
+                  <p className="vrp-card-desc">{t(item.plainDescZh, item.plainDescEn)}</p>
+                </div>
+
+                <div className="mt-auto flex items-center justify-between gap-2 pt-1">
                   <div
                     className="flex items-center gap-1"
                     title={t('提取色板（首枚为背景底色）', 'Extracted surface & palette')}
@@ -1344,7 +1490,7 @@ export function VisualReferencePicker({
                       <span
                         key={`${hex}-${idx}`}
                         title={hex}
-                        className="h-4 w-4 rounded-full border border-black/20"
+                        className="h-3.5 w-3.5 rounded-full border border-black/20"
                         style={{ background: hex }}
                       />
                     ))}
@@ -1352,14 +1498,14 @@ export function VisualReferencePicker({
 
                   <Button
                     type="button"
-                    variant={isPrimary ? 'secondary' : 'accent'}
-                    size="sm"
+                    variant={isPrimary || businessView ? 'secondary' : 'accent'}
+                    size="xs"
                     data-testid={`select-primary-ref-${item.slug}`}
                     onClick={() => onSelectionChange(selectPrimaryReference(selection, item))}
                   >
                     {isPrimary ? (
                       <>
-                        <Check size={13} />
+                        <Check size={12} />
                         {t('已设为主参考', 'Primary Selected')}
                       </>
                     ) : (
@@ -1371,6 +1517,51 @@ export function VisualReferencePicker({
             </article>
           );
         })}
+      </div>
+
+      {visibleItems.length === 0 && (
+        <p className="m-0 rounded-card border border-dashed border-border px-4 py-6 text-center text-[12.5px] text-faint-foreground">
+          {t(
+            '这个筛选下还没有参考，试试从实时图库加载。',
+            'No references under this filter yet. Try loading from the live archive.',
+          )}
+        </p>
+      )}
+
+      {/* Load more: the wall is never limited to what ships offline */}
+      <div className="vrp-more" data-testid="visual-ref-load-more">
+        <span className="text-[12px] text-faint-foreground" aria-live="polite">
+          {loadMoreNote?.offline
+            ? t(
+                '实时图库暂时连不上，当前显示的是内置精选。',
+                'The live archive is unreachable right now; showing the curated set.',
+              )
+            : loadMoreNote
+              ? loadMoreNote.added > 0
+                ? t(`已新增 ${loadMoreNote.added} 个参考`, `${loadMoreNote.added} references added`)
+                : t('这一批没有新的站点，可以再加载一次', 'Nothing new in that batch; try once more')
+              : t(
+                  `当前显示 ${visibleItems.length} 个参考`,
+                  `Showing ${visibleItems.length} references`,
+                )}
+        </span>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          data-testid="visual-ref-load-more-btn"
+          disabled={loadingAction !== null || !canLoadMore}
+          onClick={() => void handleLoadMore()}
+        >
+          {loadingAction === 'more' ? (
+            <Loader2 size={13} className="animate-spin" />
+          ) : (
+            <Plus size={13} />
+          )}
+          {canLoadMore
+            ? t('从实时图库加载更多', 'Load More from Live Archive')
+            : t('这一类已全部加载', 'All Loaded for This Look')}
+        </Button>
       </div>
 
       <VisualReferenceLightboxDialog

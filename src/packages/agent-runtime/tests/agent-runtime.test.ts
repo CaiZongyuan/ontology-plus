@@ -203,6 +203,15 @@ describe('agent-runtime deep module', () => {
     });
     expect(emptyProj.currentStage).toBe(0);
     expect(emptyProj.validation.presentModels).toEqual([]);
+    store.saveRequirementDoc({
+      id: 'rdoc-srm-po-1',
+      projectId: emptyProj.id,
+      title: '供应商采购订单协同需求文档',
+      version: 'v1.0',
+      status: 'DRAFT',
+      content: '# 供应商采购订单协同需求\n\n## 1. 业务目标\n围绕**采购订单**（PurchaseOrder）支持台账、起草与主管审核。',
+    });
+    store.confirmRequirementsStep(emptyProj.id, { docId: 'rdoc-srm-po-1' });
 
     const briefSess = store.createAgentSession({
       projectId: emptyProj.id,
@@ -464,23 +473,25 @@ describe('agent-runtime deep module', () => {
       },
     ];
 
-    for (const probe of probes) {
-      const session = store.createAgentSession({
-        projectId: 'proj-contract',
-        agentKind: probe.kind,
-        title: `Live Gateway Failure Probe (${probe.kind})`,
-      });
-      const turn = await collectUnifiedAgentTurn(store, {
-        sessionId: session.id,
-        prompt: probe.prompt,
-        mockMode: false,
-      });
-      expect(turn.events.some((e) => e.event === 'run_error')).toBe(true);
-      expect(turn.session.status).toBe('ERROR');
-      const lastMsg = turn.session.messages.at(-1);
-      expect(lastMsg?.errorDiagnostic?.code).toBe('LLM_GATEWAY_ERROR');
-      expect(lastMsg?.artifacts ?? []).toHaveLength(0);
-    }
+    await Promise.all(
+      probes.map(async (probe) => {
+        const session = store.createAgentSession({
+          projectId: 'proj-contract',
+          agentKind: probe.kind,
+          title: `Live Gateway Failure Probe (${probe.kind})`,
+        });
+        const turn = await collectUnifiedAgentTurn(store, {
+          sessionId: session.id,
+          prompt: probe.prompt,
+          mockMode: false,
+        });
+        expect(turn.events.some((e) => e.event === 'run_error')).toBe(true);
+        expect(turn.session.status).toBe('ERROR');
+        const lastMsg = turn.session.messages.at(-1);
+        expect(lastMsg?.errorDiagnostic?.code).toBe('LLM_GATEWAY_ERROR');
+        expect(lastMsg?.artifacts ?? []).toHaveLength(0);
+      }),
+    );
 
     // Zero fake template SRS, tech arch assets, or attribution reports persisted!
     expect(store.listRequirementDocs('proj-contract').length).toBe(docsBefore);

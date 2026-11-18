@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  ArrowRight,
   ImagePlus,
   Loader2,
   Send,
@@ -9,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import type { TransientTurnImageInput } from '../../../packages/agent-runtime/index.js';
+import { sanitizeBusinessText } from '../../../packages/business-vocabulary/index.js';
 import type {
   AgentImageAttachmentRef,
   DesignBrief,
@@ -20,6 +22,8 @@ import type {
 } from '../../../packages/workspace-store/index.js';
 import { apiUpdatePrototypeDesignBrief, useWorkbenchStore } from '../../api.js';
 import { usePreferences } from '../../i18n.js';
+import { cn } from '../../lib/utils.js';
+import type { StepViewMode } from '../../navigation/index.js';
 import { VisionAttachmentControls } from '../agent/VisionAttachmentControls.js';
 import { Button } from '../beautifui/index.js';
 import {
@@ -64,6 +68,11 @@ import {
   type VisualReferenceItem,
   type VisualReferenceSelection,
 } from './VisualReferencePicker.js';
+
+type BriefStep = 'REFERENCES' | 'FEEL' | 'MOTION';
+
+/** Below this stage width the brief and style tile stack under the steps instead of beside them. */
+const BRIEF_STAGE_SIDE_BY_SIDE_MIN_WIDTH = 1040;
 
 export type InspoReferenceItem = VisualReferenceItem;
 
@@ -143,6 +152,9 @@ export interface PrototypeCoDesignStudioProps {
     activeHtml: string,
     immediateDraft?: { target: PrototypeSelectionTarget; note: string },
   ) => Promise<void>;
+  viewMode?: StepViewMode;
+  defaultBriefStep?: BriefStep;
+  initialDesignBrief?: DesignBrief;
 }
 
 export function PrototypeCoDesignStudio({
@@ -161,6 +173,9 @@ export function PrototypeCoDesignStudio({
   onBackToCanvas,
   onImportHtmlClick,
   isBusyProto,
+  viewMode = 'technical',
+  defaultBriefStep = 'REFERENCES',
+  initialDesignBrief,
 }: PrototypeCoDesignStudioProps) {
   const { locale, t } = usePreferences();
   const patchData = useWorkbenchStore((s) => s.patchData);
@@ -169,12 +184,13 @@ export function PrototypeCoDesignStudio({
   const schematicsAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const activeDoc = docs.find((d) => d.id === selectedDocId) ?? docs[0];
+  const seedBrief = activePrototype?.designBrief ?? initialDesignBrief;
 
   const initialHydration = useMemo(() => {
     const baseAlignment = inferDefaultAlignmentFromSrs(activeDoc?.content, project);
-    if (activePrototype?.designBrief) {
+    if (seedBrief) {
       const hydrated = hydrateBriefingStateFromDesignBrief(
-        activePrototype.designBrief,
+        seedBrief,
         CURATED_INSPO_CATALOG,
         baseAlignment,
       );
@@ -183,10 +199,7 @@ export function PrototypeCoDesignStudio({
         alignment: hydrated.alignment,
         userFeelNote: hydrated.userFeelNote,
         userImageRefs: hydrated.userImageRefs,
-        manualBriefItems:
-          activePrototype.designBrief.items.length > 0
-            ? activePrototype.designBrief.items
-            : null,
+        manualBriefItems: seedBrief.items.length > 0 ? seedBrief.items : null,
         alignmentTouched: true,
       };
     }
@@ -217,6 +230,21 @@ export function PrototypeCoDesignStudio({
     initialHydration.manualBriefItems,
   );
   const [customNoteDraft, setCustomNoteDraft] = useState('');
+  // The brief is gathered in three short steps, one on screen at a time, instead of one long page.
+  const [briefStep, setBriefStep] = useState<BriefStep>(defaultBriefStep);
+  const stageRef = useRef<HTMLElement | null>(null);
+  // Side-by-side only when the stage itself is wide; the Agent Panel can take half the window.
+  const [stageWide, setStageWide] = useState(true);
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width) setStageWide(width >= BRIEF_STAGE_SIDE_BY_SIDE_MIN_WIDTH);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const [decidingForMe, setDecidingForMe] = useState(false);
   const [assistingBrief, setAssistingBrief] = useState(false);
   const [submittingBrief, setSubmittingBrief] = useState(false);
@@ -228,21 +256,19 @@ export function PrototypeCoDesignStudio({
     setAlignmentState(updater);
   };
 
-  // Re-hydrate when returning from Canvas Stage with an activePrototype carrying a saved DesignBrief
+  // Re-hydrate when returning from Canvas Stage with an activePrototype or preserved initialDesignBrief
   const hydratedProtoKeyRef = useRef<string>(
-    activePrototype?.designBrief
-      ? `${activePrototype.id}:${activePrototype.designBrief.updatedAt}`
-      : '',
+    seedBrief ? `${activePrototype?.id ?? 'unbound'}:${seedBrief.updatedAt}` : '',
   );
   useEffect(() => {
-    const nextKey = activePrototype?.designBrief
-      ? `${activePrototype.id}:${activePrototype.designBrief.updatedAt}`
+    const nextKey = seedBrief
+      ? `${activePrototype?.id ?? 'unbound'}:${seedBrief.updatedAt}`
       : '';
     if (!nextKey || nextKey === hydratedProtoKeyRef.current) return;
     hydratedProtoKeyRef.current = nextKey;
     const baseAlignment = inferDefaultAlignmentFromSrs(activeDoc?.content, project);
     const hydrated = hydrateBriefingStateFromDesignBrief(
-      activePrototype!.designBrief!,
+      seedBrief!,
       CURATED_INSPO_CATALOG,
       baseAlignment,
     );
@@ -251,23 +277,19 @@ export function PrototypeCoDesignStudio({
     setAlignmentTouched(true);
     setUserFeelNote(hydrated.userFeelNote);
     setLocalAttachments(hydrated.userImageRefs);
-    setManualBriefItems(
-      activePrototype!.designBrief!.items.length > 0
-        ? activePrototype!.designBrief!.items
-        : null,
-    );
-  }, [activePrototype?.id, activePrototype?.designBrief?.updatedAt, activeDoc?.content, project]);
+    setManualBriefItems(seedBrief!.items.length > 0 ? seedBrief!.items : null);
+  }, [activePrototype?.id, seedBrief, activeDoc?.content, project]);
 
   useEffect(() => {
-    if (!alignmentTouched && !activePrototype?.designBrief) {
+    if (!alignmentTouched && !seedBrief) {
       setAlignmentState(inferDefaultAlignmentFromSrs(activeDoc?.content, project));
     }
-  }, [activeDoc?.id, activeDoc?.content, project, alignmentTouched, activePrototype?.designBrief]);
+  }, [activeDoc?.id, activeDoc?.content, project, alignmentTouched, seedBrief]);
 
   // Initial agent-backed briefing synthesis when projectId is provided and no saved brief exists yet
   const initialAssistProjectRef = useRef<string>('');
   useEffect(() => {
-    if (activePrototype?.designBrief || !project.id) return;
+    if (seedBrief || !project.id) return;
     if (initialAssistProjectRef.current === project.id) return;
     initialAssistProjectRef.current = project.id;
     let cancelled = false;
@@ -559,8 +581,41 @@ export function PrototypeCoDesignStudio({
 
   const effectiveBusy = isBusyProto || submittingBrief;
 
+  const goToBriefStep = (step: BriefStep) => {
+    setBriefStep(step);
+    stageRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  };
+
+  const isBusinessView = viewMode === 'business';
+  const displayPrimaryTitle = isBusinessView
+    ? sanitizeBusinessText(referenceSelection.primary.title, locale)
+    : referenceSelection.primary.title;
+  const feelProvided = localAttachments.length > 0 || userFeelNote.trim().length > 0;
+  const briefSteps: { id: BriefStep; label: string; status: string }[] = [
+    {
+      id: 'REFERENCES',
+      label: t('视觉参考', 'Visual Reference'),
+      status: displayPrimaryTitle,
+    },
+    {
+      id: 'FEEL',
+      label: t('我的参考与感受', 'My Images & Feel'),
+      status: feelProvided
+        ? localAttachments.length > 0
+          ? t(`${localAttachments.length} 张图`, `${localAttachments.length} image${localAttachments.length === 1 ? '' : 's'}`)
+          : t('已填写', 'Filled in')
+        : t('选填', 'Optional'),
+    },
+    {
+      id: 'MOTION',
+      label: t('交互示意', 'Interactions'),
+      status: alignmentTouched ? t('已调整', 'Adjusted') : t('已按需求预选', 'Preselected'),
+    },
+  ];
+
   return (
     <section
+      ref={stageRef}
       data-testid="prototype-briefing-stage"
       aria-label={t('界面原型简报工作区', 'Prototype Design Brief Stage')}
       className="flex flex-col gap-3.5"
@@ -572,20 +627,20 @@ export function PrototypeCoDesignStudio({
       >
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="m-0 text-[15px] font-semibold text-ink">
-              {t('设计简报 · 视觉参考与风格样张', 'Design Brief · References & Style Tile')}
+            <h2 className="m-0 text-[15px] font-semibold text-foreground">
+              {t('设计简报', 'Design Brief')}
             </h2>
-            <span className="badge font-mono text-[11px]">
+            <span className="badge font-mono text-[12px]">
               {t(
-                `主参考 ${referenceSelection.primary.title}${referenceSelection.borrowed.length > 0 ? ` + ${referenceSelection.borrowed.length} 借鉴` : ''}`,
-                `Primary: ${referenceSelection.primary.title}${referenceSelection.borrowed.length > 0 ? ` +${referenceSelection.borrowed.length}` : ''}`,
+                `主参考 ${displayPrimaryTitle}${referenceSelection.borrowed.length > 0 ? ` + ${referenceSelection.borrowed.length} 借鉴` : ''}`,
+                `Primary: ${displayPrimaryTitle}${referenceSelection.borrowed.length > 0 ? ` +${referenceSelection.borrowed.length}` : ''}`,
               )}
             </span>
           </div>
-          <p className="m-0 mt-0.5 text-[12px] text-muted">
+          <p className="m-0 mt-0.5 text-[12px] text-faint-foreground">
             {t(
-              '在左侧选参考图、补充截图与直白感受并点选交互示意；右侧实时预演风格样张，确认简报后由共创智能体生成首版可交互原型。',
-              'Pick references, attach your own screenshots & feel notes, and preview the live Style Tile before generating Revision #1.',
+              '选好参考、说清感受、点选交互方式，风格样张会实时预演；确认后由 AI 助手生成可交互原型。',
+              'Pick a reference, describe the feel, choose interactions, and watch the Style Tile update; then the AI Assistant builds the prototype.',
             )}
           </p>
         </div>
@@ -606,7 +661,7 @@ export function PrototypeCoDesignStudio({
               )}
             </Button>
           )}
-          {onImportHtmlClick && (
+          {!isBusinessView && onImportHtmlClick && (
             <Button
               type="button"
               variant="secondary"
@@ -620,7 +675,7 @@ export function PrototypeCoDesignStudio({
           )}
           <Button
             type="button"
-            variant="accent"
+            variant={isBusinessView ? 'secondary' : 'accent'}
             size="sm"
             data-testid="briefing-generate-prototype-btn"
             disabled={effectiveBusy}
@@ -643,43 +698,98 @@ export function PrototypeCoDesignStudio({
       </header>
 
       {/* ─── Single-Page Side-by-Side Briefing Stage Grid ─── */}
-      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[1.25fr_0.95fr]">
-        {/* Left Column: 1. Visual References, 2. User Local Uploads & Feel, 3. 7-Group Motion Schematics */}
-        <div data-testid="briefing-left-column" className="flex min-w-0 flex-col gap-4">
-          <div ref={referencesAnchorRef}>
+      <div
+        className={cn(
+          'grid items-start gap-4',
+          stageWide ? 'grid-cols-[minmax(0,1.55fr)_minmax(320px,0.9fr)]' : 'grid-cols-1',
+        )}
+        data-layout={stageWide ? 'side-by-side' : 'stacked'}
+      >
+        {/* Left Column: one step at a time — references, your own images & feel, interaction schematics */}
+        <div data-testid="briefing-left-column" className="flex min-w-0 flex-col gap-3">
+          <div
+            role="tablist"
+            aria-label={t('设计简报步骤', 'Design Brief steps')}
+            data-testid="briefing-step-tabs"
+            className="brief-steps"
+          >
+            {briefSteps.map((step, idx) => (
+              <button
+                key={step.id}
+                id={`brief-step-tab-${step.id}`}
+                type="button"
+                role="tab"
+                aria-selected={briefStep === step.id}
+                aria-controls={`brief-step-panel-${step.id}`}
+                tabIndex={briefStep === step.id ? 0 : -1}
+                data-testid={`briefing-step-${step.id}`}
+                className="brief-step"
+                onClick={() => setBriefStep(step.id)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+                  e.preventDefault();
+                  const next =
+                    briefSteps[
+                      (idx + (e.key === 'ArrowRight' ? 1 : -1) + briefSteps.length) %
+                        briefSteps.length
+                    ]!;
+                  setBriefStep(next.id);
+                  document.getElementById(`brief-step-tab-${next.id}`)?.focus();
+                }}
+              >
+                <span className="brief-step-index" aria-hidden="true">
+                  {idx + 1}
+                </span>
+                <span className="brief-step-text">
+                  <span className="brief-step-label">{step.label}</span>
+                  <span className="brief-step-status">{step.status}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div
+            ref={referencesAnchorRef}
+            id="brief-step-panel-REFERENCES"
+            role="tabpanel"
+            aria-labelledby="brief-step-tab-REFERENCES"
+            hidden={briefStep !== 'REFERENCES'}
+          >
             <VisualReferencePicker
               selection={referenceSelection}
               onSelectionChange={setReferenceSelection}
               projectId={project.id}
               {...(activeDoc ? { docId: activeDoc.id } : {})}
-              onContinue={() => {
-                feelAnchorRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-              }}
-              continueLabelZh="继续补充参考截图与直白感受 ↓"
-              continueLabelEn="Continue to Your Images & Feel ↓"
+              onContinue={() => goToBriefStep('FEEL')}
+              continueLabelZh="下一步：我的参考与感受"
+              continueLabelEn="Next: My Images & Feel"
+              businessView={isBusinessView}
             />
           </div>
 
           <section
             ref={feelAnchorRef}
+            id="brief-step-panel-FEEL"
+            role="tabpanel"
+            hidden={briefStep !== 'FEEL'}
             data-testid="user-feel-and-uploads-card"
             aria-label={t(
               '您自己的参考图与直白感受说明',
               'Your Reference Images & Plain-Language Feel',
             )}
-            className="card flex flex-col gap-3"
+            className={cn('card flex-col gap-3', briefStep === 'FEEL' ? 'flex' : 'hidden')}
           >
-            <div className="border-b border-line pb-2.5">
+            <div className="border-b border-border pb-2.5">
               <div className="flex items-center gap-2">
-                <ImagePlus size={15} className="text-accent" />
-                <h3 className="m-0 text-[14.5px] font-semibold text-ink">
+                <ImagePlus size={15} className="text-primary" />
+                <h3 className="m-0 text-[14.5px] font-semibold text-foreground">
                   {t(
                     '上传自己的参考图与直白感受描述（选填）',
                     'Your Own Reference Images & Plain-Language Feel (Optional)',
                   )}
                 </h3>
               </div>
-              <p className="m-0 mt-0.5 text-[12px] text-ink-3">
+              <p className="m-0 mt-0.5 text-[12px] text-faint-foreground">
                 {t(
                   '可直接上传或粘贴手头喜欢的系统截图（仅保存在当前浏览器本机存储），并用大白话描述想要的整体气质与重点关切。',
                   'Upload or paste screenshots from your clipboard (persisted in browser-local storage) and describe the desired feel in plain words.',
@@ -700,7 +810,7 @@ export function PrototypeCoDesignStudio({
             <div className="flex flex-col gap-1.5">
               <label
                 htmlFor="user-feel-note-textarea"
-                className="text-[12px] font-semibold text-ink-2"
+                className="text-[12px] font-semibold text-foreground-soft"
               >
                 {t(
                   '用大白话写下想要的整体感觉或盯紧的重点：',
@@ -711,7 +821,7 @@ export function PrototypeCoDesignStudio({
                 id="user-feel-note-textarea"
                 data-testid="user-feel-note-input"
                 rows={3}
-                className="input w-full bg-surface text-[12.5px] leading-relaxed"
+                className="input w-full bg-card text-[12.5px] leading-relaxed"
                 placeholder={t(
                   '例如：想要像银行内部台账那样稳重紧凑、一眼看清待审批金额，状态标签一眼分清通过还是退回…',
                   'e.g., Steady and compact like an internal bank ledger, with pending approval amounts clear at a glance…',
@@ -720,9 +830,28 @@ export function PrototypeCoDesignStudio({
                 onChange={(e) => handleFeelNoteChange(e.target.value)}
               />
             </div>
+
+            <div className="flex justify-end border-t pt-3">
+              <Button
+                type="button"
+                variant={isBusinessView ? 'secondary' : 'accent'}
+                size="sm"
+                onClick={() => goToBriefStep('MOTION')}
+              >
+                {t('下一步：交互示意', 'Next: Interactions')}
+                <ArrowRight size={13.5} aria-hidden="true" />
+              </Button>
+            </div>
           </section>
 
-          <div ref={schematicsAnchorRef} className="card flex flex-col gap-4">
+          <div
+            ref={schematicsAnchorRef}
+            id="brief-step-panel-MOTION"
+            role="tabpanel"
+            aria-labelledby="brief-step-tab-MOTION"
+            hidden={briefStep !== 'MOTION'}
+            className={cn('card flex-col gap-4', briefStep === 'MOTION' ? 'flex' : 'hidden')}
+          >
             <MotionSchematicGallery
               alignment={alignment}
               setAlignment={setAlignment}
@@ -737,11 +866,11 @@ export function PrototypeCoDesignStudio({
               project={project}
             />
 
-            <div className="rounded-card border border-line bg-inset/45 p-3.5">
-              <div className="mb-2 text-[13px] font-semibold text-ink">
+            <div className="rounded-card border border-border bg-muted/45 p-3.5">
+              <div className="mb-2 text-[13px] font-semibold text-foreground">
                 {t(
                   '补充业务场景或页面细节（选填）',
-                  'Extra business details for the Agent (Optional)',
+                  'Extra business details for the AI Assistant (Optional)',
                 )}
               </div>
               <form
@@ -757,7 +886,7 @@ export function PrototypeCoDesignStudio({
                 }}
               >
                 <input
-                  className="input flex-1 bg-surface"
+                  className="input flex-1 bg-card"
                   placeholder={t(
                     '例如：超过 10 万金额标红预警、列表增加「所属部门」筛选…',
                     'e.g., Highlight amounts over 100k in red, add a Department filter…',
@@ -776,7 +905,7 @@ export function PrototypeCoDesignStudio({
                   {alignment.customNotes.map((n, idx) => (
                     <span
                       key={`${idx}-${n}`}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-0.5 text-[12px] text-ink"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-0.5 text-[12px] text-foreground"
                     >
                       <span>✓ {n}</span>
                       <button
@@ -787,7 +916,7 @@ export function PrototypeCoDesignStudio({
                             customNotes: prev.customNotes.filter((_, i) => i !== idx),
                           }))
                         }
-                        className="cursor-pointer text-ink-3 hover:text-red"
+                        className="cursor-pointer text-faint-foreground hover:text-destructive"
                       >
                         <X size={11.5} />
                       </button>
@@ -802,7 +931,7 @@ export function PrototypeCoDesignStudio({
         {/* Right Column (Sticky): 1. Editable Design Brief Card, 2. Real-Time Style Tile Card */}
         <div
           data-testid="briefing-right-column"
-          className="flex min-w-0 flex-col gap-4 xl:sticky xl:top-3"
+          className={cn('flex min-w-0 flex-col gap-4', stageWide && 'sticky top-3')}
         >
           <DesignBriefCard
             brief={activeBrief}
@@ -833,6 +962,7 @@ export function PrototypeCoDesignStudio({
             visionSupported={visionSupported}
             {...(visionProviderLabel ? { visionProviderLabel } : {})}
             {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
+            viewMode={viewMode}
           />
 
           <StyleTileCard

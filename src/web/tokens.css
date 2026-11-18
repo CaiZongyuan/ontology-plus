@@ -1,6 +1,13 @@
 @layer theme, base, utilities;
 @import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities);
+/* Class names are read only from the app's own markup: src/web and index.html. Packages,
+   scripts, docs, and skill notes only mention utilities (the appearance guard names the
+   ones it forbids), and tests are not shipped, so none of them adds to the stylesheet. */
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "./";
+@source "../../index.html";
+@source not "./**/*.test.{ts,tsx}";
+@source not "./**/__tests__";
 
 /* Registered custom properties for accessible indeterminate <progress class="loading-spinner">
    (modern-web-guidance: spinner — kept top-level/unscoped) */
@@ -34,7 +41,7 @@
     color: inherit;
   }
   button {
-    border: 0 solid var(--line);
+    border: 0 solid var(--border);
     background: transparent;
     padding: 0;
     cursor: pointer;
@@ -45,14 +52,53 @@
   input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='color']),
   select,
   textarea {
-    border: 0 solid var(--line);
+    border: 0 solid var(--border);
     background: transparent;
   }
   input::placeholder,
   textarea::placeholder {
-    font-family: var(--sans);
-    color: var(--faint);
+    font-family: var(--font-sans);
+    color: var(--faint-foreground);
     opacity: 1;
+  }
+
+  /* Scoped preflight substitute for shadcn/ui (Base UI) primitives ([data-slot]).
+     Tailwind preflight remains off so rendered Markdown headings and lists are untouched;
+     only [data-slot] elements get neutral margins, solid var(--border) defaults, heading
+     inheritance, list resets, block SVG icons, and strict [hidden] enforcement. */
+  :where([data-slot]) {
+    box-sizing: border-box;
+    margin: 0;
+    border: 0 solid var(--border);
+  }
+  :where([data-slot]):is(h1, h2, h3, h4, h5, h6) {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  :where([data-slot]):is(ol, ul, menu) {
+    list-style: none;
+    padding: 0;
+  }
+  :where([data-slot]):is(a) {
+    color: inherit;
+    text-decoration: inherit;
+  }
+  :where([data-slot]):is(hr) {
+    height: 0;
+    color: inherit;
+  }
+  :where([data-slot]):is(button, input, select, textarea) {
+    padding: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    background-color: transparent;
+    border-radius: 0;
+  }
+  :where([data-slot]) svg {
+    display: block;
+    vertical-align: middle;
+    flex-shrink: 0;
   }
 }
 
@@ -91,51 +137,45 @@
   src: url("/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
 }
 
-/* ─── Root Color-Scheme & Spatial-Sync Warm Paper (Light) / Film Grain (Dark) ─── */
+/* ─── Bundled Offline Fonts for the 默认 theme (Inter & JetBrains Mono) ───
+   Variable fonts from @fontsource-variable 5.3.0 (OFL-1.1), Latin subset.
+   Inter carries the optical-size axis, so large titles get its display cut. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin-opsz-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ─── Root Colour-Scheme, Type, Spacing and Motion Scales ───
+   Colours, fonts, radii, shadows and the background texture come only from the active
+   Workbench Theme's contract tokens and the shared derived variables, both written to
+   workbench-themes.generated.css (ADR 0015, docs/workbench-theme-contract.md).
+   `pnpm lint:theme` fails on anything else. */
 :root {
   color-scheme: light dark;
 
-  --ground: #f3f2ee;
-  --ground-2: #eae8e2;
-  --surface: #fdfdfb;
-  --surface-2: #f6f5f1;
-  --line: #d5d3cb;
-  --line-2: #e3e1da;
-  --ghost: rgba(26, 26, 24, 0.045);
-
-  --ink: #1a1a18;
-  --ink-2: #2e2e2a;
-  --muted: #5a5953;
-  --faint: #73716a;
-
-  --accent: #4c50c4;
-  --accent-ink: #ffffff;
-  --accent-soft: rgba(76, 80, 196, 0.1);
-  --ok: #287452;
-  --ok-soft: rgba(40, 116, 82, 0.12);
-  --warn: #a86416;
-  --warn-soft: rgba(168, 100, 22, 0.12);
-  --bad: #b83a32;
-  --bad-soft: rgba(184, 58, 50, 0.12);
-
-  --serif: "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
-  --sans: "IBM Plex Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  --paper-grain-url:
-    url("/textures/paper/warm-grain.png"),
-    url("/textures/paper/white-grain.png"),
-    url("/textures/paper/cloud.png");
-  --paper-grain-size: 260px 260px, 260px 260px, 900px 900px;
-
   /* ─── Type & Spacing Scale (use these instead of ad-hoc px values) ─── */
-  --text-2xs: 10.5px; /* table headers, overlines */
-  --text-xs: 11.5px; /* badges, captions, meta */
-  --text-sm: 12.5px; /* secondary text, compact controls */
-  --text-base: 13px; /* body, controls */
+  --text-2xs: 12px; /* table headers, overlines (minimum 12px per #48) */
+  --text-xs: 12px; /* badges, captions, meta */
+  --text-sm: 13px; /* secondary text, compact controls */
+  --text-base: 14px; /* body, controls (base 14px per #48) */
   --text-md: 14px; /* section titles (sans) */
-  --text-lg: 16px; /* card titles (serif) */
-  --text-xl: 20px; /* metrics (serif) */
+  --text-lg: 16px; /* card titles */
+  --text-xl: 20px; /* metrics */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -146,33 +186,19 @@
   --control-h-sm: 28px;
   --control-h-md: 32px;
 
-  /* ─── Shape, Elevation & Motion Scale ─── */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  /* ─── Shape & Motion Scale (radii and shadows come from the theme) ─── */
   --radius-pill: 999px;
-
-  --shadow-xs: 0 1px 0 rgba(26, 26, 24, 0.04);
-  --shadow-sm: 0 1px 2px rgba(26, 26, 24, 0.06), 0 1px 1px rgba(26, 26, 24, 0.03);
-  --shadow-md: 0 4px 14px rgba(26, 26, 24, 0.08), 0 1px 3px rgba(26, 26, 24, 0.05);
-  --shadow-lg: 0 18px 48px rgba(26, 26, 24, 0.16), 0 4px 12px rgba(26, 26, 24, 0.08);
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --dur-fast: 120ms;
   --dur-med: 200ms;
 
-  --topbar-h: 52px;
-  --sidebar-w: 240px;
-  --sidebar-w-collapsed: 56px;
+  --topbar-h: 56px;
 
   --scrollbar-track: transparent;
-  /* >= 3:1 non-text contrast against --surface (#fdfdfb) & --ground (#f3f2ee) */
-  --scrollbar-thumb: #868379;
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-  accent-color: var(--accent);
+  accent-color: var(--primary);
 }
 
 :root:has(> head > meta[name="color-scheme"][content="light"]),
@@ -180,76 +206,9 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --ground: #121211;
-    --ground-2: #0d0d0c;
-    --surface: #1a1a18;
-    --surface-2: #222220;
-    --line: #33332e;
-    --line-2: #292925;
-    --ghost: rgba(236, 234, 227, 0.055);
-
-    --ink: #eceae3;
-    --ink-2: #d2d0c8;
-    --muted: #98968e;
-    --faint: #7c7a72;
-
-    --accent: #9ca4ff;
-    --accent-ink: #0f1026;
-    --accent-soft: rgba(156, 164, 255, 0.15);
-    --ok: #4ca97c;
-    --ok-soft: rgba(76, 169, 124, 0.16);
-    --warn: #df9a42;
-    --warn-soft: rgba(223, 154, 66, 0.16);
-    --bad: #e06159;
-    --bad-soft: rgba(224, 97, 89, 0.16);
-
-    --paper-grain-url: none;
-    --scrollbar-track: transparent;
-    /* >= 3:1 non-text contrast against dark --surface (#1a1a18) & --surface-2 (#222220) */
-    --scrollbar-thumb: #737169;
-    --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
-    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
-  }
-}
-
-/* ─── Explicit Dark Mode Override (Spatial-Sync Film Grain) ─── */
 :root:has(> head > meta[name="color-scheme"][content="dark"]),
 [data-theme="dark"] {
   color-scheme: dark;
-  --ground: #121211;
-  --ground-2: #0d0d0c;
-  --surface: #1a1a18;
-  --surface-2: #222220;
-  --line: #33332e;
-  --line-2: #292925;
-  --ghost: rgba(236, 234, 227, 0.055);
-
-  --ink: #eceae3;
-  --ink-2: #d2d0c8;
-  --muted: #98968e;
-  --faint: #7c7a72;
-
-  --accent: #9ca4ff;
-  --accent-ink: #0f1026;
-  --accent-soft: rgba(156, 164, 255, 0.15);
-  --ok: #4ca97c;
-  --ok-soft: rgba(76, 169, 124, 0.16);
-  --warn: #df9a42;
-  --warn-soft: rgba(223, 154, 66, 0.16);
-  --bad: #e06159;
-  --bad-soft: rgba(224, 97, 89, 0.16);
-
-  --paper-grain-url: none;
-  --scrollbar-track: transparent;
-  --scrollbar-thumb: #737169;
-  --shadow-xs: 0 1px 0 rgba(0, 0, 0, 0.3);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 *,
@@ -265,22 +224,65 @@ body,
   padding: 0;
   width: 100%;
   height: 100%;
-  background: var(--ground);
-  color: var(--ink);
-  font-family: var(--sans);
-  font-size: 13px;
-  line-height: 1.55;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  background: color-mix(in srgb, var(--primary) 24%, transparent);
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+/* [data-slot] overlay stacking & focus-visible suppression for popups and roving-highlight items */
+[data-slot][hidden]:where(:not([hidden="until-found"])),
+[data-slot] [hidden]:where(:not([hidden="until-found"])) {
+  display: none !important;
+}
+
+[data-slot="dialog-overlay"],
+[data-slot="drawer-overlay"] {
+  z-index: 1060;
+}
+
+[data-slot="dialog-content"],
+[data-slot="drawer-content"] {
+  z-index: 1065;
+}
+
+[data-slot="popover-positioner"],
+[data-slot="dropdown-menu-positioner"],
+[data-slot="dropdown-menu-sub-positioner"] {
+  z-index: 1075;
+}
+
+[data-slot="tooltip-positioner"] {
+  z-index: 1085;
+}
+
+:where(
+  [data-slot="dialog-content"],
+  [data-slot="drawer-content"],
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="dropdown-menu-item"],
+  [data-slot="dropdown-menu-checkbox-item"],
+  [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-sub-trigger"],
+  [data-slot="command-input"],
+  [data-slot="command-item"]
+):focus-visible {
+  outline: none;
 }
 
 /* Standard scrollbar styling on scrollable containers (modern-web-guidance: customize-scrollbar-color-and-thickness) */
@@ -355,25 +357,408 @@ body,
   }
 }
 
-/* Bounded scroll region & accessible underline tabs for Requirement Convergence Sidebar */
+/* The SRS editor owns the rest of the viewport, so its toolbar never scrolls away from the text. */
+.srs-editor {
+  height: max(460px, calc(100dvh - var(--topbar-h) - 160px));
+}
+
+/* ─── Requirement Board (需求探索) ───
+   The conversation lives in the Agent Panel, so this page is one board that
+   adapts to whatever width the panel leaves: three columns when there is room,
+   tabs over a single column when there is not. */
+.req-explore {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: calc(100dvh - var(--topbar-h) - 48px);
+}
+
+.req-explore-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding: 14px 18px;
+}
+
+.req-explore-head-main {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.req-explore-sub {
+  margin: 3px 0 0;
+  max-width: 64ch;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--faint-foreground);
+  text-wrap: pretty;
+}
+
+.req-explore-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.req-explore-source {
+  width: auto;
+  max-width: 220px;
+}
+
+.req-board {
+  container: req-board / inline-size;
+  flex: 1;
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-window, var(--radius-lg));
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.req-board-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+  flex-shrink: 0;
+}
+
+.req-board-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+}
+
+.req-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--faint-foreground);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.req-tab:hover {
+  color: var(--foreground);
+  background: var(--accent);
+}
+
+.req-tab:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.req-tab[aria-selected="true"] {
+  color: var(--foreground);
+  background: var(--card);
+  box-shadow: var(--shadow-btn);
+}
+
+.req-tab-count,
+.req-col-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint-foreground);
+}
+
+.req-board-summary {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: auto;
+}
+
+.req-board-summary-text {
+  font-size: var(--text-xs);
+  color: var(--faint-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.req-board-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  flex: 0 1 190px;
+  min-width: 110px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--faint-foreground);
+}
+
+.req-board-search:focus-within {
+  border-color: var(--ring);
+  box-shadow: var(--focus-ring);
+}
+
+.req-board-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.req-board-cols {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.req-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Narrow: tabs choose the one visible column; its heading would only repeat the tab. */
+.req-board:not([data-active-tab="DECISIONS"]) .req-col[data-col="DECISIONS"],
+.req-board:not([data-active-tab="M1"]) .req-col[data-col="M1"],
+.req-board:not([data-active-tab="M3"]) .req-col[data-col="M3"] {
+  display: none;
+}
+
+.req-col-head {
+  display: none;
+}
+
+.req-col-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 12px 14px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
 .req-signal-scroller {
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
 }
 
-.req-tab {
-  position: relative;
+.req-col-empty {
+  margin: 0;
+  padding: 28px 18px;
+  text-align: center;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--faint-foreground);
+  text-wrap: balance;
 }
 
-.req-tab[aria-selected="true"] {
-  color: var(--accent);
+.req-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--card);
 }
 
-.req-tab[aria-selected="true"]::after {
-  content: "";
-  position: absolute;
-  inset: auto 4px 0;
-  border-block-end: 2px solid var(--accent);
+.req-item.is-pending {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--warning-soft) 55%, var(--card));
+}
+
+.req-item.is-numbered {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.req-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.req-item-kind {
+  font-size: var(--text-2xs);
+  color: var(--faint-foreground);
+}
+
+.req-item-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.req-item-code {
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--faint-foreground);
+}
+
+.req-item-body {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.req-item-body.is-muted {
+  color: var(--faint-foreground);
+}
+
+.req-item-index {
+  flex-shrink: 0;
+  min-width: 18px;
+  margin-top: 1px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.8;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint-foreground);
+  text-align: end;
+}
+
+.req-item-inline-badge {
+  height: 18px;
+  margin-inline-end: 6px;
+  vertical-align: 1px;
+}
+
+.req-board-empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 440px;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+.req-board-empty-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--primary);
+}
+
+.req-board-empty-title {
+  margin: 0;
+  font-family: var(--font-title);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.req-board-empty-text {
+  margin: 0 0 6px;
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  color: var(--faint-foreground);
+  text-wrap: pretty;
+}
+
+.req-board-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 8px 12px 8px 14px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+  font-size: var(--text-xs);
+  color: var(--faint-foreground);
+  flex-shrink: 0;
+}
+
+/* Wide: all three columns side by side, so the tabs step aside. */
+@container req-board (min-width: 820px) {
+  .req-board-tabs {
+    display: none;
+  }
+
+  .req-board-summary {
+    margin-inline-start: 0;
+    margin-inline-end: auto;
+  }
+
+  .req-board-cols {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .req-board[data-active-tab] .req-col[data-col] {
+    display: flex;
+  }
+
+  .req-col + .req-col {
+    border-inline-start: 1px solid var(--border-subtle);
+  }
+
+  .req-col-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 1px 8px;
+    padding: 12px 14px 4px;
+    flex-shrink: 0;
+  }
+
+  .req-col-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--foreground);
+  }
+
+  .req-col-title > svg {
+    color: var(--primary);
+    flex-shrink: 0;
+  }
+
+  .req-col-hint {
+    flex-basis: 100%;
+    font-size: var(--text-2xs);
+    color: var(--faint-foreground);
+  }
 }
 
 /* Targeted text wrapping for short standalone headings & multi-line prose
@@ -406,8 +791,8 @@ progress.loading-spinner:indeterminate {
   --_to: calc(90deg + var(--arc-end, 158deg));
   --size: 16px;
   --thickness: 2px;
-  --spinner-color: var(--accent);
-  --track-color: var(--line);
+  --spinner-color: var(--primary);
+  --track-color: var(--border);
   --spinner-duration: 1.35s;
   --_used-spinner-duration: var(--spinner-duration);
 
@@ -498,87 +883,63 @@ progress.loading-spinner:indeterminate {
   }
 }
 
-/* ─── BeautifulUI & Tailwind v4 Spatial-Sync Token Bridge ─── */
-:root {
-  --page: var(--ground);
-  --canvas: var(--ground-2);
-  --inset: var(--surface-2);
-  --hover: var(--ghost);
-  --hover-2: color-mix(in srgb, var(--ink) 8%, transparent);
-  --ink-3: var(--faint);
-  --line-strong: color-mix(in srgb, var(--muted) 42%, var(--line));
-  --line-soft: var(--line-2);
-  --grid-line: color-mix(in srgb, var(--line) 82%, transparent);
-  --field: var(--surface-2);
-  --accent-tint: var(--accent-soft);
-  --green: var(--ok);
-  --green-tint: var(--ok-soft);
-  --orange: var(--warn);
-  --orange-tint: var(--warn-soft);
-  --red: var(--bad);
-  --red-tint: var(--bad-soft);
-  --tooltip-bg: var(--ink);
-  --tooltip-fg: var(--surface);
-  --tooltip-muted: var(--muted);
-  --tooltip-border: var(--line);
-  --shadow-hairline: 0 0 0 1px var(--line);
-  --shadow-btn: 0 0 0 1px var(--line-strong), var(--shadow-xs);
-  --shadow-card: 0 0 0 1px var(--line), var(--shadow-sm);
-  --shadow-raised: 0 0 0 1px var(--line), var(--shadow-md);
-  --shadow-overlay: 0 0 0 1px var(--line), var(--shadow-lg);
-  --shadow-inset-field: inset 0 1px 2px rgba(0, 0, 0, 0.08);
-}
-
 @theme inline {
   /* The root font size is 13px, so Tailwind's default rem-based step (0.25rem) would be
      3.25px. Pin it to 4px so `gap-2` is 8px and utilities line up with --space-*. */
   --spacing: 4px;
-  --color-background: var(--ground);
-  --color-foreground: var(--ink);
-  --color-card: var(--surface);
-  --color-card-foreground: var(--ink);
-  --color-muted: var(--surface-2);
-  --color-muted-foreground: var(--muted);
-  --color-primary: var(--accent);
-  --color-primary-foreground: var(--accent-ink);
-  --color-border: var(--line);
-  --color-page: var(--page);
-  --color-canvas: var(--canvas);
-  --color-surface: var(--surface);
-  --color-inset: var(--inset);
-  --color-ink: var(--ink);
-  --color-ink-2: var(--ink-2);
-  --color-ink-3: var(--ink-3);
-  --color-hover: var(--hover);
-  --color-hover-2: var(--hover-2);
-  --color-field: var(--field);
-  --color-line: var(--line);
-  --color-line-strong: var(--line-strong);
-  --color-accent: var(--accent);
-  --color-accent-ink: var(--accent-ink);
-  --color-accent-tint: var(--accent-tint);
-  --color-green: var(--green);
-  --color-green-tint: var(--green-tint);
-  --color-orange: var(--orange);
-  --color-orange-tint: var(--orange-tint);
-  --color-red: var(--red);
-  --color-red-tint: var(--red-tint);
 
+  /* Colour utilities under the contract names (`bg-card`, `text-faint-foreground`). */
+  --color-background: var(--background);
+  --color-canvas: var(--canvas);
+  --color-foreground: var(--foreground);
+  --color-foreground-soft: var(--foreground-soft);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-faint-foreground: var(--faint-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-overlay: var(--overlay);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  /* Shared derived variables (DERIVED_VARIABLES in the workbench-theme contract). */
+  --color-accent-strong: var(--accent-strong);
+  --color-border-strong: var(--border-strong);
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
   --shadow-hairline: var(--shadow-hairline);
   --shadow-btn: var(--shadow-btn);
-  --shadow-inset-field: var(--shadow-inset-field);
   --shadow-card: var(--shadow-card);
   --shadow-raised: var(--shadow-raised);
   --shadow-overlay: var(--shadow-overlay);
 
-  --font-sans: var(--sans);
-  --font-mono: var(--mono);
-  --font-serif: var(--serif);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-title: var(--font-title);
 
-  --radius-chip: 6px;
-  --radius-control: 8px;
-  --radius-card: 10px;
-  --radius-window: 14px;
+  --radius-card: var(--radius-card);
+  --radius-window: var(--radius-window);
 
   --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
@@ -607,7 +968,7 @@ progress.loading-spinner:indeterminate {
   height: 28px;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
 }
 
 .stream-tail {
@@ -622,8 +983,8 @@ progress.loading-spinner:indeterminate {
   height: 1.05em;
   margin-left: 1.5px;
   translate: 0 -0.5px;
-  border-radius: 1px;
-  background: var(--accent);
+  border-radius: 999px;
+  background: var(--primary);
   vertical-align: text-bottom;
   animation: caret-blink 1s step-end infinite;
 }
@@ -690,33 +1051,33 @@ progress.loading-spinner:indeterminate {
 
 /* ─── BeautifulUI Status Pills ─── */
 .filter-status-todo {
-  background: var(--inset);
-  color: var(--muted);
-  border: 1px solid var(--line);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
 }
 
 .filter-status-progress {
-  background: var(--orange-tint);
-  color: var(--orange);
-  border: 1px solid color-mix(in srgb, var(--orange) 28%, transparent);
+  background: var(--warning-soft);
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
 }
 
 .filter-status-done {
-  background: var(--green-tint);
-  color: var(--green);
-  border: 1px solid color-mix(in srgb, var(--green) 28%, transparent);
+  background: var(--success-soft);
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 28%, transparent);
 }
 
 .filter-status-accent {
-  background: var(--accent-tint);
-  color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent);
 }
 
 .filter-status-error {
-  background: var(--red-tint);
-  color: var(--red);
-  border: 1px solid color-mix(in srgb, var(--red) 28%, transparent);
+  background: var(--destructive-soft);
+  color: var(--destructive);
+  border: 1px solid color-mix(in srgb, var(--destructive) 28%, transparent);
 }
 
 /* ─── Accessible Light-Dismiss Dialog (<dialog closedby="any">) ─── */
@@ -732,10 +1093,10 @@ dialog::backdrop {
 dialog.bui-dialog {
   margin: auto;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-window);
-  background: var(--surface);
-  color: var(--ink);
+  background: var(--popover);
+  color: var(--foreground);
   box-shadow: var(--shadow-overlay);
   max-width: min(520px, calc(100vw - 32px));
   width: 100%;
@@ -746,7 +1107,7 @@ dialog.bui-dialog.bui-dialog-wide {
 }
 
 dialog.bui-dialog::backdrop {
-  background: rgba(15, 15, 14, 0.46);
+  background: color-mix(in srgb, var(--overlay) 46%, transparent);
   backdrop-filter: blur(2px);
 }
 
@@ -768,8 +1129,8 @@ dialog.bui-dialog::backdrop {
   min-height: 280px;
   padding: 16px 20px;
   outline: none;
-  color: var(--ink);
-  font-family: var(--sans);
+  color: var(--foreground);
+  font-family: var(--font-sans);
   font-size: 13.5px;
   line-height: 1.68;
 }
@@ -777,7 +1138,7 @@ dialog.bui-dialog::backdrop {
 .tiptap-editor-root .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
-  color: var(--faint);
+  color: var(--faint-foreground);
   pointer-events: none;
   height: 0;
 }
@@ -789,8 +1150,8 @@ dialog.bui-dialog::backdrop {
   line-height: 1.3;
   margin: 1.1em 0 0.45em;
   padding-bottom: 0.28em;
-  border-bottom: 1px solid var(--line-2);
-  color: var(--ink);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--foreground);
 }
 
 .tiptap-editor-root .ProseMirror h2,
@@ -799,7 +1160,7 @@ dialog.bui-dialog::backdrop {
   font-weight: 600;
   line-height: 1.35;
   margin: 1em 0 0.4em;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .tiptap-editor-root .ProseMirror h3,
@@ -808,7 +1169,7 @@ dialog.bui-dialog::backdrop {
   font-weight: 600;
   line-height: 1.4;
   margin: 0.9em 0 0.35em;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .tiptap-editor-root .ProseMirror p,
@@ -856,30 +1217,30 @@ dialog.bui-dialog::backdrop {
 .md-prose blockquote {
   margin: 0.65em 0;
   padding: 0.4em 0.9em;
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
+  border-left: 3px solid var(--primary);
+  background: var(--primary-soft);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .tiptap-editor-root .ProseMirror code,
 .md-prose :not(pre) > code {
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: 0.88em;
   padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-2);
-  color: var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--muted);
+  border: 1px solid var(--border-subtle);
+  color: var(--primary);
 }
 
 .tiptap-editor-root .ProseMirror pre {
   margin: 0.7em 0;
   padding: 12px 14px;
   border-radius: var(--radius-md);
-  background: var(--ground-2);
-  border: 1px solid var(--line);
-  font-family: var(--mono);
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
   overflow-x: auto;
@@ -889,7 +1250,7 @@ dialog.bui-dialog::backdrop {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .tiptap-editor-root .ProseMirror table,
@@ -904,7 +1265,7 @@ dialog.bui-dialog::backdrop {
 .tiptap-editor-root .ProseMirror td,
 .md-prose th,
 .md-prose td {
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   padding: 7px 10px;
   text-align: left;
   vertical-align: top;
@@ -912,28 +1273,28 @@ dialog.bui-dialog::backdrop {
 
 .tiptap-editor-root .ProseMirror th,
 .md-prose th {
-  background: var(--surface-2);
+  background: var(--muted);
   font-weight: 600;
-  color: var(--ink-2);
+  color: var(--foreground-soft);
 }
 
 .tiptap-editor-root .ProseMirror hr,
 .md-prose hr {
   border: 0;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border);
   margin: 1em 0;
 }
 
 /* ─── React Flow Spatial-Sync Theme Bridge ─── */
 .react-flow {
-  --xy-background-color-default: var(--surface);
-  --xy-node-background-color-default: var(--surface);
-  --xy-node-border-default: 1px solid var(--line);
-  --xy-node-color-default: var(--ink);
-  --xy-edge-stroke-default: color-mix(in srgb, var(--muted) 58%, transparent);
-  --xy-edge-stroke-selected-default: var(--accent);
-  --xy-minimap-background-color-default: var(--surface-2);
-  --xy-controls-button-background-color-default: var(--surface);
-  --xy-controls-button-color-default: var(--ink);
-  --xy-controls-button-border-color-default: var(--line);
+  --xy-background-color-default: var(--card);
+  --xy-node-background-color-default: var(--card);
+  --xy-node-border-default: 1px solid var(--border);
+  --xy-node-color-default: var(--foreground);
+  --xy-edge-stroke-default: color-mix(in srgb, var(--muted-foreground) 58%, transparent);
+  --xy-edge-stroke-selected-default: var(--primary);
+  --xy-minimap-background-color-default: var(--muted);
+  --xy-controls-button-background-color-default: var(--card);
+  --xy-controls-button-color-default: var(--foreground);
+  --xy-controls-button-border-color-default: var(--border);
 }

@@ -26,6 +26,10 @@ import {
   defineTool,
 } from '@earendil-works/pi-durable';
 import {
+  PROJECT_STEP_NAMES,
+  type ProjectStepId,
+} from '../../business-vocabulary/index.js';
+import {
   MODEL_CODES,
   checkSqlGrounding,
   validateOntologySuite,
@@ -45,12 +49,15 @@ import {
   type AgentSession,
   type AgentSessionKind,
   type AgentSessionMessage,
+  type AgentSubagentLaneTrace,
   type AgentToolCallTrace,
   type DesignBrief,
   type InteractivePrototype,
   type LlmProviderConfig,
   type ProjectDetail,
   type PrototypeTargetAnchor,
+  type StepHandoffOrigin,
+  type StepHandoffProposal,
   type WorkspaceStore,
 } from '../../workspace-store/index.js';
 import {
@@ -68,16 +75,33 @@ import {
   extractJsonObjectFromText,
   findRequirementSessionOptional,
   parseStructuredActionFromPrompt,
+  resolveAgentTurnRunId,
   type LlmSynthesizedDomainBlueprint,
 } from './domain-run-tools.js';
 import {
   PROTOTYPE_ANCHOR_OPENAI_TOOLS,
   editPrototypeAnchor,
+  initPrototypeShell,
   listPrototypeAnchors,
+  previewPartialPrototypeScreen,
   readPrototypeAnchor,
   rewritePrototypePage,
+  upsertPrototypeScreen,
+  type InitPrototypeShellInput,
+  type PartialPrototypeScreenInput,
   type PrototypeAnchorEditOperation,
+  type PrototypeShellScreenStub,
 } from './prototype-anchor-tools.js';
+import {
+  CODEMODE_OPENAI_TOOL,
+  SPAWN_SUBAGENTS_OPENAI_TOOL,
+  renderCodemodePromptSection,
+  resolveSessionCodeModeEnabled,
+  resolveSessionMultiAgentConcurrency,
+  runCodemodeScript,
+  runParallelSubagents,
+  type SubagentTaskSpec,
+} from './codemode-subagent.js';
 import {
   buildProjectDataGrounding,
   describeGroundingRefusal,
@@ -97,6 +121,18 @@ import {
   type OntologyToolName,
   type OpenAiFunctionTool,
 } from './tools.js';
+import {
+  allocateTurnRunIdentity,
+  deriveProjectStepForSessionKind,
+  invokeAgentRunEndHooks,
+  invokeAgentRunStartHooks,
+  nextAgentMessageId,
+  type AgentRunContext,
+  type AgentRunFailureInfo,
+  type AgentRunLifecycleHooks,
+  type AgentRunOutcome,
+  type AllocatedTurnRunIdentity,
+} from './run-lifecycle.js';
 
 // ─── Gateway Error & Explicit Mock Boundary (ADR-0007) ───────────────────────
 
@@ -139,10 +175,53 @@ function escapeMockHtml(text: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function extractPrimaryObjectFromRequirements(
+  markdown: string | undefined,
+): { name?: string; label?: string } {
+  if (!markdown) return {};
+  // Match "**中文名**（EnglishName）" or "**中文名** (`EnglishName`)" while skipping generic placeholders
+  const biBoldRe =
+    /\*\*([^*\n]{2,24})\*\*\s*[（(]\s*`?([A-Za-z][A-Za-z0-9_]*)`?(?:\s*\/[^)）]*)?[)）]/g;
+  let biBoldMatch: RegExpExecArray | null;
+  while ((biBoldMatch = biBoldRe.exec(markdown)) !== null) {
+    const label = biBoldMatch[1]!.trim();
+    const name = biBoldMatch[2]!.trim();
+    if (name === 'PrimaryEntity' || label === '核心业务对象') continue;
+    return { label, name };
+  }
+  const plainBoldRe = /\*\*([^*\n]{2,24})\*\*/g;
+  let plainBoldMatch: RegExpExecArray | null;
+  while ((plainBoldMatch = plainBoldRe.exec(markdown)) !== null) {
+    const label = plainBoldMatch[1]!.trim();
+    if (
+      /^(?:来源会话|生成版本|核心诉求摘要|业务主流程|异常处理路径|11 元模型业务本体)/.test(label)
+    ) {
+      continue;
+    }
+    const ascii = /^[A-Za-z][A-Za-z0-9_]*$/.exec(label);
+    return {
+      label,
+      ...(ascii ? { name: ascii[0] } : {}),
+    };
+  }
+  return {};
+}
+
+function inferPrimaryObjectFromProject(
+  project: ProjectDetail | undefined,
+): { name?: string; label?: string } {
+  const hay = `${project?.name ?? ''} ${project?.domain ?? ''} ${project?.description ?? ''}`;
+  if (/合同|contract/i.test(hay)) return { name: 'Contract', label: '合同' };
+  if (/供应商|supplier/i.test(hay)) return { name: 'SupplierApplication', label: '供应商准入申请' };
+  if (/工单|售后|ticket/i.test(hay)) return { name: 'ServiceTicket', label: '售后工单' };
+  return {};
+}
+
 function buildMockGeneratedPrototypeHtml(
   project: ProjectDetail | undefined,
   prompt: string,
   locale: AgentLocale,
+  confirmedRequirementsContent?: string,
 ): string {
   const hexMatches = prompt.match(/#[0-9a-fA-F]{6}\b/g) ?? [];
   const wantsDark = /深色|暗色|dark\s*mode|dark\s*cockpit|交易风|#0[0-9a-f]{5}|#1[0-9a-f]{5}/i.test(
@@ -155,9 +234,13 @@ function buildMockGeneratedPrototypeHtml(
   const border = wantsDark ? 'rgba(255,255,255,0.14)' : '#e2ddd3';
   const accent = hexMatches[1] ?? (wantsDark ? '#38bdf8' : '#2563eb');
   const firstAgg = project?.suite.M1?.aggregates?.[0];
-  const aggName = firstAgg?.name || 'BusinessOrder';
+  const fromRequirements = extractPrimaryObjectFromRequirements(confirmedRequirementsContent);
+  const fromProject = inferPrimaryObjectFromProject(project);
+  const aggName = firstAgg?.name || fromRequirements.name || fromProject.name || 'BusinessOrder';
   const aggLabel =
     firstAgg?.alias ||
+    fromRequirements.label ||
+    fromProject.label ||
     project?.name?.replace(/管理系统|平台|工作台|系统|工程/g, '').trim() ||
     (locale === 'en-US' ? 'Business Record' : '核心业务单据');
   const titleText =
@@ -397,6 +480,20 @@ function extractTargetAnchorFromArgs(
   toolName: string,
   args: Record<string, unknown>,
 ): PrototypeTargetAnchor | undefined {
+  if (toolName === 'init_prototype_shell') {
+    const screens = Array.isArray(args.screens) ? args.screens : [];
+    const first = screens[0] as Record<string, unknown> | undefined;
+    const firstId = typeof first?.screenId === 'string' && first.screenId.trim() ? first.screenId.trim() : undefined;
+    const firstName =
+      typeof first?.screenName === 'string' && first.screenName.trim() ? first.screenName.trim() : undefined;
+    return firstId ? { screenId: firstId, ...(firstName ? { label: firstName } : {}) } : undefined;
+  }
+  if (toolName === 'upsert_prototype_screen') {
+    const screenId = typeof args.screenId === 'string' && args.screenId.trim() ? args.screenId.trim() : undefined;
+    const screenName =
+      typeof args.screenName === 'string' && args.screenName.trim() ? args.screenName.trim() : undefined;
+    return screenId ? { screenId, ...(screenName ? { label: screenName } : {}) } : undefined;
+  }
   if (
     toolName !== 'read_prototype_anchor' &&
     toolName !== 'edit_prototype_anchor' &&
@@ -424,22 +521,22 @@ export const UNIFIED_AGENT_EXTRA_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'ask_user',
       description:
-        'Scoped Human-in-the-Loop tool: ONLY call when collecting missing business parameters or resolving ambiguous business choices (e.g., Class-B [待确认] requirement options). Never call to ask permission for normal tool execution.',
+        'Ask the user ONE clear business question at a time with 2-4 clickable plain-language options and freeform input allowed. ONLY call when resolving an ambiguous business choice or missing business parameter; never call to ask permission for normal tool execution, and never bundle multiple questions in one call.',
       parameters: {
         type: 'object',
         properties: {
           header: {
             type: 'string',
-            description: 'Short category badge such as B类业务决策待确认',
+            description: 'Short plain-language badge such as 需要你的业务选择 / Your choice needed',
           },
           question: {
             type: 'string',
-            description: 'Clear question asking the user to choose or fill a business value',
+            description: 'One concise business question in plain language (no model codes or IDs)',
           },
           options: {
             type: 'array',
             items: { type: 'string' },
-            description: '2-5 concrete business option strings for the user to choose from',
+            description: '2-4 concrete business-language option strings for the user to click',
           },
           multiSelect: { type: 'boolean' },
           allowFreeform: { type: 'boolean' },
@@ -531,6 +628,35 @@ export const UNIFIED_AGENT_EXTRA_TOOLS: OpenAiFunctionTool[] = [
           expectedImpact: { type: 'string' },
         },
         required: ['writebackInterfaceId', 'actionTitle'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_step_handoff',
+      description:
+        'Propose handing off a cross-step user request to the Project Step that owns it (REQUIREMENTS, PROTOTYPE, BUSINESS_MODEL, or DELIVERY). Call this instead of attempting cross-step mutations whenever the user asks for work belonging to another step.',
+      parameters: {
+        type: 'object',
+        properties: {
+          targetStep: {
+            type: 'string',
+            enum: ['REQUIREMENTS', 'PROTOTYPE', 'BUSINESS_MODEL', 'DELIVERY'],
+            description: 'Destination Project Step that owns the user request',
+          },
+          request: {
+            type: 'string',
+            description:
+              'Plain-language request to carry over verbatim as a user message in targetStep if accepted',
+          },
+          reason: {
+            type: 'string',
+            description:
+              'Concise plain-language explanation of why this request belongs in targetStep',
+          },
+        },
+        required: ['targetStep', 'request'],
       },
     },
   },
@@ -709,10 +835,10 @@ export function abortActiveAgentSession(
 export async function abortActiveAgentSessionAsync(
   store: WorkspaceStore,
   sessionId: string,
-): Promise<{ aborted: boolean; session: AgentSession | undefined }> {
+): Promise<{ aborted: boolean; runId?: string; session: AgentSession | undefined }> {
   const slot = getSessionSlot(store, sessionId);
-  const runningPromise =
-    slot?.activeRun && !slot.activeRun.done ? slot.activeRun.completionPromise : undefined;
+  const activeRun = slot?.activeRun && !slot.activeRun.done ? slot.activeRun : undefined;
+  const runningPromise = activeRun?.completionPromise;
   const aborted = abortActiveAgentSession(sessionId, 'USER_ABORT', store);
   if (runningPromise) {
     await Promise.race([runningPromise, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
@@ -726,19 +852,28 @@ export async function abortActiveAgentSessionAsync(
           updatedAt: new Date().toISOString(),
         })
       : cur;
-  return { aborted, session };
+  return {
+    aborted,
+    ...(activeRun ? { runId: activeRun.runId } : {}),
+    session,
+  };
 }
 
 // ─── SSE Event Protocol ──────────────────────────────────────────────────────
 
 export type UnifiedAgentSseEventType =
   | 'session_meta'
+  | 'heartbeat'
   | 'thinking_delta'
   | 'delta'
+  | 'tool_delta'
   | 'tool_call'
   | 'tool_result'
+  | 'subagent_update'
+  | 'prototype_preview'
   | 'artifact'
   | 'ask_user'
+  | 'step_handoff'
   | 'usage'
   | 'run_error'
   | 'message_end';
@@ -796,6 +931,169 @@ function getLazyApiForType(providerType: LlmProviderConfig['providerType']) {
   if (providerType === 'ANTHROPIC') return lazyAnthropicMessages;
   if (providerType === 'GOOGLE_GEMINI') return lazyGoogleGenAi;
   return lazyOpenAiCompletions;
+}
+
+function getBlockedStepExplanation(
+  store: WorkspaceStore,
+  session: AgentSession,
+  locale: AgentLocale,
+): string | null {
+  if (!session.projectId) return null;
+  const stepConfs = store.getProjectStepConfirmations(session.projectId);
+  const hasConfirmedProto = Boolean(
+    stepConfs.prototype ?? store.getConfirmedPrototypeRevision(session.projectId),
+  );
+
+  if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+    const hasPrototype = store.listPrototypes(session.projectId).length > 0;
+    if (!stepConfs.requirements && !hasConfirmedProto && !hasPrototype) {
+      return pickLocaleText(
+        locale,
+        '原型步骤还不能开始：已收到你的请求。请先在「需求」步骤完成并确认需求文档，确认后我会依据该需求文档为你生成并调整界面原型。',
+        'Prototype cannot start yet: I have noted your request here. Please confirm the requirements document in the Requirements step first, and I will generate and refine the prototype from that confirmed version.',
+      );
+    }
+    return null;
+  }
+
+  if (session.agentKind === 'COPILOT') {
+    const project = store.getProject(session.projectId);
+    const hasOntology = (project?.validation.presentModels.length ?? 0) > 0;
+    if (project && !hasConfirmedProto && !stepConfs.businessModel && !hasOntology) {
+      return pickLocaleText(
+        locale,
+        '业务模型步骤还不能开始：已收到你的请求。请先在「原型」步骤确认界面原型，确认后我会结合这份请求为你整理业务模型。',
+        'Business Model cannot start yet: I have noted your request here. Please confirm the interactive prototype in the Prototype step first, and I will incorporate this into the Business Model once ready.',
+      );
+    }
+    return null;
+  }
+
+  if (session.agentKind === 'CODING') {
+    const hasApps = store
+      .listAssembledApplications()
+      .some((app) => app.projectId === session.projectId);
+    const hasSkills = store.listGeneratedSkills(session.projectId).length > 0;
+    if (!stepConfs.businessModel && !hasApps && !hasSkills) {
+      return pickLocaleText(
+        locale,
+        '交付步骤还不能开始：已收到你的请求。请先在「业务模型」步骤完成并确认业务模型，确认后即可在这里完善交付说明并生成开发资料包。',
+        'Delivery cannot start yet: I have noted your request here. Please confirm the Business Model in the Business Model step first before preparing deliverables and generating the development package.',
+      );
+    }
+    return null;
+  }
+
+  return null;
+}
+
+function detectMockStepHandoff(
+  kind: AgentSessionKind,
+  userPrompt: string,
+  locale: AgentLocale,
+): { targetStep: ProjectStepId; reason: string } | null {
+  const clean = userPrompt.trim();
+  if (!clean || clean.length > 240 || /\n#\s/.test(clean)) return null;
+  if (
+    /^\[ACTION:[A-Z_]+/.test(clean) ||
+    /\[(?:用户已确认选择|User Confirmed Choice|Visual Element Annotations|用户可视化圈选|PROTOTYPE_BRIEF_RESTYLE|Target application ID:|TEST_)/.test(
+      clean,
+    ) ||
+    /确认设计简报|Confirm Brief|更新当前原型|Update the existing prototype|\belement=[A-Za-z0-9_-]+|\bscreen=[A-Za-z0-9_-]+/i.test(
+      clean,
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    kind !== 'CODING' &&
+    kind !== 'ARCHITECTURE' &&
+    /(?:生成|下载|导出|打包|编译).*(?:开发资料包|开发包|交付包|交付资料包)|(?:generate|download|compile|export)\s+(?:the\s+)?(?:dev(?:elopment)?\s+package|deliverable\s+package)/i.test(
+      clean,
+    )
+  ) {
+    return {
+      targetStep: 'DELIVERY',
+      reason: pickLocaleText(
+        locale,
+        '开发资料包的生成与交付准备属于「交付」步骤的范围',
+        'Generating and preparing the development package belongs in the Delivery step',
+      ),
+    };
+  }
+
+  if (
+    kind !== 'PROTOTYPE_CO_DESIGN' &&
+    (/(?:在|给|把|调整|修改).*(?:界面原型|原型(?:页面|台账|表格|卡片|按钮)?).*(?:加一列|增加一列|新增一列|按钮|配色|颜色|间距|布局|筛选|字段|列)|(?:界面原型|原型表格|原型页面).*(?:加一列|增加|新增|修改|调整)|(?:add|insert|change|update|restyle)\b.*\b(?:column|button|color|layout|spacing|filter)\b.*\bprototype\b|\bprototype\s+(?:screen|page|table|button|layout)\b/i.test(
+      clean,
+    ))
+  ) {
+    return {
+      targetStep: 'PROTOTYPE',
+      reason: pickLocaleText(
+        locale,
+        '界面布局、表格列与页面控件调整属于「原型」步骤的范围',
+        'Screen layout, table columns, and visual controls belong in the Prototype step',
+      ),
+    };
+  }
+
+  if (
+    kind !== 'REQUIREMENT' &&
+    (/(?:修改|更新|补充|重写).*(?:需求文档|需求规格书)|(?:在|往)(?:需求文档|需求规格书)(?:里|中)|(?:update|edit|revise|rewrite)\s+(?:the\s+)?requirements\s+document/i.test(
+      clean,
+    ))
+  ) {
+    return {
+      targetStep: 'REQUIREMENTS',
+      reason: pickLocaleText(
+        locale,
+        '修改需求文档章节与整体业务范围属于「需求」步骤的范围',
+        'Editing the requirements document and overall scope belongs in the Requirements step',
+      ),
+    };
+  }
+
+  if (
+    kind === 'PROTOTYPE_CO_DESIGN' &&
+    !/原型|界面|页面|屏幕|按钮|配色|背景色|字号|间距|文案|徽章|三屏|响应式|列宽|筛选|表格|表单|字段|布局|视觉风格|prototype|screen|page|button|color|spacing|font|badge|column|filter|table|form|field|layout|style/i.test(
+      clean,
+    ) &&
+    (/(?:总经理|总监|主管|副总|法务|财务|会签|分级|多级)?审批|(?:业务|校验|准入|风控|权限)规则|角色权限|超过\s*\d+.*(?:审批|拦截|复核)|(?:approval|validation|permission)\s+rule|require.*approval|over\s+\$?\d+.*approv/i.test(
+      clean,
+    ))
+  ) {
+    return {
+      targetStep: 'BUSINESS_MODEL',
+      reason: pickLocaleText(
+        locale,
+        '业务规则、审批条件与角色权限属于「业务模型」步骤的范围',
+        'Business rules, approval thresholds, and role permissions belong in the Business Model step',
+      ),
+    };
+  }
+
+  if (
+    (kind === 'CODING' || kind === 'ARCHITECTURE') &&
+    !/验收条件|开发规格|实施规格|开发说明|补充说明|技术规范|acceptance\s+criteria|implementation\s+spec/i.test(
+      clean,
+    ) &&
+    (/(?:在业务模型|去业务模型|业务模型里|业务模型中)|(?:新增|添加|修改)(?:一条|一个)?(?:业务规则|业务对象|角色权限)|(?:in|to)\s+the\s+business\s+model/i.test(
+      clean,
+    ))
+  ) {
+    return {
+      targetStep: 'BUSINESS_MODEL',
+      reason: pickLocaleText(
+        locale,
+        '业务对象、业务规则与角色权限属于「业务模型」步骤的范围',
+        'Business objects, business rules, and role permissions belong in the Business Model step',
+      ),
+    };
+  }
+
+  return null;
 }
 
 function extractUserMessageText(msg: Extract<Message, { role: 'user' }> | undefined): string {
@@ -887,23 +1185,23 @@ function buildFauxMockModels(
               'ask_user',
               loc === 'en-US'
                 ? {
-                    header: 'Class-B Decision Pending',
-                    question: `For "${userPrompt.slice(0, 48)}", select the exception & approval policy:`,
+                    header: 'Your choice needed',
+                    question: `For "${userPrompt.slice(0, 48)}", how should exceptions and approvals be handled?`,
                     options: [
-                      'Synchronous Precondition Block (M2): reject invalid submissions immediately',
-                      'Escalated M6 Approval Flow: keep draft and route to dual sign-off',
-                      'Async Risk Hold (Writeback): accept order and hold downstream settlement',
+                      'Block submission immediately until all conditions are met',
+                      'Keep as draft and route to joint legal and finance approval',
+                      'Allow registration first while pausing downstream settlement',
                     ],
                     multiSelect: false,
                     allowFreeform: true,
                   }
                 : {
-                    header: 'B类业务边界待确认',
-                    question: `针对「${userPrompt.slice(0, 36)}」，请选择异常处理与审批流转策略：`,
+                    header: '需要你的业务选择',
+                    question: `针对「${userPrompt.slice(0, 36)}」，你希望采用哪种处理方式？`,
                     options: [
-                      '同步前置阻断 (M2 Precondition)：提交时实时拦截零脏数据落库',
-                      '进入 M6 特批会签流：保留草稿并自动升级至法务与财务总监双签',
-                      '异步风控冻结 (WB-01)：允许登记单据但自动冻结下游结算批次',
+                      '提交时直接拦截，补齐条件后再允许提交',
+                      '保留草稿并进入特批会签，由法务与财务共同审批',
+                      '先允许登记，同时自动暂停后续结算付款',
                     ],
                     multiSelect: false,
                     allowFreeform: true,
@@ -914,20 +1212,79 @@ function buildFauxMockModels(
         );
       }
 
-      if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
-        const targetProto = resolveTargetPrototypeForSession(store, session);
-        if (!targetProto) {
+      // Cross-step handoff check (when not already executing a handed-off turn)
+      const latestSessionRecord = store.getAgentSession(session.id) ?? session;
+      const lastPersistedUser = [...latestSessionRecord.messages]
+        .reverse()
+        .find((m) => m.role === 'user');
+      const isHandedOffTurn = Boolean(lastPersistedUser?.handoffFrom);
+      if (!parsedAction && !hasResolvedChoice && !isHandedOffTurn) {
+        const handoffCandidate = detectMockStepHandoff(session.agentKind, userPrompt, loc);
+        if (handoffCandidate) {
           return fauxAssistantMessage(
             [
               fauxThinking(
                 pickLocaleText(
                   loc,
-                  `正在根据已确认的设计简报、参考设计令牌与 7 组交互动效硬约束生成首版响应式原型（1440px / 768px / 390px），并挂载完整 MU 语义锚点。`,
-                  `Generating initial responsive prototype (1440px / 768px / 390px) from the confirmed Design Brief, design tokens, and 7 motion constraints with full MU semantic anchors.`,
+                  `识别到跨步骤请求，当前步骤不做跨界改动，调用 propose_step_handoff 提供一键步骤转交卡片。`,
+                  `Detected a cross-step request; preserving strict step isolation and calling propose_step_handoff.`,
+                ),
+              ),
+              fauxToolCall('propose_step_handoff', {
+                targetStep: handoffCandidate.targetStep,
+                request: userPrompt.trim(),
+                reason: handoffCandidate.reason,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+      }
+
+      // Blocked-step check (#48 Decision #3): if this step cannot start yet, explain what upstream step confirmation is needed without mutating
+      const blockedStepMessage = !parsedAction
+        ? getBlockedStepExplanation(store, latestSessionRecord, loc)
+        : null;
+      if (
+        blockedStepMessage &&
+        (isHandedOffTurn ||
+          session.agentKind !== 'COPILOT' ||
+          !/\b(?:aggregate|entity)\s+[A-Z][A-Za-z0-9]+/.test(userPrompt))
+      ) {
+        return fauxAssistantMessage([fauxText(blockedStepMessage)]);
+      }
+
+      if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+        const targetProto = resolveTargetPrototypeForSession(store, session);
+        if (!targetProto) {
+          const confirmedReq = store.getProjectStepConfirmations(session.projectId).requirements;
+          if (!confirmedReq) {
+            return fauxAssistantMessage([
+              fauxText(
+                pickLocaleText(
+                  loc,
+                  '原型步骤还不能开始：请先在「需求」步骤完成并确认需求文档，确认后我会依据该需求文档为你生成界面原型。',
+                  'Prototype cannot start yet: please confirm the requirements document in the Requirements step first, and I will generate the prototype from that confirmed version.',
+                ),
+              ),
+            ]);
+          }
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在根据已确认的需求文档「${confirmedReq.title}」与设计简报生成首版响应式原型（1440px / 768px / 390px），并挂载完整语义锚点。`,
+                  `Generating initial responsive prototype (1440px / 768px / 390px) from confirmed requirements "${confirmedReq.title}" and the Design Brief.`,
                 ),
               ),
               fauxToolCall('rewrite_prototype_page', {
-                htmlContent: buildMockGeneratedPrototypeHtml(project, userPrompt, loc),
+                htmlContent: buildMockGeneratedPrototypeHtml(
+                  project,
+                  userPrompt,
+                  loc,
+                  confirmedReq.content,
+                ),
                 allowAnchorReset: true,
               }),
             ],
@@ -1222,6 +1579,43 @@ function buildFauxMockModels(
       }
 
       if (session.agentKind === 'REQUIREMENT') {
+        const existingPrimaryDoc = store.listRequirementDocs(session.projectId)[0];
+        if (
+          existingPrimaryDoc &&
+          !parsedAction &&
+          /更新需求文档|修改需求文档|在需求文档(?:里|中)|补充到需求文档|(?:update|revise)\s+requirements\s+document/i.test(
+            userPrompt,
+          )
+        ) {
+          const cleanNote = userPrompt
+            .replace(/^(?:请|麻烦)?(?:帮我)?(?:更新需求文档|修改需求文档|补充到需求文档)\s*[:：，,]?\s*/i, '')
+            .trim() || userPrompt.trim();
+          const updatedMarkdown = `${existingPrimaryDoc.content.trimEnd()}\n\n## 补充业务约定\n- ${cleanNote}\n`;
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `正在按用户最新说明更新当前需求文档的相关章节。`,
+                  `Updating the requirements document sections with your latest instructions.`,
+                ),
+              ),
+              fauxToolCall('save_synthesized_srs_doc', {
+                docId: existingPrimaryDoc.id,
+                title: existingPrimaryDoc.title,
+                status: 'DRAFT',
+                content: updatedMarkdown,
+                reason: pickLocaleText(
+                  loc,
+                  '按你补充的业务说明在需求文档中增加了相应章节与约定。',
+                  'Added the requested business conventions to the requirements document.',
+                ),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+
         if (
           parsedAction?.kind === 'SYNTHESIZE_SRS' ||
           /合成\s*SRS|合成需求规格|生成\s*SRS|synthesize\s+(?:9[- ]chapter\s+)?srs/i.test(userPrompt)
@@ -1236,6 +1630,17 @@ function buildFauxMockModels(
           const srsContent = project
             ? buildDeterministicSrsMarkdown(store, project, reqSession, session, loc)
             : '# 需求规格说明书\n\n## 1. 引言与业务目标 (Introduction & Business Goals)\n';
+          const reason = existingPrimaryDoc
+            ? pickLocaleText(
+                loc,
+                '结合最新对话中的业务要点重新整理并更新了需求文档各章节。',
+                'Refreshed the requirements document sections from your latest conversation points.',
+              )
+            : pickLocaleText(
+                loc,
+                '根据对话中确认的业务对象、规则与约定整理出首版需求文档。',
+                'Organized the initial requirements document from your confirmed business objects and rules.',
+              );
           return fauxAssistantMessage(
             [
               fauxThinking(
@@ -1252,8 +1657,9 @@ function buildFauxMockModels(
                 ...(typeof parsedAction?.params.title === 'string' && parsedAction.params.title
                   ? { title: parsedAction.params.title }
                   : {}),
-                status: 'CONFIRMED',
+                status: 'DRAFT',
                 content: srsContent,
+                reason,
               }),
             ],
             { stopReason: 'toolUse' },
@@ -1384,6 +1790,51 @@ function buildFauxMockModels(
           userPrompt.includes('规则') ||
           userPrompt.includes('校验') ||
           lower.includes('rule');
+        const explicitlyBehavior =
+          !explicitlyRule &&
+          (userPrompt.includes('业务操作') ||
+            userPrompt.includes('操作') ||
+            userPrompt.includes('行为') ||
+            lower.includes('behavior') ||
+            lower.includes('action') ||
+            activeModelCode === 'M2');
+
+        if (explicitlyBehavior) {
+          const nextBehIdx = (project?.suite.M2?.behaviors.length ?? 4) + 1;
+          const targetOwner = project?.suite.M1?.aggregates[0]?.name ?? 'Contract';
+          const bracketMatch = /[『「"']([^』」"']+)[』」"']/.exec(userPrompt)?.[1]?.trim();
+          const afterKeywordMatch = /(?:业务操作|操作|行为|action|behavior)\s*[:：]?\s*([^\s，,。.!！;；]+)/i
+            .exec(userPrompt)?.[1]
+            ?.trim();
+          const behAlias =
+            bracketMatch ||
+            afterKeywordMatch ||
+            pickLocaleText(loc, '提交审批', 'Submit for Approval');
+          const behName =
+            behAlias === '提交审批' || /submit\s+for\s+approval/i.test(behAlias)
+              ? 'SubmitForApproval'
+              : `BusinessAction0${nextBehIdx}`;
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  loc,
+                  `解析到业务操作建模意图，调用 upsert_behavior 写入结构化操作并执行一致性校验。`,
+                  `Parsed action modeling intent; calling upsert_behavior and validating suite consistency.`,
+                ),
+              ),
+              fauxToolCall('upsert_behavior', {
+                id: `BHV-0${nextBehIdx}`,
+                name: behName,
+                alias: behAlias,
+                ownerEntity: targetOwner,
+                behaviorType: 'COMMAND',
+                triggerType: 'USER_ACTION',
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
 
         if (
           !explicitlyRule &&
@@ -1507,6 +1958,57 @@ function buildFauxMockModels(
           .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
           .map((c) => c.text)
           .join('\n') ?? '';
+
+      if (lastResult?.toolName === 'propose_step_handoff' && !lastResult.isError) {
+        const parsedHandoff = extractJsonObjectFromText<{
+          targetStep?: ProjectStepId;
+          reason?: string;
+        }>(lastResultText);
+        const stepId = parsedHandoff?.targetStep ?? 'BUSINESS_MODEL';
+        const stepName = PROJECT_STEP_NAMES[stepId];
+        const reasonText = parsedHandoff?.reason?.trim();
+        return fauxAssistantMessage([
+          fauxText(
+            loc === 'en-US'
+              ? `${reasonText ? `${reasonText}. ` : `This request belongs in the ${stepName.en} step. `}I kept the current step unchanged and prepared a hand-off card below so you can continue in ${stepName.en} or stay here.`
+              : `${reasonText ? `${reasonText}。` : `这项内容属于「${stepName.zh}」步骤的范围。`}我不会在当前步骤直接改动，已在下方准备好转交卡片，你可以转到该步骤继续，也可以选择留在这里。`,
+          ),
+        ]);
+      }
+
+      if (session.agentKind === 'REQUIREMENT') {
+        if (lastResult?.isError) {
+          return fauxAssistantMessage([
+            fauxText(
+              pickLocaleText(
+                loc,
+                '需求整理过程中遇到问题，请补充描述或重试。',
+                'Could not update the requirements document; please add more detail or retry.',
+              ),
+            ),
+          ]);
+        }
+        if (lastResult?.toolName === 'save_synthesized_srs_doc') {
+          return fauxAssistantMessage([
+            fauxText(
+              pickLocaleText(
+                loc,
+                '已整理并更新需求文档，你可以在右侧逐章核对内容，确认无误后点击「确认需求文档」。',
+                'Updated the requirements document. Review the sections on the right and click Confirm requirements when ready.',
+              ),
+            ),
+          ]);
+        }
+        return fauxAssistantMessage([
+          fauxText(
+            pickLocaleText(
+              loc,
+              '已记录你提到的业务对象、规则与约定。你可以继续补充流程细节，或整理成完整需求文档。',
+              'Recorded the business objects, rules, and choices from your message. Continue adding details or generate the full requirements document.',
+            ),
+          ),
+        ]);
+      }
 
       if (session.agentKind === 'ARCHITECTURE' || session.agentKind === 'CODING') {
         const result = extractJsonObjectFromText<Record<string, unknown>>(lastResultText);
@@ -1665,6 +2167,40 @@ function buildFauxMockModels(
       }
 
       const freshProject = resolveProjectDetail(store, session.projectId) ?? project;
+      if (session.agentKind === 'COPILOT') {
+        const isInspectionOnly =
+          toolResults.length > 0 &&
+          toolResults.every((tr) => tr.toolName === 'inspect_ontology_model');
+        return fauxAssistantMessage([
+          fauxThinking(
+            pickLocaleText(
+              loc,
+              `工具执行与一致性校验已完成，正在汇总业务模型说明。`,
+              `Tool execution and consistency validation finished; summarizing business model update.`,
+            ),
+          ),
+          fauxText(
+            isInspectionOnly
+              ? pickLocaleText(
+                  loc,
+                  `已检查当前业务模型的结构与状态，目前共有 ${freshProject?.validation.errorCount ?? 0} 个需要修正的问题。`,
+                  `Reviewed the current business model; ${freshProject?.validation.errorCount ?? 0} problems to fix.`,
+                )
+              : lastResult?.isError
+                ? pickLocaleText(
+                    loc,
+                    `由于与其他业务对象或规则存在关联约束，本次改动未生效，请确认关联影响后再试。`,
+                    `This change could not be applied because other business objects or rules depend on it.`,
+                  )
+                : pickLocaleText(
+                    loc,
+                    `已按你的说明更新业务模型，具体调整已列在下方变更说明中，点击任意条目即可定位到对应业务对象。`,
+                    `Updated the business model according to your request; review the change summary below or click any item to locate it on the canvas.`,
+                  ),
+          ),
+        ]);
+      }
+
       const summaryLines = toolResults.slice(-3).map((tr) => {
         const txt = tr.content
           .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
@@ -1905,7 +2441,7 @@ export function buildPiModelsForStore(
       cost: ZERO_MODEL_COST,
       reasoning: true,
       contextWindow: 128000,
-      maxTokens: 16384,
+      maxTokens: 32768,
     }));
 
     const provider = createProvider({
@@ -1972,7 +2508,10 @@ export function buildPiModelsForStore(
 
 // ─── System Prompt & Toolset Builder per Agent Kind ──────────────────────────
 
-function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
+export function getToolsForAgentKind(
+  kind: AgentSessionKind,
+  options?: { codeMode?: boolean; multiAgentConcurrency?: number },
+): Tool[] {
   const toPiTool = (spec: OpenAiFunctionTool): Tool => ({
     name: spec.function.name,
     description: spec.function.description,
@@ -1983,59 +2522,80 @@ function getToolsForAgentKind(kind: AgentSessionKind): Tool[] {
   const extraByName = new Map(
     UNIFIED_AGENT_EXTRA_TOOLS.map((t) => [t.function.name, toPiTool(t)]),
   );
+  const stepHandoffTool = extraByName.get('propose_step_handoff')!;
 
-  switch (kind) {
-    case 'REQUIREMENT':
-      return [
-        extraByName.get('record_requirement_insights')!,
-        extraByName.get('save_synthesized_srs_doc')!,
-        extraByName.get('inspect_ontology_model')!,
-        extraByName.get('ask_user')!,
-      ];
-    case 'COPILOT':
-      return [
-        ...ontologyTools,
-        extraByName.get('synthesize_ontology_suite')!,
-        extraByName.get('inspect_ontology_model')!,
-        extraByName.get('ask_user')!,
-      ];
-    case 'ARCHITECTURE':
-      return [
-        extraByName.get('read_architecture_assets')!,
-        extraByName.get('save_architecture_asset')!,
-        extraByName.get('save_tech_architecture_spec')!,
-        extraByName.get('ask_user')!,
-      ];
-    case 'CODING':
-      return [
-        extraByName.get('read_application_inputs')!,
-        extraByName.get('save_application_instructions')!,
-        extraByName.get('inspect_ontology_model')!,
-        extraByName.get('ask_user')!,
-      ];
-    case 'CAPABILITY':
-      return [
-        extraByName.get('invoke_mcp_tool')!,
-        extraByName.get('run_ontology_extraction')!,
-        extraByName.get('inspect_ontology_model')!,
-        extraByName.get('ask_user')!,
-      ];
-    case 'REASONING':
-      return [
-        extraByName.get('run_readonly_sql')!,
-        extraByName.get('propose_policy_writeback')!,
-        extraByName.get('save_metric_insight')!,
-        extraByName.get('save_scenario_attribution_report')!,
-        extraByName.get('inspect_ontology_model')!,
-        extraByName.get('ask_user')!,
-      ];
-    case 'PROTOTYPE_CO_DESIGN':
-      return [
-        ...PROTOTYPE_ANCHOR_OPENAI_TOOLS.map(toPiTool),
-        extraByName.get('inspect_ontology_model')!,
-        extraByName.get('ask_user')!,
-      ];
+  const baseTools = ((): Tool[] => {
+    switch (kind) {
+      case 'REQUIREMENT':
+        return [
+          extraByName.get('record_requirement_insights')!,
+          extraByName.get('save_synthesized_srs_doc')!,
+          extraByName.get('inspect_ontology_model')!,
+          extraByName.get('ask_user')!,
+          stepHandoffTool,
+        ];
+      case 'COPILOT':
+        return [
+          ...ontologyTools,
+          extraByName.get('synthesize_ontology_suite')!,
+          extraByName.get('inspect_ontology_model')!,
+          extraByName.get('ask_user')!,
+          stepHandoffTool,
+        ];
+      case 'ARCHITECTURE':
+        return [
+          extraByName.get('read_architecture_assets')!,
+          extraByName.get('save_architecture_asset')!,
+          extraByName.get('save_tech_architecture_spec')!,
+          extraByName.get('ask_user')!,
+          stepHandoffTool,
+        ];
+      case 'CODING':
+        return [
+          extraByName.get('read_application_inputs')!,
+          extraByName.get('save_application_instructions')!,
+          extraByName.get('inspect_ontology_model')!,
+          extraByName.get('ask_user')!,
+          stepHandoffTool,
+        ];
+      case 'CAPABILITY':
+        return [
+          extraByName.get('invoke_mcp_tool')!,
+          extraByName.get('run_ontology_extraction')!,
+          extraByName.get('inspect_ontology_model')!,
+          extraByName.get('ask_user')!,
+          stepHandoffTool,
+        ];
+      case 'REASONING':
+        return [
+          extraByName.get('run_readonly_sql')!,
+          extraByName.get('propose_policy_writeback')!,
+          extraByName.get('save_metric_insight')!,
+          extraByName.get('save_scenario_attribution_report')!,
+          extraByName.get('inspect_ontology_model')!,
+          extraByName.get('ask_user')!,
+          stepHandoffTool,
+        ];
+      case 'PROTOTYPE_CO_DESIGN':
+        return [
+          ...PROTOTYPE_ANCHOR_OPENAI_TOOLS.map(toPiTool),
+          extraByName.get('inspect_ontology_model')!,
+          extraByName.get('ask_user')!,
+          stepHandoffTool,
+        ];
+    }
+  })();
+
+  if (!options) return baseTools;
+
+  const extras: Tool[] = [];
+  if ((options.multiAgentConcurrency ?? 1) > 1) {
+    extras.push(toPiTool(SPAWN_SUBAGENTS_OPENAI_TOOL));
   }
+  if (options.codeMode) {
+    extras.push(toPiTool(CODEMODE_OPENAI_TOOL));
+  }
+  return extras.length > 0 ? [...baseTools, ...extras] : baseTools;
 }
 
 function latestUserPrompt(session: AgentSession): string | undefined {
@@ -2051,7 +2611,22 @@ function buildSystemPromptForSession(
   session: AgentSession,
   activeModelCode?: ModelCode,
   locale: AgentLocale = 'zh-CN',
+  execOptions?: {
+    codeMode?: boolean;
+    multiAgentConcurrency?: number;
+    offeredTools?: readonly Tool[];
+  },
 ): string {
+  const withExecFooter = (corePrompt: string): string => {
+    if (!execOptions?.codeMode || !execOptions.offeredTools) {
+      return corePrompt;
+    }
+    return `${corePrompt}\n\n${renderCodemodePromptSection(
+      execOptions.offeredTools,
+      locale,
+      execOptions.multiAgentConcurrency ?? 3,
+    )}`;
+  };
   const project = resolveProjectDetail(store, session.projectId);
   const writebacks =
     session.agentKind === 'REASONING'
@@ -2094,6 +2669,10 @@ function buildSystemPromptForSession(
       `2. ONLY call \`ask_user\` when required business parameters are missing or a Class-B business boundary ambiguity requires a human decision.`,
       `3. If an ontology mutation returns an 11-model consistency error (isError=true), read the diagnostics and self-repair in the same turn.`,
       `4. Always use the term "Ontology Extraction" — never "reverse engineering".`,
+      `5. Step Isolation & Hand-off: NEVER execute mutations belonging to another Project Step (REQUIREMENTS=scope & requirements doc; PROTOTYPE=screen layout, table columns, buttons & visual styling; BUSINESS_MODEL=business objects, actions, business/approval rules, roles & permissions, flows, reports, storage & integrations; DELIVERY=application implementation specs & development package). When the user asks for work belonging to another step, explain briefly in plain business language and call \`propose_step_handoff\` with \`targetStep\`, \`request\`, and \`reason\`.`,
+      getBlockedStepExplanation(store, session, 'en-US')
+        ? `[Current Step Status — Cannot Start Yet] ${getBlockedStepExplanation(store, session, 'en-US')} Do NOT call any mutation or synthesis tools until the upstream step is confirmed.`
+        : '',
     ]
       .filter(Boolean)
       .join('\n');
@@ -2121,40 +2700,54 @@ function buildSystemPromptForSession(
       return `${baseHeaderEn}\nYou are the Application Development Agent, helping refine an application implementation specification. Conversation follows the user's language. Author application implementation instructions saved via save_application_instructions in English; original Chinese business material may remain only as clearly quoted source. Target application ID: ${session.targetId ?? '(unselected)'}. Read read_application_inputs before recommending changes; inspect the requirements, confirmed prototype, Ontology Suite, selected Technology Profile and standards, and existing application instructions. Ontology defines business semantics, the confirmed prototype defines UI intent, and the selected standards define engineering constraints. Diagnose missing inputs and explicit contradictions, and ask_user for unresolved choices. Preserve Stage Warnings as non-blocking. Save the complete refined application-specific Markdown with save_application_instructions. Record unresolved explicit contradictions in developmentBlockers to block formal package generation; omission preserves the previous list, and [] is allowed only after resolving those contradictions with the user. An explicit application must belong to this session project; never substitute an unrelated application or standard. Shared standards are authored in the Architecture Asset Agent. Development Package generation is an ordinary explicit action after inputs are resolved. Your tools refine specifications; do not claim code implementation, build or test execution.\nSaved target inputs (use read_application_inputs for full references): ${applicationContext}`;
     }
     if (session.agentKind === 'REQUIREMENT') {
-      return `${baseHeaderEn}\nFollow Class-A/B progressive grilling: tag standard audit/engineering defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], call ask_user for unresolved Class-B decisions (or tag [Pending]), call record_requirement_insights to persist candidate aggregates and rules, and when asked to synthesize the SRS ([ACTION:SYNTHESIZE_SRS ...] or user request), MUST call save_synthesized_srs_doc with the complete 9-chapter Markdown specification (## 1. through ## 9., including ### 9.1 through ### 9.7).`;
+      return `${baseHeaderEn}\nFollow progressive business requirement clarification: auto-complete standard defaults with [AI Auto-Completed], tag confirmed business rules with [Confirmed], and when a business choice is needed, call ask_user to ask ONLY ONE question at a time with 2-4 plain business-language options (no model codes or IDs) and allowFreeform: true. Call record_requirement_insights to persist candidate business objects and rules, and when asked to synthesize the requirements document ([ACTION:SYNTHESIZE_SRS ...] or user request), MUST call save_synthesized_srs_doc with the complete 9-chapter Markdown specification (## 1. through ## 9., including ### 9.1 through ### 9.7).`;
     }
     if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+      const confirmedReq = store.getProjectStepConfirmations(session.projectId).requirements;
+      const confirmedReqSection = confirmedReq
+        ? `Confirmed Requirements Document (${confirmedReq.title} ${confirmedReq.version}):\n${confirmedReq.content.slice(0, 3000)}`
+        : `Confirmed Requirements Document: NOT YET CONFIRMED. If asked to generate a new prototype before Requirements are confirmed, explain in plain business language that the user must confirm the requirements document in the Requirements step first.`;
       const proto = resolveTargetPrototypeForSession(store, session);
       if (!proto) {
-        return [
-          baseHeaderEn,
-          `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
-          `Initial Prototype Generation Rules:`,
-          `1. Call \`rewrite_prototype_page\` with \`allowAnchorReset: true\` and a complete, self-contained HTML5 document.`,
-          `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, 7 interactive motion specifications, and SRS scope.`,
-          `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
-          `4. Ensure clean responsive layout across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
-          `5. If \`rewrite_prototype_page\` returns isError=true, fix the semantic anchors and retry in the same turn.`,
-        ].join('\n');
+        const useParallel = (execOptions?.multiAgentConcurrency ?? 1) > 1;
+        return withExecFooter(
+          [
+            baseHeaderEn,
+            confirmedReqSection,
+            `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
+            `Initial Prototype Generation Rules:`,
+            useParallel
+              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`init_prototype_shell\` with 3–4 screen artboards matching the requirements and Design Brief tokens so the user sees live artboards immediately; THEN call \`spawn_subagents\` (directly or inside \`codemode\`) so ${execOptions?.multiAgentConcurrency ?? 3} parallel subagents build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
+              : `1. Call \`rewrite_prototype_page\` with \`allowAnchorReset: true\` (or \`init_prototype_shell\` + \`upsert_prototype_screen\`) ONLY when a Confirmed Requirements Document is present above.`,
+            `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, interactive motion specifications, and the Confirmed Requirements Document scope (never unconfirmed drafts).`,
+            `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
+            `4. Ensure clean responsive layout across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
+            `5. If an anchor validator returns isError=true, fix the semantic anchors and retry in the same turn.`,
+          ].join('\n'),
+        );
       }
       const overview = listPrototypeAnchors(proto.htmlContent);
       const screensDesc =
         overview.screens
           .map((s) => `${s.screenId}(${s.screenName}:${s.screenType}, elements=${s.elementCount})`)
           .join(', ') || 'none';
-      return [
-        baseHeaderEn,
-        `Target Interactive Prototype: ${proto.name} (ID: ${proto.id}, Version: ${proto.version}).`,
-        `Screens in prototype: ${screensDesc}.`,
-        `Prototype Co-Design Rules:`,
-        `1. Always call \`read_prototype_anchor\` (or \`list_prototype_anchors\`) first to inspect ONLY the targeted element or screen without reading unrelated screens.`,
-        `2. For localized refinements, ALWAYS call \`edit_prototype_anchor\` (\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`) so untouched screens and sibling elements stay byte-for-byte identical.`,
-        `3. Reserve \`rewrite_prototype_page\` strictly for whole-page visual restyling or brand-new prototype generation.`,
-        `4. Preserve existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors, add valid \`data-element-id\` + \`data-element-type\` on every new <button>/<input>/<select>/<textarea>, and NEVER use window.alert/confirm/prompt.`,
-        `5. If an edit tool returns isError=true, fix the semantic anchors and retry in the same turn.`,
-      ].join('\n');
+      return withExecFooter(
+        [
+          baseHeaderEn,
+          `Target Interactive Prototype: ${proto.name} (ID: ${proto.id}, Version: ${proto.version}).`,
+          `Screens in prototype: ${screensDesc}.`,
+          `Prototype Co-Design Rules:`,
+          `1. Always call \`read_prototype_anchor\` (or \`list_prototype_anchors\`) first to inspect ONLY the targeted element or screen without reading unrelated screens.`,
+          `2. For localized refinements, ALWAYS call \`edit_prototype_anchor\` (\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`) or \`upsert_prototype_screen\` so untouched screens stay intact.`,
+          `3. For whole-page visual restyling across multiple screens, prefer \`spawn_subagents\` with \`upsert_prototype_screen\` per screen.`,
+          `4. Preserve existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors, add valid \`data-element-id\` + \`data-element-type\` on every new <button>/<input>/<select>/<textarea>, and NEVER use window.alert/confirm/prompt.`,
+          `5. If an edit tool returns isError=true, fix the semantic anchors and retry in the same turn.`,
+        ].join('\n'),
+      );
     }
-    return `${baseHeaderEn}\nCurrent M1 aggregates: ${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || 'none'}; M3 rules count: ${project?.suite.M3?.rules.length ?? 0}. When asked to synthesize the 11-model Ontology Suite from the prototype ([ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...] or user request), MUST call synthesize_ontology_suite.`;
+    return withExecFooter(
+      `${baseHeaderEn}\nCurrent M1 aggregates: ${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || 'none'}; M3 rules count: ${project?.suite.M3?.rules.length ?? 0}. When asked to synthesize the 11-model Ontology Suite from the prototype ([ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...] or user request), MUST call synthesize_ontology_suite.`,
+    );
   }
 
   const baseHeader = [
@@ -2170,6 +2763,10 @@ function buildSystemPromptForSession(
     `2. 仅当缺少必填业务参数或存在 B 类业务规则分歧需要用户拍板时，才调用 \`ask_user\` 工具弹出结构化单选/多选卡片。`,
     `3. 若本体变更工具返回 11 模型一致性错误（isError=true），请仔细阅读错误诊断并在本轮自动修正参数重试。`,
     `4. 严禁使用“逆向”或“逆向工程”字眼，统一使用“本体萃取 (Ontology Extraction)”。`,
+    `5. 跨步骤隔离与步骤转交准则：严禁在当前会话中执行其他步骤的改动（REQUIREMENTS=需求范围与需求文档；PROTOTYPE=页面布局、表格列、按钮与视觉样式；BUSINESS_MODEL=业务对象、业务操作、审批与校验等业务规则、角色权限、流程、报表、存储与接口；DELIVERY=应用实施说明与开发资料包）。当用户提出属于其他步骤的请求时，请用通俗业务语言简要说明原因，并调用 \`propose_step_handoff\` 工具（传入 \`targetStep\`、原样携带的 \`request\` 与 \`reason\`）生成转交卡片。`,
+    getBlockedStepExplanation(store, session, 'zh-CN')
+      ? `【当前步骤状态：还不能开始】${getBlockedStepExplanation(store, session, 'zh-CN')} 在上游步骤确认前，严禁调用任何写入或合成工具。`
+      : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -2188,49 +2785,70 @@ function buildSystemPromptForSession(
   if (session.agentKind === 'CAPABILITY') {
     const caps = project ? inspectOntologyMcpCapabilities(project) : null;
     const toolNames = caps?.tools.map((t) => `${t.name}(${t.sourceModel})`).join(', ') ?? '无';
-    return `${baseHeader}\n当前工程可用 Ontology MCP 工具：${toolNames}。优先调用 invoke_mcp_tool 执行业务动作或查询；当收到本体萃取请求（如 [ACTION:RUN_ONTOLOGY_EXTRACTION ...] 或 DDL/OpenAPI/文档本体萃取）时，必须调用 run_ontology_extraction 工具。`;
+    return withExecFooter(
+      `${baseHeader}\n当前工程可用 Ontology MCP 工具：${toolNames}。优先调用 invoke_mcp_tool 执行业务动作或查询；当收到本体萃取请求（如 [ACTION:RUN_ONTOLOGY_EXTRACTION ...] 或 DDL/OpenAPI/文档本体萃取）时，必须调用 run_ontology_extraction 工具。`,
+    );
   }
   if (session.agentKind === 'ARCHITECTURE') {
-    return `${baseHeader}\n你是架构资产智能体，编写和维护仓库拥有的可复用 UI、技术底座和技术架构规范。平台生成的开发规范正文使用英文；对话跟随用户语言，原始业务参考保留来源语言。仓库文件是权威来源；先用 read_architecture_assets 读取规范与来源，再通过 save_architecture_asset 保存并声明选定的 technologyProfileId，TECH_ARCH 也可用 save_tech_architecture_spec。规范是共享资产，本会话不选择或修改目标应用的输入。不得声称已经实现代码、运行构建或执行测试。\n仓库规范目录：${architectureContext}`;
+    return withExecFooter(
+      `${baseHeader}\n你是架构资产智能体，编写和维护仓库拥有的可复用 UI、技术底座和技术架构规范。平台生成的开发规范正文使用英文；对话跟随用户语言，原始业务参考保留来源语言。仓库文件是权威来源；先用 read_architecture_assets 读取规范与来源，再通过 save_architecture_asset 保存并声明选定的 technologyProfileId，TECH_ARCH 也可用 save_tech_architecture_spec。规范是共享资产，本会话不选择或修改目标应用的输入。不得声称已经实现代码、运行构建或执行测试。\n仓库规范目录：${architectureContext}`,
+    );
   }
   if (session.agentKind === 'CODING') {
-    return `${baseHeader}\n你是应用开发智能体，负责完善应用的实施规格。对话跟随用户语言。通过 save_application_instructions 编写并保存的应用实施指令必须使用英文；原始中文业务材料可保留为明确标注的引用来源。目标应用 ID：${session.targetId ?? '（未选择）'}。先通过 read_application_inputs 读取需求、已确认原型、本体套件、选定技术方案与规范、现有应用指令，再诊断缺项和明确冲突。本体定义业务语义，已确认原型定义 UI 意图，选定规范定义工程约束；存在未决选择时用 ask_user 澄清，阶段提示保持非阻断。通过 save_application_instructions 保存完整的应用专属 Markdown 实施指令；将未解决的明确矛盾写入 developmentBlockers，阻断正式开发包生成。省略该参数保留已有清单；只有与用户解决这些矛盾后才可传 [] 清空。明确应用必须属于当前会话工程，不得用其他应用或规范代替缺失输入。共享规范由架构资产智能体维护。开发包在输入问题解决后由普通显式生成操作产出。你的工具负责完善规格，不得声称已经实现代码、运行构建或执行测试。\n目标已保存输入（完整引用请调用 read_application_inputs）：${applicationContext}`;
+    return withExecFooter(
+      `${baseHeader}\n你是应用开发智能体，负责完善应用的实施规格。对话跟随用户语言。通过 save_application_instructions 编写并保存的应用实施指令必须使用英文；原始中文业务材料可保留为明确标注的引用来源。目标应用 ID：${session.targetId ?? '（未选择）'}。先通过 read_application_inputs 读取需求、已确认原型、本体套件、选定技术方案与规范、现有应用指令，再诊断缺项和明确冲突。本体定义业务语义，已确认原型定义 UI 意图，选定规范定义工程约束；存在未决选择时用 ask_user 澄清，阶段提示保持非阻断。通过 save_application_instructions 保存完整的应用专属 Markdown 实施指令；将未解决的明确矛盾写入 developmentBlockers，阻断正式开发包生成。省略该参数保留已有清单；只有与用户解决这些矛盾后才可传 [] 清空。明确应用必须属于当前会话工程，不得用其他应用或规范代替缺失输入。共享规范由架构资产智能体维护。开发包在输入问题解决后由普通显式生成操作产出。你的工具负责完善规格，不得声称已经实现代码、运行构建或执行测试。\n目标已保存输入（完整引用请调用 read_application_inputs）：${applicationContext}`,
+    );
   }
   if (session.agentKind === 'REQUIREMENT') {
-    return `${baseHeader}\n遵循 A/B 分级追问策略：A 类常规默认项标注 [AI自动补全]，B 类核心业务边界标注 [已确认] 或调用 ask_user 让用户选择确认，调用 record_requirement_insights 沉淀候选规则；当用户请求合成 SRS（如 [ACTION:SYNTHESIZE_SRS ...]）时，必须调用 save_synthesized_srs_doc 工具提交完整 9 章节《需求规格说明书.md》（含 ## 1. ~ ## 9. 及 ### 9.1 ~ ### 9.7）。`;
+    return withExecFooter(
+      `${baseHeader}\n遵循渐进式业务需求梳理准则：常规默认项标注 [AI自动补全]，已明确的业务规则标注 [已确认]；需要用户拍板时调用 ask_user 工具，每次只问一个问题，附 2～4 个通俗业务语言的可点选方案（严禁出现模型代号或内部标识符）并允许自由输入；调用 record_requirement_insights 沉淀业务对象与规则；当用户请求整理或合成需求文档（如 [ACTION:SYNTHESIZE_SRS ...]）时，必须调用 save_synthesized_srs_doc 工具提交完整 9 章节《需求规格说明书.md》（含 ## 1. ~ ## 9. 及 ### 9.1 ~ ### 9.7）。`,
+    );
   }
   if (session.agentKind === 'PROTOTYPE_CO_DESIGN') {
+    const confirmedReq = store.getProjectStepConfirmations(session.projectId).requirements;
+    const confirmedReqSection = confirmedReq
+      ? `【已确认需求文档快照】（${confirmedReq.title} ${confirmedReq.version}）：\n${confirmedReq.content.slice(0, 3000)}`
+      : `【已确认需求文档快照】：尚未确认。若用户在需求确认前请求生成新原型，请用业务语言说明需先在「需求」步骤确认需求文档后再生成原型。`;
     const proto = resolveTargetPrototypeForSession(store, session);
     if (!proto) {
-      return [
-        baseHeader,
-        `当前共创目标交互原型：未绑定（按设计简报从零生成首版交互原型 Revision #1）。`,
-        `首版原型生成准则：`,
-        `1. 直接调用 \`rewrite_prototype_page\`（携带 \`allowAnchorReset: true\`）输出完整单文件可运行 HTML5 原型。`,
-        `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、7 组交互动效硬性约束与 SRS 业务要素。`,
-        `3. 每个业务屏幕必须声明合法 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`，所有 <button>/<input>/<select>/<textarea> 必须携带唯一合法 \`data-element-id\` 与 \`data-element-type\`（并合理挂载 \`data-binding\` 与 \`data-event-id\`），严禁使用 window.alert/confirm/prompt。`,
-        `4. 页面必须原生支持响应式布局，在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 视口下均排版整洁无溢出。`,
-        `5. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
-      ].join('\n');
+      const useParallel = (execOptions?.multiAgentConcurrency ?? 1) > 1;
+      return withExecFooter(
+        [
+          baseHeader,
+          confirmedReqSection,
+          `当前共创目标交互原型：未绑定（按设计简报与已确认需求文档从零生成首版交互原型 Revision #1）。`,
+          `首版原型生成准则（快速上屏，禁止在 thinking 中默写整页长代码）：`,
+          useParallel
+            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码，也严禁调用单次巨型 \`rewrite_prototype_page\`**！请立即在 \`codemode\` 中或分步执行：① 先调用 \`init_prototype_shell\` 声明共享视觉令牌与 3～4 个核心业务分屏骨架（使画布 0 秒点亮所有画板）；② 紧接着调用 \`spawn_subagents\` 派发分屏任务（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行子智能体，每个子智能体各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。`
+            : `1. 仅在已存在【已确认需求文档快照】时，调用 \`init_prototype_shell\` + \`upsert_prototype_screen\`（或 \`rewrite_prototype_page\` 携带 \`allowAnchorReset: true\`）输出可运行 HTML5 原型。`,
+          `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、交互动效约束与【已确认需求文档快照】（严禁读取未确认草稿）。`,
+          `3. 每个业务屏幕必须声明合法 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`，所有 <button>/<input>/<select>/<textarea> 必须携带全局唯一合法 \`data-element-id\` 与 \`data-element-type\`（并合理挂载 \`data-binding\` 与 \`data-event-id\`），严禁使用 window.alert/confirm/prompt。`,
+          `4. 页面必须原生支持响应式布局，在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 视口下均排版整洁无溢出。`,
+          `5. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
+        ].join('\n'),
+      );
     }
     const overview = listPrototypeAnchors(proto.htmlContent);
     const screensDesc =
       overview.screens
         .map((s) => `${s.screenId}(${s.screenName}:${s.screenType}, 控件数=${s.elementCount})`)
         .join(', ') || '无';
-    return [
-      baseHeader,
-      `当前共创目标交互原型：${proto.name}（ID: ${proto.id}，版本: ${proto.version}）。`,
-      `当前原型包含屏幕锚点：${screensDesc}。`,
-      `原型局部精修准则：`,
-      `1. 先调用 \`read_prototype_anchor\`（或 \`list_prototype_anchors\`）精准读取目标控件或目标屏幕片段，严禁无故重写其他无关屏幕。`,
-      `2. 局部改动一律调用 \`edit_prototype_anchor\`（\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`），确保未选中的屏幕与兄弟控件保持逐字节一致。`,
-      `3. \`rewrite_prototype_page\` 仅限明确要求“整页重做风格”或“从零生成整页原型”时调用。`,
-      `4. 严格保留既有 \`data-screen-id\`、\`data-element-id\`、\`data-binding\`、\`data-event-id\` 语义锚点；任何新增 <button>/<input>/<select>/<textarea> 必须携带合法唯一的 \`data-element-id\` 与 \`data-element-type\`；严禁使用 window.alert/confirm/prompt。`,
-      `5. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
-    ].join('\n');
+    return withExecFooter(
+      [
+        baseHeader,
+        `当前共创目标交互原型：${proto.name}（ID: ${proto.id}，版本: ${proto.version}）。`,
+        `当前原型包含屏幕锚点：${screensDesc}。`,
+        `原型局部精修与分屏补全准则：`,
+        `1. 针对尚未绘制完成的分屏（或单独重绘某一分屏），直接调用 \`upsert_prototype_screen\`（多屏调整可调用 \`spawn_subagents\` 并行处理），严禁无故重写其他无关屏幕。`,
+        `2. 控件级局部改动一律先 \`read_prototype_anchor\` 再 \`edit_prototype_anchor\`（\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`），确保未选中的屏幕与兄弟控件保持逐字节一致。`,
+        `3. 严格保留既有 \`data-screen-id\`、\`data-element-id\`、\`data-binding\`、\`data-event-id\` 语义锚点；任何新增 <button>/<input>/<select>/<textarea> 必须携带合法唯一的 \`data-element-id\` 与 \`data-element-type\`；严禁使用 window.alert/confirm/prompt。`,
+        `4. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
+      ].join('\n'),
+    );
   }
-  return `${baseHeader}\n当前 M1 聚合根：${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || '无'}；M3 规则数：${project?.suite.M3?.rules.length ?? 0}。当收到从确认原型合成 11 模型请求（如 [ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...]）时，必须调用 synthesize_ontology_suite 工具并交由两级一致性校验门禁落库。`;
+  return withExecFooter(
+    `${baseHeader}\n当前 M1 聚合根：${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || '无'}；M3 规则数：${project?.suite.M3?.rules.length ?? 0}。当收到从确认原型合成 11 模型请求（如 [ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...]）时，必须调用 synthesize_ontology_suite 工具并交由两级一致性校验门禁落库。`,
+  );
 }
 
 // ─── Execute Single Tool Call (YOLO + Validator Gate + Scoped HITL) ──────────
@@ -2265,6 +2883,7 @@ interface ExecutedToolStep {
   isError: boolean;
   artifact?: AgentDomainArtifact;
   askUserPrompt?: AgentAskUserPrompt;
+  stepHandoffProposal?: StepHandoffProposal;
 }
 
 async function executeUnifiedToolCall(
@@ -2274,7 +2893,7 @@ async function executeUnifiedToolCall(
   hadPreviousValidatorError: boolean,
   locale: AgentLocale = 'zh-CN',
   prototypeDraft?: PrototypeTurnDraft,
-  options?: { isMock?: boolean; actionParams?: Record<string, unknown> },
+  options?: { isMock?: boolean; actionParams?: Record<string, unknown>; runId?: string },
 ): Promise<ExecutedToolStep> {
   const started = Date.now();
   const args = (tc.arguments ?? {}) as Record<string, unknown>;
@@ -2350,6 +2969,124 @@ async function executeUnifiedToolCall(
     };
   }
 
+  // 1b. Cross-step hand-off proposal (#72)
+  if (tc.name === 'propose_step_handoff') {
+    const rawTarget = typeof args.targetStep === 'string' ? args.targetStep.trim() : '';
+    const normalizedKey = rawTarget.toUpperCase().replace(/-/g, '_');
+    const stepMap: Record<string, ProjectStepId> = {
+      REQUIREMENTS: 'REQUIREMENTS',
+      REQUIREMENT: 'REQUIREMENTS',
+      PROTOTYPE: 'PROTOTYPE',
+      BUSINESS_MODEL: 'BUSINESS_MODEL',
+      MODEL: 'BUSINESS_MODEL',
+      DELIVERY: 'DELIVERY',
+    };
+    const targetStep = stepMap[normalizedKey];
+    if (!targetStep) {
+      const errMsg = pickLocaleText(
+        locale,
+        `无效的目标步骤「${rawTarget}」，可选值：REQUIREMENTS、PROTOTYPE、BUSINESS_MODEL、DELIVERY。`,
+        `Invalid targetStep "${rawTarget}"; expected REQUIREMENTS, PROTOTYPE, BUSINESS_MODEL, or DELIVERY.`,
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: errMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({ status: 'ERROR', message: errMsg }),
+        isError: true,
+      };
+    }
+
+    const sourceStep = deriveProjectStepForSessionKind(session.agentKind);
+    if (sourceStep && sourceStep === targetStep) {
+      const sameMsg = pickLocaleText(
+        locale,
+        `当前已经在「${PROJECT_STEP_NAMES[targetStep].zh}」步骤，无需发起跨步骤转交。`,
+        `Already in the ${PROJECT_STEP_NAMES[targetStep].en} step; no hand-off needed.`,
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: sameMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({ status: 'ERROR', message: sameMsg }),
+        isError: true,
+      };
+    }
+
+    const rawRequest = typeof args.request === 'string' ? args.request.trim() : '';
+    const cleanRequest = rawRequest || (latestUserPrompt(session)?.trim() ?? '');
+    if (!cleanRequest) {
+      const emptyMsg = pickLocaleText(
+        locale,
+        '转交请求内容不能为空。',
+        'Hand-off request text cannot be empty.',
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: emptyMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({ status: 'ERROR', message: emptyMsg }),
+        isError: true,
+      };
+    }
+
+    const cleanReason =
+      typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim() : undefined;
+    const proposal: StepHandoffProposal = {
+      id: `handoff-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      sourceStep,
+      targetStep,
+      request: cleanRequest,
+      ...(cleanReason ? { reason: cleanReason } : {}),
+      status: 'PENDING',
+    };
+    const stepName = PROJECT_STEP_NAMES[targetStep];
+
+    return {
+      trace: {
+        id: tc.id,
+        toolName: tc.name,
+        arguments: {
+          targetStep,
+          request: cleanRequest,
+          ...(cleanReason ? { reason: cleanReason } : {}),
+        },
+        output: pickLocaleText(
+          locale,
+          `已准备转交到「${stepName.zh}」步骤：${cleanRequest}`,
+          `Prepared hand-off to ${stepName.en}: ${cleanRequest}`,
+        ),
+        isError: false,
+        durationMs: Date.now() - started,
+      },
+      toolResultContent: JSON.stringify({
+        status: 'HANDOFF_PROPOSED',
+        handoffId: proposal.id,
+        sourceStep,
+        targetStep,
+        request: cleanRequest,
+        ...(cleanReason ? { reason: cleanReason } : {}),
+      }),
+      isError: false,
+      stepHandoffProposal: proposal,
+    };
+  }
+
   // 2. 12 Core Ontology Suite Tools (with Two-Tier Validator Self-Correction Gate)
   if (ontologyToolSet.has(tc.name)) {
     const project = store.getProject(session.projectId);
@@ -2422,11 +3159,16 @@ async function executeUnifiedToolCall(
         };
       }
 
-      const saved = store.updateSuite(
-        project.id,
-        mutation.nextSuite,
-        `Pi Session (${session.title}) executed ${tc.name} -> ${mutation.elementId}`,
-      );
+      const effectiveRunId = resolveAgentTurnRunId(session.messages, options?.runId, tc.id);
+      const saved = store.commitSuite(project.id, mutation.nextSuite, {
+        source: {
+          kind: 'AGENT_RUN',
+          runId: effectiveRunId,
+          sessionId: session.id,
+          toolName: tc.name,
+        },
+        note: `Pi Session (${session.title}) executed ${tc.name} -> ${mutation.elementId}`,
+      });
 
       const actionType: 'ADDED' | 'MODIFIED' | 'REMOVED' =
         tc.name === 'delete_element' ? 'REMOVED' : 'ADDED';
@@ -2862,6 +3604,7 @@ async function executeUnifiedToolCall(
     {
       ...(options?.isMock !== undefined ? { isMock: options.isMock } : {}),
       ...(options?.actionParams ? { actionParams: options.actionParams } : {}),
+      ...(options?.runId ? { runId: options.runId } : {}),
     },
   );
   if (domainToolResult) {
@@ -2873,7 +3616,9 @@ async function executeUnifiedToolCall(
     tc.name === 'list_prototype_anchors' ||
     tc.name === 'read_prototype_anchor' ||
     tc.name === 'edit_prototype_anchor' ||
-    tc.name === 'rewrite_prototype_page'
+    tc.name === 'rewrite_prototype_page' ||
+    tc.name === 'init_prototype_shell' ||
+    tc.name === 'upsert_prototype_screen'
   ) {
     const activeHtml =
       prototypeDraft?.workingHtml ?? resolveTargetPrototypeForSession(store, session)?.htmlContent;
@@ -2894,6 +3639,156 @@ async function executeUnifiedToolCall(
         },
         toolResultContent: JSON.stringify({ status: 'ERROR', diagnostic: noProtoMsg }),
         isError: true,
+      };
+    }
+
+    if (tc.name === 'init_prototype_shell' || tc.name === 'upsert_prototype_screen') {
+      if (
+        !resolveTargetPrototypeForSession(store, session) &&
+        !store.getProjectStepConfirmations(session.projectId).requirements
+      ) {
+        const unconfirmedMsg = pickLocaleText(
+          locale,
+          '需要先完成并确认需求文档，才能生成首版界面原型。',
+          'Confirm the requirements document first before generating an initial prototype.',
+        );
+        return {
+          trace: {
+            id: tc.id,
+            toolName: tc.name,
+            arguments: args,
+            output: unconfirmedMsg,
+            isError: true,
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({
+            status: 'REQUIREMENTS_NOT_CONFIRMED',
+            diagnostic: unconfirmedMsg,
+          }),
+          isError: true,
+        };
+      }
+
+      if (tc.name === 'init_prototype_shell') {
+        const rawScreens = Array.isArray(args.screens) ? args.screens : [];
+        const screens: PrototypeShellScreenStub[] = rawScreens
+          .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+          .map((item) => ({
+            screenId: String(item.screenId ?? '').trim(),
+            screenName: String(item.screenName ?? item.screenId ?? '').trim(),
+            screenType: String(item.screenType ?? 'LIST').trim(),
+            ...(typeof item.summary === 'string' ? { summary: item.summary } : {}),
+          }))
+          .filter((s) => Boolean(s.screenId));
+
+        const shellInput: InitPrototypeShellInput = {
+          appTitle: String(args.appTitle || prototypeDraft?.prototypeName || 'Interactive Prototype'),
+          ...(typeof args.subtitle === 'string' ? { subtitle: args.subtitle } : {}),
+          ...(args.themeTokens && typeof args.themeTokens === 'object'
+            ? { themeTokens: args.themeTokens as NonNullable<InitPrototypeShellInput['themeTokens']> }
+            : {}),
+          ...(typeof args.sharedCss === 'string' ? { sharedCss: args.sharedCss } : {}),
+          screens,
+        };
+        const shellRes = initPrototypeShell(shellInput, { locale });
+        if (shellRes.isError) {
+          return {
+            trace: {
+              id: tc.id,
+              toolName: tc.name,
+              arguments: args,
+              output: shellRes.diagnostic || shellRes.summary,
+              isError: true,
+              durationMs: Date.now() - started,
+            },
+            toolResultContent: JSON.stringify({
+              status: 'REJECTED_BY_ANCHOR_VALIDATOR',
+              diagnostic: shellRes.diagnostic || shellRes.summary,
+            }),
+            isError: true,
+          };
+        }
+        if (prototypeDraft) {
+          prototypeDraft.workingHtml = shellRes.nextHtml;
+          for (const scr of screens) {
+            recordModifiedAnchor(prototypeDraft, {
+              screenId: scr.screenId,
+              label: scr.screenName || scr.screenId,
+            });
+          }
+        }
+        return {
+          trace: {
+            id: tc.id,
+            toolName: tc.name,
+            arguments: args,
+            output: shellRes.summary,
+            isError: false,
+            ...(shellRes.targetAnchor ? { targetAnchor: shellRes.targetAnchor } : {}),
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({
+            status: 'APPLIED',
+            summary: shellRes.summary,
+            screenIds: screens.map((s) => s.screenId),
+          }),
+          isError: false,
+        };
+      }
+
+      // upsert_prototype_screen
+      const screenRes = upsertPrototypeScreen(
+        activeHtml,
+        {
+          screenId: String(args.screenId ?? ''),
+          ...(typeof args.screenName === 'string' ? { screenName: args.screenName } : {}),
+          ...(typeof args.screenType === 'string' ? { screenType: args.screenType } : {}),
+          screenHtml: String(args.screenHtml ?? ''),
+          ...(typeof args.extraCss === 'string' ? { extraCss: args.extraCss } : {}),
+          ...(typeof args.extraJs === 'string' ? { extraJs: args.extraJs } : {}),
+        },
+        { locale },
+      );
+      if (screenRes.isError) {
+        return {
+          trace: {
+            id: tc.id,
+            toolName: tc.name,
+            arguments: args,
+            output: screenRes.diagnostic || screenRes.summary,
+            isError: true,
+            ...(screenRes.targetAnchor ? { targetAnchor: screenRes.targetAnchor } : {}),
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({
+            status: 'REJECTED_BY_ANCHOR_VALIDATOR',
+            diagnostic: screenRes.diagnostic || screenRes.summary,
+            targetAnchor: screenRes.targetAnchor,
+          }),
+          isError: true,
+        };
+      }
+      if (prototypeDraft) {
+        prototypeDraft.workingHtml = screenRes.nextHtml;
+        recordModifiedAnchor(prototypeDraft, screenRes.targetAnchor);
+      }
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: screenRes.summary,
+          isError: false,
+          ...(hadPreviousValidatorError ? { validatorRepair: true } : {}),
+          ...(screenRes.targetAnchor ? { targetAnchor: screenRes.targetAnchor } : {}),
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: 'APPLIED',
+          summary: screenRes.summary,
+          targetAnchor: screenRes.targetAnchor,
+        }),
+        isError: false,
       };
     }
 
@@ -3037,6 +3932,31 @@ async function executeUnifiedToolCall(
     }
 
     // rewrite_prototype_page
+    if (
+      !resolveTargetPrototypeForSession(store, session) &&
+      !store.getProjectStepConfirmations(session.projectId).requirements
+    ) {
+      const unconfirmedMsg = pickLocaleText(
+        locale,
+        '需要先完成并确认需求文档，才能生成首版界面原型。',
+        'Confirm the requirements document first before generating an initial prototype.',
+      );
+      return {
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: unconfirmedMsg,
+          isError: true,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: 'REQUIREMENTS_NOT_CONFIRMED',
+          diagnostic: unconfirmedMsg,
+        }),
+        isError: true,
+      };
+    }
     const htmlContent = String(args.htmlContent || '');
     const rewriteRes = rewritePrototypePage(activeHtml, htmlContent, {
       allowAnchorReset: Boolean(args.allowAnchorReset) || activeHtml.trim().length === 0,
@@ -3358,16 +4278,20 @@ export interface UnifiedAgentStreamInput {
     selectedAnswers: string[];
     freeformText?: string;
   };
+  handoffFrom?: StepHandoffOrigin;
   images?: TransientTurnImageInput[];
   designBrief?: DesignBrief;
   prototypeName?: string;
   activeModelCode?: ModelCode;
   reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+  codeMode?: boolean;
+  multiAgentConcurrency?: number;
   locale?: AgentLocale | string;
   mockMode?: boolean;
   signal?: AbortSignal;
   idleTimeoutMs?: number;
   stepTimeoutMs?: number;
+  hooks?: AgentRunLifecycleHooks;
 }
 
 function toPersistedImageRef(
@@ -3500,6 +4424,7 @@ async function executeUnifiedTurnCore(
   input: Omit<UnifiedAgentStreamInput, 'signal'>,
   emit: (ev: UnifiedAgentSseEvent) => void,
   controller: AbortController,
+  preallocatedIdentity?: AllocatedTurnRunIdentity,
 ): Promise<void> {
   const existing = store.getAgentSession(input.sessionId);
   if (!existing) {
@@ -3575,7 +4500,13 @@ async function executeUnifiedTurnCore(
       ...input.askUserAnswer.selectedAnswers,
       ...(input.askUserAnswer.freeformText ? [input.askUserAnswer.freeformText] : []),
     ].filter(Boolean);
+    const answerSummary = pickLocaleText(
+      effectiveLocale,
+      `[用户已确认选择] ${combinedAnswers.join('；') || input.askUserAnswer.promptId}`,
+      `[User Confirmed Choice] ${combinedAnswers.join('; ') || input.askUserAnswer.promptId}`,
+    );
 
+    let matchedAskUser = false;
     for (let i = workingMessages.length - 1; i >= 0; i -= 1) {
       const msg = workingMessages[i]!;
       if (msg.askUser && msg.askUser.id === input.askUserAnswer.promptId) {
@@ -3587,16 +4518,14 @@ async function executeUnifiedTurnCore(
             selectedAnswers: combinedAnswers,
           },
         };
-        const answerSummary = pickLocaleText(
-          effectiveLocale,
-          `[用户已确认选择] ${combinedAnswers.join('；')}`,
-          `[User Confirmed Choice] ${combinedAnswers.join('; ')}`,
-        );
-        synthesizedPrompt = synthesizedPrompt
-          ? `${answerSummary}\n${synthesizedPrompt}`
-          : answerSummary;
+        matchedAskUser = true;
         break;
       }
+    }
+    if (matchedAskUser || !synthesizedPrompt) {
+      synthesizedPrompt = synthesizedPrompt
+        ? `${answerSummary}\n${synthesizedPrompt}`
+        : answerSummary;
     }
   }
 
@@ -3613,16 +4542,28 @@ async function executeUnifiedTurnCore(
     );
   }
 
+  const turnIdentity = preallocatedIdentity ?? allocateTurnRunIdentity(existing, input);
   let currentTurnUserMsgId: string | undefined;
   if (synthesizedPrompt) {
-    currentTurnUserMsgId = `amsg-${Date.now().toString(36)}-u`;
+    currentTurnUserMsgId = turnIdentity.allocatedUserMessageId ?? nextAgentMessageId('u');
     workingMessages.push({
       id: currentTurnUserMsgId,
+      runId: turnIdentity.runId,
       role: 'user',
       content: synthesizedPrompt,
+      ...(input.handoffFrom ? { handoffFrom: input.handoffFrom } : {}),
       ...(turnAttachmentRefs.length > 0 ? { images: turnAttachmentRefs } : {}),
       timestamp: nowIso,
     });
+  } else if (workingMessages.at(-1)?.role === 'user') {
+    const trailingIdx = workingMessages.length - 1;
+    const trailingUser = workingMessages[trailingIdx]!;
+    if (!trailingUser.runId) {
+      workingMessages[trailingIdx] = {
+        ...trailingUser,
+        runId: turnIdentity.runId,
+      };
+    }
   }
 
   const structuredTurnAction = resolveEffectiveStructuredAction(
@@ -3641,68 +4582,158 @@ async function executeUnifiedTurnCore(
       ? cleanTitleSource.replace(/\s+/g, ' ').slice(0, 26)
       : existing.title;
 
+  const effectiveCodeMode = resolveSessionCodeModeEnabled(existing, input.codeMode);
+  const effectiveConcurrency = resolveSessionMultiAgentConcurrency(
+    existing,
+    input.multiAgentConcurrency,
+  );
+
   let sessionState: AgentSession = store.saveAgentSession({
     ...existing,
     title: nextTitle,
     ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
+    codeMode: effectiveCodeMode,
+    multiAgentConcurrency: effectiveConcurrency,
     status: 'RUNNING',
     messages: workingMessages,
     updatedAt: nowIso,
   });
 
+  const turnStartMs = Date.now();
+  const assistantMsgId = nextAgentMessageId('a');
+  const turnRunId = turnIdentity.runId;
+
   saveSessionCheckpointSafe(store, sessionState, {
     phase: 'TURN_STARTED',
+    runId: turnRunId,
     messageCount: sessionState.messages.length,
     toolCallsCount: 0,
   });
-
-  const turnStartMs = Date.now();
-  const assistantMsgId = `amsg-${Date.now().toString(36)}-a`;
   let built: ReturnType<typeof buildPiModelsForStore> | undefined;
   let accumulatedThinking = '';
   let accumulatedText = '';
+  let streamedToolArgChars = 0;
+  let lastCodeModeScript: string | undefined;
   const allToolTraces: AgentToolCallTrace[] = [];
+  const allSubagentLanes: AgentSubagentLaneTrace[] = [];
   const allArtifacts: AgentDomainArtifact[] = [];
   let pendingAskUser: AgentAskUserPrompt | undefined;
+  let pendingStepHandoff: StepHandoffProposal | undefined;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let hadValidatorError = false;
 
+  const heartbeatInterval = setInterval(() => {
+    if (controller.signal.aborted) return;
+    const activeSubs = allSubagentLanes.filter((l) => l.status === 'RUNNING').length;
+    emit({
+      id: nextEventId(),
+      event: 'heartbeat',
+      data: {
+        runId: turnRunId,
+        elapsedMs: Date.now() - turnStartMs,
+        thinkingChars: accumulatedThinking.length,
+        textChars: accumulatedText.length,
+        toolArgChars: streamedToolArgChars,
+        activeSubagents: activeSubs,
+      },
+    });
+  }, 4_000);
+
+  const turnUserMessageId =
+    currentTurnUserMsgId ??
+    (workingMessages.at(-1)?.role === 'user' ? workingMessages.at(-1)!.id : undefined);
+
+  const buildRunContext = (curSession: AgentSession): AgentRunContext => ({
+    runId: turnRunId,
+    sessionId: curSession.id,
+    projectId: curSession.projectId?.trim() ? curSession.projectId : null,
+    sessionKind: curSession.agentKind,
+    projectStep: deriveProjectStepForSessionKind(curSession.agentKind),
+    ...(curSession.targetId ? { targetId: curSession.targetId } : {}),
+    ...(turnUserMessageId ? { userMessageId: turnUserMessageId } : {}),
+    startedAt: nowIso,
+  });
+
+  let didInvokeRunStart = false;
+  let runEndInvoked = false;
+  const invokeRunEndOnce = async (params: {
+    outcome: AgentRunOutcome;
+    assistantMessageId: string;
+    endedAt: string;
+    error?: AgentRunFailureInfo;
+  }): Promise<void> => {
+    if (!didInvokeRunStart || runEndInvoked) return;
+    runEndInvoked = true;
+    await invokeAgentRunEndHooks(
+      store,
+      {
+        ...buildRunContext(sessionState),
+        outcome: params.outcome,
+        assistantMessageId: params.assistantMessageId,
+        endedAt: params.endedAt,
+        durationMs: Math.max(0, Date.now() - turnStartMs),
+        ...(params.error ? { error: params.error } : {}),
+      },
+      input.hooks,
+    );
+  };
+
   let usedVisionFallback = false;
   let activeVisionFallbackNotice: string | undefined;
-
-  const initialTargetProto =
-    sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
-      ? resolveTargetPrototypeForSession(store, sessionState)
-      : undefined;
-  const fallbackProtoName =
-    input.prototypeName?.trim() ||
-    pickLocaleText(
-      effectiveLocale,
-      `${resolveProjectDetail(store, sessionState.projectId)?.name ?? '业务'}交互原型`,
-      `${resolveProjectDetail(store, sessionState.projectId)?.name ?? 'Interactive'} Prototype`,
-    );
-  const prototypeTurnDraft: PrototypeTurnDraft | undefined =
-    sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
-      ? initialTargetProto
-        ? {
-            prototypeId: initialTargetProto.id,
-            prototypeName: initialTargetProto.name,
-            ...(input.designBrief ? { designBrief: input.designBrief } : {}),
-            baselineHtml: initialTargetProto.htmlContent,
-            workingHtml: initialTargetProto.htmlContent,
-            modifiedAnchors: [],
-          }
-        : {
-            prototypeName: fallbackProtoName,
-            ...(input.designBrief ? { designBrief: input.designBrief } : {}),
-            baselineHtml: '',
-            workingHtml: '',
-            modifiedAnchors: [],
-          }
-      : undefined;
+  let prototypeTurnDraft: PrototypeTurnDraft | undefined;
 
   try {
+    didInvokeRunStart = true;
+    await invokeAgentRunStartHooks(
+      store,
+      {
+        ...buildRunContext(sessionState),
+        prompt: synthesizedPrompt,
+        mode: input.mode ?? 'PROMPT',
+      },
+      input.hooks,
+    );
+
+    const initialTargetProto =
+      sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
+        ? resolveTargetPrototypeForSession(store, sessionState)
+        : undefined;
+    const fallbackProtoName =
+      input.prototypeName?.trim() ||
+      pickLocaleText(
+        effectiveLocale,
+        `${resolveProjectDetail(store, sessionState.projectId)?.name ?? '业务'}交互原型`,
+        `${resolveProjectDetail(store, sessionState.projectId)?.name ?? 'Interactive'} Prototype`,
+      );
+    prototypeTurnDraft =
+      sessionState.agentKind === 'PROTOTYPE_CO_DESIGN'
+        ? initialTargetProto
+          ? {
+              prototypeId: initialTargetProto.id,
+              prototypeName: initialTargetProto.name,
+              ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+              baselineHtml: initialTargetProto.htmlContent,
+              workingHtml: initialTargetProto.htmlContent,
+              modifiedAnchors: [],
+            }
+          : {
+              prototypeName: fallbackProtoName,
+              ...(input.designBrief
+                ? { designBrief: input.designBrief }
+                : sessionState.designBrief
+                  ? { designBrief: sessionState.designBrief }
+                  : {}),
+              baselineHtml: '',
+              workingHtml: '',
+              modifiedAnchors: [],
+            }
+        : undefined;
+
+    if (controller.signal.aborted) {
+      throw toAbortedError();
+    }
+
     built = buildPiModelsForStore(store, sessionState, {
       ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
       ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
@@ -3724,12 +4755,15 @@ async function executeUnifiedTurnCore(
       id: nextEventId(),
       event: 'session_meta',
       data: {
+        runId: turnRunId,
         sessionId: sessionState.id,
         title: sessionState.title,
         provider: built.providerLabel,
         model: built.selectedModel.id,
         isMock: built.isMock,
         visionSupported: built.visionSupported,
+        codeMode: effectiveCodeMode,
+        multiAgentConcurrency: effectiveConcurrency,
         ...(activeVisionFallbackNotice ? { visionFallbackNotice: activeVisionFallbackNotice } : {}),
       },
     });
@@ -3804,7 +4838,220 @@ async function executeUnifiedTurnCore(
       }
     }
 
-    const tools = getToolsForAgentKind(sessionState.agentKind);
+    const baseSpecialistTools = getToolsForAgentKind(sessionState.agentKind);
+    const tools = getToolsForAgentKind(sessionState.agentKind, {
+      codeMode: effectiveCodeMode,
+      multiAgentConcurrency: effectiveConcurrency,
+    });
+    const resolvedMaxTokens = Math.min(built.selectedModel.maxTokens || 32768, 32768);
+    let lastEmittedPreviewHtml = prototypeTurnDraft?.workingHtml ?? '';
+    const livePartialScreens = new Map<string, PartialPrototypeScreenInput>();
+    let lastThrottledPreviewMs = 0;
+
+    const composeLivePreviewHtml = (): string => {
+      if (!prototypeTurnDraft) return '';
+      let composite = prototypeTurnDraft.workingHtml;
+      for (const partial of livePartialScreens.values()) {
+        composite = previewPartialPrototypeScreen(composite, partial, {
+          locale: effectiveLocale,
+        });
+      }
+      return composite;
+    };
+
+    const emitPrototypePreviewIfChanged = (
+      focusAnchor?: PrototypeTargetAnchor,
+      options?: { throttled?: boolean },
+    ) => {
+      if (!prototypeTurnDraft) return;
+      if (options?.throttled) {
+        const now = Date.now();
+        if (now - lastThrottledPreviewMs < 280) return;
+        lastThrottledPreviewMs = now;
+      }
+      const curHtml = composeLivePreviewHtml();
+      if (!curHtml.trim() || curHtml === lastEmittedPreviewHtml) return;
+      lastEmittedPreviewHtml = curHtml;
+      const anchorSummary = listPrototypeAnchors(curHtml);
+      emit({
+        id: nextEventId(),
+        event: 'prototype_preview',
+        data: {
+          runId: turnRunId,
+          ...(prototypeTurnDraft.prototypeId ? { prototypeId: prototypeTurnDraft.prototypeId } : {}),
+          prototypeName: prototypeTurnDraft.prototypeName,
+          workingHtml: curHtml,
+          screenCount: anchorSummary.screens.length,
+          ...(focusAnchor ? { targetAnchor: focusAnchor } : {}),
+        },
+      });
+    };
+
+    const runSpawnSubagentsTool = async (
+      parentCallId: string,
+      rawArgs: Record<string, unknown>,
+      stepNum: number,
+    ): Promise<ExecutedToolStep> => {
+      const started = Date.now();
+      const rawTasks = Array.isArray(rawArgs.tasks) ? rawArgs.tasks : [];
+      const parsedTasks: SubagentTaskSpec[] = rawTasks
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+        .map((item) => ({
+          title: String(item.title ?? item.screenName ?? 'Sub-task').trim(),
+          ...(typeof item.roleLabel === 'string' ? { roleLabel: item.roleLabel } : {}),
+          instruction: String(item.instruction ?? item.task ?? '').trim(),
+          ...(typeof item.screenId === 'string' ? { screenId: item.screenId } : {}),
+          ...(typeof item.screenName === 'string' ? { screenName: item.screenName } : {}),
+          ...(typeof item.screenType === 'string' ? { screenType: item.screenType } : {}),
+        }))
+        .filter((t) => Boolean(t.title && t.instruction));
+
+      if (parsedTasks.length === 0) {
+        const msg = pickLocaleText(
+          effectiveLocale,
+          'spawn_subagents 需要提供非空的 tasks 子任务数组。',
+          'spawn_subagents requires a non-empty tasks array.',
+        );
+        return {
+          trace: {
+            id: parentCallId,
+            toolName: 'spawn_subagents',
+            arguments: rawArgs,
+            output: msg,
+            isError: true,
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({ status: 'ERROR', diagnostic: msg }),
+          isError: true,
+        };
+      }
+
+      const subBaseSystemPrompt = buildSystemPromptForSession(
+        store,
+        sessionState,
+        input.activeModelCode,
+        effectiveLocale,
+      );
+
+      const batchStartIdx = allSubagentLanes.length;
+      const parallelRes = await runParallelSubagents({
+        tasks: parsedTasks,
+        concurrency: effectiveConcurrency,
+        locale: effectiveLocale,
+        isMock: built!.isMock,
+        models: built!.models,
+        selectedModel: built!.selectedModel,
+        baseSystemPrompt: subBaseSystemPrompt,
+        subagentTools: baseSpecialistTools,
+        signal: controller.signal,
+        stepTimeoutMs,
+        maxTokens: resolvedMaxTokens,
+        onActivity: resetIdleTimer,
+        onLaneUpdate: (lane, batchLanes) => {
+          allSubagentLanes.splice(batchStartIdx, batchLanes.length, ...batchLanes);
+          emit({
+            id: nextEventId(),
+            event: 'subagent_update',
+            data: {
+              runId: turnRunId,
+              lane,
+              lanes: [...allSubagentLanes],
+            },
+          });
+        },
+        onPartialScreenStream: (partial, lane) => {
+          livePartialScreens.set(partial.screenId, partial);
+          emitPrototypePreviewIfChanged(
+            lane.targetAnchor ?? { screenId: partial.screenId, label: partial.screenName },
+            { throttled: true },
+          );
+        },
+        executeSubagentToolCall: async (subTc, lane, subHadErr) => {
+          resetIdleTimer();
+          const subArgs = (subTc.arguments ?? {}) as Record<string, unknown>;
+          const subAnchor = extractTargetAnchorFromArgs(subTc.name, subArgs) ?? lane.targetAnchor;
+          emit({
+            id: nextEventId(),
+            event: 'tool_call',
+            data: {
+              id: subTc.id,
+              toolName: subTc.name,
+              arguments: subArgs,
+              ...(subAnchor ? { targetAnchor: subAnchor } : {}),
+              step: stepNum,
+            },
+          });
+          const subExec = await executeUnifiedToolCall(
+            store,
+            sessionState,
+            subTc,
+            subHadErr,
+            effectiveLocale,
+            prototypeTurnDraft,
+            {
+              isMock: built!.isMock,
+              runId: turnRunId,
+              ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
+            },
+          );
+          if (!subExec.isError && subTc.name === 'upsert_prototype_screen') {
+            const finishedSid =
+              (typeof subArgs.screenId === 'string' && subArgs.screenId.trim()) ||
+              lane.targetAnchor?.screenId;
+            if (finishedSid) {
+              livePartialScreens.delete(finishedSid);
+            }
+          }
+          allToolTraces.push(subExec.trace);
+          emit({
+            id: nextEventId(),
+            event: 'tool_result',
+            data: {
+              trace: subExec.trace,
+              step: stepNum,
+            },
+          });
+          emitPrototypePreviewIfChanged(subExec.trace.targetAnchor ?? subAnchor);
+          if (subExec.artifact) {
+            allArtifacts.push(subExec.artifact);
+            emit({
+              id: nextEventId(),
+              event: 'artifact',
+              data: { artifact: subExec.artifact },
+            });
+          }
+          return {
+            toolResultContent: subExec.toolResultContent,
+            isError: subExec.isError,
+          };
+        },
+      });
+
+      totalInputTokens += parallelRes.inputTokens;
+      totalOutputTokens += parallelRes.outputTokens;
+
+      return {
+        trace: {
+          id: parentCallId,
+          toolName: 'spawn_subagents',
+          arguments: rawArgs,
+          output: parallelRes.summaryText,
+          isError: !parallelRes.allSucceeded,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: parallelRes.allSucceeded ? 'OK' : 'PARTIAL_FAILURE',
+          summary: parallelRes.summaryText,
+          lanes: parallelRes.lanes.map((l) => ({
+            title: l.taskTitle.zh,
+            status: l.status,
+            ...(l.output ? { output: l.output } : {}),
+            ...(l.error ? { error: l.error } : {}),
+          })),
+        }),
+        isError: !parallelRes.allSucceeded,
+      };
+    };
 
     const MAX_TOOL_ROUNDS = 24;
     for (let step = 0; step < MAX_TOOL_ROUNDS; step += 1) {
@@ -3818,6 +5065,11 @@ async function executeUnifiedTurnCore(
         sessionState,
         input.activeModelCode,
         effectiveLocale,
+        {
+          codeMode: effectiveCodeMode,
+          multiAgentConcurrency: effectiveConcurrency,
+          offeredTools: tools,
+        },
       );
       const context: Context = {
         systemPrompt,
@@ -3829,11 +5081,12 @@ async function executeUnifiedTurnCore(
         signal: controller.signal,
         timeoutMs: stepTimeoutMs,
         temperature: 0.2,
-        maxTokens: 8192,
+        maxTokens: resolvedMaxTokens,
       });
 
       let finalMessage: AssistantMessage | undefined;
       const announcedToolCallIds = new Set<string>();
+      let lastToolDeltaEmitMs = 0;
 
       for await (const ev of eventStream) {
         if (ev.type !== 'error') {
@@ -3859,6 +5112,48 @@ async function executeUnifiedTurnCore(
           ev.type === 'toolcall_delta' ||
           ev.type === 'toolcall_end'
         ) {
+          if (ev.type === 'toolcall_delta') {
+            streamedToolArgChars += ev.delta.length;
+            const nowMs = Date.now();
+            const partialCall = ev.partial.content[ev.contentIndex];
+            if (
+              partialCall?.type === 'toolCall' &&
+              partialCall.name === 'upsert_prototype_screen' &&
+              prototypeTurnDraft
+            ) {
+              const pArgs = (partialCall.arguments ?? {}) as Record<string, unknown>;
+              const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
+              const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
+              if (pSid && pHtml.length >= 24) {
+                livePartialScreens.set(pSid, {
+                  screenId: pSid,
+                  ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
+                  ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
+                  partialScreenHtml: pHtml,
+                  ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
+                });
+                emitPrototypePreviewIfChanged(
+                  {
+                    screenId: pSid,
+                    ...(typeof pArgs.screenName === 'string' ? { label: pArgs.screenName } : {}),
+                  },
+                  { throttled: true },
+                );
+              }
+            }
+            if (nowMs - lastToolDeltaEmitMs >= 250) {
+              lastToolDeltaEmitMs = nowMs;
+              emit({
+                id: nextEventId(),
+                event: 'tool_delta',
+                data: {
+                  step: step + 1,
+                  toolName: partialCall?.type === 'toolCall' ? partialCall.name : undefined,
+                  streamedChars: streamedToolArgChars,
+                },
+              });
+            }
+          }
           const candidate =
             ev.type === 'toolcall_end'
               ? ev.toolCall
@@ -3898,7 +5193,12 @@ async function executeUnifiedTurnCore(
               `网关流式请求失败 (reason=${ev.reason})`,
               `Gateway streaming request failed (reason=${ev.reason})`,
             );
-          if (ev.reason === 'aborted' || /timed?\s*out|timeout/i.test(errText)) {
+          const isStepTimeout =
+            !/connect\s*timeout|connection\s*error/i.test(errText) &&
+            (ev.reason === 'aborted' ||
+              (/timed?\s*out|timeout/i.test(errText) &&
+                Date.now() - turnStartMs >= Math.min(idleTimeoutMs, stepTimeoutMs) * 0.5));
+          if (isStepTimeout) {
             throw new SessionStreamAbortedError(
               'IDLE_TIMEOUT',
               pickLocaleText(
@@ -3972,20 +5272,150 @@ async function executeUnifiedTurnCore(
           },
         });
 
-        const executed = await executeUnifiedToolCall(
-          store,
-          sessionState,
-          tc,
-          hadValidatorError,
-          effectiveLocale,
-          prototypeTurnDraft,
-          {
-            isMock: built.isMock,
-            ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
-          },
-        );
+        const executed: ExecutedToolStep =
+          tc.name === 'spawn_subagents'
+            ? await runSpawnSubagentsTool(tc.id, tcArgs, step + 1)
+            : tc.name === 'codemode'
+              ? await (async (): Promise<ExecutedToolStep> => {
+                  const startedCm = Date.now();
+                  const scriptCode = String(tcArgs.code ?? '');
+                  if (scriptCode.trim()) {
+                    lastCodeModeScript = scriptCode;
+                  }
+                  const cmRes = await runCodemodeScript({
+                    code: scriptCode,
+                    callableTools: tools.filter((t) => t.name !== 'codemode'),
+                    signal: controller.signal,
+                    timeoutMs: stepTimeoutMs,
+                    executeNestedTool: async (nestedToolName, nestedArgs, nestedIdx) => {
+                      resetIdleTimer();
+                      const nestedCallId = `${tc.id}/c${nestedIdx}`;
+                      const nestedAnchor = extractTargetAnchorFromArgs(nestedToolName, nestedArgs);
+                      emit({
+                        id: nextEventId(),
+                        event: 'tool_call',
+                        data: {
+                          id: nestedCallId,
+                          toolName: nestedToolName,
+                          arguments: nestedArgs,
+                          ...(nestedAnchor ? { targetAnchor: nestedAnchor } : {}),
+                          step: step + 1,
+                        },
+                      });
+
+                      const nestedOut =
+                        nestedToolName === 'spawn_subagents'
+                          ? await runSpawnSubagentsTool(nestedCallId, nestedArgs, step + 1)
+                          : await executeUnifiedToolCall(
+                              store,
+                              sessionState,
+                              {
+                                type: 'toolCall',
+                                id: nestedCallId,
+                                name: nestedToolName,
+                                arguments: nestedArgs as JsonObject,
+                              },
+                              hadValidatorError,
+                              effectiveLocale,
+                              prototypeTurnDraft,
+                              {
+                                isMock: built!.isMock,
+                                runId: turnRunId,
+                                ...(structuredTurnAction
+                                  ? { actionParams: structuredTurnAction.params }
+                                  : {}),
+                              },
+                            );
+
+                      if (nestedOut.isError) {
+                        hadValidatorError = true;
+                      }
+                      allToolTraces.push(nestedOut.trace);
+                      emit({
+                        id: nextEventId(),
+                        event: 'tool_result',
+                        data: {
+                          trace: nestedOut.trace,
+                          step: step + 1,
+                        },
+                      });
+                      emitPrototypePreviewIfChanged(nestedOut.trace.targetAnchor ?? nestedAnchor);
+
+                      if (nestedOut.artifact) {
+                        allArtifacts.push(nestedOut.artifact);
+                        emit({
+                          id: nextEventId(),
+                          event: 'artifact',
+                          data: { artifact: nestedOut.artifact },
+                        });
+                      }
+                      if (nestedOut.askUserPrompt) {
+                        pendingAskUser = nestedOut.askUserPrompt;
+                        emit({
+                          id: nextEventId(),
+                          event: 'ask_user',
+                          data: { askUser: nestedOut.askUserPrompt },
+                        });
+                      }
+                      if (nestedOut.stepHandoffProposal) {
+                        pendingStepHandoff = nestedOut.stepHandoffProposal;
+                        emit({
+                          id: nextEventId(),
+                          event: 'step_handoff',
+                          data: { stepHandoff: nestedOut.stepHandoffProposal },
+                        });
+                      }
+
+                      let parsedJson: unknown = nestedOut.toolResultContent;
+                      try {
+                        parsedJson = JSON.parse(nestedOut.toolResultContent);
+                      } catch {
+                        parsedJson = nestedOut.toolResultContent;
+                      }
+                      return {
+                        outputJson: parsedJson,
+                        isError: nestedOut.isError,
+                        ...(nestedOut.isError ? { errorText: nestedOut.trace.output } : {}),
+                      };
+                    },
+                  });
+
+                  return {
+                    trace: {
+                      id: tc.id,
+                      toolName: 'codemode',
+                      arguments: tcArgs,
+                      output: cmRes.outputText,
+                      isError: cmRes.isError,
+                      durationMs: Date.now() - startedCm,
+                    },
+                    toolResultContent: cmRes.outputText,
+                    isError: cmRes.isError,
+                  };
+                })()
+              : await executeUnifiedToolCall(
+                  store,
+                  sessionState,
+                  tc,
+                  hadValidatorError,
+                  effectiveLocale,
+                  prototypeTurnDraft,
+                  {
+                    isMock: built.isMock,
+                    runId: turnRunId,
+                    ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
+                  },
+                );
         if (executed.isError) {
           hadValidatorError = true;
+        } else if (tc.name === 'upsert_prototype_screen') {
+          const doneSid =
+            typeof (tc.arguments as Record<string, unknown> | undefined)?.screenId === 'string'
+              ? String((tc.arguments as Record<string, unknown>).screenId).trim()
+              : '';
+          if (doneSid) {
+            livePartialScreens.delete(doneSid);
+          }
         }
         allToolTraces.push(executed.trace);
 
@@ -3997,6 +5427,7 @@ async function executeUnifiedTurnCore(
             step: step + 1,
           },
         });
+        emitPrototypePreviewIfChanged(executed.trace.targetAnchor ?? tcAnchor);
 
         if (executed.artifact) {
           allArtifacts.push(executed.artifact);
@@ -4016,6 +5447,17 @@ async function executeUnifiedTurnCore(
             event: 'ask_user',
             data: {
               askUser: executed.askUserPrompt,
+            },
+          });
+        }
+
+        if (executed.stepHandoffProposal) {
+          pendingStepHandoff = executed.stepHandoffProposal;
+          emit({
+            id: nextEventId(),
+            event: 'step_handoff',
+            data: {
+              stepHandoff: executed.stepHandoffProposal,
             },
           });
         }
@@ -4097,7 +5539,7 @@ async function executeUnifiedTurnCore(
             content: accumulatedText,
           },
           effectiveLocale,
-          { isMock: false, actionParams: structuredTurnAction.params },
+          { isMock: false, runId: turnRunId, actionParams: structuredTurnAction.params },
         );
         if (autoSrs) {
           allToolTraces.push(autoSrs.trace);
@@ -4132,7 +5574,7 @@ async function executeUnifiedTurnCore(
               ...(parsedBp as Record<string, unknown>),
             },
             effectiveLocale,
-            { isMock: false, actionParams: structuredTurnAction.params },
+            { isMock: false, runId: turnRunId, actionParams: structuredTurnAction.params },
           );
           if (autoOnto) {
             allToolTraces.push(autoOnto.trace);
@@ -4166,7 +5608,7 @@ async function executeUnifiedTurnCore(
             content: accumulatedText,
           },
           effectiveLocale,
-          { isMock: false, actionParams: structuredTurnAction.params },
+          { isMock: false, runId: turnRunId, actionParams: structuredTurnAction.params },
         );
         if (autoArch) {
           allToolTraces.push(autoArch.trace);
@@ -4220,7 +5662,9 @@ async function executeUnifiedTurnCore(
       prototypeTurnDraft &&
       !prototypeTurnDraft.prototypeId &&
       !prototypeTurnDraft.workingHtml.trim() &&
-      !pendingAskUser
+      !pendingAskUser &&
+      !pendingStepHandoff &&
+      Boolean(store.getProjectStepConfirmations(sessionState.projectId).requirements)
     ) {
       throw new LlmGatewayError({
         message: pickLocaleText(
@@ -4251,7 +5695,7 @@ async function executeUnifiedTurnCore(
           ...(prototypeTurnDraft.designBrief
             ? { designBrief: prototypeTurnDraft.designBrief }
             : {}),
-          agentRunId: assistantMsgId,
+          agentRunId: turnRunId,
         });
         sessionState = {
           ...sessionState,
@@ -4285,7 +5729,7 @@ async function executeUnifiedTurnCore(
             instruction: cleanRevisionNote,
             htmlContent: prototypeTurnDraft.workingHtml,
             source: 'AGENT_RUN',
-            agentRunId: assistantMsgId,
+            agentRunId: turnRunId,
           });
           const revisionArtifact: AgentDomainArtifact = {
             kind: 'PROTOTYPE_REVISION',
@@ -4306,7 +5750,23 @@ async function executeUnifiedTurnCore(
       }
     }
 
-    if (!accumulatedText.trim() && allToolTraces.length > 0) {
+    if (!accumulatedText.trim() && pendingStepHandoff) {
+      const stepName = PROJECT_STEP_NAMES[pendingStepHandoff.targetStep];
+      const reasonPrefix = pendingStepHandoff.reason
+        ? effectiveLocale === 'en-US'
+          ? `${pendingStepHandoff.reason}. `
+          : `${pendingStepHandoff.reason}。`
+        : '';
+      accumulatedText =
+        effectiveLocale === 'en-US'
+          ? `${reasonPrefix}I kept the current step unchanged and prepared a hand-off card below so you can continue in ${stepName.en} or stay here.`
+          : `${reasonPrefix}我不会在当前步骤直接改动，已在下方准备好转交卡片，你可以转到该步骤继续，也可以选择留在这里。`;
+      emit({
+        id: nextEventId(),
+        event: 'delta',
+        data: { step: 1, text: accumulatedText },
+      });
+    } else if (!accumulatedText.trim() && allToolTraces.length > 0) {
       const sep = effectiveLocale === 'en-US' ? ': ' : '：';
       accumulatedText = allToolTraces.map((t) => `- **${t.toolName}**${sep}${t.output}`).join('\n');
       emit({
@@ -4318,13 +5778,17 @@ async function executeUnifiedTurnCore(
 
     const assistantRecord: AgentSessionMessage = {
       id: assistantMsgId,
+      runId: turnRunId,
       role: 'assistant',
       content: accumulatedText,
       ...(accumulatedThinking
         ? { thinking: accumulatedThinking, thinkingDurationMs: Date.now() - turnStartMs }
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
+      ...(allSubagentLanes.length > 0 ? { subagentLanes: allSubagentLanes } : {}),
+      ...(lastCodeModeScript ? { codeModeScript: lastCodeModeScript } : {}),
       ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
+      ...(pendingStepHandoff ? { stepHandoff: pendingStepHandoff } : {}),
       ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
       ...(usedVisionFallback
         ? {
@@ -4375,9 +5839,16 @@ async function executeUnifiedTurnCore(
     sessionState = store.saveAgentSession(completedSession);
 
     saveSessionCheckpointSafe(store, sessionState, {
-      phase: 'COMPLETED',
+      phase: pendingAskUser ? 'AWAITING_USER' : 'COMPLETED',
+      runId: turnRunId,
       messageCount: sessionState.messages.length,
       toolCallsCount: allToolTraces.length,
+    });
+
+    await invokeRunEndOnce({
+      outcome: pendingAskUser ? 'AWAITING_USER' : 'COMPLETED',
+      assistantMessageId: assistantRecord.id,
+      endedAt: assistantRecord.timestamp,
     });
 
     emit({
@@ -4393,7 +5864,7 @@ async function executeUnifiedTurnCore(
     emit({
       id: nextEventId(),
       event: 'message_end',
-      data: buildSessionMessageEndPayload(store, sessionState),
+      data: buildSessionMessageEndPayload(store, sessionState, { runId: turnRunId }),
     });
   } catch (err) {
     const currentActive = activeSessionAbortControllers.get(existing.id);
@@ -4402,12 +5873,18 @@ async function executeUnifiedTurnCore(
       supersededByNewTurn ||
       (err instanceof SessionStreamAbortedError && err.kind === 'STEER_SUPERSEDED')
     ) {
+      await invokeRunEndOnce({
+        outcome: 'ABORTED',
+        assistantMessageId: assistantMsgId,
+        endedAt: new Date().toISOString(),
+      });
       return;
     }
 
     if (err instanceof SessionStreamAbortedError && err.kind === 'USER_ABORT') {
       const cancelledAssistantMsg: AgentSessionMessage = {
         id: assistantMsgId,
+        runId: turnRunId,
         role: 'assistant',
         content: accumulatedText,
         cancelled: true,
@@ -4438,14 +5915,24 @@ async function executeUnifiedTurnCore(
 
       saveSessionCheckpointSafe(store, sessionState, {
         phase: 'CANCELLED',
+        runId: turnRunId,
         messageCount: sessionState.messages.length,
         toolCallsCount: allToolTraces.length,
+      });
+
+      await invokeRunEndOnce({
+        outcome: 'ABORTED',
+        assistantMessageId: cancelledAssistantMsg.id,
+        endedAt: cancelledAssistantMsg.timestamp,
       });
 
       emit({
         id: nextEventId(),
         event: 'message_end',
-        data: buildSessionMessageEndPayload(store, sessionState, { cancelled: true }),
+        data: buildSessionMessageEndPayload(store, sessionState, {
+          cancelled: true,
+          runId: turnRunId,
+        }),
       });
       return;
     }
@@ -4521,14 +6008,66 @@ async function executeUnifiedTurnCore(
       });
     }
 
+    // Preserve completed screens in prototypeTurnDraft even if a later subagent/step timed out!
+    if (
+      prototypeTurnDraft &&
+      prototypeTurnDraft.workingHtml.trim().length > 0 &&
+      prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml &&
+      /data-screen-id=/i.test(prototypeTurnDraft.workingHtml)
+    ) {
+      const cleanRevisionNote = stripSelectionBlockFromPrompt(synthesizedPrompt);
+      if (!prototypeTurnDraft.prototypeId) {
+        const savedPartial = store.createPrototype(sessionState.projectId, {
+          name: prototypeTurnDraft.prototypeName,
+          title: cleanRevisionNote.slice(0, 48),
+          instruction: cleanRevisionNote,
+          htmlContent: prototypeTurnDraft.workingHtml,
+          source: 'AGENT_RUN',
+          coDesignSessionId: sessionState.id,
+          ...(prototypeTurnDraft.designBrief ? { designBrief: prototypeTurnDraft.designBrief } : {}),
+          agentRunId: turnRunId,
+        });
+        prototypeTurnDraft.prototypeId = savedPartial.prototype.id;
+        sessionState = {
+          ...sessionState,
+          targetId: savedPartial.prototype.id,
+        };
+        allArtifacts.push({
+          kind: 'PROTOTYPE_REVISION',
+          prototypeId: savedPartial.prototype.id,
+          revisionId: savedPartial.revision.id,
+          revisionNumber: savedPartial.revision.revisionNumber,
+          modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
+        });
+      } else {
+        const appendedPartial = store.appendPrototypeRevision(prototypeTurnDraft.prototypeId, {
+          title: cleanRevisionNote.slice(0, 48),
+          instruction: cleanRevisionNote,
+          htmlContent: prototypeTurnDraft.workingHtml,
+          source: 'AGENT_RUN',
+          agentRunId: turnRunId,
+        });
+        allArtifacts.push({
+          kind: 'PROTOTYPE_REVISION',
+          prototypeId: appendedPartial.prototype.id,
+          revisionId: appendedPartial.revision.id,
+          revisionNumber: appendedPartial.revision.revisionNumber,
+          modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
+        });
+      }
+    }
+
     const errorAssistantMsg: AgentSessionMessage = {
-      id: `amsg-${Date.now().toString(36)}-err`,
+      id: nextAgentMessageId('err'),
+      runId: turnRunId,
       role: 'assistant',
       content: accumulatedText,
       ...(accumulatedThinking
         ? { thinking: accumulatedThinking, thinkingDurationMs: Date.now() - turnStartMs }
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
+      ...(allSubagentLanes.length > 0 ? { subagentLanes: allSubagentLanes } : {}),
+      ...(lastCodeModeScript ? { codeModeScript: lastCodeModeScript } : {}),
       ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
       ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
       ...(built
@@ -4547,27 +6086,54 @@ async function executeUnifiedTurnCore(
 
     saveSessionCheckpointSafe(store, sessionState, {
       phase: 'FAILED',
+      runId: turnRunId,
       messageCount: sessionState.messages.length,
       errorCode: diagnostic.code,
+    });
+
+    await invokeRunEndOnce({
+      outcome: 'FAILED',
+      assistantMessageId: errorAssistantMsg.id,
+      endedAt: errorAssistantMsg.timestamp,
+      error: diagnostic,
     });
 
     emit({
       id: nextEventId(),
       event: 'run_error',
       data: {
+        runId: turnRunId,
         diagnostic: errorAssistantMsg.errorDiagnostic,
         session: sessionState,
+        ...(sessionState.projectId
+          ? {
+              artifactHistory: store.listArtifactHistoryViews(sessionState.projectId),
+              prototypes: store.listPrototypes(sessionState.projectId),
+            }
+          : {}),
         ...(sessionState.agentKind === 'REQUIREMENT'
           ? { requirementDocs: store.listRequirementDocs(sessionState.projectId) }
           : {}),
       },
     });
   } finally {
+    clearInterval(heartbeatInterval);
     if (idleTimer !== undefined) {
       clearTimeout(idleTimer);
     }
     if (activeSessionAbortControllers.get(existing.id) === controller) {
       activeSessionAbortControllers.delete(existing.id);
+    }
+    if (didInvokeRunStart && !runEndInvoked) {
+      await invokeRunEndOnce({
+        outcome: 'FAILED',
+        assistantMessageId: assistantMsgId,
+        endedAt: new Date().toISOString(),
+        error: {
+          code: 'AGENT_RUNTIME_ERROR',
+          message: 'Agent run terminated unexpectedly before recording completion.',
+        },
+      }).catch(() => {});
     }
   }
 }
@@ -4585,8 +6151,10 @@ function launchActiveRunInSlot(
   turnInput: Omit<UnifiedAgentStreamInput, 'signal'>,
 ): ActiveBackgroundSessionRun {
   const controller = new AbortController();
+  const existingSession = store.getAgentSession(sessionId);
+  const turnIdentity = allocateTurnRunIdentity(existingSession, turnInput);
   const run: ActiveBackgroundSessionRun = {
-    runId: `srun-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    runId: turnIdentity.runId,
     sessionId,
     controller,
     bufferedEvents: [],
@@ -4602,7 +6170,13 @@ function launchActiveRunInSlot(
     notifyRunSubscribers(run);
   };
 
-  run.completionPromise = executeUnifiedTurnCore(store, turnInput, emit, controller)
+  run.completionPromise = executeUnifiedTurnCore(
+    store,
+    turnInput,
+    emit,
+    controller,
+    turnIdentity,
+  )
     .catch((err) => {
       emit({
         id: `${sessionId}-evt-fatal-${Date.now().toString(36)}`,
@@ -4712,7 +6286,12 @@ export async function* runUnifiedAgentSessionStream(
   const slot = getOrCreateSessionSlot(store, input.sessionId);
 
   if (input.mode === 'STEER' && slot.activeRun && !slot.activeRun.done) {
+    const priorCompletion = slot.activeRun.completionPromise;
     abortActiveAgentSession(input.sessionId, 'STEER_SUPERSEDED', store);
+    await Promise.race([
+      priorCompletion,
+      new Promise<void>((resolve) => setTimeout(resolve, 500)),
+    ]);
     const steerRun = launchActiveRunInSlot(store, slot, input.sessionId, turnInput);
     yield* subscribeToBackgroundRun(steerRun, clientSignal);
     return;
@@ -4784,12 +6363,15 @@ function resolveEffectiveStructuredAction(
 function buildSessionMessageEndPayload(
   store: WorkspaceStore,
   session: AgentSession,
-  extra?: { cancelled?: boolean },
+  extra?: { cancelled?: boolean; runId?: string },
 ): Record<string, unknown> {
   const base: Record<string, unknown> = {
+    ...(extra?.runId ? { runId: extra.runId } : {}),
     session,
     ...(extra?.cancelled ? { cancelled: true } : {}),
     project: store.getProject(session.projectId),
+    stepConfirmations: store.getProjectStepConfirmations(session.projectId),
+    artifactHistory: session.projectId ? store.listArtifactHistoryViews(session.projectId) : [],
   };
 
   if (session.agentKind === 'PROTOTYPE_CO_DESIGN' || session.agentKind === 'COPILOT') {
@@ -4844,12 +6426,14 @@ function markOrphanedRunningSessionInterrupted(
     lastMsg?.role === 'assistant' && lastMsg.errorDiagnostic?.code === 'AGENT_RUN_INTERRUPTED';
 
   const nowIso = new Date().toISOString();
+  const interruptedRunId = lastUserMsg ? lastUserMsg.runId || lastUserMsg.id : undefined;
   const nextMessages = alreadyMarked
     ? session.messages
     : [
         ...session.messages,
         {
-          id: `amsg-${Date.now().toString(36)}-interrupted`,
+          id: nextAgentMessageId('interrupted'),
+          ...(interruptedRunId ? { runId: interruptedRunId } : {}),
           role: 'assistant' as const,
           content: '',
           errorDiagnostic: diagnostic,
@@ -4988,6 +6572,46 @@ export async function* attachUnifiedAgentSessionLiveStream(
     id: `${sessionId}-evt-snapshot-${Date.now().toString(36)}`,
     event: 'message_end',
     data: buildSessionMessageEndPayload(store, existing),
+  };
+}
+
+export async function startUnifiedAgentSessionTurn(
+  store: WorkspaceStore,
+  input: Omit<UnifiedAgentStreamInput, 'signal'>,
+  options?: { awaitCompletion?: boolean },
+): Promise<{ runId: string; session: AgentSession }> {
+  const existing = store.getAgentSession(input.sessionId);
+  if (!existing) {
+    throw new Error(`Agent session not found: ${input.sessionId}`);
+  }
+  if (options?.awaitCompletion !== false) {
+    const collected = await collectUnifiedAgentTurn(store, input);
+    const lastUser = [...collected.session.messages].reverse().find((m) => m.role === 'user');
+    return {
+      runId: lastUser?.runId ?? lastUser?.id ?? '',
+      session: collected.session,
+    };
+  }
+
+  const slot = getOrCreateSessionSlot(store, input.sessionId);
+  if (slot.activeRun && !slot.activeRun.done) {
+    const turnIdentity = allocateTurnRunIdentity(existing, input);
+    slot.queue.push({
+      queueId: `sq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      input,
+      cancelled: false,
+      resolveRun: () => undefined,
+    });
+    return {
+      runId: turnIdentity.runId,
+      session: store.getAgentSession(input.sessionId) ?? existing,
+    };
+  }
+
+  const run = launchActiveRunInSlot(store, slot, input.sessionId, input);
+  return {
+    runId: run.runId,
+    session: store.getAgentSession(input.sessionId) ?? existing,
   };
 }
 

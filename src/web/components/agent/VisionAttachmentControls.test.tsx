@@ -1,6 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { checkBusinessViewMarkup } from '../../../packages/business-vocabulary/index.js';
 import {
   createWorkspaceStore,
   type AgentImageAttachmentRef,
@@ -382,7 +383,7 @@ describe('VisionAttachmentControls, LocalImageThumbnail & AgentPanel banner (#30
     expect(htmlEn).toContain('Image no longer on this device');
   });
 
-  it('renders explicit non-vision fallback notice with LLM Center link when supportsVision is false', () => {
+  it('renders calm platform-unavailable notice, deployer settings link, and collapsed diagnostic details with 0 checkBusinessViewMarkup violations', () => {
     useLocale('zh-CN');
     const panelZh = renderToStaticMarkup(
       <PreferencesProvider>
@@ -391,14 +392,23 @@ describe('VisionAttachmentControls, LocalImageThumbnail & AgentPanel banner (#30
           runs={[]}
           width={380}
           visionSupported={false}
+          visionProviderLabel="OpenAPI SSE Gateway (M1 YAML)"
+          visionModelLabel="auto/glm-5.2"
           onClose={noop}
           onResize={noop}
           onOpenLlmCenter={noop}
         />
       </PreferencesProvider>,
     );
+    expect(panelZh).toContain('AI 服务暂不可用，请联系为你部署的人');
     expect(panelZh).toContain('当前模型看不了图，将只使用文字设计说明');
+    expect(panelZh).toContain('前往平台设置');
+    expect(panelZh).not.toContain('前往 LLM 中心');
+    expect(panelZh).toContain('查看细节');
     expect(panelZh).toContain('data-testid="vision-open-llm-center-btn"');
+    expect(panelZh).toContain('data-testid="vision-fallback-details"');
+    expect(panelZh).toContain('model=auto/glm-5.2');
+    expect(checkBusinessViewMarkup(panelZh)).toEqual([]);
 
     useLocale('en-US');
     const controlsEn = renderToStaticMarkup(
@@ -407,15 +417,25 @@ describe('VisionAttachmentControls, LocalImageThumbnail & AgentPanel banner (#30
           attachments={[]}
           onAttachmentsChange={noop}
           visionSupported={false}
+          providerLabel="OpenAPI SSE Gateway (M1 YAML)"
+          modelLabel="auto/glm-5.2"
           onOpenLlmCenter={noop}
         />
       </PreferencesProvider>,
     );
     expect(controlsEn).toContain(
+      'The AI service is temporarily unavailable. Please contact the person who set this up for you.',
+    );
+    expect(controlsEn).toContain(
       'Current model cannot view images; only text design notes will be used',
     );
+    expect(controlsEn).toContain('Open platform settings');
+    expect(controlsEn).not.toContain('Open LLM Center');
+    expect(controlsEn).toContain('View details');
     expect(controlsEn).toContain('data-testid="vision-open-llm-center-btn"');
+    expect(controlsEn).toContain('data-testid="vision-fallback-details"');
     expect(controlsEn).toContain('data-testid="vision-file-input"');
+    expect(checkBusinessViewMarkup(controlsEn)).toEqual([]);
 
     // When visionSupported is true, VisionCapabilityBanner renders nothing
     const bannerSupported = renderToStaticMarkup(
@@ -457,9 +477,14 @@ describe('VisionAttachmentControls, LocalImageThumbnail & AgentPanel banner (#30
       </PreferencesProvider>,
     );
     expect(shellPanelEn).toContain(
+      'The AI service is temporarily unavailable. Please contact the person who set this up for you.',
+    );
+    expect(shellPanelEn).toContain(
       'Current model cannot view images; only text design notes will be used',
     );
     expect(shellPanelEn).toContain('(Internal Text Gateway)');
+    expect(shellPanelEn).toContain('model=auto/glm-5.2');
+    expect(checkBusinessViewMarkup(shellPanelEn)).toEqual([]);
   });
 
   it('streams /api/agent-sessions/:id/stream with transient images and persists zero base64 in store', async () => {

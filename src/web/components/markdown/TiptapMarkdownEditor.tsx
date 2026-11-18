@@ -199,29 +199,29 @@ export function TiptapMarkdownEditor({
   return (
     <div
       className={cn(
-        'tiptap-editor-root flex flex-col overflow-hidden rounded-window border border-line bg-surface shadow-card',
+        'tiptap-editor-root flex flex-col overflow-hidden rounded-window border border-border bg-card shadow-card',
         className,
       )}
       data-testid={testId}
     >
       {/* Top Mode & Action Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-inset/45 px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/45 px-3 py-2">
         <div className="flex flex-wrap items-center gap-2">
-          {title && <span className="text-[13px] font-semibold text-ink">{title}</span>}
+          {title && <span className="text-[13px] font-semibold text-foreground">{title}</span>}
           {badge}
 
           {/* 3-Mode Segmented Control */}
-          <div className="inline-flex items-center rounded-[7px] border border-line bg-surface p-0.5 shadow-2xs">
+          <div className="inline-flex items-center rounded-md border border-border bg-card p-0.5 shadow-xs">
             {!readOnly && (
               <button
                 type="button"
                 data-testid="md-mode-rich"
                 onClick={() => handleModeSwitch('RICH')}
                 className={cn(
-                  'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                  'inline-flex h-6 items-center gap-1 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                   mode === 'RICH'
-                    ? 'bg-surface text-ink shadow-hairline'
-                    : 'text-ink-3 hover:text-ink',
+                    ? 'bg-card text-foreground shadow-hairline'
+                    : 'text-faint-foreground hover:text-foreground',
                 )}
               >
                 <PenLine size={11.5} />
@@ -234,10 +234,10 @@ export function TiptapMarkdownEditor({
                 data-testid="md-mode-source"
                 onClick={() => handleModeSwitch('SOURCE')}
                 className={cn(
-                  'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                  'inline-flex h-6 items-center gap-1 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                   mode === 'SOURCE'
-                    ? 'bg-surface text-ink shadow-hairline'
-                    : 'text-ink-3 hover:text-ink',
+                    ? 'bg-card text-foreground shadow-hairline'
+                    : 'text-faint-foreground hover:text-foreground',
                 )}
               >
                 <FileCode size={11.5} />
@@ -249,10 +249,10 @@ export function TiptapMarkdownEditor({
               data-testid="md-mode-preview"
               onClick={() => handleModeSwitch('PREVIEW')}
               className={cn(
-                'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                'inline-flex h-6 items-center gap-1 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 mode === 'PREVIEW'
-                  ? 'bg-surface text-ink shadow-hairline'
-                  : 'text-ink-3 hover:text-ink',
+                  ? 'bg-card text-foreground shadow-hairline'
+                  : 'text-faint-foreground hover:text-foreground',
               )}
             >
               <Eye size={11.5} />
@@ -295,7 +295,7 @@ export function TiptapMarkdownEditor({
 
       {/* Rich Formatting Toolbar */}
       {!readOnly && mode === 'RICH' && editor && (
-        <div className="flex flex-wrap items-center gap-0.5 border-b border-line bg-surface px-2.5 py-1.5">
+        <div className="flex flex-wrap items-center gap-0.5 border-b border-border bg-card px-2.5 py-1.5">
           <ToolbarBtn
             active={editor.isActive('heading', { level: 1 })}
             onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
@@ -318,7 +318,7 @@ export function TiptapMarkdownEditor({
             <Heading3 size={13.5} />
           </ToolbarBtn>
 
-          <span className="mx-1 h-4 w-px bg-line" />
+          <span className="mx-1 h-4 w-px bg-border" />
 
           <ToolbarBtn
             active={editor.isActive('bold')}
@@ -356,7 +356,7 @@ export function TiptapMarkdownEditor({
             <Quote size={13.5} />
           </ToolbarBtn>
 
-          <span className="mx-1 h-4 w-px bg-line" />
+          <span className="mx-1 h-4 w-px bg-border" />
 
           <ToolbarBtn
             active={editor.isActive('bulletList')}
@@ -380,7 +380,7 @@ export function TiptapMarkdownEditor({
             <CheckSquare size={13.5} />
           </ToolbarBtn>
 
-          <span className="mx-1 h-4 w-px bg-line" />
+          <span className="mx-1 h-4 w-px bg-border" />
 
           <ToolbarBtn
             active={editor.isActive('table')}
@@ -428,8 +428,8 @@ export function TiptapMarkdownEditor({
             <div>
               <EditorContent editor={editor} />
               {mermaidBlocks.length > 0 && (
-                <div className="border-t border-line bg-inset/30 px-4 py-3">
-                  <div className="mb-2 text-[11.5px] font-semibold text-ink-3">
+                <div className="border-t border-border bg-muted/30 px-4 py-3">
+                  <div className="mb-2 text-[11.5px] font-semibold text-faint-foreground">
                     实时 Mermaid 架构图预览 ({mermaidBlocks.length})
                   </div>
                   <div className="space-y-2">
@@ -455,7 +455,7 @@ export function TiptapMarkdownEditor({
               placeholder={placeholder}
               spellCheck={false}
               style={{ minHeight }}
-              className="block w-full resize-y border-0 bg-field p-4 font-mono text-[12.5px] leading-[1.65] text-ink focus:outline-none"
+              className="block w-full resize-y border-0 bg-muted p-4 font-mono text-[12.5px] leading-[1.65] text-foreground focus:outline-none"
             />
           )}
 
@@ -464,15 +464,15 @@ export function TiptapMarkdownEditor({
               {value?.trim() ? (
                 <MarkdownRenderer content={value} />
               ) : (
-                <div className="text-[12.5px] text-ink-3">{placeholder}</div>
+                <div className="text-[12.5px] text-faint-foreground">{placeholder}</div>
               )}
             </div>
           )}
         </div>
 
         {showOutline && outline.length > 0 && (
-          <aside className="w-56 shrink-0 overflow-y-auto border-l border-line bg-inset/35 p-3">
-            <div className="mb-2 text-[11.5px] font-semibold uppercase tracking-wider text-ink-3">
+          <aside className="w-56 shrink-0 overflow-y-auto border-l border-border bg-muted/35 p-3">
+            <div className="mb-2 text-[11.5px] font-semibold uppercase tracking-wider text-faint-foreground">
               文档目录大纲
             </div>
             <div className="space-y-1">
@@ -480,10 +480,10 @@ export function TiptapMarkdownEditor({
                 <div
                   key={`${item.line}-${idx}`}
                   style={{ paddingLeft: `${(item.level - 1) * 10}px` }}
-                  className="truncate text-[12.5px] text-ink-2"
+                  className="truncate text-[12.5px] text-foreground-soft"
                   title={item.text}
                 >
-                  <span className="mr-1 font-mono text-[10.5px] text-ink-3">
+                  <span className="mr-1 font-mono text-[10.5px] text-faint-foreground">
                     H{item.level}
                   </span>
                   {item.text}
@@ -495,7 +495,7 @@ export function TiptapMarkdownEditor({
       </div>
 
       {/* Footer Metrics Bar */}
-      <div className="flex items-center justify-between border-t border-line bg-inset/35 px-3 py-1.5 font-mono text-[11.5px] text-ink-3">
+      <div className="flex items-center justify-between border-t border-border bg-muted/35 px-3 py-1.5 font-mono text-[11.5px] text-faint-foreground">
         <span>
           模式: {mode === 'RICH' ? 'Tiptap WYSIWYG' : mode === 'SOURCE' ? 'Markdown Raw' : 'GFM Preview'}
         </span>
@@ -525,10 +525,10 @@ function ToolbarBtn({
       title={title}
       aria-label={title}
       className={cn(
-        'inline-flex h-7 w-7 items-center justify-center rounded-control cursor-pointer transition-colors duration-120',
+        'inline-flex h-7 w-7 items-center justify-center rounded-md cursor-pointer transition-colors duration-120',
         active
-          ? 'bg-accent-tint text-accent'
-          : 'text-ink-2 hover:bg-hover hover:text-ink',
+          ? 'bg-primary-soft text-primary'
+          : 'text-foreground-soft hover:bg-accent hover:text-foreground',
       )}
     >
       {children}

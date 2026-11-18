@@ -1,8 +1,14 @@
+import {
+  extractPrototypeArtboards,
+  type PrototypeArtboardSlice,
+} from '../../ontology-core/index.js';
 import type {
   AgentSession,
+  AgentSubagentCursorZone,
   PrototypeTargetAnchor,
   WorkspaceStore,
 } from '../../workspace-store/index.js';
+export { extractPrototypeArtboards, type PrototypeArtboardSlice };
 import { type AgentLocale, pickLocaleText } from './locale.js';
 import type { OpenAiFunctionTool } from './tools.js';
 
@@ -1199,6 +1205,813 @@ export function rewritePrototypePage(
   };
 }
 
+export interface PrototypeShellScreenStub {
+  screenId: string;
+  screenName: string;
+  screenType: string;
+  summary?: string;
+}
+
+export interface InitPrototypeShellInput {
+  appTitle: string;
+  subtitle?: string;
+  themeTokens?: {
+    mode?: 'light' | 'dark';
+    canvasBg?: string;
+    cardBg?: string;
+    accentColor?: string;
+    borderColor?: string;
+    textColor?: string;
+    fontFamily?: string;
+    borderRadius?: string;
+  };
+  sharedCss?: string;
+  screens: PrototypeShellScreenStub[];
+}
+
+export interface UpsertPrototypeScreenInput {
+  screenId: string;
+  screenName?: string;
+  screenType?: string;
+  screenHtml: string;
+  extraCss?: string;
+  extraJs?: string;
+}
+
+function escapeHtmlAttr(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function normalizeScreenType(raw: string | undefined): string {
+  const upper = (raw ?? 'LIST').trim().toUpperCase();
+  return VALID_PROTOTYPE_SCREEN_TYPES.has(upper) ? upper : 'LIST';
+}
+
+export function initPrototypeShell(
+  input: InitPrototypeShellInput,
+  options?: { locale?: AgentLocale },
+): PrototypeHtmlMutationResult {
+  const locale = options?.locale ?? 'zh-CN';
+  const screens = Array.isArray(input.screens) ? input.screens.filter((s) => s?.screenId?.trim()) : [];
+  if (screens.length === 0) {
+    return {
+      isError: true,
+      nextHtml: '',
+      summary: pickLocaleText(locale, '缺少分屏清单 screens', 'Missing screens list'),
+      diagnostic: pickLocaleText(
+        locale,
+        'init_prototype_shell 需要至少声明 1 个业务屏幕（含 screenId、screenName、screenType）。',
+        'init_prototype_shell requires at least one screen stub (screenId, screenName, screenType).',
+      ),
+    };
+  }
+
+  if (input.sharedCss && FORBIDDEN_DIALOG_RE.test(input.sharedCss)) {
+    return {
+      isError: true,
+      nextHtml: '',
+      summary: pickLocaleText(locale, '禁止使用浏览器阻塞弹窗', 'Blocking browser dialogs are forbidden'),
+      diagnostic: pickLocaleText(
+        locale,
+        'sharedCss 中不得包含 alert/confirm/prompt。',
+        'sharedCss must not contain alert/confirm/prompt.',
+      ),
+    };
+  }
+
+  const tk = input.themeTokens ?? {};
+  const isDark = tk.mode === 'dark';
+  const canvasBg = tk.canvasBg?.trim() || (isDark ? '#141413' : '#f6f4f0');
+  const cardBg = tk.cardBg?.trim() || (isDark ? '#1e1d1b' : '#fffdf9');
+  const accent = tk.accentColor?.trim() || '#f94c05';
+  const border = tk.borderColor?.trim() || (isDark ? '#33302b' : '#dfd6c7');
+  const text = tk.textColor?.trim() || (isDark ? '#f5f2eb' : '#1f1d1a');
+  const font =
+    tk.fontFamily?.trim() ||
+    "'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif";
+  const radius = tk.borderRadius?.trim() || '12px';
+
+  const navItemsHtml = screens
+    .map((scr, idx) => {
+      const sid = escapeHtmlAttr(scr.screenId.trim());
+      const sname = escapeHtmlAttr(scr.screenName?.trim() || scr.screenId.trim());
+      const navElId = `EL-SHELL-TAB-${sid.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+      return `        <button type="button" class="proto-nav-tab${idx === 0 ? ' is-active' : ''}" data-element-id="${navElId}" data-element-type="TAB" data-element-label="${sname}" data-nav-screen="${sid}" onclick="window.__selectProtoScreen('${sid}')">${sname}</button>`;
+    })
+    .join('\n');
+
+  const sectionsHtml = screens
+    .map((scr, idx) => {
+      const sid = escapeHtmlAttr(scr.screenId.trim());
+      const sname = escapeHtmlAttr(scr.screenName?.trim() || scr.screenId.trim());
+      const stype = normalizeScreenType(scr.screenType);
+      const summary = escapeHtmlAttr(
+        scr.summary?.trim() ||
+          pickLocaleText(locale, '智能体正在并行绘制此屏幕内容…', 'Subagent is building this screen live…'),
+      );
+      return [
+        `      <section id="screen-${sid}" class="proto-screen${idx === 0 ? ' is-active' : ''}" data-screen-id="${sid}" data-screen-name="${sname}" data-screen-type="${stype}" data-screen-status="queued">`,
+        `        <div class="proto-skeleton-card">`,
+        `          <div class="proto-skeleton-head">`,
+        `            <span class="proto-skeleton-title">${sname}</span>`,
+        `            <span class="proto-skeleton-badge">${pickLocaleText(locale, '并行施工中', 'Building live')}</span>`,
+        `          </div>`,
+        `          <p class="proto-skeleton-desc">${summary}</p>`,
+        `          <div class="proto-skeleton-grid">`,
+        `            <div class="proto-shimmer-box"></div>`,
+        `            <div class="proto-shimmer-box"></div>`,
+        `            <div class="proto-shimmer-box"></div>`,
+        `          </div>`,
+        `          <div class="proto-shimmer-table"></div>`,
+        `        </div>`,
+        `      </section>`,
+      ].join('\n');
+    })
+    .join('\n\n');
+
+  const appTitle = escapeHtmlAttr(input.appTitle?.trim() || 'Interactive Prototype');
+  const subtitle = input.subtitle?.trim() ? escapeHtmlAttr(input.subtitle.trim()) : '';
+
+  const html = `<!DOCTYPE html>
+<html lang="${locale === 'en-US' ? 'en' : 'zh-CN'}">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${appTitle}</title>
+  <style id="proto-shell-styles">
+    :root {
+      --proto-bg: ${canvasBg};
+      --proto-card: ${cardBg};
+      --proto-accent: ${accent};
+      --proto-border: ${border};
+      --proto-text: ${text};
+      --proto-muted: ${isDark ? '#a69f93' : '#6e675d'};
+      --proto-radius: ${radius};
+      --proto-font: ${font};
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--proto-font);
+      background: var(--proto-bg);
+      color: var(--proto-text);
+      line-height: 1.5;
+      font-variant-numeric: tabular-nums;
+    }
+    .proto-app-shell {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .proto-topbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 24px;
+      background: var(--proto-card);
+      border-bottom: 1px solid var(--proto-border);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+    .proto-brand {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .proto-brand h1 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 700;
+    }
+    .proto-brand span {
+      font-size: 12px;
+      color: var(--proto-muted);
+    }
+    .proto-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .proto-nav-tab {
+      appearance: none;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--proto-muted);
+      padding: 6px 13px;
+      border-radius: calc(var(--proto-radius) - 4px);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 160ms ease-out;
+    }
+    .proto-nav-tab:hover {
+      color: var(--proto-text);
+      border-color: var(--proto-border);
+    }
+    .proto-nav-tab.is-active {
+      background: var(--proto-accent);
+      color: #ffffff;
+      border-color: var(--proto-accent);
+    }
+    .proto-screens-stage {
+      flex: 1;
+      width: 100%;
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 22px 24px 40px;
+    }
+    .proto-screen {
+      display: none;
+      animation: protoFadeIn 200ms ease-out;
+    }
+    .proto-screen.is-active {
+      display: block;
+    }
+    @keyframes protoFadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .proto-card, .card {
+      background: var(--proto-card);
+      border: 1px solid var(--proto-border);
+      border-radius: var(--proto-radius);
+      padding: 18px;
+    }
+    .proto-skeleton-card {
+      background: var(--proto-card);
+      border: 1px dashed var(--proto-border);
+      border-radius: var(--proto-radius);
+      padding: 24px;
+    }
+    .proto-skeleton-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .proto-skeleton-title { font-size: 16px; font-weight: 600; }
+    .proto-skeleton-badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--proto-bg);
+      border: 1px solid var(--proto-border);
+      color: var(--proto-accent);
+    }
+    .proto-skeleton-desc {
+      margin: 0 0 16px;
+      font-size: 13px;
+      color: var(--proto-muted);
+    }
+    .proto-skeleton-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .proto-shimmer-box, .proto-shimmer-table {
+      border-radius: calc(var(--proto-radius) - 4px);
+      background: linear-gradient(90deg, var(--proto-bg) 25%, var(--proto-border) 50%, var(--proto-bg) 75%);
+      background-size: 200% 100%;
+      animation: protoShimmer 1.6s infinite linear;
+      opacity: 0.55;
+    }
+    .proto-shimmer-box { height: 74px; }
+    .proto-shimmer-table { height: 180px; }
+    @keyframes protoShimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    @media (max-width: 768px) {
+      .proto-topbar { padding: 12px 16px; }
+      .proto-screens-stage { padding: 16px; }
+    }
+    ${input.sharedCss?.trim() ?? ''}
+  </style>
+</head>
+<body>
+  <div class="proto-app-shell">
+    <header class="proto-topbar">
+      <div class="proto-brand">
+        <h1>${appTitle}</h1>
+        ${subtitle ? `<span>${subtitle}</span>` : ''}
+      </div>
+      <nav class="proto-nav" aria-label="Primary Screens">
+${navItemsHtml}
+      </nav>
+    </header>
+    <main id="proto-screens-root" class="proto-screens-stage">
+${sectionsHtml}
+    </main>
+  </div>
+  <script id="proto-shell-script">
+    window.__selectProtoScreen = function(screenId) {
+      var screens = document.querySelectorAll('[data-screen-id]');
+      for (var i = 0; i < screens.length; i++) {
+        var el = screens[i];
+        var match = el.getAttribute('data-screen-id') === screenId;
+        if (match) el.classList.add('is-active');
+        else el.classList.remove('is-active');
+      }
+      var tabs = document.querySelectorAll('[data-nav-screen]');
+      for (var j = 0; j < tabs.length; j++) {
+        var tab = tabs[j];
+        if (tab.getAttribute('data-nav-screen') === screenId) tab.classList.add('is-active');
+        else tab.classList.remove('is-active');
+      }
+    };
+  </script>
+</body>
+</html>`;
+
+  return {
+    isError: false,
+    nextHtml: html,
+    targetAnchor: {
+      screenId: screens[0]!.screenId.trim(),
+      label: screens[0]!.screenName?.trim() || screens[0]!.screenId.trim(),
+    },
+    summary: pickLocaleText(
+      locale,
+      `已搭建原型应用外壳与 ${screens.length} 个分屏画板骨架`,
+      `Initialized prototype shell with ${screens.length} artboard screens`,
+    ),
+  };
+}
+
+export function upsertPrototypeScreen(
+  beforeHtml: string,
+  input: UpsertPrototypeScreenInput,
+  options?: { locale?: AgentLocale; allowAnchorReset?: boolean },
+): PrototypeHtmlMutationResult {
+  const locale = options?.locale ?? 'zh-CN';
+  const screenId = input.screenId?.trim();
+  if (!screenId) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      summary: pickLocaleText(locale, '缺少 screenId', 'Missing screenId'),
+      diagnostic: pickLocaleText(
+        locale,
+        'upsert_prototype_screen 必须指定非空 screenId（如 SCR-MEMBER-LEDGER）。',
+        'upsert_prototype_screen requires a non-empty screenId.',
+      ),
+    };
+  }
+
+  const rawFragment = (input.screenHtml ?? '')
+    .replace(/^```(?:html)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  if (!rawFragment) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(input.screenName ? { label: input.screenName } : {}) },
+      summary: pickLocaleText(locale, 'screenHtml 为空', 'screenHtml is empty'),
+      diagnostic: pickLocaleText(
+        locale,
+        'upsert_prototype_screen 需要提供该分屏的 HTML 内容。',
+        'upsert_prototype_screen requires non-empty screenHtml.',
+      ),
+    };
+  }
+
+  const combinedCheck = `${rawFragment}\n${input.extraCss ?? ''}\n${input.extraJs ?? ''}`;
+  if (FORBIDDEN_DIALOG_RE.test(combinedCheck)) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(input.screenName ? { label: input.screenName } : {}) },
+      summary: pickLocaleText(locale, '禁止使用浏览器阻塞弹窗', 'Blocking browser dialogs are forbidden'),
+      diagnostic: pickLocaleText(
+        locale,
+        `分屏 ${screenId} 中检测到 window.alert / confirm / prompt；请改用内联提示条或抽屉反馈后重试。`,
+        `Screen ${screenId} contains window.alert / confirm / prompt; replace with inline UI feedback and retry.`,
+      ),
+    };
+  }
+
+  // Ensure a base shell exists if called before init_prototype_shell
+  let baseHtml = beforeHtml;
+  if (!baseHtml.trim()) {
+    const shellRes = initPrototypeShell(
+      {
+        appTitle: input.screenName?.trim() || screenId,
+        screens: [
+          {
+            screenId,
+            screenName: input.screenName?.trim() || screenId,
+            screenType: normalizeScreenType(input.screenType),
+          },
+        ],
+      },
+      { locale },
+    );
+    baseHtml = shellRes.nextHtml;
+  }
+
+  const baseTree = parseHtmlSpanTree(baseHtml);
+  const existingScreenNode = baseTree.allNodes.find(
+    (n) => n.attrs['data-screen-id'] === screenId,
+  );
+
+  const resolvedName =
+    input.screenName?.trim() ||
+    existingScreenNode?.attrs['data-screen-name'] ||
+    screenId;
+  const resolvedType = normalizeScreenType(
+    input.screenType ?? existingScreenNode?.attrs['data-screen-type'],
+  );
+  const preserveActiveClass = existingScreenNode
+    ? /\bis-active\b/.test(existingScreenNode.attrs['class'] ?? '')
+    : baseTree.allNodes.filter((n) => Boolean(n.attrs['data-screen-id'])).length === 0;
+
+  // Wrap or normalize outer <section data-screen-id="...">
+  const fragTree = parseHtmlSpanTree(rawFragment);
+  const outerScreenRoot =
+    fragTree.roots.length === 1 && fragTree.roots[0]?.attrs['data-screen-id'] === screenId
+      ? fragTree.roots[0]
+      : undefined;
+
+  let normalizedSectionHtml: string;
+  if (outerScreenRoot) {
+    const origOpen = rawFragment.slice(outerScreenRoot.openStart, outerScreenRoot.openEnd);
+    const existingClass = outerScreenRoot.attrs['class'] ?? '';
+    const mergedClass = [
+      'proto-screen',
+      ...(preserveActiveClass ? ['is-active'] : []),
+      ...existingClass.split(/\s+/).filter((c) => c && c !== 'proto-screen' && c !== 'is-active'),
+    ].join(' ');
+    const updatedOpen = rewriteOpeningTagAttributes(origOpen, {
+      'data-screen-id': screenId,
+      'data-screen-name': resolvedName,
+      'data-screen-type': resolvedType,
+      'data-screen-status': 'ready',
+      class: mergedClass,
+    });
+    normalizedSectionHtml = `${updatedOpen}${rawFragment.slice(outerScreenRoot.openEnd)}`;
+  } else {
+    const activeCls = preserveActiveClass ? ' is-active' : '';
+    normalizedSectionHtml = `<section id="screen-${escapeHtmlAttr(screenId)}" class="proto-screen${activeCls}" data-screen-id="${escapeHtmlAttr(screenId)}" data-screen-name="${escapeHtmlAttr(resolvedName)}" data-screen-type="${resolvedType}" data-screen-status="ready">\n${rawFragment}\n</section>`;
+  }
+
+  // Validate interactive controls inside this screen
+  const sectionNodes = parseHtmlSpanTree(normalizedSectionHtml).allNodes;
+  const controlIssues = validateInteractiveControlNodes(
+    sectionNodes,
+    normalizedSectionHtml,
+    new Set(),
+    locale,
+  );
+  if (controlIssues.length > 0) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, label: resolvedName },
+      summary: controlIssues[0]!,
+      diagnostic: pickLocaleText(
+        locale,
+        `分屏「${resolvedName}」(${screenId}) 控件锚点校验未通过：${controlIssues.join('；')}。请为每个 <button>/<input>/<select>/<textarea> 补齐唯一 data-element-id 与合法 data-element-type 后重试。`,
+        `Screen "${resolvedName}" (${screenId}) control anchor validation failed: ${controlIssues.join('; ')}. Add unique data-element-id and valid data-element-type on every interactive control and retry.`,
+      ),
+    };
+  }
+
+  // Check that element IDs in this screen don't collide with element IDs in OTHER screens
+  const otherScreenElementIds = new Set<string>();
+  for (const node of baseTree.allNodes) {
+    const enclosing = findEnclosingScreenNode(node);
+    if (enclosing && enclosing.attrs['data-screen-id'] === screenId) continue;
+    const eid = node.attrs['data-element-id'];
+    if (eid) otherScreenElementIds.add(eid);
+  }
+  const duplicateAcrossScreens: string[] = [];
+  const seenInSection = new Set<string>();
+  for (const node of sectionNodes) {
+    const eid = node.attrs['data-element-id'];
+    if (!eid) continue;
+    if (seenInSection.has(eid) || otherScreenElementIds.has(eid)) {
+      duplicateAcrossScreens.push(eid);
+    }
+    seenInSection.add(eid);
+  }
+  if (duplicateAcrossScreens.length > 0) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, label: resolvedName },
+      summary: pickLocaleText(
+        locale,
+        `存在重复的 data-element-id：${duplicateAcrossScreens[0]}`,
+        `Duplicate data-element-id: ${duplicateAcrossScreens[0]}`,
+      ),
+      diagnostic: pickLocaleText(
+        locale,
+        `分屏「${resolvedName}」中检测到重复的 data-element-id（${duplicateAcrossScreens.join(', ')}）；建议加屏幕前缀保持全局唯一。`,
+        `Duplicate data-element-id detected in screen "${resolvedName}" (${duplicateAcrossScreens.join(', ')}); prefix element IDs per screen so each is globally unique.`,
+      ),
+    };
+  }
+
+  let candidateHtml: string;
+  if (existingScreenNode) {
+    candidateHtml = `${baseHtml.slice(0, existingScreenNode.openStart)}${normalizedSectionHtml}${baseHtml.slice(existingScreenNode.closeEnd)}`;
+  } else {
+    const mainNode =
+      baseTree.allNodes.find((n) => n.attrs['id'] === 'proto-screens-root') ??
+      baseTree.allNodes.find((n) => n.tagName === 'main') ??
+      baseTree.allNodes.find((n) => n.tagName === 'body');
+    if (mainNode && mainNode.innerEnd !== null) {
+      candidateHtml = `${baseHtml.slice(0, mainNode.innerEnd)}\n${normalizedSectionHtml}\n${baseHtml.slice(mainNode.innerEnd)}`;
+    } else {
+      candidateHtml = `${baseHtml}\n${normalizedSectionHtml}`;
+    }
+  }
+
+  if (input.extraCss?.trim()) {
+    const styleCloseIdx = candidateHtml.lastIndexOf('</style>');
+    if (styleCloseIdx !== -1) {
+      candidateHtml = `${candidateHtml.slice(0, styleCloseIdx)}\n/* [${screenId}] */\n${input.extraCss.trim()}\n${candidateHtml.slice(styleCloseIdx)}`;
+    } else {
+      const headCloseIdx = candidateHtml.indexOf('</head>');
+      const styleBlock = `<style data-screen-css="${escapeHtmlAttr(screenId)}">\n${input.extraCss.trim()}\n</style>\n`;
+      candidateHtml =
+        headCloseIdx !== -1
+          ? `${candidateHtml.slice(0, headCloseIdx)}${styleBlock}${candidateHtml.slice(headCloseIdx)}`
+          : `${styleBlock}${candidateHtml}`;
+    }
+  }
+
+  if (input.extraJs?.trim()) {
+    const bodyCloseIdx = candidateHtml.lastIndexOf('</body>');
+    const scriptBlock = `\n<script data-screen-js="${escapeHtmlAttr(screenId)}">\n(function(){\n${input.extraJs.trim()}\n})();\n</script>\n`;
+    candidateHtml =
+      bodyCloseIdx !== -1
+        ? `${candidateHtml.slice(0, bodyCloseIdx)}${scriptBlock}${candidateHtml.slice(bodyCloseIdx)}`
+        : `${candidateHtml}${scriptBlock}`;
+  }
+
+  return {
+    isError: false,
+    nextHtml: candidateHtml,
+    targetAnchor: { screenId, label: resolvedName },
+    summary: pickLocaleText(
+      locale,
+      `已完成分屏「${resolvedName}」(${screenId}) 绘制（共 ${seenInSection.size} 个交互控件）`,
+      `Built screen "${resolvedName}" (${screenId}) with ${seenInSection.size} anchored controls`,
+    ),
+  };
+}
+
+export interface PartialPrototypeScreenInput {
+  screenId: string;
+  screenName?: string;
+  screenType?: string;
+  partialScreenHtml: string;
+  extraCss?: string;
+}
+
+export interface HtmlWritingSignal {
+  activeLabel?: string;
+  cursorZone: AgentSubagentCursorZone;
+}
+
+export function extractLatestHtmlWritingSignal(partialHtml: string): HtmlWritingSignal {
+  const tail = partialHtml.slice(-1400);
+  const lowerTail = tail.toLowerCase();
+
+  let cursorZone: AgentSubagentCursorZone = 'body';
+  if (/(?:drawer|aside|modal|slideover|sheet|抽屉|侧栏)/i.test(tail.slice(-500))) {
+    cursorZone = 'drawer';
+  } else if (/(?:sticky-save|footer|action-bar|confirm-bar|底部|锁账|提交栏)/i.test(tail.slice(-500))) {
+    cursorZone = 'footer';
+  } else if (/(?:<table|<thead|<tbody|<tr|<td|<th|ledger|list-row)/i.test(lowerTail.slice(-500))) {
+    cursorZone = 'body';
+  } else if (/(?:filter|toolbar|search|筛选|搜索|<input|<select)/i.test(tail.slice(-500))) {
+    cursorZone = 'toolbar';
+  } else if (/(?:kpi|stat-card|metric|汇总|营业额|指标)/i.test(tail.slice(-500))) {
+    cursorZone = 'kpi';
+  } else if (partialHtml.length < 420 || /(?:<header|<h1|<h2|hero|banner)/i.test(lowerTail.slice(-400))) {
+    cursorZone = 'header';
+  }
+
+  // Prefer explicit data-element-label near the tail, otherwise visible text between tags
+  const labelMatches = Array.from(tail.matchAll(/data-element-label=["']([^"']{2,28})["']/gi));
+  if (labelMatches.length > 0) {
+    const picked = labelMatches[labelMatches.length - 1]![1]!.trim();
+    if (picked) return { activeLabel: picked, cursorZone };
+  }
+
+  const textMatches = Array.from(
+    tail.matchAll(/>([^<>{}\n]{2,26})<\/(?:h1|h2|h3|h4|button|th|label|strong|span|p|div|li)>/gi),
+  );
+  for (let i = textMatches.length - 1; i >= 0; i -= 1) {
+    const candidate = textMatches[i]![1]!
+      .replace(/&[a-z]+;/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (candidate.length >= 2 && !/^[\d\s.,¥$%+-]+$/.test(candidate)) {
+      return { activeLabel: candidate.slice(0, 22), cursorZone };
+    }
+  }
+
+  return { cursorZone };
+}
+
+function balanceAndMarkPartialHtml(rawFragment: string): string {
+  const cleaned = rawFragment
+    .replace(/^```(?:html)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .replace(/<[^>]*$/, '')
+    .replace(/&[A-Za-z0-9#]*$/, '')
+    .trim();
+
+  if (!cleaned) return '';
+
+  const openStack: string[] = [];
+  let lastVisualOpenPos: { start: number; afterTagName: number } | null = null;
+  const visualTags = new Set([
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'button',
+    'input',
+    'select',
+    'tr',
+    'th',
+    'td',
+    'li',
+    'article',
+    'header',
+    'footer',
+    'aside',
+    'div',
+  ]);
+
+  let i = 0;
+  while (i < cleaned.length) {
+    const lt = cleaned.indexOf('<', i);
+    if (lt === -1) break;
+    if (cleaned.startsWith('<!--', lt)) {
+      const end = cleaned.indexOf('-->', lt + 4);
+      i = end === -1 ? cleaned.length : end + 3;
+      continue;
+    }
+    if (cleaned[lt + 1] === '!' || cleaned[lt + 1] === '?') {
+      const gt = cleaned.indexOf('>', lt + 2);
+      i = gt === -1 ? cleaned.length : gt + 1;
+      continue;
+    }
+    if (cleaned[lt + 1] === '/') {
+      const closeMatch = /^<\/\s*([A-Za-z][A-Za-z0-9:-]*)/.exec(cleaned.slice(lt));
+      if (!closeMatch) {
+        i = lt + 2;
+        continue;
+      }
+      const closeTag = closeMatch[1]!.toLowerCase();
+      const { end } = findTagEnd(cleaned, lt + closeMatch[0].length);
+      for (let s = openStack.length - 1; s >= 0; s -= 1) {
+        if (openStack[s] === closeTag) {
+          openStack.splice(s);
+          break;
+        }
+      }
+      i = end;
+      continue;
+    }
+
+    const openMatch = /^<([A-Za-z][A-Za-z0-9:-]*)(?=[\s/>]|$)/.exec(cleaned.slice(lt));
+    if (!openMatch) {
+      i = lt + 1;
+      continue;
+    }
+    const tagName = openMatch[1]!.toLowerCase();
+    const afterName = lt + openMatch[0].length;
+    const { end, selfClosing } = findTagEnd(cleaned, afterName);
+    const isVoid = selfClosing || VOID_HTML_TAGS.has(tagName);
+    if (visualTags.has(tagName) && tagName !== 'section') {
+      lastVisualOpenPos = { start: lt, afterTagName: afterName };
+    }
+    if (isVoid) {
+      i = end;
+      continue;
+    }
+    if (RAW_TEXT_TAGS.has(tagName)) {
+      const closeRe = new RegExp(`<\\/\\s*${tagName}\\s*>`, 'gi');
+      closeRe.lastIndex = end;
+      const hit = closeRe.exec(cleaned);
+      if (hit) {
+        i = hit.index + hit[0].length;
+      } else {
+        openStack.push(tagName);
+        i = cleaned.length;
+      }
+      continue;
+    }
+    openStack.push(tagName);
+    i = end;
+  }
+
+  let marked = cleaned;
+  if (lastVisualOpenPos) {
+    marked = `${cleaned.slice(0, lastVisualOpenPos.afterTagName)} data-live-writing="true"${cleaned.slice(lastVisualOpenPos.afterTagName)}`;
+  }
+
+  const closers = openStack
+    .slice()
+    .reverse()
+    .map((t) => `</${t}>`)
+    .join('');
+  return `${marked}${closers}`;
+}
+
+export function previewPartialPrototypeScreen(
+  beforeHtml: string,
+  input: PartialPrototypeScreenInput,
+  options?: { locale?: AgentLocale },
+): string {
+  const locale = options?.locale ?? 'zh-CN';
+  const screenId = input.screenId?.trim();
+  if (!screenId) return beforeHtml;
+
+  const balanced = balanceAndMarkPartialHtml(input.partialScreenHtml);
+  if (!balanced) return beforeHtml;
+
+  let baseHtml = beforeHtml;
+  if (!baseHtml.trim()) {
+    const shellRes = initPrototypeShell(
+      {
+        appTitle: input.screenName?.trim() || screenId,
+        screens: [
+          {
+            screenId,
+            screenName: input.screenName?.trim() || screenId,
+            screenType: normalizeScreenType(input.screenType),
+          },
+        ],
+      },
+      { locale },
+    );
+    baseHtml = shellRes.nextHtml;
+  }
+
+  const baseTree = parseHtmlSpanTree(baseHtml);
+  const existingScreenNode = baseTree.allNodes.find(
+    (n) => n.attrs['data-screen-id'] === screenId,
+  );
+  const resolvedName =
+    input.screenName?.trim() || existingScreenNode?.attrs['data-screen-name'] || screenId;
+  const resolvedType = normalizeScreenType(
+    input.screenType ?? existingScreenNode?.attrs['data-screen-type'],
+  );
+  const signal = extractLatestHtmlWritingSignal(input.partialScreenHtml);
+
+  // Strip outer <section data-screen-id="..."> wrapper if partial already opened one
+  const innerBody = balanced
+    .replace(/^<section\b[^>]*>/i, '')
+    .replace(/<\/section>\s*$/i, '');
+
+  const liveLabelAttr = signal.activeLabel
+    ? ` data-live-writing-label="${escapeHtmlAttr(signal.activeLabel)}"`
+    : '';
+  const streamingSection = `<section id="screen-${escapeHtmlAttr(screenId)}" class="proto-screen is-active" data-screen-id="${escapeHtmlAttr(screenId)}" data-screen-name="${escapeHtmlAttr(resolvedName)}" data-screen-type="${resolvedType}" data-screen-status="streaming"${liveLabelAttr}>\n${innerBody}\n</section>`;
+
+  let candidateHtml: string;
+  if (existingScreenNode) {
+    candidateHtml = `${baseHtml.slice(0, existingScreenNode.openStart)}${streamingSection}${baseHtml.slice(existingScreenNode.closeEnd)}`;
+  } else {
+    const mainNode =
+      baseTree.allNodes.find((n) => n.attrs['id'] === 'proto-screens-root') ??
+      baseTree.allNodes.find((n) => n.tagName === 'main') ??
+      baseTree.allNodes.find((n) => n.tagName === 'body');
+    if (mainNode && mainNode.innerEnd !== null) {
+      candidateHtml = `${baseHtml.slice(0, mainNode.innerEnd)}\n${streamingSection}\n${baseHtml.slice(mainNode.innerEnd)}`;
+    } else {
+      candidateHtml = `${baseHtml}\n${streamingSection}`;
+    }
+  }
+
+  if (input.extraCss?.trim()) {
+    const cleanCss = input.extraCss.replace(/<[^>]*$/, '').trim();
+    const styleCloseIdx = candidateHtml.lastIndexOf('</style>');
+    if (cleanCss && styleCloseIdx !== -1) {
+      candidateHtml = `${candidateHtml.slice(0, styleCloseIdx)}\n/* [live:${screenId}] */\n${cleanCss}\n${candidateHtml.slice(styleCloseIdx)}`;
+    }
+  }
+
+  return candidateHtml;
+}
+
 export function ensurePrototypeCoDesignSession(
   store: WorkspaceStore,
   projectId: string,
@@ -1352,6 +2165,102 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'init_prototype_shell',
+      description:
+        'Initialize a responsive multi-artboard HTML5 prototype shell with shared design tokens, navigation tabs, and placeholder screen frames (data-screen-status="queued") so the user sees all artboards immediately while parallel subagents fill each screen via upsert_prototype_screen.',
+      parameters: {
+        type: 'object',
+        properties: {
+          appTitle: {
+            type: 'string',
+            description: 'Application title displayed in the prototype header',
+          },
+          subtitle: {
+            type: 'string',
+            description: 'Optional domain or version subtitle',
+          },
+          themeTokens: {
+            type: 'object',
+            description: 'Design Brief visual tokens',
+            properties: {
+              mode: { type: 'string', enum: ['light', 'dark'] },
+              canvasBg: { type: 'string' },
+              cardBg: { type: 'string' },
+              accentColor: { type: 'string' },
+              borderColor: { type: 'string' },
+              textColor: { type: 'string' },
+              fontFamily: { type: 'string' },
+              borderRadius: { type: 'string' },
+            },
+          },
+          sharedCss: {
+            type: 'string',
+            description: 'Optional shared CSS utility classes injected into the shell stylesheet',
+          },
+          screens: {
+            type: 'array',
+            description: 'List of screens to create as artboards (typically 3-5 screens)',
+            items: {
+              type: 'object',
+              properties: {
+                screenId: { type: 'string', description: 'Unique screen ID such as SCR-MEMBER-LEDGER' },
+                screenName: { type: 'string', description: 'Human-readable screen title' },
+                screenType: {
+                  type: 'string',
+                  description: 'LIST | FORM | DETAIL | APPROVAL | REPORT | DASHBOARD | MODAL',
+                },
+                summary: { type: 'string', description: 'One-sentence summary of what this screen contains' },
+              },
+              required: ['screenId', 'screenName', 'screenType'],
+            },
+          },
+        },
+        required: ['appTitle', 'screens'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'upsert_prototype_screen',
+      description:
+        'Create or replace a single screen artboard (data-screen-id) inside the prototype without rewriting other screens. Every <button>, <input>, <select>, and <textarea> inside screenHtml MUST carry a globally unique data-element-id and valid data-element-type, and NEVER call window.alert/confirm/prompt.',
+      parameters: {
+        type: 'object',
+        properties: {
+          screenId: {
+            type: 'string',
+            description: 'Target data-screen-id (e.g. SCR-MEMBER-LEDGER)',
+          },
+          screenName: {
+            type: 'string',
+            description: 'Human-readable screen name (e.g. 会员储值台账)',
+          },
+          screenType: {
+            type: 'string',
+            description: 'LIST | FORM | DETAIL | APPROVAL | REPORT | DASHBOARD | MODAL',
+          },
+          screenHtml: {
+            type: 'string',
+            description:
+              'HTML body for this single screen (only this screen, ~80-220 lines; may be inner content or <section data-screen-id="...">)',
+          },
+          extraCss: {
+            type: 'string',
+            description: 'Optional scoped CSS rules specific to this screen',
+          },
+          extraJs: {
+            type: 'string',
+            description: 'Optional interactive JS handlers scoped to this screen (no alert/confirm/prompt)',
+          },
+        },
+        required: ['screenId', 'screenHtml'],
+      },
+    },
+  },
 ];
 
 export const PROTOTYPE_ANCHOR_TOOL_NAMES = [
@@ -1359,6 +2268,8 @@ export const PROTOTYPE_ANCHOR_TOOL_NAMES = [
   'read_prototype_anchor',
   'edit_prototype_anchor',
   'rewrite_prototype_page',
+  'init_prototype_shell',
+  'upsert_prototype_screen',
 ] as const;
 
 export type PrototypeAnchorToolName = (typeof PROTOTYPE_ANCHOR_TOOL_NAMES)[number];

@@ -22,7 +22,7 @@ export function MarkdownRenderer({
 }: MarkdownRendererProps) {
   return (
     <div
-      className={cn('md-prose text-[length:var(--text-base)] leading-[1.65] text-ink break-words', className)}
+      className={cn('md-prose text-[length:var(--text-base)] leading-[1.65] text-foreground break-words', className)}
       data-testid={testId}
     >
       <ReactMarkdown
@@ -31,7 +31,7 @@ export function MarkdownRenderer({
           table({ children }) {
             return (
               <div
-                className="responsive-table-region my-2 rounded-card border border-line"
+                className="responsive-table-region my-2 rounded-card border border-border"
                 role="region"
                 aria-label="Markdown data table"
                 tabIndex={0}
@@ -70,7 +70,7 @@ export function MarkdownRenderer({
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-medium text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+                className="font-medium text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
                 {...rest}
                 onClick={(event) => onLinkClick?.(href ?? '', event)}
               >

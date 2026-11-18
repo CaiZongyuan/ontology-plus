@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import {
+  buildKnowledgeGraph,
   exportToOwl,
   parseModelYaml,
+  validateOntologySuite,
   type ModelCode,
   type OntologySuite,
 } from '../packages/ontology-core/index.js';
@@ -23,6 +25,7 @@ import {
   type LlmProviderConfig,
   type McpServerConfig,
   type MetricDefinition,
+  type ProjectDetail,
   type WorkspaceStore,
   type WritebackInterface,
 } from '../packages/workspace-store/index.js';
@@ -38,11 +41,13 @@ import {
   ensurePrototypeCoDesignSession,
   getLiveAgentSessionStatus,
   normalizeAgentLocale,
+  registerAgentRunLifecycleHooks,
   runDataOntologyReasoning,
   runSmartOntologyExtractionJob,
   runUnifiedAgentSessionStream,
   testLlmGatewayConnection,
   type AgentLocale,
+  type AgentRunLifecycleHooks,
   type AssistProjectDesignBriefInput,
   type DesignBriefAssistMode,
   type TransientTurnImageInput,
@@ -58,9 +63,32 @@ import {
 } from '../packages/package-compiler/index.js';
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
+import { registerArtifactHistoryRoutes } from './artifact-history.js';
+import { registerBusinessModelEditRoutes } from './business-model-edits.js';
+import {
+  deriveProjectStepsForStoreProject,
+  listProjectPackageSnapshots,
+  registerStepConfirmationRoutes,
+} from './step-confirmations.js';
+import { registerStepHandoffRoutes } from './step-handoff.js';
 
-export function createApiApp(customStore?: WorkspaceStore): Hono {
+export interface ApiAppOptions {
+  agentRunHooks?: AgentRunLifecycleHooks | readonly AgentRunLifecycleHooks[];
+}
+
+export function createApiApp(
+  customStore?: WorkspaceStore,
+  options?: ApiAppOptions,
+): Hono {
   const store = customStore ?? createWorkspaceStore();
+  if (options?.agentRunHooks) {
+    const hookList = Array.isArray(options.agentRunHooks)
+      ? options.agentRunHooks
+      : [options.agentRunHooks];
+    for (const hook of hookList) {
+      registerAgentRunLifecycleHooks(store, hook);
+    }
+  }
   const app = new Hono();
 
   // Baseline security headers (nosniff, clickjacking & referrer protection)
@@ -123,22 +151,68 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
 
   app.get('/api/bootstrap', (c) => {
     const projects = store.listProjects();
-    const requestedProjectId = c.req.query('projectId') || projects[0]?.id || 'proj-contract';
+    const requestedProjectId = c.req.query('projectId') || projects[0]?.id || '';
+    const emptyFallbackProject = (): ProjectDetail => {
+      const now = new Date(0).toISOString();
+      const suite: OntologySuite = {};
+      return {
+        id: '',
+        name: '',
+        code: '',
+        center: 'APPLICATION',
+        domain: '',
+        description: '',
+        currentStage: 0,
+        currentStep: 'REQUIREMENTS',
+        currentStepState: 'NOT_STARTED',
+        stepStates: {
+          REQUIREMENTS: 'NOT_STARTED',
+          PROTOTYPE: 'NOT_STARTED',
+          BUSINESS_MODEL: 'NOT_STARTED',
+          DELIVERY: 'NOT_STARTED',
+        },
+        createdAt: now,
+        updatedAt: now,
+        suite,
+        validation: validateOntologySuite(suite),
+        knowledgeGraph: buildKnowledgeGraph(suite),
+        changelog: '',
+      };
+    };
     const activeProject =
-      store.getProject(requestedProjectId) ?? store.getProject(projects[0]!.id)!;
+      (requestedProjectId ? store.getProject(requestedProjectId) : undefined) ??
+      (projects[0] ? store.getProject(projects[0].id) : undefined) ??
+      emptyFallbackProject();
 
     return c.json({
       projects,
       activeProject,
-      projectSnapshots: store.listProjectSnapshots(activeProject.id),
+      projectSnapshots: activeProject.id ? store.listProjectSnapshots(activeProject.id) : [],
       agentSessions: store.listAgentSessions(),
-      requirementSessions: store.listRequirementSessions(activeProject.id),
-      requirementDocs: store.listRequirementDocs(activeProject.id),
-      prototypes: store.listPrototypes(activeProject.id),
-      confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(activeProject.id) ?? null,
+      requirementSessions: activeProject.id ? store.listRequirementSessions(activeProject.id) : [],
+      requirementDocs: activeProject.id ? store.listRequirementDocs(activeProject.id) : [],
+      prototypes: activeProject.id ? store.listPrototypes(activeProject.id) : [],
+      confirmedPrototypeRevision: activeProject.id
+        ? (store.getConfirmedPrototypeRevision(activeProject.id) ?? null)
+        : null,
+      stepConfirmations: activeProject.id
+        ? store.getProjectStepConfirmations(activeProject.id)
+        : { requirements: null, prototype: null, businessModel: null },
+      artifactHistory: activeProject.id
+        ? store.listArtifactHistoryViews(
+            activeProject.id,
+            (() => {
+              const bootLocale = normalizeAgentLocale(c.req.header('x-onto-locale') ?? undefined);
+              return bootLocale ? { locale: bootLocale } : undefined;
+            })(),
+          )
+        : [],
       fourLayerAssets: store.listFourLayerAssets(),
       technologyProfiles: store.listTechnologyProfiles(),
       assembledApplications: store.listAssembledApplications(),
+      packageSnapshots: activeProject.id
+        ? listProjectPackageSnapshots(store, activeProject.id)
+        : [],
       generatedSkills: store.listGeneratedSkills(),
       legacySystems: store.listLegacySystems(),
       extractionJobs: store.listExtractionJobs(),
@@ -184,6 +258,8 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       providerId?: string;
       modelOverride?: string;
       reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+      codeMode?: boolean;
+      multiAgentConcurrency?: number;
     }>();
     if (!['REQUIREMENT', 'PROTOTYPE_CO_DESIGN', 'COPILOT', 'ARCHITECTURE', 'CODING', 'CAPABILITY', 'REASONING'].includes(body.agentKind)) {
       return c.json({ error: 'Unknown agent specialisation.', code: 'INVALID_AGENT_KIND' }, 400);
@@ -206,8 +282,14 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       providerId?: string;
       modelOverride?: string;
       reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+      codeMode?: boolean;
+      multiAgentConcurrency?: number;
       clearMessages?: boolean;
     }>();
+    const clampedConcurrency =
+      typeof body.multiAgentConcurrency === 'number' && Number.isFinite(body.multiAgentConcurrency)
+        ? Math.max(1, Math.min(6, Math.round(body.multiAgentConcurrency)))
+        : undefined;
     const updated = store.saveAgentSession({
       ...existing,
       ...(body.title !== undefined ? { title: body.title.trim() || existing.title } : {}),
@@ -215,6 +297,8 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       ...(body.providerId !== undefined ? { providerId: body.providerId } : {}),
       ...(body.modelOverride !== undefined ? { modelOverride: body.modelOverride } : {}),
       ...(body.reasoningMode !== undefined ? { reasoningMode: body.reasoningMode } : {}),
+      ...(body.codeMode !== undefined ? { codeMode: Boolean(body.codeMode) } : {}),
+      ...(clampedConcurrency !== undefined ? { multiAgentConcurrency: clampedConcurrency } : {}),
       ...(body.clearMessages
         ? { messages: [], compactedSummary: undefined, status: 'IDLE' as const }
         : {}),
@@ -250,9 +334,10 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
 
   app.post('/api/agent-sessions/:id/abort', async (c) => {
     const id = c.req.param('id');
-    const { aborted, session } = await abortActiveAgentSessionAsync(store, id);
+    const { aborted, runId, session } = await abortActiveAgentSessionAsync(store, id);
     return c.json({
       aborted,
+      ...(runId ? { runId } : {}),
       session,
       agentSessions: store.listAgentSessions(),
     });
@@ -311,6 +396,8 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
         prototypeName?: string;
         activeModelCode?: ModelCode;
         reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+        codeMode?: boolean;
+        multiAgentConcurrency?: number;
         mockMode?: boolean;
         locale?: string;
       }>()
@@ -335,18 +422,50 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     return c.json({ projects: store.listProjects() });
   });
 
-  app.post('/api/projects', async (c) => {
-    const body = await c.req.json<{
-      name: string;
-      code: string;
-      center?: 'APPLICATION' | 'CAPABILITY' | 'ANALYTICS';
-      domain: string;
-      description?: string;
-      template?: 'CONTRACT' | 'MFT' | 'EMPTY';
-    }>();
-    const project = store.createProject(body);
-    return c.json({ project, projects: store.listProjects() });
-  });
+  const handleCreateProject = async (c: {
+    req: { json: <T>() => Promise<T> };
+    json: (data: unknown, status?: 200 | 201 | 400) => Response;
+  }) => {
+    const body = await c.req
+      .json<{
+        name?: string;
+        code?: string;
+        center?: 'APPLICATION' | 'CAPABILITY' | 'ANALYTICS';
+        domain?: string;
+        description?: string;
+        template?: 'CONTRACT' | 'MFT' | 'EMPTY';
+      }>()
+      .catch(() => ({} as Record<string, never>));
+
+    const hasExplicitName = Boolean(body.name?.trim());
+    const hasDescription = Boolean(body.description?.trim());
+    if (!hasExplicitName && !hasDescription) {
+      return c.json({ error: 'Project description or name is required.' }, 400);
+    }
+
+    if (hasExplicitName) {
+      const project = store.createProject({
+        name: body.name!.trim(),
+        code: body.code?.trim() ?? '',
+        ...(body.center ? { center: body.center } : {}),
+        domain: body.domain?.trim() || body.name!.trim(),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(body.template ? { template: body.template } : {}),
+      });
+      return c.json({ project, projects: store.listProjects() }, 200);
+    }
+
+    const project = store.createProject({
+      description: body.description!.trim(),
+      ...(body.code ? { code: body.code } : {}),
+      ...(body.center ? { center: body.center } : {}),
+      ...(body.domain ? { domain: body.domain } : {}),
+      template: body.template ?? 'EMPTY',
+    });
+    return c.json({ project, projects: store.listProjects() }, 201);
+  };
+
+  app.post('/api/projects', handleCreateProject);
 
   app.get('/api/projects/:id', (c) => {
     const project = store.getProject(c.req.param('id'));
@@ -359,6 +478,9 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       requirementDocs: store.listRequirementDocs(project.id),
       prototypes: store.listPrototypes(project.id),
       confirmedPrototypeRevision: store.getConfirmedPrototypeRevision(project.id) ?? null,
+      stepConfirmations: store.getProjectStepConfirmations(project.id),
+      artifactHistory: store.listArtifactHistoryViews(project.id),
+      packageSnapshots: listProjectPackageSnapshots(store, project.id),
       extractionJobs: store.listExtractionJobs(project.id),
     });
   });
@@ -419,6 +541,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       project,
       projects: store.listProjects(),
       snapshots: store.listProjectSnapshots(projectId),
+      artifactHistory: store.listArtifactHistoryViews(projectId),
     });
   });
 
@@ -440,7 +563,10 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
         ? parseModelYaml(modelCode, body.yamlText)
         : (body.modelData as NonNullable<OntologySuite[typeof modelCode]>);
       const project = store.updateModel(projectId, modelCode, parsed);
-      return c.json({ project });
+      return c.json({
+        project,
+        artifactHistory: store.listArtifactHistoryViews(projectId),
+      });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
     }
@@ -449,8 +575,14 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
   app.put('/api/projects/:id/suite', async (c) => {
     const projectId = c.req.param('id');
     const body = await c.req.json<{ suite: OntologySuite; changelogNote?: string }>();
-    const project = store.updateSuite(projectId, body.suite, body.changelogNote);
-    return c.json({ project });
+    const project = store.commitSuite(projectId, body.suite, {
+      source: { kind: 'MANUAL' },
+      ...(body.changelogNote !== undefined ? { note: body.changelogNote } : {}),
+    });
+    return c.json({
+      project,
+      artifactHistory: store.listArtifactHistoryViews(projectId),
+    });
   });
 
   app.get('/api/projects/:id/yaml/export', (c) => {
@@ -464,7 +596,10 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     const projectId = c.req.param('id');
     const body = await c.req.json<{ files: Record<string, string> }>();
     const result = store.importYamlFiles(projectId, body.files);
-    return c.json(result);
+    return c.json({
+      ...result,
+      artifactHistory: store.listArtifactHistoryViews(projectId),
+    });
   });
 
   app.get('/api/projects/:id/owl', (c) => {
@@ -485,13 +620,24 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     const projectId = c.req.param('id');
     const body = await c.req.json<{ oldId: string; newId: string }>();
     const result = store.renameSymbol(projectId, body.oldId, body.newId);
-    return c.json(result);
+    return c.json({
+      ...result,
+      artifactHistory: store.listArtifactHistoryViews(projectId),
+    });
   });
 
   app.post('/api/projects/:id/generate-skill', (c) => {
     const project = store.getProject(c.req.param('id'));
     if (!project) return c.json({ error: 'Project not found' }, 404);
-    const compiled = compileOntologySkill(project);
+    const confirmedModel = store.getProjectStepConfirmations(project.id).businessModel;
+    const sourceProject: ProjectDetail = confirmedModel
+      ? {
+          ...project,
+          suite: structuredClone(confirmedModel.suiteSnapshot ?? confirmedModel.suite),
+          updatedAt: confirmedModel.confirmedAt,
+        }
+      : project;
+    const compiled = compileOntologySkill(sourceProject);
     const saved = store.saveGeneratedSkill({ ...compiled, isCustomRefined: false });
     return c.json({ skill: saved, skills: store.listGeneratedSkills() });
   });
@@ -580,17 +726,28 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       projectId: string;
       title: string;
       version: string;
-      status: 'DRAFT' | 'CONFIRMED' | 'PUBLISHED';
+      status?: 'DRAFT' | 'CONFIRMED' | 'PUBLISHED';
       content: string;
     }>();
-    const doc = store.saveRequirementDoc(body);
-    return c.json({ doc, docs: store.listRequirementDocs(body.projectId) });
+    const doc = store.saveRequirementDoc({
+      ...body,
+      status: body.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT',
+    });
+    return c.json({
+      doc,
+      docs: store.listRequirementDocs(body.projectId),
+      artifactHistory: store.listArtifactHistoryViews(body.projectId),
+    });
   });
 
   app.post('/api/requirements/docs/:id/clone', (c) => {
     const id = c.req.param('id');
     const doc = store.cloneRequirementDoc(id);
-    return c.json({ doc, docs: store.listRequirementDocs(doc.projectId) });
+    return c.json({
+      doc,
+      docs: store.listRequirementDocs(doc.projectId),
+      artifactHistory: store.listArtifactHistoryViews(doc.projectId),
+    });
   });
 
   app.delete('/api/requirements/docs/:id', (c) => {
@@ -600,6 +757,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     return c.json({
       deletedId: id,
       docs: store.listRequirementDocs(projectId),
+      artifactHistory: store.listArtifactHistoryViews(projectId),
     });
   });
 
@@ -633,6 +791,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
           ...appended,
           prototypes: store.listPrototypes(projectId),
           confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+          artifactHistory: store.listArtifactHistoryViews(projectId),
         });
       }
     }
@@ -644,6 +803,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       ...created,
       prototypes: store.listPrototypes(projectId),
       confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+      artifactHistory: store.listArtifactHistoryViews(projectId),
     });
   });
 
@@ -657,6 +817,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       ...appended,
       prototypes: store.listPrototypes(existing.projectId),
       confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+      artifactHistory: store.listArtifactHistoryViews(existing.projectId),
     });
   });
 
@@ -674,6 +835,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
         ...restored,
         prototypes: store.listPrototypes(existing.projectId),
         confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+        artifactHistory: store.listArtifactHistoryViews(existing.projectId),
       });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
@@ -692,6 +854,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
         ...updated,
         prototypes: store.listPrototypes(existing.projectId),
         confirmedRevision: store.getConfirmedPrototypeRevision(existing.projectId) ?? null,
+        artifactHistory: store.listArtifactHistoryViews(existing.projectId),
       });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
@@ -722,18 +885,29 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
 
   app.post('/api/projects/:id/prototypes/confirm-revision', async (c) => {
     const projectId = c.req.param('id');
-    const body = await c.req.json<{ revisionId: string }>();
-    if (!body.revisionId) {
+    const body = await c.req
+      .json<{ revisionId?: string }>()
+      .catch((): { revisionId?: string } => ({}));
+    const targetRevisionId =
+      body.revisionId ||
+      store.getConfirmedPrototypeRevision(projectId)?.revisionId ||
+      store.listPrototypes(projectId)[0]?.currentRevisionId;
+    if (!targetRevisionId) {
       return c.json({ error: 'revisionId is required' }, 400);
     }
     try {
-      const res = store.confirmPrototypeRevision(projectId, body.revisionId);
+      const res = store.confirmPrototypeRevision(projectId, targetRevisionId);
+      const stepConfirmations = store.getProjectStepConfirmations(projectId);
       return c.json({
+        confirmation: stepConfirmations.prototype,
         confirmed: res.confirmed,
         confirmedRevision: res.confirmed,
         prototype: res.prototype,
         project: res.project,
         prototypes: store.listPrototypes(projectId),
+        artifactHistory: store.listArtifactHistoryViews(projectId),
+        stepConfirmations,
+        steps: deriveProjectStepsForStoreProject(store, projectId),
       });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 404);
@@ -769,6 +943,7 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
         deletedId: id,
         prototypes: store.listPrototypes(projectId),
         confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
+        artifactHistory: store.listArtifactHistoryViews(projectId),
       });
     } catch (err) {
       if (
@@ -800,10 +975,23 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
     const projectId = c.req.param('id');
     const project = store.getProject(projectId);
     if (!project) return c.json({ error: 'Project not found' }, 404);
+    const locale = getReqLocale(c);
+    if (!store.getProjectStepConfirmations(projectId).requirements) {
+      return c.json(
+        {
+          ok: false,
+          code: 'REQUIREMENTS_NOT_CONFIRMED',
+          error:
+            locale === 'en-US'
+              ? 'Confirm the requirements document first before generating a prototype.'
+              : '需要先完成并确认需求文档，才能生成界面原型。',
+        },
+        409,
+      );
+    }
     const body = await c.req
       .json<{ title?: string }>()
       .catch(() => ({ title: undefined }));
-    const locale = getReqLocale(c);
     const session = store.createAgentSession({
       projectId,
       agentKind: 'PROTOTYPE_CO_DESIGN',
@@ -856,6 +1044,19 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
       return c.json({ ok: false, error: `Unsupported brief assist mode: ${body.mode}` }, 400);
     }
     const locale = getReqLocale(c, body as { locale?: string });
+    if (!store.getProjectStepConfirmations(projectId).requirements) {
+      return c.json(
+        {
+          ok: false,
+          code: 'REQUIREMENTS_NOT_CONFIRMED',
+          error:
+            locale === 'en-US'
+              ? 'Confirm the requirements document first before generating a design brief or prototype.'
+              : '需要先完成并确认需求文档，才能准备设计简报与生成原型。',
+        },
+        409,
+      );
+    }
     const res = await assistProjectDesignBrief(store, {
       ...(body as Omit<AssistProjectDesignBriefInput, 'projectId' | 'mode'>),
       projectId,
@@ -972,6 +1173,10 @@ export function createApiApp(customStore?: WorkspaceStore): Hono {
   });
 
   registerApplicationDeliveryRoutes(app, store);
+  registerArtifactHistoryRoutes(app, store);
+  registerBusinessModelEditRoutes(app, store);
+  registerStepConfirmationRoutes(app, store);
+  registerStepHandoffRoutes(app, store);
 
   app.post('/api/applications/:appId/publish', async (c) => {
     const appId = c.req.param('appId');

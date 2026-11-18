@@ -19,3 +19,16 @@ src/packages/
 
 Avoid giant barrel files that blindly re-export internal helpers; keep entry points small, cohesive, and high-leverage.
 
+## Package Directory
+
+| Package | Responsibility |
+| --- | --- |
+| `ontology-core` | Typed AST for the 11-model `Ontology Suite`, two-tier validator (`Consistency Error` vs. `Stage Warning`), Business-Object-centred projection (`projectByBusinessObject`), and typed suite/UI-model diff (`diffOntologySuites`) |
+| `workspace-store` | SQLite-everywhere persistence (`drizzle-orm/sqlite-core` across local SQLite, Cloudflare D1, and Durable Object SQLite): projects, `Agent Sessions`, `Step Confirmations`, linear `Artifact History` (undo & restore), and immutable `Package Snapshots` |
+| `agent-runtime` | Persistent multi-turn `Agent Sessions` on `pi-durable`: SSE streaming, thinking traces, validated tool execution with self-repair, `Step Hand-off`, scoped `ask_user` cards, fork & compact |
+| `architecture-assets` | Repository-owned `Architecture Assets` and `Technology Profiles` catalog for `Four-Layer Application Assembly` |
+| `package-compiler` | Compiles confirmed `Ontology Suites` and `Four-Layer Application Assemblies` into immutable `Development Packages`, `Ontology MCP Servers`, and progressive-disclosure `Ontology Skills` (`SKILL.md`) |
+| `workbench-theme` | Versioned `Workbench Theme` token contract, built-in `Default` and `Warm Paper` themes (light & dark), CSS/doc compiler, and completeness/contrast/source guards |
+| `business-vocabulary` | Canonical 1-to-1 mapping between `GLOSSARY.md` terms/model codes and bilingual `Business View` names, tool-progress phrasing, and automated Business View vocabulary guard (`checkBusinessViewMarkup`) |
+
+

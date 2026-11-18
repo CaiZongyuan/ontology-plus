@@ -5,21 +5,32 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleSlash,
+  CornerDownRight,
   Database,
   Loader2,
   RotateCcw,
   Send,
+  Settings2,
   Square,
 } from 'lucide-react';
+import {
+  PROJECT_STEP_NAMES,
+  checkBusinessViewMarkup,
+  type ProjectStepId,
+} from '../../../packages/business-vocabulary/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { ApprovalCard, Button } from '../beautifui/index.js';
-import { LocalImageThumbnail } from './VisionAttachmentControls.js';
 import { MarkdownRenderer } from '../markdown/index.js';
+import { StepHandoffCard } from './StepHandoffCard.js';
+import { LocalImageThumbnail } from './VisionAttachmentControls.js';
 import {
+  PLATFORM_UNAVAILABLE_COPY,
   formatAnchorBadgeLabel,
   formatRunElapsed,
+  formatRunFailurePresentation,
   formatStepClock,
+  selectVisibleProgressSteps,
   type AgentRunStatus,
   type AgentRunStepStatus,
   type AgentRunView,
@@ -31,10 +42,20 @@ export interface AgentRunCardProps {
   onCancel?: () => void;
   onRetry?: () => void;
   onOpenArtifact?: () => void;
+  /** Navigates to platform settings (`llm-center` / `system-settings`). Falls back to `onOpenLlmCenter`. */
+  onOpenPlatformSettings?: () => void;
   onOpenLlmCenter?: () => void;
   onHoverAnchor?: (anchor: PrototypeTargetAnchor | null) => void;
   onAnswerAskUser?: (promptId: string, selectedAnswers: string[], freeformText?: string) => void;
+  onAcceptStepHandoff?: (handoffId: string) => void | Promise<void>;
+  onDeclineStepHandoff?: (handoffId: string) => void | Promise<void>;
+  onOpenHandoffTargetStep?: (targetStep: ProjectStepId, targetSessionId?: string) => void;
+  handoffBusyAction?: 'accept' | 'decline' | null;
   onTriggerWriteback?: (writebackInterfaceId: string, actionTitle: string) => void;
+  /** Hook slot for #65/#67/#70 computed Change Summary & run-level Undo footer. */
+  changeSummarySlot?: React.ReactNode;
+  /** Opens the "查看细节" / "View details" disclosure initially (useful for tests/inspection). */
+  defaultDetailsOpen?: boolean;
   /** Fixed clock for deterministic rendering; defaults to a live one-second tick while running. */
   now?: number;
   className?: string;
@@ -65,21 +86,61 @@ function StepGlyph({ status }: { status: AgentRunStepStatus }) {
   return <CircleSlash size={12} aria-hidden="true" />;
 }
 
+const USER_PROMPT_CLAMP_CHARS = 280;
+
+/** The user's side of a turn. Long prompts fold so the agent's reply stays in view. */
+function UserPromptBubble({ text }: { text: string }) {
+  const { t } = usePreferences();
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > USER_PROMPT_CLAMP_CHARS || text.split('\n').length > 6;
+  return (
+    <div className={cn('agent-turn-bubble', isLong && !expanded && 'is-clamped')}>
+      <p className="agent-turn-bubble-text">{text}</p>
+      {isLong && (
+        <button
+          type="button"
+          className="agent-turn-bubble-more"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? t('收起', 'Show less') : t('展开全文', 'Show more')}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /**
- * The single presentation of an Agent Run across the workbench (ADR 0009):
- * live status, elapsed time and cancel on top; expandable steps; thinking
- * collapsed by default; then either the result with a link to the artifact,
- * or the real failure with retry.
+ * The single presentation of an AI Assistant turn across the workbench (ADR 0009, Spec #37 §11):
+ * Business View shows only a few concise deterministic business-language progress lines;
+ * tool call arguments/outputs, thinking, character/token usage, and ADR 0007 diagnostics
+ * sit inside "查看细节" / "View details" by default.
  */
+const WORKER_DOT_VARS = [
+  'var(--model-mu)',
+  'var(--model-m1)',
+  'var(--model-m2)',
+  'var(--model-m4)',
+  'var(--model-m6)',
+  'var(--model-m7)',
+] as const;
+
 export function AgentRunCard({
   run,
   onCancel,
   onRetry,
   onOpenArtifact,
+  onOpenPlatformSettings,
   onOpenLlmCenter,
   onHoverAnchor,
   onAnswerAskUser,
+  onAcceptStepHandoff,
+  onDeclineStepHandoff,
+  onOpenHandoffTargetStep,
+  handoffBusyAction,
   onTriggerWriteback,
+  changeSummarySlot,
+  defaultDetailsOpen = false,
   now: fixedNow,
   className,
 }: AgentRunCardProps) {
@@ -88,6 +149,11 @@ export function AgentRunCard({
   const now = useRunClock(running, fixedNow);
   const elapsed = formatRunElapsed(run.startedAt, run.completedAt ?? now);
   const title = t(run.title.zh, run.title.en);
+  const safeAriaTitle =
+    checkBusinessViewMarkup(title, { plainText: true }).length === 0
+      ? title
+      : t('AI 助手处理', 'AI Assistant request');
+  const handleOpenSettings = onOpenPlatformSettings ?? onOpenLlmCenter;
 
   const statusLabel: Record<AgentRunStatus, string> = {
     RUNNING: t('进行中', 'Running'),
@@ -102,18 +168,79 @@ export function AgentRunCard({
     STOPPED: t('已停止', 'Stopped'),
   };
 
+  const { visibleSteps, hiddenStepCount } = selectVisibleProgressSteps(run.steps, run.status);
+  const visibleStepIds = new Set(visibleSteps.map((s) => s.id));
+  const activeVisibleStep = visibleSteps.find((s) => s.status === 'RUNNING');
+
+  const replyChars = (run.text ?? (!run.text && run.result ? t(run.result.summary.zh, run.result.summary.en) : '')).trim().length;
+  const thinkingChars = (run.thinking ?? '').trim().length;
+  const hasUsageMeta = Boolean(
+    run.usage || run.model || run.providerName || replyChars > 0 || thinkingChars > 0,
+  );
+  const hasDiagnostics = Boolean(run.failure || run.visionFallback?.used);
+  const hasDetails =
+    run.steps.length > 0 ||
+    Boolean(run.thinking) ||
+    Boolean(run.codeModeScript) ||
+    hasUsageMeta ||
+    hasDiagnostics;
+
+  const failurePresentation =
+    run.status === 'FAILED'
+      ? formatRunFailurePresentation(run.failure, run.visionFallback)
+      : null;
+
   return (
     <article
       className={cn('agent-run-card', className)}
       data-testid="agent-run-card"
       data-run-status={run.status}
-      aria-label={`${title} · ${statusLabel[run.status]}`}
+      aria-label={`${safeAriaTitle} · ${statusLabel[run.status]}`}
     >
+      {run.userPrompt ? (
+        <div className="agent-turn-user" data-testid="agent-turn-user">
+          {run.handoffFrom && (
+            <div
+              className="mb-1 inline-flex items-center gap-1 text-xs text-muted-foreground"
+              data-testid="agent-turn-handoff-origin"
+            >
+              <CornerDownRight size={12} aria-hidden="true" />
+              <span>
+                {run.handoffFrom.sourceStep
+                  ? t(
+                      `来自「${PROJECT_STEP_NAMES[run.handoffFrom.sourceStep].zh}」步骤的转交请求`,
+                      `Handed off from ${PROJECT_STEP_NAMES[run.handoffFrom.sourceStep].en}`,
+                    )
+                  : t('跨步骤转交请求', 'Handed-off request')}
+              </span>
+            </div>
+          )}
+          {run.images && run.images.length > 0 && (
+            <div
+              className="vision-attachment-strip agent-run-images"
+              data-testid="agent-run-images"
+              aria-label={t('参考图附件', 'Attached reference images')}
+            >
+              {run.images.map((img) => (
+                <LocalImageThumbnail key={img.id} attachment={img} compact />
+              ))}
+            </div>
+          )}
+          <UserPromptBubble text={run.userPrompt} />
+        </div>
+      ) : null}
+
       <header className="agent-run-head">
         <span className="agent-run-glyph">
           <RunStatusGlyph status={run.status} />
         </span>
-        <h3 className="agent-run-title">{title}</h3>
+        {run.userPrompt ? (
+          <h3 className="visually-hidden">{safeAriaTitle}</h3>
+        ) : (
+          <h3 className="agent-run-title" title={safeAriaTitle}>
+            {title}
+          </h3>
+        )}
         <span className="agent-run-meta">
           <span className="agent-run-state">{statusLabel[run.status]}</span>
           <time
@@ -122,6 +249,22 @@ export function AgentRunCard({
           >
             {elapsed}
           </time>
+          {running && run.reconnecting && (
+            <span
+              className="rounded bg-warning-soft px-1.5 py-0.5 text-[11px] font-medium text-warning"
+              data-testid="agent-run-reconnecting-badge"
+            >
+              {t('自动重连中', 'Reconnecting')}
+            </span>
+          )}
+          {running && !run.reconnecting && (run.liveStreamedChars ?? 0) > 0 && (
+            <span
+              className="font-mono text-[11px] text-muted-foreground"
+              data-testid="agent-run-stream-chars"
+            >
+              {t(`已接收 ${run.liveStreamedChars} 字`, `${run.liveStreamedChars} chars`)}
+            </span>
+          )}
         </span>
         {running && onCancel && (
           <Button
@@ -136,7 +279,7 @@ export function AgentRunCard({
         )}
       </header>
 
-      {run.images && run.images.length > 0 && (
+      {!run.userPrompt && run.images && run.images.length > 0 && (
         <div
           className="vision-attachment-strip agent-run-images"
           data-testid="agent-run-images"
@@ -148,43 +291,79 @@ export function AgentRunCard({
         </div>
       )}
 
-      {running && (
+      {running && !activeVisibleStep && (
         <p className="agent-run-live" data-testid="agent-run-live" aria-live="polite">
           {t(run.liveStatus.zh, run.liveStatus.en)}
         </p>
       )}
 
-      {run.steps.length > 0 && (
-        <ol className="agent-run-steps" aria-label={t('步骤', 'Steps')}>
-          {run.steps.map((step) => {
-            const label = t(step.label.zh, step.label.en);
-            const clock = formatStepClock(step.at);
-            const anchorBadge = formatAnchorBadgeLabel(step.targetAnchor);
-            const row = (
-              <>
-                <span className="agent-run-step-glyph">
-                  <StepGlyph status={step.status} />
-                </span>
-                <span className="agent-run-step-label">{label}</span>
-                {anchorBadge && (
+      {run.subagentLanes && run.subagentLanes.length > 0 && (
+        <div
+          className="my-1.5 flex flex-col gap-1 rounded-md border border-border-subtle bg-muted/40 p-2"
+          data-testid="agent-run-subagent-lanes"
+          aria-label={t('并行协作进展', 'Parallel collaboration progress')}
+        >
+          {run.subagentLanes.map((lane) => {
+            const dotVar = WORKER_DOT_VARS[(Math.max(1, lane.workerIndex) - 1) % WORKER_DOT_VARS.length]!;
+            const laneStepStatus: AgentRunStepStatus =
+              lane.status === 'RUNNING'
+                ? 'RUNNING'
+                : lane.status === 'DONE'
+                  ? 'DONE'
+                  : lane.status === 'FAILED'
+                    ? 'FAILED'
+                    : 'STOPPED';
+            return (
+              <div
+                key={lane.laneId}
+                data-testid="agent-run-subagent-lane"
+                data-lane-status={lane.status}
+                className="flex items-center justify-between gap-2 rounded px-1.5 py-1 text-[12px] transition hover:bg-accent/50"
+                {...(onHoverAnchor && lane.targetAnchor
+                  ? {
+                      onMouseEnter: () => onHoverAnchor(lane.targetAnchor ?? null),
+                      onMouseLeave: () => onHoverAnchor(null),
+                    }
+                  : {})}
+              >
+                <div className="flex min-w-0 items-center gap-1.5">
                   <span
-                    className="agent-run-step-anchor"
-                    data-testid="agent-run-step-anchor"
-                    {...(step.targetAnchor?.screenId
-                      ? { 'data-anchor-screen-id': step.targetAnchor.screenId }
-                      : {})}
-                    {...(step.targetAnchor?.elementId
-                      ? { 'data-anchor-element-id': step.targetAnchor.elementId }
-                      : {})}
-                    title={step.targetAnchor?.label || anchorBadge}
-                  >
-                    {anchorBadge}
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: dotVar }}
+                    aria-hidden="true"
+                  />
+                  <span className="shrink-0 font-medium text-foreground">
+                    {t(lane.workerLabel.zh, lane.workerLabel.en)}
                   </span>
-                )}
-                <span className="visually-hidden">{stepStatusLabel[step.status]}</span>
-                {clock && <span className="agent-run-step-clock">{clock}</span>}
-              </>
+                  <span className="truncate text-muted-foreground">
+                    {lane.status === 'RUNNING' && lane.liveAction
+                      ? t(lane.liveAction.zh, lane.liveAction.en)
+                      : t(lane.taskTitle.zh, lane.taskTitle.en)}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                  {lane.progressChars ? (
+                    <span className="font-mono">
+                      {t(`${lane.progressChars} 字`, `${lane.progressChars}c`)}
+                    </span>
+                  ) : null}
+                  <StepGlyph status={laneStepStatus} />
+                </div>
+              </div>
             );
+          })}
+        </div>
+      )}
+
+      {visibleSteps.length > 0 && (
+        <ol
+          className="agent-run-steps"
+          data-testid="agent-run-progress"
+          aria-label={t('处理进展', 'Progress')}
+        >
+          {visibleSteps.map((step) => {
+            const label = t(step.label.zh, step.label.en);
+            const isActiveLine = running && activeVisibleStep?.id === step.id;
             return (
               <li
                 key={step.id}
@@ -198,38 +377,229 @@ export function AgentRunCard({
                     }
                   : {})}
               >
-                {step.detail ? (
-                  <details>
-                    <summary className="agent-run-step-row">
-                      {row}
-                      <ChevronRight size={12} className="agent-run-chevron" aria-hidden="true" />
-                    </summary>
-                    <pre className="agent-run-detail">{step.detail}</pre>
-                  </details>
-                ) : (
-                  <div className="agent-run-step-row">{row}</div>
-                )}
+                <div className="agent-run-step-row">
+                  <span className="agent-run-step-glyph">
+                    <StepGlyph status={step.status} />
+                  </span>
+                  <span
+                    className="agent-run-step-label"
+                    {...(isActiveLine
+                      ? { 'data-testid': 'agent-run-live', 'aria-live': 'polite' as const }
+                      : {})}
+                  >
+                    {label}
+                  </span>
+                  <span className="visually-hidden">{stepStatusLabel[step.status]}</span>
+                </div>
               </li>
             );
           })}
+          {hiddenStepCount > 0 && (
+            <li className="agent-run-steps-more">
+              {t(
+                `其余 ${hiddenStepCount} 项进展见「查看细节」`,
+                `${hiddenStepCount} more in View details`,
+              )}
+            </li>
+          )}
         </ol>
       )}
 
-      {run.thinking && (
-        <details className="agent-run-thinking" data-testid="agent-run-thinking">
-          <summary>
+      {hasDetails && (
+        <details
+          className="agent-run-details"
+          data-testid="agent-run-details"
+          open={defaultDetailsOpen ? true : undefined}
+        >
+          <summary className="agent-run-details-summary" data-testid="agent-run-details-toggle">
             <ChevronRight size={12} className="agent-run-chevron" aria-hidden="true" />
-            {t('思考过程', 'Thinking')}
+            <span>{t('查看细节', 'View details')}</span>
           </summary>
-          <pre className="agent-run-detail">{run.thinking}</pre>
+
+          <div className="agent-run-details-body" data-testid="agent-run-details-body">
+            {run.steps.length > 0 && (
+              <section
+                className="agent-run-details-section"
+                data-testid="agent-run-tool-details"
+              >
+                <div className="agent-run-details-label">
+                  {t(`工具调用 (${run.steps.length})`, `Tool calls (${run.steps.length})`)}
+                </div>
+                <ol className="agent-run-trace-list">
+                  {run.steps.map((step) => {
+                    const label = t(step.label.zh, step.label.en);
+                    const clock = formatStepClock(step.at);
+                    const anchorBadge = formatAnchorBadgeLabel(step.targetAnchor);
+                    return (
+                      <li
+                        key={step.id}
+                        className="agent-run-trace-item"
+                        data-step-status={step.status}
+                        {...(!visibleStepIds.has(step.id) && step.toolName
+                          ? { 'data-tool-name': step.toolName }
+                          : {})}
+                        {...(step.toolName ? { 'data-trace-tool-name': step.toolName } : {})}
+                        {...(onHoverAnchor && step.targetAnchor
+                          ? {
+                              onMouseEnter: () => onHoverAnchor(step.targetAnchor ?? null),
+                              onMouseLeave: () => onHoverAnchor(null),
+                            }
+                          : {})}
+                      >
+                        <div className="agent-run-trace-head">
+                          <span className="agent-run-step-glyph">
+                            <StepGlyph status={step.status} />
+                          </span>
+                          <span className="agent-run-step-label">{label}</span>
+                          {step.toolName && (
+                            <code className="agent-run-trace-code">{step.toolName}</code>
+                          )}
+                          {anchorBadge && (
+                            <span
+                              className="agent-run-step-anchor"
+                              data-testid="agent-run-step-anchor"
+                              {...(step.targetAnchor?.screenId
+                                ? { 'data-anchor-screen-id': step.targetAnchor.screenId }
+                                : {})}
+                              {...(step.targetAnchor?.elementId
+                                ? { 'data-anchor-element-id': step.targetAnchor.elementId }
+                                : {})}
+                              title={step.targetAnchor?.label || anchorBadge}
+                            >
+                              {anchorBadge}
+                            </span>
+                          )}
+                          {clock && <span className="agent-run-step-clock">{clock}</span>}
+                        </div>
+                        {step.detail && <pre className="agent-run-detail">{step.detail}</pre>}
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
+            )}
+
+            {run.codeModeScript && (
+              <section className="agent-run-details-section" data-testid="agent-run-codemode-script">
+                <div className="agent-run-details-label">
+                  {t('Code Mode 编排脚本', 'Code Mode Script')}
+                </div>
+                <pre className="agent-run-detail">{run.codeModeScript}</pre>
+              </section>
+            )}
+
+            {run.thinking && (
+              <section className="agent-run-details-section" data-testid="agent-run-thinking">
+                <div className="agent-run-details-label">{t('思考过程', 'Thinking')}</div>
+                <pre className="agent-run-detail">{run.thinking}</pre>
+              </section>
+            )}
+
+            {hasUsageMeta && (
+              <section className="agent-run-details-section" data-testid="agent-run-usage">
+                <div className="agent-run-details-label">{t('用量', 'Usage')}</div>
+                <p className="agent-run-details-meta">
+                  {[
+                    run.usage
+                      ? t(
+                          `输入 ${run.usage.inputTokens} · 输出 ${run.usage.outputTokens} · 共 ${run.usage.totalTokens} tokens`,
+                          `Input ${run.usage.inputTokens} · Output ${run.usage.outputTokens} · Total ${run.usage.totalTokens} tokens`,
+                        )
+                      : '',
+                    replyChars > 0 ? t(`回复 ${replyChars} 字`, `Reply ${replyChars} chars`) : '',
+                    thinkingChars > 0
+                      ? t(`思考 ${thinkingChars} 字`, `Thinking ${thinkingChars} chars`)
+                      : '',
+                    run.providerName || '',
+                    run.model || '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
+              </section>
+            )}
+
+            {hasDiagnostics && (
+              <section
+                className="agent-run-details-section"
+                data-testid="agent-run-diagnostic-details"
+              >
+                <div className="agent-run-details-label">{t('诊断信息', 'Diagnostics')}</div>
+                <div className="agent-run-diagnostic-box">
+                  {run.failure ? (
+                    <>
+                      <p className="agent-run-details-meta">
+                        {[
+                          run.failure.code ? `code=${run.failure.code}` : '',
+                          run.failure.statusCode !== undefined
+                            ? `status=${run.failure.statusCode}`
+                            : '',
+                          run.failure.providerName ? `provider=${run.failure.providerName}` : '',
+                          run.failure.baseUrl ? `baseUrl=${run.failure.baseUrl}` : '',
+                          run.failure.model ? `model=${run.failure.model}` : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </p>
+                      <pre className="agent-run-detail">{run.failure.message}</pre>
+                      {run.failure.remediation && (
+                        <p className="agent-run-details-meta">{run.failure.remediation}</p>
+                      )}
+                    </>
+                  ) : run.visionFallback?.used ? (
+                    <p className="agent-run-details-meta">
+                      {[
+                        'code=VISION_UNSUPPORTED',
+                        run.visionFallback.providerName
+                          ? `provider=${run.visionFallback.providerName}`
+                          : '',
+                        run.model ? `model=${run.model}` : '',
+                        run.visionFallback.notice || '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                  ) : null}
+                </div>
+              </section>
+            )}
+          </div>
         </details>
+      )}
+
+      {run.status !== 'FAILED' && run.visionFallback?.used && (
+        <div
+          className="agent-run-platform-notice"
+          data-testid="agent-run-platform-notice"
+          role="status"
+        >
+          <p className="agent-run-outcome-text">
+            {t(
+              `${PLATFORM_UNAVAILABLE_COPY.zh}（当前模型不支持查看图片，本次仅按文字说明处理）。`,
+              `${PLATFORM_UNAVAILABLE_COPY.en} (the current model cannot view images; only text notes were used).`,
+            )}
+          </p>
+          {handleOpenSettings && (
+            <div className="agent-run-actions">
+              <Button
+                variant="ghost"
+                size="xs"
+                data-testid="agent-run-open-platform-settings-btn"
+                onClick={handleOpenSettings}
+              >
+                <Settings2 size={11} aria-hidden="true" />
+                {t('前往平台设置', 'Open platform settings')}
+              </Button>
+            </div>
+          )}
+        </div>
       )}
 
       {run.text && (
         <MarkdownRenderer
           content={run.text}
           isStreaming={running}
-          className="agent-run-text"
+          className="agent-run-text agent-run-reply"
           testId="agent-run-text"
         />
       )}
@@ -249,12 +619,25 @@ export function AgentRunCard({
         </div>
       )}
 
+      {run.stepHandoff && (
+        <div className="agent-run-hitl">
+          <StepHandoffCard
+            handoff={run.stepHandoff}
+            disabled={running}
+            {...(handoffBusyAction !== undefined ? { busyAction: handoffBusyAction } : {})}
+            {...(onAcceptStepHandoff ? { onAccept: onAcceptStepHandoff } : {})}
+            {...(onDeclineStepHandoff ? { onDecline: onDeclineStepHandoff } : {})}
+            {...(onOpenHandoffTargetStep ? { onOpenTargetStep: onOpenHandoffTargetStep } : {})}
+          />
+        </div>
+      )}
+
       {run.status === 'SUCCEEDED' && run.result && (
         <footer className="agent-run-outcome" data-testid="agent-run-result">
           {!run.text && (
             <MarkdownRenderer
               content={t(run.result.summary.zh, run.result.summary.en)}
-              className="agent-run-outcome-text"
+              className="agent-run-outcome-text agent-run-reply"
             />
           )}
           {run.artifact?.kind === 'REASONING_POLICY' &&
@@ -295,8 +678,8 @@ export function AgentRunCard({
                 </strong>
                 <span>
                   {t(
-                    `已萃取 ${run.artifact.candidateCount} 项本体候选`,
-                    `${run.artifact.candidateCount} ontology candidates extracted`,
+                    `已萃取 ${run.artifact.candidateCount} 项候选`,
+                    `${run.artifact.candidateCount} candidates extracted`,
                   )}
                 </span>
               </div>
@@ -329,14 +712,17 @@ export function AgentRunCard({
         </footer>
       )}
 
-      {run.status === 'FAILED' && (
+      {!running && changeSummarySlot && (
+        <div className="agent-run-change-slot" data-testid="agent-run-change-slot">
+          {changeSummarySlot}
+        </div>
+      )}
+
+      {run.status === 'FAILED' && failurePresentation && (
         <footer className="agent-run-outcome" data-testid="agent-run-failure" role="alert">
           <p className="agent-run-outcome-text">
-            {run.failure?.message ?? t('运行失败，未返回原因。', 'The run failed without a reason.')}
+            {t(failurePresentation.summary.zh, failurePresentation.summary.en)}
           </p>
-          {run.failure?.remediation && (
-            <p className="agent-run-remediation">{run.failure.remediation}</p>
-          )}
           <div className="agent-run-actions">
             {onRetry && (
               <Button
@@ -349,14 +735,15 @@ export function AgentRunCard({
                 {t('重试', 'Retry')}
               </Button>
             )}
-            {onOpenLlmCenter && (
+            {failurePresentation.isPlatformProblem && handleOpenSettings && (
               <Button
                 variant="ghost"
                 size="xs"
-                data-testid="agent-run-llm-center-btn"
-                onClick={onOpenLlmCenter}
+                data-testid="agent-run-open-platform-settings-btn"
+                onClick={handleOpenSettings}
               >
-                {t('前往大模型中心', 'Open LLM Center')}
+                <Settings2 size={11} aria-hidden="true" />
+                {t('前往平台设置', 'Open platform settings')}
               </Button>
             )}
           </div>
@@ -377,14 +764,12 @@ export function AgentRunCard({
                 onClick={onRetry}
               >
                 <RotateCcw size={11} aria-hidden="true" />
-                {t('重新运行', 'Run again')}
+                {t('重试', 'Retry')}
               </Button>
             </div>
           )}
         </footer>
       )}
-
-      {run.model && <p className="agent-run-model">{run.model}</p>}
     </article>
   );
 }

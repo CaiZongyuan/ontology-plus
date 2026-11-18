@@ -19,13 +19,13 @@ function highlightLine(text: string): React.ReactNode {
     if (idx > last) out.push(text.slice(last, idx));
     const [full, comment, str, kw, num] = m;
     const color = comment
-      ? 'var(--ink-3)'
+      ? 'var(--faint-foreground)'
       : str
-        ? 'var(--green)'
+        ? 'var(--success)'
         : kw
-          ? 'var(--accent)'
+          ? 'var(--primary)'
           : num
-            ? 'var(--orange)'
+            ? 'var(--warning)'
             : undefined;
     out.push(
       <span key={k++} style={color ? { color } : undefined}>
@@ -81,22 +81,22 @@ export function CodeBlock({
   let lineNo = 0;
 
   return (
-    <div className={cn('my-2 w-full overflow-hidden rounded-card bg-surface shadow-card', className)}>
-      <div className="primitive-card-bar flex items-center gap-2 border-b border-line bg-inset/45">
-        <span className="truncate font-mono text-[11.5px] text-ink-2">
+    <div className={cn('my-2 w-full overflow-hidden rounded-card bg-card shadow-card', className)}>
+      <div className="primitive-card-bar flex items-center gap-2 border-b border-border bg-muted/45">
+        <span className="truncate font-mono text-[11.5px] text-foreground-soft">
           {filename || language || 'text'}
         </span>
         {(adds > 0 || dels > 0) && (
           <span className="inline-flex items-center gap-1.5 font-mono text-[11.5px] tabular-nums">
-            {adds > 0 && <span className="text-green">+{adds}</span>}
-            {dels > 0 && <span className="text-red">-{dels}</span>}
+            {adds > 0 && <span className="text-success">+{adds}</span>}
+            {dels > 0 && <span className="text-destructive">-{dels}</span>}
           </span>
         )}
         <button
           type="button"
           onClick={copy}
           aria-label="Copy code"
-          className="primitive-icon-button ml-auto cursor-pointer text-ink-3 transition-colors duration-150 hover:bg-hover hover:text-ink"
+          className="primitive-icon-button ml-auto cursor-pointer text-faint-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
         >
           <span className="relative flex h-3.5 w-3.5 items-center justify-center">
             <Copy
@@ -111,7 +111,7 @@ export function CodeBlock({
               size={13}
               strokeWidth={2.25}
               className={cn(
-                'absolute text-green transition-[opacity,transform] duration-180 ease-out-strong',
+                'absolute text-success transition-[opacity,transform] duration-180 ease-out-strong',
                 copied ? 'scale-100 opacity-100' : 'scale-50 opacity-0',
               )}
             />
@@ -132,26 +132,26 @@ export function CodeBlock({
               key={i}
               className={cn(
                 'flex px-3 whitespace-pre',
-                isAdd && 'bg-green-tint',
-                isDel && 'bg-red-tint',
+                isAdd && 'bg-success-soft',
+                isDel && 'bg-destructive-soft',
               )}
             >
-              <span className="w-7 shrink-0 select-none pr-2 text-right text-ink-3/70 tabular-nums">
+              <span className="w-7 shrink-0 select-none pr-2 text-right text-faint-foreground/70 tabular-nums">
                 {num}
               </span>
               {(adds > 0 || dels > 0) && (
                 <span
                   className={cn(
                     'w-4 shrink-0 select-none',
-                    isAdd && 'text-green',
-                    isDel && 'text-red',
-                    !isAdd && !isDel && 'text-ink-3',
+                    isAdd && 'text-success',
+                    isDel && 'text-destructive',
+                    !isAdd && !isDel && 'text-faint-foreground',
                   )}
                 >
                   {isAdd ? '+' : isDel ? '-' : ' '}
                 </span>
               )}
-              <span className={cn('text-ink', isDel && 'text-ink-2 line-through opacity-75')}>
+              <span className={cn('text-foreground', isDel && 'text-foreground-soft line-through opacity-75')}>
                 {highlightLine(line.text)}
               </span>
             </div>

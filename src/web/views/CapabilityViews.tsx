@@ -147,15 +147,15 @@ export function CapabilitySystemsView() {
       key: 'code',
       header: t('系统编码', 'Code'),
       width: '130px',
-      render: (sys) => <span className="font-mono font-semibold text-ink">{sys.code}</span>,
+      render: (sys) => <span className="font-mono font-semibold text-foreground">{sys.code}</span>,
     },
     {
       key: 'name',
       header: t('系统名称与职责范围', 'System Name & Scope'),
       render: (sys) => (
         <div>
-          <div className="font-semibold text-ink">{sys.name}</div>
-          <div className="text-[11.5px] text-ink-3">{sys.description}</div>
+          <div className="font-semibold text-foreground">{sys.name}</div>
+          <div className="text-[11.5px] text-faint-foreground">{sys.description}</div>
         </div>
       ),
     },
@@ -165,7 +165,7 @@ export function CapabilitySystemsView() {
       render: (sys) => (
         <div className="text-[12.5px]">
           <div>{sys.category}</div>
-          <div className="font-mono text-[11.5px] text-ink-3">{sys.dbDialect}</div>
+          <div className="font-mono text-[11.5px] text-faint-foreground">{sys.dbDialect}</div>
         </div>
       ),
     },
@@ -209,7 +209,7 @@ export function CapabilitySystemsView() {
             {t('编辑', 'Edit')}
           </Button>
           <Button variant="ghost" size="xs" onClick={() => setDeleteTarget(sys)}>
-            <Trash2 size={11.5} className="text-red" />
+            <Trash2 size={11.5} className="text-destructive" />
           </Button>
         </div>
       ),
@@ -223,7 +223,7 @@ export function CapabilitySystemsView() {
           <div className="text-[11.5px] text-muted-foreground">
             {t('已接入存量业务系统', 'Registered Legacy Systems')}
           </div>
-          <div className="font-serif text-[22px] font-semibold mt-1">
+          <div className="font-title text-[22px] font-semibold mt-1">
             {data.legacySystems.length}
           </div>
         </div>
@@ -231,7 +231,7 @@ export function CapabilitySystemsView() {
           <div className="text-[11.5px] text-muted-foreground">
             {t('已完成本体萃取系统', 'Ontology Extracted Systems')}
           </div>
-          <div className="font-serif text-[22px] font-semibold mt-1">
+          <div className="font-title text-[22px] font-semibold mt-1">
             {data.legacySystems.filter((s) => s.status !== 'CONNECTED').length}
           </div>
         </div>
@@ -239,7 +239,7 @@ export function CapabilitySystemsView() {
           <div className="text-[11.5px] text-muted-foreground">
             {t('MCP 服务在线封装数', 'Active MCP Wrapped Systems')}
           </div>
-          <div className="font-serif text-[22px] font-semibold mt-1">
+          <div className="font-title text-[22px] font-semibold mt-1">
             {data.legacySystems.filter((s) => s.status === 'MCP_ACTIVE').length}
           </div>
         </div>
@@ -732,12 +732,12 @@ export function CapabilityExtractionView() {
 
         {extractionError && (
           <div
-            className="p-2.5 mb-3 rounded-[6px] border border-line bg-surface flex items-start justify-between gap-2 text-[12.5px]"
+            className="p-2.5 mb-3 rounded-sm border border-border bg-card flex items-start justify-between gap-2 text-[12.5px]"
             data-testid="extraction-error-banner"
             role="alert"
           >
             <div className="flex flex-col gap-0.5 min-w-0">
-              <div className="font-medium text-red">
+              <div className="font-medium text-destructive">
                 {extractionError.diagnostic?.providerName
                   ? `${extractionError.diagnostic.providerName} · `
                   : ''}
@@ -758,7 +758,7 @@ export function CapabilityExtractionView() {
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2 mb-3 rounded-[6px] bg-inset border border-line"
+        <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2 mb-3 rounded-sm bg-muted border border-border"
         >
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[11.5px] font-semibold text-muted-foreground">
@@ -1173,8 +1173,8 @@ export function CapabilityMcpView() {
       header: t('MCP 服务名称', 'MCP Server'),
       render: (srv) => (
         <div>
-          <div className="font-semibold text-ink">{srv.name}</div>
-          <div className="font-mono text-[11.5px] text-ink-3">{srv.endpoint}</div>
+          <div className="font-semibold text-foreground">{srv.name}</div>
+          <div className="font-mono text-[11.5px] text-faint-foreground">{srv.endpoint}</div>
         </div>
       ),
     },
@@ -1222,7 +1222,7 @@ export function CapabilityMcpView() {
             {srv.status === 'ONLINE' ? t('下线', 'Disable') : t('上线', 'Enable')}
           </Button>
           <Button variant="ghost" size="xs" onClick={() => setDeleteTarget({ item: srv })}>
-            <Trash2 size={11.5} className="text-red" />
+            <Trash2 size={11.5} className="text-destructive" />
           </Button>
         </div>
       ),
@@ -1232,8 +1232,8 @@ export function CapabilityMcpView() {
   return (
     <div className="flex flex-col gap-3.5">
       {/* Top Mode Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
-        <div className="inline-flex items-center gap-1 rounded-control bg-inset p-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-xs">
+        <div className="inline-flex items-center gap-1 rounded-md bg-muted p-1">
           <Button
             type="button"
             onClick={() => setViewMode('DEBUGGER')}
@@ -1356,11 +1356,11 @@ export function CapabilityMcpView() {
                       onClick={() => handleSelectTool(tool)}
                       style={{
                         padding: '8px 10px',
-                        borderRadius: 5,
+                        borderRadius: 'var(--radius-sm)',
                         cursor: 'pointer',
                         background:
-                          selectedTool === tool.name ? 'var(--accent-soft)' : 'var(--surface-2)',
-                        border: '1px solid var(--line)',
+                          selectedTool === tool.name ? 'var(--primary-soft)' : 'var(--muted)',
+                        border: '1px solid var(--border)',
                       }}
                     >
                       <div className="flex justify-between gap-1.5">
@@ -1396,14 +1396,14 @@ export function CapabilityMcpView() {
                       style={{
                         textAlign: 'left',
                         padding: '6px 10px',
-                        borderRadius: 5,
+                        borderRadius: 'var(--radius-sm)',
                         cursor: 'pointer',
                         background:
                           selectedResourceUri === resItem.uri
-                            ? 'var(--accent-soft)'
-                            : 'var(--surface-2)',
-                        border: '1px solid var(--line)',
-                        color: 'var(--ink)',
+                            ? 'var(--primary-soft)'
+                            : 'var(--muted)',
+                        border: '1px solid var(--border)',
+                        color: 'var(--foreground)',
                       }}
                     >
                       <div className="flex justify-between gap-2">
@@ -1464,7 +1464,7 @@ export function CapabilityMcpView() {
                 />
               )}
 
-              <div className="p-2.5 bg-inset rounded-[6px] border border-line"
+              <div className="p-2.5 bg-muted rounded-sm border border-border"
               >
                 <div className="flex justify-between items-center mb-1.5"
                 >
@@ -1742,16 +1742,16 @@ export function CapabilityAgentsView() {
                 }}
                 style={{
                   padding: 10,
-                  borderRadius: 6,
+                  borderRadius: 'var(--radius-sm)',
                   cursor: 'pointer',
-                  background: selected ? 'var(--accent-soft)' : 'var(--surface-2)',
-                  border: `1px solid ${selected ? 'var(--accent)' : 'var(--line)'}`,
+                  background: selected ? 'var(--primary-soft)' : 'var(--muted)',
+                  border: `1px solid ${selected ? 'var(--primary)' : 'var(--border)'}`,
                 }}
               >
                 <div className="flex justify-between items-center gap-1.5"
                 >
                   <strong className="inline-flex items-center gap-1.5">
-                    <Bot size={13} className="text-accent" />
+                    <Bot size={13} className="text-primary" />
                     {ag.name}
                   </strong>
                   <div
@@ -1763,7 +1763,7 @@ export function CapabilityAgentsView() {
                     </Button>
                     {data.capabilityAgents.length > 1 && (
                       <Button variant="ghost" size="xs" onClick={() => setDeleteTarget(ag)}>
-                        <Trash2 size={11} className="text-red" />
+                        <Trash2 size={11} className="text-destructive" />
                       </Button>
                     )}
                   </div>
@@ -1795,15 +1795,15 @@ export function CapabilityAgentsView() {
         <div className="card-header">
           <div>
             <h3 className="card-title inline-flex items-center gap-1.5">
-              <Sparkles size={15} className="text-accent" />
+              <Sparkles size={15} className="text-primary" />
               {activeAgent
                 ? activeAgent.name
-                : t('能力中心智能体上下文', 'Capability Agent Context')}
+                : t('能力对话上下文', 'Capability Context')}
             </h3>
             <div className="text-[12px] text-muted-foreground mt-0.5">
               {activeAgent
-                ? `${activeAgent.role} · ${t('对话与 MCP 工具调用已统一收敛至右侧 Agent 面板', 'Smart Chat & MCP tool runs live in the unified Agent Panel')}`
-                : t('请选择左侧能力智能体', 'Select a capability agent on the left')}
+                ? `${activeAgent.role} · ${t('对话与工具调用统一在右侧 AI 助手中进行', 'Conversations and tool calls run in the AI Assistant on the right')}`
+                : t('请选择左侧能力配置', 'Select a capability profile on the left')}
             </div>
           </div>
           <Button
@@ -1815,15 +1815,15 @@ export function CapabilityAgentsView() {
               useAgentPanelStore.getState().setWideMode(true);
             }}
           >
-            {t('打开右侧 Agent 面板对话 →', 'Open Agent Panel →')}
+            {t('打开 AI 助手 →', 'Open AI Assistant →')}
           </Button>
         </div>
 
         {activeAgent && (
           <>
             <div className="grid grid-cols-2 gap-2.5">
-              <div className="rounded-[6px] border border-line bg-inset/50 p-2.5">
-                <div className="text-[11px] font-semibold text-ink-3 mb-1.5">
+              <div className="rounded-sm border border-border bg-muted/50 p-2.5">
+                <div className="text-[11px] font-semibold text-faint-foreground mb-1.5">
                   {t('已挂载本体 MCP 服务', 'Mounted Ontology MCP Servers')}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -1838,8 +1838,8 @@ export function CapabilityAgentsView() {
                   })}
                 </div>
               </div>
-              <div className="rounded-[6px] border border-line bg-inset/50 p-2.5">
-                <div className="text-[11px] font-semibold text-ink-3 mb-1.5">
+              <div className="rounded-sm border border-border bg-muted/50 p-2.5">
+                <div className="text-[11px] font-semibold text-faint-foreground mb-1.5">
                   {t('已注入渐进式 SKILL.md 规则包', 'Injected SKILL.md Packages')}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -1856,18 +1856,18 @@ export function CapabilityAgentsView() {
               </div>
             </div>
 
-            <div className="rounded-[6px] border border-line bg-surface-2 p-3">
-              <div className="text-[11px] font-semibold text-ink-3 mb-1">
+            <div className="rounded-sm border border-border p-3">
+              <div className="text-[11px] font-semibold text-faint-foreground mb-1">
                 {t('智能体系统提示词契约', 'System Prompt Contract')}
               </div>
-              <div className="text-[12.5px] leading-relaxed text-ink whitespace-pre-wrap">
+              <div className="text-[12.5px] leading-relaxed text-foreground whitespace-pre-wrap">
                 {activeAgent.systemPrompt}
               </div>
             </div>
 
             <div>
-              <div className="text-[11.5px] font-semibold text-ink-2 mb-2">
-                {t('快捷业务校验指令（点击直接在右侧 Agent 面板发起运行）', 'Quick MCP Verification Runs (runs in Agent Panel)')}
+              <div className="text-[11.5px] font-semibold text-foreground-soft mb-2">
+                {t('快捷业务校验指令（点击交给 AI 助手执行）', 'Quick verification prompts (runs in AI Assistant)')}
               </div>
               <div className="flex flex-col gap-1.5">
                 {starterPrompts.map((promptText, idx) => (
@@ -1876,10 +1876,10 @@ export function CapabilityAgentsView() {
                     type="button"
                     disabled={isRunningCapSession}
                     onClick={() => handleQuickPrompt(promptText)}
-                    className="flex items-center justify-between gap-2 rounded-[6px] border border-line bg-surface px-3 py-2 text-left text-[12.5px] text-ink transition-colors hover:border-accent hover:bg-accent-soft cursor-pointer disabled:opacity-50"
+                    className="flex items-center justify-between gap-2 rounded-sm border border-border bg-card px-3 py-2 text-left text-[12.5px] text-foreground transition-colors hover:border-primary hover:bg-primary-soft cursor-pointer disabled:opacity-50"
                   >
                     <span>{promptText}</span>
-                    <Play size={12} className="shrink-0 text-accent" />
+                    <Play size={12} className="shrink-0 text-primary" />
                   </button>
                 ))}
               </div>
@@ -1953,7 +1953,7 @@ export function CapabilityAgentsView() {
           <div className="flex flex-wrap gap-2">
             {data.mcpServers.map((mcp) => (
               <label
-                key={mcp.id} className="inline-flex items-center gap-1.5 p-[5px_10px] rounded-[5px] bg-inset border border-line text-[12.5px] cursor-pointer"
+                key={mcp.id} className="inline-flex items-center gap-1.5 p-[5px_10px] rounded-sm bg-muted border border-border text-[12.5px] cursor-pointer"
               >
                 <input
                   type="checkbox"
@@ -1975,7 +1975,7 @@ export function CapabilityAgentsView() {
           <div className="flex flex-wrap gap-2">
             {data.generatedSkills.map((sk) => (
               <label
-                key={sk.id} className="inline-flex items-center gap-1.5 p-[5px_10px] rounded-[5px] bg-inset border border-line text-[12.5px] cursor-pointer"
+                key={sk.id} className="inline-flex items-center gap-1.5 p-[5px_10px] rounded-sm bg-muted border border-border text-[12.5px] cursor-pointer"
               >
                 <input
                   type="checkbox"
@@ -2093,9 +2093,9 @@ export function CapabilityCrossFlowsView() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
-        <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
-          <Workflow size={15} className="text-accent" />
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-xs">
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-foreground">
+          <Workflow size={15} className="text-primary" />
           {t(
             '跨系统 MCP 协同编排',
             'Cross-System MCP Orchestration Flows',
@@ -2134,7 +2134,7 @@ export function CapabilityCrossFlowsView() {
                 {t('演练执行跨系统协同流', 'Execute Cross-System Flow')}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(fl)}>
-                <Trash2 size={13} className="text-red" />
+                <Trash2 size={13} className="text-destructive" />
               </Button>
             </div>
           </div>
@@ -2149,14 +2149,14 @@ export function CapabilityCrossFlowsView() {
           >
             {fl.steps.map((s, stepIdx) => (
               <div
-                key={s.stepOrder} className="p-2.5 rounded-[6px] bg-inset border border-line"
+                key={s.stepOrder} className="p-2.5 rounded-sm bg-muted border border-border"
               >
                 <div className="flex justify-between mb-1">
                   <span className="badge badge-accent">Step #{s.stepOrder}</span>
                   <span className="badge badge-ok">{s.status}</span>
                 </div>
                 <div className="font-semibold text-[12.5px]">{s.systemName}</div>
-                <div className="font-mono text-[11.5px] text-accent m-[4px_0]"
+                <div className="font-mono text-[11.5px] text-primary m-[4px_0]"
                 >
                   {s.mcpToolName}
                 </div>
@@ -2169,7 +2169,7 @@ export function CapabilityCrossFlowsView() {
           </div>
 
           <div
-            className="responsive-table-region mb-3 rounded border border-line"
+            className="responsive-table-region mb-3 rounded border border-border"
             role="region"
             aria-label={fl.name}
             tabIndex={0}
@@ -2187,11 +2187,11 @@ export function CapabilityCrossFlowsView() {
               <tbody>
                 {fl.steps.map((s) => (
                   <tr key={s.stepOrder}>
-                    <td style={{ fontFamily: 'var(--mono)' }}>#{s.stepOrder}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)' }}>#{s.stepOrder}</td>
                     <td>
                       <strong>{s.systemName}</strong>
                     </td>
-                    <td style={{ fontFamily: 'var(--mono)' }}>{s.mcpToolName}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)' }}>{s.mcpToolName}</td>
                     <td>{s.description}</td>
                     <td>
                       <span className="badge badge-ok">{s.status}</span>
@@ -2356,7 +2356,7 @@ export function KnowledgeCenterView() {
       header: t('知识词条标题', 'Title'),
       render: (kn) => (
         <div>
-          <div className="font-semibold text-ink">{kn.title}</div>
+          <div className="font-semibold text-foreground">{kn.title}</div>
           <div className="mt-0.5 flex flex-wrap gap-1">
             {kn.tags.map((tg) => (
               <span key={tg} className="badge">
@@ -2376,7 +2376,7 @@ export function KnowledgeCenterView() {
       key: 'updatedAt',
       header: t('最近更新', 'Updated'),
       render: (kn) => (
-        <span className="font-mono text-[11.5px] text-ink-3">
+        <span className="font-mono text-[11.5px] text-faint-foreground">
           {kn.updatedAt?.slice(0, 16) ?? '-'}
         </span>
       ),
@@ -2399,7 +2399,7 @@ export function KnowledgeCenterView() {
             {t('打开编辑', 'Edit')}
           </Button>
           <Button variant="ghost" size="xs" onClick={() => setDeleteTarget(kn)}>
-            <Trash2 size={11.5} className="text-red" />
+            <Trash2 size={11.5} className="text-destructive" />
           </Button>
         </div>
       ),
@@ -2408,8 +2408,8 @@ export function KnowledgeCenterView() {
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-line bg-surface px-4 py-2.5 shadow-2xs">
-        <div className="inline-flex items-center gap-1 rounded-control bg-inset p-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-xs">
+        <div className="inline-flex items-center gap-1 rounded-md bg-muted p-1">
           <Button
             type="button"
             variant="toggle" size="sm" aria-pressed={viewMode === 'WORKSPACE'}
@@ -2463,7 +2463,7 @@ export function KnowledgeCenterView() {
       ) : (
         <div className="grid grid-cols-[300px_minmax(0,1fr)] gap-3.5">
           <div className="card flex flex-col gap-2">
-            <div className="text-[12.5px] font-semibold text-ink">
+            <div className="text-[12.5px] font-semibold text-foreground">
               {t('知识词条目录', 'Knowledge Entries')} ({data.knowledgeEntries.length})
             </div>
             <div className="flex flex-col gap-1.5 max-h-[540px] overflow-y-auto">
@@ -2475,10 +2475,10 @@ export function KnowledgeCenterView() {
                     onClick={() => setSelectedId(kn.id)}
                     style={{
                       padding: '8px 10px',
-                      borderRadius: 6,
+                      borderRadius: 'var(--radius-sm)',
                       cursor: 'pointer',
-                      background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
-                      border: `1px solid ${active ? 'var(--accent)' : 'var(--line)'}`,
+                      background: active ? 'var(--primary-soft)' : 'var(--muted)',
+                      border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
                     }}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -2491,7 +2491,7 @@ export function KnowledgeCenterView() {
                           setDeleteTarget(kn);
                         }}
                       >
-                        <Trash2 size={11} className="text-red" />
+                        <Trash2 size={11} className="text-destructive" />
                       </Button>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -2521,7 +2521,7 @@ export function KnowledgeCenterView() {
               testId="knowledge-markdown-editor"
             />
           ) : (
-            <div className="card text-ink-3">{t('暂无知识词条', 'No knowledge entries')}</div>
+            <div className="card text-faint-foreground">{t('暂无知识词条', 'No knowledge entries')}</div>
           )}
         </div>
       )}

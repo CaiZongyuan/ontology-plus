@@ -7,24 +7,24 @@ import { cn } from '../../lib/utils.js';
 // default outline; pills are reserved for status badges.
 export const buttonVariants = cva(
   [
-    'inline-flex items-center justify-center gap-1.5 rounded-[6px] border border-solid font-sans font-medium leading-none cursor-pointer select-none whitespace-nowrap',
+    'inline-flex items-center justify-center gap-1.5 rounded-sm border border-solid font-sans font-medium leading-none cursor-pointer select-none whitespace-nowrap',
     'transition-[background-color,border-color,color,box-shadow,opacity] duration-150 ease-out-strong',
     'active:translate-y-[0.5px] disabled:opacity-45 disabled:cursor-not-allowed disabled:active:translate-y-0',
-    'focus-visible:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30',
+    'focus-visible:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30',
   ],
   {
     variants: {
       variant: {
-        primary: 'bg-accent border-accent text-accent-ink enabled:hover:brightness-[0.93]',
-        accent: 'bg-accent border-accent text-accent-ink enabled:hover:brightness-[0.93]',
-        secondary: 'bg-surface border-line text-ink enabled:hover:bg-inset enabled:hover:border-line-strong',
-        ghost: 'bg-transparent border-transparent text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink',
-        quiet: 'bg-inset border-transparent text-ink-2 enabled:hover:bg-hover-2 enabled:hover:text-ink',
-        success: 'bg-green-tint border-green/30 text-green enabled:hover:border-green/60',
+        primary: 'bg-primary border-primary text-primary-foreground enabled:hover:brightness-[0.93]',
+        accent: 'bg-primary border-primary text-primary-foreground enabled:hover:brightness-[0.93]',
+        secondary: 'bg-card border-border text-foreground enabled:hover:bg-muted enabled:hover:border-border-strong',
+        ghost: 'bg-transparent border-transparent text-foreground-soft enabled:hover:bg-accent enabled:hover:text-foreground',
+        quiet: 'bg-muted border-transparent text-foreground-soft enabled:hover:bg-accent-strong enabled:hover:text-foreground',
+        success: 'bg-success-soft border-success/30 text-success enabled:hover:border-success/60',
         // Segment / filter toggle: pair with aria-pressed (or aria-selected for tabs).
         toggle:
-          'bg-transparent border-transparent text-ink-2 enabled:hover:text-ink enabled:hover:bg-hover aria-pressed:bg-surface aria-pressed:border-line aria-pressed:text-ink aria-pressed:shadow-xs aria-selected:bg-surface aria-selected:border-line aria-selected:text-ink aria-selected:shadow-xs',
-        danger: 'bg-surface border-line text-red enabled:hover:bg-red-tint enabled:hover:border-red/40',
+          'bg-transparent border-transparent text-foreground-soft enabled:hover:text-foreground enabled:hover:bg-accent aria-pressed:bg-card aria-pressed:border-border aria-pressed:text-foreground aria-pressed:shadow-xs aria-selected:bg-card aria-selected:border-border aria-selected:text-foreground aria-selected:shadow-xs',
+        danger: 'bg-card border-border text-destructive enabled:hover:bg-destructive-soft enabled:hover:border-destructive/40',
       },
       size: {
         xs: 'h-6 px-2 text-[11.5px] gap-1',

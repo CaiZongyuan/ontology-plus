@@ -37,7 +37,8 @@ describe('application development handoff UI', () => {
     expect(html).toContain('AGENTS.md');
     expect(html).toContain('data-testid="compile-dev-package-btn"');
     expect(html).toMatch(/disabled=""[^>]*>Download saved snapshot/);
-    expect(html).toContain('Application Development Agent');
+    expect(html).toContain('AI Assistant');
+    expect(html).not.toContain('Application Development Agent');
     expect(html).not.toContain('Generates domain repositories');
     expect(html).not.toContain('4A Gate');
   });
@@ -64,9 +65,12 @@ describe('application development handoff UI', () => {
   it('exposes repository origins and a distinct authoring agent, and presents delivery as a package handoff', async () => {
     await fixture();
     const library = renderToStaticMarkup(<PreferencesProvider><FourLayerAssetsView /></PreferencesProvider>);
-    expect(library).toContain('Architecture Asset Agent');
+    expect(library).toContain('Author standards with the AI Assistant');
+    expect(library).not.toContain('Architecture Asset Agent');
     expect(library).toContain('Saving writes to repository files');
-    expect(library).toContain('asset-source-asset-foundation-ts-edge');
+    // The shelf is master-detail: the selected standard (the first, by default) shows its repository origin.
+    expect(library).toContain('data-testid="asset-source-asset-arch-ddd-deep-module"');
+    expect(library).toContain('src/packages/architecture-assets/lib/catalog/assets/asset-arch-ddd-deep-module.json');
     const delivery = renderToStaticMarkup(<PreferencesProvider><AppPublishView /></PreferencesProvider>);
     expect(delivery).toContain('Development Package handoff');
     expect(delivery).not.toContain('Publish Release');

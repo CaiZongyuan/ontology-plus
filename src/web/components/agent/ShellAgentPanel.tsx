@@ -1,271 +1,69 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import type { ProjectStepId } from '../../../packages/business-vocabulary/index.js';
 import type {
   AgentSession,
   AgentSessionKind,
+  ArtifactJumpTarget,
   WritebackInterface,
 } from '../../../packages/workspace-store/index.js';
 import {
+  apiCreateAgentSession,
+  apiDeleteAgentSession,
   apiPatchAgentSession,
   apiPostJson,
-  getCurrentClientLocale,
   useWorkbenchStore,
   type BootstrapPayload,
   type SessionLiveDraft,
 } from '../../api.js';
-import { usePreferences, type NavViewId } from '../../i18n.js';
+import { usePreferences } from '../../i18n.js';
+import {
+  AGENT_PANEL_SURFACES,
+  agentPanelSurfaceFor,
+  defaultNavForSessionKind,
+  getDefaultViewForStep,
+  resolveArtifactNavTarget,
+  type AgentPanelSurface,
+  type NavViewId,
+} from '../../navigation/index.js';
 import { Button } from '../beautifui/index.js';
-import { decideDesignBriefForMe } from '../prototype/DesignBriefAndStyleTile.js';
+import { ChangeSummaryCard } from '../history/index.js';
+import { formatPrototypeLabelForBusinessView } from '../prototype/PrototypeRevisionHistory.js';
 import { SelectionAttachmentStrip } from '../prototype/SelectionAttachmentStrip.js';
 import {
   submitPrototypeComposerTurnWithSelections,
   usePrototypeSelectionStore,
 } from '../prototype/prototypeSelectionStore.js';
 import { AgentPanel } from './AgentPanel.js';
-import { AGENT_PANEL_OVERLAY_QUERY, useAgentPanelStore } from './agentPanelStore.js';
+import {
+  AGENT_PANEL_OVERLAY_QUERY,
+  agentSessionScopeKey,
+  useAgentPanelStore,
+} from './agentPanelStore.js';
 import {
   agentRunsFromSession,
+  formatRelativeTime,
   summarizeUserPromptTitle,
   type LocalizedText,
 } from './agentRun.js';
 import { resolveActiveVisionCapability } from './VisionAttachmentControls.js';
 
-export interface AgentPanelSurface {
-  /** Name of the Agent Session this module shows. */
-  title: LocalizedText;
-  /** Durable Agent Session kind bound to this module's Agent Panel. */
-  sessionKind: AgentSessionKind;
-  /** Whether this module's agent uses visual references/uploads and should warn if vision is unsupported. */
-  usesVision?: boolean;
-  /** Whether conversation is the primary workflow on this page (auto-reveals Wide Mode). */
-  conversationPrimary?: boolean;
-  /** Contextual composer placeholder for this module. */
-  placeholder?: LocalizedText;
-}
-
-/**
- * Every workbench view maps to its owning project specialist Agent Session (ADR 0009),
- * so the right-hand ShellAgentPanel stays available across all 24 views.
- */
-export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
-  overview: {
-    title: { zh: '工程概览与全流程助手', en: 'Project Overview Copilot' },
-    sessionKind: 'COPILOT',
-    placeholder: {
-      zh: '询问工程阶段进展或发起本体协同操作…',
-      en: 'Ask about project lifecycle status or run ontology copilot actions…',
-    },
-  },
-  'app-req-explore': {
-    title: { zh: '需求探索与 SRS 合成', en: 'Requirement & SRS Agent' },
-    sessionKind: 'REQUIREMENT',
-    conversationPrimary: true,
-    placeholder: {
-      zh: '描述业务场景、核心角色或规则阈值（Enter 发送，Shift+Enter 换行）…',
-      en: 'Describe domain workflows, roles, or rule thresholds (Enter to send)…',
-    },
-  },
-  'app-req-docs': {
-    title: { zh: '需求规格合成助手', en: 'SRS Synthesis Agent' },
-    sessionKind: 'REQUIREMENT',
-    placeholder: {
-      zh: '输入需求补充说明或触发九章节 SRS 合成…',
-      en: 'Add requirement notes or synthesize the 9-chapter SRS…',
-    },
-  },
-  'app-prototype': {
-    title: { zh: '原型共创', en: 'Prototype Co-Design' },
-    sessionKind: 'PROTOTYPE_CO_DESIGN',
-    usesVision: true,
-    placeholder: {
-      zh: '输入局部精修指令（Enter 发送，Shift+Enter 换行）…',
-      en: 'Describe a prototype refinement (Enter to send, Shift+Enter for newline)…',
-    },
-  },
-  'app-ontology': {
-    title: { zh: '本体建模与 11 模型合成', en: 'Ontology Copilot & Synthesis' },
-    sessionKind: 'COPILOT',
-    placeholder: {
-      zh: '输入本体建模指令（如：新增 M3 业务规则或从原型合成 11 模型）…',
-      en: 'Describe an ontology change (e.g. upsert M3 rule or synthesize 11-model suite)…',
-    },
-  },
-  'app-model-files': {
-    title: { zh: '本体模型文件与校验助手', en: 'Model Files & Validation Copilot' },
-    sessionKind: 'COPILOT',
-    placeholder: {
-      zh: '询问模型 YAML 契约或修复一致性校验问题…',
-      en: 'Inspect YAML contracts or resolve consistency validation findings…',
-    },
-  },
-  'app-knowledge-graph': {
-    title: { zh: '本体知识图谱助手', en: 'Knowledge Graph Copilot' },
-    sessionKind: 'COPILOT',
-    placeholder: {
-      zh: '询问聚合根跨层关联、血缘影响或补充模型映射…',
-      en: 'Explore cross-model lineage, impact paths, or ontology links…',
-    },
-  },
-  'app-four-layer-assets': {
-    title: { zh: '架构资产智能体', en: 'Architecture Asset Agent' },
-    sessionKind: 'ARCHITECTURE',
-    placeholder: {
-      zh: '编写或完善可复用的 UI、技术底座与技术架构规范…',
-      en: 'Author or refine reusable UI, foundation and architecture standards…',
-    },
-  },
-  'app-assembly-dev': {
-    title: { zh: '应用开发规格助手', en: 'Application Specification Assistant' },
-    sessionKind: 'CODING',
-    placeholder: {
-      zh: '检查当前应用的输入缺项与冲突，完善实施规格和验收条件…',
-      en: 'Inspect this application’s missing inputs and conflicts, or refine its implementation specification…',
-    },
-  },
-  'app-skills': {
-    title: { zh: '领域 SKILL 资产助手', en: 'Domain SKILL Copilot' },
-    sessionKind: 'COPILOT',
-    placeholder: {
-      zh: '围绕本体派生 SKILL 指令集提出优化或校验问题…',
-      en: 'Refine or inspect ontology-derived SKILL assets…',
-    },
-  },
-  'app-publish': {
-    title: { zh: '应用交付规格助手', en: 'Application Delivery Specification Assistant' },
-    sessionKind: 'CODING',
-    placeholder: {
-      zh: '检查当前应用的资料包输入与验收条件…',
-      en: 'Inspect this application’s package inputs and acceptance criteria…',
-    },
-  },
-  'cap-systems': {
-    title: { zh: '存量系统接入与能力助手', en: 'Legacy Systems Capability Agent' },
-    sessionKind: 'CAPABILITY',
-    placeholder: {
-      zh: '询问存量系统接入契约、数据源配置或发起能力萃取…',
-      en: 'Ask about legacy system contracts, connectors, or capability extraction…',
-    },
-  },
-  'cap-extraction': {
-    title: { zh: '存量系统本体萃取智能体', en: 'Ontology Extraction Agent' },
-    sessionKind: 'CAPABILITY',
-    placeholder: {
-      zh: '解析 DDL / OpenAPI 萃取本体候选，或询问候选对齐策略…',
-      en: 'Extract ontology candidates from DDL / OpenAPI or align candidates…',
-    },
-  },
-  'cap-mcp': {
-    title: { zh: '本体 MCP 服务助手', en: 'Ontology MCP Capability Agent' },
-    sessionKind: 'CAPABILITY',
-    placeholder: {
-      zh: '探查本体编译生成的 MCP 工具契约与资源端点…',
-      en: 'Inspect compiled Ontology MCP tool schemas and resource endpoints…',
-    },
-  },
-  'cap-agents': {
-    title: { zh: '能力智能体对话 (MCP + SKILL)', en: 'Capability Smart Chat (MCP + SKILL)' },
-    sessionKind: 'CAPABILITY',
-    conversationPrimary: true,
-    placeholder: {
-      zh: '输入业务指令以调用本体 MCP 工具与领域 SKILL（Enter 发送）…',
-      en: 'Send a business query to invoke Ontology MCP tools & SKILL rules…',
-    },
-  },
-  'cap-cross-flows': {
-    title: { zh: '跨系统编排能力助手', en: 'Cross-System Flow Agent' },
-    sessionKind: 'CAPABILITY',
-    placeholder: {
-      zh: '梳理跨系统事件编排、接口调用链与补偿规则…',
-      en: 'Design cross-system event orchestration and compensation rules…',
-    },
-  },
-  'cap-knowledge': {
-    title: { zh: '领域知识库与能力助手', en: 'Domain Knowledge Agent' },
-    sessionKind: 'CAPABILITY',
-    placeholder: {
-      zh: '结合领域知识条目与 MCP 能力进行检索问答…',
-      en: 'Query domain knowledge entries alongside Ontology MCP capabilities…',
-    },
-  },
-  'data-resources': {
-    title: { zh: '数据资源与数据本体助手', en: 'Data Resource Copilot' },
-    sessionKind: 'COPILOT',
-    placeholder: {
-      zh: '分析数据库表结构、元数据约定或发起数据本体抽取…',
-      en: 'Inspect database schemas, metadata conventions, or data ontology alignment…',
-    },
-  },
-  'data-mappings': {
-    title: { zh: '语义映射与字段对齐助手', en: 'Semantic Mapping Copilot' },
-    sessionKind: 'COPILOT',
-    placeholder: {
-      zh: '检查 M1 聚合属性与物理库表字段之间的 ME/MM 语义映射…',
-      en: 'Verify ME/MM semantic mappings between M1 attributes and physical columns…',
-    },
-  },
-  'data-metrics-reports': {
-    title: { zh: '指标洞察与场景归因', en: 'Metric Insight & Attribution' },
-    sessionKind: 'REASONING',
-    placeholder: {
-      zh: '输入指标异动追问或多维场景归因指令…',
-      en: 'Ask about metric anomalies or multi-dimensional scenario attribution…',
-    },
-  },
-  'data-reasoning': {
-    title: { zh: '三段式数据本体推理', en: '3-Stage Data Ontology Reasoning' },
-    sessionKind: 'REASONING',
-    conversationPrimary: true,
-    placeholder: {
-      zh: '输入问数 / 问因 / 问策问题（结合 M1 对象关联、M3 规则阈值与回写接口）…',
-      en: 'Ask Data / Why / Policy questions grounded in M1 objects, M3 rules & write-backs…',
-    },
-  },
-  'data-writeback': {
-    title: { zh: '策略回写与闭环推理助手', en: 'Policy Write-Back Reasoning Agent' },
-    sessionKind: 'REASONING',
-    placeholder: {
-      zh: '推演策略回写动作影响并校验 M7/ME 执行契约…',
-      en: 'Evaluate policy write-back impact and M7/ME execution contracts…',
-    },
-  },
-  'llm-center': {
-    title: { zh: '模型网关与工作台助手', en: 'LLM Gateway & Workbench Copilot' },
-    sessionKind: 'COPILOT',
-    placeholder: {
-      zh: '询问网关配置要求、多模态视觉支持或测试建议…',
-      en: 'Ask about gateway configuration, vision support, or model routing…',
-    },
-  },
-  'system-settings': {
-    title: { zh: '平台治理与工作台助手', en: 'Platform Governance Copilot' },
-    sessionKind: 'COPILOT',
-    placeholder: {
-      zh: '询问工作区设置、离线演示模式或本体治理规范…',
-      en: 'Ask about workspace settings, demo mock mode, or governance rules…',
-    },
-  },
+export {
+  AGENT_PANEL_SURFACES,
+  agentPanelSurfaceFor,
+  defaultNavForSessionKind,
+  type AgentPanelSurface,
 };
 
-export function agentPanelSurfaceFor(view: NavViewId): AgentPanelSurface {
-  return AGENT_PANEL_SURFACES[view];
-}
+/** Title a conversation carries until its first turn names it. */
+export const NEW_AGENT_SESSION_TITLE: LocalizedText = { zh: '新对话', en: 'New conversation' };
 
-export function defaultNavForSessionKind(kind: AgentSessionKind): NavViewId {
-  switch (kind) {
-    case 'REQUIREMENT':
-      return 'app-req-explore';
-    case 'PROTOTYPE_CO_DESIGN':
-      return 'app-prototype';
-    case 'COPILOT':
-      return 'app-ontology';
-    case 'ARCHITECTURE':
-      return 'app-four-layer-assets';
-    case 'CODING':
-      return 'app-assembly-dev';
-    case 'CAPABILITY':
-      return 'cap-agents';
-    case 'REASONING':
-      return 'data-reasoning';
-  }
+export function isUntitledAgentSession(title: string): boolean {
+  return (
+    title === NEW_AGENT_SESSION_TITLE.zh ||
+    title === NEW_AGENT_SESSION_TITLE.en ||
+    title === '新会话' ||
+    title === 'New session'
+  );
 }
 
 export interface ActiveWorkspaceRunInfo {
@@ -330,6 +128,8 @@ export function resolveSurfaceAgentSession(
     activePrototypeIdByProject?: Record<string, string>;
     activeItemId?: string | null;
     activeSessionId?: string | null;
+    /** Conversation last opened per agent scope; used when the URL names no session. */
+    rememberedSessionByScope?: Record<string, string>;
   },
 ): {
   session: AgentSession | undefined;
@@ -433,7 +233,14 @@ export function resolveSurfaceAgentSession(
             )
           : allCapSessions;
     const list = matching.length > 0 ? matching : allCapSessions;
-    const session = list.find((s) => s.id === opts?.activeSessionId) ?? list[0];
+    const rememberedCapId =
+      opts?.rememberedSessionByScope?.[
+        agentSessionScopeKey(activeProjectId, 'CAPABILITY', activeCapAgent?.id)
+      ];
+    const session =
+      list.find((s) => s.id === opts?.activeSessionId) ??
+      list.find((s) => s.id === rememberedCapId) ??
+      list[0];
     return {
       session,
       matchingSessions: list,
@@ -442,8 +249,12 @@ export function resolveSurfaceAgentSession(
     };
   }
 
+  const projectApps = surface.sessionKind === 'CODING'
+    ? (data?.assembledApplications ?? []).filter((app) => app.projectId === activeProjectId)
+    : [];
   const projectApplication = surface.sessionKind === 'CODING'
-    ? data?.assembledApplications.find((app) => app.id === opts?.activeItemId && app.projectId === activeProjectId)
+    ? projectApps.find((app) => app.id === opts?.activeItemId) ??
+      (projectApps.length === 1 ? projectApps[0] : undefined)
     : undefined;
   const explicitApplicationSession = surface.sessionKind === 'CODING'
     ? sessions.find((session) => session.id === opts?.activeSessionId && session.agentKind === 'CODING'
@@ -460,7 +271,12 @@ export function resolveSurfaceAgentSession(
       return !s.targetId || s.targetId === applicationTargetId;
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const session = matching.find((s) => s.id === opts?.activeSessionId) ?? matching[0];
+  const rememberedId =
+    opts?.rememberedSessionByScope?.[agentSessionScopeKey(activeProjectId, surface.sessionKind)];
+  const session =
+    matching.find((s) => s.id === opts?.activeSessionId) ??
+    matching.find((s) => s.id === rememberedId) ??
+    matching[0];
   return {
     session,
     matchingSessions: matching,
@@ -512,6 +328,10 @@ export function useAgentPanelOverlayMode(): boolean {
 export interface ShellAgentPanelProps {
   surface: AgentPanelSurface;
   overlay: boolean;
+  side?: 'left' | 'right';
+  closable?: boolean;
+  resizable?: boolean;
+  defaultHistoryOpen?: boolean;
   onClose: () => void;
   onNavigate: (view: NavViewId) => void;
   composerHeaderSlot?: React.ReactNode;
@@ -521,6 +341,10 @@ export interface ShellAgentPanelProps {
 export function ShellAgentPanel({
   surface,
   overlay,
+  side = 'right',
+  closable = true,
+  resizable,
+  defaultHistoryOpen,
   onClose,
   onNavigate,
   composerHeaderSlot,
@@ -542,11 +366,19 @@ export function ShellAgentPanel({
     setSelectedModel,
     setSelectedElementId,
     setActivePrototypeId,
+    focusRequirementSection,
+    focusBusinessModelTarget,
+    focusPrototypeTarget,
+    openPrototypeRevisionCompare,
+    openArtifactHistoryDrawer,
+    undoArtifactChange,
     ensureProjectAgentSession,
-    startPrototypeBriefGenerationRun,
+    updateAgentSessionExecutionConfig,
     startSessionAgentRun,
     cancelSessionAgentRun,
     retrySessionAgentRun,
+    acceptStepHandoff,
+    declineStepHandoff,
     removeQueuedSessionPrompt,
   } = useWorkbenchStore();
   const width = useAgentPanelStore((s) => s.width);
@@ -554,11 +386,17 @@ export function ShellAgentPanel({
   const setWidth = useAgentPanelStore((s) => s.setWidth);
   const toggleWideMode = useAgentPanelStore((s) => s.toggleWideMode);
   const setHoveredAnchor = useAgentPanelStore((s) => s.setHoveredAnchor);
+  const sessionByScope = useAgentPanelStore((s) => s.sessionByScope);
+  const rememberSession = useAgentPanelStore((s) => s.rememberSession);
   const activeProjectId = data?.activeProject?.id;
 
   const [reasoningMode, setReasoningMode] = useState<'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY'>(
     'ASK_POLICY',
   );
+  const [localCodeMode, setLocalCodeMode] = useState<boolean>(true);
+  const [localConcurrency, setLocalConcurrency] = useState<number>(3);
+  const [undoingEntryId, setUndoingEntryId] = useState<string | null>(null);
+  const [handoffBusyById, setHandoffBusyById] = useState<Record<string, 'accept' | 'decline'>>({});
 
   const {
     session: activeSession,
@@ -571,31 +409,82 @@ export function ShellAgentPanel({
         activePrototypeIdByProject,
         activeItemId,
         activeSessionId,
+        rememberedSessionByScope: sessionByScope,
       }),
-    [surface, data, activePrototypeIdByProject, activeItemId, activeSessionId],
+    [surface, data, activePrototypeIdByProject, activeItemId, activeSessionId, sessionByScope],
   );
+
+  // Prototype sessions belong to their Interactive Prototype (ADR 0009); every other agent can hold several conversations.
+  const sessionsOwnedByArtifact = surface.sessionKind === 'PROTOTYPE_CO_DESIGN';
+  const sessionScopeKey = activeProjectId
+    ? agentSessionScopeKey(
+        activeProjectId,
+        surface.sessionKind,
+        surface.sessionKind === 'CAPABILITY' ? activeCapabilityAgentId : undefined,
+      )
+    : null;
+
+  useEffect(() => {
+    if (sessionsOwnedByArtifact || !sessionScopeKey || !activeSession) return;
+    rememberSession(sessionScopeKey, activeSession.id);
+  }, [sessionsOwnedByArtifact, sessionScopeKey, activeSession?.id, rememberSession]);
 
   useEffect(() => {
     if (activeSession?.reasoningMode) {
       setReasoningMode(activeSession.reasoningMode);
     }
-  }, [activeSession?.id, activeSession?.reasoningMode]);
+    if (activeSession?.codeMode !== undefined) {
+      setLocalCodeMode(activeSession.codeMode);
+    }
+    if (activeSession?.multiAgentConcurrency !== undefined) {
+      setLocalConcurrency(activeSession.multiAgentConcurrency);
+    }
+  }, [
+    activeSession?.id,
+    activeSession?.reasoningMode,
+    activeSession?.codeMode,
+    activeSession?.multiAgentConcurrency,
+  ]);
+
+  const effectiveCodeMode = activeSession?.codeMode ?? localCodeMode;
+  const effectiveConcurrency = activeSession?.multiAgentConcurrency ?? localConcurrency;
+
+  const handleToggleCodeMode = () => {
+    const next = !effectiveCodeMode;
+    setLocalCodeMode(next);
+    if (activeSession) {
+      void updateAgentSessionExecutionConfig(activeSession.id, { codeMode: next });
+    }
+  };
+
+  const handleSelectConcurrency = (next: number) => {
+    setLocalConcurrency(next);
+    if (activeSession) {
+      void updateAgentSessionExecutionConfig(activeSession.id, {
+        multiAgentConcurrency: next,
+      });
+    }
+  };
 
   const liveDraft = activeSession ? liveSessionDrafts[activeSession.id] : undefined;
   const queuedItems = activeSession ? (sessionQueues[activeSession.id] ?? []) : [];
 
+  const activeSuite = data?.activeProject?.suite;
   const runs = useMemo(
-    () => agentRunsFromSession(activeSession, liveDraft),
-    [activeSession, liveDraft],
+    () =>
+      agentRunsFromSession(activeSession, liveDraft, {
+        ...(activeSuite ? { suite: activeSuite } : {}),
+      }),
+    [activeSession, liveDraft, activeSuite],
   );
 
   const queuedPrompts = useMemo(
     () =>
       queuedItems.map((q) => {
         const title = summarizeUserPromptTitle(q.prompt, q.displayTitle);
-        return { id: q.id, label: title.zh };
+        return { id: q.id, label: t(title.zh, title.en) };
       }),
-    [queuedItems],
+    [queuedItems, t],
   );
 
   const visionState = useMemo(
@@ -607,7 +496,7 @@ export function ShellAgentPanel({
     activePrototypeId ? s.attachmentsByPrototype[activePrototypeId] : undefined,
   );
 
-  const effectiveComposerHeaderSlot =
+  const selectionSlot =
     composerHeaderSlot ??
     (surface.sessionKind === 'PROTOTYPE_CO_DESIGN' &&
     activePrototypeId &&
@@ -616,15 +505,168 @@ export function ShellAgentPanel({
       <SelectionAttachmentStrip prototypeId={activePrototypeId} />
     ) : undefined);
 
+  const executionModeBar = (
+    <div
+      className="flex flex-wrap items-center justify-between gap-1.5 text-[11.5px]"
+      data-testid="agent-execution-mode-bar"
+    >
+      <button
+        type="button"
+        data-testid="agent-codemode-toggle"
+        aria-pressed={effectiveCodeMode}
+        onClick={handleToggleCodeMode}
+        className={`inline-flex cursor-pointer items-center gap-1 rounded border px-2 py-0.5 font-medium transition ${
+          effectiveCodeMode
+            ? 'border-primary/50 bg-primary-soft text-primary'
+            : 'border-border bg-muted/40 text-muted-foreground hover:bg-accent'
+        }`}
+        title={t(
+          '开启后允许助手编写脚本批量并行编排步骤动作',
+          'Allow the assistant to write orchestration scripts for batch & parallel actions',
+        )}
+      >
+        <span>{t('代码模式', 'Code Mode')}</span>
+        <span className="font-mono text-[10.5px]">{effectiveCodeMode ? 'ON' : 'OFF'}</span>
+      </button>
+
+      <div
+        className="inline-flex items-center gap-0.5 rounded border border-border bg-muted/35 p-0.5"
+        role="group"
+        aria-label={t('并行协作路数', 'Parallel assistants count')}
+        data-testid="agent-concurrency-group"
+      >
+        <span className="px-1.5 text-[11px] text-muted-foreground">
+          {t('并行', 'Multi')}
+        </span>
+        {([1, 2, 3, 4] as const).map((n) => {
+          const active = effectiveConcurrency === n;
+          return (
+            <button
+              key={n}
+              type="button"
+              data-testid={`agent-concurrency-btn-${n}`}
+              aria-pressed={active}
+              onClick={() => handleSelectConcurrency(n)}
+              className={`cursor-pointer rounded px-1.5 py-0.2 font-mono text-[11px] transition ${
+                active
+                  ? 'bg-primary font-semibold text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              }`}
+            >
+              ×{n}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const effectiveComposerHeaderSlot = selectionSlot ? (
+    <div className="flex flex-col gap-1.5">
+      {selectionSlot}
+      {executionModeBar}
+    </div>
+  ) : (
+    executionModeBar
+  );
+
+  const isProjectStepSurface =
+    surface.sessionKind === 'REQUIREMENT' ||
+    surface.sessionKind === 'PROTOTYPE_CO_DESIGN' ||
+    surface.sessionKind === 'COPILOT' ||
+    surface.sessionKind === 'CODING';
+
   const sessionOptions = useMemo(
     () =>
-      matchingSessions.map((s) => ({
-        id: s.id,
-        title: s.title,
-        isFork: Boolean(s.parentSessionId),
-      })),
-    [matchingSessions],
+      matchingSessions.map((s) => {
+        const updated = formatRelativeTime(s.updatedAt);
+        const defaultTitle = t(NEW_AGENT_SESSION_TITLE.zh, NEW_AGENT_SESSION_TITLE.en);
+        const displayTitle = isUntitledAgentSession(s.title)
+          ? defaultTitle
+          : isProjectStepSurface
+            ? formatPrototypeLabelForBusinessView(s.title, defaultTitle)
+            : s.title;
+        return {
+          id: s.id,
+          title: displayTitle,
+          isFork: Boolean(s.parentSessionId),
+          turnCount: (s.messages ?? []).filter((m) => m.role === 'user').length,
+          updatedLabel: t(updated.zh, updated.en),
+          running: s.status === 'RUNNING' || Boolean(liveSessionDrafts[s.id]),
+        };
+      }),
+    [matchingSessions, liveSessionDrafts, isProjectStepSurface, t],
   );
+
+  const handleCreateSession = async () => {
+    if (!activeProjectId || !data || sessionsOwnedByArtifact) return;
+    // An untouched conversation is already "new": reuse it instead of piling up empty ones.
+    const reusable = matchingSessions.find(
+      (s) => (s.messages ?? []).length === 0 && !liveSessionDrafts[s.id] && s.status !== 'RUNNING',
+    );
+    if (reusable) {
+      setActiveSessionId(reusable.id);
+      return;
+    }
+    const capAgent =
+      surface.sessionKind === 'CAPABILITY'
+        ? data.capabilityAgents.find((a) => a.id === activeCapabilityAgentId) ??
+          data.capabilityAgents[0]
+        : undefined;
+    try {
+      const created = await apiCreateAgentSession({
+        projectId: capAgent?.projectId ?? activeProjectId,
+        agentKind: surface.sessionKind,
+        ...(capAgent ? { targetId: capAgent.id } : {}),
+        title: t(NEW_AGENT_SESSION_TITLE.zh, NEW_AGENT_SESSION_TITLE.en),
+        ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
+      });
+      patchData({ agentSessions: created.agentSessions });
+      setActiveSessionId(created.session.id);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleRenameSession = async (sessionId: string, title: string) => {
+    try {
+      const res = await apiPatchAgentSession(sessionId, { title });
+      patchData({ agentSessions: res.agentSessions });
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      const res = await apiDeleteAgentSession(sessionId);
+      patchData({ agentSessions: res.agentSessions });
+      if (activeSession?.id === sessionId) {
+        const next = matchingSessions.find((s) => s.id !== sessionId);
+        setActiveSessionId(next?.id ?? null);
+        if (sessionScopeKey) rememberSession(sessionScopeKey, next?.id ?? null);
+      }
+      showToast(t('对话已删除', 'Conversation deleted'));
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /** The first thing said in a conversation becomes its name, so the switcher stays scannable. */
+  const autoTitleSession = (session: AgentSession, prompt: string) => {
+    if ((session.messages ?? []).length > 0 || !isUntitledAgentSession(session.title)) return;
+    const firstLine = prompt.split(/\r?\n/).find((l) => l.trim())?.trim() ?? '';
+    if (!firstLine) return;
+    const title = firstLine.length > 28 ? `${firstLine.slice(0, 27)}…` : firstLine;
+    void apiPatchAgentSession(session.id, { title })
+      .then((res) => {
+        const latest = useWorkbenchStore.getState().data?.agentSessions ?? [];
+        patchData({
+          agentSessions: latest.map((s) => (s.id === session.id ? { ...s, title: res.session.title } : s)),
+        });
+      })
+      .catch(() => undefined);
+  };
 
   const handleChangeReasoningMode = async (nextMode: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY') => {
     setReasoningMode(nextMode);
@@ -677,7 +719,7 @@ export function ShellAgentPanel({
         <select
           className="agent-panel-session-select"
           data-testid="agent-panel-capability-select"
-          aria-label={t('选择能力智能体', 'Select Capability Agent')}
+          aria-label={t('选择能力配置', 'Select capability profile')}
           value={selectedCap.id}
           onChange={(e) => setActiveItemId(e.target.value)}
         >
@@ -722,6 +764,50 @@ export function ShellAgentPanel({
     });
   };
 
+  const runHandoffAction = async (
+    runId: string,
+    handoffId: string,
+    action: 'accept' | 'decline',
+    task: (sessionId: string) => Promise<void>,
+  ) => {
+    const target = runs.find((r) => r.id === runId);
+    const sessionId = target?.sourceSessionId ?? activeSession?.id;
+    if (!sessionId) return;
+    setHandoffBusyById((prev) => ({ ...prev, [handoffId]: action }));
+    try {
+      await task(sessionId);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHandoffBusyById((prev) => {
+        const next = { ...prev };
+        delete next[handoffId];
+        return next;
+      });
+    }
+  };
+
+  const handleAcceptStepHandoff = (runId: string, handoffId: string) =>
+    runHandoffAction(runId, handoffId, 'accept', async (sessionId) => {
+      const res = await acceptStepHandoff(sessionId, handoffId);
+      if (res) {
+        onNavigate(res.targetNavView);
+      }
+    });
+
+  const handleDeclineStepHandoff = (runId: string, handoffId: string) =>
+    runHandoffAction(runId, handoffId, 'decline', async (sessionId) => {
+      await declineStepHandoff(sessionId, handoffId);
+    });
+
+  const handleOpenHandoffTargetStep = (targetStep: ProjectStepId, targetSessionId?: string) => {
+    const targetView = getDefaultViewForStep(targetStep);
+    setActiveNav(targetView, {
+      ...(targetSessionId ? { sessionId: targetSessionId } : {}),
+    });
+    onNavigate(targetView);
+  };
+
   const handleTriggerWriteback = async (writebackInterfaceId: string, actionTitle: string) => {
     try {
       const res = await apiPostJson<{
@@ -755,23 +841,17 @@ export function ShellAgentPanel({
           instruction: prompt,
           visionSupported: visionState?.visionSupported ?? true,
         });
-      } else if (activeSession) {
-        await startSessionAgentRun({
-          sessionId: activeSession.id,
-          prompt,
-        });
       } else {
-        const locale = getCurrentClientLocale();
-        const decided = await decideDesignBriefForMe({
-          project: data.activeProject,
-          ...(data.requirementDocs[0] ? { doc: data.requirementDocs[0] } : {}),
-          userFeelNote: prompt,
-          locale,
-        });
-        await startPrototypeBriefGenerationRun({
-          projectId: activeProjectId,
+        const targetSession =
+          activeSession ??
+          (await ensureProjectAgentSession(activeProjectId, 'PROTOTYPE_CO_DESIGN'));
+        setActiveSessionId(targetSession.id);
+        autoTitleSession(targetSession, prompt);
+        await startSessionAgentRun({
+          sessionId: targetSession.id,
           prompt,
-          designBrief: decided.brief,
+          codeMode: effectiveCodeMode,
+          multiAgentConcurrency: effectiveConcurrency,
         });
       }
       return;
@@ -783,21 +863,32 @@ export function ShellAgentPanel({
           data.capabilityAgents[0]
         : undefined;
     const targetProjectId = capAgent?.projectId ?? activeProjectId;
+    const projectCodingApps =
+      surface.sessionKind === 'CODING'
+        ? data.assembledApplications.filter((app) => app.projectId === activeProjectId)
+        : [];
+    const codingTargetApp =
+      surface.sessionKind === 'CODING'
+        ? projectCodingApps.find((app) => app.id === activeItemId) ??
+          (projectCodingApps.length === 1 ? projectCodingApps[0] : undefined)
+        : undefined;
     const targetSession =
       activeSession ??
       (await ensureProjectAgentSession(targetProjectId, surface.sessionKind, {
         ...(capAgent ? { targetId: capAgent.id } : {}),
-        ...(surface.sessionKind === 'CODING' && data.assembledApplications.some(
-          (app) => app.id === activeItemId && app.projectId === activeProjectId,
-        ) ? { targetId: activeItemId! } : {}),
+        ...(codingTargetApp ? { targetId: codingTargetApp.id } : {}),
         ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
       }));
     setActiveSessionId(targetSession.id);
+    autoTitleSession(targetSession, prompt);
     await startSessionAgentRun({
       sessionId: targetSession.id,
-      prompt: surface.sessionKind === 'CODING' && !targetSession.targetId && data.assembledApplications.some(
-        (app) => app.id === activeItemId && app.projectId === activeProjectId,
-      ) ? `[Target application ID: ${activeItemId}]\n${prompt}` : prompt,
+      prompt:
+        surface.sessionKind === 'CODING' && !targetSession.targetId && codingTargetApp
+          ? `[Target application ID: ${codingTargetApp.id}]\n${prompt}`
+          : prompt,
+      codeMode: effectiveCodeMode,
+      multiAgentConcurrency: effectiveConcurrency,
       ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
       ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
     });
@@ -815,7 +906,11 @@ export function ShellAgentPanel({
     const target = runs.find((r) => r.id === runId);
     const sessionId = target?.sourceSessionId ?? activeSession?.id;
     if (sessionId) {
-      void retrySessionAgentRun(sessionId, target?.sourceUserMessageId ?? runId);
+      void retrySessionAgentRun(
+        sessionId,
+        target?.sourceUserMessageId ?? runId,
+        target?.retryPrompt,
+      );
     }
   };
 
@@ -826,56 +921,19 @@ export function ShellAgentPanel({
       setActiveNav('app-prototype', { itemId: target.prototypeRevision.prototypeId });
       return;
     }
-    const art = target?.artifact;
-    if (!art) return;
-    switch (art.kind) {
-      case 'PROTOTYPE_REVISION':
-        if (activeProjectId) {
-          setActivePrototypeId(activeProjectId, art.prototypeId);
-        }
-        setActiveNav('app-prototype', { itemId: art.prototypeId });
-        return;
-      case 'REQUIREMENT_DOC':
-        setActiveNav('app-req-docs', { itemId: art.docId });
-        return;
-      case 'ONTOLOGY_SUITE':
-        setActiveNav('app-ontology');
-        return;
-      case 'ONTOLOGY_DIFF':
-        if (art.modelCode) {
-          setSelectedModel(art.modelCode);
-        }
-        if (art.changes[0]?.id) {
-          setSelectedElementId(art.changes[0].id);
-        }
-        setActiveNav('app-ontology');
-        return;
-      case 'TECH_ARCH_ASSET':
-        setActiveNav('app-four-layer-assets', { itemId: art.assetId });
-        return;
-      case 'CODING_PACKAGE':
-        setActiveNav('app-assembly-dev', { itemId: art.appId });
-        return;
-      case 'METRIC_INSIGHT':
-        setActiveNav('data-metrics-reports', { itemId: art.metricId });
-        return;
-      case 'ANALYTICS_REPORT':
-        setActiveNav('data-metrics-reports', { itemId: art.reportId });
-        return;
-      case 'REASONING_POLICY':
-      case 'SQL_PREVIEW':
-        setActiveNav('data-reasoning');
-        return;
-      case 'EXTRACTION_JOB':
-        setActiveNav('cap-extraction', { itemId: art.jobId });
-        return;
-      default:
-        break;
+    const navTarget = target?.artifact ? resolveArtifactNavTarget(target.artifact) : null;
+    if (!navTarget) return;
+    if (navTarget.prototypeId && activeProjectId) {
+      setActivePrototypeId(activeProjectId, navTarget.prototypeId);
     }
+    if (navTarget.modelCode) {
+      setSelectedModel(navTarget.modelCode);
+    }
+    if (navTarget.elementId) {
+      setSelectedElementId(navTarget.elementId);
+    }
+    setActiveNav(navTarget.view, ...(navTarget.itemId ? [{ itemId: navTarget.itemId }] : []));
   };
-
-  const allowPrototypeSessionSelect =
-    surface.sessionKind === 'PROTOTYPE_CO_DESIGN' && (data?.prototypes?.length ?? 0) > 1;
 
   const handleSelectPrototypeSession = (sessionId: string) => {
     setActiveSessionId(sessionId);
@@ -889,33 +947,139 @@ export function ShellAgentPanel({
     }
   };
 
+  const artifactHistoryByRunId = useMemo(() => {
+    const map = new Map<string, NonNullable<BootstrapPayload['artifactHistory']>>();
+    for (const entry of data?.artifactHistory ?? []) {
+      if (entry.source.kind !== 'AGENT_RUN') continue;
+      const list = map.get(entry.source.runId) ?? [];
+      list.push(entry);
+      map.set(entry.source.runId, list);
+    }
+    return map;
+  }, [data?.artifactHistory]);
+
+  const handleJumpToArtifactTarget = (target: ArtifactJumpTarget) => {
+    if (target.kind === 'REQUIREMENTS_SECTION') {
+      setActiveNav('app-requirements');
+      onNavigate('app-requirements');
+      focusRequirementSection(target.sectionHeading, target.docId);
+      return;
+    }
+    if (target.kind === 'PROTOTYPE_ANCHOR') {
+      focusPrototypeTarget(target);
+      onNavigate('app-prototype');
+      setHoveredAnchor({
+        ...(target.screenId ? { screenId: target.screenId } : {}),
+        ...(target.elementId ? { elementId: target.elementId } : {}),
+      });
+      return;
+    }
+    if (target.kind === 'BUSINESS_OBJECT') {
+      focusBusinessModelTarget(target);
+      onNavigate('app-ontology');
+    }
+  };
+
+  const renderRunFooter = (run: (typeof runs)[number]): React.ReactNode => {
+    if (run.status === 'RUNNING') return null;
+    const matched =
+      artifactHistoryByRunId.get(run.id) ??
+      (run.sourceUserMessageId ? artifactHistoryByRunId.get(run.sourceUserMessageId) : undefined);
+    if (!matched || matched.length === 0) return null;
+
+    const visibleEntries = matched.filter((entry) => entry.changeSummary.items.length > 0);
+    if (visibleEntries.length === 0) return null;
+
+    return (
+      <div className="space-y-2">
+        {visibleEntries.map((entry) => (
+          <ChangeSummaryCard
+            key={entry.id}
+            summary={entry.changeSummary}
+            undoing={undoingEntryId === entry.id}
+            onUndo={async (summary) => {
+              setUndoingEntryId(entry.id);
+              try {
+                await undoArtifactChange(
+                  summary.artifactKind,
+                  entry.id,
+                  summary.artifactKind === 'PROTOTYPE' ? summary.targetId : undefined,
+                );
+              } finally {
+                setUndoingEntryId(null);
+              }
+            }}
+            onJumpToTarget={handleJumpToArtifactTarget}
+            onCompareRevisions={(pair) => {
+              openPrototypeRevisionCompare(pair);
+              onNavigate('app-prototype');
+            }}
+            onOpenHistory={(kind) => {
+              if (kind === 'REQUIREMENTS_DOC') {
+                setActiveNav('app-requirements');
+                onNavigate('app-requirements');
+              } else if (kind === 'ONTOLOGY_SUITE') {
+                setActiveNav('app-ontology');
+                onNavigate('app-ontology');
+              } else if (kind === 'PROTOTYPE') {
+                setActiveNav('app-prototype');
+                onNavigate('app-prototype');
+              }
+              openArtifactHistoryDrawer(kind);
+            }}
+          />
+        ))}
+      </div>
+    );
+  };
+
   return (
     <AgentPanel
       title={surface.title}
+      {...(surface.subtitle ? { subtitle: surface.subtitle } : {})}
       runs={runs}
       width={width}
       wideMode={wideMode}
       onToggleWideMode={toggleWideMode}
       overlay={overlay}
+      side={side}
+      closable={closable}
+      {...(resizable !== undefined ? { resizable } : {})}
+      {...(defaultHistoryOpen !== undefined ? { defaultHistoryOpen } : {})}
       onClose={onClose}
       onResize={(next, opts) => setWidth(next, opts)}
       onCancelRun={handleCancelRun}
       onRetryRun={handleRetryRun}
       onOpenRunArtifact={handleOpenArtifact}
+      onOpenPlatformSettings={() => onNavigate('llm-center')}
       onOpenLlmCenter={() => onNavigate('llm-center')}
       onHoverAnchor={setHoveredAnchor}
       onAnswerAskUser={(runId, promptId, selectedAnswers, freeformText) =>
         void handleAnswerAskUser(runId, promptId, selectedAnswers, freeformText)
       }
+      onAcceptStepHandoff={(runId, handoffId) => void handleAcceptStepHandoff(runId, handoffId)}
+      onDeclineStepHandoff={(runId, handoffId) => void handleDeclineStepHandoff(runId, handoffId)}
+      onOpenHandoffTargetStep={handleOpenHandoffTargetStep}
+      handoffBusyById={handoffBusyById}
       onTriggerWriteback={(writebackId, actionTitle) =>
         void handleTriggerWriteback(writebackId, actionTitle)
       }
-      {...(allowPrototypeSessionSelect
+      renderRunFooter={renderRunFooter}
+      {...(sessionsOwnedByArtifact
         ? {
             sessions: sessionOptions,
+            sessionsOwnedByArtifact: true,
             onSelectSession: handleSelectPrototypeSession,
+            onRenameSession: handleRenameSession,
           }
-        : {})}
+        : {
+            sessions: sessionOptions,
+            onSelectSession: setActiveSessionId,
+            onCreateSession: handleCreateSession,
+            onRenameSession: handleRenameSession,
+            onDeleteSession: handleDeleteSession,
+          })}
+      {...(surface.starters ? { starterPrompts: surface.starters } : {})}
       {...(activeSession?.id ? { activeSessionId: activeSession.id } : {})}
       isForkSession={Boolean(activeSession?.parentSessionId)}
       {...(headerContextSlot ? { headerContextSlot } : {})}
@@ -935,6 +1099,7 @@ export function ShellAgentPanel({
         ? {
             visionSupported: visionState.visionSupported,
             ...(visionState.providerLabel ? { visionProviderLabel: visionState.providerLabel } : {}),
+            ...(visionState.modelLabel ? { visionModelLabel: visionState.modelLabel } : {}),
           }
         : {})}
     />

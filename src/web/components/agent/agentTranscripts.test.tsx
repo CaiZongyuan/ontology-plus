@@ -104,8 +104,9 @@ describe('assistant transcript streaming', () => {
     const architectureSurface = agentPanelSurfaceFor('app-four-layer-assets');
     const applicationSurface = agentPanelSurfaceFor('app-assembly-dev');
     expect(architectureSurface.sessionKind).toBe('ARCHITECTURE');
-    expect(architectureSurface.title.en).toBe('Architecture Asset Agent');
-    expect(applicationSurface.title.en).toBe('Application Specification Assistant');
+    expect(architectureSurface.title.en).toBe('AI Assistant');
+    expect(architectureSurface.subtitle?.en).toBe('Authoring development standards');
+    expect(applicationSurface.title.en).toBe('AI Assistant');
     expect(resolveSurfaceAgentSession(architectureSurface, data, { activeSessionId: previous.id }).session?.id).toBe(architecture.id);
     expect(resolveSurfaceAgentSession(applicationSurface, data, { activeItemId: other.id, activeSessionId: previous.id }).session?.id).toBe(projectSession.id);
     expect(resolveSurfaceAgentSession(applicationSurface, data).matchingSessions.map((session) => session.id)).toEqual([projectSession.id]);

@@ -91,21 +91,21 @@ export function RegistryTable<T>({
   return (
     <div
       className={cn(
-        'w-full overflow-hidden rounded-window bg-surface shadow-card text-[13px]',
+        'w-full overflow-hidden rounded-window bg-card shadow-card text-[13px]',
         className,
       )}
       data-testid={testId}
     >
       {/* Top Header Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="m-0 text-[14px] font-semibold text-ink">{title}</h3>
-            <span className="rounded-full bg-inset px-2 py-0.5 font-mono text-[11.5px] text-ink-3 tabular-nums">
+            <h3 className="m-0 text-[14px] font-semibold text-foreground">{title}</h3>
+            <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-[11.5px] text-faint-foreground tabular-nums">
               {filtered.length}/{rows.length}
             </span>
           </div>
-          {subtitle && <p className="m-0 mt-0.5 text-[12.5px] text-ink-3">{subtitle}</p>}
+          {subtitle && <p className="m-0 mt-0.5 text-[12.5px] text-faint-foreground">{subtitle}</p>}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -126,23 +126,23 @@ export function RegistryTable<T>({
 
       {/* Search & Status Filter Bar */}
       {(matchesSearch || (statusFilters && statusFilters.length > 0)) && (
-        <div className="primitive-card-bar flex flex-wrap items-center gap-2 border-b border-line bg-inset/35">
+        <div className="primitive-card-bar flex flex-wrap items-center gap-2 border-b border-border bg-muted/35">
           {matchesSearch && (
-            <div className="flex min-w-[200px] flex-1 items-center gap-1.5 rounded-control bg-surface px-2.5 py-1 shadow-hairline">
-              <Search size={13} strokeWidth={1.75} className="shrink-0 text-ink-3" />
+            <div className="flex min-w-[200px] flex-1 items-center gap-1.5 rounded-md bg-card px-2.5 py-1 shadow-hairline">
+              <Search size={13} strokeWidth={1.75} className="shrink-0 text-faint-foreground" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={searchPlaceholder}
                 aria-label={searchPlaceholder}
-                className="w-full bg-transparent text-[12.5px] text-ink placeholder:text-ink-3 focus:outline-none"
+                className="w-full bg-transparent text-[12.5px] text-foreground placeholder:text-faint-foreground focus:outline-none"
               />
               {query && (
                 <button
                   type="button"
                   onClick={() => setQuery('')}
                   aria-label="Clear search"
-                  className="cursor-pointer rounded-full p-0.5 text-ink-3 hover:bg-hover hover:text-ink"
+                  className="cursor-pointer rounded-full p-0.5 text-faint-foreground hover:bg-accent hover:text-foreground"
                 >
                   <X size={11} strokeWidth={2} />
                 </button>
@@ -160,17 +160,17 @@ export function RegistryTable<T>({
                     type="button"
                     onClick={() => setStatus(f.value)}
                     className={cn(
-                      'inline-flex h-6 items-center gap-1.5 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors duration-150',
+                      'inline-flex h-6 items-center gap-1.5 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors duration-150',
                       active
-                        ? 'bg-surface text-ink shadow-hairline'
-                        : 'text-ink-3 hover:bg-hover hover:text-ink-2',
+                        ? 'bg-card text-foreground shadow-hairline'
+                        : 'text-faint-foreground hover:bg-accent hover:text-foreground-soft',
                     )}
                   >
                     {f.label}
                     <span
                       className={cn(
                         'font-mono text-[10.5px] tabular-nums',
-                        active ? 'opacity-75' : 'text-ink-3',
+                        active ? 'opacity-75' : 'text-faint-foreground',
                       )}
                     >
                       {counts[f.value] ?? 0}
@@ -192,7 +192,7 @@ export function RegistryTable<T>({
       >
         <table>
           <thead>
-            <tr className="border-b border-line bg-inset/50 text-[11.5px] font-semibold text-ink-3">
+            <tr className="border-b border-border bg-muted/50 text-[11.5px] font-semibold text-faint-foreground">
               {columns.map((col) => (
                 <th
                   key={col.key}
@@ -209,12 +209,12 @@ export function RegistryTable<T>({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-line">
+          <tbody className="divide-y divide-border">
             {filtered.length === 0 ? (
               <tr>
                 <td
                   colSpan={columns.length}
-                  className="py-10 text-center text-[12.5px] text-ink-3"
+                  className="py-10 text-center text-[12.5px] text-faint-foreground"
                 >
                   {emptyMessage}
                 </td>
@@ -229,8 +229,8 @@ export function RegistryTable<T>({
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                     className={cn(
                       'transition-colors duration-120',
-                      onRowClick && 'cursor-pointer hover:bg-hover',
-                      isActive && 'bg-accent-tint/55',
+                      onRowClick && 'cursor-pointer hover:bg-accent',
+                      isActive && 'bg-primary-soft/55',
                     )}
                   >
                     {columns.map((col) => (

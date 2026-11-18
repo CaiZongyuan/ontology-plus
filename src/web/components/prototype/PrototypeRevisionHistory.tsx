@@ -14,8 +14,16 @@ import {
   RotateCcw,
   ShieldCheck,
   Star,
+  Undo2,
   X,
 } from 'lucide-react';
+import {
+  BUSINESS_VOCABULARY,
+  MODEL_BUSINESS_NAMES,
+  checkBusinessViewMarkup,
+  sanitizeBusinessText,
+  type BusinessLocale,
+} from '../../../packages/business-vocabulary/index.js';
 import {
   computeMuDiff,
   extractMuFromPrototypeHtml,
@@ -36,12 +44,52 @@ import {
   apiConfirmPrototypeRevision,
   apiRestorePrototypeRevision,
   apiUpdatePrototypeRevisionMeta,
+  getCurrentClientLocale,
 } from '../../api.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
+import type { StepViewMode } from '../../navigation/stepViewMode.js';
 import { Button } from '../beautifui/index.js';
 import { stripVisualInspectorFromHtml } from './PrototypeVisualInspector.js';
 import './prototype-revision-history.css';
+
+export function formatPrototypeLabelForBusinessView(
+  raw: string | undefined,
+  fallback?: string,
+  locale?: BusinessLocale,
+): string {
+  const effectiveLocale = locale ?? getCurrentClientLocale();
+  const defaultFallback = effectiveLocale === 'en-US' ? 'Interactive Prototype' : '界面原型';
+  const resolvedFallback = fallback !== undefined ? fallback : defaultFallback;
+  const source = (raw ?? '').trim();
+  if (!source) return resolvedFallback;
+  let cleaned = source
+    .replace(
+      /\s*[（(][^()（）]*\.(?:yaml|yml|json|owl|ddl|sql|md|html?|css|zip)[^()（）]*[)）]/gi,
+      '',
+    )
+    .replace(/\.(?:yaml|yml|json|owl|ddl|sql|md|html?|css|zip)(?![A-Za-z0-9_])/gi, '')
+    .replace(/(?<![A-Za-z0-9_])(?:M[1-7]|ME|MU|MM|MI)(?![A-Za-z0-9_])/g, '')
+    .replace(
+      /(?<![A-Za-z0-9_])(?:HTML5?|CSS|YAML|YML|JSON|OWL|DDL|SQLite|SQL|Markdown|ZIP)(?![A-Za-z0-9_])/gi,
+      '',
+    )
+    .replace(
+      /(?<![A-Za-z0-9_-])(?:AGG|ENT|VO|DIC|DICT|ASSOC|BHV|BEH|RUL|RULE|EVT|SCN|ACT|ROL|ROLE|PERM|PGRP|FLW|FLOW|ACTV|QRY|RPT|SCR|EL|UIE|NAV|CC|MAP|INT|IF|MET|ASCN|WB)-[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Za-z0-9_-])/g,
+      '',
+    )
+    .replace(/\s*[()（）]\s*/g, (m) => m)
+    .replace(/[（(]\s*[)）]/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (cleaned && checkBusinessViewMarkup(cleaned, { plainText: true }).length > 0) {
+    cleaned = sanitizeBusinessText(cleaned, effectiveLocale).trim();
+  }
+  if (!cleaned || checkBusinessViewMarkup(cleaned, { plainText: true }).length > 0) {
+    cleaned = fallback !== undefined ? fallback : defaultFallback;
+  }
+  return cleaned;
+}
 
 export type PrototypeConfirmationViewState = 'CONFIRMED' | 'AHEAD' | 'UNCONFIRMED';
 
@@ -283,12 +331,12 @@ export function MuDiffSummaryPanel({
         <span className="px-2 py-0.5 rounded-full mu-diff-badge-modified font-mono">
           ~{summary.modifiedScreens} {t('屏幕', 'Screens')}
         </span>
-        <span className="text-ink-3">·</span>
-        <span className="px-2 py-0.5 rounded-full bg-inset border border-line text-ink-2 font-mono">
+        <span className="text-faint-foreground">·</span>
+        <span className="px-2 py-0.5 rounded-full bg-muted border border-border text-foreground-soft font-mono">
           +{summary.addedElements} / -{summary.removedElements} / ~{summary.modifiedElements}{' '}
           {t('元素', 'Elements')}
         </span>
-        <span className="px-2 py-0.5 rounded-full bg-inset border border-line text-ink-2 font-mono">
+        <span className="px-2 py-0.5 rounded-full bg-muted border border-border text-foreground-soft font-mono">
           +{summary.addedEvents} / -{summary.removedEvents} / ~{summary.modifiedEvents}{' '}
           {t('事件', 'Events')}
         </span>
@@ -296,7 +344,7 @@ export function MuDiffSummaryPanel({
 
       {!summary.hasChanges ? (
         <div
-          className="rounded-[8px] border border-line bg-inset px-3.5 py-3 text-[12.5px] text-ink-2"
+          className="rounded-md border border-border bg-muted px-3.5 py-3 text-[12.5px] text-foreground-soft"
           data-testid="mu-diff-empty-state"
         >
           {nextMu.screens.length === 0
@@ -318,7 +366,7 @@ export function MuDiffSummaryPanel({
             return (
               <div
                 key={sc.screenId}
-                className="rounded-[8px] border border-line bg-surface p-3 space-y-2"
+                className="rounded-md border border-border bg-card p-3 space-y-2"
                 data-testid={`mu-diff-screen-${sc.screenId}`}
                 data-diff-status={sc.status}
               >
@@ -332,20 +380,20 @@ export function MuDiffSummaryPanel({
                     >
                       {formatDiffStatusLabel(sc.status, t)}
                     </span>
-                    <span className="font-semibold text-[13px] text-ink">{sc.name}</span>
-                    <code className="font-mono text-[11.5px] text-ink-3">({sc.screenId})</code>
-                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-inset border border-line text-ink-3 font-mono">
+                    <span className="font-semibold text-[13px] text-foreground">{sc.name}</span>
+                    <code className="font-mono text-[11.5px] text-faint-foreground">({sc.screenId})</code>
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted border border-border text-faint-foreground font-mono">
                       {sc.screenType}
                     </span>
                   </div>
                 </div>
 
                 {sc.changedFields.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 text-[11.5px] text-ink-2">
+                  <div className="flex flex-wrap gap-1.5 text-[11.5px] text-foreground-soft">
                     {sc.changedFields.map((chg) => (
                       <span
                         key={chg.field}
-                        className="px-1.5 py-0.5 rounded bg-inset border border-line font-mono"
+                        className="px-1.5 py-0.5 rounded bg-muted border border-border font-mono"
                       >
                         {chg.field}: {chg.before} → {chg.after}
                       </span>
@@ -354,15 +402,15 @@ export function MuDiffSummaryPanel({
                 )}
 
                 {changedElements.length > 0 && (
-                  <div className="space-y-1 pt-1 border-t border-line/60">
-                    <div className="text-[11px] font-medium text-ink-3">
+                  <div className="space-y-1 pt-1 border-t border-border/60">
+                    <div className="text-[11px] font-medium text-faint-foreground">
                       {t('元素变更', 'Elements')} ({changedElements.length})
                     </div>
                     <ul className="list-none m-0 p-0 space-y-1">
                       {changedElements.map((el) => (
                         <li
                           key={el.elementId}
-                          className="flex flex-col gap-0.5 rounded bg-inset/60 px-2 py-1 text-[12px]"
+                          className="flex flex-col gap-0.5 rounded bg-muted/60 px-2 py-1 text-[12px]"
                           data-testid={`mu-diff-element-${el.elementId}`}
                           data-diff-status={el.status}
                         >
@@ -375,21 +423,21 @@ export function MuDiffSummaryPanel({
                             >
                               {formatDiffStatusLabel(el.status, t)}
                             </span>
-                            <span className="font-medium text-ink">{el.label}</span>
-                            <code className="font-mono text-[11px] text-ink-3">
+                            <span className="font-medium text-foreground">{el.label}</span>
+                            <code className="font-mono text-[11px] text-faint-foreground">
                               [{el.elementId}]
                             </code>
-                            <span className="font-mono text-[11px] text-ink-2">
+                            <span className="font-mono text-[11px] text-foreground-soft">
                               {el.elementType}
                             </span>
                             {el.dataBinding && (
-                              <span className="font-mono text-[11px] text-accent">
+                              <span className="font-mono text-[11px] text-primary">
                                 ↳ {el.dataBinding}
                               </span>
                             )}
                           </div>
                           {el.changedFields.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 text-[11px] text-ink-2 font-mono">
+                            <div className="flex flex-wrap gap-1.5 text-[11px] text-foreground-soft font-mono">
                               {el.changedFields.map((chg) => (
                                 <span key={chg.field}>
                                   {chg.field}: {chg.before} → {chg.after}
@@ -404,15 +452,15 @@ export function MuDiffSummaryPanel({
                 )}
 
                 {changedEvents.length > 0 && (
-                  <div className="space-y-1 pt-1 border-t border-line/60">
-                    <div className="text-[11px] font-medium text-ink-3">
+                  <div className="space-y-1 pt-1 border-t border-border/60">
+                    <div className="text-[11px] font-medium text-faint-foreground">
                       {t('UI 事件调用链变更', 'UI Events')} ({changedEvents.length})
                     </div>
                     <ul className="list-none m-0 p-0 space-y-1">
                       {changedEvents.map((ev) => (
                         <li
                           key={ev.eventId}
-                          className="flex flex-col gap-0.5 rounded bg-inset/60 px-2 py-1 text-[11.5px]"
+                          className="flex flex-col gap-0.5 rounded bg-muted/60 px-2 py-1 text-[11.5px]"
                           data-testid={`mu-diff-event-${ev.eventId}`}
                           data-diff-status={ev.status}
                         >
@@ -425,10 +473,10 @@ export function MuDiffSummaryPanel({
                             >
                               {formatDiffStatusLabel(ev.status, t)}
                             </span>
-                            <code className="font-mono font-medium text-ink">{ev.eventId}</code>
-                            <span className="text-ink-2">({ev.name})</span>
+                            <code className="font-mono font-medium text-foreground">{ev.eventId}</code>
+                            <span className="text-foreground-soft">({ev.name})</span>
                           </div>
-                          <div className="font-mono text-[11px] text-ink-2">
+                          <div className="font-mono text-[11px] text-foreground-soft">
                             {ev.previousCallChainSummary
                               ? `${ev.previousCallChainSummary} → ${ev.callChainSummary}`
                               : ev.callChainSummary}
@@ -456,6 +504,7 @@ export interface PrototypeRevisionCompareViewProps {
   confirmedRevisionId?: string;
   domain?: string;
   tab: CompareInspectorTab;
+  viewMode?: StepViewMode;
   onSelectLeft: (revisionId: string) => void;
   onSelectRight: (revisionId: string) => void;
   onSwap?: () => void;
@@ -471,6 +520,7 @@ export function PrototypeRevisionCompareView({
   confirmedRevisionId,
   domain = 'OntologyDomain',
   tab,
+  viewMode = 'technical',
   onSelectLeft,
   onSelectRight,
   onSwap,
@@ -479,6 +529,14 @@ export function PrototypeRevisionCompareView({
   className,
 }: PrototypeRevisionCompareViewProps) {
   const { t } = usePreferences();
+  const isBusinessView = viewMode === 'business';
+  const formatRevLabel = (rev: PrototypeRevision) =>
+    isBusinessView
+      ? formatPrototypeLabelForBusinessView(
+          rev.title,
+          t(`第 ${rev.revisionNumber} 版`, `Revision #${rev.revisionNumber}`),
+        )
+      : rev.title;
   const orderedAsc = useMemo(
     () => [...prototype.revisions].sort((a, b) => a.revisionNumber - b.revisionNumber),
     [prototype.revisions],
@@ -513,22 +571,22 @@ export function PrototypeRevisionCompareView({
 
   return (
     <div
-      className={cn('border-b border-line bg-inset/45 p-3.5 space-y-3', className)}
+      className={cn('border-b border-border bg-muted/45 p-3.5 space-y-3', className)}
       data-testid="revision-side-by-side-compare"
     >
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center flex-wrap gap-2">
-          <label className="flex items-center gap-1.5 text-[12px] text-ink-2">
+          <label className="flex items-center gap-1.5 text-[12px] text-foreground-soft">
             <span>{t('基准修订', 'Left')}</span>
             <select
               value={leftRev.id}
               onChange={(e) => onSelectLeft(e.target.value)}
-              className="h-7 px-2 rounded-[6px] border border-line bg-surface text-[12px] text-ink"
+              className="h-7 px-2 rounded-sm border border-border bg-card text-[12px] text-foreground"
               data-testid="compare-left-revision-select"
             >
               {orderedAsc.map((rev) => (
                 <option key={rev.id} value={rev.id}>
-                  #{rev.revisionNumber} · {rev.title}
+                  #{rev.revisionNumber} · {formatRevLabel(rev)}
                   {confirmedRevisionId === rev.id
                     ? ` (${t('已确认', 'Confirmed')})`
                     : ''}
@@ -549,17 +607,17 @@ export function PrototypeRevisionCompareView({
             </Button>
           )}
 
-          <label className="flex items-center gap-1.5 text-[12px] text-ink-2">
+          <label className="flex items-center gap-1.5 text-[12px] text-foreground-soft">
             <span>{t('对比修订', 'Right')}</span>
             <select
               value={rightRev.id}
               onChange={(e) => onSelectRight(e.target.value)}
-              className="h-7 px-2 rounded-[6px] border border-line bg-surface text-[12px] text-ink"
+              className="h-7 px-2 rounded-sm border border-border bg-card text-[12px] text-foreground"
               data-testid="compare-right-revision-select"
             >
               {orderedAsc.map((rev) => (
                 <option key={rev.id} value={rev.id}>
-                  #{rev.revisionNumber} · {rev.title}
+                  #{rev.revisionNumber} · {formatRevLabel(rev)}
                   {confirmedRevisionId === rev.id
                     ? ` (${t('已确认', 'Confirmed')})`
                     : ''}
@@ -573,23 +631,29 @@ export function PrototypeRevisionCompareView({
           <Button
             variant="toggle"
             size="xs"
-            aria-pressed={tab === 'VISUAL_AND_MU'}
+            aria-pressed={isBusinessView ? true : tab === 'VISUAL_AND_MU'}
             onClick={() => onTabChange('VISUAL_AND_MU')}
             data-testid="compare-tab-mu-btn"
           >
             <Layers size={12} aria-hidden="true" />
-            <span>{t('画布与 MU 差异', 'Visual & MU Diff')}</span>
+            <span>
+              {isBusinessView
+                ? t('画面与界面差异', 'Visual & Screen Changes')
+                : t('画布与 MU 差异', 'Visual & MU Diff')}
+            </span>
           </Button>
-          <Button
-            variant="toggle"
-            size="xs"
-            aria-pressed={tab === 'HTML'}
-            onClick={() => onTabChange('HTML')}
-            data-testid="compare-tab-html-btn"
-          >
-            <Code2 size={12} aria-hidden="true" />
-            <span>{t('HTML 源码对比', 'HTML Source')}</span>
-          </Button>
+          {!isBusinessView && (
+            <Button
+              variant="toggle"
+              size="xs"
+              aria-pressed={tab === 'HTML'}
+              onClick={() => onTabChange('HTML')}
+              data-testid="compare-tab-html-btn"
+            >
+              <Code2 size={12} aria-hidden="true" />
+              <span>{t('HTML 源码对比', 'HTML Source')}</span>
+            </Button>
+          )}
           {onClose && (
             <Button
               variant="ghost"
@@ -606,9 +670,9 @@ export function PrototypeRevisionCompareView({
 
       <div className="proto-rev-compare-grid">
         <div className="proto-rev-compare-pane">
-          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-line bg-surface-2 text-[12px]">
-            <span className="font-medium text-ink truncate">
-              #{leftRev.revisionNumber} · {leftRev.title}
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border text-[12px]">
+            <span className="font-medium text-foreground truncate">
+              #{leftRev.revisionNumber} · {formatRevLabel(leftRev)}
             </span>
             {confirmedRevisionId === leftRev.id && (
               <span className="proto-rev-status-pill is-confirmed">
@@ -629,9 +693,9 @@ export function PrototypeRevisionCompareView({
         </div>
 
         <div className="proto-rev-compare-pane">
-          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-line bg-surface-2 text-[12px]">
-            <span className="font-medium text-ink truncate">
-              #{rightRev.revisionNumber} · {rightRev.title}
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border text-[12px]">
+            <span className="font-medium text-foreground truncate">
+              #{rightRev.revisionNumber} · {formatRevLabel(rightRev)}
             </span>
             {confirmedRevisionId === rightRev.id && (
               <span className="proto-rev-status-pill is-confirmed">
@@ -652,7 +716,13 @@ export function PrototypeRevisionCompareView({
         </div>
       </div>
 
-      {tab === 'VISUAL_AND_MU' ? (
+      {isBusinessView ? (
+        <ScreenChangesBusinessPanel
+          diff={pairDiff}
+          nextMu={rightMu}
+          testId="compare-mu-diff-section"
+        />
+      ) : tab === 'VISUAL_AND_MU' ? (
         <MuDiffSummaryPanel
           diff={pairDiff}
           nextMu={rightMu}
@@ -663,17 +733,17 @@ export function PrototypeRevisionCompareView({
           className="space-y-2"
           data-testid="compare-html-diff-section"
         >
-          <div className="text-[11.5px] text-ink-3 font-mono">
+          <div className="text-[11.5px] text-faint-foreground font-mono">
             {t(
               `左栏 #${leftRev.revisionNumber}：${leftLines.length} 行（${leftCleanHtml.length} 字符） · 右栏 #${rightRev.revisionNumber}：${rightLines.length} 行（${rightCleanHtml.length} 字符）`,
               `Left #${leftRev.revisionNumber}: ${leftLines.length} lines (${leftCleanHtml.length} chars) · Right #${rightRev.revisionNumber}: ${rightLines.length} lines (${rightCleanHtml.length} chars)`,
             )}
           </div>
           <div className="proto-rev-compare-grid">
-            <pre className="m-0 max-h-[200px] overflow-auto rounded-[6px] border border-line bg-surface p-2.5 font-mono text-[11px] text-ink-2">
+            <pre className="m-0 max-h-[200px] overflow-auto rounded-sm border border-border bg-card p-2.5 font-mono text-[11px] text-foreground-soft">
               {leftCleanHtml}
             </pre>
-            <pre className="m-0 max-h-[200px] overflow-auto rounded-[6px] border border-line bg-surface p-2.5 font-mono text-[11px] text-ink-2">
+            <pre className="m-0 max-h-[200px] overflow-auto rounded-sm border border-border bg-card p-2.5 font-mono text-[11px] text-foreground-soft">
               {rightCleanHtml}
             </pre>
           </div>
@@ -843,11 +913,11 @@ function formatRevisionSourceBadge(
     case 'GENERATED':
       return t('AI 生成', 'Generated');
     case 'AGENT_RUN':
-      return t('Agent 运行', 'Agent Run');
+      return t('AI 助手修改', 'AI Assistant');
     case 'REFINED':
       return t('AI 精修', 'Refined');
     case 'UPLOADED':
-      return t('HTML 导入', 'Uploaded');
+      return t('外部导入', 'Uploaded');
     case 'RESTORED':
       return t('历史恢复', 'Restored');
     case 'CLONED':
@@ -878,11 +948,13 @@ export interface PrototypeRevisionHistoryDrawerProps {
   domain?: string;
   previewRevisionId?: string | null;
   busyRevisionId?: string | null;
+  viewMode?: StepViewMode;
   viewState?: RevisionHistoryViewState;
   onViewStateChange?: (next: RevisionHistoryViewState) => void;
   onClose?: () => void;
   onSelectPreviewRevision: (revisionId: string | null) => void;
   onRestoreRevision: (revisionId: string) => void | Promise<void>;
+  onUndoLatestRevision?: (revisionId: string) => void | Promise<void>;
   onRenameRevision: (revisionId: string, newTitle: string) => void | Promise<void>;
   onToggleStarRevision: (revisionId: string, nextStarred: boolean) => void | Promise<void>;
   onRequestConfirmRevision: (revision: PrototypeRevision) => void;
@@ -896,17 +968,20 @@ export function PrototypeRevisionHistoryDrawer({
   domain,
   previewRevisionId = null,
   busyRevisionId = null,
+  viewMode = 'technical',
   viewState: controlledViewState,
   onViewStateChange,
   onClose,
   onSelectPreviewRevision,
   onRestoreRevision,
+  onUndoLatestRevision,
   onRenameRevision,
   onToggleStarRevision,
   onRequestConfirmRevision,
   className,
 }: PrototypeRevisionHistoryDrawerProps) {
   const { t } = usePreferences();
+  const isBusinessView = viewMode === 'business';
   const [internalState, internalDispatch] = useReducer(
     revisionHistoryViewReducer,
     prototype,
@@ -942,19 +1017,42 @@ export function PrototypeRevisionHistoryDrawer({
     ? prototype.revisions.find((r) => r.id === previewRevisionId)
     : undefined;
 
+  const displayProtoName = isBusinessView
+    ? formatPrototypeLabelForBusinessView(prototype.name, t('当前原型', 'Current prototype'))
+    : prototype.name;
+  const previewBannerTitle = previewingRevision
+    ? isBusinessView
+      ? formatPrototypeLabelForBusinessView(
+          previewingRevision.title,
+          t(
+            `第 ${previewingRevision.revisionNumber} 版`,
+            `Revision #${previewingRevision.revisionNumber}`,
+          ),
+        )
+      : previewingRevision.title
+    : '';
+  const otherConfirmedProtoName = confirmedRevision
+    ? isBusinessView
+      ? formatPrototypeLabelForBusinessView(
+          confirmedRevision.prototype.name,
+          t('其他原型', 'Another prototype'),
+        )
+      : confirmedRevision.prototype.name
+    : '';
+
   return (
     <section
       className={cn('proto-rev-drawer', className)}
       data-testid="prototype-revision-history-drawer"
-      aria-label={t(`修订历史 · ${prototype.name}`, `Revision History · ${prototype.name}`)}
+      aria-label={t(`修订历史 · ${displayProtoName}`, `Revision History · ${displayProtoName}`)}
     >
       <header className="proto-rev-drawer-header">
         <div className="flex items-center gap-2 min-w-0">
-          <History size={15} className="text-accent shrink-0" aria-hidden="true" />
-          <h3 className="m-0 text-[13.5px] font-semibold text-ink truncate">
+          <History size={15} className="text-primary shrink-0" aria-hidden="true" />
+          <h3 className="m-0 text-[13.5px] font-semibold text-foreground truncate">
             {t('修订历史', 'Revision History')}
           </h3>
-          <span className="text-[11.5px] text-ink-3 font-mono">
+          <span className="text-[11.5px] text-faint-foreground font-mono">
             ({prototype.revisions.length})
           </span>
           {prototype.isConfirmed && prototype.aheadOfConfirmedCount > 0 && (
@@ -1011,7 +1109,7 @@ export function PrototypeRevisionHistoryDrawer({
               type="button"
               onClick={onClose}
               aria-label={t('关闭修订历史', 'Close revision history')}
-              className="primitive-icon-button text-ink-3 hover:bg-hover hover:text-ink"
+              className="primitive-icon-button text-faint-foreground hover:bg-accent hover:text-foreground"
               data-testid="revision-drawer-close-btn"
             >
               <X size={14} />
@@ -1022,14 +1120,14 @@ export function PrototypeRevisionHistoryDrawer({
 
       {previewingRevision && previewingRevision.id !== prototype.currentRevisionId && (
         <div
-          className="flex items-center justify-between gap-2 border-b border-line bg-accent-tint px-3.5 py-2 text-[12px] text-ink"
+          className="flex items-center justify-between gap-2 border-b border-border bg-primary-soft px-3.5 py-2 text-[12px] text-foreground"
           role="status"
           data-testid="revision-preview-banner"
         >
           <span>
             {t(
-              `正在预览历史修订 #${previewingRevision.revisionNumber}「${previewingRevision.title}」（未改写历史）`,
-              `Previewing historical revision #${previewingRevision.revisionNumber} "${previewingRevision.title}" (history unchanged)`,
+              `正在预览历史修订 #${previewingRevision.revisionNumber}「${previewBannerTitle}」（未改写历史）`,
+              `Previewing historical revision #${previewingRevision.revisionNumber} "${previewBannerTitle}" (history unchanged)`,
             )}
           </span>
           <Button
@@ -1045,12 +1143,12 @@ export function PrototypeRevisionHistoryDrawer({
 
       {confirmedRevision && confirmedRevision.prototypeId !== prototype.id && (
         <div
-          className="border-b border-line bg-inset px-3.5 py-2 text-[11.5px] text-ink-2"
+          className="border-b border-border bg-muted px-3.5 py-2 text-[11.5px] text-foreground-soft"
           data-testid="other-prototype-confirmed-banner"
         >
           {t(
-            `当前工程已确认修订位于「${confirmedRevision.prototype.name}」#${confirmedRevision.revision.revisionNumber}`,
-            `Project Confirmed Revision is on "${confirmedRevision.prototype.name}" #${confirmedRevision.revision.revisionNumber}`,
+            `当前工程已确认修订位于「${otherConfirmedProtoName}」#${confirmedRevision.revision.revisionNumber}`,
+            `Project Confirmed Revision is on "${otherConfirmedProtoName}" #${confirmedRevision.revision.revisionNumber}`,
           )}
         </div>
       )}
@@ -1063,6 +1161,7 @@ export function PrototypeRevisionHistoryDrawer({
           confirmedRevisionId={confirmedRevIdOnThisProto}
           domain={domain}
           tab={state.compareTab}
+          viewMode={viewMode}
           onSelectLeft={(revisionId) => dispatch({ type: 'SET_COMPARE_LEFT', revisionId })}
           onSelectRight={(revisionId) => dispatch({ type: 'SET_COMPARE_RIGHT', revisionId })}
           onSwap={() => dispatch({ type: 'SWAP_COMPARE_REVISIONS' })}
@@ -1074,7 +1173,7 @@ export function PrototypeRevisionHistoryDrawer({
       <ol className="proto-rev-timeline" data-testid="revision-timeline-list">
         {visibleRevisions.length === 0 ? (
           <li
-            className="py-6 text-center text-[12.5px] text-ink-3"
+            className="py-6 text-center text-[12.5px] text-faint-foreground"
             data-testid="revision-timeline-empty"
           >
             {state.starredOnly
@@ -1105,11 +1204,11 @@ export function PrototypeRevisionHistoryDrawer({
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center flex-wrap gap-1.5 min-w-0">
-                    <span className="font-mono text-[11.5px] font-semibold text-ink px-1.5 py-0.5 rounded bg-inset border border-line">
+                    <span className="font-mono text-[11.5px] font-semibold text-foreground px-1.5 py-0.5 rounded bg-muted border border-border">
                       #{rev.revisionNumber}
                     </span>
 
-                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-inset text-ink-2 border border-line">
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-foreground-soft border border-border">
                       {formatRevisionSourceBadge(rev.source, t)}
                     </span>
 
@@ -1125,7 +1224,14 @@ export function PrototypeRevisionHistoryDrawer({
                         data-testid={`revision-confirmed-badge-${rev.revisionNumber}`}
                       >
                         <CheckCircle2 size={11} aria-hidden="true" />
-                        <span>{t('已确认修订', 'Confirmed Revision')}</span>
+                        <span>
+                          {isBusinessView
+                            ? t(
+                                BUSINESS_VOCABULARY.CONFIRMED_REVISION.zh,
+                                BUSINESS_VOCABULARY.CONFIRMED_REVISION.en,
+                              )
+                            : t('已确认修订', 'Confirmed Revision')}
+                        </span>
                       </span>
                     )}
                   </div>
@@ -1142,8 +1248,8 @@ export function PrototypeRevisionHistoryDrawer({
                       onClick={() => void onToggleStarRevision(rev.id, !rev.starred)}
                       disabled={isBusy}
                       className={cn(
-                        'primitive-icon-button text-ink-3 hover:bg-hover hover:text-ink',
-                        rev.starred && 'text-orange',
+                        'primitive-icon-button text-faint-foreground hover:bg-accent hover:text-foreground',
+                        rev.starred && 'text-warning',
                       )}
                       data-testid={`revision-star-btn-${rev.revisionNumber}`}
                     >
@@ -1166,7 +1272,7 @@ export function PrototypeRevisionHistoryDrawer({
                           })
                         }
                         disabled={isBusy}
-                        className="primitive-icon-button text-ink-3 hover:bg-hover hover:text-ink"
+                        className="primitive-icon-button text-faint-foreground hover:bg-accent hover:text-foreground"
                         data-testid={`revision-rename-btn-${rev.revisionNumber}`}
                       >
                         <Pencil size={12.5} aria-hidden="true" />
@@ -1201,7 +1307,7 @@ export function PrototypeRevisionHistoryDrawer({
                         }
                       }}
                       aria-label={t('修订名称', 'Revision title')}
-                      className="flex-1 min-w-0 h-7 px-2 rounded-[6px] border border-line bg-field text-[12.5px] text-ink"
+                      className="flex-1 min-w-0 h-7 px-2 rounded-sm border border-border bg-muted text-[12.5px] text-foreground"
                       data-testid={`revision-rename-input-${rev.revisionNumber}`}
                     />
                     <Button
@@ -1225,18 +1331,23 @@ export function PrototypeRevisionHistoryDrawer({
                     </Button>
                   </form>
                 ) : (
-                  <div className="text-[13px] font-medium text-ink leading-snug">
-                    {rev.title}
+                  <div className="text-[13px] font-medium text-foreground leading-snug">
+                    {isBusinessView
+                      ? formatPrototypeLabelForBusinessView(
+                          rev.title,
+                          t(`第 ${rev.revisionNumber} 版`, `Revision #${rev.revisionNumber}`),
+                        )
+                      : rev.title}
                   </div>
                 )}
 
-                <div className="flex items-center justify-between flex-wrap gap-2 text-[11.5px] text-ink-3">
+                <div className="flex items-center justify-between flex-wrap gap-2 text-[12px] text-faint-foreground">
                   <div className="flex items-center gap-2">
                     <time dateTime={rev.createdAt}>{formatRevisionTimestamp(rev.createdAt)}</time>
                     <span>·</span>
                     <span>
                       {t(
-                        `${rev.extractedScreenCount} 个屏幕`,
+                        `${rev.extractedScreenCount} 个${MODEL_BUSINESS_NAMES.MU.zh}`,
                         `${rev.extractedScreenCount} screens`,
                       )}
                     </span>
@@ -1278,6 +1389,19 @@ export function PrototypeRevisionHistoryDrawer({
                       >
                         <Columns2 size={12} aria-hidden="true" />
                         <span>{t('对比', 'Compare')}</span>
+                      </Button>
+                    )}
+
+                    {isLatest && prototype.revisions.length >= 2 && onUndoLatestRevision && (
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        onClick={() => void onUndoLatestRevision(rev.id)}
+                        disabled={isBusy}
+                        data-testid="revision-undo-latest-btn"
+                      >
+                        <Undo2 size={12} aria-hidden="true" />
+                        <span>{t('撤销', 'Undo')}</span>
                       </Button>
                     )}
 
@@ -1337,6 +1461,196 @@ export function hasNonMuOntologyModels(suite: OntologySuite | undefined): boolea
   return NON_MU_MODEL_KEYS.some((key) => Boolean(suite[key]));
 }
 
+// ─── Business-Language Screen Changes Panel (User Story 24) ──────────────────
+
+function formatBusinessScreenType(
+  screenType: string | undefined,
+  t: (zh: string, en: string) => string,
+): string {
+  switch ((screenType ?? '').toUpperCase()) {
+    case 'LIST':
+      return t('列表页面', 'List screen');
+    case 'FORM':
+      return t('录入表单', 'Form screen');
+    case 'DETAIL':
+      return t('详情页面', 'Detail screen');
+    case 'APPROVAL':
+      return t('审批页面', 'Approval screen');
+    case 'DASHBOARD':
+      return t('总览看板', 'Dashboard');
+    case 'MODAL':
+      return t('弹窗页面', 'Dialog');
+    case 'WORKSPACE':
+      return t('工作台页面', 'Workspace');
+    default:
+      return t(MODEL_BUSINESS_NAMES.MU.singularZh, MODEL_BUSINESS_NAMES.MU.singularEn);
+  }
+}
+
+function formatBusinessElementType(
+  elementType: string | undefined,
+  t: (zh: string, en: string) => string,
+): string {
+  switch ((elementType ?? '').toUpperCase()) {
+    case 'BUTTON':
+      return t('按钮', 'button');
+    case 'INPUT':
+    case 'TEXTAREA':
+      return t('输入项', 'field');
+    case 'SELECT':
+      return t('下拉选项', 'selector');
+    case 'TABLE':
+      return t('表格', 'table');
+    case 'FORM':
+      return t('表单区', 'form');
+    case 'CARD':
+      return t('卡片区', 'card');
+    default:
+      return t('界面元素', 'item');
+  }
+}
+
+export interface ScreenChangesBusinessPanelProps {
+  diff: MuModelDiff;
+  nextMu: MUUiModel;
+  testId?: string;
+  className?: string;
+}
+
+export function ScreenChangesBusinessPanel({
+  diff,
+  nextMu,
+  testId = 'confirm-screen-changes-list',
+  className,
+}: ScreenChangesBusinessPanelProps) {
+  const { locale, t } = usePreferences();
+  const { summary } = diff;
+  const changedScreens = diff.screens.filter((sc) => sc.status !== 'UNCHANGED');
+  const quote = (label: string) => (locale === 'en-US' ? `"${label}"` : `「${label}」`);
+
+  return (
+    <div className={cn('space-y-2.5', className)} data-testid={testId}>
+      <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+        {summary.addedScreens > 0 && (
+          <span className="rounded-full px-2.5 py-0.5 font-medium mu-diff-badge-added">
+            {t(
+              `新增 ${summary.addedScreens} 个${MODEL_BUSINESS_NAMES.MU.zh}`,
+              `${summary.addedScreens} ${summary.addedScreens === 1 ? 'screen' : 'screens'} added`,
+            )}
+          </span>
+        )}
+        {summary.modifiedScreens > 0 && (
+          <span className="rounded-full px-2.5 py-0.5 font-medium mu-diff-badge-modified">
+            {t(
+              `调整 ${summary.modifiedScreens} 个${MODEL_BUSINESS_NAMES.MU.zh}`,
+              `${summary.modifiedScreens} ${summary.modifiedScreens === 1 ? 'screen' : 'screens'} updated`,
+            )}
+          </span>
+        )}
+        {summary.removedScreens > 0 && (
+          <span className="rounded-full px-2.5 py-0.5 font-medium mu-diff-badge-removed">
+            {t(
+              `移除 ${summary.removedScreens} 个${MODEL_BUSINESS_NAMES.MU.zh}`,
+              `${summary.removedScreens} ${summary.removedScreens === 1 ? 'screen' : 'screens'} removed`,
+            )}
+          </span>
+        )}
+        {!summary.hasChanges && (
+          <span className="rounded-full border border-border bg-muted px-2.5 py-0.5 text-muted-foreground">
+            {t('界面结构无变化', 'No screen structure changes')}
+          </span>
+        )}
+      </div>
+
+      {!summary.hasChanges ? (
+        <div
+          className="rounded-md border border-border bg-muted px-3.5 py-3 text-[13px] text-foreground-soft"
+          data-testid="screen-changes-empty-state"
+        >
+          {nextMu.screens.length === 0
+            ? t(
+                '当前原型包含整体预览画面，确认后将记录为当前已确认的原型。',
+                'Confirming records this prototype as the confirmed prototype for downstream steps.',
+              )
+            : t(
+                '界面结构、字段和按钮与上次确认时一致（仅调整了视觉样式或说明文字）。',
+                'Screens, fields, and actions match the last confirmed prototype (visual or copy refinements only).',
+              )}
+        </div>
+      ) : (
+        <div className="max-h-[300px] space-y-2 overflow-y-auto pr-1">
+          {changedScreens.map((sc) => {
+            const screenTitle = formatPrototypeLabelForBusinessView(
+              sc.name,
+              t('未命名界面', 'Untitled screen'),
+            );
+            const changedElements = sc.elements.filter((e) => e.status !== 'UNCHANGED');
+            const changedEvents = sc.events.filter((ev) => ev.status !== 'UNCHANGED');
+            const itemLines: string[] = [];
+
+            for (const el of changedElements) {
+              const kindText = formatBusinessElementType(el.elementType, t);
+              const elName = formatPrototypeLabelForBusinessView(
+                el.label,
+                t('未命名控件', 'Control'),
+              );
+              if (el.status === 'ADDED') {
+                itemLines.push(t(`新增${kindText}${quote(elName)}`, `Added ${kindText} ${quote(elName)}`));
+              } else if (el.status === 'REMOVED') {
+                itemLines.push(t(`移除${kindText}${quote(elName)}`, `Removed ${kindText} ${quote(elName)}`));
+              } else {
+                itemLines.push(t(`调整${kindText}${quote(elName)}`, `Updated ${kindText} ${quote(elName)}`));
+              }
+            }
+
+            for (const ev of changedEvents) {
+              const evName = formatPrototypeLabelForBusinessView(ev.name, '');
+              if (!evName) continue;
+              if (ev.status === 'ADDED') {
+                itemLines.push(t(`新增交互动作${quote(evName)}`, `Added interaction ${quote(evName)}`));
+              } else if (ev.status === 'REMOVED') {
+                itemLines.push(t(`移除交互动作${quote(evName)}`, `Removed interaction ${quote(evName)}`));
+              } else {
+                itemLines.push(t(`更新交互动作${quote(evName)}`, `Updated interaction ${quote(evName)}`));
+              }
+            }
+
+            return (
+              <div
+                key={sc.screenId}
+                className="space-y-1.5 rounded-md border border-border bg-card p-3"
+                data-testid={`screen-change-${sc.screenId}`}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={cn(
+                      'rounded px-2 py-0.5 text-[12px] font-medium',
+                      diffStatusBadgeClass(sc.status),
+                    )}
+                  >
+                    {formatDiffStatusLabel(sc.status, t)}
+                  </span>
+                  <span className="text-[13px] font-semibold text-foreground">{screenTitle}</span>
+                  <span className="rounded border border-border bg-muted px-2 py-0.5 text-[12px] text-muted-foreground">
+                    {formatBusinessScreenType(sc.screenType, t)}
+                  </span>
+                </div>
+                {itemLines.length > 0 && (
+                  <ul className="m-0 list-disc space-y-1 pl-5 text-[12.5px] text-foreground-soft">
+                    {itemLines.map((line, idx) => (
+                      <li key={`${sc.screenId}-${idx}`}>{line}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface ConfirmRevisionMuDiffModalProps {
   open: boolean;
   revision: PrototypeRevision | null;
@@ -1347,6 +1661,7 @@ export interface ConfirmRevisionMuDiffModalProps {
   hasSynthesizedOntology?: boolean;
   domain: string;
   busy?: boolean;
+  viewMode?: StepViewMode;
   onConfirm: (revisionId: string) => void | Promise<void>;
   onClose: () => void;
 }
@@ -1361,12 +1676,14 @@ export function ConfirmRevisionMuDiffModal({
   hasSynthesizedOntology,
   domain,
   busy = false,
+  viewMode = 'business',
   onConfirm,
   onClose,
 }: ConfirmRevisionMuDiffModalProps) {
   const { t } = usePreferences();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const isBusinessView = viewMode === 'business';
 
   const resolvedCurrentMu = currentMu ?? suite?.MU;
   const resolvedHasNonMu =
@@ -1398,6 +1715,13 @@ export function ConfirmRevisionMuDiffModal({
   }
 
   const { nextMu, diff } = preview;
+  const cleanProtoName = prototypeName
+    ? formatPrototypeLabelForBusinessView(prototypeName, t('当前原型', 'Current prototype'))
+    : '';
+  const cleanRevTitle = formatPrototypeLabelForBusinessView(
+    revision.title,
+    t(`第 ${revision.revisionNumber} 版`, `Revision #${revision.revisionNumber}`),
+  );
 
   return (
     <dialog
@@ -1409,14 +1733,18 @@ export function ConfirmRevisionMuDiffModal({
       onClose={onClose}
     >
       <div className="flex flex-col">
-        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 bg-surface-2">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="flex items-center gap-2 min-w-0">
-            <CheckCircle2 size={16} className="text-accent shrink-0" aria-hidden="true" />
-            <h3 id={titleId} className="m-0 text-[14px] font-semibold text-ink truncate">
-              {t(
-                `确认原型修订 #${revision.revisionNumber} 并同步 MU 模型`,
-                `Confirm Revision #${revision.revisionNumber} & Sync MU Model`,
-              )}
+            <CheckCircle2 size={16} className="text-primary shrink-0" aria-hidden="true" />
+            <h3 id={titleId} className="m-0 text-[15px] font-semibold text-foreground truncate">
+              {isBusinessView
+                ? confirmedRevision
+                  ? t('重新确认原型', 'Re-confirm prototype')
+                  : t('确认原型', 'Confirm prototype')
+                : t(
+                    `确认原型修订 #${revision.revisionNumber} 并同步 MU 模型`,
+                    `Confirm Revision #${revision.revisionNumber} & Sync MU Model`,
+                  )}
             </h3>
           </div>
           <button
@@ -1424,65 +1752,140 @@ export function ConfirmRevisionMuDiffModal({
             onClick={onClose}
             disabled={busy}
             aria-label={t('关闭确认窗口', 'Close confirmation dialog')}
-            className="primitive-icon-button text-ink-3 hover:bg-hover hover:text-ink"
+            className="primitive-icon-button text-faint-foreground hover:bg-accent hover:text-foreground"
             data-testid="confirm-revision-close-btn"
           >
             <X size={14} />
           </button>
         </div>
 
-        <div className="space-y-3 px-4 py-3.5 text-[13px] leading-relaxed text-ink-2">
-          <div className="rounded-[8px] border border-line bg-inset/55 px-3 py-2 text-[12.5px]">
-            <div className="font-medium text-ink">
-              {prototypeName ? `${prototypeName} · ` : ''}#{revision.revisionNumber}{' '}
-              {revision.title}
-            </div>
-            <div className="text-[11.5px] text-ink-3 mt-0.5">
-              {confirmedRevision
-                ? t(
-                    `当前已确认基准：${confirmedRevision.prototype.name} #${confirmedRevision.revision.revisionNumber}（${confirmedRevision.revision.title}）`,
-                    `Current Confirmed Revision: ${confirmedRevision.prototype.name} #${confirmedRevision.revision.revisionNumber} (${confirmedRevision.revision.title})`,
-                  )
-                : diff.isInitialExtraction
-                  ? t(
-                      '本工程尚未确认过原型修订；确认后将首次提取并建立 MU（UI 模型）。',
-                      'No revision confirmed yet in this project; confirming will extract and initialize the MU (UI Model).',
-                    )
-                  : t(
-                      '对比基准：当前工程已保存的 MU（UI 模型）。',
-                      'Compared against this project’s current MU (UI Model).',
+        <div className="space-y-3 px-4 py-3.5 text-[13px] leading-relaxed text-foreground-soft">
+          {isBusinessView ? (
+            <>
+              <div
+                className="rounded-md border border-border bg-muted/55 px-3 py-2.5 text-[13px]"
+                data-testid="confirm-screen-changes-summary"
+              >
+                <div className="font-medium text-foreground">
+                  {cleanProtoName ? `${cleanProtoName} · ` : ''}
+                  {cleanRevTitle}
+                </div>
+                <p className="m-0 mt-1 text-[12.5px] text-muted-foreground">
+                  {confirmedRevision
+                    ? t(
+                        '确认后，业务模型将标为待更新；以下是和上次确认的原型相比带来的界面变化。',
+                        'Confirming will mark the Business Model as Outdated; below are the screen changes compared with your last confirmed prototype.',
+                      )
+                    : t(
+                        `确认后，业务模型会依据这 ${nextMu.screens.length} 个界面来整理。`,
+                        `Once confirmed, the Business Model will be organized from these ${nextMu.screens.length} screens.`,
+                      )}
+                </p>
+              </div>
+
+              {resolvedHasNonMu && (
+                <div
+                  className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary-soft px-3 py-2 text-[12.5px] text-foreground"
+                  role="note"
+                >
+                  <ShieldCheck size={15} className="text-primary shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>
+                    {t(
+                      '确认原型只会更新界面定义，不会覆盖已经整理好的业务对象、业务规则和角色权限。',
+                      'Confirming updates screen definitions only and will not overwrite your existing business objects, rules, or permissions.',
                     )}
-            </div>
-          </div>
+                  </span>
+                </div>
+              )}
 
-          {resolvedHasNonMu && (
-            <div
-              className="flex items-start gap-2 rounded-[8px] border border-accent/30 bg-accent-tint px-3 py-2 text-[12px] text-ink"
-              role="note"
-              data-testid="confirm-mu-only-safeguard"
-            >
-              <ShieldCheck size={15} className="text-accent shrink-0 mt-0.5" aria-hidden="true" />
-              <span>
-                {t(
-                  '仅重新提取并更新 MU（UI 模型），不会重新合成或覆盖已有的 M1–M7、ME、MM、MI 业务本体模型。',
-                  'Re-extracts and updates MU (UI Model) only — existing M1–M7, ME, MM, and MI ontology models will never be re-synthesized or overwritten.',
-                )}
-              </span>
-            </div>
+              <ScreenChangesBusinessPanel diff={diff} nextMu={nextMu} />
+
+              <details
+                className="rounded-md border border-border bg-muted/35 px-3 py-2"
+                data-testid="confirm-revision-technical-disclosure"
+              >
+                <summary className="cursor-pointer select-none text-[12px] font-medium text-muted-foreground hover:text-foreground">
+                  {t('查看细节', 'View details')}
+                </summary>
+                <div className="mt-2.5 space-y-2.5 border-t border-border pt-2.5">
+                  {resolvedHasNonMu && (
+                    <div
+                      className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary-soft px-3 py-2 text-[12px] text-foreground"
+                      role="note"
+                      data-testid="confirm-mu-only-safeguard"
+                    >
+                      <ShieldCheck size={15} className="text-primary shrink-0 mt-0.5" aria-hidden="true" />
+                      <span>
+                        {t(
+                          '仅重新提取并更新 MU（UI 模型），不会重新合成或覆盖已有的 M1–M7、ME、MM、MI 业务本体模型。',
+                          'Re-extracts and updates MU (UI Model) only — existing M1–M7, ME, MM, and MI ontology models will never be re-synthesized or overwritten.',
+                        )}
+                      </span>
+                    </div>
+                  )}
+                  <MuDiffSummaryPanel
+                    diff={diff}
+                    nextMu={nextMu}
+                    testId="confirm-modal-mu-diff"
+                  />
+                </div>
+              </details>
+            </>
+          ) : (
+            <>
+              <div className="rounded-md border border-border bg-muted/55 px-3 py-2 text-[12.5px]">
+                <div className="font-medium text-foreground">
+                  {prototypeName ? `${prototypeName} · ` : ''}#{revision.revisionNumber}{' '}
+                  {revision.title}
+                </div>
+                <div className="text-[12px] text-faint-foreground mt-0.5">
+                  {confirmedRevision
+                    ? t(
+                        `当前已确认基准：${confirmedRevision.prototype.name} #${confirmedRevision.revision.revisionNumber}（${confirmedRevision.revision.title}）`,
+                        `Current Confirmed Revision: ${confirmedRevision.prototype.name} #${confirmedRevision.revision.revisionNumber} (${confirmedRevision.revision.title})`,
+                      )
+                    : diff.isInitialExtraction
+                      ? t(
+                          '本工程尚未确认过原型修订；确认后将首次提取并建立 MU（UI 模型）。',
+                          'No revision confirmed yet in this project; confirming will extract and initialize the MU (UI Model).',
+                        )
+                      : t(
+                          '对比基准：当前工程已保存的 MU（UI 模型）。',
+                          'Compared against this project’s current MU (UI Model).',
+                        )}
+                </div>
+              </div>
+
+              {resolvedHasNonMu && (
+                <div
+                  className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary-soft px-3 py-2 text-[12px] text-foreground"
+                  role="note"
+                  data-testid="confirm-mu-only-safeguard"
+                >
+                  <ShieldCheck size={15} className="text-primary shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>
+                    {t(
+                      '仅重新提取并更新 MU（UI 模型），不会重新合成或覆盖已有的 M1–M7、ME、MM、MI 业务本体模型。',
+                      'Re-extracts and updates MU (UI Model) only — existing M1–M7, ME, MM, and MI ontology models will never be re-synthesized or overwritten.',
+                    )}
+                  </span>
+                </div>
+              )}
+
+              <MuDiffSummaryPanel
+                diff={diff}
+                nextMu={nextMu}
+                testId="confirm-modal-mu-diff"
+              />
+            </>
           )}
-
-          <MuDiffSummaryPanel
-            diff={diff}
-            nextMu={nextMu}
-            testId="confirm-modal-mu-diff"
-          />
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-line bg-inset/45 px-4 py-2.5">
-          <span className="text-[11.5px] text-ink-3">
+        <div className="flex items-center justify-between gap-2 border-t border-border bg-muted/45 px-4 py-2.5">
+          <span className="text-[12px] text-muted-foreground">
             {t(
-              `提取目标屏幕数：${nextMu.screens.length}`,
-              `Target extracted screens: ${nextMu.screens.length}`,
+              `识别到 ${nextMu.screens.length} 个${MODEL_BUSINESS_NAMES.MU.zh}`,
+              `${nextMu.screens.length} ${nextMu.screens.length === 1 ? 'screen' : 'screens'}`,
             )}
           </span>
           <div className="flex items-center gap-2">
@@ -1504,9 +1907,15 @@ export function ConfirmRevisionMuDiffModal({
             >
               <CheckCircle2 size={13} aria-hidden="true" />
               <span>
-                {busy
-                  ? t('正在同步 MU…', 'Syncing MU…')
-                  : t('确认并同步 MU', 'Confirm & Sync MU')}
+                {isBusinessView
+                  ? busy
+                    ? t('正在确认原型…', 'Confirming…')
+                    : confirmedRevision
+                      ? t('重新确认原型', 'Re-confirm prototype')
+                      : t('确认原型', 'Confirm prototype')
+                  : busy
+                    ? t('正在同步 MU…', 'Syncing MU…')
+                    : t('确认并同步 MU', 'Confirm & Sync MU')}
               </span>
             </Button>
           </div>

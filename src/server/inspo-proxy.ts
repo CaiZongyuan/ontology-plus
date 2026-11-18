@@ -44,6 +44,10 @@ export {
 
 export const INSPO_MCP_ENDPOINT = 'https://inspomcp.dev/api/mcp';
 export const INSPO_MCP_TIMEOUT_MS = 6000;
+/** Upstream `search_screens` caps `limit` at 20; we ask for all of it and keep one screen per site. */
+export const INSPO_SEARCH_LIMIT = 20;
+/** Curated picks returned when the live archive is unreachable. */
+export const INSPO_CURATED_FALLBACK_LIMIT = 24;
 
 export type SupportedInspoAction = 'search' | 'recommend' | 'design_system' | 'filters';
 
@@ -113,7 +117,7 @@ function enrichSearchQuery(rawQuery: string): string {
 
 function dedupeAndNormalizeScreens(
   rows: RawVisualReferenceInput[],
-  limit = 8,
+  limit = INSPO_SEARCH_LIMIT,
 ): VisualReferenceItem[] {
   const seenRoots = new Set<string>();
   const normalized: VisualReferenceItem[] = [];
@@ -154,7 +158,7 @@ function selectCuratedFallbackItems(opts: {
   });
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 8).map((entry) => entry.item);
+  return scored.slice(0, INSPO_CURATED_FALLBACK_LIMIT).map((entry) => entry.item);
 }
 
 function buildCuratedDesignSystemMarkdown(slug: string): string {
@@ -361,7 +365,7 @@ export async function handleInspoProxyRequest(
         Array.isArray(parsed.exemplars) && parsed.exemplars.length > 0
           ? parsed.exemplars
           : (parsed.shortlist ?? []).flatMap((s) => s.exemplars ?? []);
-      const items = dedupeAndNormalizeScreens(exemplarRows, 8);
+      const items = dedupeAndNormalizeScreens(exemplarRows);
       if (items.length === 0) {
         throw new Error('No exemplars returned by Inspo recommend');
       }
@@ -424,7 +428,7 @@ export async function handleInspoProxyRequest(
     ? rawBody.vibe.trim().toLowerCase()
     : undefined;
 
-  const cacheKey = `inspo:search:${JSON.stringify({
+  const cacheKey = `inspo:search:v2:${JSON.stringify({
     q: enrichedQuery,
     mode: mode ?? '',
     style: style ?? '',
@@ -445,7 +449,7 @@ export async function handleInspoProxyRequest(
 
   const toolArgs: Record<string, unknown> = {
     query: enrichedQuery,
-    limit: 14,
+    limit: INSPO_SEARCH_LIMIT,
     detail: 'concise',
     ...(mode ? { mode } : {}),
     ...(style ? { style } : {}),
@@ -460,7 +464,7 @@ export async function handleInspoProxyRequest(
       results?: RawVisualReferenceInput[];
       exemplars?: RawVisualReferenceInput[];
     };
-    const items = dedupeAndNormalizeScreens(parsed.results ?? parsed.exemplars ?? [], 8);
+    const items = dedupeAndNormalizeScreens(parsed.results ?? parsed.exemplars ?? []);
     if (items.length === 0) {
       return {
         ok: true,

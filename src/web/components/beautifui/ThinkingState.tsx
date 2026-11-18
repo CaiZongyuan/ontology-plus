@@ -55,7 +55,7 @@ export function ThinkingState({
         onClick={() => hasBody && setManualOpen(!open)}
         aria-expanded={open}
         className={cn(
-          'group inline-flex items-center gap-1.5 rounded-chip py-1 text-left transition-colors duration-150',
+          'group inline-flex items-center gap-1.5 rounded-sm py-1 text-left transition-colors duration-150',
           hasBody ? 'cursor-pointer' : 'cursor-default',
         )}
       >
@@ -63,8 +63,8 @@ export function ThinkingState({
           className={cn(
             'inline-block font-medium',
             working
-              ? 'bg-[linear-gradient(110deg,var(--muted)_35%,var(--ink)_50%,var(--muted)_65%)] bg-[length:220%_100%] bg-clip-text text-transparent animate-[shimmer-text_1.9s_linear_infinite]'
-              : 'text-ink-3 group-hover:text-ink-2',
+              ? 'bg-[linear-gradient(110deg,var(--muted-foreground)_35%,var(--foreground)_50%,var(--muted-foreground)_65%)] bg-[length:220%_100%] bg-clip-text text-transparent animate-[shimmer-text_1.9s_linear_infinite]'
+              : 'text-faint-foreground group-hover:text-foreground-soft',
           )}
         >
           {working ? activeLabel : doneLabel}
@@ -74,7 +74,7 @@ export function ThinkingState({
             size={13}
             strokeWidth={1.75}
             className={cn(
-              'shrink-0 text-ink-3 transition-transform duration-200 ease-out-strong group-hover:text-ink-2',
+              'shrink-0 text-faint-foreground transition-transform duration-200 ease-out-strong group-hover:text-foreground-soft',
               open && 'rotate-90',
             )}
           />
@@ -92,18 +92,18 @@ export function ThinkingState({
             <div
               ref={bodyScrollRef}
               className={cn(
-                'relative ml-1.5 mt-1 space-y-2 border-l border-line pl-4 pb-1 pt-0.5 text-[12.5px] leading-[1.55] text-ink-2',
+                'relative ml-1.5 mt-1 space-y-2 border-l border-border pl-4 pb-1 pt-0.5 text-[12.5px] leading-[1.55] text-foreground-soft',
                 working && 'max-h-44 overflow-y-auto pr-1',
               )}
             >
               {rows.map((row, idx) => (
                 <div key={`${row.label}-${idx}`} className="animate-[fade-up_220ms_var(--ease-out-strong)_both]">
-                  <span className="text-ink-3">{row.label}</span>
-                  {row.detail && <span className="ml-1.5 font-mono text-[11.5px] text-ink">{row.detail}</span>}
+                  <span className="text-faint-foreground">{row.label}</span>
+                  {row.detail && <span className="ml-1.5 font-mono text-[11.5px] text-foreground">{row.detail}</span>}
                 </div>
               ))}
               {thinkingText && (
-                <div className="whitespace-pre-wrap text-[12.5px] text-ink-3">{thinkingText}</div>
+                <div className="whitespace-pre-wrap text-[12.5px] text-faint-foreground">{thinkingText}</div>
               )}
             </div>
           </div>

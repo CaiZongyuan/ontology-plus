@@ -9,6 +9,7 @@ import {
   ExternalLink,
   History,
   Laptop,
+  LayoutGrid,
   Maximize2,
   Minimize2,
   PanelRightOpen,
@@ -21,6 +22,8 @@ import {
 } from 'lucide-react';
 import type {
   AgentSession,
+  AgentSubagentLaneTrace,
+  ArtifactHistoryEntryView,
   ConfirmedPrototypeRevision,
   InteractivePrototype,
   ProjectDetail,
@@ -34,16 +37,22 @@ import {
   apiRestorePrototypeRevision,
   apiSavePrototype,
   apiUpdatePrototypeRevisionMeta,
+  useWorkbenchStore,
 } from '../../api.js';
 import {
   ConfirmRevisionMuDiffModal,
   PrototypeRevisionHistoryDrawer,
+  createInitialRevisionHistoryViewState,
+  deriveDefaultComparePair,
+  formatPrototypeLabelForBusinessView,
+  type RevisionHistoryViewState,
 } from './PrototypeRevisionHistory.js';
 import { useAgentPanelOverlayMode } from '../agent/ShellAgentPanel.js';
 import { AGENT_PANEL_WIDE_CSS_WIDTH, useAgentPanelStore } from '../agent/agentPanelStore.js';
 import { Button } from '../beautifui/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
+import type { StepViewMode } from '../../navigation/index.js';
 import {
   PrototypeVisualPreviewStage,
   computeViewportFitScale,
@@ -55,6 +64,8 @@ import {
   type PrototypeVisualAnnotation,
   type PrototypeZoomMode,
 } from './PrototypeVisualInspector.js';
+import { extractPrototypeArtboards } from '../../../packages/ontology-core/index.js';
+import { PrototypeArtboardGrid } from './PrototypeArtboardGrid.js';
 import { resolveHighlightSelectorFromAnchor } from './prototypeSelectionStore.js';
 
 export interface RevisionHistorySlotProps {
@@ -95,6 +106,7 @@ export interface PrototypeCanvasStageProps {
     project?: ProjectDetail;
     selectedPrototypeId?: string;
     agentSessions?: AgentSession[];
+    artifactHistory?: ArtifactHistoryEntryView[];
   }) => void;
   onBackToBrief: () => void;
   onNotify?: (message: string) => void;
@@ -121,6 +133,10 @@ export interface PrototypeCanvasStageProps {
   canvasBannerSlot?: React.ReactNode;
   htmlOverride?: string | null;
   busy?: boolean;
+  subagentLanes?: readonly AgentSubagentLaneTrace[];
+  liveStreamedChars?: number;
+  reconnecting?: boolean;
+  onRetryScreen?: (screenId: string, screenName: string) => void;
 
   // Viewport, Zoom & Focus Mode (controlled or uncontrolled)
   viewport?: PrototypeViewportPreset;
@@ -150,6 +166,8 @@ export interface PrototypeCanvasStageProps {
     prototype: InteractivePrototype,
     revision: PrototypeRevision,
   ) => void;
+  viewMode?: StepViewMode;
+  primaryActionHandledAbove?: boolean;
 }
 
 export function resolveRevisionStatusSummary(
@@ -249,6 +267,7 @@ export async function runDeletePrototypeSafely(
       deletedId: string;
       prototypes: InteractivePrototype[];
       confirmedRevision: ConfirmedPrototypeRevision | null;
+      artifactHistory?: ArtifactHistoryEntryView[];
     }
   | {
       ok: false;
@@ -263,6 +282,7 @@ export async function runDeletePrototypeSafely(
       deletedId: res.deletedId,
       prototypes: res.prototypes,
       confirmedRevision: res.confirmedRevision,
+      ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
     };
   } catch (err) {
     const errorMessage =
@@ -367,6 +387,10 @@ export function PrototypeCanvasStage({
   canvasBannerSlot,
   htmlOverride = null,
   busy = false,
+  subagentLanes,
+  liveStreamedChars,
+  reconnecting,
+  onRetryScreen,
   viewport: controlledViewport,
   defaultViewport = 'DESKTOP',
   onViewportChange,
@@ -387,6 +411,8 @@ export function PrototypeCanvasStage({
   renderRevisionHistory,
   renderConfirmModal,
   onRequestConfirmRevision,
+  viewMode = 'technical',
+  primaryActionHandledAbove = false,
 }: PrototypeCanvasStageProps) {
   const { locale, t } = usePreferences();
   const switcherRef = useRef<HTMLDivElement | null>(null);
@@ -474,11 +500,45 @@ export function PrototypeCanvasStage({
   const activePrototype =
     prototypes.find((p) => p.id === selectedPrototypeId) ?? prototypes[0] ?? null;
 
+  const highlightedComparePair = useWorkbenchStore((s) => s.highlightedPrototypeComparePair);
+  const [historyViewState, setHistoryViewState] = useState<RevisionHistoryViewState | undefined>(
+    () => (activePrototype ? createInitialRevisionHistoryViewState(activePrototype) : undefined),
+  );
+
+  useEffect(() => {
+    if (!activePrototype) return;
+    setHistoryViewState((prev) => {
+      if (!prev) return createInitialRevisionHistoryViewState(activePrototype);
+      if (prev.compareOpen) return prev;
+      const pair = deriveDefaultComparePair(activePrototype);
+      return {
+        ...prev,
+        leftRevisionId: pair.leftRevisionId,
+        rightRevisionId: pair.rightRevisionId,
+      };
+    });
+  }, [activePrototype?.id, activePrototype?.currentRevisionId]);
+
+  useEffect(() => {
+    if (!highlightedComparePair || !activePrototype) return;
+    if (highlightedComparePair.prototypeId !== activePrototype.id) return;
+    setHistoryOpen(true);
+    setHistoryViewState((prev) => ({
+      ...(prev ?? createInitialRevisionHistoryViewState(activePrototype)),
+      compareOpen: true,
+      leftRevisionId: highlightedComparePair.leftRevisionId,
+      rightRevisionId: highlightedComparePair.rightRevisionId,
+    }));
+    useWorkbenchStore.getState().clearPrototypeRevisionCompare();
+  }, [highlightedComparePair?.seq, activePrototype?.id]);
+
   const [cloneNameDraft, setCloneNameDraft] = useState<string>('');
   const [importNameDraft, setImportNameDraft] = useState<string>('');
   const [importHtmlDraft, setImportHtmlDraft] = useState<string>('');
   const [deleteError, setDeleteError] = useState<string | null>(defaultDeleteError);
   const [actionBusy, setActionBusy] = useState<boolean>(false);
+  const [layoutOverride, setLayoutOverride] = useState<'ARTBOARDS' | 'SINGLE' | null>(null);
+  const [focusedScreenId, setFocusedScreenId] = useState<string | null>(null);
   const [measuredScale, setMeasuredScale] = useState<number>(() =>
     computeViewportFitScale(containerWidthOverride ?? 1200, viewport, zoomMode).scale,
   );
@@ -548,6 +608,23 @@ export function PrototypeCanvasStage({
 
   const isPreviewingHistorical = activeRevision.id !== currentRevision.id;
   const displayedHtml = htmlOverride ?? activeRevision.htmlContent ?? activePrototype.htmlContent;
+  const artboardCount = extractPrototypeArtboards(displayedHtml).length;
+  const hasMultiArtboardShell =
+    Boolean(subagentLanes && subagentLanes.length > 0) ||
+    /id="proto-screens-root"|data-screen-status=/i.test(displayedHtml);
+  const effectiveCanvasLayout: 'ARTBOARDS' | 'SINGLE' = inspectMode
+    ? 'SINGLE'
+    : (layoutOverride ?? (hasMultiArtboardShell ? 'ARTBOARDS' : 'SINGLE'));
+
+  const singleStageHtml = (() => {
+    if (!focusedScreenId) return displayedHtml;
+    const jsScreen = JSON.stringify(focusedScreenId);
+    const autoSelectScript = `<script data-focus-screen>(function(){window.addEventListener('DOMContentLoaded',function(){if(typeof window.__selectProtoScreen==='function'){try{window.__selectProtoScreen(${jsScreen});}catch(_){}}});})();</script>`;
+    const bodyEnd = displayedHtml.lastIndexOf('</body>');
+    return bodyEnd !== -1
+      ? `${displayedHtml.slice(0, bodyEnd)}${autoSelectScript}${displayedHtml.slice(bodyEnd)}`
+      : `${displayedHtml}${autoSelectScript}`;
+  })();
 
   const revStatus = resolveRevisionStatusSummary(
     activePrototype,
@@ -576,6 +653,7 @@ export function PrototypeCanvasStage({
         confirmedRevision: res.confirmedRevision,
         project: res.project,
         selectedPrototypeId: res.prototype.id,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
       onSelectPrototype(res.prototype.id);
       setSwitcherOpen(false);
@@ -648,6 +726,7 @@ export function PrototypeCanvasStage({
         prototypes: res.prototypes,
         confirmedRevision: res.confirmedRevision,
         ...(nextSelected ? { selectedPrototypeId: nextSelected } : {}),
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
       if (nextSelected) {
         onSelectPrototype(nextSelected);
@@ -671,6 +750,7 @@ export function PrototypeCanvasStage({
         prototypes: res.prototypes,
         confirmedRevision: res.confirmedRevision,
         selectedPrototypeId: res.prototype.id,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
       setPreviewRevisionId(null);
       onNotify?.(
@@ -680,6 +760,21 @@ export function PrototypeCanvasStage({
         ),
       );
     } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleUndoLatestRevision = async (revisionId: string) => {
+    if (actionBusy) return;
+    setActionBusy(true);
+    setBusyRevisionId(revisionId);
+    try {
+      await useWorkbenchStore
+        .getState()
+        .undoArtifactChange('PROTOTYPE', revisionId, activePrototype.id);
+      setPreviewRevisionId(null);
+    } finally {
+      setBusyRevisionId(null);
       setActionBusy(false);
     }
   };
@@ -694,6 +789,7 @@ export function PrototypeCanvasStage({
         prototypes: res.prototypes,
         confirmedRevision: res.confirmedRevision,
         selectedPrototypeId: res.prototype.id,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
     } finally {
       setBusyRevisionId(null);
@@ -710,11 +806,26 @@ export function PrototypeCanvasStage({
         prototypes: res.prototypes,
         confirmedRevision: res.confirmedRevision,
         selectedPrototypeId: res.prototype.id,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
     } finally {
       setBusyRevisionId(null);
     }
   };
+
+  const isBusinessView = viewMode === 'business';
+  const displayProtoName = isBusinessView
+    ? formatPrototypeLabelForBusinessView(activePrototype.name, t('当前原型', 'Current prototype'))
+    : activePrototype.name;
+  const displayRevTitle = isBusinessView
+    ? formatPrototypeLabelForBusinessView(activeRevision.title, `R${activeRevision.revisionNumber}`)
+    : activeRevision.title;
+  const displayCurrentRevTitle = isBusinessView
+    ? formatPrototypeLabelForBusinessView(
+        currentRevision.title,
+        `R${currentRevision.revisionNumber}`,
+      )
+    : currentRevision.title;
 
   const handleConfirmRevisionById = async (revisionId: string) => {
     if (actionBusy) return;
@@ -728,14 +839,20 @@ export function PrototypeCanvasStage({
         confirmedRevision: res.confirmedRevision,
         project: res.project,
         selectedPrototypeId: res.prototype.id,
+        ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
       });
       setConfirmModalOpen(false);
       setConfirmTargetRevision(null);
       onNotify?.(
-        t(
-          `已确认修订 R${confirmedNum}，MU 模型已同步更新`,
-          `Confirmed revision R${confirmedNum} and synced MU model`,
-        ),
+        isBusinessView
+          ? t(
+              `已确认原型修订 R${confirmedNum}`,
+              `Confirmed prototype revision R${confirmedNum}`,
+            )
+          : t(
+              `已确认修订 R${confirmedNum}，MU 模型已同步更新`,
+              `Confirmed revision R${confirmedNum} and synced MU model`,
+            ),
       );
     } finally {
       setActionBusy(false);
@@ -757,10 +874,10 @@ export function PrototypeCanvasStage({
       data-focus-mode={focusMode ? 'true' : 'false'}
       aria-label={t('界面原型画布工作区', 'Interactive Prototype Canvas Stage')}
       className={cn(
-        'flex flex-col overflow-hidden rounded-card border border-line bg-surface',
+        'flex flex-col overflow-hidden rounded-card border border-border bg-card',
         focusMode
-          ? 'fixed top-0 bottom-0 left-0 z-[980] rounded-none border-0 bg-ground shadow-lg'
-          : 'min-h-[calc(100vh-128px)]',
+          ? 'fixed top-0 bottom-0 left-0 z-[980] rounded-none border-0 shadow-lg'
+          : 'min-h-[calc(100dvh-100px)]',
       )}
       style={focusMode ? { right: focusRightOffset, animation: 'none' } : undefined}
     >
@@ -776,10 +893,10 @@ export function PrototypeCanvasStage({
       {/* ─── Single Top Toolbar ─── */}
       <header
         data-testid="prototype-canvas-toolbar"
-        className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface px-3 py-2 shrink-0"
+        className="pcs-toolbar flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-border bg-card px-3 py-2 shrink-0"
       >
         {/* Left group: Prototype Switcher + Back to Brief + Revision History */}
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5">
           <div ref={switcherRef} className="relative">
             <Button
               type="button"
@@ -797,15 +914,15 @@ export function PrototypeCanvasStage({
                 }
               }}
             >
-              <span className="max-w-[200px] truncate font-medium text-ink">
-                {activePrototype.name}
+              <span className="pcs-proto-name truncate font-medium text-foreground">
+                {displayProtoName}
               </span>
               {confirmedRevision?.prototypeId === activePrototype.id && (
-                <span className="badge badge-ok text-[10.5px]">
+                <span className="pcs-label-wide badge badge-ok text-[12px]">
                   {t('含已确认', 'Confirmed')}
                 </span>
               )}
-              <ChevronDown size={13} className="text-muted shrink-0" aria-hidden="true" />
+              <ChevronDown size={13} className="text-muted-foreground shrink-0" aria-hidden="true" />
             </Button>
 
             {switcherOpen && (
@@ -813,9 +930,9 @@ export function PrototypeCanvasStage({
                 role="menu"
                 aria-label={t('切换与管理界面原型', 'Switch and manage prototypes')}
                 data-testid="prototype-switcher-menu"
-                className="absolute top-[calc(100%+6px)] left-0 z-50 flex w-[min(360px,92vw)] flex-col gap-1.5 rounded-card border border-line bg-surface p-2 shadow-lg"
+                className="absolute top-[calc(100%+6px)] left-0 z-50 flex w-[min(360px,92vw)] flex-col gap-1.5 rounded-card border border-border bg-card p-2 shadow-lg"
               >
-                <div className="px-2 py-1 text-[11px] font-medium text-muted">
+                <div className="px-2 py-1 text-[12px] font-medium text-muted-foreground">
                   {t(
                     `当前工程原型方向 (${prototypes.length})`,
                     `Project Prototypes (${prototypes.length})`,
@@ -828,6 +945,12 @@ export function PrototypeCanvasStage({
                     const holdsConfirmed =
                       confirmedRevision?.prototypeId === item.id ||
                       Boolean(item.confirmedRevisionId);
+                    const itemDisplayName = isBusinessView
+                      ? formatPrototypeLabelForBusinessView(
+                          item.name,
+                          t('界面原型', 'Prototype'),
+                        )
+                      : item.name;
                     return (
                       <button
                         key={item.id}
@@ -842,21 +965,21 @@ export function PrototypeCanvasStage({
                           setDeleteError(null);
                         }}
                         className={cn(
-                          'flex w-full cursor-pointer items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] transition-colors',
+                          'flex w-full cursor-pointer items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left text-[12.5px]',
                           isSelected
-                            ? 'bg-accent-tint/60 font-medium text-ink'
-                            : 'text-ink-2 hover:bg-hover hover:text-ink',
+                            ? 'bg-primary-soft/60 font-medium text-foreground'
+                            : 'text-foreground-soft hover:bg-accent hover:text-foreground',
                         )}
                       >
                         <div className="flex min-w-0 items-center gap-1.5">
-                          <span className="truncate">{item.name}</span>
+                          <span className="truncate">{itemDisplayName}</span>
                           {holdsConfirmed && (
-                            <span className="badge badge-ok text-[10px]">
+                            <span className="badge badge-ok text-[12px]">
                               {t('已确认', 'Confirmed')}
                             </span>
                           )}
                         </div>
-                        <span className="shrink-0 font-mono text-[11px] text-muted">
+                        <span className="shrink-0 font-mono text-[12px] text-muted-foreground">
                           {t(`${item.revisions.length} 修订`, `${item.revisions.length} rev`)}
                         </span>
                       </button>
@@ -864,37 +987,39 @@ export function PrototypeCanvasStage({
                   })}
                 </div>
 
-                <div className="my-0.5 h-px bg-line" />
+                <div className="my-0.5 h-px bg-border" />
 
                 {/* Switcher Actions */}
                 <div className="flex flex-col gap-1">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    data-testid="prototype-import-html-btn"
-                    onClick={() => {
-                      setDeleteError(null);
-                      setSwitcherSubPanel((cur) =>
-                        cur === 'IMPORT_HTML' ? 'NONE' : 'IMPORT_HTML',
-                      );
-                    }}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink"
-                  >
-                    <Upload size={13} className="text-muted" aria-hidden="true" />
-                    <span>{t('导入 HTML…', 'Import HTML…')}</span>
-                  </button>
+                  {!isBusinessView && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      data-testid="prototype-import-html-btn"
+                      onClick={() => {
+                        setDeleteError(null);
+                        setSwitcherSubPanel((cur) =>
+                          cur === 'IMPORT_HTML' ? 'NONE' : 'IMPORT_HTML',
+                        );
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-[12.5px] text-foreground-soft hover:bg-accent hover:text-foreground"
+                    >
+                      <Upload size={13} className="text-muted-foreground" aria-hidden="true" />
+                      <span>{t('导入 HTML…', 'Import HTML…')}</span>
+                    </button>
+                  )}
 
-                  {switcherSubPanel === 'IMPORT_HTML' && (
+                  {!isBusinessView && switcherSubPanel === 'IMPORT_HTML' && (
                     <form
                       data-testid="prototype-import-panel"
-                      className="flex flex-col gap-2 rounded-[6px] border border-line bg-surface-2 p-2.5"
+                      className="flex flex-col gap-2 rounded-sm border border-border p-2.5"
                       onSubmit={(e) => {
                         e.preventDefault();
                         void handleImportHtmlContent(importNameDraft, importHtmlDraft);
                       }}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11.5px] font-medium text-ink">
+                        <span className="text-[12px] font-medium text-foreground">
                           {t('导入单条修订新原型', 'Import 1-Revision Prototype')}
                         </span>
                         <Button
@@ -925,7 +1050,7 @@ export function PrototypeCanvasStage({
                         id={importHtmlId}
                         rows={3}
                         data-testid="prototype-import-html-textarea"
-                        className="textarea font-mono text-[11.5px]"
+                        className="textarea font-mono text-[12px]"
                         placeholder={t('或在此粘贴完整 HTML…', 'Or paste full HTML here…')}
                         value={importHtmlDraft}
                         onChange={(e) => setImportHtmlDraft(e.target.value)}
@@ -959,23 +1084,23 @@ export function PrototypeCanvasStage({
                     onClick={() => {
                       setDeleteError(null);
                       setCloneNameDraft(
-                        t(`${activePrototype.name} (新方向)`, `${activePrototype.name} (Copy)`),
+                        t(`${displayProtoName} (新方向)`, `${displayProtoName} (Copy)`),
                       );
                       setSwitcherSubPanel((cur) => (cur === 'CLONE' ? 'NONE' : 'CLONE'));
                     }}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink"
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-[12.5px] text-foreground-soft hover:bg-accent hover:text-foreground"
                   >
-                    <Copy size={13} className="text-muted" aria-hidden="true" />
+                    <Copy size={13} className="text-muted-foreground" aria-hidden="true" />
                     <span>{t('另存为新原型…', 'Save as New Prototype…')}</span>
                   </button>
 
                   {switcherSubPanel === 'CLONE' && (
                     <form
                       data-testid="prototype-clone-panel"
-                      className="flex flex-col gap-2 rounded-[6px] border border-line bg-surface-2 p-2.5"
+                      className="flex flex-col gap-2 rounded-sm border border-border p-2.5"
                       onSubmit={(e) => void handleCloneSubmit(e)}
                     >
-                      <label htmlFor={cloneNameId} className="text-[11.5px] font-medium text-ink">
+                      <label htmlFor={cloneNameId} className="text-[11.5px] font-medium text-foreground">
                         {t(
                           '复制当前修订、设计简报并分叉共创会话：',
                           'Copy current revision, Design Brief & fork session:',
@@ -1019,13 +1144,13 @@ export function PrototypeCanvasStage({
                       setSwitcherSubPanel('NONE');
                       onBackToBrief();
                     }}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink"
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-[12.5px] text-foreground-soft hover:bg-accent hover:text-foreground"
                   >
-                    <ArrowLeft size={13} className="text-muted" aria-hidden="true" />
+                    <ArrowLeft size={13} className="text-muted-foreground" aria-hidden="true" />
                     <span>{t('返回设计简报', 'Edit Design Brief')}</span>
                   </button>
 
-                  {onSynthesizeOntology && (
+                  {!isBusinessView && onSynthesizeOntology && (
                     <button
                       type="button"
                       role="menuitem"
@@ -1055,9 +1180,9 @@ export function PrototypeCanvasStage({
                           confirmedRevision.prototype.id || confirmedRevision.prototypeId,
                         );
                       }}
-                      className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-[12.5px] text-foreground-soft hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <Sparkles size={13} className="text-accent" aria-hidden="true" />
+                      <Sparkles size={13} className="text-primary" aria-hidden="true" />
                       <span>
                         {synthesizingOntology
                           ? t('正在后台合成 11 模型…', 'Synthesizing 11 Models…')
@@ -1079,7 +1204,7 @@ export function PrototypeCanvasStage({
                       setDeleteError(null);
                       setSwitcherSubPanel((cur) => (cur === 'DELETE' ? 'NONE' : 'DELETE'));
                     }}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] text-red hover:bg-hover"
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-[12.5px] text-destructive hover:bg-accent"
                   >
                     <Trash2 size={13} aria-hidden="true" />
                     <span>{t('删除此原型…', 'Delete Prototype…')}</span>
@@ -1088,19 +1213,19 @@ export function PrototypeCanvasStage({
                   {switcherSubPanel === 'DELETE' && (
                     <div
                       data-testid="prototype-delete-confirm-box"
-                      className="flex flex-col gap-2 rounded-[6px] border border-red/40 bg-surface-2 p-2.5"
+                      className="flex flex-col gap-2 rounded-sm border border-destructive/40 p-2.5"
                     >
-                      <p className="m-0 text-[12px] text-ink">
+                      <p className="m-0 text-[12px] text-foreground">
                         {t(
-                          `确定删除原型「${activePrototype.name}」及其全部修订记录吗？`,
-                          `Delete "${activePrototype.name}" and all its revisions?`,
+                          `确定删除原型「${displayProtoName}」及其全部修订记录吗？`,
+                          `Delete "${displayProtoName}" and all its revisions?`,
                         )}
                       </p>
                       {deleteError && (
                         <div
                           role="alert"
                           data-testid="prototype-delete-error-banner"
-                          className="rounded-[5px] border border-red/40 bg-surface px-2.5 py-1.5 text-[11.5px] text-red"
+                          className="rounded-sm border border-destructive/40 bg-card px-2.5 py-1.5 text-[12px] text-destructive"
                         >
                           {deleteError}
                         </div>
@@ -1122,7 +1247,7 @@ export function PrototypeCanvasStage({
                           variant="secondary"
                           size="xs"
                           data-testid="prototype-delete-confirm-btn"
-                          className="border-red/40 text-red"
+                          className="border-destructive/40 text-destructive"
                           disabled={actionBusy}
                           onClick={() => void handleDeleteConfirm()}
                         >
@@ -1141,10 +1266,11 @@ export function PrototypeCanvasStage({
             variant="ghost"
             size="sm"
             data-testid="prototype-back-to-brief-btn"
+            title={t('返回设计简报，调整视觉参考与风格', 'Back to the Design Brief to adjust references and style')}
             onClick={onBackToBrief}
           >
             <ArrowLeft size={13} aria-hidden="true" />
-            <span>{t('返回简报', 'Back to Brief')}</span>
+            <span className="pcs-label">{t('返回简报', 'Back to Brief')}</span>
           </Button>
 
           <Button
@@ -1154,14 +1280,18 @@ export function PrototypeCanvasStage({
             data-testid="prototype-history-btn"
             aria-pressed={historyOpen}
             aria-expanded={historyOpen}
+            title={t(
+              `修订历史 · R${activeRevision.revisionNumber} ${displayRevTitle}`,
+              `Revision history · R${activeRevision.revisionNumber} ${displayRevTitle}`,
+            )}
             onClick={() => setHistoryOpen((v) => !v)}
           >
             <History size={13} aria-hidden="true" />
-            <span className="font-mono text-[11.5px]">R{activeRevision.revisionNumber}</span>
-            <span className="max-w-[140px] truncate">{activeRevision.title}</span>
+            <span className="font-mono text-[12px]">R{activeRevision.revisionNumber}</span>
+            <span className="pcs-label-wide max-w-[140px] truncate">{displayRevTitle}</span>
             <span
               className={cn(
-                'badge text-[10.5px]',
+                'badge text-[12px]',
                 revStatus.isConfirmed
                   ? 'badge-ok'
                   : revStatus.aheadCount > 0
@@ -1178,18 +1308,41 @@ export function PrototypeCanvasStage({
         <div
           role="group"
           aria-label={t('预览设备尺寸与缩放', 'Preview viewport and zoom')}
-          className="flex flex-wrap items-center gap-1"
+          className="pcs-seg"
         >
+          {(artboardCount >= 2 || hasMultiArtboardShell) && (
+            <Button
+              type="button"
+              variant="toggle"
+              size="xs"
+              data-testid="prototype-artboards-toggle-btn"
+              aria-pressed={effectiveCanvasLayout === 'ARTBOARDS'}
+              title={t('切换多画板总览与单屏实操模式', 'Toggle multi-artboard overview vs single-screen interactive mode')}
+              onClick={() => {
+                if (effectiveCanvasLayout === 'ARTBOARDS') {
+                  setLayoutOverride('SINGLE');
+                } else {
+                  if (inspectMode) setInspectMode(false);
+                  setLayoutOverride('ARTBOARDS');
+                }
+              }}
+            >
+              <LayoutGrid size={12.5} aria-hidden="true" />
+              <span className="pcs-label-wide">{t('分屏画板', 'Artboards')}</span>
+            </Button>
+          )}
           <Button
             type="button"
             variant="toggle"
             size="xs"
             data-testid="prototype-viewport-desktop"
             aria-pressed={viewport === 'DESKTOP'}
+            title={t('桌面 1440', 'Desktop 1440')}
+            aria-label={t('桌面 1440', 'Desktop 1440')}
             onClick={() => setViewport('DESKTOP')}
           >
             <Laptop size={12.5} aria-hidden="true" />
-            <span>{t('桌面 1440', 'Desktop 1440')}</span>
+            <span className="pcs-label-wide">{t('桌面', 'Desktop')}</span>
           </Button>
           <Button
             type="button"
@@ -1197,10 +1350,12 @@ export function PrototypeCanvasStage({
             size="xs"
             data-testid="prototype-viewport-tablet"
             aria-pressed={viewport === 'TABLET'}
+            title={t('平板 768', 'Tablet 768')}
+            aria-label={t('平板 768', 'Tablet 768')}
             onClick={() => setViewport('TABLET')}
           >
             <Tablet size={12.5} aria-hidden="true" />
-            <span>{t('平板 768', 'Tablet 768')}</span>
+            <span className="pcs-label-wide">{t('平板', 'Tablet')}</span>
           </Button>
           <Button
             type="button"
@@ -1208,10 +1363,12 @@ export function PrototypeCanvasStage({
             size="xs"
             data-testid="prototype-viewport-mobile"
             aria-pressed={viewport === 'MOBILE'}
+            title={t('手机 390', 'Mobile 390')}
+            aria-label={t('手机 390', 'Mobile 390')}
             onClick={() => setViewport('MOBILE')}
           >
             <Smartphone size={12.5} aria-hidden="true" />
-            <span>{t('手机 390', 'Mobile 390')}</span>
+            <span className="pcs-label-wide">{t('手机', 'Mobile')}</span>
           </Button>
           <Button
             type="button"
@@ -1225,28 +1382,37 @@ export function PrototypeCanvasStage({
               'Toggle between Auto-Fit scaling and 100% actual size',
             )}
           >
-            <span className="font-mono text-[11px]">
-              {zoomMode === 'FIT'
-                ? t(`自适应 ${zoomPercent}%`, `Fit ${zoomPercent}%`)
-                : '100%'}
+            <span className="font-mono text-[12px]">
+              {zoomMode === 'FIT' ? (
+                <>
+                  <span className="pcs-label-wide">{t('自适应 ', 'Fit ')}</span>
+                  {zoomPercent}%
+                </>
+              ) : (
+                '100%'
+              )}
             </span>
           </Button>
         </div>
 
         {/* Right group: Box-Select + Focus Mode + Open in New Tab + Agent Toggle (in Focus Mode) + Confirm Revision */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex items-center gap-1">
           <Button
             type="button"
             variant="toggle"
             size="sm"
             data-testid="prototype-inspect-toggle-btn"
             aria-pressed={inspectMode}
+            title={t(
+              '框选界面元素，作为精修指令的上下文发给 AI 助手',
+              'Box-select an element to send it to the AI Assistant as refinement context',
+            )}
             onClick={() => setInspectMode(!inspectMode)}
           >
             <Crosshair size={13} aria-hidden="true" />
-            <span>{t('框选', 'Box-Select')}</span>
+            <span className="pcs-label">{t('框选', 'Box-Select')}</span>
             {annotations && annotations.length > 0 && (
-              <span className="badge badge-accent font-mono text-[10px]">
+              <span className="badge badge-accent font-mono text-[12px]">
                 {annotations.length}
               </span>
             )}
@@ -1270,9 +1436,11 @@ export function PrototypeCanvasStage({
             ) : (
               <Maximize2 size={13} aria-hidden="true" />
             )}
-            <span>
-              {focusMode ? t('退出专注 (Esc)', 'Exit Focus (Esc)') : t('专注模式', 'Focus Mode')}
-            </span>
+            {focusMode ? (
+              <span>{t('退出专注 (Esc)', 'Exit Focus (Esc)')}</span>
+            ) : (
+              <span className="visually-hidden">{t('专注模式', 'Focus Mode')}</span>
+            )}
           </Button>
 
           {focusMode && (
@@ -1285,25 +1453,29 @@ export function PrototypeCanvasStage({
               onClick={toggleShellAgentPanel}
             >
               <PanelRightOpen size={13} aria-hidden="true" />
-              <span>{t('智能体面板', 'Agent Panel')}</span>
+              <span>{t('AI 助手', 'AI Assistant')}</span>
             </Button>
           )}
 
           <Button
             type="button"
-            variant="secondary"
+            variant="ghost"
             size="sm"
             data-testid="prototype-open-tab-btn"
             onClick={handleOpenInNewTab}
-            title={t('在浏览器新标签页打开干净的原型 HTML', 'Open clean prototype HTML in new tab')}
+            title={t('在浏览器新标签页打开独立原型预览', 'Open clean prototype preview in new tab')}
           >
             <ExternalLink size={13} aria-hidden="true" />
-            <span>{t('新标签页打开', 'Open in New Tab')}</span>
+            <span className="visually-hidden">{t('新标签页打开', 'Open in New Tab')}</span>
           </Button>
+
+          <span className="pcs-divider" aria-hidden="true" />
 
           <Button
             type="button"
-            variant={revStatus.isConfirmed ? 'secondary' : 'accent'}
+            variant={
+              revStatus.isConfirmed || primaryActionHandledAbove ? 'secondary' : 'accent'
+            }
             size="sm"
             data-testid="prototype-confirm-revision-btn"
             disabled={revStatus.isConfirmed || actionBusy}
@@ -1318,14 +1490,20 @@ export function PrototypeCanvasStage({
             }}
           >
             {revStatus.isConfirmed ? (
-              <CheckCircle2 size={13.5} className="text-green" aria-hidden="true" />
+              <CheckCircle2 size={13.5} className="text-success" aria-hidden="true" />
             ) : (
               <Check size={13.5} aria-hidden="true" />
             )}
             <span>
-              {revStatus.isConfirmed
-                ? t('已确认此修订', 'Confirmed')
-                : t('确认此修订', 'Confirm This Revision')}
+              {isBusinessView
+                ? revStatus.isConfirmed
+                  ? t('已确认原型', 'Confirmed')
+                  : confirmedRevision
+                    ? t('重新确认原型', 'Re-confirm prototype')
+                    : t('确认原型', 'Confirm prototype')
+                : revStatus.isConfirmed
+                  ? t('已确认此修订', 'Confirmed')
+                  : t('确认此修订', 'Confirm This Revision')}
             </span>
           </Button>
         </div>
@@ -1335,12 +1513,12 @@ export function PrototypeCanvasStage({
       {isPreviewingHistorical && (
         <div
           data-testid="prototype-historical-preview-banner"
-          className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-surface-2 px-3 py-1.5 text-[12px] text-ink-2 shrink-0"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-1.5 text-[12px] text-foreground-soft shrink-0"
         >
           <span>
             {t(
-              `正在预览历史修订 R${activeRevision.revisionNumber}「${activeRevision.title}」（当前最新为 R${currentRevision.revisionNumber}）`,
-              `Previewing historical revision R${activeRevision.revisionNumber} "${activeRevision.title}" (latest is R${currentRevision.revisionNumber})`,
+              `正在预览历史修订 R${activeRevision.revisionNumber}「${displayRevTitle}」（当前最新为 R${currentRevision.revisionNumber}「${displayCurrentRevTitle}」）`,
+              `Previewing historical revision R${activeRevision.revisionNumber} "${displayRevTitle}" (latest is R${currentRevision.revisionNumber} "${displayCurrentRevTitle}")`,
             )}
           </span>
           <div className="flex items-center gap-1.5">
@@ -1371,31 +1549,51 @@ export function PrototypeCanvasStage({
       {/* ─── Main Canvas Body (Preview + Optional Revision History Drawer) ─── */}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <PrototypeVisualPreviewStage
-            htmlContent={displayedHtml}
-            inspectMode={inspectMode}
-            onInspectModeChange={setInspectMode}
-            {...(annotations ? { annotations } : {})}
-            {...(onAddAnnotation ? { onAddAnnotation } : {})}
-            {...(onApplyImmediate ? { onApplyImmediate } : {})}
-            {...(onSelectTarget ? { onSelectTarget } : {})}
-            {...(onSelectionCropUpgrade ? { onSelectionCropUpgrade } : {})}
-            {...(showInlineInspectorPopover !== undefined
-              ? { showInlinePopover: showInlineInspectorPopover }
-              : {})}
-            highlightedSelector={effectiveHighlightedSelector}
-            activeRunningAnchor={activeRunningAnchor}
-            {...(flashedAnchors ? { flashedAnchors } : {})}
-            flashKey={flashKey}
-            onEscape={focusMode ? () => setFocusMode(false) : undefined}
-            busy={busy}
-            allowInspectWhileBusy
-            viewport={viewport}
-            zoomMode={zoomMode}
-            {...(containerWidthOverride !== undefined ? { containerWidthOverride } : {})}
-            onScaleChange={({ scale }) => setMeasuredScale(scale)}
-            fillHeight
-          />
+          {effectiveCanvasLayout === 'ARTBOARDS' ? (
+            <PrototypeArtboardGrid
+              htmlContent={displayedHtml}
+              projectName={project.name}
+              busy={busy}
+              {...(reconnecting !== undefined ? { reconnecting } : {})}
+              {...(liveStreamedChars !== undefined ? { liveStreamedChars } : {})}
+              {...(subagentLanes ? { subagentLanes } : {})}
+              activeRunningAnchor={activeRunningAnchor}
+              highlightedScreenId={hoveredAnchor?.screenId ?? null}
+              highlightedSelector={effectiveHighlightedSelector}
+              onFocusScreen={(screenId) => {
+                setFocusedScreenId(screenId);
+                setLayoutOverride('SINGLE');
+              }}
+              {...(onRetryScreen ? { onRetryScreen } : {})}
+              viewMode={viewMode}
+            />
+          ) : (
+            <PrototypeVisualPreviewStage
+              htmlContent={singleStageHtml}
+              inspectMode={inspectMode}
+              onInspectModeChange={setInspectMode}
+              {...(annotations ? { annotations } : {})}
+              {...(onAddAnnotation ? { onAddAnnotation } : {})}
+              {...(onApplyImmediate ? { onApplyImmediate } : {})}
+              {...(onSelectTarget ? { onSelectTarget } : {})}
+              {...(onSelectionCropUpgrade ? { onSelectionCropUpgrade } : {})}
+              {...(showInlineInspectorPopover !== undefined
+                ? { showInlinePopover: showInlineInspectorPopover }
+                : {})}
+              highlightedSelector={effectiveHighlightedSelector}
+              activeRunningAnchor={activeRunningAnchor}
+              {...(flashedAnchors ? { flashedAnchors } : {})}
+              flashKey={flashKey}
+              onEscape={focusMode ? () => setFocusMode(false) : undefined}
+              busy={busy}
+              allowInspectWhileBusy
+              viewport={viewport}
+              zoomMode={zoomMode}
+              {...(containerWidthOverride !== undefined ? { containerWidthOverride } : {})}
+              onScaleChange={({ scale }) => setMeasuredScale(scale)}
+              fillHeight
+            />
+          )}
         </div>
 
         {historyOpen &&
@@ -1418,11 +1616,14 @@ export function PrototypeCanvasStage({
               domain={project.domain}
               previewRevisionId={previewRevisionId}
               busyRevisionId={busyRevisionId}
+              {...(historyViewState ? { viewState: historyViewState } : {})}
+              onViewStateChange={setHistoryViewState}
               onClose={() => setHistoryOpen(false)}
               onSelectPreviewRevision={(revId) =>
                 setPreviewRevisionId(revId === currentRevision.id ? null : revId)
               }
               onRestoreRevision={handleRestoreRevision}
+              onUndoLatestRevision={handleUndoLatestRevision}
               onRenameRevision={handleRenameRevision}
               onToggleStarRevision={handleToggleStarRevision}
               onRequestConfirmRevision={(rev) => {
@@ -1433,6 +1634,7 @@ export function PrototypeCanvasStage({
                   setConfirmModalOpen(true);
                 }
               }}
+              viewMode={viewMode}
               className="w-[380px] shrink-0 border-y-0 border-r-0 rounded-none"
             />
           ))}
@@ -1470,6 +1672,7 @@ export function PrototypeCanvasStage({
             confirmedRevision={confirmedRevision}
             domain={project.domain}
             busy={actionBusy}
+            viewMode={viewMode}
             onConfirm={handleConfirmRevisionById}
             onClose={() => {
               setConfirmModalOpen(false);

@@ -1,23 +1,37 @@
 import { create } from 'zustand';
+import {
+  formatToolProgress as formatVocabularyToolProgress,
+  formatToolStepLabel as formatVocabularyToolStepLabel,
+  type ProjectStepId,
+  type ProjectStepStateId,
+} from '../packages/business-vocabulary/index.js';
 import type {
   ImpactAnalysisReport,
   ModelCode,
   OntologySuite,
 } from '../packages/ontology-core/index.js';
-import type {
-  AgentAskUserPrompt,
+import {
+  resolveCurrentProjectStep,
+  type AgentAskUserPrompt,
   AgentDomainArtifact,
   AgentImageAttachmentRef,
   AgentSession,
   AgentSessionKind,
+  AgentSubagentLaneTrace,
   AgentToolCallTrace,
   AnalyticsQueryResult,
   AnalyticsReport,
   AnalyticsScenario,
   AppendPrototypeRevisionInput,
+  ArtifactHistoryEntryView,
+  ArtifactHistorySurfaceKind,
+  ArtifactJumpTarget,
   AssembledApplication,
+  BusinessModelStepConfirmationRecord,
   CapabilityAgent,
   CapabilityChatSession,
+  ChangeSummaryItemView,
+  ChangeSummaryView,
   ConfirmedPrototypeRevision,
   CreatePrototypeInput,
   CrossSystemFlow,
@@ -27,6 +41,7 @@ import type {
   DesignBrief,
   DesignBriefBorrowedReference,
   DesignBriefItem,
+  DevelopmentPackageSnapshot,
   ExtractionJob,
   FourLayerAsset,
   GeneratedSkill,
@@ -36,16 +51,21 @@ import type {
   LlmProviderConfig,
   McpServerConfig,
   MetricDefinition,
+  PersistedArtifactHistoryKind,
   ProjectDetail,
   ProjectSnapshot,
+  ProjectStepConfirmations,
   ProjectSummary,
   PrototypeArtifact,
+  PrototypeCompareRevisionPair,
   PrototypeRevision,
   PrototypeRevisionSource,
   PrototypeTargetAnchor,
   ReasoningSession,
   RequirementDoc,
   RequirementSession,
+  RequirementsStepConfirmationRecord,
+  StepHandoffProposal,
   SystemSettingsState,
   TechnologyProfile,
   WritebackInterface,
@@ -60,7 +80,36 @@ import type {
   McpResourceDefinition,
   McpToolDefinition,
 } from '../packages/package-compiler/index.js';
-import { useAgentPanelStore } from './components/agent/agentPanelStore.js';
+import {
+  agentSessionScopeKey,
+  useAgentPanelStore,
+} from './components/agent/agentPanelStore.js';
+import {
+  DEFAULT_NAV_VIEW,
+  STEP_SPECIALIST_AGENT_KINDS,
+  deriveProjectStepProgress,
+  getDefaultViewForStep,
+  getProjectLifecycleState,
+  getProjectStepsFromBootstrap,
+  normalizeNavViewAlias,
+  readUrlNavState,
+  writeStepViewMode,
+  writeUrlNavState,
+  type CanonicalNavViewId,
+  type ProjectLifecycleState,
+  type ProjectStepProgressInput,
+  type UrlNavState,
+} from './navigation/index.js';
+
+export {
+  deriveProjectStepProgress,
+  getProjectLifecycleState,
+  readUrlNavState,
+  writeUrlNavState,
+  type ProjectLifecycleState,
+  type ProjectStepProgressInput,
+  type UrlNavState,
+};
 
 export interface BootstrapPayload {
   technologyProfiles?: TechnologyProfile[];
@@ -72,8 +121,11 @@ export interface BootstrapPayload {
   requirementDocs: RequirementDoc[];
   prototypes: PrototypeArtifact[];
   confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
+  stepConfirmations?: ProjectStepConfirmations;
+  artifactHistory?: ArtifactHistoryEntryView[];
   fourLayerAssets: FourLayerAsset[];
   assembledApplications: AssembledApplication[];
+  packageSnapshots?: DevelopmentPackageSnapshot[];
   generatedSkills: GeneratedSkill[];
   legacySystems: LegacySystemConfig[];
   extractionJobs: ExtractionJob[];
@@ -92,158 +144,6 @@ export interface BootstrapPayload {
   writebackInterfaces: WritebackInterface[];
   llmProviders: LlmProviderConfig[];
   systemSettings: SystemSettingsState;
-}
-
-export interface ProjectLifecycleState {
-  hasExploration: boolean;
-  explorationCount: number;
-  hasSrsDoc: boolean;
-  srsDocCount: number;
-  hasPrototype: boolean;
-  hasConfirmedPrototype: boolean;
-  prototypeCount: number;
-  presentModelCount: number;
-  hasOntology: boolean;
-  hasForeignDemoTemplate: boolean;
-  foreignTemplateNameZh?: string;
-  foreignTemplateNameEn?: string;
-  projectApps: AssembledApplication[];
-  projectSkills: GeneratedSkill[];
-  nextStep: {
-    step: 1 | 2 | 3 | 4 | 5;
-    targetView:
-      | 'app-req-explore'
-      | 'app-req-docs'
-      | 'app-prototype'
-      | 'app-ontology'
-      | 'app-assembly-dev';
-    labelZh: string;
-    labelEn: string;
-    hintZh: string;
-    hintEn: string;
-  };
-}
-
-export function getProjectLifecycleState(data: BootstrapPayload): ProjectLifecycleState {
-  const active = data.activeProject;
-  const reqAgentSessions = (data.agentSessions ?? []).filter(
-    (s) => s.projectId === active.id && s.agentKind === 'REQUIREMENT' && s.messages.length > 0,
-  );
-  const explorationCount = Math.max(data.requirementSessions.length, reqAgentSessions.length);
-  const hasExploration = explorationCount > 0;
-  const srsDocCount = data.requirementDocs.length;
-  const hasSrsDoc = srsDocCount > 0;
-  const prototypeCount = data.prototypes.length;
-  const hasPrototype = prototypeCount > 0;
-  const hasConfirmedPrototype = Boolean(data.confirmedPrototypeRevision);
-  const presentModelCount = active.validation.presentModels.length;
-  const hasOntology = presentModelCount > 0;
-
-  const isContractForeign =
-    active.id !== 'proj-contract' &&
-    active.suite.M1?.domain === '合同全生命周期管理系统' &&
-    active.domain !== '合同全生命周期管理系统';
-  const isMftForeign =
-    active.id !== 'proj-mft' &&
-    active.suite.M1?.domain === '企业文件安全传输系统 (MFT)' &&
-    active.domain !== '企业文件安全传输系统 (MFT)';
-  const hasForeignDemoTemplate = isContractForeign || isMftForeign;
-
-  const projectApps = (data.assembledApplications ?? []).filter((a) => a.projectId === active.id);
-  const projectSkills = (data.generatedSkills ?? []).filter((s) => s.projectId === active.id);
-
-  let nextStep: ProjectLifecycleState['nextStep'];
-  if (!hasExploration) {
-    nextStep = {
-      step: 1,
-      targetView: 'app-req-explore',
-      labelZh: '前往第 1 步：开始需求探索',
-      labelEn: 'Step 1: Start Requirement Exploration',
-      hintZh: '先与 AI 澄清核心业务角色、单据与规则决策，再逐步自动生成规格书、原型与业务本体。',
-      hintEn: 'Clarify domain roles, entities, and rules with AI first before generating downstream artifacts.',
-    };
-  } else if (!hasSrsDoc) {
-    nextStep = {
-      step: 2,
-      targetView: 'app-req-explore',
-      labelZh: '前往需求探索：合成《需求文档》',
-      labelEn: 'Step 2: Synthesize SRS Document',
-      hintZh: '您已完成需求探索对话，下一步请合成《软件需求说明书》，作为原型与本体的输入依据。',
-      hintEn: 'Exploration session found. Next, synthesize the Software Requirements Specification (SRS).',
-    };
-  } else if (!hasConfirmedPrototype) {
-    nextStep = hasPrototype
-      ? {
-          step: 3,
-          targetView: 'app-prototype',
-          labelZh: '前往界面原型：确认为当前原型',
-          labelEn: 'Step 3: Confirm Current Prototype',
-          hintZh: '草稿原型已生成，请先在「界面原型」中点击「确认为当前原型」，再推导 11 元模型业务本体。',
-          hintEn: 'Draft prototype exists. Confirm a prototype revision ("Confirm Current Prototype") first before synthesizing the 11-model ontology.',
-        }
-      : {
-          step: 3,
-          targetView: 'app-req-docs',
-          labelZh: '前往需求文档：生成交互界面原型',
-          labelEn: 'Step 3: Generate UI Prototype',
-          hintZh: '《需求文档》已就绪，下一步请生成交互式 HTML 原型以确认页面布局与业务操作流。',
-          hintEn: 'SRS is ready. Next, generate an interactive HTML prototype to confirm screens and actions.',
-        };
-  } else if (!hasOntology) {
-    nextStep = {
-      step: 4,
-      targetView: 'app-prototype',
-      labelZh: '前往界面原型：一键推导业务本体',
-      labelEn: 'Step 4: Synthesize 11-Model Ontology',
-      hintZh: '交互原型已就绪，现在可在「界面原型」中一键推导出本工程专属的 11 元模型业务本体。',
-      hintEn: 'Prototype is ready. Synthesize your project-specific 11-model ontology from the prototype.',
-    };
-  } else {
-    nextStep = {
-      step: 5,
-      targetView: 'app-assembly-dev',
-      labelZh: '前往应用开发：组装四层开发资料包',
-      labelEn: 'Step 5: Assemble 4-Layer Dev Package',
-      hintZh: '业务本体已就绪，可绑定四层架构资产并编译导出《开发指导书》与开发资料包。',
-      hintEn: 'Business ontology is ready. Bind 4-layer assets and compile the development package.',
-    };
-  }
-
-  return {
-    hasExploration,
-    explorationCount,
-    hasSrsDoc,
-    srsDocCount,
-    hasPrototype,
-    hasConfirmedPrototype,
-    prototypeCount,
-    presentModelCount,
-    hasOntology,
-    hasForeignDemoTemplate,
-    ...(isContractForeign
-      ? {
-          foreignTemplateNameZh: '合同全生命周期管理系统 (CLM)',
-          foreignTemplateNameEn: 'Contract Lifecycle Management (CLM)',
-        }
-      : isMftForeign
-        ? {
-            foreignTemplateNameZh: '企业文件安全传输系统 (MFT)',
-            foreignTemplateNameEn: 'Enterprise MFT Security',
-          }
-        : {}),
-    projectApps,
-    projectSkills,
-    nextStep,
-  };
-}
-
-// ─── URL Deep-Link State Sync (projectId / nav / itemId / sessionId) ─────────
-
-export interface UrlNavState {
-  projectId?: string;
-  nav?: string;
-  itemId?: string;
-  sessionId?: string;
 }
 
 export function getCurrentClientLocale(): 'zh-CN' | 'en-US' {
@@ -288,48 +188,6 @@ function writeLastProjectIdToStorage(projectId: string): void {
   }
 }
 
-export function readUrlNavState(): UrlNavState {
-  if (typeof window === 'undefined') return {};
-  const params = new URLSearchParams(window.location.search);
-  const hashNav = window.location.hash.replace(/^#\/?/, '').trim();
-  const projectId = params.get('projectId') || undefined;
-  const nav = params.get('mode') || hashNav || undefined;
-  const itemId = params.get('itemId') || undefined;
-  const sessionId = params.get('sessionId') || undefined;
-  return {
-    ...(projectId ? { projectId } : {}),
-    ...(nav ? { nav } : {}),
-    ...(itemId ? { itemId } : {}),
-    ...(sessionId ? { sessionId } : {}),
-  };
-}
-
-export function writeUrlNavState(patch: UrlNavState): void {
-  if (typeof window === 'undefined') return;
-  const url = new URL(window.location.href);
-  if (patch.projectId !== undefined) {
-    if (patch.projectId) url.searchParams.set('projectId', patch.projectId);
-    else url.searchParams.delete('projectId');
-  }
-  if (patch.nav !== undefined) {
-    if (patch.nav) {
-      url.searchParams.set('mode', patch.nav);
-      url.hash = `#/${patch.nav}`;
-    } else {
-      url.searchParams.delete('mode');
-    }
-  }
-  if (patch.itemId !== undefined) {
-    if (patch.itemId) url.searchParams.set('itemId', patch.itemId);
-    else url.searchParams.delete('itemId');
-  }
-  if (patch.sessionId !== undefined) {
-    if (patch.sessionId) url.searchParams.set('sessionId', patch.sessionId);
-    else url.searchParams.delete('sessionId');
-  }
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
-}
-
 export interface SessionLiveStep {
   id: string;
   label: { zh: string; en: string };
@@ -338,6 +196,7 @@ export interface SessionLiveStep {
   at?: string;
   targetAnchor?: PrototypeTargetAnchor;
   toolName?: string;
+  arguments?: Record<string, unknown>;
 }
 
 export interface SessionLiveDraft {
@@ -349,12 +208,40 @@ export interface SessionLiveDraft {
   startedAt: number;
   liveStatus: { zh: string; en: string };
   model?: string;
+  providerName?: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  visionFallbackUsed?: boolean;
+  visionFallbackNotice?: string;
   thinking: string;
   text: string;
   steps: SessionLiveStep[];
+  subagentLanes?: AgentSubagentLaneTrace[];
+  livePreviewHtml?: string;
+  liveStreamedChars?: number;
+  lastHeartbeatAt?: number;
+  reconnecting?: boolean;
   artifacts?: AgentDomainArtifact[];
   askUser?: AgentAskUserPrompt;
+  stepHandoff?: StepHandoffProposal;
   activeAnchor?: PrototypeTargetAnchor;
+}
+
+export interface AcceptStepHandoffResult {
+  handoff: StepHandoffProposal;
+  sourceSession: AgentSession;
+  targetSession: AgentSession;
+  targetStep: ProjectStepId;
+  targetNavView: CanonicalNavViewId;
+  targetSessionId: string;
+  targetRunId: string;
+  targetItemId?: string;
+  agentSessions: AgentSession[];
+  project?: ProjectDetail;
+  stepConfirmations?: ProjectStepConfirmations;
 }
 
 export interface QueuedSessionPromptItem {
@@ -383,68 +270,17 @@ export function formatAnchorBadgeLabel(anchor: PrototypeTargetAnchor | undefined
   return anchor.elementId || anchor.screenId || anchor.cssSelector || anchor.label || '';
 }
 
-export function formatToolStepLabel(toolName: string): { zh: string; en: string } {
-  switch (toolName) {
-    case 'list_prototype_anchors':
-      return { zh: '盘点原型屏幕与锚点清单', en: 'List prototype screens & anchors' };
-    case 'read_prototype_anchor':
-      return { zh: '读取锚点片段', en: 'Read anchor fragment' };
-    case 'edit_prototype_anchor':
-      return { zh: '局部修改锚点片段', en: 'Edit anchor fragment' };
-    case 'rewrite_prototype_page':
-      return { zh: '重写整页原型结构', en: 'Rewrite full prototype page' };
-    case 'inspect_ontology_model':
-      return { zh: '检视业务本体模型', en: 'Inspect ontology model' };
-    case 'ask_user':
-      return { zh: '请求确认业务决策', en: 'Ask user decision' };
-    case 'save_synthesized_srs_doc':
-      return { zh: '写入九章节 SRS 需求规格书', en: 'Save 9-chapter SRS document' };
-    case 'synthesize_ontology_suite':
-      return { zh: '校验并持久化 11 模型本体套件', en: 'Validate & save 11-model ontology suite' };
-    case 'save_tech_architecture_spec':
-      return { zh: '持久化技术架构规格资产', en: 'Save technical architecture spec' };
-    case 'read_architecture_assets':
-      return { zh: '读取仓库架构规范', en: 'Read repository architecture standards' };
-    case 'save_architecture_asset':
-      return { zh: '保存仓库架构规范', en: 'Save repository architecture standard' };
-    case 'read_application_inputs':
-      return { zh: '检查应用开发规格输入', en: 'Inspect application specification inputs' };
-    case 'save_application_instructions':
-      return { zh: '保存应用专属开发规格', en: 'Save application implementation instructions' };
-    case 'save_metric_insight':
-      return { zh: '生成并保存指标波动解读', en: 'Generate & save metric insight' };
-    case 'save_scenario_attribution_report':
-      return { zh: '生成并保存多维场景归因报告', en: 'Generate & save scenario attribution report' };
-    case 'record_requirement_insights':
-      return { zh: '沉淀结构化需求追问洞察', en: 'Record requirement insights' };
-    case 'compile_dev_package':
-      return { zh: '编译本体驱动研发指导包', en: 'Compile development package' };
-    case 'run_readonly_sql':
-      return { zh: '执行只读 SQL 数据探查', en: 'Execute read-only SQL query' };
-    case 'propose_policy_writeback':
-      return { zh: '拟定策略回写动作草案', en: 'Propose policy writeback action' };
-    case 'invoke_mcp_tool':
-      return { zh: '调用本体 MCP 工具', en: 'Invoke ontology MCP tool' };
-    case 'run_ontology_extraction':
-    case 'extract_ontology_candidates':
-      return { zh: '解析源码契约并萃取本体候选', en: 'Extract ontology candidates from source' };
-    case 'upsert_term':
-    case 'upsert_aggregate':
-    case 'upsert_process':
-    case 'upsert_command':
-    case 'upsert_rule':
-    case 'upsert_agent':
-    case 'upsert_event':
-    case 'upsert_external_mapping':
-    case 'upsert_ui_screen':
-    case 'upsert_metadata_entry':
-    case 'upsert_ai_binding':
-      return { zh: `更新本体元素 (${toolName.replace('upsert_', '')})`, en: `Upsert ontology element (${toolName.replace('upsert_', '')})` };
-    case 'delete_element':
-      return { zh: '移除本体元素并校验一致性', en: 'Delete ontology element & validate' };
-    default:
-      return { zh: `执行工具 ${toolName}`, en: `Run ${toolName}` };
-  }
+export function formatToolStepLabel(
+  toolName: string,
+  args?: Record<string, unknown>,
+  targetAnchor?: PrototypeTargetAnchor,
+): { zh: string; en: string } {
+  const { zh, en } = formatVocabularyToolStepLabel(
+    toolName,
+    args,
+    targetAnchor?.label ? { targetLabel: targetAnchor.label } : undefined,
+  );
+  return { zh, en };
 }
 
 export function formatPrototypeSelectionsForPrompt(
@@ -519,6 +355,37 @@ export function formatPrototypeSelectionsForPrompt(
 const activeSessionStreamAborters = new Map<string, AbortController>();
 const cancelledSessionIds = new Set<string>();
 
+export interface OntologyUndoRedoState {
+  canUndo: boolean;
+  canRedo: boolean;
+  latestEntryId: string | null;
+}
+
+export function getOntologyUndoRedoState(
+  artifactHistory?: readonly ArtifactHistoryEntryView[],
+): OntologyUndoRedoState {
+  const ontEntries = (artifactHistory ?? []).filter(
+    (entry) => entry.artifactKind === 'ONTOLOGY_SUITE',
+  );
+  if (ontEntries.length === 0) {
+    return { canUndo: false, canRedo: false, latestEntryId: null };
+  }
+  const byId = new Map(ontEntries.map((entry) => [entry.id, entry]));
+  const latest = ontEntries[0]!;
+  let undoDepth = 0;
+  let cursor: ArtifactHistoryEntryView | undefined = latest;
+  while (cursor && cursor.source.kind === 'UNDO') {
+    undoDepth += 1;
+    cursor = byId.get(cursor.source.undoneEntryId);
+  }
+  const isUndoneHead = undoDepth % 2 === 1;
+  return {
+    canUndo: !isUndoneHead,
+    canRedo: isUndoneHead,
+    latestEntryId: latest.id,
+  };
+}
+
 interface WorkbenchStoreState {
   data: BootstrapPayload | null;
   loading: boolean;
@@ -529,10 +396,24 @@ interface WorkbenchStoreState {
   activePrototypeIdByProject: Record<string, string>;
   liveSessionDrafts: Record<string, SessionLiveDraft>;
   sessionQueues: Record<string, QueuedSessionPromptItem[]>;
-  undoStack: OntologySuite[];
-  redoStack: OntologySuite[];
   selectedModel: ModelCode;
   selectedElementId: string | null;
+  highlightedRequirementSection: { heading: string; docId?: string; seq: number } | null;
+  highlightedBusinessModelTarget: { pageId?: string; anchorId: string; seq: number } | null;
+  highlightedPrototypeTarget: {
+    prototypeId: string;
+    revisionId?: string;
+    screenId?: string;
+    elementId?: string;
+    seq: number;
+  } | null;
+  highlightedPrototypeComparePair: {
+    prototypeId: string;
+    leftRevisionId: string;
+    rightRevisionId: string;
+    seq: number;
+  } | null;
+  historyDrawerArtifactKind: ArtifactHistorySurfaceKind | null;
   liveAnnouncement: string;
   setActiveNav: (nav: string, opts?: { itemId?: string | null; sessionId?: string | null }) => void;
   setActiveItemId: (itemId: string | null) => void;
@@ -540,6 +421,31 @@ interface WorkbenchStoreState {
   setActivePrototypeId: (projectId: string, prototypeId: string) => void;
   setSelectedModel: (code: ModelCode, elementId?: string | null) => void;
   setSelectedElementId: (elementId: string | null) => void;
+  focusRequirementSection: (sectionHeading: string, docId?: string) => void;
+  focusBusinessModelTarget: (
+    target: Extract<ArtifactJumpTarget, { kind: 'BUSINESS_OBJECT' }>,
+  ) => void;
+  focusPrototypeTarget: (
+    target: Extract<ArtifactJumpTarget, { kind: 'PROTOTYPE_ANCHOR' }>,
+  ) => void;
+  openPrototypeRevisionCompare: (pair: PrototypeCompareRevisionPair) => void;
+  clearPrototypeRevisionCompare: () => void;
+  openArtifactHistoryDrawer: (kind: ArtifactHistorySurfaceKind) => void;
+  closeArtifactHistoryDrawer: () => void;
+  refreshArtifactHistory: (
+    projectId?: string,
+    kind?: ArtifactHistorySurfaceKind,
+    prototypeId?: string,
+  ) => Promise<ArtifactHistoryEntryView[]>;
+  undoArtifactChange: (
+    artifactKind: ArtifactHistorySurfaceKind,
+    expectedEntryId?: string,
+    prototypeId?: string,
+  ) => Promise<boolean>;
+  restoreArtifactBeforeChange: (
+    artifactKind: ArtifactHistorySurfaceKind,
+    entryId: string,
+  ) => Promise<boolean>;
   showToast: (msg: string) => void;
   announcePolite: (msg: string) => void;
   bootstrap: (projectId?: string) => Promise<void>;
@@ -552,11 +458,22 @@ interface WorkbenchStoreState {
     description?: string;
     template: 'CONTRACT' | 'MFT' | 'EMPTY';
   }) => Promise<ProjectDetail>;
+  createProjectFromDescription: (description: string) => Promise<{
+    project: ProjectDetail;
+    session: AgentSession;
+    runPromise: Promise<void>;
+  }>;
   saveSuiteWithUndo: (suite: OntologySuite, note?: string) => Promise<void>;
-  pushUndoSnapshot: (prevSuite: OntologySuite) => void;
+  applyBusinessModelEdit: (
+    payload: PatchBusinessModelInput,
+  ) => Promise<BusinessModelEditResult>;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
   patchData: (patch: Partial<BootstrapPayload>) => void;
+  confirmRequirementsStep: (
+    docId?: string,
+  ) => Promise<RequirementsStepConfirmationRecord | null>;
+  confirmBusinessModelStep: () => Promise<BusinessModelStepConfirmationRecord | null>;
   ensureProjectAgentSession: (
     projectId: string,
     agentKind: AgentSessionKind,
@@ -571,6 +488,10 @@ interface WorkbenchStoreState {
     projectId: string,
     prototypeId: string,
   ) => Promise<AgentSession>;
+  updateAgentSessionExecutionConfig: (
+    sessionId: string,
+    patch: { codeMode?: boolean; multiAgentConcurrency?: number },
+  ) => Promise<AgentSession | null>;
   attachLiveSessionStream: (sessionId: string) => Promise<void>;
   startSessionAgentRun: (input: {
     sessionId: string;
@@ -586,6 +507,8 @@ interface WorkbenchStoreState {
     prototypeName?: string;
     activeModelCode?: ModelCode;
     reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+    codeMode?: boolean;
+    multiAgentConcurrency?: number;
     mockMode?: boolean;
   }) => Promise<void>;
   startPrototypeBriefGenerationRun: (input: {
@@ -617,6 +540,9 @@ interface WorkbenchStoreState {
   startOntologySynthesisRun: (opts?: {
     prototypeId?: string;
     docId?: string;
+    mode?: 'synthesize' | 'update' | 'fix_problems' | 'complete_missing';
+    instruction?: string;
+    displayTitle?: string;
     mockMode?: boolean;
   }) => Promise<{ sessionId: string } | null>;
   startOntologyCopilotRun: (
@@ -660,38 +586,114 @@ interface WorkbenchStoreState {
     mockMode?: boolean;
   }) => Promise<{ sessionId: string }>;
   cancelSessionAgentRun: (sessionId: string) => Promise<void>;
-  retrySessionAgentRun: (sessionId: string, runId?: string) => Promise<void>;
+  retrySessionAgentRun: (
+    sessionId: string,
+    runId?: string,
+    fallbackPrompt?: string,
+  ) => Promise<void>;
+  acceptStepHandoff: (
+    sessionId: string,
+    handoffId: string,
+  ) => Promise<AcceptStepHandoffResult | null>;
+  declineStepHandoff: (
+    sessionId: string,
+    handoffId: string,
+  ) => Promise<StepHandoffProposal | null>;
   removeQueuedSessionPrompt: (sessionId: string, queueId: string) => void;
 }
 
 const initialUrl = readUrlNavState();
 
+function syncActiveProjectSummaryInBootstrap(nextData: BootstrapPayload): BootstrapPayload {
+  const projectId = nextData.activeProject?.id;
+  if (!projectId) return nextData;
+  const derivedSteps = getProjectStepsFromBootstrap(nextData);
+  const stepStates = Object.fromEntries(
+    derivedSteps.map((st) => [st.id, st.state]),
+  ) as Record<ProjectStepId, ProjectStepStateId>;
+  const currentStep = resolveCurrentProjectStep(stepStates);
+  return {
+    ...nextData,
+    projects: nextData.projects.map((p) =>
+      p.id === projectId
+        ? {
+            ...p,
+            currentStage: nextData.activeProject.currentStage,
+            currentStep,
+            currentStepState: stepStates[currentStep],
+            stepStates,
+            updatedAt: nextData.activeProject.updatedAt,
+          }
+        : p,
+    ),
+  };
+}
+
+function applyArtifactHistoryMutationToStore(
+  projectId: string,
+  res: ArtifactHistoryMutationResponse,
+  set: (partial: Partial<WorkbenchStoreState>) => void,
+  get: () => WorkbenchStoreState,
+): void {
+  const latest = get().data;
+  if (!latest || latest.activeProject.id !== projectId) return;
+  const nextData = syncActiveProjectSummaryInBootstrap({
+    ...latest,
+    activeProject: res.project,
+    requirementDocs: res.requirementDocs,
+    ...(res.prototypes !== undefined ? { prototypes: res.prototypes } : {}),
+    ...(res.confirmedPrototypeRevision !== undefined
+      ? { confirmedPrototypeRevision: res.confirmedPrototypeRevision }
+      : {}),
+    ...(res.agentSessions !== undefined ? { agentSessions: res.agentSessions } : {}),
+    stepConfirmations: res.stepConfirmations,
+    artifactHistory: res.artifactHistory,
+  });
+  const activeProtoId = get().activePrototypeIdByProject[projectId];
+  const shouldClearActiveProto = Boolean(
+    activeProtoId &&
+      res.prototypes !== undefined &&
+      !res.prototypes.some((p) => p.id === activeProtoId),
+  );
+  if (shouldClearActiveProto) {
+    const nextProtoMap = { ...get().activePrototypeIdByProject };
+    delete nextProtoMap[projectId];
+    set({ data: nextData, activePrototypeIdByProject: nextProtoMap });
+  } else {
+    set({ data: nextData });
+  }
+}
+
 export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   data: null,
   loading: true,
   toast: null,
-  activeNav: initialUrl.nav || 'app-ontology',
+  activeNav: initialUrl.nav || DEFAULT_NAV_VIEW,
   activeItemId: initialUrl.itemId || null,
   activeSessionId: initialUrl.sessionId || null,
   activePrototypeIdByProject: {},
   liveSessionDrafts: {},
   sessionQueues: {},
-  undoStack: [],
-  redoStack: [],
   selectedModel: 'M1',
   selectedElementId: null,
+  highlightedRequirementSection: null,
+  highlightedBusinessModelTarget: null,
+  highlightedPrototypeTarget: null,
+  highlightedPrototypeComparePair: null,
+  historyDrawerArtifactKind: null,
   liveAnnouncement: '',
 
   setActiveNav: (nav, opts) => {
+    const canonicalNav = normalizeNavViewAlias(nav) ?? nav;
     const nextItem = opts?.itemId !== undefined ? opts.itemId : get().activeItemId;
     const nextSess = opts?.sessionId !== undefined ? opts.sessionId : get().activeSessionId;
     set({
-      activeNav: nav,
+      activeNav: canonicalNav,
       activeItemId: nextItem,
       activeSessionId: nextSess,
     });
     writeUrlNavState({
-      nav,
+      nav: canonicalNav,
       itemId: nextItem ?? '',
       sessionId: nextSess ?? '',
     });
@@ -724,6 +726,144 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
 
   setSelectedElementId: (elementId) => set({ selectedElementId: elementId }),
 
+  focusRequirementSection: (sectionHeading, docId) => {
+    const nextSeq = (get().highlightedRequirementSection?.seq ?? 0) + 1;
+    set({
+      highlightedRequirementSection: {
+        heading: sectionHeading,
+        ...(docId ? { docId } : {}),
+        seq: nextSeq,
+      },
+    });
+  },
+
+  focusBusinessModelTarget: (target) => {
+    writeStepViewMode('BUSINESS_MODEL', 'business');
+    const targetPage = target.pageId ?? target.objectId ?? null;
+    if (target.modelCode) {
+      set({
+        selectedModel: target.modelCode,
+        selectedElementId: target.elementId ?? target.objectId ?? null,
+      });
+    } else if (target.elementId || target.objectId) {
+      set({ selectedElementId: target.elementId ?? target.objectId ?? null });
+    }
+    get().setActiveNav('app-ontology', { itemId: targetPage });
+    const nextSeq = (get().highlightedBusinessModelTarget?.seq ?? 0) + 1;
+    set({
+      highlightedBusinessModelTarget: {
+        ...(targetPage ? { pageId: targetPage } : {}),
+        anchorId: target.anchorId ?? target.elementId ?? target.objectId ?? '',
+        seq: nextSeq,
+      },
+    });
+  },
+
+  focusPrototypeTarget: (target) => {
+    const projectId = get().data?.activeProject.id;
+    if (projectId) {
+      get().setActivePrototypeId(projectId, target.prototypeId);
+    }
+    get().setActiveNav('app-prototype', { itemId: target.prototypeId });
+    const nextSeq = (get().highlightedPrototypeTarget?.seq ?? 0) + 1;
+    set({
+      highlightedPrototypeTarget: {
+        prototypeId: target.prototypeId,
+        ...(target.revisionId ? { revisionId: target.revisionId } : {}),
+        ...(target.screenId ? { screenId: target.screenId } : {}),
+        ...(target.elementId ? { elementId: target.elementId } : {}),
+        seq: nextSeq,
+      },
+    });
+  },
+
+  openPrototypeRevisionCompare: (pair) => {
+    const projectId = get().data?.activeProject.id;
+    if (projectId) {
+      get().setActivePrototypeId(projectId, pair.prototypeId);
+    }
+    get().setActiveNav('app-prototype', { itemId: pair.prototypeId });
+    const nextSeq = (get().highlightedPrototypeComparePair?.seq ?? 0) + 1;
+    set({
+      highlightedPrototypeComparePair: {
+        ...pair,
+        seq: nextSeq,
+      },
+    });
+  },
+
+  clearPrototypeRevisionCompare: () => set({ highlightedPrototypeComparePair: null }),
+
+  openArtifactHistoryDrawer: (kind) => set({ historyDrawerArtifactKind: kind }),
+
+  closeArtifactHistoryDrawer: () => set({ historyDrawerArtifactKind: null }),
+
+  refreshArtifactHistory: async (projectId, kind, prototypeId) => {
+    const cur = get().data;
+    const targetProjectId = projectId ?? cur?.activeProject.id;
+    if (!targetProjectId) return [];
+    const res = await apiListArtifactHistory(targetProjectId, kind, prototypeId);
+    const latest = get().data;
+    if (latest && latest.activeProject.id === targetProjectId) {
+      const merged = kind
+        ? [
+            ...res.entries,
+            ...(latest.artifactHistory ?? []).filter(
+              (e) =>
+                e.artifactKind !== kind ||
+                (kind === 'PROTOTYPE' && prototypeId && e.targetId !== prototypeId),
+            ),
+          ]
+        : res.entries;
+      set({ data: { ...latest, artifactHistory: merged } });
+    }
+    return res.entries;
+  },
+
+  undoArtifactChange: async (artifactKind, expectedEntryId, prototypeId) => {
+    const cur = get().data;
+    if (!cur?.activeProject.id) return false;
+    const projectId = cur.activeProject.id;
+    const locale = getCurrentClientLocale();
+    try {
+      const res = await apiUndoArtifactChange(
+        projectId,
+        artifactKind,
+        expectedEntryId,
+        prototypeId,
+      );
+      applyArtifactHistoryMutationToStore(projectId, res, set, get);
+      get().showToast(locale === 'en-US' ? 'Undid latest change' : '已撤销最近一次改动');
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : String(err));
+      void get()
+        .refreshArtifactHistory(projectId, artifactKind, prototypeId)
+        .catch(() => undefined);
+      return false;
+    }
+  },
+
+  restoreArtifactBeforeChange: async (artifactKind, entryId) => {
+    const cur = get().data;
+    if (!cur?.activeProject.id) return false;
+    const projectId = cur.activeProject.id;
+    const locale = getCurrentClientLocale();
+    try {
+      const res = await apiRestoreArtifactBeforeChange(projectId, artifactKind, entryId);
+      applyArtifactHistoryMutationToStore(projectId, res, set, get);
+      get().showToast(
+        locale === 'en-US'
+          ? 'Restored to the state before that change (undoable)'
+          : '已恢复到该次改动之前的状态（本次恢复也可撤销）',
+      );
+      return true;
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  },
+
   showToast: (msg) => {
     set({ toast: msg });
     setTimeout(() => {
@@ -738,13 +878,18 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   patchData: (patch) => {
     const cur = get().data;
     if (!cur) return;
-    set({ data: { ...cur, ...patch } });
-  },
-
-  pushUndoSnapshot: (prevSuite) => {
+    const merged: BootstrapPayload = { ...cur, ...patch };
+    const shouldSyncSummary =
+      patch.projects === undefined &&
+      ('stepConfirmations' in patch ||
+        'confirmedPrototypeRevision' in patch ||
+        'prototypes' in patch ||
+        'requirementDocs' in patch ||
+        'activeProject' in patch ||
+        'assembledApplications' in patch ||
+        'packageSnapshots' in patch);
     set({
-      undoStack: [...get().undoStack, JSON.parse(JSON.stringify(prevSuite)) as OntologySuite],
-      redoStack: [],
+      data: shouldSyncSummary ? syncActiveProjectSummaryInBootstrap(merged) : merged,
     });
   },
 
@@ -752,15 +897,20 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     set({ loading: true });
     const targetId = projectId || readUrlNavState().projectId || readLastProjectIdFromStorage();
     const qs = targetId ? `?projectId=${encodeURIComponent(targetId)}` : '';
-    const res = await fetch(`/api/bootstrap${qs}`);
+    const res = await fetch(`/api/bootstrap${qs}`, {
+      headers: buildLocaleHeaders(),
+    });
     const payload = (await res.json()) as BootstrapPayload;
 
     set({
       data: payload,
       loading: false,
-      undoStack: [],
-      redoStack: [],
       selectedElementId: null,
+      highlightedRequirementSection: null,
+      highlightedBusinessModelTarget: null,
+      highlightedPrototypeTarget: null,
+      highlightedPrototypeComparePair: null,
+      historyDrawerArtifactKind: null,
     });
     writeLastProjectIdToStorage(payload.activeProject.id);
     writeUrlNavState({ projectId: payload.activeProject.id });
@@ -781,94 +931,193 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   createNewProject: async (input) => {
     const res = await fetch('/api/projects', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildJsonHeaders(),
       body: JSON.stringify(input),
     });
     const { project } = (await res.json()) as { project: ProjectDetail };
     await get().bootstrap(project.id);
     get().showToast(
       getCurrentClientLocale() === 'en-US'
-        ? `Created ontology project "${project.name}"`
-        : `已创建本体工程「${project.name}」`,
+        ? `Created project "${project.name}"`
+        : `已创建项目「${project.name}」`,
     );
     return project;
+  },
+
+  createProjectFromDescription: async (description) => {
+    const trimmed = description.trim();
+    if (!trimmed) {
+      throw new Error('Project description is required.');
+    }
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: buildJsonHeaders(),
+      body: JSON.stringify({ description: trimmed }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error || 'Create project failed');
+    }
+    const { project } = (await res.json()) as { project: ProjectDetail };
+    await get().bootstrap(project.id);
+
+    const session = await get().ensureProjectAgentSession(project.id, 'REQUIREMENT', {
+      title: project.name,
+    });
+    useAgentPanelStore
+      .getState()
+      .rememberSession(agentSessionScopeKey(project.id, 'REQUIREMENT'), session.id);
+    useAgentPanelStore.getState().revealPanel();
+
+    const targetView = getDefaultViewForStep('REQUIREMENTS');
+    get().setActiveNav(targetView, { itemId: null, sessionId: session.id });
+
+    const runPromise = get().startSessionAgentRun({
+      sessionId: session.id,
+      prompt: trimmed,
+    });
+
+    return { project, session, runPromise };
   },
 
   saveSuiteWithUndo: async (suite, note) => {
     const cur = get().data;
     if (!cur) return;
-    const prevSuite = JSON.parse(JSON.stringify(cur.activeProject.suite)) as OntologySuite;
     const res = await fetch(`/api/projects/${cur.activeProject.id}/suite`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildJsonHeaders(),
       body: JSON.stringify({ suite, changelogNote: note }),
     });
-    const { project } = (await res.json()) as { project: ProjectDetail };
+    const { project, artifactHistory } = (await res.json()) as {
+      project: ProjectDetail;
+      artifactHistory?: ArtifactHistoryEntryView[];
+    };
+    const latest = get().data ?? cur;
     set({
       data: {
-        ...cur,
+        ...latest,
         activeProject: project,
-        projects: cur.projects.map((p) =>
+        ...(artifactHistory ? { artifactHistory } : {}),
+        projects: latest.projects.map((p) =>
           p.id === project.id
             ? { ...p, currentStage: project.currentStage, updatedAt: project.updatedAt }
             : p,
         ),
       },
-      undoStack: [...get().undoStack, prevSuite],
-      redoStack: [],
     });
+  },
+
+  applyBusinessModelEdit: async (payload) => {
+    const cur = get().data;
+    if (!cur) {
+      return {
+        ok: false,
+        rejection: {
+          code: 'SUITE_VALIDATION_REJECTED',
+          reasonZh: '当前未加载项目，无法保存修改。',
+          reasonEn: 'No active project is loaded.',
+          assistantPromptZh: '',
+          assistantPromptEn: '',
+          newErrorCount: 0,
+        },
+      };
+    }
+    const result = await apiPatchBusinessModel(cur.activeProject.id, payload);
+    if (!result.ok) {
+      return result;
+    }
+
+    const latest = get().data ?? cur;
+    set({
+      data: {
+        ...latest,
+        activeProject: result.project,
+        ...(result.artifactHistory ? { artifactHistory: result.artifactHistory } : {}),
+        projects: result.projects ?? latest.projects.map((p) =>
+          p.id === result.project.id
+            ? {
+                ...p,
+                currentStage: result.project.currentStage,
+                updatedAt: result.project.updatedAt,
+              }
+            : p,
+        ),
+      },
+    });
+    return result;
   },
 
   undo: async () => {
-    const { undoStack, redoStack, data } = get();
-    if (!data || undoStack.length === 0) return;
-    const previous = undoStack[undoStack.length - 1]!;
-    const current = JSON.parse(JSON.stringify(data.activeProject.suite)) as OntologySuite;
-    const res = await fetch(`/api/projects/${data.activeProject.id}/suite`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ suite: previous, changelogNote: 'Undo AST change' }),
-    });
-    const { project } = (await res.json()) as { project: ProjectDetail };
-    set({
-      data: {
-        ...data,
-        activeProject: project,
-        projects: data.projects.map((p) =>
-          p.id === project.id
-            ? { ...p, currentStage: project.currentStage, updatedAt: project.updatedAt }
-            : p,
-        ),
-      },
-      undoStack: undoStack.slice(0, -1),
-      redoStack: [...redoStack, current],
-    });
+    const cur = get().data;
+    if (!cur?.activeProject.id) return;
+    const { canUndo, latestEntryId } = getOntologyUndoRedoState(cur.artifactHistory);
+    if (!canUndo || !latestEntryId) return;
+    await get().undoArtifactChange('ONTOLOGY_SUITE', latestEntryId);
   },
 
   redo: async () => {
-    const { undoStack, redoStack, data } = get();
-    if (!data || redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1]!;
-    const current = JSON.parse(JSON.stringify(data.activeProject.suite)) as OntologySuite;
-    const res = await fetch(`/api/projects/${data.activeProject.id}/suite`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ suite: next, changelogNote: 'Redo AST change' }),
-    });
-    const { project } = (await res.json()) as { project: ProjectDetail };
-    set({
-      data: {
-        ...data,
-        activeProject: project,
-        projects: data.projects.map((p) =>
-          p.id === project.id
-            ? { ...p, currentStage: project.currentStage, updatedAt: project.updatedAt }
-            : p,
-        ),
-      },
-      undoStack: [...undoStack, current],
-      redoStack: redoStack.slice(0, -1),
-    });
+    const cur = get().data;
+    if (!cur?.activeProject.id) return;
+    const { canRedo, latestEntryId } = getOntologyUndoRedoState(cur.artifactHistory);
+    if (!canRedo || !latestEntryId) return;
+    const projectId = cur.activeProject.id;
+    const locale = getCurrentClientLocale();
+    try {
+      const res = await apiUndoArtifactChange(projectId, 'ONTOLOGY_SUITE', latestEntryId);
+      applyArtifactHistoryMutationToStore(projectId, res, set, get);
+      get().showToast(locale === 'en-US' ? 'Redid latest change' : '已重做最近一次改动');
+    } catch (err) {
+      get().showToast(err instanceof Error ? err.message : String(err));
+      void get().refreshArtifactHistory(projectId, 'ONTOLOGY_SUITE').catch(() => undefined);
+    }
+  },
+
+  confirmRequirementsStep: async (docId) => {
+    const cur = get().data;
+    if (!cur) return null;
+    const projectId = cur.activeProject.id;
+    const res = await apiPostJson<{
+      confirmation: RequirementsStepConfirmationRecord;
+      doc: RequirementDoc;
+      docs: RequirementDoc[];
+      stepConfirmations: ProjectStepConfirmations;
+    }>(
+      `/api/projects/${encodeURIComponent(projectId)}/steps/requirements/confirm`,
+      docId ? { docId } : {},
+    );
+    const latest = get().data;
+    if (latest && latest.activeProject.id === projectId) {
+      set({
+        data: syncActiveProjectSummaryInBootstrap({
+          ...latest,
+          requirementDocs: res.docs,
+          stepConfirmations: res.stepConfirmations,
+        }),
+      });
+    }
+    return res.confirmation;
+  },
+
+  confirmBusinessModelStep: async () => {
+    const cur = get().data;
+    if (!cur) return null;
+    const projectId = cur.activeProject.id;
+    const res = await apiPostJson<{
+      confirmation: BusinessModelStepConfirmationRecord;
+      project: ProjectDetail;
+      stepConfirmations: ProjectStepConfirmations;
+    }>(`/api/projects/${encodeURIComponent(projectId)}/steps/business-model/confirm`, {});
+    const latest = get().data;
+    if (latest && latest.activeProject.id === projectId) {
+      set({
+        data: syncActiveProjectSummaryInBootstrap({
+          ...latest,
+          activeProject: res.project,
+          stepConfirmations: res.stepConfirmations,
+        }),
+      });
+    }
+    return res.confirmation;
   },
 
   ensureProjectAgentSession: async (projectId, agentKind, opts) => {
@@ -882,21 +1131,28 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const preferredId = opts?.preferredSessionId ?? get().activeSessionId ?? undefined;
+    // Canvas actions land in the conversation the Agent Panel is showing for this agent.
+    const rememberedId =
+      useAgentPanelStore.getState().sessionByScope[
+        agentSessionScopeKey(projectId, agentKind, opts?.targetId)
+      ];
     const existing =
-      (preferredId ? candidates.find((s) => s.id === preferredId) : undefined) ?? candidates[0];
+      (preferredId ? candidates.find((s) => s.id === preferredId) : undefined) ??
+      (rememberedId ? candidates.find((s) => s.id === rememberedId) : undefined) ??
+      candidates[0];
     if (existing) {
       return existing;
     }
 
     const locale = getCurrentClientLocale();
     const defaultTitleByKind: Record<AgentSessionKind, { zh: string; en: string }> = {
-      REQUIREMENT: { zh: '需求探索与 SRS 合成会话', en: 'Requirement & SRS Session' },
-      COPILOT: { zh: '本体智能助手会话', en: 'Ontology Copilot Session' },
-      PROTOTYPE_CO_DESIGN: { zh: '原型协同精修会话', en: 'Prototype Co-Design Session' },
-      ARCHITECTURE: { zh: '架构资产编写会话', en: 'Architecture Asset Authoring Session' },
-      CODING: { zh: '应用开发规格会话', en: 'Application Specification Session' },
-      CAPABILITY: { zh: '能力智能体会话', en: 'Capability Agent Session' },
-      REASONING: { zh: '数据归因与指标洞察会话', en: 'Data Reasoning & Insight Session' },
+      REQUIREMENT: { zh: '需求梳理对话', en: 'Requirements conversation' },
+      COPILOT: { zh: '业务模型对话', en: 'Business model conversation' },
+      PROTOTYPE_CO_DESIGN: { zh: '原型共创对话', en: 'Prototype conversation' },
+      ARCHITECTURE: { zh: '开发规范编写对话', en: 'Standards authoring conversation' },
+      CODING: { zh: '应用交付对话', en: 'Delivery conversation' },
+      CAPABILITY: { zh: '能力中心对话', en: 'Capability conversation' },
+      REASONING: { zh: '数据分析对话', en: 'Data analysis conversation' },
     };
     const fallbackTitle = defaultTitleByKind[agentKind];
     const created = await apiCreateAgentSession({
@@ -908,13 +1164,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     });
     const latest = get().data;
     if (latest) {
-      const otherSessions = (latest.agentSessions ?? []).filter((s) => s.projectId !== projectId);
-      set({
-        data: {
-          ...latest,
-          agentSessions: [...created.agentSessions, ...otherSessions],
-        },
-      });
+      // The server answers with every project's sessions, so replacing avoids duplicate rows.
+      set({ data: { ...latest, agentSessions: created.agentSessions } });
     }
     return created.session;
   },
@@ -952,6 +1203,47 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     return ensured.session;
   },
 
+  updateAgentSessionExecutionConfig: async (sessionId, patch) => {
+    const cur = get().data;
+    if (cur) {
+      set({
+        data: {
+          ...cur,
+          agentSessions: (cur.agentSessions ?? []).map((s) =>
+            s.id === sessionId
+              ? {
+                  ...s,
+                  ...(patch.codeMode !== undefined ? { codeMode: patch.codeMode } : {}),
+                  ...(patch.multiAgentConcurrency !== undefined
+                    ? { multiAgentConcurrency: patch.multiAgentConcurrency }
+                    : {}),
+                }
+              : s,
+          ),
+        },
+      });
+    }
+    try {
+      const res = await fetch(`/api/agent-sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'PATCH',
+        headers: buildJsonHeaders(),
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as {
+        session: AgentSession;
+        agentSessions?: AgentSession[];
+      };
+      const latest = get().data;
+      if (latest && body.agentSessions) {
+        set({ data: { ...latest, agentSessions: body.agentSessions } });
+      }
+      return body.session;
+    } catch {
+      return null;
+    }
+  },
+
   attachLiveSessionStream: async (sessionId) => {
     if (activeSessionStreamAborters.has(sessionId)) return;
     const controller = new AbortController();
@@ -978,14 +1270,58 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       });
     }
 
+    let terminalSeen = false;
+    let lastEventId: string | undefined;
+    const baseCallbacks = buildStoreSessionStreamCallbacks(sessionId, set, get);
+    const trackedCallbacks: StreamAgentSessionCallbacks = {
+      ...baseCallbacks,
+      onEventId: (id) => {
+        lastEventId = id;
+      },
+      onRunError: (p) => {
+        terminalSeen = true;
+        baseCallbacks.onRunError?.(p);
+      },
+      onMessageEnd: (p) => {
+        terminalSeen = true;
+        baseCallbacks.onMessageEnd?.(p);
+      },
+    };
+
     try {
-      await attachAgentSessionLiveStream(
-        sessionId,
-        buildStoreSessionStreamCallbacks(sessionId, set, get),
-        { signal: controller.signal },
-      );
-    } catch {
-      // Ignore client SSE detach
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        if (controller.signal.aborted || terminalSeen) break;
+        if (attempt > 0) {
+          const curDraft = get().liveSessionDrafts[sessionId];
+          if (curDraft) {
+            set({
+              liveSessionDrafts: {
+                ...get().liveSessionDrafts,
+                [sessionId]: {
+                  ...curDraft,
+                  reconnecting: true,
+                  liveStatus: {
+                    zh: '连接闪断，正在自动接回后台进展…',
+                    en: 'Connection interrupted — reconnecting to live run…',
+                  },
+                },
+              },
+            });
+          }
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+        }
+        if (controller.signal.aborted || terminalSeen) break;
+        try {
+          await attachAgentSessionLiveStream(sessionId, trackedCallbacks, {
+            ...(lastEventId ? { afterEventId: lastEventId } : {}),
+            signal: controller.signal,
+          });
+          // Clean EOF from /live means the server intentionally ended the stream
+          break;
+        } catch {
+          // Retry on transient stream disconnect unless aborted
+        }
+      }
     } finally {
       if (activeSessionStreamAborters.get(sessionId) === controller) {
         activeSessionStreamAborters.delete(sessionId);
@@ -1066,22 +1402,88 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       },
     });
 
+    let terminalSeen = false;
+    let lastEventId: string | undefined;
+    const baseCallbacks = buildStoreSessionStreamCallbacks(sessionId, set, get);
+    const trackedCallbacks: StreamAgentSessionCallbacks = {
+      ...baseCallbacks,
+      onEventId: (id) => {
+        lastEventId = id;
+      },
+      onRunError: (p) => {
+        terminalSeen = true;
+        baseCallbacks.onRunError?.(p);
+      },
+      onMessageEnd: (p) => {
+        terminalSeen = true;
+        baseCallbacks.onMessageEnd?.(p);
+      },
+    };
+
     try {
-      await streamAgentSessionTurn(
-        sessionId,
-        {
-          ...(prompt.trim() ? { prompt } : {}),
-          ...(input.askUserAnswer ? { askUserAnswer: input.askUserAnswer } : {}),
-          ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
-          ...(input.designBrief ? { designBrief: input.designBrief } : {}),
-          ...(input.prototypeName ? { prototypeName: input.prototypeName } : {}),
-          ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
-          ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
-          ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
-        },
-        buildStoreSessionStreamCallbacks(sessionId, set, get),
-        controller.signal,
-      );
+      let streamDisconnected = false;
+      try {
+        await streamAgentSessionTurn(
+          sessionId,
+          {
+            ...(prompt.trim() ? { prompt } : {}),
+            ...(input.askUserAnswer ? { askUserAnswer: input.askUserAnswer } : {}),
+            ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+            ...(input.designBrief ? { designBrief: input.designBrief } : {}),
+            ...(input.prototypeName ? { prototypeName: input.prototypeName } : {}),
+            ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
+            ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
+            ...(input.codeMode !== undefined ? { codeMode: input.codeMode } : {}),
+            ...(input.multiAgentConcurrency !== undefined
+              ? { multiAgentConcurrency: input.multiAgentConcurrency }
+              : {}),
+            ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
+          },
+          trackedCallbacks,
+          controller.signal,
+        );
+      } catch {
+        if (!controller.signal.aborted && !terminalSeen) {
+          streamDisconnected = true;
+        }
+      }
+
+      // If the initial POST stream broke mid-flight due to a transient disconnect, seamlessly attach to /live!
+      if (streamDisconnected) {
+        for (
+          let attempt = 1;
+          attempt <= 3 && !terminalSeen && !controller.signal.aborted;
+          attempt += 1
+        ) {
+          const curDraft = get().liveSessionDrafts[sessionId];
+          if (curDraft) {
+            set({
+              liveSessionDrafts: {
+                ...get().liveSessionDrafts,
+                [sessionId]: {
+                  ...curDraft,
+                  reconnecting: true,
+                  liveStatus: {
+                    zh: '连接闪断，正在自动接回后台进展…',
+                    en: 'Connection interrupted — reconnecting to live run…',
+                  },
+                },
+              },
+            });
+          }
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+          if (controller.signal.aborted || terminalSeen) break;
+          try {
+            await attachAgentSessionLiveStream(sessionId, trackedCallbacks, {
+              ...(lastEventId ? { afterEventId: lastEventId } : {}),
+              signal: controller.signal,
+            });
+            break;
+          } catch {
+            // Keep retrying up to 3 attempts on transient /live disconnect
+          }
+        }
+      }
     } catch {
       // Detaching client SSE reader does not abort server run
     } finally {
@@ -1245,29 +1647,27 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     const session = await get().ensureProjectAgentSession(projectId, 'COPILOT', {
       title:
         locale === 'en-US'
-          ? `${curData.activeProject.name} Ontology Copilot`
-          : `${curData.activeProject.name} 本体智能助手`,
+          ? `${curData.activeProject.name} Business Model`
+          : `${curData.activeProject.name} 业务模型对话`,
     });
     get().setActiveSessionId(session.id);
 
     const payload: Record<string, unknown> = {
       ...(opts?.prototypeId ? { prototypeId: opts.prototypeId } : {}),
       ...(opts?.docId ? { docId: opts.docId } : {}),
+      ...(opts?.mode ? { mode: opts.mode } : {}),
     };
     const header = `[ACTION:SYNTHESIZE_ONTOLOGY_SUITE ${JSON.stringify(payload)}]`;
-    const instruction =
+    const defaultInstruction =
       locale === 'en-US'
         ? 'Synthesize and validate the 11-model Ontology Suite from the confirmed UI prototype and SRS context via synthesize_ontology_suite.'
         : '请从已确认的界面原型锚点与需求规格上下文推导并校验完整的 11 模型本体套件，通过 synthesize_ontology_suite 工具保存。';
-    const displayTitle =
-      locale === 'en-US'
-        ? 'Synthesize 11-Model Ontology Suite'
-        : '从已确认原型合成 11 模型本体';
+    const instruction = opts?.instruction?.trim() || defaultInstruction;
 
     await get().startSessionAgentRun({
       sessionId: session.id,
       prompt: `${header}\n${instruction}`,
-      displayTitle,
+      ...(opts?.displayTitle?.trim() ? { displayTitle: opts.displayTitle.trim() } : {}),
       activeModelCode: get().selectedModel,
       ...(opts?.mockMode !== undefined ? { mockMode: opts.mockMode } : {}),
     });
@@ -1510,15 +1910,18 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     }
   },
 
-  retrySessionAgentRun: async (sessionId, runId) => {
+  retrySessionAgentRun: async (sessionId, runId, fallbackPrompt) => {
     const sess = get().data?.agentSessions.find((s) => s.id === sessionId);
-    if (!sess) return;
+    if (!sess && !fallbackPrompt?.trim()) return;
     let targetPrompt = '';
-    if (runId) {
+    if (sess && runId) {
       const msg = sess.messages.find((m) => m.id === runId && m.role === 'user');
       if (msg) targetPrompt = msg.content;
     }
-    if (!targetPrompt) {
+    if (!targetPrompt && fallbackPrompt?.trim()) {
+      targetPrompt = fallbackPrompt;
+    }
+    if (!targetPrompt && sess) {
       for (let i = sess.messages.length - 1; i >= 0; i -= 1) {
         const m = sess.messages[i]!;
         if (m.role === 'user' && m.content.trim()) {
@@ -1532,6 +1935,94 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       sessionId,
       prompt: targetPrompt,
     });
+  },
+
+  acceptStepHandoff: async (sessionId, handoffId) => {
+    const cur = get().data;
+    const sourceSession = cur?.agentSessions.find((s) => s.id === sessionId);
+    const proposal = sourceSession?.messages
+      .slice()
+      .reverse()
+      .find((m) => m.stepHandoff?.id === handoffId)?.stepHandoff;
+    const projectId = sourceSession?.projectId ?? cur?.activeProject.id;
+
+    let preferredTargetSessionId: string | undefined;
+    let preferredPrototypeId: string | undefined;
+    let preferredApplicationId: string | undefined;
+
+    if (projectId && proposal) {
+      const targetKind = STEP_SPECIALIST_AGENT_KINDS[proposal.targetStep];
+      if (proposal.targetStep === 'PROTOTYPE') {
+        preferredPrototypeId = get().activePrototypeIdByProject[projectId];
+      } else {
+        if (proposal.targetStep === 'DELIVERY') {
+          const activeApp = cur?.assembledApplications.find(
+            (a) => a.id === get().activeItemId && a.projectId === projectId,
+          );
+          preferredApplicationId = activeApp?.id;
+        }
+        preferredTargetSessionId =
+          useAgentPanelStore.getState().sessionByScope[
+            agentSessionScopeKey(projectId, targetKind)
+          ];
+      }
+    }
+
+    const res = await apiAcceptStepHandoff(sessionId, handoffId, {
+      runInBackground: true,
+      ...(preferredTargetSessionId ? { preferredTargetSessionId } : {}),
+      ...(preferredPrototypeId ? { preferredPrototypeId } : {}),
+      ...(preferredApplicationId ? { preferredApplicationId } : {}),
+    });
+
+    const latest = get().data;
+    if (latest) {
+      const isSameProject = projectId && latest.activeProject.id === projectId;
+      set({
+        data: {
+          ...latest,
+          agentSessions: res.agentSessions,
+          ...(isSameProject && res.project ? { activeProject: res.project } : {}),
+          ...(isSameProject && res.stepConfirmations
+            ? { stepConfirmations: res.stepConfirmations }
+            : {}),
+        },
+      });
+    }
+
+    if (projectId) {
+      if (res.targetStep === 'PROTOTYPE' && res.targetItemId) {
+        get().setActivePrototypeId(projectId, res.targetItemId);
+      } else if (res.targetStep !== 'PROTOTYPE') {
+        const targetKind = STEP_SPECIALIST_AGENT_KINDS[res.targetStep];
+        useAgentPanelStore
+          .getState()
+          .rememberSession(agentSessionScopeKey(projectId, targetKind), res.targetSessionId);
+      }
+    }
+
+    useAgentPanelStore.getState().revealPanel();
+    get().setActiveNav(res.targetNavView, {
+      itemId: res.targetItemId ?? null,
+      sessionId: res.targetSessionId,
+    });
+    void get().attachLiveSessionStream(res.targetSessionId);
+
+    return res;
+  },
+
+  declineStepHandoff: async (sessionId, handoffId) => {
+    const res = await apiDeclineStepHandoff(sessionId, handoffId);
+    const latest = get().data;
+    if (latest) {
+      set({
+        data: {
+          ...latest,
+          agentSessions: res.agentSessions,
+        },
+      });
+    }
+    return res.handoff;
   },
 
   removeQueuedSessionPrompt: (sessionId, queueId) => {
@@ -1703,7 +2194,39 @@ export async function apiCompactAgentSession(
   return res.json();
 }
 
+export async function apiAcceptStepHandoff(
+  sessionId: string,
+  handoffId: string,
+  input?: {
+    preferredTargetSessionId?: string;
+    preferredPrototypeId?: string;
+    preferredApplicationId?: string;
+    runInBackground?: boolean;
+    mockMode?: boolean;
+  },
+): Promise<AcceptStepHandoffResult> {
+  return apiPostJson<AcceptStepHandoffResult>(
+    `/api/agent-sessions/${encodeURIComponent(sessionId)}/handoffs/${encodeURIComponent(handoffId)}/accept`,
+    input ?? {},
+  );
+}
+
+export async function apiDeclineStepHandoff(
+  sessionId: string,
+  handoffId: string,
+): Promise<{
+  handoff: StepHandoffProposal;
+  sourceSession: AgentSession;
+  agentSessions: AgentSession[];
+}> {
+  return apiPostJson(
+    `/api/agent-sessions/${encodeURIComponent(sessionId)}/handoffs/${encodeURIComponent(handoffId)}/decline`,
+    {},
+  );
+}
+
 export interface StreamAgentSessionCallbacks {
+  onEventId?: (id: string) => void;
   onSessionMeta?: (meta: {
     sessionId: string;
     title: string;
@@ -1712,9 +2235,23 @@ export interface StreamAgentSessionCallbacks {
     isMock: boolean;
     visionSupported?: boolean;
     visionFallbackNotice?: string;
+    codeMode?: boolean;
+    multiAgentConcurrency?: number;
+  }) => void;
+  onHeartbeat?: (hb: {
+    elapsedMs: number;
+    thinkingChars: number;
+    textChars: number;
+    toolArgChars: number;
+    activeSubagents: number;
   }) => void;
   onThinkingDelta?: (delta: string, step: number) => void;
   onTextDelta?: (delta: string, step: number) => void;
+  onToolDelta?: (delta: {
+    step: number;
+    toolName?: string;
+    streamedChars: number;
+  }) => void;
   onToolCall?: (call: {
     id: string;
     toolName: string;
@@ -1723,8 +2260,20 @@ export interface StreamAgentSessionCallbacks {
     targetAnchor?: PrototypeTargetAnchor;
   }) => void;
   onToolResult?: (trace: AgentToolCallTrace, step: number) => void;
+  onSubagentUpdate?: (payload: {
+    lane: AgentSubagentLaneTrace;
+    lanes: AgentSubagentLaneTrace[];
+  }) => void;
+  onPrototypePreview?: (preview: {
+    prototypeId?: string;
+    prototypeName: string;
+    workingHtml: string;
+    screenCount: number;
+    targetAnchor?: PrototypeTargetAnchor;
+  }) => void;
   onArtifact?: (artifact: AgentDomainArtifact) => void;
   onAskUser?: (askUser: AgentAskUserPrompt) => void;
+  onStepHandoff?: (stepHandoff: StepHandoffProposal) => void;
   onUsage?: (usage: {
     tokenUsage?: AgentSession['tokenUsage'];
     providerName?: string;
@@ -1735,10 +2284,15 @@ export interface StreamAgentSessionCallbacks {
       code: string;
       providerName?: string;
       baseUrl?: string;
+      model?: string;
+      statusCode?: number;
       message: string;
       remediation: string;
     };
     session?: AgentSession;
+    prototypes?: InteractivePrototype[];
+    artifactHistory?: ArtifactHistoryEntryView[];
+    requirementDocs?: RequirementDoc[];
   }) => void;
   onMessageEnd?: (payload: {
     session: AgentSession;
@@ -1747,6 +2301,8 @@ export interface StreamAgentSessionCallbacks {
     requirementSessions?: RequirementSession[];
     prototypes?: InteractivePrototype[];
     confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
+    stepConfirmations?: ProjectStepConfirmations;
+    artifactHistory?: ArtifactHistoryEntryView[];
     fourLayerAssets?: FourLayerAsset[];
     assembledApplications?: AssembledApplication[];
     extractionJobs?: ExtractionJob[];
@@ -1768,14 +2324,20 @@ function consumeAgentSessionSseBody(
 
     const processBlock = (rawBlock: string) => {
       const lines = rawBlock.split(/\r?\n/);
+      let eventId = '';
       let eventName = '';
       const dataLines: string[] = [];
       for (const line of lines) {
-        if (line.startsWith('event:')) {
+        if (line.startsWith('id:')) {
+          eventId = line.slice(3).trim();
+        } else if (line.startsWith('event:')) {
           eventName = line.slice(6).trim();
         } else if (line.startsWith('data:')) {
           dataLines.push(line.slice(5).trim());
         }
+      }
+      if (eventId) {
+        callbacks.onEventId?.(eventId);
       }
       if (!eventName || dataLines.length === 0) return;
       let parsed: Record<string, unknown>;
@@ -1789,11 +2351,17 @@ function consumeAgentSessionSseBody(
         case 'session_meta':
           callbacks.onSessionMeta?.(parsed as never);
           break;
+        case 'heartbeat':
+          callbacks.onHeartbeat?.(parsed as never);
+          break;
         case 'thinking_delta':
           callbacks.onThinkingDelta?.(String(parsed.delta ?? ''), Number(parsed.step ?? 1));
           break;
         case 'delta':
           callbacks.onTextDelta?.(String(parsed.text ?? ''), Number(parsed.step ?? 1));
+          break;
+        case 'tool_delta':
+          callbacks.onToolDelta?.(parsed as never);
           break;
         case 'tool_call':
           callbacks.onToolCall?.(parsed as never);
@@ -1804,11 +2372,20 @@ function consumeAgentSessionSseBody(
             Number(parsed.step ?? 1),
           );
           break;
+        case 'subagent_update':
+          callbacks.onSubagentUpdate?.(parsed as never);
+          break;
+        case 'prototype_preview':
+          callbacks.onPrototypePreview?.(parsed as never);
+          break;
         case 'artifact':
           callbacks.onArtifact?.(parsed.artifact as AgentDomainArtifact);
           break;
         case 'ask_user':
           callbacks.onAskUser?.(parsed.askUser as AgentAskUserPrompt);
+          break;
+        case 'step_handoff':
+          callbacks.onStepHandoff?.(parsed.stepHandoff as StepHandoffProposal);
           break;
         case 'usage':
           callbacks.onUsage?.(parsed as never);
@@ -1855,6 +2432,8 @@ export async function streamAgentSessionTurn(
     prototypeName?: string;
     activeModelCode?: ModelCode;
     reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+    codeMode?: boolean;
+    multiAgentConcurrency?: number;
     mockMode?: boolean;
     locale?: string;
   },
@@ -1862,18 +2441,35 @@ export async function streamAgentSessionTurn(
   signal?: AbortSignal,
 ): Promise<void> {
   const locale = body.locale || getCurrentClientLocale();
-  const res = await fetch(`/api/agent-sessions/${sessionId}/stream`, {
-    method: 'POST',
-    headers: buildJsonHeaders(),
-    body: JSON.stringify({ ...body, locale }),
-    ...(signal ? { signal } : {}),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api/agent-sessions/${sessionId}/stream`, {
+      method: 'POST',
+      headers: buildJsonHeaders(),
+      body: JSON.stringify({ ...body, locale }),
+      ...(signal ? { signal } : {}),
+    });
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    callbacks.onRunError?.({
+      diagnostic: {
+        code: 'LLM_UNREACHABLE',
+        message: err instanceof Error ? err.message : String(err),
+        remediation:
+          locale === 'en-US'
+            ? 'Check backend server status or configure your gateway in LLM Center.'
+            : '请检查后端服务状态或 LLM 中心网关配置。',
+      },
+    });
+    return;
+  }
 
   if (!res.ok || !res.body) {
     const errJson = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     callbacks.onRunError?.({
       diagnostic: errJson.diagnostic ?? {
         code: 'HTTP_ERROR',
+        statusCode: res.status,
         message:
           errJson.error ||
           (locale === 'en-US' ? `Request failed (${res.status})` : `请求失败 (${res.status})`),
@@ -1929,6 +2525,8 @@ function buildStoreSessionStreamCallbacks(
     requirementSessions?: RequirementSession[];
     prototypes?: InteractivePrototype[];
     confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
+    stepConfirmations?: ProjectStepConfirmations;
+    artifactHistory?: ArtifactHistoryEntryView[];
     fourLayerAssets?: FourLayerAsset[];
     assembledApplications?: AssembledApplication[];
     extractionJobs?: ExtractionJob[];
@@ -1945,78 +2543,182 @@ function buildStoreSessionStreamCallbacks(
       : [updatedSession, ...(cur.agentSessions ?? [])];
     const isSameProject =
       cur.activeProject.id === (payload.project?.id ?? updatedSession.projectId);
-    set({
-      data: {
-        ...cur,
-        agentSessions: nextSessions,
-        ...(isSameProject && payload.project
+    const nextData: BootstrapPayload = {
+      ...cur,
+      agentSessions: nextSessions,
+      ...(isSameProject && payload.project
+        ? {
+            activeProject: payload.project,
+            projects: cur.projects.map((p) =>
+              p.id === payload.project!.id
+                ? {
+                    ...p,
+                    currentStage: payload.project!.currentStage,
+                    updatedAt: payload.project!.updatedAt,
+                  }
+                : p,
+            ),
+          }
+        : {}),
+      ...(isSameProject && payload.requirementDocs
+        ? { requirementDocs: payload.requirementDocs }
+        : {}),
+      ...(isSameProject && payload.requirementSessions
+        ? { requirementSessions: payload.requirementSessions }
+        : {}),
+      ...(isSameProject && payload.prototypes ? { prototypes: payload.prototypes } : {}),
+      ...(isSameProject && payload.confirmedPrototypeRevision !== undefined
+        ? { confirmedPrototypeRevision: payload.confirmedPrototypeRevision }
+        : {}),
+      ...(isSameProject && payload.stepConfirmations !== undefined
+        ? { stepConfirmations: payload.stepConfirmations }
+        : {}),
+      ...(isSameProject && payload.artifactHistory !== undefined
+        ? { artifactHistory: payload.artifactHistory }
+        : {}),
+      ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
+      ...(isSameProject && payload.assembledApplications
+        ? { assembledApplications: payload.assembledApplications }
+        : {}),
+      ...(payload.extractionJobs ? { extractionJobs: payload.extractionJobs } : {}),
+      ...(payload.metrics ? { metrics: payload.metrics } : {}),
+      ...(payload.analyticsReports ? { analyticsReports: payload.analyticsReports } : {}),
+      ...(isSameProject && payload.reasoningSessions
+        ? { reasoningSessions: payload.reasoningSessions }
+        : {}),
+    };
+
+    if (isSameProject && nextData.activeProject.id) {
+      const derivedSteps = getProjectStepsFromBootstrap(nextData);
+      const stepStates = Object.fromEntries(
+        derivedSteps.map((st) => [st.id, st.state]),
+      ) as Record<ProjectStepId, ProjectStepStateId>;
+      const currentStep = resolveCurrentProjectStep(stepStates);
+      const currentStepState = stepStates[currentStep];
+      nextData.projects = nextData.projects.map((p) =>
+        p.id === nextData.activeProject.id
           ? {
-              activeProject: payload.project,
-              projects: cur.projects.map((p) =>
-                p.id === payload.project!.id
-                  ? {
-                      ...p,
-                      currentStage: payload.project!.currentStage,
-                      updatedAt: payload.project!.updatedAt,
-                    }
-                  : p,
-              ),
+              ...p,
+              currentStep,
+              currentStepState,
+              stepStates,
+              updatedAt: updatedSession.updatedAt || p.updatedAt,
             }
-          : {}),
-        ...(isSameProject && payload.requirementDocs
-          ? { requirementDocs: payload.requirementDocs }
-          : {}),
-        ...(isSameProject && payload.requirementSessions
-          ? { requirementSessions: payload.requirementSessions }
-          : {}),
-        ...(isSameProject && payload.prototypes ? { prototypes: payload.prototypes } : {}),
-        ...(isSameProject && payload.confirmedPrototypeRevision !== undefined
-          ? { confirmedPrototypeRevision: payload.confirmedPrototypeRevision }
-          : {}),
-        ...(payload.fourLayerAssets ? { fourLayerAssets: payload.fourLayerAssets } : {}),
-        ...(isSameProject && payload.assembledApplications
-          ? { assembledApplications: payload.assembledApplications }
-          : {}),
-        ...(payload.extractionJobs ? { extractionJobs: payload.extractionJobs } : {}),
-        ...(payload.metrics ? { metrics: payload.metrics } : {}),
-        ...(payload.analyticsReports ? { analyticsReports: payload.analyticsReports } : {}),
-        ...(isSameProject && payload.reasoningSessions
-          ? { reasoningSessions: payload.reasoningSessions }
-          : {}),
-      },
-    });
+          : p,
+      );
+    }
+
+    set({ data: nextData });
   };
 
   return {
     onSessionMeta: (meta) => {
-      patchDraft((cur) => ({ ...cur, model: meta.model }));
-    },
-    onThinkingDelta: (delta) => {
       patchDraft((cur) => ({
         ...cur,
-        thinking: `${cur.thinking}${delta}`,
-        liveStatus: cur.activeAnchor
-          ? cur.liveStatus
-          : { zh: '正在思考…', en: 'Thinking…' },
+        reconnecting: false,
+        lastHeartbeatAt: Date.now(),
+        model: meta.model,
+        providerName: meta.provider,
+        ...(meta.visionSupported === false && cur.images && cur.images.length > 0
+          ? {
+              visionFallbackUsed: true,
+              ...(meta.visionFallbackNotice
+                ? { visionFallbackNotice: meta.visionFallbackNotice }
+                : {}),
+            }
+          : {}),
       }));
     },
-    onTextDelta: (delta) => {
+    onHeartbeat: (hb) => {
       patchDraft((cur) => ({
         ...cur,
-        text: `${cur.text}${delta}`,
-        liveStatus: { zh: '正在回复…', en: 'Responding…' },
+        reconnecting: false,
+        lastHeartbeatAt: Date.now(),
+        liveStreamedChars: hb.thinkingChars + hb.textChars + hb.toolArgChars,
+      }));
+    },
+    onThinkingDelta: (delta) => {
+      patchDraft((cur) => {
+        const nextThinking = `${cur.thinking}${delta}`;
+        return {
+          ...cur,
+          reconnecting: false,
+          lastHeartbeatAt: Date.now(),
+          thinking: nextThinking,
+          liveStreamedChars: Math.max(cur.liveStreamedChars ?? 0, nextThinking.length + cur.text.length),
+          liveStatus: cur.steps.some((s) => s.status === 'RUNNING')
+            ? cur.liveStatus
+            : { zh: '正在思考…', en: 'Thinking…' },
+        };
+      });
+    },
+    onTextDelta: (delta) => {
+      patchDraft((cur) => {
+        const nextText = `${cur.text}${delta}`;
+        return {
+          ...cur,
+          reconnecting: false,
+          lastHeartbeatAt: Date.now(),
+          text: nextText,
+          liveStreamedChars: Math.max(cur.liveStreamedChars ?? 0, cur.thinking.length + nextText.length),
+          liveStatus: { zh: '正在回复…', en: 'Responding…' },
+        };
+      });
+    },
+    onToolDelta: (td) => {
+      patchDraft((cur) => ({
+        ...cur,
+        reconnecting: false,
+        lastHeartbeatAt: Date.now(),
+        liveStreamedChars: cur.thinking.length + cur.text.length + td.streamedChars,
+        liveStatus: td.toolName
+          ? formatVocabularyToolProgress(td.toolName, undefined)
+          : { zh: '正在持续生成内容…', en: 'Streaming generated content…' },
+      }));
+    },
+    onSubagentUpdate: (sub) => {
+      patchDraft((cur) => {
+        const runningLanes = sub.lanes.filter((l) => l.status === 'RUNNING');
+        const doneCount = sub.lanes.filter((l) => l.status === 'DONE').length;
+        return {
+          ...cur,
+          reconnecting: false,
+          lastHeartbeatAt: Date.now(),
+          subagentLanes: sub.lanes,
+          ...(sub.lane.targetAnchor ? { activeAnchor: sub.lane.targetAnchor } : {}),
+          liveStatus:
+            runningLanes.length > 0
+              ? {
+                  zh: `正在并行推进 ${runningLanes.length} 路子任务（已完成 ${doneCount}/${sub.lanes.length}）…`,
+                  en: `Running ${runningLanes.length} parallel tasks (${doneCount}/${sub.lanes.length} done)…`,
+                }
+              : cur.liveStatus,
+        };
+      });
+    },
+    onPrototypePreview: (preview) => {
+      patchDraft((cur) => ({
+        ...cur,
+        reconnecting: false,
+        lastHeartbeatAt: Date.now(),
+        livePreviewHtml: preview.workingHtml,
+        ...(preview.targetAnchor ? { activeAnchor: preview.targetAnchor } : {}),
       }));
     },
     onToolCall: (call) => {
-      const anchorText = formatAnchorBadgeLabel(call.targetAnchor);
-      const stepLabel = formatToolStepLabel(call.toolName);
+      const progressLabel = formatVocabularyToolProgress(
+        call.toolName,
+        call.arguments,
+        call.targetAnchor?.label ? { targetLabel: call.targetAnchor.label } : undefined,
+      );
       patchDraft((cur) => {
         const existingIdx = cur.steps.findIndex((s) => s.id === call.id);
         const nextStep: SessionLiveStep = {
           id: call.id,
-          label: stepLabel,
+          label: { zh: progressLabel.zh, en: progressLabel.en },
           status: 'RUNNING',
           toolName: call.toolName,
+          arguments: call.arguments,
           at: new Date().toISOString(),
           ...(call.targetAnchor ? { targetAnchor: call.targetAnchor } : {}),
         };
@@ -2028,12 +2730,7 @@ function buildStoreSessionStreamCallbacks(
           ...cur,
           steps: nextSteps,
           ...(call.targetAnchor ? { activeAnchor: call.targetAnchor } : {}),
-          liveStatus: anchorText
-            ? {
-                zh: `${stepLabel.zh} (${anchorText})…`,
-                en: `${stepLabel.en} (${anchorText})…`,
-              }
-            : stepLabel,
+          liveStatus: { zh: progressLabel.zh, en: progressLabel.en },
         };
       });
     },
@@ -2054,9 +2751,10 @@ function buildStoreSessionStreamCallbacks(
         const existingIdx = cur.steps.findIndex((s) => s.id === trace.id);
         const updatedStep: SessionLiveStep = {
           id: trace.id,
-          label: formatToolStepLabel(trace.toolName),
+          label: formatToolStepLabel(trace.toolName, trace.arguments, trace.targetAnchor),
           status: stepStatus,
           toolName: trace.toolName,
+          ...(trace.arguments ? { arguments: trace.arguments } : {}),
           ...(trace.targetAnchor
             ? { targetAnchor: trace.targetAnchor }
             : existingIdx >= 0 && cur.steps[existingIdx]?.targetAnchor
@@ -2078,11 +2776,26 @@ function buildStoreSessionStreamCallbacks(
         };
       });
     },
+    onUsage: (usage) => {
+      patchDraft((cur) => ({
+        ...cur,
+        ...(usage.tokenUsage ? { usage: usage.tokenUsage } : {}),
+        ...(usage.providerName ? { providerName: usage.providerName } : {}),
+        ...(usage.modelUsed ? { model: usage.modelUsed } : {}),
+      }));
+    },
     onAskUser: (askUser) => {
       patchDraft((cur) => ({
         ...cur,
         askUser,
         liveStatus: { zh: '等待确认关键业务决策…', en: 'Waiting for user decision…' },
+      }));
+    },
+    onStepHandoff: (stepHandoff) => {
+      patchDraft((cur) => ({
+        ...cur,
+        stepHandoff,
+        liveStatus: { zh: '已准备步骤转交建议…', en: 'Prepared step hand-off…' },
       }));
     },
     onArtifact: (artifact) => {
@@ -2098,7 +2811,50 @@ function buildStoreSessionStreamCallbacks(
       }
     },
     onRunError: (payload) => {
-      upsertCompletedSession(payload);
+      if (payload.session) {
+        upsertCompletedSession(payload);
+        return;
+      }
+      const cur = get().data;
+      const draft = get().liveSessionDrafts[sessionId];
+      const existing = cur?.agentSessions.find((s) => s.id === sessionId);
+      if (!cur || !existing || !payload.diagnostic) return;
+      const nowIso = new Date().toISOString();
+      const startedIso = draft ? new Date(draft.startedAt).toISOString() : nowIso;
+      const promptText = draft?.userPrompt ?? '';
+      const lastMsg = existing.messages[existing.messages.length - 1];
+      const needsUserMsg =
+        Boolean(promptText.trim()) &&
+        !(lastMsg?.role === 'user' && lastMsg.content === promptText);
+      const nextMessages = [
+        ...existing.messages,
+        ...(needsUserMsg
+          ? [
+              {
+                id: `${draft?.runId ?? 'err'}-u`,
+                role: 'user' as const,
+                content: promptText,
+                timestamp: startedIso,
+              },
+            ]
+          : []),
+        {
+          id: `${draft?.runId ?? 'err'}-a`,
+          role: 'assistant' as const,
+          content: draft?.text ?? '',
+          ...(draft?.thinking ? { thinking: draft.thinking } : {}),
+          errorDiagnostic: payload.diagnostic,
+          timestamp: nowIso,
+        },
+      ];
+      upsertCompletedSession({
+        session: {
+          ...existing,
+          status: 'ERROR',
+          messages: nextMessages,
+          updatedAt: nowIso,
+        },
+      });
     },
     onMessageEnd: (payload) => {
       upsertCompletedSession(payload);
@@ -2201,10 +2957,15 @@ export async function apiRenameSymbol(
   projectId: string,
   oldId: string,
   newId: string,
-): Promise<{ project: ProjectDetail; changedCount: number; changelogEntry: string }> {
+): Promise<{
+  project: ProjectDetail;
+  changedCount: number;
+  changelogEntry: string;
+  artifactHistory?: ArtifactHistoryEntryView[];
+}> {
   const res = await fetch(`/api/projects/${projectId}/rename`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildJsonHeaders(),
     body: JSON.stringify({ oldId, newId }),
   });
   return res.json();
@@ -2246,6 +3007,7 @@ export async function apiSavePrototype(
   project: ProjectDetail;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  artifactHistory?: ArtifactHistoryEntryView[];
 }> {
   return apiPostJson(`/api/projects/${encodeURIComponent(projectId)}/prototypes`, input);
 }
@@ -2259,6 +3021,7 @@ export async function apiAppendPrototypeRevision(
   project: ProjectDetail;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  artifactHistory?: ArtifactHistoryEntryView[];
 }> {
   return apiPostJson(`/api/prototypes/${encodeURIComponent(prototypeId)}/revisions`, input);
 }
@@ -2272,6 +3035,7 @@ export async function apiRestorePrototypeRevision(
   revision: PrototypeRevision;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  artifactHistory?: ArtifactHistoryEntryView[];
 }> {
   return apiPostJson(
     `/api/prototypes/${encodeURIComponent(prototypeId)}/revisions/${encodeURIComponent(revisionId)}/restore`,
@@ -2288,6 +3052,7 @@ export async function apiUpdatePrototypeRevisionMeta(
   revision: PrototypeRevision;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  artifactHistory?: ArtifactHistoryEntryView[];
 }> {
   const res = await fetch(
     `/api/prototypes/${encodeURIComponent(prototypeId)}/revisions/${encodeURIComponent(revisionId)}`,
@@ -2329,10 +3094,31 @@ export async function apiConfirmPrototypeRevision(
   prototype: InteractivePrototype;
   project: ProjectDetail;
   prototypes: InteractivePrototype[];
+  artifactHistory?: ArtifactHistoryEntryView[];
+  stepConfirmations?: ProjectStepConfirmations;
 }> {
-  return apiPostJson(`/api/projects/${encodeURIComponent(projectId)}/prototypes/confirm-revision`, {
+  const res = await apiPostJson<{
+    confirmed: ConfirmedPrototypeRevision;
+    confirmedRevision: ConfirmedPrototypeRevision;
+    prototype: InteractivePrototype;
+    project: ProjectDetail;
+    prototypes: InteractivePrototype[];
+    artifactHistory?: ArtifactHistoryEntryView[];
+    stepConfirmations?: ProjectStepConfirmations;
+  }>(`/api/projects/${encodeURIComponent(projectId)}/prototypes/confirm-revision`, {
     revisionId,
   });
+  const cur = useWorkbenchStore.getState().data;
+  if (cur && cur.activeProject.id === projectId) {
+    useWorkbenchStore.getState().patchData({
+      activeProject: res.project,
+      prototypes: res.prototypes,
+      confirmedPrototypeRevision: res.confirmedRevision,
+      ...(res.artifactHistory ? { artifactHistory: res.artifactHistory } : {}),
+      ...(res.stepConfirmations ? { stepConfirmations: res.stepConfirmations } : {}),
+    });
+  }
+  return res;
 }
 
 export async function apiClonePrototype(
@@ -2354,6 +3140,7 @@ export async function apiDeletePrototype(
   deletedId: string;
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
+  artifactHistory?: ArtifactHistoryEntryView[];
 }> {
   return apiDeleteResource(
     `/api/prototypes/${encodeURIComponent(prototypeId)}?projectId=${encodeURIComponent(projectId)}`,
@@ -2389,14 +3176,160 @@ export async function apiEnsurePrototypeCoDesignSession(
   );
 }
 
+export type {
+  ArtifactHistoryEntryView,
+  ArtifactHistorySurfaceKind,
+  ArtifactJumpTarget,
+  BusinessModelInlineEditTarget,
+  BusinessModelIntentSummary,
+  ChangeSummaryItemView,
+  ChangeSummaryView,
+  PersistedArtifactHistoryKind,
+  PrototypeCompareRevisionPair,
+} from '../packages/workspace-store/index.js';
+
+export interface ArtifactHistoryMutationResponse {
+  entry: ArtifactHistoryEntryView;
+  undoneEntryId?: string;
+  restoredBeforeEntryId?: string;
+  entries: ArtifactHistoryEntryView[];
+  artifactHistory: ArtifactHistoryEntryView[];
+  project: ProjectDetail;
+  requirementDocs: RequirementDoc[];
+  prototypes?: InteractivePrototype[];
+  confirmedPrototypeRevision?: ConfirmedPrototypeRevision | null;
+  agentSessions?: AgentSession[];
+  stepConfirmations: ProjectStepConfirmations;
+}
+
+export async function apiListArtifactHistory(
+  projectId: string,
+  kind?: ArtifactHistorySurfaceKind,
+  prototypeId?: string,
+): Promise<{
+  projectId: string;
+  kind: ArtifactHistorySurfaceKind | null;
+  entries: ArtifactHistoryEntryView[];
+  latestEntryId: string | null;
+}> {
+  const params = new URLSearchParams();
+  if (kind) params.set('kind', kind);
+  if (prototypeId) params.set('prototypeId', prototypeId);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/history${qs}`, {
+    headers: buildLocaleHeaders(),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to load artifact history');
+  }
+  return body;
+}
+
+export async function apiUndoArtifactChange(
+  projectId: string,
+  artifactKind: ArtifactHistorySurfaceKind,
+  expectedEntryId?: string,
+  prototypeId?: string,
+): Promise<ArtifactHistoryMutationResponse> {
+  return apiPostJson<ArtifactHistoryMutationResponse>(
+    `/api/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(artifactKind)}/undo`,
+    {
+      ...(expectedEntryId ? { expectedEntryId } : {}),
+      ...(prototypeId ? { prototypeId } : {}),
+    },
+  );
+}
+
+export async function apiRestoreArtifactBeforeChange(
+  projectId: string,
+  artifactKind: ArtifactHistorySurfaceKind,
+  entryId: string,
+): Promise<ArtifactHistoryMutationResponse> {
+  return apiPostJson<ArtifactHistoryMutationResponse>(
+    `/api/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(artifactKind)}/${encodeURIComponent(entryId)}/restore`,
+    {},
+  );
+}
+
+export interface PatchBusinessModelInput {
+  edit?: import('../packages/workspace-store/index.js').BusinessModelInlineEditTarget;
+  suite?: OntologySuite;
+  note?: string;
+  intentSummary?: import('../packages/workspace-store/index.js').BusinessModelIntentSummary;
+}
+
+export interface BusinessModelEditRejection {
+  code: 'SUITE_VALIDATION_REJECTED';
+  reasonZh: string;
+  reasonEn: string;
+  assistantPromptZh: string;
+  assistantPromptEn: string;
+  newErrorCount: number;
+}
+
+export type BusinessModelEditResult =
+  | {
+      ok: true;
+      project: ProjectDetail;
+      projects?: ProjectSummary[];
+      artifactHistory?: ArtifactHistoryEntryView[];
+    }
+  | {
+      ok: false;
+      rejection: BusinessModelEditRejection;
+    };
+
+export async function apiPatchBusinessModel(
+  projectId: string,
+  payload: PatchBusinessModelInput,
+): Promise<BusinessModelEditResult> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/business-model`, {
+    method: 'PATCH',
+    headers: buildJsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 422 || res.status === 409) {
+    const rejection = (await res.json()) as BusinessModelEditRejection;
+    return { ok: false, rejection };
+  }
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error || `Business model update failed (${res.status})`);
+  }
+  const data = (await res.json()) as {
+    project: ProjectDetail;
+    projects?: ProjectSummary[];
+    artifactHistory?: ArtifactHistoryEntryView[];
+  };
+  return {
+    ok: true,
+    project: data.project,
+    ...(data.projects ? { projects: data.projects } : {}),
+    ...(data.artifactHistory ? { artifactHistory: data.artifactHistory } : {}),
+  };
+}
+
 export async function apiCompileDevPackage(
   appId: string,
 ): Promise<{
   compiledPackage: CompiledDevelopmentPackage;
   application: AssembledApplication;
   assembledApplications: AssembledApplication[];
+  packageSnapshots?: DevelopmentPackageSnapshot[];
 }> {
-  return apiPostJson(`/api/applications/${appId}/compile-package`, {});
+  return apiPostJson(`/api/applications/${encodeURIComponent(appId)}/compile-package`, {});
+}
+
+export async function apiCompileProjectDevPackage(
+  projectId: string,
+): Promise<{
+  compiledPackage: CompiledDevelopmentPackage;
+  application: AssembledApplication;
+  assembledApplications: AssembledApplication[];
+  packageSnapshots?: DevelopmentPackageSnapshot[];
+}> {
+  return apiPostJson(`/api/projects/${encodeURIComponent(projectId)}/compile-package`, {});
 }
 
 export async function apiInspectMcp(projectId: string): Promise<{

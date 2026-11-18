@@ -286,7 +286,7 @@ describe('server API & Cloudflare Worker integration', () => {
 
     const docs = store.listRequirementDocs(coffeeProject.id);
     expect(docs.length).toBe(1);
-    expect(docs[0]!.status).toBe('CONFIRMED');
+    expect(docs[0]!.status).toBe('DRAFT');
     expect(docs[0]!.content).toContain('## 1.');
     expect(docs[0]!.content).toContain('## 9.');
     expect(docs[0]!.content).toContain('### 9.7');

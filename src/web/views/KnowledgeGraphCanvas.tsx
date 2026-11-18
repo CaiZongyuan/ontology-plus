@@ -51,18 +51,19 @@ import { Button } from '../components/beautifui/index.js';
 export type KnowledgeGraphPreset = 'GLOBAL_SWIMLANE' | 'WORKBENCH_EGO' | 'DATA_LINEAGE';
 export type KnowledgeGraphLayoutMode = 'STAGE_SWIMLANE' | 'EGO_FOCUS';
 
+// Each model's colour comes from the Workbench Theme (`--model-*` contract tokens).
 const MODEL_COLORS: Record<ModelCode, string> = {
-  M1: '#4c50c4',
-  M2: '#287452',
-  M3: '#a86416',
-  ME: '#8a3ab9',
-  M4: '#1d70b8',
-  M5: '#6e56cf',
-  M6: '#0f766e',
-  M7: '#b45309',
-  MU: '#be185d',
-  MM: '#4b5563',
-  MI: '#0369a1',
+  M1: 'var(--model-m1)',
+  M2: 'var(--model-m2)',
+  M3: 'var(--model-m3)',
+  ME: 'var(--model-me)',
+  M4: 'var(--model-m4)',
+  M5: 'var(--model-m5)',
+  M6: 'var(--model-m6)',
+  M7: 'var(--model-m7)',
+  MU: 'var(--model-mu)',
+  MM: 'var(--model-mm)',
+  MI: 'var(--model-mi)',
 };
 
 const MODEL_LABELS = new Map(MODEL_STAGE_ORDER.map((m) => [m.code, m]));
@@ -104,13 +105,13 @@ function SwimlaneGroupNode({ data }: NodeProps<Node<SwimlaneNodeData>>) {
       data-model={data.model}
       className={cn(
         'h-full w-full rounded-window border transition-colors',
-        data.collapsed ? 'bg-surface shadow-card' : 'bg-surface/65',
+        data.collapsed ? 'bg-card shadow-card' : 'bg-card/65',
       )}
       style={{
-        borderColor: `color-mix(in srgb, ${data.color} 34%, var(--line))`,
+        borderColor: `color-mix(in srgb, ${data.color} 34%, var(--border))`,
         background: data.collapsed
-          ? 'var(--surface)'
-          : `color-mix(in srgb, ${data.color} 5%, var(--surface))`,
+          ? 'var(--card)'
+          : `color-mix(in srgb, ${data.color} 5%, var(--card))`,
       }}
     >
       {data.collapsed && (
@@ -130,21 +131,21 @@ function SwimlaneGroupNode({ data }: NodeProps<Node<SwimlaneNodeData>>) {
       <div
         className="flex items-center justify-between gap-2 rounded-t-window border-b px-3 py-1.5"
         style={{
-          borderColor: `color-mix(in srgb, ${data.color} 22%, var(--line-2))`,
-          background: `color-mix(in srgb, ${data.color} 10%, var(--surface))`,
+          borderColor: `color-mix(in srgb, ${data.color} 22%, var(--border-subtle))`,
+          background: `color-mix(in srgb, ${data.color} 10%, var(--card))`,
         }}
       >
         <div className="flex min-w-0 items-center gap-1.5">
           <span
-            className="inline-block h-2.5 w-2.5 shrink-0 rounded-[3px]"
+            className="inline-block h-2.5 w-2.5 shrink-0 rounded-xs"
             style={{ background: data.color }}
           />
-          <span className="truncate text-[11.5px] font-semibold text-ink">
+          <span className="truncate text-[11.5px] font-semibold text-foreground">
             {data.title}
           </span>
         </div>
         <div className="flex items-center gap-1">
-          <span className="rounded-full bg-surface/90 px-1.5 py-0.2 font-mono text-[10.5px] text-ink-3 shadow-hairline">
+          <span className="rounded-full bg-card/90 px-1.5 py-0.2 font-mono text-[10.5px] text-faint-foreground shadow-hairline">
             {data.count}
           </span>
           <button
@@ -154,14 +155,14 @@ function SwimlaneGroupNode({ data }: NodeProps<Node<SwimlaneNodeData>>) {
               data.onToggleCollapse(data.model);
             }}
             title={data.collapsed ? '展开模型泳道' : '折叠模型泳道'}
-            className="nodrag nopan inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-ink-3 hover:bg-hover hover:text-ink"
+            className="nodrag nopan inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded text-faint-foreground hover:bg-accent hover:text-foreground"
           >
             {data.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
           </button>
         </div>
       </div>
       {data.collapsed && (
-        <div className="px-3 py-2 text-[11.5px] text-ink-3">
+        <div className="px-3 py-2 text-[11.5px] text-faint-foreground">
           已折叠 {data.count} 个实体节点（点击展开明细）
         </div>
       )}
@@ -175,11 +176,11 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
       data-testid="kg-node"
       data-node-id={data.node.id}
       className={cn(
-        'group relative flex h-[56px] w-[188px] flex-col justify-between overflow-hidden rounded-control border bg-surface px-2.5 py-1.5 transition-[opacity,box-shadow,border-color,transform] duration-150',
-        data.isSelected && 'ring-2 ring-accent border-accent shadow-raised',
-        !data.isSelected && data.isNeighbor && 'border-accent/65 shadow-card',
-        !data.isSelected && !data.isNeighbor && 'border-line shadow-xs hover:border-ink-3',
-        data.isSearchHit && 'ring-2 ring-orange',
+        'group relative flex h-[56px] w-[188px] flex-col justify-between overflow-hidden rounded-md border bg-card px-2.5 py-1.5 transition-[opacity,box-shadow,border-color,transform] duration-150',
+        data.isSelected && 'ring-2 ring-primary border-primary shadow-raised',
+        !data.isSelected && data.isNeighbor && 'border-primary/65 shadow-card',
+        !data.isSelected && !data.isNeighbor && 'border-border shadow-xs hover:border-faint-foreground',
+        data.isSearchHit && 'ring-2 ring-warning',
         data.isDimmed && 'opacity-30',
       )}
     >
@@ -213,13 +214,13 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
       />
 
       <div className="flex items-center justify-between gap-1.5 pl-1">
-        <span className="truncate font-mono text-[10.5px] font-semibold text-ink-2">
+        <span className="truncate font-mono text-[10.5px] font-semibold text-foreground-soft">
           {data.node.id}
         </span>
         <span
           className={cn(
             'shrink-0 rounded px-1 font-mono text-[10.5px]',
-            data.isFocal ? 'bg-accent text-accent-ink' : 'bg-inset text-ink-3',
+            data.isFocal ? 'bg-primary text-primary-foreground' : 'bg-muted text-faint-foreground',
           )}
         >
           d:{data.degree}
@@ -228,12 +229,12 @@ function OntologyEntityNode({ data }: NodeProps<Node<EntityNodeData>>) {
 
       <div className="flex items-center justify-between gap-1 pl-1">
         <span
-          className="truncate text-[12.5px] font-medium text-ink"
+          className="truncate text-[12.5px] font-medium text-foreground"
           title={data.node.label}
         >
           {data.node.label || data.node.id}
         </span>
-        <span className="shrink-0 font-mono text-[10.5px] text-ink-3">
+        <span className="shrink-0 font-mono text-[10.5px] text-faint-foreground">
           {data.node.model}
         </span>
       </div>
@@ -819,7 +820,7 @@ function KnowledgeGraphInner({
         if (spec.kind === 'swimlane') {
           const meta = MODEL_LABELS.get(spec.model);
           const title = meta ? t(meta.labelZh, meta.labelEn) : spec.model;
-          const color = MODEL_COLORS[spec.model] || '#4c50c4';
+          const color = MODEL_COLORS[spec.model] || MODEL_COLORS.M1;
 
           if (preservePositions && prev && prev.type === 'swimlaneGroup') {
             const prevData = prev.data as SwimlaneNodeData;
@@ -886,7 +887,7 @@ function KnowledgeGraphInner({
           (n.id.toLowerCase().includes(searchLower) ||
             n.label.toLowerCase().includes(searchLower));
         const degree = degreeOf(n);
-        const color = MODEL_COLORS[n.model] || '#4c50c4';
+        const color = MODEL_COLORS[n.model] || MODEL_COLORS.M1;
 
         if (preservePositions && prev && prev.type === 'ontologyEntity') {
           const prevData = prev.data as EntityNodeData;
@@ -975,19 +976,19 @@ function KnowledgeGraphInner({
           label: edge.relation,
           labelStyle: {
             fontSize: 10.5,
-            fontFamily: 'var(--mono)',
-            fill: isIncident ? 'var(--accent)' : 'var(--muted)',
+            fontFamily: 'var(--font-mono)',
+            fill: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
             fontWeight: 600,
           },
           labelBgStyle: {
-            fill: 'var(--surface)',
-            stroke: 'var(--line)',
+            fill: 'var(--card)',
+            stroke: 'var(--border)',
             fillOpacity: 0.92,
           },
           labelBgPadding: [5, 2],
           labelBgBorderRadius: 4,
           style: {
-            stroke: isIncident ? 'var(--accent)' : 'var(--muted)',
+            stroke: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
             strokeWidth: isIncident ? 2 : 1.25,
             opacity: isIncident ? 0.95 : 0.55,
           },
@@ -995,7 +996,7 @@ function KnowledgeGraphInner({
             type: MarkerType.ArrowClosed,
             width: 15,
             height: 15,
-            color: isIncident ? 'var(--accent)' : 'var(--muted)',
+            color: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
           },
         });
       }
@@ -1055,20 +1056,20 @@ function KnowledgeGraphInner({
         label: isIncident || filterRelation !== 'ALL' ? edge.relation : undefined,
         labelStyle: {
           fontSize: 10.5,
-          fontFamily: 'var(--mono)',
-          fill: 'var(--accent)',
+          fontFamily: 'var(--font-mono)',
+          fill: 'var(--primary)',
           fontWeight: 600,
         },
         labelBgStyle: {
-          fill: 'var(--surface)',
-          stroke: 'var(--accent)',
+          fill: 'var(--card)',
+          stroke: 'var(--primary)',
           fillOpacity: 0.94,
         },
         labelBgPadding: [4, 2],
         labelBgBorderRadius: 4,
         zIndex: isIncident ? 2 : 1,
         style: {
-          stroke: isIncident ? 'var(--accent)' : 'var(--muted)',
+          stroke: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
           strokeWidth: isIncident ? 2 : 1.15,
           opacity: isIncident ? 0.95 : hoveredNodeId ? 0.16 : 0.36,
         },
@@ -1076,7 +1077,7 @@ function KnowledgeGraphInner({
           type: MarkerType.ArrowClosed,
           width: 14,
           height: 14,
-          color: isIncident ? 'var(--accent)' : 'var(--muted)',
+          color: isIncident ? 'var(--primary)' : 'var(--muted-foreground)',
         },
       });
     }
@@ -1092,19 +1093,19 @@ function KnowledgeGraphInner({
         label: b.count > 1 ? `×${b.count}` : b.sampleRel,
         labelStyle: {
           fontSize: 10.5,
-          fontFamily: 'var(--mono)',
-          fill: 'var(--muted)',
+          fontFamily: 'var(--font-mono)',
+          fill: 'var(--muted-foreground)',
           fontWeight: 600,
         },
         labelBgStyle: {
-          fill: 'var(--surface-2)',
-          stroke: 'var(--line)',
+          fill: 'var(--muted)',
+          stroke: 'var(--border)',
           fillOpacity: 0.9,
         },
         labelBgPadding: [4, 1.5],
         labelBgBorderRadius: 999,
         style: {
-          stroke: 'var(--muted)',
+          stroke: 'var(--muted-foreground)',
           strokeDasharray: b.count > 1 ? '4 3' : undefined,
           strokeWidth: Math.min(2.4, 1 + b.count * 0.2),
           opacity: hoveredNodeId ? 0.15 : 0.35,
@@ -1113,7 +1114,7 @@ function KnowledgeGraphInner({
           type: MarkerType.ArrowClosed,
           width: 13,
           height: 13,
-          color: 'var(--muted)',
+          color: 'var(--muted-foreground)',
         },
       });
     }
@@ -1198,16 +1199,16 @@ function KnowledgeGraphInner({
       <div className="kg-toolbar">
         <div className="kg-chips">
           {/* Layout Mode Switcher */}
-          <div className="mr-1 inline-flex items-center rounded-[7px] border border-line bg-surface p-0.5 shadow-2xs">
+          <div className="mr-1 inline-flex items-center rounded-md border border-border bg-card p-0.5 shadow-xs">
             <button
               type="button"
               data-testid="kg-mode-swimlane-btn"
               onClick={() => setLayoutMode('STAGE_SWIMLANE')}
               className={cn(
-                'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                'inline-flex h-6 items-center gap-1 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 layoutMode === 'STAGE_SWIMLANE'
-                  ? 'bg-surface text-ink shadow-hairline'
-                  : 'text-ink-3 hover:text-ink',
+                  ? 'bg-card text-foreground shadow-hairline'
+                  : 'text-faint-foreground hover:text-foreground',
               )}
             >
               <Layers size={11.5} />
@@ -1218,10 +1219,10 @@ function KnowledgeGraphInner({
               data-testid="kg-mode-ego-btn"
               onClick={() => setLayoutMode('EGO_FOCUS')}
               className={cn(
-                'inline-flex h-6 items-center gap-1 rounded-[5px] px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
+                'inline-flex h-6 items-center gap-1 rounded-sm px-2.5 text-[11.5px] font-medium cursor-pointer transition-colors',
                 layoutMode === 'EGO_FOCUS'
-                  ? 'bg-surface text-ink shadow-hairline'
-                  : 'text-ink-3 hover:text-ink',
+                  ? 'bg-card text-foreground shadow-hairline'
+                  : 'text-faint-foreground hover:text-foreground',
               )}
             >
               <LocateFixed size={11.5} />
@@ -1451,7 +1452,7 @@ function KnowledgeGraphInner({
               variant={BackgroundVariant.Dots}
               gap={18}
               size={1.15}
-              color="var(--line)"
+              color="var(--border)"
             />
             <MiniMap
               pannable
@@ -1459,18 +1460,18 @@ function KnowledgeGraphInner({
               nodeColor={(n) => {
                 if (n.type === 'swimlaneGroup') {
                   const m = (n.data as SwimlaneNodeData)?.model;
-                  return (m && MODEL_COLORS[m]) || '#6e56cf';
+                  return (m && MODEL_COLORS[m]) || MODEL_COLORS.M5;
                 }
                 const entity = (n.data as EntityNodeData)?.node;
-                return (entity && MODEL_COLORS[entity.model]) || '#4c50c4';
+                return (entity && MODEL_COLORS[entity.model]) || MODEL_COLORS.M1;
               }}
-              maskColor="color-mix(in srgb, var(--ground) 70%, transparent)"
+              maskColor="color-mix(in srgb, var(--background) 70%, transparent)"
               style={{
                 width: 148,
                 height: 96,
-                borderRadius: 8,
-                border: '1px solid var(--line)',
-                background: 'var(--surface-2)',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border)',
+                background: 'var(--muted)',
               }}
             />
           </ReactFlow>
@@ -1563,7 +1564,7 @@ function KnowledgeGraphInner({
                 )}
               </div>
 
-              <div className="border-t border-line pt-2">
+              <div className="border-t border-border pt-2">
                 <div className="text-[11.5px] font-semibold mb-1.5">
                   {t('跨模型关联边 (点击多跳追踪)', 'Cross-Model Edges')} (
                   {relatedEdges.length})
@@ -1582,11 +1583,11 @@ function KnowledgeGraphInner({
 
                       return (
                         <div
-                          key={edge.id} className="p-[6px_8px] rounded-[5px] bg-inset border border-[var(--line-2)] text-[11.5px] flex flex-col gap-1"
+                          key={edge.id} className="p-[6px_8px] rounded-sm bg-muted border border-border-subtle text-[11.5px] flex flex-col gap-1"
                         >
                           <div className="flex justify-between items-center gap-1"
                           >
-                            <span className="text-accent font-mono text-[10.5px] font-semibold"
+                            <span className="text-primary font-mono text-[10.5px] font-semibold"
                             >
                               {isOutgoing ? '→' : '←'} {edge.relation}
                             </span>
@@ -1607,10 +1608,10 @@ function KnowledgeGraphInner({
                                 <span
                                   style={{
                                     padding: '0 4px',
-                                    borderRadius: 3,
+                                    borderRadius: 'var(--radius-xs)',
                                     background:
-                                      MODEL_COLORS[neighborNode.model] || 'var(--accent)',
-                                    color: '#fff',
+                                      MODEL_COLORS[neighborNode.model] || 'var(--primary)',
+                                    color: 'var(--model-foreground)',
                                     fontSize: 10.5,
                                     flexShrink: 0,
                                   }}

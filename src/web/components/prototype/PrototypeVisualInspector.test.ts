@@ -43,6 +43,7 @@ describe('PrototypeVisualInspector helpers', () => {
       targetOrigin: 'http://localhost:5173',
       initialActive: true,
       locale: 'zh-CN',
+      selectionColor: '#2466de',
     });
 
     expect(injected).toContain('data-onto-visual-inspector="1"');
@@ -58,6 +59,18 @@ describe('PrototypeVisualInspector helpers', () => {
     const stripped = stripVisualInspectorFromHtml(injected);
     expect(stripped).not.toContain('data-onto-visual-inspector');
     expect(stripped.trim()).toBe(SAMPLE_PROTOTYPE_HTML.trim());
+  });
+
+  it('draws selection, hover, and pins in the selection colour it is given, so the workbench theme can set it', () => {
+    const injected = injectVisualInspectorIntoHtml(SAMPLE_PROTOTYPE_HTML, {
+      token: 'tok',
+      targetOrigin: 'http://localhost:5173',
+      initialActive: true,
+      locale: 'en-US',
+      selectionColor: '#2466de',
+    });
+    expect(injected).toContain('"selectionColor":"#2466de"');
+    expect(injected).not.toMatch(/#4c50c4|76, 80, 196/i);
   });
 
   it('validates sandboxed postMessage events by source window, token, and opaque Origin pinning', () => {
@@ -198,6 +211,7 @@ describe('PrototypeVisualInspector helpers', () => {
       targetOrigin: 'http://localhost:5173',
       initialActive: true,
       locale: 'zh-CN',
+      selectionColor: '#2466de',
     });
     expect(injected).toContain('data-onto-visual-inspector="1"');
 
@@ -280,6 +294,7 @@ describe('PrototypeVisualInspector helpers', () => {
       targetOrigin: 'http://localhost:5173',
       initialActive: true,
       locale: 'zh-CN',
+      selectionColor: '#2466de',
     });
 
     // Sandboxed iframe script includes SVG foreignObject + direct 2D canvas crop capture & live/flash overlays

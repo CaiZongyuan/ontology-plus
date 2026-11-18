@@ -4,8 +4,9 @@ test.describe('Knowledge Graph hover stability', () => {
   test('hovering entity blocks in Swimlane and Ego modes does not hide nodes or oscillate mouseleave', async ({
     page,
   }) => {
-    await page.goto('/');
-    await page.getByTestId('nav-app-knowledge-graph').click();
+    await page.goto('/?step=business-model');
+    await page.getByTestId('open-technical-details-btn').click();
+    await page.getByTestId('tech-tab-graph').click();
 
     // Ensure a project with ontology graph nodes is active
     const hasKg = await page
@@ -30,7 +31,8 @@ test.describe('Knowledge Graph hover stability', () => {
       });
       expect(switched).toBe(true);
       await page.reload();
-      await page.getByTestId('nav-app-knowledge-graph').click();
+      await page.getByTestId('step-tab-BUSINESS_MODEL').click();
+      await page.getByTestId('tech-tab-graph').click();
     }
 
     await expect(page.getByTestId('kg-root')).toBeVisible();

@@ -22,11 +22,14 @@ import type {
   RequirementDoc,
   VisualReferenceItem,
 } from '../../../packages/workspace-store/index.js';
+import { sanitizeBusinessText } from '../../../packages/business-vocabulary/index.js';
 import type { TransientTurnImageInput } from '../../../packages/agent-runtime/index.js';
 import { usePreferences } from '../../i18n.js';
+import type { StepViewMode } from '../../navigation/index.js';
 import { loadLocalImage, resolveTurnImagesForRequest } from '../../lib/localImageStore.js';
 import { LocalImageThumbnail, VisionCapabilityBanner } from '../agent/VisionAttachmentControls.js';
 import { Button } from '../beautifui/index.js';
+import { formatPrototypeLabelForBusinessView } from './PrototypeRevisionHistory.js';
 import {
   DEFAULT_ALIGNMENT_STATE,
   MOTION_SCHEMATICS_BY_ID,
@@ -82,6 +85,9 @@ function isLightHexColor(hex: string): boolean {
   return (r * 299 + g * 587 + b * 114) / 1000 >= 140;
 }
 
+// The style tile previews the app being designed: its surfaces, ink, accent, and status
+// colours are the prototype's, not workbench appearance, and stay literal whatever
+// Workbench Theme is active.
 function pickReadableInkForAccent(hex: string): string {
   const clean = hex.replace('#', '').trim();
   if (clean.length !== 6) return '#ffffff';
@@ -273,7 +279,7 @@ export function synthesizeDesignBriefItems({
     items.push({
       id: 'brief-scope',
       category: 'screen_scope',
-      statement: `Business Screen Scope (${doc ? doc.title : project.name}): Cover core workflows for "${nouns.primaryEntity.en}" and "${nouns.secondaryEntity.en}" with full MU semantic anchors (SCR / EL / data-binding / UIE) and zero blocking browser dialogs.`,
+      statement: `Business Screen Scope (${doc ? doc.title : project.name}): Cover core workflows for "${nouns.primaryEntity.en}" and "${nouns.secondaryEntity.en}" with complete interactive states and zero blocking browser dialogs.`,
     });
 
     return items;
@@ -313,7 +319,7 @@ export function synthesizeDesignBriefItems({
   items.push({
     id: 'brief-scope',
     category: 'screen_scope',
-    statement: `业务画面覆盖范围（${doc ? `《${doc.title}》` : project.name}）：围绕「${nouns.primaryEntity.zh}」与「${nouns.secondaryEntity.zh}」构建可交互列表、录入/详情与审批流转画面，内置完整 MU 语义锚点且零阻塞弹窗。`,
+    statement: `业务画面覆盖范围（${doc ? `《${doc.title}》` : project.name}）：围绕「${nouns.primaryEntity.zh}」与「${nouns.secondaryEntity.zh}」构建可交互列表、录入/详情与审批流转画面，覆盖完整交互状态且零阻塞弹窗。`,
   });
 
   return items;
@@ -1020,6 +1026,7 @@ export interface DesignBriefCardProps {
   visionSupported?: boolean;
   visionProviderLabel?: string;
   onOpenLlmCenter?: () => void;
+  viewMode?: StepViewMode;
 }
 
 export function DesignBriefCard({
@@ -1043,14 +1050,21 @@ export function DesignBriefCard({
   visionSupported = true,
   visionProviderLabel,
   onOpenLlmCenter,
+  viewMode = 'technical',
 }: DesignBriefCardProps) {
-  const { t } = usePreferences();
+  const { locale, t } = usePreferences();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState('');
   const [newItemDraft, setNewItemDraft] = useState('');
   const [rewriteDraft, setRewriteDraft] = useState('');
 
   const isRestyleMode = Boolean(activePrototype);
+  const isBusinessView = viewMode === 'business';
+  const displayProtoName = activePrototype
+    ? isBusinessView
+      ? formatPrototypeLabelForBusinessView(activePrototype.name, t('当前原型', 'Current prototype'))
+      : activePrototype.name
+    : '';
 
   const categoryBadgeLabel = (category: string): string => {
     switch (category) {
@@ -1071,7 +1085,7 @@ export function DesignBriefCard({
       case 'screen_scope':
         return t('画面范围', 'Screen Scope');
       case 'agent_rewrite':
-        return t('一句话重塑', 'Agent Rewrite');
+        return t('一句话重塑', 'One-sentence rewrite');
       default:
         return t('补充要求', 'Custom');
     }
@@ -1083,25 +1097,25 @@ export function DesignBriefCard({
       aria-label={t('设计简报', 'Design Brief')}
       className="card flex flex-col gap-3.5"
     >
-      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line pb-3">
+      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border pb-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="m-0 font-serif text-[16px] font-semibold text-ink">
+            <h3 className="m-0 font-title text-[16px] font-semibold text-foreground">
               {t('设计简报', 'Design Brief')}
             </h3>
-            <span className="badge badge-accent font-mono text-[10.5px] tabular-nums">
+            <span className="badge badge-accent font-mono text-[12px] tabular-nums">
               {brief.items.length} {t('条共识', 'items')}
             </span>
           </div>
-          <p className="m-0 mt-0.5 text-[12px] text-ink-3">
+          <p className="m-0 mt-0.5 text-[12px] text-faint-foreground">
             {isRestyleMode
               ? t(
-                  `正在编辑「${activePrototype?.name ?? ''}」的设计简报，确认后将按新简报重做整页风格并生成新修订版本。`,
-                  `Editing Design Brief for "${activePrototype?.name ?? ''}"; confirming restyles the prototype as a new revision.`,
+                  `正在编辑「${displayProtoName}」的设计简报，确认后将按新简报重做整页风格并生成新修订版本。`,
+                  `Editing Design Brief for "${displayProtoName}"; confirming restyles the prototype as a new revision.`,
                 )
               : t(
-                  '把参考图、直白感受与动效选择翻译成可读可改的设计共识，确认后交给原型共创智能体生成首版原型。',
-                  'Plain-language design contract synthesized from your references, feel notes, and schematics.',
+                  '把参考图、直白感受与动效选择翻译成可读可改的设计共识，确认后交给 AI 助手生成首版原型。',
+                  'Plain-language design consensus synthesized from your references, feel notes, and interactions.',
                 )}
           </p>
         </div>
@@ -1136,7 +1150,7 @@ export function DesignBriefCard({
             {decidingForMe ? (
               <Loader2 size={12.5} className="animate-spin" />
             ) : (
-              <Wand2 size={12.5} className="text-accent" />
+              <Wand2 size={12.5} className="text-primary" />
             )}
             {t('帮我定', 'Decide for me')}
           </Button>
@@ -1151,7 +1165,7 @@ export function DesignBriefCard({
 
       {brief.userImageRefs && brief.userImageRefs.length > 0 && (
         <div
-          className="flex flex-wrap items-center gap-2 rounded-control border border-line bg-inset/40 p-2"
+          className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 p-2"
           data-testid="design-brief-image-refs"
         >
           {brief.userImageRefs.map((imgRef) => (
@@ -1167,8 +1181,8 @@ export function DesignBriefCard({
 
       {docs.length > 0 && onSelectDocId && (
         <div className="flex flex-col gap-1">
-          <label className="text-[11.5px] font-medium text-ink-2">
-            {t('关联需求规格说明书：', 'Linked SRS Specification:')}
+          <label className="text-[12px] font-medium text-foreground-soft">
+            {t('依据的需求文档：', 'Based on requirements:')}
           </label>
           <select
             className="input text-[12.5px]"
@@ -1176,18 +1190,23 @@ export function DesignBriefCard({
             value={selectedDocId}
             onChange={(e) => onSelectDocId(e.target.value)}
           >
-            {docs.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.title} ({d.version})
-              </option>
-            ))}
+            {docs.map((d) => {
+              const displayTitle = isBusinessView
+                ? formatPrototypeLabelForBusinessView(d.title, t('需求文档', 'Requirements'))
+                : d.title;
+              return (
+                <option key={d.id} value={d.id}>
+                  {displayTitle} ({d.version})
+                </option>
+              );
+            })}
           </select>
         </div>
       )}
 
       {/* One-sentence Agent rewrite input */}
       <form
-        className="flex gap-1.5 rounded-control border border-line bg-inset/55 p-2"
+        className="flex gap-1.5 rounded-md border border-border bg-muted/55 p-2"
         onSubmit={(e) => {
           e.preventDefault();
           if (!rewriteDraft.trim()) return;
@@ -1199,7 +1218,7 @@ export function DesignBriefCard({
         <input
           type="text"
           data-testid="brief-one-sentence-input"
-          className="input h-8 flex-1 bg-surface text-[12.5px]"
+          className="input h-8 flex-1 bg-card text-[12.5px]"
           placeholder={t(
             '用一句话改写整份简报，如：改成深色高密度交易风…',
             'Rewrite brief in one sentence, e.g., Switch to dark high-density trading style…',
@@ -1217,7 +1236,7 @@ export function DesignBriefCard({
           {assistingBrief ? (
             <Loader2 size={12} className="animate-spin" />
           ) : (
-            <Sparkles size={12} className="text-accent" />
+            <Sparkles size={12} className="text-primary" />
           )}
           {t('一句话改写', 'Rewrite')}
         </Button>
@@ -1231,13 +1250,13 @@ export function DesignBriefCard({
             <li
               key={item.id}
               data-testid={`design-brief-item-${item.id}`}
-              className="rounded-control border border-line bg-inset/35 px-3 py-2 text-[12.5px] leading-relaxed text-ink"
+              className="rounded-md border border-border bg-muted/35 px-3 py-2 text-[12.5px] leading-relaxed text-foreground"
             >
               {isEditing ? (
                 <div className="flex flex-col gap-2">
                   <textarea
                     rows={2}
-                    className="input w-full bg-surface text-[12.5px]"
+                    className="input w-full bg-card text-[12.5px]"
                     value={editingDraft}
                     onChange={(e) => setEditingDraft(e.target.value)}
                   />
@@ -1274,10 +1293,12 @@ export function DesignBriefCard({
               ) : (
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <span className="mr-1.5 inline-block rounded bg-surface px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-ink-2">
+                    <span className="mr-1.5 inline-block rounded bg-card px-1.5 py-0.5 font-mono text-[12px] font-semibold text-foreground-soft">
                       {categoryBadgeLabel(item.category)}
                     </span>
-                    <span>{item.statement}</span>
+                    <span>
+                      {isBusinessView ? sanitizeBusinessText(item.statement, locale) : item.statement}
+                    </span>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <button
@@ -1287,7 +1308,7 @@ export function DesignBriefCard({
                         setEditingId(item.id);
                         setEditingDraft(item.statement);
                       }}
-                      className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-ink-3 hover:bg-surface hover:text-ink"
+                      className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-faint-foreground hover:bg-card hover:text-foreground"
                     >
                       <Edit3 size={12} />
                     </button>
@@ -1295,7 +1316,7 @@ export function DesignBriefCard({
                       type="button"
                       aria-label={t('删除简报条目', 'Remove brief item')}
                       onClick={() => onRemoveItem(item.id)}
-                      className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-ink-3 hover:bg-surface hover:text-red"
+                      className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded text-faint-foreground hover:bg-card hover:text-destructive"
                     >
                       <Trash2 size={12} />
                     </button>
@@ -1341,7 +1362,7 @@ export function DesignBriefCard({
       </form>
 
       {/* Primary Action Footer */}
-      <div className="flex flex-col gap-2 border-t border-line pt-3">
+      <div className="flex flex-col gap-2 border-t border-border pt-3">
         {isRestyleMode && onConfirmRestyle ? (
           <>
             <Button
@@ -1437,14 +1458,14 @@ export function StyleTileCard({
       aria-label={t('实时风格样张', 'Live Style Tile')}
       className="card flex flex-col gap-3.5"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2.5">
         <div className="flex items-center gap-2">
-          <Palette size={15} className="text-accent" />
-          <h3 className="m-0 font-serif text-[15.5px] font-semibold text-ink">
+          <Palette size={15} className="text-primary" />
+          <h3 className="m-0 font-title text-[15.5px] font-semibold text-foreground">
             {t('实时风格样张', 'Live Style Tile')}
           </h3>
         </div>
-        <span className="badge font-mono text-[10.5px]">
+        <span className="badge font-mono text-[12px]">
           {tokens.mode === 'dark' ? t('深色样张', 'Dark Mode') : t('浅色样张', 'Light Mode')} ·{' '}
           {tokens.fontDisplayLabel} · {tokens.radiusPx}px
         </span>
@@ -1455,15 +1476,15 @@ export function StyleTileCard({
         {swatches.map((sw) => (
           <div
             key={sw.key}
-            className="flex items-center gap-2 rounded-control border border-line bg-inset/40 px-2 py-1.5"
+            className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5"
           >
             <span
               className="h-5 w-5 shrink-0 rounded border border-black/15"
               style={{ background: sw.hex }}
             />
             <div className="min-w-0 leading-tight">
-              <div className="truncate text-[10.5px] font-medium text-ink-2">{sw.label}</div>
-              <div className="truncate font-mono text-[10px] text-ink-3 uppercase">{sw.hex}</div>
+              <div className="truncate text-[12px] font-medium text-foreground-soft">{sw.label}</div>
+              <div className="truncate font-mono text-[12px] text-faint-foreground uppercase">{sw.hex}</div>
             </div>
           </div>
         ))}
@@ -1471,7 +1492,7 @@ export function StyleTileCard({
 
       {/* 2. Live Preview Surface: Typography + Buttons + Card + Table + Status Badges */}
       <div
-        className="flex flex-col gap-3 border p-3.5 transition-colors"
+        className="flex flex-col gap-3 border p-3.5"
         style={{
           background: tokens.surfaceHex,
           color: tokens.inkHex,
