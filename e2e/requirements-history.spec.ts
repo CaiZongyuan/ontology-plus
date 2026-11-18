@@ -51,8 +51,19 @@ test.describe('Requirements Change Summary, Reload-Persistent Undo & Append-Only
 
     const changeSummary = agentPanel.getByTestId('run-change-summary');
     await expect(changeSummary).toHaveCount(1);
-    await expect(changeSummary.getByTestId('change-summary-reason')).toBeVisible();
+    await expect(changeSummary).toHaveAttribute('data-variant', 'strip');
+    await expect(changeSummary.getByTestId('change-summary-headline')).toContainText(
+      /需求文档改了\s*\d+\s*处/,
+    );
+    await expect(changeSummary.getByTestId('change-summary-toggle-btn')).toHaveText('查看');
     await expect(changeSummary.getByTestId('change-summary-undo-btn')).toBeVisible();
+    // Variant B strip starts collapsed: items and reason only mount after clicking "查看"
+    await expect(changeSummary.getByTestId('change-summary-item')).toHaveCount(0);
+    await expect(changeSummary.getByTestId('change-summary-reason')).toHaveCount(0);
+
+    await changeSummary.getByTestId('change-summary-toggle-btn').click();
+    await expect(changeSummary.getByTestId('change-summary-toggle-btn')).toHaveText('收起');
+    await expect(changeSummary.getByTestId('change-summary-reason')).toBeVisible();
     const sectionItems = changeSummary.getByTestId('change-summary-item');
     expect(await sectionItems.count()).toBeGreaterThanOrEqual(5);
 
@@ -83,9 +94,10 @@ test.describe('Requirements Change Summary, Reload-Persistent Undo & Append-Only
     await expect(page.getByTestId('requirements-document-sections')).toContainText(
       '断链应急封存规程',
     );
-    // Earlier AI run card keeps its Change Summary, and no longer shows 1-click Undo
+    // Earlier AI run strip keeps its Change Summary, swaps 1-click Undo for History
     await expect(agentPanel.getByTestId('run-change-summary')).toHaveCount(1);
     await expect(agentPanel.getByTestId('change-summary-undo-btn')).toHaveCount(0);
+    await expect(agentPanel.getByTestId('change-summary-open-history-btn')).toBeVisible();
 
     // 4. Reload browser -> history & Undo survive reload!
     await page.reload();

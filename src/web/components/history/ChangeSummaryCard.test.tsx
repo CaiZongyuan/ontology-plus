@@ -16,7 +16,12 @@ import { RequirementsStepView } from '../../views/ApplicationCenterViews.js';
 import { BusinessModelStepView } from '../../views/BusinessModelStepView.js';
 import { OntologyWorkbenchView } from '../../views/OntologyWorkbenchView.js';
 import { ShellAgentPanel, agentPanelSurfaceFor } from '../agent/ShellAgentPanel.js';
-import { ArtifactHistoryDrawer, ChangeSummaryCard } from './index.js';
+import {
+  ArtifactHistoryDrawer,
+  ChangeSummaryCard,
+  ChangeSummaryDisplayVariantContext,
+  clearChangeSummaryExpansionForTests,
+} from './index.js';
 
 function stubBrowserStorage(entries: Record<string, string> = {}) {
   const map = new Map<string, string>(Object.entries(entries));
@@ -44,6 +49,7 @@ describe('ChangeSummaryCard & ArtifactHistoryDrawer UI (#65)', () => {
   const initialSnapshot = { ...useWorkbenchStore.getInitialState() };
 
   afterEach(() => {
+    clearChangeSummaryExpansionForTests();
     vi.unstubAllGlobals();
     useWorkbenchStore.setState({
       data: initialSnapshot.data,
@@ -130,6 +136,146 @@ describe('ChangeSummaryCard & ArtifactHistoryDrawer UI (#65)', () => {
       </PreferencesProvider>,
     );
     expect(emptyHtml).toBe('');
+  });
+
+  it('renders Variant B single-line strip via ChangeSummaryDisplayVariantContext or variant="strip" with artifact count headline, View/Hide toggle, canUndo gating, and 0 Business View violations (#80)', () => {
+    const reqSummary: ChangeSummaryView = {
+      entryId: 'ahist-strip-1',
+      artifactKind: 'REQUIREMENTS_DOC',
+      targetId: 'rdoc-1',
+      reason: {
+        zh: '按你给的金额分档写入审批规则。',
+        en: 'Added approval thresholds from your breakdown.',
+      },
+      canUndo: true,
+      items: [
+        {
+          id: 'c-1',
+          changeType: 'ADDED',
+          label: {
+            zh: '审批规则：5 万以下由部门经理审批',
+            en: 'Approval rule: under 50k approved by department manager',
+          },
+          jumpTarget: {
+            kind: 'REQUIREMENTS_SECTION',
+            docId: 'rdoc-1',
+            sectionHeading: '2. 审批流程',
+          },
+        },
+        {
+          id: 'c-2',
+          changeType: 'ADDED',
+          label: {
+            zh: '审批规则：5 万到 50 万增加财务审批',
+            en: 'Approval rule: 50k-500k adds finance review',
+          },
+        },
+        {
+          id: 'c-3',
+          changeType: 'MODIFIED',
+          label: {
+            zh: '审批流程：50 万以上改为总经理审批',
+            en: 'Approval flow: above 500k updated to general manager',
+          },
+        },
+      ],
+    };
+
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      stubBrowserStorage({ onto_locale: locale });
+
+      // 1. Collapsed single-line strip via context
+      const collapsedStripHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <ChangeSummaryDisplayVariantContext.Provider value="strip">
+            <ChangeSummaryCard
+              summary={reqSummary}
+              onUndo={() => {}}
+              onJumpToTarget={() => {}}
+              onOpenHistory={() => {}}
+            />
+          </ChangeSummaryDisplayVariantContext.Provider>
+        </PreferencesProvider>,
+      );
+
+      const collapsedViolations = checkBusinessViewMarkup(collapsedStripHtml);
+      expect(collapsedViolations, formatBusinessViewViolations(collapsedViolations)).toEqual([]);
+      expect(collapsedStripHtml).toContain('data-testid="run-change-summary"');
+      expect(collapsedStripHtml).toContain('data-variant="strip"');
+      expect(collapsedStripHtml).toContain(
+        locale === 'en-US' ? 'Requirements document · 3 changes' : '需求文档改了 3 处',
+      );
+      expect(collapsedStripHtml).toContain('data-testid="change-summary-toggle-btn"');
+      expect(collapsedStripHtml).toContain(locale === 'en-US' ? 'View' : '查看');
+      expect(collapsedStripHtml).toContain('data-testid="change-summary-undo-btn"');
+      expect(collapsedStripHtml).not.toContain('data-testid="change-summary-open-history-btn"');
+      // Items and reason stay collapsed until "查看 / View" is clicked
+      expect(collapsedStripHtml).not.toContain('data-testid="change-summary-item"');
+      expect(collapsedStripHtml).not.toContain('data-testid="change-summary-reason"');
+
+      // 2. Expanded strip (`defaultExpanded`) reveals reason + change items and switches toggle to "收起 / Hide"
+      const expandedStripHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <ChangeSummaryCard
+            variant="strip"
+            defaultExpanded
+            summary={reqSummary}
+            onUndo={() => {}}
+            onJumpToTarget={() => {}}
+          />
+        </PreferencesProvider>,
+      );
+
+      const expandedViolations = checkBusinessViewMarkup(expandedStripHtml);
+      expect(expandedViolations, formatBusinessViewViolations(expandedViolations)).toEqual([]);
+      expect(expandedStripHtml).toContain(locale === 'en-US' ? 'Hide' : '收起');
+      expect(expandedStripHtml).toContain('data-testid="change-summary-reason"');
+      expect(expandedStripHtml.match(/data-testid="change-summary-item"/g)).toHaveLength(3);
+
+      // 3. PROTOTYPE & ONTOLOGY_SUITE headlines + canUndo=false -> History link + Undone badge
+      const protoOlderHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <ChangeSummaryCard
+            variant="strip"
+            summary={{
+              ...reqSummary,
+              entryId: 'ahist-strip-proto',
+              artifactKind: 'PROTOTYPE',
+              canUndo: false,
+              isUndone: true,
+              items: [reqSummary.items[0]!],
+            }}
+            onUndo={() => {}}
+            onOpenHistory={() => {}}
+          />
+        </PreferencesProvider>,
+      );
+      expect(protoOlderHtml).toContain(
+        locale === 'en-US' ? 'Prototype · 1 change' : '界面原型改了 1 处',
+      );
+      expect(protoOlderHtml).toContain('data-testid="change-summary-undone-badge"');
+      expect(protoOlderHtml).toContain('data-testid="change-summary-open-history-btn"');
+      expect(protoOlderHtml).not.toContain('data-testid="change-summary-undo-btn"');
+
+      const ontStripHtml = renderToStaticMarkup(
+        <PreferencesProvider>
+          <ChangeSummaryCard
+            variant="strip"
+            summary={{
+              ...reqSummary,
+              entryId: 'ahist-strip-ont',
+              artifactKind: 'ONTOLOGY_SUITE',
+              items: reqSummary.items.slice(0, 2),
+            }}
+            onUndo={() => {}}
+          />
+        </PreferencesProvider>,
+      );
+      expect(ontStripHtml).toContain(
+        locale === 'en-US' ? 'Business Model · 2 changes' : '业务模型改了 2 处',
+      );
+      expect(checkBusinessViewMarkup(ontStripHtml)).toEqual([]);
+    }
   });
 
   it('wires ShellAgentPanel + RequirementsStepView + ArtifactHistoryDrawer end-to-end: zero-diff runs omit Change Summary, mutating runs show Change Summary + Undo until superseded by manual edit, and History Drawer offers Undo on top & Restore on earlier entries with 0 Business View violations', async () => {

@@ -57,9 +57,17 @@ export interface LocalizedText {
 export interface AgentRunStep {
   id: string;
   label: LocalizedText;
+  /** Optional one-sentence business-safe summary shown beside `label` in the Work Process list. */
+  summary?: LocalizedText;
   status: AgentRunStepStatus;
   /** Expandable detail: tool arguments, tool output, or a tail of streamed text. */
   detail?: string;
+  /** Structured JSON arguments string preserved for Level-2 developer inspection (#80). */
+  argsText?: string;
+  /** Structured tool output string preserved for Level-2 developer inspection (#80). */
+  resultText?: string;
+  /** Wall-clock execution duration in milliseconds when recorded on the tool trace. */
+  durationMs?: number;
   /** ISO timestamp of when the step started. */
   at?: string;
   /** Semantic screen/element anchor targeted by a prototype tool call. */
@@ -116,6 +124,8 @@ export interface AgentRunView {
   visionFallback?: AgentRunVisionFallback;
   steps: AgentRunStep[];
   thinking?: string;
+  /** Recorded thinking duration in milliseconds when provided by the session message. */
+  thinkingDurationMs?: number;
   /**
    * What the user actually sent, shown as their side of the conversation.
    * Absent for structured action prompts, where `title` already says it all.
@@ -699,14 +709,74 @@ export function formatRunFailurePresentation(
   };
 }
 
+function formatToolArgsText(args: Record<string, unknown> | undefined): string | undefined {
+  if (!args || Object.keys(args).length === 0) return undefined;
+  try {
+    return JSON.stringify(args, null, 2);
+  } catch {
+    return undefined;
+  }
+}
+
+function summarizeToolStepBusinessOutcome(trace: AgentToolCallTrace): LocalizedText | undefined {
+  if (trace.isError) {
+    return { zh: '执行遇到问题', en: 'Step encountered an issue' };
+  }
+  const args = trace.arguments ?? {};
+  if (trace.toolName === 'record_requirement_insights') {
+    const aggCount = Array.isArray(args.aggregates) ? args.aggregates.length : 0;
+    const ruleCount = Array.isArray(args.rules) ? args.rules.length : 0;
+    const zhParts: string[] = [];
+    const enParts: string[] = [];
+    if (aggCount > 0) {
+      zhParts.push(`${aggCount} 个${BUSINESS_VOCABULARY.M1.zh}`);
+      enParts.push(`${aggCount} ${aggCount === 1 ? BUSINESS_VOCABULARY.M1.singularEn.toLowerCase() : BUSINESS_VOCABULARY.M1.en.toLowerCase()}`);
+    }
+    if (ruleCount > 0) {
+      zhParts.push(`${ruleCount} 条${BUSINESS_VOCABULARY.M3.zh}`);
+      enParts.push(`${ruleCount} ${ruleCount === 1 ? BUSINESS_VOCABULARY.M3.singularEn.toLowerCase() : BUSINESS_VOCABULARY.M3.en.toLowerCase()}`);
+    }
+    if (zhParts.length > 0) {
+      const candidate = {
+        zh: `整理 ${zhParts.join('、')}`,
+        en: `Captured ${enParts.join(', ')}`,
+      };
+      if (
+        checkBusinessViewMarkup(candidate.zh, { plainText: true }).length === 0 &&
+        checkBusinessViewMarkup(candidate.en, { plainText: true }).length === 0
+      ) {
+        return candidate;
+      }
+    }
+  }
+  if (
+    trace.toolName === 'save_synthesized_srs_doc' ||
+    trace.toolName === 'save_requirement_doc'
+  ) {
+    const content = typeof args.content === 'string' ? args.content : '';
+    const sectionCount = (content.match(/^##\s+/gm) ?? []).length;
+    if (sectionCount > 0) {
+      return {
+        zh: `共 ${sectionCount} 个章节`,
+        en: `${sectionCount} ${sectionCount === 1 ? 'section' : 'sections'}`,
+      };
+    }
+  }
+  if (trace.toolName === 'upsert_aggregate' && Array.isArray(args.fields) && args.fields.length > 0) {
+    const n = args.fields.length;
+    return {
+      zh: `包含 ${n} 个字段`,
+      en: `${n} ${n === 1 ? 'field' : 'fields'}`,
+    };
+  }
+  return undefined;
+}
+
 function formatToolTraceDetail(trace: AgentToolCallTrace): string | undefined {
   const parts: string[] = [];
-  if (trace.arguments && Object.keys(trace.arguments).length > 0) {
-    try {
-      parts.push(JSON.stringify(trace.arguments, null, 2));
-    } catch {
-      // Ignore non-serializable debug preview
-    }
+  const argsText = formatToolArgsText(trace.arguments);
+  if (argsText) {
+    parts.push(argsText);
   }
   if (trace.output?.trim()) {
     parts.push(trace.output.trim());
@@ -721,7 +791,16 @@ function mapToolTraceToStep(
 ): AgentRunStep {
   const status: AgentRunStepStatus =
     trace.isError ? 'FAILED' : parentCancelled ? 'STOPPED' : 'DONE';
+  const argsText = formatToolArgsText(trace.arguments);
+  const resultText = trace.output?.trim() ? trace.output.trim() : undefined;
   const detail = formatToolTraceDetail(trace);
+  const summary = summarizeToolStepBusinessOutcome(trace);
+  const durationMs =
+    typeof trace.durationMs === 'number' &&
+    Number.isFinite(trace.durationMs) &&
+    trace.durationMs >= 0
+      ? trace.durationMs
+      : undefined;
   return {
     id: trace.id,
     label: formatRunToolProgress(trace.toolName, trace.arguments, {
@@ -729,9 +808,13 @@ function mapToolTraceToStep(
       ...(trace.targetAnchor ? { targetAnchor: trace.targetAnchor } : {}),
       ...(suite ? { suite } : {}),
     }),
+    ...(summary ? { summary } : {}),
     status,
     toolName: trace.toolName,
     ...(trace.targetAnchor ? { targetAnchor: trace.targetAnchor } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(argsText ? { argsText } : {}),
+    ...(resultText ? { resultText } : {}),
     ...(detail ? { detail } : {}),
   };
 }
@@ -965,6 +1048,11 @@ function buildCompletedSessionRun(
       : {}),
     steps,
     ...(thinking ? { thinking } : {}),
+    ...(typeof aMsg.thinkingDurationMs === 'number' &&
+    Number.isFinite(aMsg.thinkingDurationMs) &&
+    aMsg.thinkingDurationMs >= 0
+      ? { thinkingDurationMs: aMsg.thinkingDurationMs }
+      : {}),
     ...(userPrompt ? { userPrompt } : {}),
     ...(cleanAssistantText ? { text: cleanAssistantText } : {}),
     sourceSessionId: session.id,
@@ -1043,9 +1131,21 @@ function buildRunFromLiveDraft(
       ...(step.targetAnchor ? { targetAnchor: step.targetAnchor } : {}),
       ...(suite ? { suite } : {}),
     });
+    const argsText = formatToolArgsText(step.arguments);
+    let resultText: string | undefined;
+    if (step.detail) {
+      if (argsText && step.detail.startsWith(argsText)) {
+        const rest = step.detail.slice(argsText.length).trim();
+        resultText = rest || undefined;
+      } else {
+        resultText = step.detail.trim() || undefined;
+      }
+    }
     return {
       ...step,
       label: step.arguments || step.targetAnchor?.label ? label : step.label,
+      ...(argsText ? { argsText } : {}),
+      ...(resultText ? { resultText } : {}),
     };
   });
   const activeStep = steps.find((s) => s.status === 'RUNNING');

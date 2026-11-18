@@ -1,40 +1,106 @@
 import React from 'react';
 import {
-  AlertTriangle,
   ArrowRight,
-  CheckCircle2,
   ChevronRight,
-  CircleSlash,
   Database,
-  Loader2,
   RotateCcw,
   Send,
   Settings2,
-  Square,
 } from 'lucide-react';
 import type { ProjectStepId } from '../../../../packages/business-vocabulary/index.js';
 import { usePreferences } from '../../../i18n.js';
 import { ApprovalCard, Button } from '../../beautifui/index.js';
+import { ChangeSummaryDisplayVariantContext } from '../../history/index.js';
 import { MarkdownRenderer } from '../../markdown/index.js';
 import { StepHandoffCard } from '../StepHandoffCard.js';
 import {
   PLATFORM_UNAVAILABLE_COPY,
-  formatAnchorBadgeLabel,
   formatRunFailurePresentation,
-  formatStepClock,
-  selectVisibleProgressSteps,
-  type AgentRunStepStatus,
+  type AgentRunFailure,
   type AgentRunView,
+  type AgentRunVisionFallback,
   type PrototypeTargetAnchor,
 } from '../agentRun.js';
+import { WorkProcessBlock } from './WorkProcessBlock.js';
+import './work-process.css';
 
-function StepStatusGlyph({ status }: { status: AgentRunStepStatus }) {
-  if (status === 'RUNNING') {
-    return <Loader2 size={12} className="agent-run-spin" aria-hidden="true" />;
+export {
+  WorkProcessBlock,
+  clearWorkProcessExpansionForTests,
+  computeThinkingSeconds,
+  isToolStepExpanded,
+  isWorkBlockExpanded,
+  setToolStepExpanded,
+  setWorkBlockExpanded,
+  type WorkProcessBlockProps,
+} from './WorkProcessBlock.js';
+
+function TuckedDiagnosticsDetails({
+  failure,
+  visionFallback,
+  model,
+}: {
+  failure?: AgentRunFailure;
+  visionFallback?: AgentRunVisionFallback;
+  model?: string;
+}) {
+  const { t } = usePreferences();
+
+  if (!failure && !visionFallback?.used) {
+    return null;
   }
-  if (status === 'DONE') return <CheckCircle2 size={12} aria-hidden="true" />;
-  if (status === 'FAILED') return <AlertTriangle size={12} aria-hidden="true" />;
-  return <CircleSlash size={12} aria-hidden="true" />;
+
+  return (
+    <details
+      className="conversation-diagnostic-details"
+      data-testid="conversation-diagnostic-details"
+    >
+      <summary
+        className="conversation-diagnostic-summary"
+        data-testid="conversation-diagnostic-toggle"
+      >
+        <ChevronRight size={12} className="agent-run-chevron" aria-hidden="true" />
+        <span>{t('查看详情', 'View details')}</span>
+      </summary>
+      <div
+        className="conversation-diagnostic-body agent-run-diagnostic-box"
+        data-testid="agent-run-diagnostic-details"
+      >
+        {failure ? (
+          <>
+            <p className="agent-run-details-meta">
+              {[
+                failure.code ? `code=${failure.code}` : '',
+                failure.statusCode !== undefined ? `status=${failure.statusCode}` : '',
+                failure.providerName ? `provider=${failure.providerName}` : '',
+                failure.baseUrl ? `baseUrl=${failure.baseUrl}` : '',
+                failure.model ? `model=${failure.model}` : model ? `model=${model}` : '',
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
+            {failure.message && (
+              <pre className="work-process-tool-pre">{failure.message}</pre>
+            )}
+            {failure.remediation && (
+              <p className="agent-run-details-meta">{failure.remediation}</p>
+            )}
+          </>
+        ) : visionFallback?.used ? (
+          <p className="agent-run-details-meta">
+            {[
+              'code=VISION_UNSUPPORTED',
+              visionFallback.providerName ? `provider=${visionFallback.providerName}` : '',
+              model ? `model=${model}` : '',
+              visionFallback.notice || '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+        ) : null}
+      </div>
+    </details>
+  );
 }
 
 export interface AssistantReplyItemProps {
@@ -51,7 +117,7 @@ export interface AssistantReplyItemProps {
   onOpenHandoffTargetStep?: (targetStep: ProjectStepId, targetSessionId?: string) => void;
   handoffBusyAction?: 'accept' | 'decline' | null;
   onTriggerWriteback?: (writebackInterfaceId: string, actionTitle: string) => void;
-  /** Slot for Change Summary & Undo (upgraded to inline strip by #80 in Wave 2). */
+  /** Slot for Change Summary & Undo (rendered as Variant B inline strip via context). */
   changeSummarySlot?: React.ReactNode;
   /** Optional reply-level action bar slot (for #81 copy reply action). */
   replyActionsSlot?: React.ReactNode;
@@ -59,8 +125,9 @@ export interface AssistantReplyItemProps {
 
 /**
  * Renders the assistant's side of a turn as continuous desktop chat prose without
- * task-card borders or status pills (ADR 0009, 2026-11-18 amendment).
- * Owned by Wave 2 #80 for folded Work Process block, inline Change Summary strip, and failure notice polish.
+ * task-card borders or status pills (ADR 0009, 2026-11-18 amendment), combining
+ * thinking + tool calls into a default-collapsed Work Process block and anchoring
+ * the Change Summary as an inline strip at the end of the reply (#80).
  */
 export function AssistantReplyItem({
   run,
@@ -83,15 +150,6 @@ export function AssistantReplyItem({
   const running = run.status === 'RUNNING';
   const handleOpenSettings = onOpenPlatformSettings ?? onOpenLlmCenter;
 
-  const { visibleSteps } = selectVisibleProgressSteps(run.steps, run.status);
-  const activeVisibleStep = visibleSteps.find((s) => s.status === 'RUNNING');
-  const liveLabel = activeVisibleStep
-    ? t(activeVisibleStep.label.zh, activeVisibleStep.label.en)
-    : t(run.liveStatus.zh, run.liveStatus.en);
-
-  const hasWorkTrace =
-    run.steps.length > 0 || Boolean(run.thinking) || Boolean(run.failure);
-
   const failurePresentation =
     run.status === 'FAILED'
       ? formatRunFailurePresentation(run.failure, run.visionFallback)
@@ -109,124 +167,11 @@ export function AssistantReplyItem({
       data-testid="conversation-assistant-reply"
       data-run-status={run.status}
     >
-      {running && (
-        <div
-          className="conversation-live-bar"
-          data-testid="conversation-live-status"
-          aria-live="polite"
-        >
-          <Loader2 size={13} className="agent-run-spin conversation-live-icon" aria-hidden="true" />
-          <span className="conversation-live-text">{liveLabel}</span>
-          {run.reconnecting && (
-            <span
-              className="conversation-reconnecting-badge"
-              data-testid="agent-run-reconnecting-badge"
-            >
-              {t('自动重连中', 'Reconnecting')}
-            </span>
-          )}
-          {onCancel && (
-            <Button
-              variant="ghost"
-              size="xs"
-              data-testid="agent-run-cancel-btn"
-              onClick={onCancel}
-            >
-              <Square size={10} aria-hidden="true" />
-              {t('取消', 'Cancel')}
-            </Button>
-          )}
-        </div>
-      )}
-
-      {hasWorkTrace && (
-        <details className="conversation-work-details" data-testid="conversation-work-details">
-          <summary
-            className="conversation-work-summary"
-            data-testid="conversation-work-toggle"
-          >
-            <ChevronRight size={12} className="agent-run-chevron" aria-hidden="true" />
-            <span>{t('查看处理过程', 'View work process')}</span>
-          </summary>
-          <div className="agent-run-details-body" data-testid="conversation-work-body">
-            {run.thinking && (
-              <section className="agent-run-details-section" data-testid="agent-run-thinking">
-                <div className="agent-run-details-label">{t('思考过程', 'Thinking')}</div>
-                <pre className="agent-run-detail">{run.thinking}</pre>
-              </section>
-            )}
-            {run.steps.length > 0 && (
-              <section className="agent-run-details-section" data-testid="agent-run-tool-details">
-                <div className="agent-run-details-label">
-                  {t(`工具调用 (${run.steps.length})`, `Tool calls (${run.steps.length})`)}
-                </div>
-                <ol className="agent-run-trace-list">
-                  {run.steps.map((step) => {
-                    const label = t(step.label.zh, step.label.en);
-                    const clock = formatStepClock(step.at);
-                    const anchorBadge = formatAnchorBadgeLabel(step.targetAnchor);
-                    return (
-                      <li
-                        key={step.id}
-                        className="agent-run-trace-item"
-                        data-step-status={step.status}
-                        {...(step.toolName ? { 'data-tool-name': step.toolName } : {})}
-                        {...(onHoverAnchor && step.targetAnchor
-                          ? {
-                              onMouseEnter: () => onHoverAnchor(step.targetAnchor ?? null),
-                              onMouseLeave: () => onHoverAnchor(null),
-                            }
-                          : {})}
-                      >
-                        <div className="agent-run-trace-head">
-                          <span className="agent-run-step-glyph">
-                            <StepStatusGlyph status={step.status} />
-                          </span>
-                          <span className="agent-run-step-label">{label}</span>
-                          {step.toolName && (
-                            <code className="agent-run-trace-code">{step.toolName}</code>
-                          )}
-                          {anchorBadge && (
-                            <span className="agent-run-step-anchor" title={anchorBadge}>
-                              {anchorBadge}
-                            </span>
-                          )}
-                          {clock && <span className="agent-run-step-clock">{clock}</span>}
-                        </div>
-                        {step.detail && <pre className="agent-run-detail">{step.detail}</pre>}
-                      </li>
-                    );
-                  })}
-                </ol>
-              </section>
-            )}
-            {run.failure && (
-              <section
-                className="agent-run-details-section"
-                data-testid="agent-run-diagnostic-details"
-              >
-                <div className="agent-run-details-label">{t('诊断信息', 'Diagnostics')}</div>
-                <div className="agent-run-diagnostic-box">
-                  <p className="agent-run-details-meta">
-                    {[
-                      run.failure.code ? `code=${run.failure.code}` : '',
-                      run.failure.statusCode !== undefined
-                        ? `status=${run.failure.statusCode}`
-                        : '',
-                      run.failure.providerName ? `provider=${run.failure.providerName}` : '',
-                      run.failure.baseUrl ? `baseUrl=${run.failure.baseUrl}` : '',
-                      run.failure.model ? `model=${run.failure.model}` : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </p>
-                  <pre className="agent-run-detail">{run.failure.message}</pre>
-                </div>
-              </section>
-            )}
-          </div>
-        </details>
-      )}
+      <WorkProcessBlock
+        run={run}
+        {...(onCancel ? { onCancel } : {})}
+        {...(onHoverAnchor ? { onHoverAnchor } : {})}
+      />
 
       {run.status !== 'FAILED' && run.visionFallback?.used && (
         <div
@@ -253,6 +198,10 @@ export function AssistantReplyItem({
               </Button>
             </div>
           )}
+          <TuckedDiagnosticsDetails
+            visionFallback={run.visionFallback}
+            {...(run.model ? { model: run.model } : {})}
+          />
         </div>
       )}
 
@@ -376,7 +325,9 @@ export function AssistantReplyItem({
 
       {!running && changeSummarySlot && (
         <div className="agent-run-change-slot" data-testid="conversation-change-slot">
-          {changeSummarySlot}
+          <ChangeSummaryDisplayVariantContext.Provider value="strip">
+            {changeSummarySlot}
+          </ChangeSummaryDisplayVariantContext.Provider>
         </div>
       )}
 
@@ -413,6 +364,11 @@ export function AssistantReplyItem({
               </Button>
             )}
           </div>
+          <TuckedDiagnosticsDetails
+            {...(run.failure ? { failure: run.failure } : {})}
+            {...(run.visionFallback ? { visionFallback: run.visionFallback } : {})}
+            {...(run.model ? { model: run.model } : {})}
+          />
         </div>
       )}
 
