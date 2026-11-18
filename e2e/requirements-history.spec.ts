@@ -38,7 +38,8 @@ test.describe('Requirements Change Summary, Reload-Persistent Undo & Append-Only
     await expect(page.getByTestId('requirements-forming-outline')).toBeVisible({
       timeout: 25_000,
     });
-    await expect(agentPanel.getByTestId('agent-run-card')).toHaveCount(1);
+    await expect(agentPanel.getByTestId('agent-run-card')).toHaveCount(0);
+    await expect(agentPanel.getByTestId('conversation-turn')).toHaveCount(1);
     await expect(agentPanel.getByTestId('run-change-summary')).toHaveCount(0);
     await expect(agentPanel.getByTestId('change-summary-undo-btn')).toHaveCount(0);
 

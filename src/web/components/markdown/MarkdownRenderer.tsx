@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { CodeBlock } from '../beautifui/CodeBlock.js';
 import { MermaidDiagram } from './MermaidDiagram.js';
@@ -20,6 +21,7 @@ export function MarkdownRenderer({
   testId,
   onLinkClick,
 }: MarkdownRendererProps) {
+  const { t } = usePreferences();
   return (
     <div
       className={cn('md-prose text-[length:var(--text-base)] leading-[1.65] text-foreground break-words', className)}
@@ -33,7 +35,7 @@ export function MarkdownRenderer({
               <div
                 className="responsive-table-region my-2 rounded-card border border-border"
                 role="region"
-                aria-label="Markdown data table"
+                aria-label={t('数据表格', 'Data table')}
                 tabIndex={0}
               >
                 <table className="!m-0 !border-0">{children}</table>

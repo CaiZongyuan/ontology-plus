@@ -26,14 +26,15 @@ test.describe('Single AI Assistant & History Menu (#62)', () => {
     await page.getByTestId('locale-toggle-btn').click();
     await expect(panel.getByTestId('assistant-panel-title')).toHaveText('AI 助手');
 
-    // Step 1: REQUIREMENTS -> send a step-specific turn
+    // Step 1: REQUIREMENTS -> send a step-specific turn (continuous conversation stream, #79)
     await page.getByTestId('step-tab-REQUIREMENTS').click();
     await expect(panel.getByTestId('assistant-panel-title')).toHaveText('AI 助手');
     await page.getByTestId('agent-panel-composer-input').fill('需求步骤独立话题：明确合同归档保留年限');
     await page.getByTestId('agent-panel-send-btn').click();
     await expect(
-      panel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      panel.locator('[data-testid="conversation-turn"][data-run-status="SUCCEEDED"]').last(),
     ).toBeVisible({ timeout: 25_000 });
+    await expect(panel.getByTestId('agent-run-card')).toHaveCount(0);
     await expect(panel).toContainText('需求步骤独立话题：明确合同归档保留年限');
 
     // Step 2: PROTOTYPE -> header still says AI 助手, and Requirements topic does not bleed into Prototype
@@ -110,7 +111,7 @@ test.describe('Single AI Assistant & History Menu (#62)', () => {
     await page.getByTestId('agent-panel-composer-input').fill('新开话题：跨境外币结算汇率锁定条款');
     await page.getByTestId('agent-panel-send-btn').click();
     await expect(
-      panel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      panel.locator('[data-testid="conversation-turn"][data-run-status="SUCCEEDED"]').last(),
     ).toBeVisible({ timeout: 25_000 });
 
     // 2. Rename the active conversation inline in the History Menu (zero window.prompt)
@@ -184,6 +185,9 @@ test.describe('Single AI Assistant & History Menu (#62)', () => {
     await expect(protoMenu.getByTestId('assistant-rename-session-btn').first()).toBeVisible();
     await expect(protoMenu.getByTestId('assistant-new-session-btn')).toHaveCount(0);
     await expect(protoMenu.getByTestId('assistant-delete-session-btn')).toHaveCount(0);
+
+    // Confirm the prototype refinement so shared proj-contract stays in clean confirmed prototype state for later specs
+    await page.request.post('/api/projects/proj-contract/steps/prototype/confirm', { data: {} });
   });
 });
 

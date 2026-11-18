@@ -1038,6 +1038,7 @@ export function ShellAgentPanel({
       title={surface.title}
       {...(surface.subtitle ? { subtitle: surface.subtitle } : {})}
       runs={runs}
+      presentationMode={surface.sessionKind === 'REQUIREMENT' ? 'conversation' : 'run-cards'}
       width={width}
       wideMode={wideMode}
       onToggleWideMode={toggleWideMode}

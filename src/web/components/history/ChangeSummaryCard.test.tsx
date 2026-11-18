@@ -196,8 +196,9 @@ describe('ChangeSummaryCard & ArtifactHistoryDrawer UI (#65)', () => {
         );
         const violations = checkBusinessViewMarkup(panelHtml);
         expect(violations, formatBusinessViewViolations(violations)).toEqual([]);
-        // Two run cards total (Turn 1 no-op + Turn 2 SRS synthesis), ONLY ONE run-change-summary!
-        expect(panelHtml.match(/data-testid="agent-run-card"/g)?.length).toBe(2);
+        // Two conversation turns total (Turn 1 no-op + Turn 2 SRS synthesis), zero legacy run cards, ONLY ONE run-change-summary!
+        expect(panelHtml).not.toContain('data-testid="agent-run-card"');
+        expect(panelHtml.match(/data-testid="conversation-turn"/g)?.length).toBe(2);
         expect(panelHtml.match(/data-testid="run-change-summary"/g)?.length).toBe(1);
         expect(panelHtml.match(/data-testid="change-summary-undo-btn"/g)?.length).toBe(1);
       }

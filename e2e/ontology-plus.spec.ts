@@ -91,7 +91,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
       .fill('请补充大额采购合同法务会签与分期结算的边界规则');
     await page.getByTestId('agent-panel-send-btn').click();
     await expect(
-      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      agentPanel.locator('[data-testid="conversation-turn"][data-run-status="SUCCEEDED"]').last(),
     ).toBeVisible({ timeout: 25_000 });
 
     await page.getByTestId('synthesize-srs-btn').click();

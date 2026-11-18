@@ -47,8 +47,9 @@ test.describe('Full End-to-End Business User Journey (#74)', () => {
       await expect(agentPanel).toBeVisible();
       await expect(agentPanel).toContainText(description);
       await expect(
-        agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+        agentPanel.locator('[data-testid="conversation-turn"][data-run-status="SUCCEEDED"]').last(),
       ).toBeVisible({ timeout: 30_000 });
+      await expect(agentPanel.getByTestId('agent-run-card')).toHaveCount(0);
 
       createdProjectId = await page.getByTestId('project-selector').inputValue();
       expect(createdProjectId).toBeTruthy();
