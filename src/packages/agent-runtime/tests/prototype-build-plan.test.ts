@@ -219,6 +219,34 @@ describe('「继续这一屏」 for a screen that is not there (S3)', () => {
   });
 });
 
+describe('「继续这一屏」 after the prototype moved on (re-review 1)', () => {
+  it('continues from the current document, not from the plan of an older revision', async () => {
+    const { store, session } = await firstBuild();
+    const proto = store.listPrototypes('proj-contract').find((p) => p.name === '施工计划原型')!;
+    // An edit removes the orders list: the saved plan (of R1) no longer matches what is on screen.
+    const orders = splitPrototypeDocument(proto.htmlContent).screens.find((sc) => sc.screenId === 'SCR-ORDERS')!;
+    store.appendPrototypeRevision(proto.id, {
+      title: '删掉订货单列表',
+      instruction: '删掉订货单列表',
+      htmlContent: proto.htmlContent.replace(orders.html, ''),
+      source: 'AGENT_RUN',
+    });
+
+    const resumed = await collectUnifiedAgentTurn(store, {
+      sessionId: session.id,
+      prompt: `[ACTION:RESUME_PROTOTYPE_SCREEN ${JSON.stringify({ screenId: FAILING })}] 继续画「退款审批」`,
+      mockMode: true,
+    });
+    const start = resumed.events.find((e) => e.event === 'prototype_build_start')!;
+    const plan = (start.data.base as PrototypeBuildState).plan.map((p) => p.screenId);
+    expect(plan).toEqual(SCREENS.filter((sid) => sid !== 'SCR-ORDERS'));
+    const saved = lastAssistant(resumed.session.messages).prototypeBuild!;
+    expect(saved.plan.map((p) => p.screenId)).not.toContain('SCR-ORDERS');
+    const after = store.listPrototypes('proj-contract').find((p) => p.id === proto.id)!;
+    expect(saved.revisionId).toBe(after.currentRevisionId);
+  });
+});
+
 describe('createPrototypeBuildRun: from lane events to screen states', () => {
   type Lane = Parameters<ReturnType<typeof createPrototypeBuildRun>['observeLane']>[0];
   const lane = (screenId: string, workerIndex: number, status: Lane['status'], extra: Partial<Lane> = {}): Lane => ({

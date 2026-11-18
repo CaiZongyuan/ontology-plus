@@ -4980,7 +4980,11 @@ async function executeUnifiedTurnCore(
     prototypeBuildRun = prototypeTurnDraft
       ? createPrototypeBuildRun({
           locale: effectiveLocale,
-          base: resumeScreenAction ? latestPrototypeBuild(existing.messages) : null,
+          // Only the plan of the revision now on screen; after an undo or edit there is none, and
+          // the plan is derived from the current document instead.
+          base: resumeScreenAction
+            ? latestPrototypeBuild(existing.messages, currentPrototypeRevisionId() ?? null)
+            : null,
           emit: (buildEvent) =>
             emit({
               id: nextEventId(),

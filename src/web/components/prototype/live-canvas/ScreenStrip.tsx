@@ -116,8 +116,21 @@ export function ScreenStrip({
             data-testid={`prototype-strip-card-${screen.screenId}`}
             data-build-status={screen.status}
             title={screen.purpose ? businessText(screen.purpose, locale) || undefined : undefined}
+            tabIndex={0}
+            aria-label={screen.name}
             onClick={() => onFocusScreen(screen.screenId)}
             onDoubleClick={() => onTryScreen(screen.screenId)}
+            onKeyDown={(event) => {
+              // Keyboard on the card itself: Enter tries the screen, Space focuses it.
+              if (event.target !== event.currentTarget) return;
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                onTryScreen(screen.screenId);
+              } else if (event.key === ' ') {
+                event.preventDefault();
+                onFocusScreen(screen.screenId);
+              }
+            }}
           >
             {/* The name is the card's button; its click reaches the card (focus, or open the page). */}
             <button

@@ -188,4 +188,43 @@ describe('Build Plan on the live canvas (#90)', () => {
       localStorage.removeItem('onto_locale');
     }
   });
+
+  it('keyboard on a strip card: Enter tries the screen, Space focuses it', async () => {
+    await render({ documentHtml: DOC, build: midBuild(), busy: false });
+    const viewport = q('prototype-canvas-viewport')!;
+    const cardEl = q('prototype-strip-card-SCR-HOME')!;
+    expect(cardEl.getAttribute('tabindex')).toBe('0');
+    await act(async () => {
+      cardEl.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    });
+    expect(viewport.getAttribute('data-following')).toBe('false');
+    expect(viewport.getAttribute('data-trying')).toBe('');
+    await act(async () => {
+      cardEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(viewport.getAttribute('data-trying')).toBe('SCR-HOME');
+  });
+
+  it('in web mode a build log line opens that page, like a strip card', async () => {
+    try {
+      await render({ documentHtml: DOC, build: midBuild(), busy: false });
+      await act(async () => q('prototype-dock-view-web')!.click());
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(q('prototype-canvas-viewport')?.getAttribute('data-view')).toBe('web');
+      const homeLine = host.querySelector<HTMLElement>(
+        '[data-testid="prototype-build-log-entry"][data-screen-id="SCR-HOME"] button',
+      )!;
+      await act(async () => homeLine.click());
+      expect(q('prototype-web-view')?.getAttribute('data-web-screen')).toBe('SCR-HOME');
+      const ordersLine = host.querySelector<HTMLElement>(
+        '[data-testid="prototype-build-log-entry"][data-screen-id="SCR-ORDERS"] button',
+      )!;
+      await act(async () => ordersLine.click());
+      expect(q('prototype-web-view')?.getAttribute('data-web-screen')).toBe('SCR-ORDERS');
+    } finally {
+      localStorage.clear();
+    }
+  });
 });

@@ -330,6 +330,17 @@ export function PrototypeLiveCanvas({
 
   useEffect(() => stopTween, []);
 
+  // A strip card or a log line shows its screen: web mode (#97) opens that page, the canvas
+  // frames the artboard. Trying a screen opens the page in web mode, try-out on the canvas.
+  const showScreen = (screenId: string) => {
+    if (view === 'web') webRef.current?.open(screenId);
+    else focusScreen(screenId);
+  };
+  const tryScreen = (screenId: string) => {
+    if (view === 'web') webRef.current?.open(screenId);
+    else enterTry(screenId);
+  };
+
   // #97's end-of-build suggestion, shown as the last entry of the build log.
   const webModeHint =
     webHint && view === 'artboards' ? (
@@ -628,7 +639,7 @@ export function PrototypeLiveCanvas({
               build={plan}
               screens={views}
               busy={busy}
-              onFocusScreen={focusScreen}
+              onFocusScreen={showScreen}
               onResumeScreen={onRetryScreen}
               endEntry={webModeHint}
             />
@@ -645,21 +656,8 @@ export function PrototypeLiveCanvas({
         screens={views}
         highlightedScreenId={view === 'web' ? webScreenId : (tryScreenId ?? followTarget)}
         busy={busy}
-        onFocusScreen={(screenId) => {
-          // Web mode (#97): a card opens that page; on the canvas it frames the artboard.
-          if (view === 'web') {
-            webRef.current?.open(screenId);
-            return;
-          }
-          focusScreen(screenId);
-        }}
-        onTryScreen={(screenId) => {
-          if (view === 'web') {
-            webRef.current?.open(screenId);
-            return;
-          }
-          enterTry(screenId);
-        }}
+        onFocusScreen={showScreen}
+        onTryScreen={tryScreen}
         onResumeScreen={onRetryScreen}
         onOpenSingleScreen={onOpenSingleScreen}
       />
