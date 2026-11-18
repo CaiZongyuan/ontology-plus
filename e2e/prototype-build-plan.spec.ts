@@ -123,6 +123,19 @@ test.describe('Build Plan (#90): plan first, real per-screen states, continue on
     // The same state is there after a reload (it is persisted with the run).
     await page.reload();
     await expect(card(page, FAILING)).toHaveAttribute('data-build-status', 'failed', { timeout: 15_000 });
+    const readOtherScreens = () =>
+      page.evaluate((ids) => {
+        const out: Record<string, string> = {};
+        for (const id of ids) {
+          const frame = document.querySelector<HTMLIFrameElement>(`[data-testid="prototype-artboard-frame-${id}"]`);
+          out[id] = frame?.contentDocument?.querySelector(`[data-screen-id="${id}"]`)?.innerHTML ?? '';
+        }
+        return out;
+      }, SCREENS.filter((s) => s !== FAILING));
+    // After the reload the artboards load again: wait until every drawn screen is back.
+    await expect
+      .poll(async () => Object.values(await readOtherScreens()).every((html) => html.length > 100), { timeout: 15_000 })
+      .toBe(true);
     const otherScreensBefore = await page.evaluate((ids) => {
       const out: Record<string, string> = {};
       for (const id of ids) {
