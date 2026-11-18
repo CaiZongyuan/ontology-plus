@@ -853,7 +853,9 @@ export function alignSuiteWithExtractedMu(
   baseSuite: OntologySuite,
   htmlContent: string,
   domain: string,
+  options?: { fabricateMissingModels?: boolean },
 ): OntologySuite {
+  const fabricateMissingModels = options?.fabricateMissingModels ?? true;
   const suite: OntologySuite = JSON.parse(JSON.stringify(baseSuite));
   const extractedMu = extractMuFromPrototypeHtml(htmlContent, domain);
 
@@ -890,14 +892,101 @@ export function alignSuiteWithExtractedMu(
     suite.M7 = { model_type: 'QUERY_REPORT', version: '5.0', domain, query_reports: [] };
   }
 
+  const toPascalBindingAgg = (raw: string): string => {
+    const cleaned = raw.replace(/[^A-Za-z0-9_]/g, '').trim();
+    if (!cleaned) return 'BusinessOrder';
+    return cleaned
+      .split('_')
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
+  };
+
+  const ensureFilterParamOnM7 = (agg: AggregateRoot, paramName: string, paramLabel: string) => {
+    let report = suite.M7!.query_reports.find(
+      (q) => q.primarySource.aggregateRef.toLowerCase() === agg.name.toLowerCase(),
+    );
+    if (!report) {
+      const rptIdx = suite.M7!.query_reports.length + 1;
+      const rptId = `QRY-0${rptIdx}`;
+      const behId = `BHV-QRY-0${rptIdx}`;
+      if (!suite.M2!.behaviors.some((b) => b.id === behId)) {
+        suite.M2!.behaviors.push({
+          id: behId,
+          name: `list${agg.name.replace(/[^A-Za-z0-9]/g, '')}`,
+          alias: `查询${agg.alias}列表`,
+          ownerEntity: agg.name,
+          behaviorType: 'QUERY',
+          triggerType: 'SYSTEM',
+          inputParameters: [{ name: paramName, label: paramLabel, type: 'String', required: false }],
+          outputParameters: [{ name: 'items', label: '结果集', type: 'Array', required: true }],
+          preconditions: [],
+          stateChanges: [],
+          invokedRules: [],
+          producedEvents: [],
+          requiredPermissions: [],
+          queryReportRef: rptId,
+        });
+      }
+      const firstCol = agg.attributes[0]?.name ?? 'id';
+      const colSnake = firstCol.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+      const tblSnake = `t_${agg.name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()}`;
+      report = {
+        id: rptId,
+        name: `List${agg.name.replace(/[^A-Za-z0-9]/g, '')}Query`,
+        alias: `${agg.alias}列表查询`,
+        queryType: 'LIST_QUERY',
+        behaviorRef: behId,
+        primarySource: { aggregateRef: agg.name, alias: 't' },
+        joins: [],
+        parameters: [{ name: paramName, label: paramLabel, type: 'String', required: false }],
+        conditions: [],
+        resultColumns: [
+          { name: firstCol, label: '单据标识', sourceExpr: `t.${colSnake}`, dataType: 'String' },
+        ],
+        groupBy: [],
+        orderBy: [],
+        referenceSql: {
+          dialect: 'SQLite',
+          sql: `SELECT t.${colSnake} AS ${firstCol} FROM ${tblSnake} t`,
+          parameterMappings: [],
+          resultMappings: [firstCol],
+        },
+      };
+      suite.M7!.query_reports.push(report);
+      return;
+    }
+    if (!report.parameters.some((p) => p.name === paramName)) {
+      report.parameters.push({ name: paramName, label: paramLabel, type: 'String', required: false });
+    }
+    const pairedBeh = suite.M2!.behaviors.find((b) => b.id === report!.behaviorRef);
+    if (pairedBeh && !pairedBeh.inputParameters.some((p) => p.name === paramName)) {
+      pairedBeh.inputParameters.push({
+        name: paramName,
+        label: paramLabel,
+        type: 'String',
+        required: false,
+      });
+    }
+  };
+
   for (const screen of extractedMu.screens) {
     for (const el of screen.elements) {
       if (el.dataBinding && el.dataBinding.includes('.')) {
         const [aggName, attrRaw] = el.dataBinding.split('.');
         const attrName = (attrRaw ?? '').replace(/\[\d*\]/g, '').trim();
         const safeAggName = aggName ?? 'BusinessOrder';
-        let agg = suite.M1.aggregates.find((a) => a.name === safeAggName || a.id === safeAggName);
+        const safeAggLower = safeAggName.toLowerCase();
+        let agg = suite.M1.aggregates.find(
+          (a) =>
+            a.name === safeAggName ||
+            a.id === safeAggName ||
+            a.name.toLowerCase() === safeAggLower ||
+            a.id.toLowerCase() === safeAggLower ||
+            a.alias.toLowerCase() === safeAggLower,
+        );
         if (!agg) {
+          const pascalAggName = toPascalBindingAgg(safeAggName);
           const knownAliases: Readonly<Record<string, string>> = {
             Contract: '合同',
             Counterparty: '签约相对方',
@@ -905,11 +994,17 @@ export function alignSuiteWithExtractedMu(
             SupplierApplication: '供应商准入申请',
             ServiceTicket: '售后工单',
             BusinessOrder: '业务主单据',
+            Member: '会员档案',
+            Recharge: '储值充值单',
+            Points: '积分账户',
+            Order: '业务订单',
+            Settle: '日结对账单',
           };
           const inferredScreenSubject = screen.name
             ?.replace(/(?:台账|列表|详情|管理|工作台|登记|看板|页|界面)+$/g, '')
             .trim();
-          const cleanAlias =
+          const baseAlias =
+            knownAliases[pascalAggName] ||
             knownAliases[safeAggName] ||
             (inferredScreenSubject && inferredScreenSubject.length >= 2
               ? inferredScreenSubject
@@ -917,10 +1012,22 @@ export function alignSuiteWithExtractedMu(
             domain
               .replace(/(?:全生命周期)?(?:管理系统|管理平台|系统|平台|工作台)$/g, '')
               .trim() ||
-            safeAggName;
+            pascalAggName;
+          const usedAggKeys = new Set(
+            suite.M1.aggregates.flatMap((a) => [a.name.trim(), a.alias.trim()]),
+          );
+          let cleanAlias = baseAlias;
+          if (usedAggKeys.has(cleanAlias)) {
+            cleanAlias = `${baseAlias}（${pascalAggName}）`;
+            let suffix = 2;
+            while (usedAggKeys.has(cleanAlias)) {
+              cleanAlias = `${baseAlias}（${pascalAggName}${suffix}）`;
+              suffix += 1;
+            }
+          }
           agg = {
-            id: `AGG-0${suite.M1.aggregates.length + 1}`,
-            name: safeAggName,
+            id: `AGG-${String(suite.M1.aggregates.length + 1).padStart(2, '0')}`,
+            name: usedAggKeys.has(pascalAggName) ? `${pascalAggName}${suite.M1.aggregates.length + 1}` : pascalAggName,
             alias: cleanAlias,
             aggregateType: 'AGGREGATE_ROOT',
             lifecycle: ['DRAFT', 'ACTIVE', 'COMPLETED'],
@@ -932,24 +1039,33 @@ export function alignSuiteWithExtractedMu(
           };
           suite.M1.aggregates.push(agg);
         }
+        const isSearchFilterBinding =
+          attrName === 'keyword' ||
+          attrName === 'searchKeyword' ||
+          /(?:^|[-_])(?:SEARCH|FILTER)(?:[-_]|$)/i.test(el.elementId) ||
+          /搜索|检索|筛选/.test(el.label);
         const hasAttr =
           attrName === 'id' ||
           agg.attributes.some((at) => at.name === attrName) ||
           agg.entities.some((en) => en.name === attrName) ||
           agg.valueObjects.some((vo) => vo.name === attrName);
         if (!hasAttr && attrName) {
-          const inferredType: Attribute['type'] =
-            el.elementType === 'NUMBER'
-              ? 'Money'
-              : el.elementType === 'DATE_PICKER' || el.elementType === 'DATEPICKER'
-                ? 'Date'
-                : 'String';
-          agg.attributes.push({
-            name: attrName,
-            label: el.label || attrName,
-            type: inferredType,
-            required: el.required,
-          });
+          if (isSearchFilterBinding) {
+            ensureFilterParamOnM7(agg, attrName, el.label || attrName);
+          } else {
+            const inferredType: Attribute['type'] =
+              el.elementType === 'NUMBER'
+                ? 'Money'
+                : el.elementType === 'DATE_PICKER' || el.elementType === 'DATEPICKER'
+                  ? 'Date'
+                  : 'String';
+            agg.attributes.push({
+              name: attrName,
+              label: el.label || attrName,
+              type: inferredType,
+              required: el.required,
+            });
+          }
         }
       }
     }
@@ -973,7 +1089,7 @@ export function alignSuiteWithExtractedMu(
       invariants: [],
     });
   }
-  if (suite.M1.aggregates.length === 1) {
+  if (fabricateMissingModels && suite.M1.aggregates.length === 1) {
     suite.M1.aggregates.push({
       id: 'AGG-02',
       name: `${suite.M1.aggregates[0]!.name}AuditLog`,
@@ -1317,7 +1433,7 @@ export function alignSuiteWithExtractedMu(
     }
   }
 
-  if (suite.ME.events.length === 0) {
+  if (fabricateMissingModels && suite.ME.events.length === 0) {
     const prodBeh = suite.M2.behaviors[0];
     const evId = 'EVT-01';
     if (prodBeh && !prodBeh.producedEvents.includes(evId)) {
@@ -1336,7 +1452,7 @@ export function alignSuiteWithExtractedMu(
     });
   }
 
-  if (suite.M3.rules.length === 0) {
+  if (fabricateMissingModels && suite.M3.rules.length === 0) {
     suite.M3.rules.push({
       id: 'RULE-01',
       name: 'PrimaryEntityIntegrityRule',
@@ -1354,7 +1470,7 @@ export function alignSuiteWithExtractedMu(
     });
   }
 
-  if (!suite.M4 || suite.M4.event_scenarios.length === 0) {
+  if (fabricateMissingModels && (!suite.M4 || suite.M4.event_scenarios.length === 0)) {
     const firstEv = suite.ME.events[0]!;
     const firstBeh = suite.M2.behaviors[0];
     suite.M4 = {
@@ -1395,7 +1511,7 @@ export function alignSuiteWithExtractedMu(
     };
   }
 
-  if (!suite.M6 || suite.M6.flows.length === 0) {
+  if (fabricateMissingModels && (!suite.M6 || suite.M6.flows.length === 0)) {
     const roleRef = suite.M5.roles[0]?.id;
     const behRef = suite.M2.behaviors[0]?.id;
     const firstScreenId = extractedMu.screens[0]?.screenId;
@@ -1444,7 +1560,33 @@ export function alignSuiteWithExtractedMu(
     };
   }
 
+  if (!fabricateMissingModels) {
+    if (!suite.M4) {
+      suite.M4 = { model_type: 'SCENARIO', version: '5.0', domain, event_scenarios: [] };
+    }
+    if (!suite.M6) {
+      suite.M6 = { model_type: 'FLOW', version: '5.0', domain, flows: [] };
+    }
+    if (!suite.MI) {
+      suite.MI = { model_type: 'INTERFACE', version: '1.0', domain, interfaces: [] };
+    }
+  }
+
   suite.MU = extractedMu;
+
+  const buildColumnsForAgg = (agg: AggregateRoot) =>
+    agg.attributes
+      .filter((at) => at.type !== 'ValueObject')
+      .map((at) => ({
+        attributeRef: `${agg.name}.${at.name}`,
+        column: at.name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase(),
+        columnType:
+          at.type === 'Money' || at.type === 'Decimal'
+            ? 'DECIMAL(18,2)'
+            : at.type === 'Integer'
+              ? 'INTEGER'
+              : 'VARCHAR(128)',
+      }));
 
   if (!suite.MM || suite.MM.mappings.length === 0) {
     suite.MM = {
@@ -1452,7 +1594,7 @@ export function alignSuiteWithExtractedMu(
       version: '1.0',
       domain,
       mappings: suite.M1.aggregates.map((agg: AggregateRoot, idx: number) => ({
-        id: `MAP-0${idx + 1}`,
+        id: `MAP-${String(idx + 1).padStart(2, '0')}`,
         objectRef: agg.id,
         objectRole: 'AGGREGATE_ROOT' as const,
         objectName: agg.name,
@@ -1462,22 +1604,47 @@ export function alignSuiteWithExtractedMu(
             tableRole: 'MASTER' as const,
             primaryKey: 'id',
             foreignKeys: [],
-            columnMappings: agg.attributes
-              .filter((at) => at.type !== 'ValueObject')
-              .slice(0, 6)
-              .map((at) => ({
-                attributeRef: `${agg.name}.${at.name}`,
-                column: at.name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase(),
-                columnType:
-                  at.type === 'Money' || at.type === 'Decimal' ? 'DECIMAL(18,2)' : 'VARCHAR(128)',
-              })),
+            columnMappings: buildColumnsForAgg(agg),
           },
         ],
       })),
     };
+  } else {
+    for (const [idx, agg] of suite.M1.aggregates.entries()) {
+      const existingMap = suite.MM.mappings.find(
+        (m) => m.objectRef === agg.id || m.objectName === agg.name,
+      );
+      if (!existingMap) {
+        suite.MM.mappings.push({
+          id: `MAP-${String(suite.MM.mappings.length + idx + 1).padStart(2, '0')}`,
+          objectRef: agg.id,
+          objectRole: 'AGGREGATE_ROOT',
+          objectName: agg.name,
+          tableMappings: [
+            {
+              tableName: `t_${agg.name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()}`,
+              tableRole: 'MASTER',
+              primaryKey: 'id',
+              foreignKeys: [],
+              columnMappings: buildColumnsForAgg(agg),
+            },
+          ],
+        });
+      } else {
+        const masterTbl = existingMap.tableMappings.find((t) => t.tableRole === 'MASTER') ?? existingMap.tableMappings[0];
+        if (masterTbl) {
+          const mappedAttrRefs = new Set(masterTbl.columnMappings.map((c) => c.attributeRef));
+          for (const col of buildColumnsForAgg(agg)) {
+            if (!mappedAttrRefs.has(col.attributeRef)) {
+              masterTbl.columnMappings.push(col);
+            }
+          }
+        }
+      }
+    }
   }
 
-  if (!suite.MI || suite.MI.interfaces.length === 0) {
+  if (fabricateMissingModels && (!suite.MI || suite.MI.interfaces.length === 0)) {
     const firstBeh = suite.M2.behaviors[0];
     suite.MI = {
       model_type: 'INTERFACE',
@@ -2678,19 +2845,32 @@ export async function executeDomainRunToolCall(
 
     if (!isMock) {
       const missingModels: string[] = [];
-      if ((seedSuite.M1?.aggregates.length ?? 0) === 0) missingModels.push('aggregates (M1)');
-      if ((seedSuite.M2?.behaviors.length ?? 0) === 0) missingModels.push('behaviors (M2)');
-      if ((seedSuite.M3?.rules.length ?? 0) === 0) missingModels.push('rules (M3)');
-      if ((seedSuite.ME?.events.length ?? 0) === 0) missingModels.push('events (ME)');
-      if ((seedSuite.M5?.actors.length ?? 0) === 0) missingModels.push('actors (M5)');
-      if ((seedSuite.M6?.flows.length ?? 0) === 0) missingModels.push('flows (M6)');
-      if ((seedSuite.MI?.interfaces.length ?? 0) === 0) missingModels.push('interfaces (MI)');
+      const hasAnyM1 = (seedSuite.M1?.aggregates.length ?? 0) > 0;
+      if (!hasAnyM1) {
+        missingModels.push('aggregates (M1)');
+        if ((seedSuite.M2?.behaviors.length ?? 0) === 0) missingModels.push('behaviors (M2)');
+        if ((seedSuite.M3?.rules.length ?? 0) === 0) missingModels.push('rules (M3)');
+        if ((seedSuite.ME?.events.length ?? 0) === 0) missingModels.push('events (ME)');
+        if ((seedSuite.M5?.actors.length ?? 0) === 0) missingModels.push('actors (M5)');
+        if ((seedSuite.M6?.flows.length ?? 0) === 0) missingModels.push('flows (M6)');
+        if ((seedSuite.MI?.interfaces.length ?? 0) === 0) missingModels.push('interfaces (MI)');
+      } else {
+        if (
+          (seedSuite.M2?.behaviors.length ?? 0) === 0 &&
+          (seedSuite.M7?.query_reports.length ?? 0) === 0
+        ) {
+          missingModels.push('behaviors (M2)');
+        }
+        if ((seedSuite.M5?.actors.length ?? 0) === 0) {
+          missingModels.push('actors (M5)');
+        }
+      }
 
       if (missingModels.length > 0) {
         const missingBlueprintMsg = pickLocaleText(
           locale,
-          `实时大模型模式下禁止使用兜底模板伪造本体模型，当前调用缺失必填领域蓝图字段：${missingModels.join(', ')}。请在 synthesize_ontology_suite 参数中补齐真实的领域模型定义后重试。`,
-          `Silent template fallback is disabled in live LLM mode; missing required domain blueprint models: [${missingModels.join(', ')}]. Supply complete domain models in synthesize_ontology_suite and retry.`,
+          `实时大模型模式下禁止使用兜底模板伪造本体模型，当前调用缺失必填领域蓝图字段：${missingModels.join(', ')}。请先按四波渐进建模（upsert_aggregate / upsert_actor_role / upsert_behavior 等）或在 synthesize_ontology_suite 参数中补齐真实的领域模型定义后重试。`,
+          `Silent template fallback is disabled in live LLM mode; missing required domain blueprint models: [${missingModels.join(', ')}]. Author domain models via progressive upsert_* tools or supply them in synthesize_ontology_suite and retry.`,
         );
         return {
           trace: {
@@ -2718,9 +2898,11 @@ export async function executeDomainRunToolCall(
     const currentCheck = validateOntologySuite(currentWithSyncedMu);
 
     let candidateSuite: OntologySuite =
-      currentCheck.errorCount === 0 && currentCheck.presentModels.length === 11
+      isMock && currentCheck.errorCount === 0 && currentCheck.presentModels.length === 11
         ? currentWithSyncedMu
-        : alignSuiteWithExtractedMu(seedSuite, confirmedHtml, project.domain);
+        : alignSuiteWithExtractedMu(seedSuite, confirmedHtml, project.domain, {
+            fabricateMissingModels: isMock,
+          });
 
     let finalValidation = validateOntologySuite(candidateSuite);
     if (isMock && finalValidation.errorCount > 0) {
@@ -2732,11 +2914,18 @@ export async function executeDomainRunToolCall(
       finalValidation = validateOntologySuite(candidateSuite);
     }
     if (finalValidation.errorCount > 0) {
-      const firstErr = finalValidation.diagnostics.find((d) => d.tier === 'ERROR');
+      const errSummaries = finalValidation.diagnostics
+        .filter((d) => d.tier === 'ERROR')
+        .slice(0, 5)
+        .map(
+          (d) =>
+            `[${d.code}@${d.model}] (${d.elementId ?? 'root'}) ${locale === 'en-US' ? d.messageEn : d.messageZh}`,
+        )
+        .join('；');
       const rejectMsg = pickLocaleText(
         locale,
-        `11 模型两级一致性校验拦截（${finalValidation.errorCount} 个错误）：${firstErr?.messageZh ?? '跨模型引用不一致'}`,
-        `Rejected by 11-model validator (${finalValidation.errorCount} consistency errors): ${firstErr?.messageEn ?? 'cross-model reference mismatch'}`,
+        `11 模型两级一致性校验拦截（${finalValidation.errorCount} 个错误）：${errSummaries || '跨模型引用不一致'}`,
+        `Rejected by 11-model validator (${finalValidation.errorCount} consistency errors): ${errSummaries || 'cross-model reference mismatch'}`,
       );
       return {
         trace: {

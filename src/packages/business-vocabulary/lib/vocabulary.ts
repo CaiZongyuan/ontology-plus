@@ -23,6 +23,7 @@ export type WorkspaceConceptKey =
   | 'CONSISTENCY_ERROR'
   | 'STAGE_WARNING'
   | 'CONFIRMED_REVISION'
+  | 'ONTOLOGY_SYNTHESIS'
   | 'AI_ASSISTANT'
   | 'PROJECT_STEP'
   | 'STEP_HANDOFF'
@@ -219,6 +220,16 @@ export const BUSINESS_VOCABULARY: Readonly<Record<BusinessConceptKey, BusinessVo
     en: 'Confirmed prototype',
     singularZh: '已确认的原型',
     singularEn: 'Confirmed prototype',
+  },
+  ONTOLOGY_SYNTHESIS: {
+    key: 'ONTOLOGY_SYNTHESIS',
+    glossaryTermEn: 'Ontology Synthesis',
+    glossaryTermZh: '本体合成',
+    shownAsInGlossary: true,
+    zh: '生成业务模型',
+    en: 'Generate business model',
+    singularZh: '生成业务模型',
+    singularEn: 'Generate business model',
   },
   AI_ASSISTANT: {
     key: 'AI_ASSISTANT',

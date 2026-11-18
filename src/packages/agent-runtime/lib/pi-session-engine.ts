@@ -32,6 +32,7 @@ import {
 import {
   MODEL_CODES,
   checkSqlGrounding,
+  extractMuFromPrototypeHtml,
   validateOntologySuite,
   type ModelCode,
   type OntologySuite,
@@ -2611,6 +2612,105 @@ function latestUserPrompt(session: AgentSession): string | undefined {
   return undefined;
 }
 
+function buildCopilotUpstreamDigest(
+  store: WorkspaceStore,
+  projectId: string,
+  project: ReturnType<typeof resolveProjectDetail>,
+  locale: AgentLocale,
+): string {
+  const stepConfs = store.getProjectStepConfirmations(projectId);
+  const confirmedReq = stepConfs.requirements;
+  const confirmedProto = store.getConfirmedPrototypeRevision(projectId);
+  const sections: string[] = [];
+
+  const aggsSummary =
+    (project?.suite.M1?.aggregates ?? [])
+      .map(
+        (a) =>
+          `${a.name}(${a.id}:${a.alias}, fields=[${a.attributes.map((f) => f.name).join(', ')}])`,
+      )
+      .join('; ') || (locale === 'en-US' ? 'none' : '无');
+  const rulesSummary =
+    (project?.suite.M3?.rules ?? []).map((r) => `${r.id}:${r.alias}`).join('; ') ||
+    (locale === 'en-US' ? 'none' : '无');
+  const behaviorsSummary =
+    (project?.suite.M2?.behaviors ?? []).map((b) => `${b.id}:${b.alias}(${b.ownerEntity})`).join('; ') ||
+    (locale === 'en-US' ? 'none' : '无');
+  const activeErrors = (project?.validation.diagnostics ?? [])
+    .filter((d) => d.tier === 'ERROR')
+    .slice(0, 8)
+    .map(
+      (d) =>
+        `[${d.code}@${d.model}] (${d.elementId ?? 'root'}) ${locale === 'en-US' ? d.messageEn : d.messageZh}`,
+    );
+
+  if (locale === 'en-US') {
+    sections.push(
+      `Current Ontology Suite Summary: M1 aggregates=${aggsSummary}; M2 behaviors=${behaviorsSummary}; M3 rules (${project?.suite.M3?.rules.length ?? 0})=${rulesSummary}.`,
+    );
+    if (activeErrors.length > 0) {
+      sections.push(`Active Consistency Errors to fix:\n${activeErrors.join('\n')}`);
+    }
+    if (confirmedReq) {
+      sections.push(
+        `[Confirmed Requirements Specification: ${confirmedReq.title} ${confirmedReq.version}]\n${confirmedReq.content.slice(0, 12000)}`,
+      );
+    } else {
+      sections.push(`Confirmed Requirements Specification: NOT YET CONFIRMED.`);
+    }
+    if (confirmedProto) {
+      const extractedMu = extractMuFromPrototypeHtml(
+        confirmedProto.htmlContent,
+        project?.domain ?? '',
+      );
+      const screenLines = extractedMu.screens.map((s) => {
+        const bindings = s.elements
+          .filter((e) => e.dataBinding)
+          .map((e) => e.dataBinding!)
+          .join(', ');
+        const events = s.events.map((ev) => `${ev.eventId}(${ev.name})`).join(', ');
+        return `- ${s.screenId} (${s.name}, ${s.screenType}): bindings=[${bindings || 'none'}]; events=[${events || 'none'}]`;
+      });
+      sections.push(
+        `[Confirmed Prototype Revision Anchors (${confirmedProto.prototype.id} / ${confirmedProto.revisionId})]\n${screenLines.join('\n') || '(no screens)'}`,
+      );
+    }
+    return sections.join('\n\n');
+  }
+
+  sections.push(
+    `当前 M1 聚合根：${aggsSummary}；M2 行为：${behaviorsSummary}；M3 规则数（${project?.suite.M3?.rules.length ?? 0}）：${rulesSummary}。`,
+  );
+  if (activeErrors.length > 0) {
+    sections.push(`【当前待修复一致性错误】\n${activeErrors.join('\n')}`);
+  }
+  if (confirmedReq) {
+    sections.push(
+      `【已确认需求文档快照】（${confirmedReq.title} ${confirmedReq.version}）：\n${confirmedReq.content.slice(0, 12000)}`,
+    );
+  } else {
+    sections.push(`【已确认需求文档快照】：尚未确认。`);
+  }
+  if (confirmedProto) {
+    const extractedMu = extractMuFromPrototypeHtml(
+      confirmedProto.htmlContent,
+      project?.domain ?? '',
+    );
+    const screenLines = extractedMu.screens.map((s) => {
+      const bindings = s.elements
+        .filter((e) => e.dataBinding)
+        .map((e) => e.dataBinding!)
+        .join(', ');
+      const events = s.events.map((ev) => `${ev.eventId}(${ev.name})`).join(', ');
+      return `- ${s.screenId}（${s.name}，${s.screenType}）：数据绑定=[${bindings || '无'}]；交互事件=[${events || '无'}]`;
+    });
+    sections.push(
+      `【已确认原型锚点摘要】（${confirmedProto.prototype.id} / ${confirmedProto.revisionId}）：\n${screenLines.join('\n') || '（无屏幕锚点）'}`,
+    );
+  }
+  return sections.join('\n\n');
+}
+
 function buildSystemPromptForSession(
   store: WorkspaceStore,
   session: AgentSession,
@@ -2683,7 +2783,7 @@ function buildSystemPromptForSession(
       `1. Execute the routine tools provided to this specialist automatically. Never ask permission before calling routine tools.`,
       `2. ONLY call \`ask_user\` when required business parameters are missing or a Class-B business boundary ambiguity requires a human decision.`,
       `3. If an ontology mutation returns an 11-model consistency error (isError=true), read the diagnostics and self-repair in the same turn.`,
-      `4. Always use the term "Ontology Extraction" — never "reverse engineering".`,
+      `4. Use "Ontology Synthesis" for generating/updating the Business Model from confirmed requirements and prototype, and "Ontology Extraction" strictly for legacy system extraction — never "reverse engineering".`,
       `5. Step Isolation & Hand-off: NEVER execute mutations belonging to another Project Step (REQUIREMENTS=scope & requirements doc; PROTOTYPE=screen layout, table columns, buttons & visual styling; BUSINESS_MODEL=business objects, actions, business/approval rules, roles & permissions, flows, reports, storage & integrations; DELIVERY=application implementation specs & development package). When the user asks for work belonging to another step, explain briefly in plain business language and call \`propose_step_handoff\` with \`targetStep\`, \`request\`, and \`reason\`.`,
       getBlockedStepExplanation(store, session, 'en-US')
         ? biz(`[Current Step Status — Cannot Start Yet] ${getBlockedStepExplanation(store, session, 'en-US')} Do NOT call any mutation or synthesis tools until the upstream step is confirmed.`)
@@ -2761,7 +2861,19 @@ function buildSystemPromptForSession(
       );
     }
     return withExecFooter(
-      `${baseHeaderEn}\n${biz(`Current M1 aggregates: ${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || 'none'}; M3 rules count: ${project?.suite.M3?.rules.length ?? 0}.`)} When asked to synthesize the 11-model Ontology Suite from the prototype ([ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...] or user request), MUST call synthesize_ontology_suite.`,
+      [
+        baseHeaderEn,
+        biz(buildCopilotUpstreamDigest(store, session.projectId, project, 'en-US')),
+        `Ontology Synthesis Guidelines (ADR 0018 — 4-Wave Progressive Authoring):`,
+        `1. Dual-Source Scope: Cover ALL business objects, actions, rules, flows, and reports in the Confirmed Requirements Specification (even modules without prototype screens), while aligning UI bindings with the Confirmed Prototype Revision anchors. Never fabricate features explicitly excluded in requirements.`,
+        `2. Four-Wave Order on [ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...]:`,
+        `   - Wave 1 (Foundation): Call \`upsert_aggregate\` for each domain aggregate (use PascalCase names aligned with prototype binding prefixes, e.g. \`Member\` for \`member.*\`; keep search/filter inputs like \`keyword\` out of M1 attributes) and \`upsert_actor_role\` for M5 actors/roles.`,
+        `   - Wave 2 (Capabilities & Rules): Call \`upsert_rule\` (M3), \`upsert_behavior\` (M2), and \`upsert_query_report\` (M7, declaring filter parameters).`,
+        `   - Wave 3 (Events, Automations & Flows): Call \`upsert_event\` (ME), \`upsert_scenario\` (M4, omit if no cross-aggregate event automation exists), and \`upsert_flow\` (M6, omit if no multi-role/approval workflow exists). Only call \`upsert_interface\` (MI) if external/inbound integrations exist in requirements.`,
+        `   - Wave 4 (Finalize & Align MU/MM): MUST call \`synthesize_ontology_suite\` (\`{}\` or \`{"mode":"update"}\`) as the final step to bind MU from the Confirmed Prototype Revision, derive MM table mappings, and pass the consistency gate.`,
+        `3. Incremental Updates (\`mode="update"\` or \`mode="fix_problems"\`): Preserve existing authored objects, rules, and manual edits; only add/adjust elements required by the updated upstream inputs or active diagnostics.`,
+        `4. Conflict Handling: Absorb benign prototype refinements naturally and ignore harmless UI navigation shortcuts; ONLY call \`ask_user\` or \`propose_step_handoff\` when an irreconcilable business rule contradiction exists between Confirmed Requirements and Confirmed Prototype.`,
+      ].join('\n'),
     );
   }
 
@@ -2777,7 +2889,7 @@ function buildSystemPromptForSession(
     `1. 当前专职智能体可用的常规工具均直接自动调用，严禁在调用常规工具前向用户索要权限许可。`,
     `2. 仅当缺少必填业务参数或存在 B 类业务规则分歧需要用户拍板时，才调用 \`ask_user\` 工具弹出结构化单选/多选卡片。`,
     `3. 若本体变更工具返回 11 模型一致性错误（isError=true），请仔细阅读错误诊断并在本轮自动修正参数重试。`,
-    `4. 严禁使用“逆向”或“逆向工程”字眼，统一使用“本体萃取 (Ontology Extraction)”。`,
+    `4. 术语准则：从已确认需求与原型生成业务模型统称“本体合成 (Ontology Synthesis) / 生成业务模型”；存量系统提取才称“本体萃取 (Ontology Extraction)”；严禁使用“逆向”或“逆向工程”。`,
     `5. 跨步骤隔离与步骤转交准则：严禁在当前会话中执行其他步骤的改动（REQUIREMENTS=需求范围与需求文档；PROTOTYPE=页面布局、表格列、按钮与视觉样式；BUSINESS_MODEL=业务对象、业务操作、审批与校验等业务规则、角色权限、流程、报表、存储与接口；DELIVERY=应用实施说明与开发资料包）。当用户提出属于其他步骤的请求时，请用通俗业务语言简要说明原因，并调用 \`propose_step_handoff\` 工具（传入 \`targetStep\`、原样携带的 \`request\` 与 \`reason\`）生成转交卡片。`,
     getBlockedStepExplanation(store, session, 'zh-CN')
       ? biz(`【当前步骤状态：还不能开始】${getBlockedStepExplanation(store, session, 'zh-CN')} 在上游步骤确认前，严禁调用任何写入或合成工具。`)
@@ -2862,7 +2974,19 @@ function buildSystemPromptForSession(
     );
   }
   return withExecFooter(
-    `${baseHeader}\n${biz(`当前 M1 聚合根：${(project?.suite.M1?.aggregates ?? []).map((a) => `${a.name}(${a.id}:${a.alias})`).join(', ') || '无'}；M3 规则数：${project?.suite.M3?.rules.length ?? 0}。`)}当收到从确认原型合成 11 模型请求（如 [ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...]）时，必须调用 synthesize_ontology_suite 工具并交由两级一致性校验门禁落库。`,
+    [
+      baseHeader,
+      biz(buildCopilotUpstreamDigest(store, session.projectId, project, 'zh-CN')),
+      `本体合成准则（ADR 0018 · 四波渐进建模）：`,
+      `1. 双源融合边界：【已确认需求文档快照】决定全量业务范围（即使原型未画某模块页面，需求已确认的业务对象、操作、规则、报表也必须完整建模；需求明确排除的暂缓项严禁脑补）；【已确认原型锚点摘要】决定已绘界面的数据绑定与事件对齐。`,
+      `2. 收到生成/更新业务模型请求（如 [ACTION:SYNTHESIZE_ONTOLOGY_SUITE ...]）时，严禁单次默写巨型蓝图或编造假模板，按依赖分 4 波推进（尽量直接并发调用常规工具而非编写复杂探针脚本）：`,
+      `   - 第 1 波（立骨架）：调用 \`upsert_aggregate\` 建立全部业务对象（大驼峰 \`name\` 对齐原型绑定前缀，如 \`member.*\` 对应 \`Member\`；搜索框 \`keyword\` 等筛选条件归入查询参数，不要塞进 M1 字段），并调用 \`upsert_actor_role\` 建立 M5 角色；`,
+      `   - 第 2 波（定能力与规则）：调用 \`upsert_rule\`（M3 跨对象/计算/校验规则）、\`upsert_behavior\`（M2 行为）与 \`upsert_query_report\`（M7 查询与经营报表）；`,
+      `   - 第 3 波（串联动与流程）：调用 \`upsert_event\`（ME 业务事件）；仅在业务确实存在跨对象自动联动时调用 \`upsert_scenario\`（M4），存在多角色协作/人工审批时调用 \`upsert_flow\`（M6），存在外部系统对接时调用 \`upsert_interface\`（MI）——业务中不存在的模型如实留空，绝不造假凑数；`,
+      `   - 第 4 波（对齐收口）：最后必须调用一次 \`synthesize_ontology_suite\`（传 \`{}\` 或 \`{"mode":"update"}\`），由系统同步已确认原型 MU、生成 MM 数据存储映射并完成一致性校验收口。`,
+      `3. 增量更新与修复准则（\`mode="update"\` 或 \`mode="fix_problems"\`）：默认保留已有的业务对象、规则及用户手动修改，仅新增或调整上游变更及待修复错误涉及的部分，严禁推倒重来。`,
+      `4. 冲突处理准则：原型的合理交互细化直接吸收，无关快捷跳转噪音自动忽略；仅当需求文档与原型出现正面业务规则矛盾时，才调用 \`ask_user\` 或 \`propose_step_handoff\` 请用户拍板。`,
+    ].join('\n'),
   );
 }
 
@@ -3134,15 +3258,55 @@ async function executeUnifiedToolCall(
         args,
         project.domain,
       );
+      const effectiveBaselineSuite: OntologySuite = {
+        ...workingSuite,
+        ...(!workingSuite.M1 && mutation.nextSuite.M1
+          ? {
+              M1: {
+                model_type: 'OBJECT',
+                version: '5.0',
+                domain: project.domain,
+                aggregates: [],
+                data_dictionaries: [],
+                aggregate_associations: [],
+              },
+            }
+          : {}),
+        ...(!workingSuite.M7 && mutation.nextSuite.M7
+          ? {
+              M7: {
+                model_type: 'QUERY_REPORT',
+                version: '5.0',
+                domain: project.domain,
+                query_reports: [],
+              },
+            }
+          : {}),
+      };
+      const effectiveBaselineReport =
+        effectiveBaselineSuite.M1 !== workingSuite.M1 || effectiveBaselineSuite.M7 !== workingSuite.M7
+          ? validateOntologySuite(effectiveBaselineSuite)
+          : baselineReport;
+      const effectiveBaselineErrorIds = new Set(
+        effectiveBaselineReport.diagnostics.filter((d) => d.tier === 'ERROR').map((d) => d.id),
+      );
       const candidateReport = validateOntologySuite(mutation.nextSuite);
+      const newlyIntroducedErrors = candidateReport.diagnostics.filter(
+        (d) => d.tier === 'ERROR' && !effectiveBaselineErrorIds.has(d.id),
+      );
 
-      if (candidateReport.errorCount > baselineReport.errorCount) {
-        const addedErrors = candidateReport.diagnostics
-          .filter((d) => d.tier === 'ERROR')
-          .map(
-            (d) =>
-              `[${d.code}@${d.model}] ${locale === 'en-US' ? d.messageEn : d.messageZh} (${d.elementId ?? 'root'})`,
-          );
+      if (
+        newlyIntroducedErrors.length > 0 ||
+        candidateReport.errorCount > effectiveBaselineReport.errorCount
+      ) {
+        const displayErrors =
+          newlyIntroducedErrors.length > 0
+            ? newlyIntroducedErrors
+            : candidateReport.diagnostics.filter((d) => d.tier === 'ERROR');
+        const addedErrors = displayErrors.map(
+          (d) =>
+            `[${d.code}@${d.model}] ${locale === 'en-US' ? d.messageEn : d.messageZh} (${d.elementId ?? 'root'})`,
+        );
 
         return {
           trace: {
@@ -3151,8 +3315,8 @@ async function executeUnifiedToolCall(
             arguments: args,
             output: pickLocaleText(
               locale,
-              `被 11 模型一致性门禁拦截（错误 ${baselineReport.errorCount} -> ${candidateReport.errorCount}）：${addedErrors[0] ?? '跨模型引用不一致'}`,
-              `Blocked by 11-model consistency gate (errors ${baselineReport.errorCount} -> ${candidateReport.errorCount}): ${addedErrors[0] ?? 'cross-model reference inconsistency'}`,
+              `被 11 模型一致性门禁拦截（错误 ${effectiveBaselineReport.errorCount} -> ${candidateReport.errorCount}）：${addedErrors.slice(0, 3).join('；') || '跨模型引用不一致'}`,
+              `Blocked by 11-model consistency gate (errors ${effectiveBaselineReport.errorCount} -> ${candidateReport.errorCount}): ${addedErrors.slice(0, 3).join('; ') || 'cross-model reference inconsistency'}`,
             ),
             isError: true,
             targetModelCode: mutation.modelCode,
@@ -3161,7 +3325,7 @@ async function executeUnifiedToolCall(
           },
           toolResultContent: JSON.stringify({
             status: 'REJECTED_BY_VALIDATOR',
-            baselineErrors: baselineReport.errorCount,
+            baselineErrors: effectiveBaselineReport.errorCount,
             candidateErrors: candidateReport.errorCount,
             diagnostics: addedErrors,
             hint: pickLocaleText(
@@ -5798,7 +5962,11 @@ async function executeUnifiedTurnCore(
         RUN_ONTOLOGY_EXTRACTION: 'EXTRACTION_JOB',
       };
       const expectedKind = expectedArtifactKindByAction[structuredTurnAction.kind];
-      if (!allArtifacts.some((a) => a.kind === expectedKind)) {
+      if (
+        !allArtifacts.some((a) => a.kind === expectedKind) &&
+        !pendingAskUser &&
+        !pendingStepHandoff
+      ) {
         const lastFailedTrace = [...allToolTraces].reverse().find((t) => t.isError);
         const detailSuffix = lastFailedTrace?.output ? ` — ${lastFailedTrace.output}` : '';
         throw new LlmGatewayError({
