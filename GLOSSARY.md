@@ -185,7 +185,7 @@ _Avoid_: Shell, skeleton, outline, task list
 **Prototype Note (原型说明)**:
 A numbered business-language explanation attached to one element of an Interactive Prototype, saying what the element is, what it shows, and what happens when it is used.
 _Avoid_: Annotation, tooltip, comment, spec label
-_Shown to business users as_: 说明 (in 说明模式 / Note mode)
+_Shown to business users as_: 说明 (Note)
 
 **Demo Tour (演示路线)**:
 An ordered, playable walk through an Interactive Prototype toward one user goal, each step naming the screen, the element acted on, and the narration shown while it plays.

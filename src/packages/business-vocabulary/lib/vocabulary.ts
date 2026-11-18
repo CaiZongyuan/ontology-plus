@@ -30,7 +30,8 @@ export type WorkspaceConceptKey =
   | 'OUTDATED'
   | 'CHANGE_SUMMARY'
   | 'BUSINESS_VIEW'
-  | 'TECHNICAL_DETAILS';
+  | 'TECHNICAL_DETAILS'
+  | 'PROTOTYPE_NOTE';
 
 export type BusinessConceptKey = ModelCode | WorkspaceConceptKey;
 
@@ -298,6 +299,16 @@ export const BUSINESS_VOCABULARY: Readonly<Record<BusinessConceptKey, BusinessVo
     en: 'Technical Details',
     singularZh: '技术细节',
     singularEn: 'Technical Details',
+  },
+  PROTOTYPE_NOTE: {
+    key: 'PROTOTYPE_NOTE',
+    glossaryTermEn: 'Prototype Note',
+    glossaryTermZh: '原型说明',
+    shownAsInGlossary: true,
+    zh: '说明',
+    en: 'Note',
+    singularZh: '说明',
+    singularEn: 'Note',
   },
 };
 
