@@ -81,4 +81,41 @@ describe('ensurePrototypeNavigationRuntime', () => {
     expect(active(win)).toEqual(['SCR-A']);
     expect(win.location.hash).toBe('#SCR-A');
   });
+
+  it('keeps a document that switches screens its own way (style.display) navigating', async () => {
+    const own = `<!DOCTYPE html><html><head></head><body>
+<nav><button type="button" data-nav-screen="SCR-B" onclick="window.__selectProtoScreen('SCR-B')">订单</button></nav>
+<section data-screen-id="SCR-A" style="display:block"><button type="button" id="to-b" data-navigate-to="SCR-B">去订单</button></section>
+<section data-screen-id="SCR-B" style="display:none"><h2>订货单</h2></section>
+<script>
+window.__selectProtoScreen = function (id) {
+  document.querySelectorAll('[data-screen-id]').forEach(function (s) { s.style.display = s.getAttribute('data-screen-id') === id ? 'block' : 'none'; });
+};
+</script>
+</body></html>`;
+    const shownByStyle = (win: NavWindow) =>
+      Array.from(win.document.querySelectorAll<HTMLElement>('[data-screen-id]'))
+        .filter((el) => el.style.display !== 'none')
+        .map((el) => el.getAttribute('data-screen-id'));
+    const html = ensurePrototypeNavigationRuntime(own);
+    expect(html).toContain(PROTOTYPE_NAVIGATION_RUNTIME_ATTR);
+
+    const win = open(html).window;
+    expect(shownByStyle(win)).toEqual(['SCR-A']);
+    win.document.querySelector<HTMLElement>('[data-nav-screen="SCR-B"]')!.click();
+    await tick(win);
+    expect(shownByStyle(win)).toEqual(['SCR-B']);
+    win.history.back();
+    await tick(win);
+    expect(shownByStyle(win)).toEqual(['SCR-A']);
+    win.document.getElementById('to-b')!.click();
+    await tick(win);
+    expect(shownByStyle(win)).toEqual(['SCR-B']);
+    expect(shownByStyle(open(html, 'https://prototype.test/#SCR-B').window)).toEqual(['SCR-B']);
+  });
+
+  it('leaves documents without screens alone', () => {
+    const plain = '<!DOCTYPE html><html><body><p>一页说明</p></body></html>';
+    expect(ensurePrototypeNavigationRuntime(plain)).toBe(plain);
+  });
 });
