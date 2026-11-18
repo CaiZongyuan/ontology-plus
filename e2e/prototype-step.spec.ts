@@ -100,7 +100,8 @@ test.describe('Prototype Step: Redesigned Shell, Business Screen Diff & Outdated
     await expect(confirmModal).toBeVisible();
     await expect(confirmModal.getByTestId('confirm-screen-changes-summary')).toBeVisible();
     await expect(confirmModal.getByTestId('confirm-screen-changes-list')).toBeVisible();
-    await expect(confirmModal.getByTestId('confirm-screen-changes-list')).toContainText('新增界面');
+    await expect(confirmModal.getByTestId('confirm-screen-changes-list')).toContainText(/新增 \d+ 个界面/);
+    await expect(confirmModal.getByTestId('confirm-screen-changes-list')).not.toContainText('未命名');
 
     await confirmModal.getByTestId('confirm-revision-approve-btn').click();
     await expect(confirmModal).toBeHidden();

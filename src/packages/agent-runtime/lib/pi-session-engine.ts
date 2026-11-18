@@ -1300,14 +1300,19 @@ function buildFauxMockModels(
             // Replay the recorded multi-screen build through the real engine: the lead plans the
             // shell and hands one screen to each subagent; every subagent call below is answered
             // by the same faux provider, so its tool-call arguments stream token by token.
-            const replay = createMockPrototypeBuildReplay(loc);
+            const requirementsObject = extractPrimaryObjectFromRequirements(confirmedReq.content);
+            const replay = createMockPrototypeBuildReplay(loc, {
+              businessObject:
+                project?.suite.M1?.aggregates?.[0]?.name ||
+                requirementsObject.name ||
+                inferPrimaryObjectFromProject(project).name,
+            });
             faux.setResponses(
               Array.from({ length: replay.responseBudget }, () => replay.respond),
             );
-            const primaryObject = extractPrimaryObjectFromRequirements(confirmedReq.content);
             return replay.leadOpening(
               confirmedReq.title,
-              primaryObject.label ?? primaryObject.name,
+              requirementsObject.label ?? requirementsObject.name,
             );
           }
           return fauxAssistantMessage(
