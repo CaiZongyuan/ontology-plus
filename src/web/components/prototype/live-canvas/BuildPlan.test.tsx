@@ -227,4 +227,102 @@ describe('Build Plan on the live canvas (#90)', () => {
       localStorage.clear();
     }
   });
+
+  it('shows scan-band while reviewing, live fix narration while fixing, real review counts when done, and 未做视觉检查 when skipped (#93)', async () => {
+    const t = createPrototypeBuildTracker({ now: () => new Date('2026-11-19T10:15:00') });
+    t.start();
+    t.plan(PLAN, false);
+    t.phase('plan', 'done');
+    t.phase('style', 'done');
+    t.phase('screens', 'now');
+    t.phase('review', 'now');
+    t.screen('SCR-HOME', {
+      status: 'reviewing',
+      agent: 1,
+      writtenElements: 5,
+      fixActivity: { sentence: '正在按画板尺寸截图并逐项检查…', state: 'reviewing' },
+    });
+    t.log({ agent: 0, kind: 'review_started', screenId: 'SCR-HOME' });
+    t.screen('SCR-ORDERS', {
+      status: 'fixing',
+      agent: 2,
+      writtenElements: 6,
+      finding: '表格右侧超出画板宽度，「状态」列被裁切',
+      fixActivity: {
+        elementId: 'EL-ORDERS-TABLE',
+        sentence: '发现问题：表格右侧超出画板宽度（EL-ORDERS-TABLE）。正在修改：收窄列宽以完整显示状态列',
+        state: 'fixing',
+      },
+    });
+    t.log({
+      agent: 0,
+      kind: 'review_finding',
+      screenId: 'SCR-ORDERS',
+      detail: '表格右侧超出画板宽度，「状态」列被裁切',
+    });
+    t.screen('SCR-REFUND', { status: 'writing', agent: 3, writtenElements: 2 });
+
+    await render({ documentHtml: DOC, build: t.state(), busy: true });
+
+    // Both `screens` and `review` phases can be `now` simultaneously (#88 overlap verdict)
+    expect(q('prototype-phase-screens')?.getAttribute('data-phase-status')).toBe('now');
+    expect(q('prototype-phase-review')?.getAttribute('data-phase-status')).toBe('now');
+
+    // Scan-band appears ONLY on the `reviewing` artboard (SCR-HOME), not on `fixing` or `writing`
+    expect(q('prototype-artboard-scan-SCR-HOME')).not.toBeNull();
+    expect(q('prototype-artboard-scan-SCR-ORDERS')).toBeNull();
+    expect(q('prototype-artboard-scan-SCR-REFUND')).toBeNull();
+
+    // Reviewing & fixing screens show Lead assistant as active reviewer/fixer
+    expect(q('prototype-strip-status-SCR-HOME')?.textContent).toBe('检查中 · 主助手');
+    expect(q('prototype-strip-status-SCR-ORDERS')?.textContent).toBe('修正中 · 主助手');
+
+    // Default fix narration renders sanitized business text (no EL-ORDERS-TABLE leak!)
+    const fixPill = q('prototype-fix-narration-SCR-ORDERS');
+    expect(fixPill).not.toBeNull();
+    expect(fixPill!.textContent).toContain('收窄列宽以完整显示状态列');
+    expect(fixPill!.textContent).not.toContain('EL-ORDERS-TABLE');
+    expect(checkBusinessViewMarkup(host.innerHTML, { ignoreTestIds: ['prototype-canvas-world'] })).toEqual([]);
+
+    // Custom `renderFixActivity` prop (#92 seam) overrides default pill cleanly
+    const customSpy = vi.fn((acts) => <div data-testid="custom-fix-layer">{acts.length}</div>);
+    await render({ documentHtml: DOC, build: t.state(), busy: true, renderFixActivity: customSpy });
+    expect(customSpy).toHaveBeenCalled();
+    expect(q('custom-fix-layer')?.textContent).toBe('2');
+    expect(q('prototype-fix-narration-SCR-ORDERS')).toBeNull();
+
+    // Completed review round reports checked & fixed counts
+    t.screen('SCR-HOME', { status: 'done', reviewed: 'pass' });
+    t.screen('SCR-ORDERS', { status: 'done', reviewed: 'fixed' });
+    t.screen('SCR-REFUND', { status: 'done', reviewed: 'pass' });
+    t.phase('screens', 'done');
+    t.phase('review', 'done');
+    await render({ documentHtml: DOC, build: t.state(), busy: false });
+    expect(q('prototype-phase-review')?.textContent).toContain('修正 1 屏');
+    expect(q('prototype-artboard-scan-SCR-HOME')).toBeNull();
+    expect(q('prototype-fix-narration-SCR-ORDERS')).toBeNull();
+
+    // Skipped visual check (no browser) reports 未做视觉检查 / Not visually checked honestly
+    const skipped = createPrototypeBuildTracker();
+    skipped.start();
+    skipped.plan(PLAN, false);
+    skipped.phase('plan', 'done');
+    skipped.phase('screens', 'done');
+    skipped.phase('review', 'skipped');
+    skipped.log({ agent: 0, kind: 'phase_skipped', phase: 'review' });
+    await render({ documentHtml: DOC, build: skipped.state(), busy: false });
+    expect(q('prototype-phase-review')?.getAttribute('data-phase-status')).toBe('skipped');
+    expect(q('prototype-phase-review')?.textContent).toContain('未做视觉检查');
+    expect(host.textContent).toContain('这次没有做截图检查（未做视觉检查）');
+
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    localStorage.setItem('onto_locale', 'en-US');
+    try {
+      await render({ documentHtml: DOC, build: skipped.state(), busy: false });
+      expect(q('prototype-phase-review')?.textContent).toContain('Not visually checked');
+    } finally {
+      localStorage.removeItem('onto_locale');
+    }
+  });
 });

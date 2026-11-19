@@ -889,6 +889,7 @@ function buildCompletedSessionRun(
         (tc) =>
           !tc.isError &&
           (tc.toolName === 'edit_prototype_anchor' ||
+            tc.toolName === 'edit_screen' ||
             tc.toolName === 'rewrite_prototype_page' ||
             tc.toolName === 'init_prototype_shell' ||
             tc.toolName === 'upsert_prototype_screen') &&

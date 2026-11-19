@@ -1298,3 +1298,30 @@ dialog.bui-dialog::backdrop {
   --xy-controls-button-color-default: var(--foreground);
   --xy-controls-button-border-color-default: var(--border);
 }
+
+/* ─── Prototype Artboard Visual Review Scan Band (#93) ─── */
+@keyframes onto-artboard-scan {
+  0% {
+    top: -120px;
+  }
+  100% {
+    top: 100%;
+  }
+}
+
+.onto-artboard-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 120px;
+  pointer-events: none;
+  z-index: 6;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--warning) 16%, transparent),
+    transparent
+  );
+  border-bottom: 1.5px solid color-mix(in srgb, var(--warning) 62%, transparent);
+  animation: onto-artboard-scan 1.75s ease-in-out infinite;
+}

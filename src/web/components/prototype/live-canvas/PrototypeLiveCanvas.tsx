@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Crosshair, Loader2, Maximize, Minus, Plus, WifiOff } from 'lucide-react';
+import { Crosshair, Loader2, Maximize, Minus, Plus, WifiOff, Wrench } from 'lucide-react';
 import { sanitizeBusinessText } from '../../../../packages/business-vocabulary/index.js';
 import {
   PROTOTYPE_STYLE_BOARD_ID,
+  activePrototypeBuildFixActivities,
   buildPrototypeCanvasModel,
   composePrototypeDocument,
   hasPrototypeBuildPlan,
+  type PrototypeBuildFixActivity,
   type PrototypeBuildState,
   type PrototypeCanvasArtboard,
   type PrototypeLiveState,
@@ -13,10 +15,10 @@ import {
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
-import { ArtboardFrame } from './Artboard.js';
+import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboard.js';
 import { BuildLog } from './BuildLog.js';
 import { BuildPhaseBar } from './BuildPhaseBar.js';
-import { agentName, screenBuildViews } from './buildView.js';
+import { businessText, screenBuildViews, screenOwnerName } from './buildView.js';
 import { ScreenStatusIcon, ScreenStrip, screenStatusLabel } from './ScreenStrip.js';
 import {
   ARTBOARD_H,
@@ -60,6 +62,11 @@ export interface PrototypeLiveCanvasProps {
   onOpenSingleScreen?: (screenId: string) => void;
   /** Opens the composed document in a new tab (defaults to a blob URL; tests replace it). */
   onOpenStandalone?: (documentHtml: string, screenId: string) => boolean;
+  /**
+   * Optional custom renderer for active screenshot review & targeted-fix narration (#93 -> #92
+   * cursor/narration integration seam). When omitted, a minimal clean narration pill is rendered.
+   */
+  renderFixActivity?: (activities: readonly PrototypeBuildFixActivity[]) => React.ReactNode;
 }
 
 interface Viewport {
@@ -84,6 +91,7 @@ export function PrototypeLiveCanvas({
   onRetryScreen,
   onOpenSingleScreen,
   onOpenStandalone = openStandalone,
+  renderFixActivity,
 }: PrototypeLiveCanvasProps) {
   const { locale, t } = usePreferences();
   const isBusiness = viewMode === 'business';
@@ -121,6 +129,16 @@ export function PrototypeLiveCanvas({
 
   const views = useMemo(() => screenBuildViews(screens, plan, cleanName), [screens, plan, cleanName]);
   const viewById = new Map(views.map((v) => [v.screenId, v] as const));
+  const fixActivities = useMemo(() => (plan ? activePrototypeBuildFixActivities(plan) : []), [plan]);
+  const artboardHandles = useRef(new Map<string, React.MutableRefObject<ArtboardHandle | null>>());
+  const handleRefFor = (screenId: string): React.MutableRefObject<ArtboardHandle | null> => {
+    let ref = artboardHandles.current.get(screenId);
+    if (!ref) {
+      ref = { current: null };
+      artboardHandles.current.set(screenId, ref);
+    }
+    return ref;
+  };
 
   // ─── Camera ────────────────────────────────────────────────────────────────
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -359,12 +377,15 @@ export function PrototypeLiveCanvas({
     drawn: screens.filter((s) => s.status === 'ready').length,
     drawing: screens.filter((s) => s.status === 'streaming').length,
   };
-  // The follow ring marks a screen only while it is being written.
+  // The follow ring marks a screen while it is being written, reviewed or fixed.
+  const followedBuildStatus = followedScreenId ? viewById.get(followedScreenId)?.status : undefined;
   const followedStatus =
     followedScreenId === PROTOTYPE_STYLE_BOARD_ID
       ? styleBoard?.status
       : screens.find((s) => s.screenId === followedScreenId)?.status;
-  const followTarget = following && followedScreenId && followedStatus === 'streaming' ? followedScreenId : undefined;
+  const followedActive =
+    followedStatus === 'streaming' || followedBuildStatus === 'reviewing' || followedBuildStatus === 'fixing';
+  const followTarget = following && followedScreenId && followedActive ? followedScreenId : undefined;
 
   return (
     <div
@@ -477,19 +498,32 @@ export function PrototypeLiveCanvas({
             {mountedScreens.map((board) => {
               const idx = indexById.get(board.screenId) ?? 0;
               const rect = artboardRect(idx);
+              const boardView = viewById.get(board.screenId);
+              const isReviewing = boardView?.status === 'reviewing';
+              const isFixing = boardView?.status === 'fixing';
               const isTrying = tryScreenId === board.screenId;
               const isHighlighted =
                 isTrying || highlightedScreenId === board.screenId || followTarget === board.screenId;
+              const handleRef = handleRefFor(board.screenId);
+              const targetBox: ArtboardRect | null =
+                !renderFixActivity && isFixing && boardView?.fixActivity?.elementId
+                  ? (handleRef.current?.rectOf(boardView.fixActivity.elementId) ?? null)
+                  : null;
               return (
                 <div
                   key={board.screenId}
                   className={cn(
                     'absolute overflow-hidden rounded-md border bg-background shadow-sm',
-                    isHighlighted ? 'border-primary ring-4 ring-primary/30' : 'border-border',
+                    isReviewing || isFixing
+                      ? 'border-warning ring-4 ring-warning/25'
+                      : isHighlighted
+                        ? 'border-primary ring-4 ring-primary/30'
+                        : 'border-border',
                   )}
                   style={{ left: rect.x, top: rect.y, width: ARTBOARD_W, height: ARTBOARD_H }}
                   data-testid={`prototype-artboard-${board.screenId}`}
                   data-screen-status={board.status}
+                  data-review-status={boardView?.status ?? board.status}
                   title={isTrying ? undefined : t('双击试用这一屏', 'Double-click to try this screen')}
                   onDoubleClick={() => enterTry(board.screenId)}
                 >
@@ -506,7 +540,28 @@ export function PrototypeLiveCanvas({
                     paused={view === 'web'}
                     onNavigate={navigateFromPrototype}
                     onEscape={exitTry}
+                    handleRef={handleRef}
                   />
+                  {isReviewing && (
+                    <div
+                      className="onto-artboard-scan"
+                      data-testid={`prototype-artboard-scan-${board.screenId}`}
+                      aria-hidden="true"
+                    />
+                  )}
+                  {targetBox && targetBox.w > 0 && targetBox.h > 0 && (
+                    <div
+                      className="pointer-events-none absolute rounded-sm border-2 border-dashed border-warning bg-warning-soft/20"
+                      style={{
+                        left: Math.max(0, targetBox.x - 4),
+                        top: Math.max(0, targetBox.y - 4),
+                        width: targetBox.w + 8,
+                        height: targetBox.h + 8,
+                      }}
+                      data-testid={`prototype-fix-target-${board.screenId}`}
+                      aria-hidden="true"
+                    />
+                  )}
                 </div>
               );
             })}
@@ -533,21 +588,21 @@ export function PrototypeLiveCanvas({
           {view === 'artboards' && screens.map((board, i) => {
             const idx = i + slotOffset;
             const rect = artboardRect(idx);
-            const view = viewById.get(board.screenId)!;
-            const owner = agentName(view.agent, locale);
+            const screenView = viewById.get(board.screenId)!;
+            const owner = screenOwnerName(screenView, locale);
             return (
               <div
                 key={`label-${board.screenId}`}
                 className="pointer-events-none absolute flex max-w-[60%] items-center gap-1.5 truncate text-[12px] text-foreground"
                 style={{ left: cam.x + rect.x * cam.k, top: cam.y + rect.y * cam.k - 22 }}
                 data-testid={`prototype-artboard-label-${board.screenId}`}
-                data-build-status={view.status}
+                data-build-status={screenView.status}
               >
-                <ScreenStatusIcon status={view.status} />
+                <ScreenStatusIcon status={screenView.status} />
                 <span className="truncate font-medium">{cleanName(board, i)}</span>
                 {plan && (
                   <span className="truncate text-muted-foreground" data-testid={`prototype-artboard-owner-${board.screenId}`}>
-                    {screenStatusLabel(view.status, t)}
+                    {screenStatusLabel(screenView.status, t)}
                     {owner ? ` · ${owner}` : ''}
                   </span>
                 )}
@@ -555,6 +610,33 @@ export function PrototypeLiveCanvas({
               </div>
             );
           })}
+
+          {view === 'artboards' &&
+            (renderFixActivity
+              ? renderFixActivity(fixActivities)
+              : fixActivities
+                  .filter((act) => act.state === 'fixing')
+                  .map((act) => {
+                    const idx = indexById.get(act.screenId);
+                    if (idx === undefined) return null;
+                    const rect = artboardRect(idx);
+                    const text = isBusiness ? businessText(act.sentence, locale) : act.sentence;
+                    if (!text) return null;
+                    return (
+                      <div
+                        key={`fix-narration-${act.screenId}`}
+                        className="pointer-events-none absolute z-10 flex max-w-[360px] items-center gap-1.5 rounded-md border border-warning/50 bg-card px-2.5 py-1.5 text-[12px] text-foreground shadow-md"
+                        style={{
+                          left: cam.x + (rect.x + 16) * cam.k,
+                          top: cam.y + (rect.y + 16) * cam.k,
+                        }}
+                        data-testid={`prototype-fix-narration-${act.screenId}`}
+                      >
+                        <Wrench size={12} className="shrink-0 text-warning" aria-hidden="true" />
+                        <span className="line-clamp-2 leading-snug">{text}</span>
+                      </div>
+                    );
+                  }))}
 
           {view === 'web' && (
             <PrototypeWebView
