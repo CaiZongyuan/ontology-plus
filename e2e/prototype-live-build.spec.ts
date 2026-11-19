@@ -41,6 +41,22 @@ async function setUpProjectWithConfirmedRequirements(request: import('@playwrigh
   return project.id;
 }
 
+/** Waits until the canvas camera has stopped moving (the world's transform holds still). */
+async function waitForCameraToSettle(page: Page) {
+  let last = '';
+  await expect
+    .poll(
+      async () => {
+        const now = await page.getByTestId('prototype-canvas-world').evaluate((el) => (el as HTMLElement).style.transform);
+        const settled = now === last;
+        last = now;
+        return settled;
+      },
+      { timeout: 5_000, intervals: [150] },
+    )
+    .toBe(true);
+}
+
 function streamingCount(page: Page) {
   return page.locator('[data-testid^="prototype-artboard-SCR-"][data-screen-status="streaming"]').count();
 }
@@ -72,8 +88,41 @@ test.describe('Prototype live build (#89): per-screen streaming onto one canvas'
       );
     });
 
+    // #91: the 风格样张 is drawn first, live, on the first artboard, and its phase is done before
+    // any screen starts. Record, in the page, the order in which these signals really appear.
+    await page.evaluate(() => {
+      const w = window as unknown as { __order?: string[] };
+      w.__order = [];
+      const note = (what: string) => {
+        if (!w.__order!.includes(what)) w.__order!.push(what);
+      };
+      const check = () => {
+        const board = document.querySelector('[data-testid="prototype-style-artboard"]');
+        if (board?.getAttribute('data-style-status') === 'streaming') note('style-streaming');
+        if (document.querySelector('[data-testid="prototype-phase-style"][data-phase-status="done"]')) note('style-done');
+        if (document.querySelector('[data-testid^="prototype-artboard-SCR-"][data-screen-status="streaming"]')) note('screen-streaming');
+      };
+      check();
+      new MutationObserver(check).observe(document.body, { subtree: true, attributes: true, childList: true });
+    });
+    const styleBoard = page.getByTestId('prototype-style-artboard');
+    await expect(styleBoard).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('prototype-phase-style')).toHaveAttribute('data-phase-status', 'done', { timeout: 20_000 });
+    await expect(styleBoard).toHaveAttribute('data-style-status', 'ready');
+    // The brief was approved in the wizard: the style keeps its values.
+    await expect(styleBoard).toHaveAttribute('data-style-locked', 'true');
+    const styleFrame = page.frameLocator('[data-testid="prototype-style-frame"]');
+    // Buttons, a table, tags, a form field and an empty state, drawn with the shared components.
+    for (const sample of ['提交订单', '订单号', '已收货', '还没有加入商品']) {
+      await expect(styleFrame.getByText(sample).first()).toBeVisible();
+    }
+    await expect(styleFrame.getByPlaceholder('搜索商品名称')).toBeVisible();
+    await page.screenshot({ path: '.scratch/issue-91/e2e-style-sample.png' });
+
     // Several screens are being drawn at the same time.
     await expect.poll(() => streamingCount(page), { timeout: 20_000, intervals: [50] }).toBeGreaterThanOrEqual(2);
+    const order = await page.evaluate(() => (window as unknown as { __order?: string[] }).__order ?? []);
+    expect(order).toEqual(['style-streaming', 'style-done', 'screen-streaming']);
     const viewport = page.getByTestId('prototype-canvas-viewport');
     await expect(viewport).toHaveAttribute('data-following', 'true');
     await expect(viewport).not.toHaveAttribute('data-follow-target', '');
@@ -114,6 +163,21 @@ test.describe('Prototype live build (#89): per-screen streaming onto one canvas'
     expect(continuity.loadCounts).toEqual(SCREENS.map(() => '1'));
     expect(continuity.markers).toEqual(SCREENS.map(() => true));
     expect(continuity.texts.every((n) => n > 50)).toBe(true);
+    // The style artboard stays after saving, from the saved document alone.
+    await expect(styleBoard).toHaveAttribute('data-style-status', 'ready');
+    // The shared look replaced the shell's hard-coded orange tabs and fixed width.
+    const homeShell = await page
+      .frameLocator('[data-testid="prototype-artboard-frame-SCR-HOME"]')
+      .locator('body')
+      .evaluate((body) => ({
+        tabs: body.querySelectorAll('.proto-nav-tab').length,
+        navLinks: body.querySelectorAll('.proto-app-nav-link').length,
+        accent: getComputedStyle(body).getPropertyValue('--proto-accent').trim(),
+      }));
+    expect(homeShell.tabs).toBe(0);
+    expect(homeShell.navLinks).toBe(SCREENS.length);
+    expect(homeShell.accent).not.toBe('');
+    expect(homeShell.accent.toLowerCase()).not.toBe('#f94c05');
 
     await page.screenshot({ path: '.scratch/issue-89/e2e-saved-canvas.png' });
 
@@ -142,6 +206,9 @@ test.describe('Prototype live build (#89): per-screen streaming onto one canvas'
     const orderForm = page.frameLocator('[data-testid="prototype-artboard-frame-SCR-NEW-ORDER"]');
     const firstQty = orderForm.locator('[data-element-id="EL-QTY-CROISSANT"] [data-qty]');
     await expect(firstQty).toHaveText('0');
+    // The camera is still gliding to the new screen: a real mouse click aims where the button
+    // will be once it stops (the iframe moving is not something Playwright waits for).
+    await waitForCameraToSettle(page);
     await orderForm.locator('[data-element-id="EL-NEW-ORDER-BUTTON-2"]').click();
     await expect(firstQty).toHaveText('1');
     expect(await page.getByTestId('prototype-artboard-frame-SCR-NEW-ORDER').getAttribute('data-load-count')).toBe('1');
