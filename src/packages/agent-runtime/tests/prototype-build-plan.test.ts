@@ -121,14 +121,15 @@ describe('Build Plan (#90): the lead declares the screens first, each screen rep
 
     // Phases report what really happened.
     expect(build.phases.plan.status).toBe('done');
-    expect(build.phases.style.status).toBe('skipped');
+    // The lead draws the 风格样张 before the screens (#91).
+    expect(build.phases.style.status).toBe('done');
     expect(build.phases.screens.status).toBe('failed');
     expect(build.phases.review.status).toBe('skipped');
     expect(build.phases.tours.status).toBe('skipped');
 
     // The log, in order: plan, starts, done/failed lines, the skipped check, the end.
     const kinds = build.log.map((l) => l.kind);
-    expect(kinds[0]).toBe('plan_ready');
+    expect(kinds.slice(0, 3)).toEqual(['plan_ready', 'style_started', 'style_ready']);
     expect(kinds.filter((k) => k === 'screen_started')).toHaveLength(SCREENS.length);
     expect(kinds.filter((k) => k === 'screen_done')).toHaveLength(SCREENS.length - 1);
     expect(build.log.find((l) => l.kind === 'screen_failed')).toMatchObject({ screenId: FAILING, failure: 'validation_failed' });

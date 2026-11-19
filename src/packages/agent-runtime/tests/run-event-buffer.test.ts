@@ -30,9 +30,12 @@ describe('createCoalescingRunEventBuffer: reconnect catches up with each screen�
     buffer.push(screen('e6', 'SCR-A', 'a3'));
     buffer.push({ id: 'e7', event: 'prototype_frame', data: { frame: 1 } });
     buffer.push({ id: 'e8', event: 'prototype_frame', data: { frame: 2 } });
+    // The 风格样张 (#91) catches up with its latest state too.
+    buffer.push({ id: 'e9', event: 'prototype_style', data: { status: 'streaming', sampleHtml: '<p>' } });
+    buffer.push({ id: 'e10', event: 'prototype_style', data: { status: 'ready', sampleHtml: '<p>x</p>' } });
 
-    expect(drain(buffer).map((e) => e.id)).toEqual(['e1', 'e3', 'e5', 'e6', 'e8']);
-    expect(buffer.retainedPayloadCount()).toBe(5);
+    expect(drain(buffer).map((e) => e.id)).toEqual(['e1', 'e3', 'e5', 'e6', 'e8', 'e10']);
+    expect(buffer.retainedPayloadCount()).toBe(6);
   });
 
   it('resumes after an event id even when that event was later superseded', () => {

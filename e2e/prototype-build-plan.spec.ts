@@ -94,7 +94,9 @@ test.describe('Build Plan (#90): plan first, real per-screen states, continue on
       '这一屏有按钮或输入框没有标注好，没能通过检查。',
     );
     await expect(page.getByTestId('prototype-phase-plan')).toHaveAttribute('data-phase-status', 'done');
-    await expect(page.getByTestId('prototype-phase-style')).toHaveAttribute('data-phase-status', 'skipped');
+    // The lead drew the 风格样张 with the values approved in the wizard (#91).
+    await expect(page.getByTestId('prototype-phase-style')).toHaveAttribute('data-phase-status', 'done');
+    await expect(page.getByTestId('prototype-phase-style')).toContainText('用你确认的设计值');
     await expect(page.getByTestId('prototype-phase-screens')).toHaveAttribute('data-phase-status', 'failed');
     await expect(page.getByTestId('prototype-phase-review')).toHaveAttribute('data-phase-status', 'skipped');
     await expect(page.getByTestId('prototype-phase-review')).toContainText('未做视觉检查');

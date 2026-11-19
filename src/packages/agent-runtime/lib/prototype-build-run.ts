@@ -17,6 +17,7 @@ import {
   type PrototypeBuildEvent,
   type PrototypeBuildPlanItem,
   type PrototypeBuildState,
+  type PrototypeStyleValueKey,
 } from '../../ontology-core/index.js';
 import type { AgentSubagentLaneTrace } from '../../workspace-store/index.js';
 import { type AgentLocale, pickLocaleText } from './locale.js';
@@ -107,6 +108,15 @@ export interface PrototypeBuildRun {
   observePlanStream(partialArgs: unknown): void;
   /** `plan_screens` finished: validate and record the plan; returns the tool result. */
   commitPlan(args: unknown): { isError: boolean; content: string; summary: string };
+  /** The lead started writing `define_style`: the 风格样张 phase is now. */
+  observeStyleStream(documentHtml?: string): void;
+  /** `define_style` was accepted (done) or rejected (failed). */
+  commitStyle(
+    result:
+      | { ok: true; locked: boolean; userChanged?: readonly PrototypeStyleValueKey[]; lockUnavailable?: boolean }
+      | { ok: false },
+    documentHtml?: string,
+  ): void;
   /** Orders dispatched tasks by the plan, and plans them when the lead skipped `plan_screens`. */
   prepareDispatch<T extends { screenId?: string; screenName?: string; instruction: string; screenType?: string }>(
     tasks: readonly T[],
@@ -132,6 +142,8 @@ export interface PrototypeBuildRun {
   snapshot(options?: { revisionId?: string | undefined }): PrototypeBuildState | undefined;
   /** The committed plan's screens, which the shared shell must follow (null without a plan). */
   plannedScreens(): PrototypeBuildPlanItem[] | null;
+  /** Anchored elements written for a screen so far (0 for a screen the plan does not have). */
+  writtenElements(screenId: string): number;
 }
 
 const SCREEN_ID_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
@@ -159,7 +171,7 @@ export function createPrototypeBuildRun(options: {
   const beginScreensPhase = () => {
     if (screensPhaseStarted) return;
     screensPhaseStarted = true;
-    // No style sample was drawn before the screens (that step arrives with #91).
+    // No Style Tile was drawn before the screens: the phase says so instead of pretending.
     const style = tracker.state().phases.style.status;
     if (style === 'not_started' || style === 'now') {
       send(tracker.phase('style', 'skipped'));
@@ -170,8 +182,32 @@ export function createPrototypeBuildRun(options: {
 
   const planned = (screenId: string) => tracker.state().plan.some((p) => p.screenId === screenId);
 
+  const ensureStyleRun = (documentHtml?: string) => {
+    if (!hasPrototypeBuildPlan(tracker.state())) {
+      const fromDoc = documentHtml ? planFromDocument(documentHtml) : null;
+      if (fromDoc) {
+        if (!tracker.started()) {
+          send(tracker.start(fromDoc));
+          return;
+        }
+        send(tracker.plan(fromDoc.plan, false));
+        send(tracker.phase('plan', 'done'));
+        for (const item of fromDoc.plan) {
+          const scr = prototypeBuildScreen(fromDoc, item.screenId);
+          if (scr.status === 'done') {
+            send(tracker.screen(item.screenId, { status: 'done', writtenElements: scr.writtenElements }));
+          }
+        }
+        return;
+      }
+    }
+    ensureStarted();
+  };
+
   return {
-    active: () => tracker.started() && hasPrototypeBuildPlan(tracker.state()),
+    active: () =>
+      tracker.started() &&
+      (hasPrototypeBuildPlan(tracker.state()) || tracker.state().phases.style.status !== 'not_started'),
 
     observePlanStream(partialArgs) {
       const items = readStreamingBuildPlan(partialArgs);
@@ -223,6 +259,31 @@ export function createPrototypeBuildRun(options: {
         }),
         summary,
       };
+    },
+
+    observeStyleStream(documentHtml) {
+      ensureStyleRun(documentHtml);
+      if (tracker.state().phases.style.status === 'now') return;
+      send(tracker.phase('style', 'now'));
+      send(tracker.log({ agent: 0, kind: 'style_started' }));
+    },
+
+    commitStyle(result, documentHtml) {
+      if (!result.ok) {
+        if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) return;
+        send(tracker.phase('style', 'failed'));
+        return;
+      }
+      ensureStyleRun(documentHtml);
+      if (tracker.state().phases.style.status !== 'now') {
+        send(tracker.log({ agent: 0, kind: 'style_started' }));
+      }
+      if (result.lockUnavailable) send(tracker.log({ agent: 0, kind: 'style_lock_unavailable' }));
+      if (result.userChanged && result.userChanged.length > 0) {
+        send(tracker.log({ agent: 0, kind: 'style_values_changed', valueKeys: [...result.userChanged] }));
+      }
+      send(tracker.phase('style', 'done'));
+      send(tracker.log({ agent: 0, kind: 'style_ready', locked: result.locked }));
     },
 
     prepareDispatch(tasks) {
@@ -328,6 +389,8 @@ export function createPrototypeBuildRun(options: {
       const state = tracker.state();
       if (state.planStreaming) send(tracker.plan(state.plan, false));
       if (state.phases.plan.status === 'now') send(tracker.phase('plan', outcome === 'succeeded' ? 'done' : 'failed'));
+      // A Style Tile still being written when the run ended was never set.
+      if (state.phases.style.status === 'now') send(tracker.phase('style', 'failed'));
       const leftover =
         outcome === 'cancelled' ? 'cancelled' : outcome === 'failed' ? 'interrupted' : 'not_written';
       let done = 0;
@@ -373,6 +436,11 @@ export function createPrototypeBuildRun(options: {
         log: state.log.slice(-PROTOTYPE_BUILD_LOG_LIMIT),
         ...(snapOptions?.revisionId ? { revisionId: snapOptions.revisionId } : {}),
       };
+    },
+
+    writtenElements(screenId) {
+      if (!tracker.started()) return 0;
+      return prototypeBuildScreen(tracker.state(), screenId).writtenElements;
     },
 
     plannedScreens() {

@@ -13,6 +13,17 @@ import {
   type PrototypeBuildEvent,
   type PrototypeBuildState,
 } from './prototype-build.js';
+import {
+  PROTOTYPE_STYLE_TILE_CSS,
+  prototypeStyleCss,
+  prototypeStyleTileBody,
+  readPrototypeDocumentStyle,
+  resolvePrototypeStyleValues,
+  sanitizeStyleCss,
+  sanitizeStyleSampleHtml,
+  stripStyleValueOverrides,
+  type PrototypeStyleValues,
+} from './prototype-style.js';
 
 export type PrototypeScreenStatus = 'queued' | 'streaming' | 'ready';
 
@@ -55,6 +66,18 @@ export type PrototypeLiveEvent =
       html: string;
       /** Screen-specific CSS still being written (cleared once the screen lands in the document). */
       css?: string;
+    }
+  | {
+      /** The 「风格样张」 (#91): the shared look, while the lead writes it and once it is set. */
+      kind: 'style';
+      seq: number;
+      status: 'streaming' | 'ready';
+      /** The style's stylesheet: values, then shared components. */
+      css: string;
+      /** The shared components drawn with sample content (healed while streaming). */
+      sampleHtml: string;
+      direction: string;
+      locked: boolean;
     };
 
 const VOID_TAGS = new Set([
@@ -407,11 +430,42 @@ export function healPartialScreenSection(
 
 function healPartialCss(css: string | undefined): string | undefined {
   if (!css?.trim()) return undefined;
-  // Drop a trailing unfinished rule and anything that would close the style element early.
-  const cleaned = css.replace(/<\/?style[^>]*>?/gi, '');
+  // Drop a trailing unfinished rule and anything that would close the style element early or override --proto-*.
+  const cleaned = stripStyleValueOverrides(sanitizeStyleCss(css));
   const lastClose = cleaned.lastIndexOf('}');
   const complete = lastClose >= 0 ? cleaned.slice(0, lastClose + 1) : '';
   return complete.trim() || undefined;
+}
+
+export interface PrototypeStyleStream {
+  css: string;
+  sampleHtml: string;
+  direction: string;
+  locked: boolean;
+}
+
+/**
+ * The 「风格样张」 as far as the lead has written `define_style`'s arguments: the values so far
+ * (approved Style Tile values always win), the complete component rules so far, and the samples
+ * healed. Null until there is something to draw.
+ */
+export function readStreamingPrototypeStyle(
+  partialArgs: unknown,
+  locked?: Partial<PrototypeStyleValues> | null,
+): PrototypeStyleStream | null {
+  const args = partialArgs && typeof partialArgs === 'object' ? (partialArgs as Record<string, unknown>) : {};
+  const resolved = resolvePrototypeStyleValues(args.values, locked);
+  const componentCss = healPartialCss(typeof args.componentCss === 'string' ? args.componentCss : undefined) ?? '';
+  const rawSample = typeof args.sampleHtml === 'string' ? args.sampleHtml : '';
+  const sampleHtml = rawSample ? sanitizeStyleSampleHtml(healPartialHtml(rawSample)).trim() : '';
+  const hasValues = args.values && typeof args.values === 'object';
+  if (!hasValues && !componentCss && !sampleHtml && !resolved.locked) return null;
+  return {
+    css: prototypeStyleCss({ values: resolved.values, componentCss }),
+    sampleHtml,
+    direction: typeof args.direction === 'string' ? args.direction.trim() : '',
+    locked: resolved.locked,
+  };
 }
 
 /** Screen status changes travel in screen events, so they do not make the frame "changed". */
@@ -444,6 +498,8 @@ export interface PrototypeLiveTracker {
    * for it is taken back (an empty queued screen); null when there is nothing to take back.
    */
   withdrawScreen(screenId: string, documentHtml: string): PrototypeLiveEvent | null;
+  /** The 「风格样张」 as it stands (streaming or set); null when nothing changed. */
+  observeStyle(style: PrototypeStyleStream, status: 'streaming' | 'ready'): PrototypeLiveEvent | null;
 }
 
 /**
@@ -453,6 +509,7 @@ export interface PrototypeLiveTracker {
 export function createPrototypeLiveTracker(): PrototypeLiveTracker {
   let seq = 0;
   let sentFrame = '';
+  let sentStyle = '';
   const sentScreens = new Map<string, string>();
   const knownStubs = new Map<string, PrototypeScreenStub>();
 
@@ -545,6 +602,14 @@ export function createPrototypeLiveTracker(): PrototypeLiveTracker {
       seq += 1;
       return { kind: 'screen', seq, screenId: sid, ...candidate };
     },
+
+    observeStyle(style, status) {
+      const key = JSON.stringify([status, style.css, style.sampleHtml, style.direction, style.locked]);
+      if (key === sentStyle) return null;
+      sentStyle = key;
+      seq += 1;
+      return { kind: 'style', seq, status, ...style };
+    },
   };
 }
 
@@ -560,6 +625,14 @@ export interface PrototypeLiveScreenState {
   css?: string;
 }
 
+export interface PrototypeLiveStyleState extends PrototypeStyleStream {
+  seq: number;
+  status: 'streaming' | 'ready';
+}
+
+/** The artboard id of the 「风格样张」 on the canvas (never a screen id: screens start with a letter). */
+export const PROTOTYPE_STYLE_BOARD_ID = '__style';
+
 export interface PrototypeLiveState {
   frame?: PrototypeDocumentFrame;
   frameSeq: number;
@@ -569,6 +642,8 @@ export interface PrototypeLiveState {
   /** The screen the latest real event touched; the follow camera aims here. */
   focusScreenId?: string;
   focusSeq: number;
+  /** The 「风格样张」 of this run (#91), once the lead starts writing it. */
+  style?: PrototypeLiveStyleState;
   /** The run's Build Plan and per-screen build states (#90), once the run has a plan. */
   build?: PrototypeBuildState;
 }
@@ -589,6 +664,20 @@ export function applyPrototypeLiveEvent(
   if (event.kind === 'frame') {
     if (event.seq <= state.frameSeq) return state;
     return { ...state, frame: event.frame, frameSeq: event.seq };
+  }
+  if (event.kind === 'style') {
+    if (state.style && state.style.seq >= event.seq) return state;
+    const { kind: _kind, ...style } = event;
+    // While the style is being written the follow camera aims at its artboard.
+    const focus =
+      event.status === 'streaming'
+        ? { focusScreenId: PROTOTYPE_STYLE_BOARD_ID, focusSeq: state.focusSeq + 1 }
+        : state.focusScreenId === PROTOTYPE_STYLE_BOARD_ID
+          ? { focusScreenId: undefined, focusSeq: state.focusSeq + 1 }
+          : {};
+    const next: PrototypeLiveState = { ...state, style, ...focus };
+    if (next.focusScreenId === undefined) delete next.focusScreenId;
+    return next;
   }
   const prev = state.screens[event.screenId];
   if (prev && prev.seq >= event.seq) return state;
@@ -625,7 +714,19 @@ export interface PrototypeCanvasArtboard extends PrototypeScreenStub {
   css?: string;
 }
 
+/** The 「风格样张」 artboard: the shared components drawn with the style's own stylesheet. */
+export interface PrototypeCanvasStyleBoard {
+  status: 'streaming' | 'ready';
+  /** The style's stylesheet plus the tile layout. */
+  css: string;
+  bodyHtml: string;
+  direction: string;
+  locked: boolean;
+}
+
 export interface PrototypeCanvasModel {
+  /** The 「风格样张」, first on the canvas, when the run or the document has one. */
+  style?: PrototypeCanvasStyleBoard;
   css: string;
   links: string[];
   /** Head scripts, run in each artboard once its screen has landed. */
@@ -716,13 +817,32 @@ export function buildPrototypeCanvasModel(
   const assets = prototypeFrameAssets(frame);
   const htmlById = new Map(saved.screens.map((s) => [s.screenId, s.html]));
   for (const [id, screen] of Object.entries(live?.screens ?? {})) htmlById.set(id, screen.html);
+  const style = styleBoardOf(live, frame);
   return {
+    ...(style ? { style } : {}),
     css: assets.css,
     links: assets.links,
     headScripts: assets.scripts,
     screens,
     pageBodyHtml: composeDocumentBody(frame, htmlById, live),
     pageCss: screens.map((s) => s.css ?? '').filter(Boolean).join('\n'),
+  };
+}
+
+/** The run's style while it streams or once set; otherwise the one the document carries. */
+function styleBoardOf(
+  live: PrototypeLiveState | null | undefined,
+  frame: PrototypeDocumentFrame,
+): PrototypeCanvasStyleBoard | undefined {
+  const fromRun = live?.style;
+  const source = fromRun ?? readPrototypeDocumentStyle(frame.headHtml);
+  if (!source || (!source.sampleHtml && fromRun?.status !== 'streaming')) return undefined;
+  return {
+    status: fromRun?.status ?? 'ready',
+    css: `${source.css}\n${PROTOTYPE_STYLE_TILE_CSS}`,
+    bodyHtml: prototypeStyleTileBody(source.sampleHtml),
+    direction: source.direction,
+    locked: source.locked,
   };
 }
 

@@ -17,7 +17,7 @@ function phaseName(phase: PrototypeBuildPhaseId, t: T): string {
     case 'plan':
       return t('施工计划', 'Build plan');
     case 'style':
-      return t('风格样张', 'Style sample');
+      return t('风格样张', 'Style Tile');
     case 'screens':
       return t('逐屏施工', 'Screens');
     case 'review':
@@ -43,6 +43,11 @@ function phaseDetail(
     if (status === 'now') return t(`正在列 · ${total} 屏`, `Listing · ${total}`);
     if (status === 'failed') return t('没列完', 'Not finished');
     return t(`${total} 屏`, `${total} screens`);
+  }
+  if (phase === 'style' && (status === 'now' || status === 'done')) {
+    if (status === 'now') return t('正在画', 'Drawing');
+    const ready = [...build.log].reverse().find((e) => e.kind === 'style_ready');
+    return ready?.locked ? t('用你确认的设计值', 'Your approved values') : t('助手提出的设计值', 'Proposed values');
   }
   if (phase === 'screens' && status !== 'not_started') {
     if (status === 'now') {

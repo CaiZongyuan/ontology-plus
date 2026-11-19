@@ -1,7 +1,15 @@
 import {
+  PROTOTYPE_SHELL_SKELETON_CSS,
   extractPrototypeArtboards,
   prototypeNavigationRuntimeScript,
+  prototypeStyleHeadHtml,
+  resolvePrototypeStyleValues,
+  sanitizeStyleCss,
+  stripInlineStyleValueOverrides,
+  stripStyleValueOverrides,
   type PrototypeArtboardSlice,
+  type PrototypeStyle,
+  type PrototypeStyleValues,
 } from '../../ontology-core/index.js';
 import type {
   AgentSession,
@@ -80,7 +88,7 @@ const RAW_TEXT_TAGS = new Set(['script', 'style']);
 
 const INTERACTIVE_CONTROL_TAGS = new Set(['button', 'input', 'select', 'textarea']);
 
-const FORBIDDEN_DIALOG_RE = /\b(?:window\s*\.\s*)?(?:alert|confirm|prompt)\s*\(/i;
+export const FORBIDDEN_DIALOG_RE = /\b(?:window\s*\.\s*)?(?:alert|confirm|prompt)\s*\(/i;
 
 interface HtmlSpanNode {
   tagName: string;
@@ -835,6 +843,47 @@ function rewriteOpeningTagAttributes(
   return result;
 }
 
+/**
+ * Removes unscoped `<style>` / `<link>` tags and `--proto-*` inline style overrides from a screen
+ * or anchor HTML fragment (shared across `upsert_prototype_screen`, `edit_prototype_anchor`, and
+ * live partial screen streaming).
+ */
+export function sanitizePrototypeScreenFragment(html: string): string {
+  return stripInlineStyleValueOverrides(
+    html
+      .replace(/<style\b[\s\S]*?(?:<\/style\s*>|$)/gi, '')
+      .replace(/<link\b(?:[^>"']|"[^"]*"|'[^']*')*>?/gi, ''),
+  );
+}
+
+/**
+ * Checks that every interactive control inside `screenId` carries valid semantic anchors, and
+ * marks a drawn `queued` screen stub as `ready` (used when a helper edits via `edit_prototype_anchor`).
+ */
+export function validatePrototypeScreenControls(
+  html: string,
+  screenId: string,
+  locale: AgentLocale,
+): { ok: true; nextHtml: string } | { ok: false; diagnostic: string } {
+  const tree = parseHtmlSpanTree(html);
+  const scrNode = tree.allNodes.find((n) => n.attrs['data-screen-id'] === screenId);
+  if (!scrNode) return { ok: true, nextHtml: html };
+  const sectionHtml = html.slice(scrNode.openStart, scrNode.closeEnd);
+  const sectionNodes = parseHtmlSpanTree(sectionHtml).allNodes;
+  const issues = validateInteractiveControlNodes(sectionNodes, sectionHtml, new Set(), locale);
+  if (issues.length > 0) {
+    return { ok: false, diagnostic: issues.join('；') };
+  }
+  const inner = scrNode.innerEnd !== null ? html.slice(scrNode.openEnd, scrNode.innerEnd).trim() : '';
+  if (inner && (scrNode.attrs['data-screen-status'] ?? '').toLowerCase() === 'queued') {
+    const updatedOpen = rewriteOpeningTagAttributes(html.slice(scrNode.openStart, scrNode.openEnd), {
+      'data-screen-status': 'ready',
+    });
+    return { ok: true, nextHtml: `${html.slice(0, scrNode.openStart)}${updatedOpen}${html.slice(scrNode.openEnd)}` };
+  }
+  return { ok: true, nextHtml: html };
+}
+
 export function editPrototypeAnchor(
   html: string,
   input: EditPrototypeAnchorInput,
@@ -859,9 +908,9 @@ export function editPrototypeAnchor(
   }
 
   const targetAnchor = toTargetAnchor(targetNode, input);
-  const fragment = (input.htmlFragment ?? '').trim();
+  const rawAnchorFragment = (input.htmlFragment ?? '').trim();
 
-  if (fragment && FORBIDDEN_DIALOG_RE.test(fragment)) {
+  if (rawAnchorFragment && FORBIDDEN_DIALOG_RE.test(rawAnchorFragment)) {
     return {
       isError: true,
       nextHtml: html,
@@ -874,6 +923,7 @@ export function editPrototypeAnchor(
       ),
     };
   }
+  const fragment = rawAnchorFragment ? sanitizePrototypeScreenFragment(rawAnchorFragment).trim() : '';
 
   if (input.attributes) {
     for (const val of Object.values(input.attributes)) {
@@ -1033,8 +1083,17 @@ export function editPrototypeAnchor(
         ),
       };
     }
+    const sanitizedUpdates: Record<string, string | null> = {};
+    for (const [k, v] of Object.entries(updates)) {
+      if (k.toLowerCase() === 'style' && typeof v === 'string') {
+        const cleaned = stripStyleValueOverrides(sanitizeStyleCss(v)).trim();
+        sanitizedUpdates[k] = cleaned || null;
+      } else {
+        sanitizedUpdates[k] = v;
+      }
+    }
     const origOpenTag = html.slice(targetNode.openStart, targetNode.openEnd);
-    const updatedOpenTag = rewriteOpeningTagAttributes(origOpenTag, updates);
+    const updatedOpenTag = rewriteOpeningTagAttributes(origOpenTag, sanitizedUpdates);
     const reparsedOpen = parseHtmlSpanTree(updatedOpenTag).allNodes;
     const controlIssues = validateInteractiveControlNodes(
       reparsedOpen,
@@ -1252,9 +1311,40 @@ function normalizeScreenType(raw: string | undefined): string {
   return VALID_PROTOTYPE_SCREEN_TYPES.has(upper) ? upper : 'LIST';
 }
 
+/**
+ * The style the shell's own `themeTokens` describe (the lead's proposal, no samples); approved
+ * values, when given, win over the tokens.
+ */
+export function styleFromShellTokens(
+  tokens: unknown,
+  locked?: Partial<PrototypeStyleValues> | null,
+): PrototypeStyle {
+  const tk = tokens && typeof tokens === 'object' ? (tokens as Record<string, unknown>) : {};
+  const resolved = resolvePrototypeStyleValues(
+    {
+      mode: tk.mode,
+      background: tk.canvasBg,
+      surface: tk.cardBg,
+      accent: tk.accentColor,
+      border: tk.borderColor,
+      ink: tk.textColor,
+      fontFamily: tk.fontFamily,
+      radiusPx: tk.borderRadius,
+    },
+    locked ?? null,
+  );
+  return { direction: '', values: resolved.values, componentCss: '', sampleHtml: '', locked: resolved.locked };
+}
+
+/**
+ * The document skeleton (spec #87 decision 3): head, an app bar with the title and one link
+ * per screen, and one empty section per screen. It has no look of its own: every colour, font
+ * and radius comes from the build's style (`define_style`, ADR 0018 / #91), or — when the lead
+ * set none — from the shell's `themeTokens`. No fixed page width: the pages follow the viewport.
+ */
 export function initPrototypeShell(
   input: InitPrototypeShellInput,
-  options?: { locale?: AgentLocale },
+  options?: { locale?: AgentLocale; style?: PrototypeStyle | null },
 ): PrototypeHtmlMutationResult {
   const locale = options?.locale ?? 'zh-CN';
   const screens = Array.isArray(input.screens) ? input.screens.filter((s) => s?.screenId?.trim()) : [];
@@ -1284,24 +1374,14 @@ export function initPrototypeShell(
     };
   }
 
-  const tk = input.themeTokens ?? {};
-  const isDark = tk.mode === 'dark';
-  const canvasBg = tk.canvasBg?.trim() || (isDark ? '#141413' : '#f6f4f0');
-  const cardBg = tk.cardBg?.trim() || (isDark ? '#1e1d1b' : '#fffdf9');
-  const accent = tk.accentColor?.trim() || '#f94c05';
-  const border = tk.borderColor?.trim() || (isDark ? '#33302b' : '#dfd6c7');
-  const text = tk.textColor?.trim() || (isDark ? '#f5f2eb' : '#1f1d1a');
-  const font =
-    tk.fontFamily?.trim() ||
-    "'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif";
-  const radius = tk.borderRadius?.trim() || '12px';
+  const style = options?.style ?? styleFromShellTokens(input.themeTokens);
 
   const navItemsHtml = screens
     .map((scr, idx) => {
       const sid = escapeHtmlAttr(scr.screenId.trim());
       const sname = escapeHtmlAttr(scr.screenName?.trim() || scr.screenId.trim());
       const navElId = `EL-SHELL-TAB-${sid.replace(/[^A-Za-z0-9_-]/g, '-')}`;
-      return `        <button type="button" class="proto-nav-tab${idx === 0 ? ' is-active' : ''}" data-element-id="${navElId}" data-element-type="TAB" data-element-label="${sname}" data-nav-screen="${sid}" onclick="window.__selectProtoScreen('${sid}')">${sname}</button>`;
+      return `        <button type="button" class="proto-app-nav-link${idx === 0 ? ' is-active' : ''}" data-element-id="${navElId}" data-element-type="TAB" data-element-label="${sname}" data-nav-screen="${sid}" onclick="window.__selectProtoScreen('${sid}')">${sname}</button>`;
     })
     .join('\n');
 
@@ -1319,129 +1399,27 @@ export function initPrototypeShell(
   const appTitle = escapeHtmlAttr(input.appTitle?.trim() || 'Interactive Prototype');
   const subtitle = input.subtitle?.trim() ? escapeHtmlAttr(input.subtitle.trim()) : '';
 
+  // Structure only, at zero specificity (:where), so the style's components restyle any of it.
   const html = `<!DOCTYPE html>
 <html lang="${locale === 'en-US' ? 'en' : 'zh-CN'}">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${appTitle}</title>
+  ${prototypeStyleHeadHtml(style)}
   <style id="proto-shell-styles">
-    :root {
-      --proto-bg: ${canvasBg};
-      --proto-card: ${cardBg};
-      --proto-accent: ${accent};
-      --proto-border: ${border};
-      --proto-text: ${text};
-      --proto-muted: ${isDark ? '#a69f93' : '#6e675d'};
-      --proto-radius: ${radius};
-      --proto-font: ${font};
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: var(--proto-font);
-      background: var(--proto-bg);
-      color: var(--proto-text);
-      line-height: 1.5;
-      font-variant-numeric: tabular-nums;
-    }
-    .proto-app-shell {
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-    .proto-topbar {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 14px 24px;
-      background: var(--proto-card);
-      border-bottom: 1px solid var(--proto-border);
-      position: sticky;
-      top: 0;
-      z-index: 20;
-    }
-    .proto-brand {
-      display: flex;
-      align-items: baseline;
-      gap: 10px;
-    }
-    .proto-brand h1 {
-      margin: 0;
-      font-size: 17px;
-      font-weight: 700;
-    }
-    .proto-brand span {
-      font-size: 12px;
-      color: var(--proto-muted);
-    }
-    .proto-nav {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    .proto-nav-tab {
-      appearance: none;
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--proto-muted);
-      padding: 6px 13px;
-      border-radius: calc(var(--proto-radius) - 4px);
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 160ms ease-out;
-    }
-    .proto-nav-tab:hover {
-      color: var(--proto-text);
-      border-color: var(--proto-border);
-    }
-    .proto-nav-tab.is-active {
-      background: var(--proto-accent);
-      color: #ffffff;
-      border-color: var(--proto-accent);
-    }
-    .proto-screens-stage {
-      flex: 1;
-      width: 100%;
-      max-width: 1380px;
-      margin: 0 auto;
-      padding: 22px 24px 40px;
-    }
-    .proto-screen {
-      display: none;
-      animation: protoFadeIn 200ms ease-out;
-    }
-    .proto-screen.is-active {
-      display: block;
-    }
-    @keyframes protoFadeIn {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .proto-card, .card {
-      background: var(--proto-card);
-      border: 1px solid var(--proto-border);
-      border-radius: var(--proto-radius);
-      padding: 18px;
-    }
-    @media (max-width: 768px) {
-      .proto-topbar { padding: 12px 16px; }
-      .proto-screens-stage { padding: 16px; }
-    }
-    ${input.sharedCss?.trim() ?? ''}
+    ${PROTOTYPE_SHELL_SKELETON_CSS}
+    ${stripStyleValueOverrides(sanitizeStyleCss(input.sharedCss?.trim() ?? ''))}
   </style>
 </head>
 <body>
   <div class="proto-app-shell">
-    <header class="proto-topbar">
-      <div class="proto-brand">
-        <h1>${appTitle}</h1>
-        ${subtitle ? `<span>${subtitle}</span>` : ''}
+    <header class="proto-app-bar">
+      <div class="proto-app-brand">
+        <h1 class="proto-app-title">${appTitle}</h1>
+        ${subtitle ? `<span class="proto-app-subtitle">${subtitle}</span>` : ''}
       </div>
-      <nav class="proto-nav" aria-label="Primary Screens">
+      <nav class="proto-app-nav" aria-label="Screens">
 ${navItemsHtml}
       </nav>
     </header>
@@ -1468,6 +1446,219 @@ ${sectionsHtml}
   };
 }
 
+/** Drops this screen's own CSS block and page-level script blocks older writes left for it. */
+function removeScreenCssBlock(html: string, screenId: string): string {
+  const id = screenId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const withoutCss = html.replace(new RegExp(`<style\\b[^>]*data-screen-css="${id}"[^>]*>[\\s\\S]*?</style>\\n?`, 'gi'), '');
+  // A script inside a section is that section's (replaced with it); only page-level ones go here.
+  return withoutCss.replace(
+    new RegExp(`\\n?<script\\b[^>]*data-screen-js="${id}"[^>]*>[\\s\\S]*?</script>\\n?`, 'gi'),
+    (match: string, offset: number, whole: string) => {
+      const before = whole.slice(0, offset);
+      const open = (before.match(/<section\b/gi) ?? []).length - (before.match(/<\/section>/gi) ?? []).length;
+      return open > 0 ? match : '';
+    },
+  );
+}
+
+function skipCssString(css: string, fromQuote: number): number {
+  const quote = css[fromQuote]!;
+  let i = fromQuote + 1;
+  while (i < css.length) {
+    if (css[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (css[i] === quote) return i + 1;
+    i += 1;
+  }
+  return css.length;
+}
+
+/** Splits CSS into top-level chunks: `{ prelude, body }` for blocks, `{ statement }` otherwise. */
+function splitCssBlocks(css: string): ({ prelude: string; body: string } | { statement: string })[] {
+  const out: ({ prelude: string; body: string } | { statement: string })[] = [];
+  let i = 0;
+  let start = 0;
+  while (i < css.length) {
+    const ch = css[i]!;
+    if (ch === '"' || ch === "'") {
+      i = skipCssString(css, i);
+      continue;
+    }
+    if (ch === '/' && css[i + 1] === '*') {
+      const end = css.indexOf('*/', i + 2);
+      i = end === -1 ? css.length : end + 2;
+      continue;
+    }
+    if (ch === ';') {
+      const statement = css.slice(start, i + 1).replace(/\/\*[\s\S]*?\*\//g, '').trim();
+      if (statement && statement !== ';') out.push({ statement });
+      start = i + 1;
+    } else if (ch === '{') {
+      let depth = 1;
+      let j = i + 1;
+      while (j < css.length && depth > 0) {
+        const inner = css[j]!;
+        if (inner === '"' || inner === "'") {
+          j = skipCssString(css, j);
+          continue;
+        }
+        if (inner === '/' && css[j + 1] === '*') {
+          const end = css.indexOf('*/', j + 2);
+          j = end === -1 ? css.length : end + 2;
+          continue;
+        }
+        if (inner === '{') depth += 1;
+        else if (inner === '}') depth -= 1;
+        j += 1;
+      }
+      out.push({
+        prelude: css.slice(start, i).replace(/\/\*[\s\S]*?\*\//g, '').trim(),
+        body: css.slice(i + 1, depth === 0 ? j - 1 : j),
+      });
+      i = j;
+      start = j;
+      continue;
+    }
+    i += 1;
+  }
+  const tail = css.slice(start).replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  if (tail) out.push({ statement: tail });
+  return out;
+}
+
+function splitSelectorList(prelude: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (let i = 0; i < prelude.length; i += 1) {
+    const ch = prelude[i]!;
+    if (ch === '"' || ch === "'") {
+      const next = skipCssString(prelude, i);
+      cur += prelude.slice(i, next);
+      i = next - 1;
+      continue;
+    }
+    if (ch === '(' || ch === '[') depth += 1;
+    if (ch === ')' && depth > 0) depth -= 1;
+    if (ch === ']' && depth > 0) depth -= 1;
+    if (ch === ',' && depth === 0) {
+      if (cur.trim()) parts.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  return parts;
+}
+
+/**
+ * True when `afterOwn` (the remainder of a selector starting with `[data-screen-id="<own>"]` or
+ * `#screen-<own>`) applies `+` or `~` to the screen root itself (including after compound
+ * qualifiers such as `.proto-screen` or `:not(.x)`) before stepping inside a descendant or child.
+ */
+function escapesOwnRoot(afterOwn: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < afterOwn.length; i += 1) {
+    const ch = afterOwn[i]!;
+    if (ch === '"' || ch === "'") {
+      i = skipCssString(afterOwn, i) - 1;
+      continue;
+    }
+    if (ch === '(' || ch === '[') {
+      depth += 1;
+      continue;
+    }
+    if ((ch === ')' || ch === ']') && depth > 0) {
+      depth -= 1;
+      continue;
+    }
+    if (depth > 0) continue;
+    if (ch === '+' || ch === '~') return true;
+    if (ch === '>' || /\s/.test(ch)) {
+      let j = ch === '>' ? i + 1 : i;
+      while (j < afterOwn.length && /\s/.test(afterOwn[j]!)) j += 1;
+      const next = afterOwn[j];
+      if (!next) return ch === '>';
+      if (next === '+' || next === '~') return true;
+      if (next === '>') {
+        j += 1;
+        while (j < afterOwn.length && /\s/.test(afterOwn[j]!)) j += 1;
+        const afterChild = afterOwn[j];
+        return !afterChild || afterChild === '+' || afterChild === '~' || afterChild === '>';
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * A screen's extraCss confined to its own section: every selector is prefixed with the section,
+ * design values (--proto-*) cannot be redeclared, and selectors aimed at the page (:root, html,
+ * body), the shell, the style or another screen are rejected.
+ */
+export function scopeScreenCss(css: string, screenId: string): { css: string; rejected: string[] } {
+  const scope = `[data-screen-id="${screenId}"]`;
+  const idSel = `#screen-${screenId}`;
+  const rejected: string[] = [];
+  const reaches = (sel: string): boolean => {
+    if (/(^|[\s>+~,(])(?::root|:host|html|body)(?![\w-])/i.test(sel)) return true;
+    if (/proto-app|proto-topbar|proto-brand|proto-nav|proto-screens-stage|data-proto-style|data-nav-screen|data-screen-css/i.test(sel)) {
+      return true;
+    }
+    for (const m of sel.matchAll(/\[\s*data-screen-id(?:\s*([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+)))?\s*\]/gi)) {
+      const op = m[1];
+      const val = m[2] ?? m[3] ?? m[4];
+      if (op !== '=' || val !== screenId) return true;
+    }
+    for (const m of sel.matchAll(/#screen-([A-Za-z0-9_-]+)/g)) if (m[1] !== screenId) return true;
+    const afterOwn = sel.startsWith(scope)
+      ? sel.slice(scope.length)
+      : sel.startsWith(idSel)
+        ? sel.slice(idSel.length)
+        : null;
+    if (afterOwn !== null && escapesOwnRoot(afterOwn)) return true;
+    return false;
+  };
+  const cleanedSource = css.replace(/<\/?(?:style|template|script)[^>]*>?/gi, '');
+  const scopeBlocks = (source: string): string =>
+    splitCssBlocks(source)
+      .map((chunk) => {
+        if ('statement' in chunk) {
+          // @import, @charset and stray declarations do not belong to a screen.
+          rejected.push(chunk.statement.slice(0, 60));
+          return '';
+        }
+        const { prelude, body } = chunk;
+        if (prelude.startsWith('@')) {
+          if (/^@(media|supports|container|layer)\b/i.test(prelude)) {
+            const inner = scopeBlocks(body);
+            return inner ? `${prelude} {\n${inner}\n}` : '';
+          }
+          if (/^@(keyframes|-webkit-keyframes|font-face)\b/i.test(prelude)) {
+            return `${prelude} {${stripStyleValueOverrides(sanitizeStyleCss(body))}}`;
+          }
+          rejected.push(prelude.slice(0, 60));
+          return '';
+        }
+        const selectors = splitSelectorList(prelude);
+        const bad = selectors.filter(reaches);
+        if (bad.length > 0 || selectors.length === 0) {
+          rejected.push(...(bad.length > 0 ? bad : [prelude.slice(0, 60)]));
+          return '';
+        }
+        const scoped = selectors
+          .map((sel) => (sel.startsWith(scope) || sel.startsWith(idSel) ? sel : `${scope} ${sel}`))
+          .join(', ');
+        return `${scoped} {${stripStyleValueOverrides(sanitizeStyleCss(body))}}`;
+      })
+      .filter(Boolean)
+      .join('\n');
+  const out = scopeBlocks(cleanedSource).trim();
+  return { css: out, rejected };
+}
+
 export function upsertPrototypeScreen(
   beforeHtml: string,
   input: UpsertPrototypeScreenInput,
@@ -1488,12 +1679,12 @@ export function upsertPrototypeScreen(
     };
   }
 
-  const rawFragment = (input.screenHtml ?? '')
+  const rawFragmentBeforeStrip = (input.screenHtml ?? '')
     .replace(/^```(?:html)?\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim();
 
-  if (!rawFragment) {
+  if (!rawFragmentBeforeStrip) {
     return {
       isError: true,
       nextHtml: beforeHtml,
@@ -1507,7 +1698,7 @@ export function upsertPrototypeScreen(
     };
   }
 
-  const combinedCheck = `${rawFragment}\n${input.extraCss ?? ''}\n${input.extraJs ?? ''}`;
+  const combinedCheck = `${rawFragmentBeforeStrip}\n${input.extraCss ?? ''}\n${input.extraJs ?? ''}`;
   if (FORBIDDEN_DIALOG_RE.test(combinedCheck)) {
     return {
       isError: true,
@@ -1518,6 +1709,38 @@ export function upsertPrototypeScreen(
         locale,
         `分屏 ${screenId} 中检测到 window.alert / confirm / prompt；请改用内联提示条或抽屉反馈后重试。`,
         `Screen ${screenId} contains window.alert / confirm / prompt; replace with inline UI feedback and retry.`,
+      ),
+    };
+  }
+
+  // Screen HTML must not smuggle unscoped <style>/<link> or inline --proto-* overrides (use extraCss + var(--proto-*)).
+  const rawFragment = sanitizePrototypeScreenFragment(rawFragmentBeforeStrip).trim();
+  if (!rawFragment) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(input.screenName ? { label: input.screenName } : {}) },
+      summary: pickLocaleText(locale, 'screenHtml 为空', 'screenHtml is empty'),
+      diagnostic: pickLocaleText(
+        locale,
+        'upsert_prototype_screen 需要提供该分屏的 HTML 内容（样式请放在 extraCss 中）。',
+        'upsert_prototype_screen requires non-empty screenHtml (put screen CSS in extraCss).',
+      ),
+    };
+  }
+
+  // Screen CSS stays on this screen: scoped to its section, never the page, the shell or the style.
+  const scopedCss = scopeScreenCss(input.extraCss ?? '', screenId);
+  if (scopedCss.rejected.length > 0) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(input.screenName ? { label: input.screenName } : {}) },
+      summary: pickLocaleText(locale, 'extraCss 只能写这一屏的样式', 'extraCss may only style this screen'),
+      diagnostic: pickLocaleText(
+        locale,
+        `分屏 ${screenId} 的 extraCss 里有作用到整页、外壳、风格或别的屏的选择器：${scopedCss.rejected.join('，')}。extraCss 只写这一屏内部元素的样式（会自动限定在这一屏里），颜色和字体用 var(--proto-*)。`,
+        `Screen ${screenId}'s extraCss has selectors reaching the page, shell, style or other screens: ${scopedCss.rejected.join(', ')}. extraCss styles only elements inside this screen (it is scoped automatically); use var(--proto-*) for colours and type.`,
       ),
     };
   }
@@ -1644,6 +1867,18 @@ export function upsertPrototypeScreen(
     };
   }
 
+  // The screen's own behaviour lives inside its section, handed the section as `screen`.
+  if (input.extraJs?.trim()) {
+    const sid = escapeHtmlAttr(screenId);
+    const safeJs = input.extraJs.trim().replace(/<\/script/gi, '<\\/script');
+    const script = `\n<script data-screen-js="${sid}">\n(function (screen) {\n${safeJs}\n})((document.currentScript && document.currentScript.closest('section')) || document.getElementById('screen-${sid}'));\n</script>\n`;
+    const closeAt = normalizedSectionHtml.toLowerCase().lastIndexOf('</section>');
+    normalizedSectionHtml =
+      closeAt >= 0
+        ? `${normalizedSectionHtml.slice(0, closeAt)}${script}${normalizedSectionHtml.slice(closeAt)}`
+        : `${normalizedSectionHtml}${script}`;
+  }
+
   let candidateHtml: string;
   if (existingScreenNode) {
     candidateHtml = `${baseHtml.slice(0, existingScreenNode.openStart)}${normalizedSectionHtml}${baseHtml.slice(existingScreenNode.closeEnd)}`;
@@ -1659,27 +1894,15 @@ export function upsertPrototypeScreen(
     }
   }
 
-  if (input.extraCss?.trim()) {
-    const styleCloseIdx = candidateHtml.lastIndexOf('</style>');
-    if (styleCloseIdx !== -1) {
-      candidateHtml = `${candidateHtml.slice(0, styleCloseIdx)}\n/* [${screenId}] */\n${input.extraCss.trim()}\n${candidateHtml.slice(styleCloseIdx)}`;
-    } else {
-      const headCloseIdx = candidateHtml.indexOf('</head>');
-      const styleBlock = `<style data-screen-css="${escapeHtmlAttr(screenId)}">\n${input.extraCss.trim()}\n</style>\n`;
-      candidateHtml =
-        headCloseIdx !== -1
-          ? `${candidateHtml.slice(0, headCloseIdx)}${styleBlock}${candidateHtml.slice(headCloseIdx)}`
-          : `${styleBlock}${candidateHtml}`;
-    }
-  }
-
-  if (input.extraJs?.trim()) {
-    const bodyCloseIdx = candidateHtml.lastIndexOf('</body>');
-    const scriptBlock = `\n<script data-screen-js="${escapeHtmlAttr(screenId)}">\n(function(){\n${input.extraJs.trim()}\n})();\n</script>\n`;
+  // The screen's own CSS: one block per screen at the end of <head>, replaced on every write.
+  candidateHtml = removeScreenCssBlock(candidateHtml, screenId);
+  if (scopedCss.css) {
+    const headCloseIdx = candidateHtml.search(/<\/head>/i);
+    const styleBlock = `<style data-screen-css="${escapeHtmlAttr(screenId)}">\n${scopedCss.css}\n</style>\n`;
     candidateHtml =
-      bodyCloseIdx !== -1
-        ? `${candidateHtml.slice(0, bodyCloseIdx)}${scriptBlock}${candidateHtml.slice(bodyCloseIdx)}`
-        : `${candidateHtml}${scriptBlock}`;
+      headCloseIdx !== -1
+        ? `${candidateHtml.slice(0, headCloseIdx)}${styleBlock}${candidateHtml.slice(headCloseIdx)}`
+        : `${styleBlock}${candidateHtml}`;
   }
 
   return {
@@ -1907,7 +2130,7 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'init_prototype_shell',
       description:
-        'Initialize a responsive multi-artboard HTML5 prototype shell with shared design tokens, navigation tabs, and placeholder screen frames (data-screen-status="queued") so the user sees all artboards immediately while parallel subagents fill each screen via upsert_prototype_screen.',
+        'Initialize the document skeleton: app title, one navigation link per screen and an empty section per planned screen. It has no look of its own — colours, type and components come from define_style (set the style first); themeTokens are only used when no style was set. Never draws a screen.',
       parameters: {
         type: 'object',
         properties: {

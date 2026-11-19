@@ -4,6 +4,7 @@ import {
   ONTOLOGY_TOOL_NAMES,
   PROTOTYPE_ANCHOR_TOOL_NAMES,
   UNIFIED_AGENT_EXTRA_TOOLS,
+  getToolsForAgentKind,
 } from '../../agent-runtime/index.js';
 import {
   MODEL_BUSINESS_NAMES,
@@ -22,6 +23,7 @@ describe('tool-call to business-language progress mapping', () => {
       ...PROTOTYPE_ANCHOR_TOOL_NAMES,
       ...DOMAIN_RUN_TOOL_NAMES,
       ...UNIFIED_AGENT_EXTRA_TOOLS.map((t) => t.function.name),
+      ...getToolsForAgentKind('PROTOTYPE_CO_DESIGN', { codeMode: true, multiAgentConcurrency: 3 }).map((t) => t.name),
     ]);
 
     for (const toolName of allRuntimeToolNames) {
@@ -30,6 +32,11 @@ describe('tool-call to business-language progress mapping', () => {
         `Register agent tool "${toolName}" in TOOL_PROGRESS_CATALOG`,
       ).toBeDefined();
     }
+    expect(formatToolProgress('define_style', {})).toEqual({
+      zh: '正在绘制风格样张',
+      en: 'Drawing the Style Tile',
+    });
+    expect(checkBusinessViewMarkup(`<p>${formatToolProgress('define_style', {}).en}</p>`)).toEqual([]);
 
     // Verify 11 upsert_* tools derive directly from MODEL_BUSINESS_NAMES
     const expectedModelMap = {

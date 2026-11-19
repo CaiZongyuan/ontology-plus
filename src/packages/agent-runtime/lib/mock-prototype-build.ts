@@ -2,6 +2,7 @@
  * The recorded multi-screen build the Mock engine replays (ADR 0007, spec #87 test decision 1).
  *
  * In Mock mode the prototype session plays this back through the real engine: the lead calls
+ * `plan_screens`, then `define_style` (the 「风格样张」, streamed onto the first artboard), then
  * `init_prototype_shell` and `spawn_subagents`, and each subagent's `upsert_prototype_screen`
  * arguments stream token by token from the faux provider, the same path a real model's tool
  * call takes. The content is the #88 review fixture (a bakery chain's store ordering app),
@@ -17,6 +18,8 @@ import {
   type AssistantMessage,
   type Context,
 } from '@earendil-works/pi-ai';
+import { describePrototypeBuildFailure } from '../../business-vocabulary/index.js';
+import type { PrototypeBuildFailureCode } from '../../ontology-core/index.js';
 import { pickLocaleText, type AgentLocale } from './locale.js';
 
 export interface MockPrototypeBuildScreen {
@@ -32,15 +35,11 @@ export interface MockPrototypeBuildScreen {
 
 export interface MockPrototypeBuild {
   appTitle: string;
-  themeTokens: {
-    mode: 'light';
-    canvasBg: string;
-    cardBg: string;
-    accentColor: string;
-    borderColor: string;
-    textColor: string;
-    fontFamily: string;
-    borderRadius: string;
+  /** The style the lead proposes with `define_style` (approved Style Tile values override it). */
+  style: {
+    direction: string;
+    values: Record<string, string | number>;
+    sampleHtml: string;
   };
   sharedCss: string;
   screens: MockPrototypeBuildScreen[];
@@ -57,15 +56,22 @@ const NEW_ORDER_JS = `document.addEventListener('click', function (event) {
   qty.textContent = String(Math.max(0, next));
 });`;
 
+/**
+ * The shared components (define_style's componentCss), written on the style's design values: the
+ * short names below are aliases of the --proto-* variables, so approved values reach every rule.
+ */
 const SHARED_CSS = `:root {
-  --c-bg: #f5f3ee; --c-card: #ffffff; --c-ink: #1d2621; --c-soft: #5b675f; --c-faint: #8a948d;
-  --c-line: #e2ded4; --c-accent: #2e6a4e; --c-accent-ink: #ffffff; --c-accent-soft: #e2eee7;
-  --c-warn: #a85a17; --c-warn-soft: #f7e8d6; --c-danger: #a83434; --c-danger-soft: #f6e1df;
-  --r: 10px; --r-sm: 6px;
+  --c-bg: var(--proto-bg); --c-card: var(--proto-card); --c-ink: var(--proto-text); --c-soft: var(--proto-muted);
+  --c-faint: color-mix(in srgb, var(--proto-muted) 70%, var(--proto-card)); --c-line: var(--proto-border);
+  --c-accent: var(--proto-accent); --c-accent-ink: var(--proto-accent-ink);
+  --c-accent-soft: color-mix(in srgb, var(--proto-accent) 14%, var(--proto-card));
+  --c-warn: var(--proto-warn); --c-warn-soft: color-mix(in srgb, var(--proto-warn) 16%, var(--proto-card));
+  --c-danger: var(--proto-danger); --c-danger-soft: color-mix(in srgb, var(--proto-danger) 14%, var(--proto-card));
+  --r: var(--proto-radius); --r-sm: var(--proto-radius-sm);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
-body { background: var(--c-bg); color: var(--c-ink); font: 14px/1.55 "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; }
+body { background: var(--c-bg); color: var(--c-ink); font-family: var(--proto-font); font-size: 14px; line-height: 1.55; }
 h1 { font-size: 22px; margin: 0; letter-spacing: .01em; }
 h2 { font-size: 15px; margin: 0 0 12px; }
 .bar { height: 56px; display: flex; align-items: center; gap: 28px; padding: 0 28px; background: var(--c-card); border-bottom: 1px solid var(--c-line); }
@@ -85,7 +91,7 @@ h2 { font-size: 15px; margin: 0 0 12px; }
 .tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 12px; background: var(--c-accent-soft); color: var(--c-accent); }
 .tag.warn { background: var(--c-warn-soft); color: var(--c-warn); }
 .tag.danger { background: var(--c-danger-soft); color: var(--c-danger); }
-.tag.mute { background: #eeece6; color: var(--c-soft); }
+.tag.mute { background: var(--proto-inset); color: var(--c-soft); }
 .input { height: 36px; border: 1px solid var(--c-line); border-radius: var(--r-sm); padding: 0 12px; font: inherit; background: var(--c-card); color: var(--c-ink); min-width: 0; }
 textarea.input { height: 76px; padding: 8px 12px; resize: none; width: 100%; }
 .muted { color: var(--c-soft); }
@@ -94,15 +100,16 @@ table { width: 100%; border-collapse: collapse; }
 th { text-align: left; font-weight: 500; color: var(--c-soft); font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--c-line); }
 td { padding: 11px 10px; border-bottom: 1px solid var(--c-line); }
 tr[data-nav] { cursor: pointer; }
-tr[data-nav]:hover td { background: #faf9f5; }
-.kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+tr[data-nav]:hover td { background: var(--proto-inset); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
 .kpi { cursor: pointer; }
 .kpi b { display: block; font-size: 28px; margin-top: 6px; }
-.tabs { display: flex; gap: 2px; background: #ece9e2; padding: 3px; border-radius: 8px; }
+.tabs { display: flex; gap: 2px; background: var(--proto-inset); padding: 3px; border-radius: 8px; }
 .tabs a { padding: 5px 12px; border-radius: 6px; color: var(--c-soft); cursor: pointer; }
 .tabs a.on { background: var(--c-card); color: var(--c-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-.split { display: grid; grid-template-columns: 1fr 340px; gap: 18px; align-items: start; }
-.goods { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 18px; align-items: start; }
+@media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
+.goods { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
 .good { border: 1px solid var(--c-line); border-radius: var(--r); padding: 12px; background: var(--c-card); }
 .good .pic { height: 74px; border-radius: 8px; background: linear-gradient(135deg, #efe3cf, #e2d0b0); margin-bottom: 10px; }
 .good:nth-child(2) .pic { background: linear-gradient(135deg, #f1dfc6, #d9b98d); }
@@ -120,24 +127,57 @@ tr[data-nav]:hover td { background: #faf9f5; }
 .timeline div { display: grid; grid-template-columns: 14px 1fr auto; gap: 12px; align-items: start; }
 .timeline i { width: 10px; height: 10px; border-radius: 50%; background: var(--c-accent); margin-top: 6px; }
 .timeline .todo i { background: var(--c-line); }
-.sample { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.sample { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
 .swatch { border-radius: var(--r); height: 84px; padding: 10px; display: flex; align-items: flex-end; font-size: 12px; border: 1px solid var(--c-line); }
 .empty { border: 1px dashed var(--c-line); border-radius: var(--r); padding: 26px; text-align: center; color: var(--c-soft); }
 .list-item { display: flex; gap: 12px; align-items: center; padding: 12px; border-radius: 8px; cursor: pointer; }
 .list-item.on { background: var(--c-accent-soft); }
 `;
 
+/** The 「风格样张」 of the review prototype (#88 `mock-app.html`), drawn with the shared components. */
+const STYLE_SAMPLE_HTML = `<section class="page" data-note="风格样张：后面每一屏都只用这里的颜色和组件，所以各屏看起来是一套。">
+  <div><div class="faint">禾木烘焙 · 门店订货</div><h1>风格样张</h1><p class="muted">沉稳的墨绿配暖纸底色，像门店里的木质货架和牛皮纸袋。</p></div>
+</section>
+<section class="page" data-note="颜色：墨绿表示可以操作和正常状态，琥珀色表示需要注意，红色只用于异常。">
+  <div class="sample">
+    <div class="swatch" style="background:var(--c-accent);color:var(--c-accent-ink)">主色 · 墨绿</div>
+    <div class="swatch" style="background:var(--c-bg)">底色 · 暖纸</div>
+    <div class="swatch" style="background:var(--c-warn-soft);color:var(--c-warn)">提醒 · 琥珀</div>
+    <div class="swatch" style="background:var(--c-danger-soft);color:var(--c-danger)">异常 · 砖红</div>
+  </div>
+</section>
+<section class="page" data-note="按钮和标签：每个区域只有一个墨绿主按钮，其他操作用描边按钮。">
+  <div class="card row"><button class="btn primary">提交订单</button><button class="btn">保存草稿</button><button class="btn danger">驳回</button><span class="grow"></span><span class="tag">已收货</span><span class="tag warn">待审批</span><span class="tag danger">缺货</span><span class="tag mute">草稿</span></div>
+</section>
+<section class="page" data-note="卡片和表格：订单、退款这类清单统一用这种表格，行可以点开看详情。">
+  <div class="kpis"><div class="card kpi"><span class="muted">今日待收货</span><b>3 单</b><span class="faint">最早一单 09:30 到店</span></div><div class="card"><table><tr><th>订单号</th><th>门店</th><th>金额</th><th>状态</th></tr><tr><td>DH-1024</td><td>城西店</td><td>¥ 3,280</td><td><span class="tag">已收货</span></td></tr><tr><td>DH-1025</td><td>滨江店</td><td>¥ 1,960</td><td><span class="tag warn">配送中</span></td></tr></table></div></div>
+</section>
+<section class="page" data-note="表单和空状态：输入框和选择框统一高度，空状态用虚线框说明下一步做什么。">
+  <div class="row"><input class="input grow" placeholder="搜索商品名称"><select class="input"><option>全部分类</option></select><div class="empty grow">还没有加入商品 · 从左侧选择</div></div>
+</section>`;
+
 export const MOCK_PROTOTYPE_BUILD: MockPrototypeBuild = {
   appTitle: '禾木烘焙 · 门店订货',
-  themeTokens: {
-    mode: 'light',
-    canvasBg: '#f5f3ee',
-    cardBg: '#ffffff',
-    accentColor: '#2e6a4e',
-    borderColor: '#e2ded4',
-    textColor: '#1d2621',
-    fontFamily: '"PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif',
-    borderRadius: '10px',
+  style: {
+    direction: '沉稳的墨绿配暖纸底色，像门店里的木质货架和牛皮纸袋',
+    values: {
+      mode: 'light',
+      background: '#f5f3ee',
+      surface: '#ffffff',
+      inset: '#eeece6',
+      accent: '#2e6a4e',
+      accentInk: '#ffffff',
+      border: '#e2ded4',
+      ink: '#1d2621',
+      mutedInk: '#5b675f',
+      ok: '#2e6a4e',
+      warn: '#a85a17',
+      danger: '#a83434',
+      fontFamily: '"PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif',
+      radiusPx: 10,
+      density: 'comfortable',
+    },
+    sampleHtml: STYLE_SAMPLE_HTML,
   },
   sharedCss: SHARED_CSS,
   screens: [
@@ -263,6 +303,21 @@ function firstUserText(context: Context): string {
     .join('\n');
 }
 
+/** The per-screen check results in a `spawn_subagents` tool result. */
+function screenResultsOf(
+  message: Extract<Context['messages'][number], { role: 'toolResult' }>,
+): { screenName: string; check: string; failure?: PrototypeBuildFailureCode }[] {
+  const text = message.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+  try {
+    const parsed = JSON.parse(text) as {
+      screens?: { screenName: string; check: string; failure?: PrototypeBuildFailureCode }[];
+    };
+    return Array.isArray(parsed.screens) ? parsed.screens : [];
+  } catch {
+    return [];
+  }
+}
+
 export interface MockPrototypeBuildReplay {
   /** How many faux responses to queue: every later call of this turn is answered by `respond`. */
   responseBudget: number;
@@ -309,7 +364,7 @@ export function createMockPrototypeBuildReplay(
   let subtitle = '';
 
   return {
-    responseBudget: build.screens.length * 3 + 6,
+    responseBudget: build.screens.length * 3 + 8,
     leadOpening(requirementsTitle, primaryObjectLabel) {
       // The replayed screens are a recorded demo; the subtitle says so and names what the
       // confirmed requirements are about, so a replay is never mistaken for a real design.
@@ -390,21 +445,40 @@ export function createMockPrototypeBuildReplay(
             fauxThinking(
               pickLocaleText(
                 locale,
-                '计划已列好。先搭好共用的外壳和配色，再请几位助手同时各画一屏。',
-                'The plan is ready. Set up the shared shell and colours, then have several helpers draw one screen each at the same time.',
+                '计划已列好。先定设计值，再把共用的按钮、卡片、表格、表单、标签和空状态画在风格样张上。',
+                'The plan is ready. Design values first, then the shared buttons, cards, tables, forms, tags and empty states on the Style Tile.',
+              ),
+            ),
+            // Short fields first, the long CSS and samples last: the values apply from the start.
+            fauxToolCall('define_style', {
+              direction: build.style.direction,
+              values: build.style.values,
+              componentCss: build.sharedCss,
+              sampleHtml: build.style.sampleHtml,
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+      if (last?.role === 'toolResult' && last.toolName === 'define_style') {
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                locale,
+                '风格样张画好了。搭好文档外壳，再请几位助手同时各画一屏。',
+                'The Style Tile is ready. Set up the document shell, then have several helpers draw one screen each at the same time.',
               ),
             ),
             fauxToolCall('init_prototype_shell', {
               appTitle: build.appTitle,
               subtitle,
-              themeTokens: build.themeTokens,
               screens: build.screens.map((s) => ({
                 screenId: s.screenId,
                 screenName: s.screenName,
                 screenType: s.screenType,
                 summary: s.purpose,
               })),
-              sharedCss: build.sharedCss,
             }),
             fauxToolCall('spawn_subagents', {
               tasks: build.screens.map((s) => ({
@@ -419,14 +493,17 @@ export function createMockPrototypeBuildReplay(
           { stopReason: 'toolUse' },
         );
       }
-      const failed = failScreenId ? byId.get(failScreenId) : undefined;
+      // The recorded lead closes from what it really got back: each screen's own check result.
+      const results = last?.role === 'toolResult' && last.toolName === 'spawn_subagents' ? screenResultsOf(last) : [];
+      const failed = results.filter((r) => r.check !== 'passed');
+      const drawn = results.length - failed.length;
       return fauxAssistantMessage([
         fauxText(
-          failed
+          failed.length > 0
             ? pickLocaleText(
                 locale,
-                `原型画好了 ${build.screens.length - 1} 屏；「${failed.screenName}」没通过检查，可以在画布上点「继续这一屏」单独重画。双击任意一屏可以试着点一点。`,
-                `${build.screens.length - 1} screens of the prototype are drawn; "${failed.screenName}" did not pass the check — use "Continue this screen" on the canvas to redo just that one. Double-click any screen to try it.`,
+                `原型画好了 ${drawn} 屏；${failed.map((f) => `「${f.screenName}」没画完：${describePrototypeBuildFailure(f.failure, 'zh-CN')}`).join('；')}可以在画布上点「继续这一屏」单独重画。双击任意一屏可以试着点一点。`,
+                `${drawn} screens of the prototype are drawn; ${failed.map((f) => `"${f.screenName}" is not finished: ${describePrototypeBuildFailure(f.failure, 'en-US')}`).join(' ')} Use "Continue this screen" on the canvas to redo just that one. Double-click any screen to try it.`,
               )
             : pickLocaleText(
                 locale,

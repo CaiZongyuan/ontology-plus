@@ -2,6 +2,7 @@ import type {
   Api,
   AssistantMessage,
   Context,
+  ImageContent,
   JsonObject,
   Message,
   Model,
@@ -31,6 +32,7 @@ import {
   type PartialPrototypeScreenInput,
 } from './prototype-anchor-tools.js';
 import type { OpenAiFunctionTool } from './tools.js';
+import { DOCUMENT_LEVEL_TOOL_NAMES, checkScreenHelperCall, screenHelperTools } from './prototype-design-guide.js';
 
 let cachedWasmPromise: Promise<CodemodeWasmModule> | undefined;
 
@@ -293,6 +295,18 @@ export interface RunParallelSubagentsOptions {
   maxTokens: number;
   onActivity: () => void;
   onLaneUpdate: (lane: AgentSubagentLaneTrace, allLanes: AgentSubagentLaneTrace[]) => void;
+  /**
+   * The context package of a screen helper (#91): Design Brief, design values, shared
+   * components, Visual Reference manifest, requirements summary, other screens.
+   */
+  screenContext?: (spec: SubagentTaskSpec) => string;
+  /** Visual Reference images sent to every screen helper as vision input. */
+  contextImages?: readonly ImageContent[];
+  /**
+   * During a prototype build every helper owns exactly one screen: a task without a screenId is
+   * not run (it would have no scope to keep it on its own screen).
+   */
+  requireScreen?: boolean;
   onPartialScreenStream?: (
     partial: PartialPrototypeScreenInput,
     lane: AgentSubagentLaneTrace,
@@ -385,13 +399,40 @@ class ScreenNotFinishedError extends Error {
   }
 }
 
-const SCREEN_WRITE_TOOLS = new Set(['upsert_prototype_screen']);
+const SCREEN_WRITE_TOOLS = new Set(['upsert_prototype_screen', 'edit_prototype_anchor']);
+
+/** What the lead learns about each screen a helper built: written, and did it pass the check. */
+export interface SubagentScreenResult {
+  screenId: string;
+  screenName: string;
+  status: 'DONE' | 'FAILED';
+  /** passed: written and checked; failed: every write was rejected; not_written: never written. */
+  check: 'passed' | 'failed' | 'not_written';
+  failure?: PrototypeBuildFailureCode;
+  /** The validator's diagnostic of the last rejected write of this screen. */
+  diagnostic?: string;
+}
+
+function diagnosticOf(toolResultContent: string): string {
+  try {
+    const parsed = JSON.parse(toolResultContent) as { diagnostic?: unknown; summary?: unknown };
+    if (typeof parsed.diagnostic === 'string') return parsed.diagnostic;
+    if (typeof parsed.summary === 'string') return parsed.summary;
+  } catch {
+    // plain text result
+  }
+  return toolResultContent.slice(0, 600);
+}
 
 function writesOwnScreen(tc: ToolCall, spec: SubagentTaskSpec): boolean {
   if (!SCREEN_WRITE_TOOLS.has(tc.name)) return false;
   const target = spec.screenId?.trim();
+  if (!target) return true;
   const written = (tc.arguments as Record<string, unknown> | undefined)?.screenId;
-  return !target || (typeof written === 'string' && written.trim() === target);
+  if (tc.name === 'edit_prototype_anchor' && (typeof written !== 'string' || !written.trim())) {
+    return true;
+  }
+  return typeof written === 'string' && written.trim() === target;
 }
 
 function classifySubagentFailure(err: unknown, signal: AbortSignal): PrototypeBuildFailureCode {
@@ -411,8 +452,10 @@ export async function runParallelSubagents(
   outputTokens: number;
   allSucceeded: boolean;
   summaryText: string;
+  screenResults: SubagentScreenResult[];
 }> {
   const { tasks, concurrency, locale, signal } = options;
+  const lastDiagnostics = new Map<number, string>();
   const nowIso = new Date().toISOString();
 
   const workerCount = Math.min(Math.max(1, concurrency), Math.max(1, tasks.length));
@@ -467,6 +510,20 @@ export async function runParallelSubagents(
       return;
     }
 
+    if (options.requireScreen && !spec.screenId?.trim()) {
+      lane.status = 'FAILED';
+      lane.phase = 'FAILED';
+      lane.failureCode = 'not_written';
+      lane.error = pickLocaleText(
+        locale,
+        '原型施工里每个任务都要指定一屏（screenId），这个任务没有指定，没有执行。',
+        'In a prototype build every task must name one screen (screenId); this task did not and was not run.',
+      );
+      lane.completedAt = new Date().toISOString();
+      options.onLaneUpdate({ ...lane }, stripHeavyFieldsForLiveSse(lanes));
+      return;
+    }
+
     lane.workerIndex = workerSlot;
     lane.workerLabel = defaultWorkerLabel(workerSlot, spec.roleLabel);
     lane.status = 'RUNNING';
@@ -513,13 +570,21 @@ export async function runParallelSubagents(
           )
         : spec.instruction;
 
+      const ownScreenId = spec.screenId?.trim() ?? '';
+      const context = ownScreenId ? options.screenContext?.(spec)?.trim() : undefined;
+      const promptText = context ? `${subPrompt}\n\n${context}` : subPrompt;
+      const images = ownScreenId ? (options.contextImages ?? []) : [];
       const subMessages: Message[] = [
         {
           role: 'user',
-          content: subPrompt,
+          content: images.length > 0 ? [{ type: 'text', text: promptText }, ...images] : promptText,
           timestamp: Date.now(),
         },
       ];
+      // A screen helper gets only the screen-level tools; no helper ever gets a document-level one.
+      const taskTools = ownScreenId
+        ? screenHelperTools(options.subagentTools)
+        : options.subagentTools.filter((t) => !DOCUMENT_LEVEL_TOOL_NAMES.has(t.name));
 
       let subThinking = '';
       let subText = '';
@@ -536,7 +601,7 @@ export async function runParallelSubagents(
         const ctx: Context = {
           systemPrompt: options.baseSystemPrompt,
           messages: subMessages,
-          tools: [...options.subagentTools],
+          tools: taskTools,
         };
 
         const stream = options.models.streamSimple(options.selectedModel, ctx, {
@@ -600,7 +665,8 @@ export async function runParallelSubagents(
                       zh: '正在实时写入界面区块…',
                       en: 'Streaming screen blocks…',
                     };
-                if (resolvedSid && partialHtml.length - lastPartialStreamLen >= 90) {
+                const allowedStreamScreen = !ownScreenId || resolvedSid === ownScreenId;
+                if (resolvedSid && allowedStreamScreen && partialHtml.length - lastPartialStreamLen >= 90) {
                   lastPartialStreamLen = partialHtml.length;
                   options.onPartialScreenStream?.(
                     {
@@ -657,10 +723,22 @@ export async function runParallelSubagents(
         let roundAllOk = true;
         for (const tc of toolCalls) {
           options.onActivity();
-          const exec = await options.executeSubagentToolCall(tc, lane, hadValidatorError);
+          // The runtime keeps a screen helper on its own screen, whatever the model asks for.
+          const outOfScope = ownScreenId ? checkScreenHelperCall(tc, ownScreenId, locale) : null;
+          const exec = outOfScope
+            ? {
+                isError: true,
+                toolResultContent: JSON.stringify({ status: 'REJECTED_OUT_OF_SCOPE', diagnostic: outOfScope }),
+              }
+            : await options.executeSubagentToolCall(tc, lane, hadValidatorError);
           if (writesOwnScreen(tc, spec)) {
-            if (exec.isError) ownWriteRejected = true;
-            else lane.wroteScreen = true;
+            if (exec.isError) {
+              ownWriteRejected = true;
+              lastDiagnostics.set(taskIdx, diagnosticOf(exec.toolResultContent));
+            } else {
+              lane.wroteScreen = true;
+              lastDiagnostics.delete(taskIdx);
+            }
           }
           if (exec.isError) {
             hadValidatorError = true;
@@ -748,11 +826,28 @@ export async function runParallelSubagents(
     `Parallel subagents finished: ${succeededCount}/${lanes.length} succeeded${failedCount > 0 ? `, ${failedCount} failed (completed screens preserved)` : ''}`,
   );
 
+  const screenResults: SubagentScreenResult[] = [];
+  tasks.forEach((task, idx) => {
+    const screenId = task.screenId?.trim();
+    if (!screenId) return;
+    const lane = lanes[idx]!;
+    const diagnostic = lastDiagnostics.get(idx);
+    screenResults.push({
+      screenId,
+      screenName: task.screenName?.trim() || task.title.trim(),
+      status: lane.status === 'DONE' ? 'DONE' : 'FAILED',
+      check: lane.status === 'DONE' ? 'passed' : lane.failureCode === 'validation_failed' ? 'failed' : 'not_written',
+      ...(lane.status !== 'DONE' && lane.failureCode ? { failure: lane.failureCode } : {}),
+      ...(lane.status !== 'DONE' && diagnostic ? { diagnostic } : {}),
+    });
+  });
+
   return {
     lanes,
     inputTokens: totalInputTokens,
     outputTokens: totalOutputTokens,
     allSucceeded: failedCount === 0,
     summaryText,
+    screenResults,
   };
 }

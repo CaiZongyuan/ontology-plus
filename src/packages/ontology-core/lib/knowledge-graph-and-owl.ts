@@ -965,11 +965,16 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
   const navigationEdges: NavigationEdge[] = [];
   let navSeq = 1;
 
+  const scanTarget = (html ?? '')
+    .replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, '')
+    .replace(/<style\b[\s\S]*?(?:<\/style\s*>|$)/gi, '')
+    .replace(/<template\b[^>]*\bdata-proto-style-tile\b[^>]*>[\s\S]*?(?:<\/template\s*>|$)/gi, '');
+
   const screenRegex =
     /<([a-z0-9]+)\b[^>]*data-screen-id\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)(?=<[a-z0-9]+\b[^>]*data-screen-id|$)/gi;
 
   let screenMatch: RegExpExecArray | null;
-  while ((screenMatch = screenRegex.exec(html)) !== null) {
+  while ((screenMatch = screenRegex.exec(scanTarget)) !== null) {
     const openingTag = screenMatch[0].slice(0, screenMatch[0].indexOf('>') + 1);
     const screenBody = screenMatch[0];
     const screenId = screenMatch[2];

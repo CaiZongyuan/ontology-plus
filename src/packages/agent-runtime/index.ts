@@ -156,8 +156,19 @@ export {
   runCodemodeScript,
   runParallelSubagents,
   type SubagentTaskSpec,
+  type SubagentScreenResult,
   type CodemodeExecutionSummary,
 } from './lib/codemode-subagent.js';
+
+export {
+  DOCUMENT_LEVEL_TOOL_NAMES,
+  prototypeDesignGuide,
+  prototypeLeadStyleInstructions,
+  screenHelperSystemPrompt,
+  keepWithinOwnScreen,
+  buildScreenHelperContext,
+  commitDefineStyle,
+} from './lib/prototype-design-guide.js';
 
 export {
   PLAN_SCREENS_OPENAI_TOOL,
