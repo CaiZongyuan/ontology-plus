@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { Crosshair, Loader2, Maximize, Minus, Plus, WifiOff } from 'lucide-react';
 import { sanitizeBusinessText } from '../../../../packages/business-vocabulary/index.js';
 import {
@@ -13,9 +13,17 @@ import {
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
-import { ArtboardFrame } from './Artboard.js';
-import { BuildLog } from './BuildLog.js';
+import { AgentCursorDockControl, CanvasAgentCursors } from './AgentCursor.js';
+import { ArtboardFrame, type ArtboardHandle } from './Artboard.js';
+import { BuildLog, BuildLogLiveRows } from './BuildLog.js';
 import { BuildPhaseBar } from './BuildPhaseBar.js';
+import {
+  readAgentCursorPrefs,
+  resolveLiveActivities,
+  writeAgentCursorPrefs,
+  type AgentCursorPrefs,
+  type AgentLiveActivity,
+} from './agentCursor.js';
 import { agentName, screenBuildViews } from './buildView.js';
 import { ScreenStatusIcon, ScreenStrip, screenStatusLabel } from './ScreenStrip.js';
 import {
@@ -60,6 +68,11 @@ export interface PrototypeLiveCanvasProps {
   onOpenSingleScreen?: (screenId: string) => void;
   /** Opens the composed document in a new tab (defaults to a blob URL; tests replace it). */
   onOpenStandalone?: (documentHtml: string, screenId: string) => boolean;
+  /**
+   * Explicit live agent activities (#92, #93 targeted fixes): merged with streaming screen
+   * writing activities to drive the cursor, narration bubble, and build log "现在" rows.
+   */
+  liveActivities?: readonly AgentLiveActivity[];
 }
 
 interface Viewport {
@@ -84,6 +97,7 @@ export function PrototypeLiveCanvas({
   onRetryScreen,
   onOpenSingleScreen,
   onOpenStandalone = openStandalone,
+  liveActivities,
 }: PrototypeLiveCanvasProps) {
   const { locale, t } = usePreferences();
   const isBusiness = viewMode === 'business';
@@ -121,6 +135,39 @@ export function PrototypeLiveCanvas({
 
   const views = useMemo(() => screenBuildViews(screens, plan, cleanName), [screens, plan, cleanName]);
   const viewById = new Map(views.map((v) => [v.screenId, v] as const));
+
+  // ─── Agent cursor preferences & artboard frame handles (#92) ───────────────
+  const [cursorPrefs, setCursorPrefs] = useState<AgentCursorPrefs>(readAgentCursorPrefs);
+  const updateCursorPrefs = useCallback((next: AgentCursorPrefs) => {
+    setCursorPrefs(next);
+    writeAgentCursorPrefs(next);
+  }, []);
+  const frameHandles = useRef(new Map<string, MutableRefObject<ArtboardHandle | null>>());
+  const handleRefFor = useCallback((screenId: string): MutableRefObject<ArtboardHandle | null> => {
+    let entry = frameHandles.current.get(screenId);
+    if (!entry) {
+      entry = { current: null };
+      frameHandles.current.set(screenId, entry);
+    }
+    return entry;
+  }, []);
+  const getFrameHandle = useCallback(
+    (screenId: string): ArtboardHandle | null => frameHandles.current.get(screenId)?.current ?? null,
+    [],
+  );
+  const [layoutVersion, setLayoutVersion] = useState(0);
+  const bumpLayout = useCallback(() => setLayoutVersion((n) => n + 1), []);
+  const activities = useMemo(
+    () =>
+      resolveLiveActivities({
+        screens,
+        views,
+        locale,
+        isBusiness,
+        externalActivities: liveActivities,
+      }),
+    [screens, views, locale, isBusiness, liveActivities],
+  );
 
   // ─── Camera ────────────────────────────────────────────────────────────────
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -174,10 +221,13 @@ export function PrototypeLiveCanvas({
     if (!host) return;
     const measure = () => setViewport({ w: host.clientWidth, h: host.clientHeight });
     measure();
-    if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(host);
-    return () => ro.disconnect();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(measure);
+      ro.observe(host);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
   }, []);
 
   const stopTween = () => {
@@ -194,9 +244,10 @@ export function PrototypeLiveCanvas({
       return;
     }
     const from = camRef.current;
-    const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    let started: number | null = null;
     const step = (now: number) => {
-      const p = Math.min(1, (now - started) / CAMERA_TWEEN_MS);
+      if (started === null) started = now;
+      const p = Math.max(0, Math.min(1, (now - started) / CAMERA_TWEEN_MS));
       const e = 1 - Math.pow(1 - p, 3);
       setCam({
         x: from.x + (target.x - from.x) * e,
@@ -506,6 +557,8 @@ export function PrototypeLiveCanvas({
                     paused={view === 'web'}
                     onNavigate={navigateFromPrototype}
                     onEscape={exitTry}
+                    handleRef={handleRefFor(board.screenId)}
+                    onLayout={bumpLayout}
                   />
                 </div>
               );
@@ -556,6 +609,18 @@ export function PrototypeLiveCanvas({
             );
           })}
 
+          {view === 'artboards' && (
+            <CanvasAgentCursors
+              activities={tryScreenId ? activities.filter((a) => a.screenId !== tryScreenId) : activities}
+              indexById={indexById}
+              getHandle={getFrameHandle}
+              cam={cam}
+              viewportWidth={viewport.w || hostRef.current?.clientWidth || 0}
+              prefs={cursorPrefs}
+              layoutVersion={layoutVersion}
+            />
+          )}
+
           {view === 'web' && (
             <PrototypeWebView
               ref={webRef}
@@ -574,6 +639,8 @@ export function PrototypeLiveCanvas({
               {...(onRetryScreen ? { onRetryScreen } : {})}
               composeDocument={() => composePrototypeDocument(documentHtml, live)}
               onOpenStandalone={onOpenStandalone}
+              liveActivities={activities}
+              cursorPrefs={cursorPrefs}
             />
           )}
 
@@ -671,13 +738,15 @@ export function PrototypeLiveCanvas({
             </Button>
               </>
             )}
-            {/* Cursor and design-notes controls arrive with #92 and #94. */}
-            <span data-slot="dock-cursor" />
+            {/* Cursor preferences (#92) and design-notes slot (#94). */}
+            <span className="inline-flex items-center gap-1" data-slot="dock-cursor">
+              <AgentCursorDockControl prefs={cursorPrefs} onChange={updateCursorPrefs} />
+            </span>
             <span data-slot="dock-design-notes" />
           </div>
         </div>
 
-        {/* Build log: entries arrive with #90. */}
+        {/* Build log: entries arrive with #90; live "现在" narrations (#92) appear at the bottom. */}
         <aside
           className="hidden min-h-0 flex-col border-l border-border bg-card md:flex"
           data-testid="prototype-build-log"
@@ -693,11 +762,18 @@ export function PrototypeLiveCanvas({
               busy={busy}
               onFocusScreen={showScreen}
               onResumeScreen={onRetryScreen}
+              liveActivities={activities}
               endEntry={webModeHint}
             />
           ) : (
             <div className="min-h-0 flex-1 overflow-auto px-3 py-2 text-[12px] text-muted-foreground" data-slot="build-log-entries">
-              {webModeHint ?? t('生成原型时，这里会逐条记下每一屏的进展。', 'While a prototype is built, each screen’s progress is logged here.')}
+              {activities.some((a) => Boolean(a.sentence)) ? (
+                <ol className="m-0 list-none p-0">
+                  <BuildLogLiveRows activities={activities} onFocusScreen={showScreen} />
+                </ol>
+              ) : (
+                webModeHint ?? t('生成原型时，这里会逐条记下每一屏的进展。', 'While a prototype is built, each screen’s progress is logged here.')
+              )}
             </div>
           )}
         </aside>

@@ -99,6 +99,8 @@ interface ArtboardFrameProps {
   testId?: string;
   /** Receives the frame's handle for overlays. */
   handleRef?: MutableRefObject<ArtboardHandle | null>;
+  /** Called after content morphs or when the frame's document scrolls or resizes. */
+  onLayout?: () => void;
 }
 
 type ProtoWindow = Window & { __selectProtoScreen?: (screenId: string) => void };
@@ -124,17 +126,22 @@ export const ArtboardFrame = memo(function ArtboardFrame({
   paused = false,
   testId,
   handleRef,
+  onLayout,
 }: ArtboardFrameProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [loadVersion, setLoadVersion] = useState(0);
   const loadCount = useRef(0);
   const applied = useRef<{ version: number; html: string; screenId: string } | null>(null);
+  const screenIdRef = useRef(screenId);
+  screenIdRef.current = screenId;
   const interactiveRef = useRef(interactive);
   interactiveRef.current = interactive;
   const navigateRef = useRef(onNavigate);
   navigateRef.current = onNavigate;
   const escapeRef = useRef(onEscape);
   escapeRef.current = onEscape;
+  const layoutRef = useRef(onLayout);
+  layoutRef.current = onLayout;
   const selectRef = useRef<((screenId: string) => void) | null>(null);
   /** Script element → the source it last ran with; a script runs once per source. */
   const ranScripts = useRef(new WeakMap<Element, string>());
@@ -153,8 +160,18 @@ export const ArtboardFrame = memo(function ArtboardFrame({
 
   useEffect(() => {
     if (!handleRef) return;
-    const find = (elementId: string): Element | null =>
-      doc()?.querySelector(`[data-element-id="${cssAttrValue(elementId)}"]`) ?? null;
+    const find = (elementId: string): Element | null => {
+      const d = doc();
+      if (!d) return null;
+      const sid = screenIdRef.current;
+      if (sid && !sid.startsWith('__')) {
+        const scoped = d.querySelector(
+          `[data-screen-id="${cssAttrValue(sid)}"] [data-element-id="${cssAttrValue(elementId)}"]`,
+        );
+        if (scoped) return scoped;
+      }
+      return d.querySelector(`[data-element-id="${cssAttrValue(elementId)}"]`);
+    };
     const box = (el: Element | null): ArtboardRect | null => {
       if (!el) return null;
       const r = el.getBoundingClientRect();
@@ -227,6 +244,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       // else, so what the person did on each page (state set by its scripts, typed text) stays.
       markActive(d);
       toTop();
+      layoutRef.current?.();
       return;
     }
     const parsed = new DOMParser().parseFromString(
@@ -259,6 +277,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     // Kept screens were not touched, so their `is-active` is set in the live document.
     if (page) markActive(d);
     toTop();
+    layoutRef.current?.();
     const stamp = String(Date.now());
     for (const el of Array.from(d.querySelectorAll(`[${BORN_ATTR}=""]`))) el.setAttribute(BORN_ATTR, stamp);
     const timer = setTimeout(() => {
@@ -266,6 +285,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       for (const el of Array.from(d.querySelectorAll(`[${BORN_ATTR}]`))) {
         if (now - Number(el.getAttribute(BORN_ATTR) || 0) >= BORN_FADE_MS) el.removeAttribute(BORN_ATTR);
       }
+      layoutRef.current?.();
     }, BORN_FADE_MS + 50);
     return () => clearTimeout(timer);
   }, [loadVersion, bodyHtml, screenId, page, paused]);
@@ -339,11 +359,18 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') escapeRef.current();
     };
+    const onMove = () => layoutRef.current?.();
     d.addEventListener('click', onClick);
     d.addEventListener('keydown', onKey);
+    d.addEventListener('scroll', onMove, { capture: true, passive: true });
+    win?.addEventListener('scroll', onMove, { passive: true });
+    win?.addEventListener('resize', onMove, { passive: true });
     return () => {
       d.removeEventListener('click', onClick);
       d.removeEventListener('keydown', onKey);
+      d.removeEventListener('scroll', onMove, true);
+      win?.removeEventListener('scroll', onMove);
+      win?.removeEventListener('resize', onMove);
       if (win && win.__selectProtoScreen === go) delete win.__selectProtoScreen;
     };
   }, [loadVersion]);

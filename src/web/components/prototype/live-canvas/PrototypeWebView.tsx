@@ -1,9 +1,11 @@
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, ExternalLink, Loader2, PenLine, RefreshCw } from 'lucide-react';
 import type { PrototypeCanvasArtboard } from '../../../../packages/ontology-core/index.js';
 import { usePreferences } from '../../../i18n.js';
 import { Button } from '../../beautifui/index.js';
+import { WebAgentCursor } from './AgentCursor.js';
 import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboard.js';
+import { readAgentCursorPrefs, type AgentCursorPrefs, type AgentLiveActivity } from './agentCursor.js';
 
 /** What design notes (#94) and demo tours (#95) use to draw over the web page. */
 export interface PrototypeWebViewHandle {
@@ -42,6 +44,9 @@ export interface PrototypeWebViewProps {
   composeDocument: () => string;
   /** Opens it in a new tab; false when there was nothing to open. */
   onOpenStandalone: (documentHtml: string, screenId: string) => boolean;
+  /** Live writing/fixing activities (#92, #93) for rendering the agent cursor and narration over the page. */
+  liveActivities?: readonly AgentLiveActivity[];
+  cursorPrefs?: AgentCursorPrefs;
 }
 
 interface History {
@@ -72,6 +77,8 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
     onRetryScreen,
     composeDocument,
     onOpenStandalone,
+    liveActivities = [],
+    cursorPrefs,
   },
   ref,
 ) {
@@ -85,7 +92,27 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
   const currentRef = useRef(currentId);
   currentRef.current = currentId;
   const frameHandle = useRef<ArtboardHandle | null>(null);
+  const pageContainerRef = useRef<HTMLDivElement | null>(null);
+  const [pageWidth, setPageWidth] = useState(0);
+  const [layoutVersion, setLayoutVersion] = useState(0);
+  const bumpLayout = useCallback(() => setLayoutVersion((v) => v + 1), []);
+  const effectiveCursorPrefs = cursorPrefs ?? readAgentCursorPrefs();
+  const activeWebActivity = board ? liveActivities.find((a) => a.screenId === board.screenId) : undefined;
   const [openFailed, setOpenFailed] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = pageContainerRef.current;
+    if (!el) return;
+    const measure = () => setPageWidth(el.clientWidth);
+    measure();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(measure);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
 
   const onPageChangeRef = useRef(onPageChange);
   onPageChangeRef.current = onPageChange;
@@ -237,7 +264,7 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
         )}
       </div>
 
-      <div className="relative min-h-0 flex-1 bg-background" data-testid="prototype-web-page">
+      <div ref={pageContainerRef} className="relative min-h-0 flex-1 overflow-hidden bg-background" data-testid="prototype-web-page">
         {board ? (
           <ArtboardFrame
             screenId={board.screenId}
@@ -253,6 +280,7 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
             page
             testId="prototype-web-frame"
             handleRef={frameHandle}
+            onLayout={bumpLayout}
             onNavigate={go}
             onEscape={noop}
           />
@@ -266,6 +294,13 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
             </span>
           </div>
         )}
+        <WebAgentCursor
+          activity={activeWebActivity}
+          getHandle={() => frameHandle.current}
+          pageWidth={pageWidth || pageContainerRef.current?.clientWidth || 0}
+          prefs={effectiveCursorPrefs}
+          layoutVersion={layoutVersion}
+        />
         {board && canResume && (
           <div className="absolute inset-x-0 top-4 flex justify-center px-4">
             <div
