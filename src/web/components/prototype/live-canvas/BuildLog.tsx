@@ -5,6 +5,7 @@ import type { PrototypeBuildState } from '../../../../packages/ontology-core/ind
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
+import { agentThemePalette, type AgentLiveActivity } from './agentCursor.js';
 import { agentName, type ScreenBuildView } from './buildView.js';
 
 function clock(at: string, locale: string): string {
@@ -18,10 +19,62 @@ function clock(at: string, locale: string): string {
   });
 }
 
+export function BuildLogLiveRows({
+  activities,
+  onFocusScreen,
+}: {
+  activities: readonly AgentLiveActivity[];
+  onFocusScreen: (screenId: string) => void;
+}) {
+  const { locale, t } = usePreferences();
+  const narrated = activities.filter((a) => Boolean(a.sentence));
+  if (narrated.length === 0) return null;
+
+  return (
+    <>
+      {narrated.map((activity) => {
+        const palette = agentThemePalette(activity.agent);
+        const dotColor = activity.state === 'fixing' ? 'var(--warning)' : palette.color;
+        return (
+          <li
+            key={`live-${activity.screenId}`}
+            className="mt-1 rounded-md bg-muted px-1.5 py-1 hover:bg-accent"
+            data-testid="prototype-build-log-live"
+            data-screen-id={activity.screenId}
+            data-activity-state={activity.state}
+          >
+            <button
+              type="button"
+              className="block w-full cursor-pointer border-0 bg-transparent p-0 text-left"
+              title={t('在画布上定位这一屏', 'Show this screen on the canvas')}
+              onClick={() => onFocusScreen(activity.screenId)}
+            >
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground-soft">{t('现在', 'Now')}</span>
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: dotColor }}
+                  aria-hidden="true"
+                />
+                <span className="font-semibold text-foreground">
+                  {agentName(activity.agent, locale)}
+                </span>
+              </span>
+              <span className="block text-xs leading-snug text-foreground italic">
+                {activity.sentence}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </>
+  );
+}
+
 /**
  * The build log (#90, #88 layout D): one line per real engine event — time, who, which screen,
  * and a business sentence. A line about a screen focuses it; a failure line carries
- * 「继续这一屏」 while that screen is still failed.
+ * 「继续这一屏」 while that screen is still failed; active narrations appear as "现在" / "Now" rows.
  */
 export function BuildLog({
   build,
@@ -29,6 +82,7 @@ export function BuildLog({
   busy,
   onFocusScreen,
   onResumeScreen,
+  liveActivities = [],
   endEntry,
 }: {
   build: PrototypeBuildState;
@@ -36,6 +90,7 @@ export function BuildLog({
   busy: boolean;
   onFocusScreen: (screenId: string) => void;
   onResumeScreen?: ((screenId: string, screenName: string) => void) | undefined;
+  liveActivities?: readonly AgentLiveActivity[];
   /** A closing entry after the last line (#97's suggestion to try web mode). */
   endEntry?: React.ReactNode;
 }) {
@@ -45,15 +100,20 @@ export function BuildLog({
   const listRef = useRef<HTMLOListElement | null>(null);
   const stickToEnd = useRef(true);
   const count = build.log.length;
+  const liveNarrationKey = liveActivities.map((a) => `${a.screenId}:${a.sentence ?? ''}`).join('|');
   // Only a screen's latest failure line offers to continue it.
   const lastFailure = new Map<string, number>();
   for (const e of build.log) if (e.kind === 'screen_failed' && e.screenId) lastFailure.set(e.screenId, e.id);
 
-  // New lines scroll into view unless the reader has scrolled up to read earlier ones.
+  // Follow new live entries when a build or single-screen continuation starts, unless scrolled up.
+  useEffect(() => {
+    if (busy) stickToEnd.current = true;
+  }, [busy]);
+
   useEffect(() => {
     const el = listRef.current;
     if (el && stickToEnd.current) el.scrollTop = el.scrollHeight;
-  }, [count, Boolean(endEntry)]);
+  }, [busy, count, liveNarrationKey, Boolean(endEntry)]);
 
   return (
     <ol
@@ -121,6 +181,7 @@ export function BuildLog({
           </li>
         );
       })}
+      <BuildLogLiveRows activities={liveActivities} onFocusScreen={onFocusScreen} />
       {endEntry && <li data-testid="prototype-build-log-end">{endEntry}</li>}
     </ol>
   );

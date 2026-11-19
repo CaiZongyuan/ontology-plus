@@ -278,15 +278,25 @@ describe('Build Plan on the live canvas (#90)', () => {
     expect(q('prototype-strip-status-SCR-HOME')?.textContent).toBe('检查中 · 主助手');
     expect(q('prototype-strip-status-SCR-ORDERS')?.textContent).toBe('修正中 · 主助手');
 
-    // Default fix narration renders sanitized business text (no EL-ORDERS-TABLE leak!)
-    const fixPill = q('prototype-fix-narration-SCR-ORDERS');
-    expect(fixPill).not.toBeNull();
-    expect(fixPill!.textContent).toContain('发现问题：');
-    expect(fixPill!.textContent).toContain('正在修改：收窄列宽以完整显示状态列');
-    expect(fixPill!.textContent).not.toContain('EL-ORDERS-TABLE');
+    // #92 + #93: Lead assistant cursor, narration bubble, and BuildLog "现在" row show sanitized fix narration!
+    const fixCursor = q('prototype-agent-cursor-SCR-ORDERS');
+    const fixBubble = q('prototype-cursor-bubble-SCR-ORDERS');
+    const liveLogRow = host.querySelector<HTMLElement>(
+      '[data-testid="prototype-build-log-live"][data-screen-id="SCR-ORDERS"]',
+    );
+    expect(fixCursor?.getAttribute('data-activity-state')).toBe('fixing');
+    expect(fixCursor?.getAttribute('data-agent')).toBe('0');
+    expect(fixBubble).not.toBeNull();
+    expect(fixBubble!.textContent).toContain('发现问题：');
+    expect(fixBubble!.textContent).toContain('正在修改：收窄列宽以完整显示状态列');
+    expect(fixBubble!.textContent).not.toContain('EL-ORDERS-TABLE');
+    expect(liveLogRow?.getAttribute('data-activity-state')).toBe('fixing');
+    expect(liveLogRow?.textContent).toContain('现在');
+    expect(liveLogRow?.textContent).toContain('主助手');
+    expect(liveLogRow?.textContent).toContain('正在修改：收窄列宽以完整显示状态列');
     expect(checkBusinessViewMarkup(host.innerHTML, { ignoreTestIds: ['prototype-canvas-world'] })).toEqual([]);
 
-    // Web mode (#97) also shows reviewing badge/scan and active fixing narration banner!
+    // Web mode (#97) also shows reviewing badge/scan and #92's WebAgentCursor fixing narration!
     await act(async () => q('prototype-dock-view-web')!.click());
     await act(async () => {
       await new Promise((r) => setTimeout(r, 20));
@@ -295,7 +305,8 @@ describe('Build Plan on the live canvas (#90)', () => {
     expect(q('prototype-web-scan-SCR-HOME')).not.toBeNull();
     await act(async () => q('prototype-strip-card-SCR-ORDERS')!.click());
     expect(q('prototype-web-fixing')?.textContent).toContain('主助手正在修正这一页');
-    expect(q('prototype-fix-narration-SCR-ORDERS')?.textContent).toContain('正在修改：收窄列宽以完整显示状态列');
+    expect(q('prototype-web-agent-cursor')?.getAttribute('data-activity-state')).toBe('fixing');
+    expect(q('prototype-web-cursor-bubble')?.textContent).toContain('正在修改：收窄列宽以完整显示状态列');
     await act(async () => q('prototype-dock-view-artboards')!.click());
     localStorage.removeItem('onto_prototype_view');
 
@@ -305,22 +316,15 @@ describe('Build Plan on the live canvas (#90)', () => {
     localStorage.setItem('onto_locale', 'en-US');
     try {
       await render({ documentHtml: DOC, build: t.state(), busy: true });
-      expect(q('prototype-fix-narration-SCR-ORDERS')?.textContent).toContain('Issue found:');
-      expect(q('prototype-fix-narration-SCR-ORDERS')?.textContent).toContain('Fixing:');
+      expect(q('prototype-cursor-bubble-SCR-ORDERS')?.textContent).toContain('Issue found:');
+      expect(q('prototype-cursor-bubble-SCR-ORDERS')?.textContent).toContain('Fixing:');
     } finally {
       localStorage.removeItem('onto_locale');
     }
     await act(async () => root.unmount());
     root = createRoot(host);
 
-    // Custom `renderFixActivity` prop (#92 seam) overrides default pill cleanly
-    const customSpy = vi.fn((acts) => <div data-testid="custom-fix-layer">{acts.length}</div>);
-    await render({ documentHtml: DOC, build: t.state(), busy: true, renderFixActivity: customSpy });
-    expect(customSpy).toHaveBeenCalled();
-    expect(q('custom-fix-layer')?.textContent).toBe('2');
-    expect(q('prototype-fix-narration-SCR-ORDERS')).toBeNull();
-
-    // Completed review round reports checked & fixed counts
+    // Completed review round reports checked & fixed counts and clears live fix cursor/narration
     t.screen('SCR-HOME', { status: 'done', reviewed: 'pass' });
     t.screen('SCR-ORDERS', { status: 'done', reviewed: 'fixed' });
     t.screen('SCR-REFUND', { status: 'done', reviewed: 'pass' });
@@ -329,7 +333,7 @@ describe('Build Plan on the live canvas (#90)', () => {
     await render({ documentHtml: DOC, build: t.state(), busy: false });
     expect(q('prototype-phase-review')?.textContent).toContain('修正 1 屏');
     expect(q('prototype-artboard-scan-SCR-HOME')).toBeNull();
-    expect(q('prototype-fix-narration-SCR-ORDERS')).toBeNull();
+    expect(q('prototype-agent-cursor-SCR-ORDERS')).toBeNull();
 
     // Skipped visual check (no browser) reports 未做视觉检查 / Not visually checked honestly
     const skipped = createPrototypeBuildTracker();

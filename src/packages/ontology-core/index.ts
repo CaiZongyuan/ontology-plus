@@ -268,6 +268,17 @@ export {
 } from './lib/prototype-style.js';
 
 export {
+  PROTOTYPE_NOTE_ATTR,
+  sanitizePrototypeNote,
+  parsePrototypeNote,
+  readPrototypeNotes,
+  writePrototypeNote,
+  derivePrototypeLiveWriting,
+  type PrototypeNoteItem,
+  type PrototypeLiveWritingTarget,
+} from './lib/prototype-notes.js';
+
+export {
   PROTOTYPE_BUILD_PHASES,
   PROTOTYPE_BUILD_LOG_LIMIT,
   emptyPrototypeBuildState,

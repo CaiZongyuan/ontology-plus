@@ -7,12 +7,19 @@
  */
 
 import {
+  RAW_TEXT_HTML_TAGS as RAW_TEXT_TAGS,
+  VOID_HTML_TAGS as VOID_TAGS,
+  findHtmlTagClose as findTagClose,
+  parseHtmlAttributes as parseAttributes,
+} from './html-scan.js';
+import {
   applyPrototypeBuildEvent,
   emptyPrototypeBuildState,
   isPrototypeBuildEvent,
   type PrototypeBuildEvent,
   type PrototypeBuildState,
 } from './prototype-build.js';
+import { sanitizePrototypeNote } from './prototype-notes.js';
 import {
   PROTOTYPE_STYLE_TILE_CSS,
   prototypeStyleCss,
@@ -80,45 +87,6 @@ export type PrototypeLiveEvent =
       locked: boolean;
     };
 
-const VOID_TAGS = new Set([
-  'area',
-  'base',
-  'br',
-  'col',
-  'embed',
-  'hr',
-  'img',
-  'input',
-  'link',
-  'meta',
-  'param',
-  'source',
-  'track',
-  'wbr',
-]);
-const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
-
-/** Index just past the `>` that ends a tag starting at `from`, honouring quotes; -1 if unfinished. */
-function findTagClose(html: string, from: number): number {
-  let quote: string | null = null;
-  let lastSignificant = '';
-  for (let i = from; i < html.length; i += 1) {
-    const ch = html[i]!;
-    if (quote) {
-      if (ch === quote) quote = null;
-      continue;
-    }
-    // A quote only opens an attribute value right after `=`; in `title=it's` it is text.
-    if ((ch === '"' || ch === "'") && lastSignificant === '=') {
-      quote = ch;
-    } else if (ch === '>') {
-      return i + 1;
-    }
-    if (!/\s/.test(ch)) lastSignificant = ch;
-  }
-  return -1;
-}
-
 /** Entity names a stream is likely to be in the middle of; `R&D` is not one of them. */
 const COMMON_ENTITY_NAMES = [
   'amp', 'lt', 'gt', 'quot', 'apos', 'nbsp', 'copy', 'reg', 'trade', 'yen', 'euro', 'pound', 'cent',
@@ -134,16 +102,6 @@ function dropHalfEntity(text: string): string {
   const name = m[1]!;
   const half = name === '' || name.startsWith('#') || COMMON_ENTITY_NAMES.some((e) => e.startsWith(name));
   return half ? text.slice(0, m.index) : text;
-}
-
-function parseAttributes(region: string): Record<string, string> {
-  const attrs: Record<string, string> = {};
-  const re = /([A-Za-z_:@][A-Za-z0-9_.:@-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(region)) !== null) {
-    attrs[m[1]!.toLowerCase()] = m[2] ?? m[3] ?? m[4] ?? '';
-  }
-  return attrs;
 }
 
 interface ScannedElement {
@@ -401,6 +359,8 @@ export interface PartialPrototypeScreenStream {
   screenId: string;
   screenName?: string;
   screenType?: string;
+  /** Optional business-language note streamed before `partialHtml` (spec #87 decision 6). */
+  note?: string;
   /** The screen HTML written so far (already JSON-decoded tool-call arguments). */
   partialHtml: string;
   /** Screen-specific CSS written so far. */
@@ -415,16 +375,23 @@ export function healPartialScreenSection(
   const screenId = input.screenId.trim();
   const screenName = input.screenName?.trim() || known?.screenName || screenId;
   const screenType = input.screenType?.trim() || known?.screenType || 'LIST';
+  const note = sanitizePrototypeNote(input.note);
   // Same shape as upsert_prototype_screen's landed section (`>\n${fragment}\n</section>`, or the
   // model's own section kept as-is), so streamed nodes keep their positions when the screen lands.
   let inner = healPartialHtml(input.partialHtml).trimStart();
-  const opened = /^<section\b[^>]*data-screen-id\s*=\s*["']?([^"'\s>]+)[^>]*>/i.exec(inner);
-  if (opened && opened[1] === screenId) {
-    inner = inner.slice(opened[0].length).replace(/<\/section>$/i, '');
-  } else {
+  let unwrapped = false;
+  if (/^<section(?=[\s/>])/i.test(inner)) {
+    const openEnd = findTagClose(inner, 8);
+    if (openEnd > 0 && parseAttributes(inner.slice(8, openEnd - 1))['data-screen-id'] === screenId) {
+      inner = inner.slice(openEnd).replace(/<\/section>$/i, '');
+      unwrapped = true;
+    }
+  }
+  if (!unwrapped) {
     inner = `\n${inner.trimEnd()}\n`;
   }
-  const html = `<section id="screen-${escapeAttr(screenId)}" class="proto-screen is-active" data-screen-id="${escapeAttr(screenId)}" data-screen-name="${escapeAttr(screenName)}" data-screen-type="${escapeAttr(screenType)}" data-screen-status="streaming">${inner}</section>`;
+  const noteAttr = note ? ` data-note="${escapeAttr(note)}"` : '';
+  const html = `<section id="screen-${escapeAttr(screenId)}" class="proto-screen is-active" data-screen-id="${escapeAttr(screenId)}" data-screen-name="${escapeAttr(screenName)}" data-screen-type="${escapeAttr(screenType)}" data-screen-status="streaming"${noteAttr}>${inner}</section>`;
   return { html, screenName, screenType };
 }
 
@@ -722,6 +689,8 @@ export function applyPrototypeLiveEvent(
 export interface PrototypeCanvasArtboard extends PrototypeScreenStub {
   /** The `<body>` inner HTML this artboard shows: the shell plus this one screen. */
   bodyHtml: string;
+  /** This screen's own `<section data-screen-id>` HTML (empty while queued). */
+  screenHtml?: string;
   /** Extra CSS that only this artboard needs (a screen's styles still being written). */
   css?: string;
 }
@@ -823,6 +792,7 @@ export function buildPrototypeCanvasModel(
       status: liveScreen?.status ?? savedScreen?.status ?? stub?.status ?? 'queued',
       // Nothing written yet (or a failed write was taken back): a blank artboard.
       bodyHtml: html ? composeArtboardBody(frame, id, html) : '',
+      ...(html ? { screenHtml: html } : {}),
       ...(liveScreen?.css ? { css: liveScreen.css } : {}),
     });
   }

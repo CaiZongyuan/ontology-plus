@@ -103,6 +103,7 @@ import {
   listPrototypeAnchors,
   sanitizePrototypeScreenFragment,
   scopeScreenCss,
+  shouldStreamPartialScreen,
   styleFromShellTokens,
   readPrototypeAnchor,
   rewritePrototypePage,
@@ -4005,6 +4006,7 @@ async function executeUnifiedToolCall(
           screenId: String(args.screenId ?? ''),
           ...(typeof args.screenName === 'string' ? { screenName: args.screenName } : {}),
           ...(typeof args.screenType === 'string' ? { screenType: args.screenType } : {}),
+          ...(typeof args.note === 'string' ? { note: args.note } : {}),
           screenHtml: String(args.screenHtml ?? ''),
           ...(typeof args.extraCss === 'string' ? { extraCss: args.extraCss } : {}),
           ...(typeof args.extraJs === 'string' ? { extraJs: args.extraJs } : {}),
@@ -4128,6 +4130,7 @@ async function executeUnifiedToolCall(
       const screenId = typeof args.screenId === 'string' ? args.screenId : undefined;
       const cssSelector = typeof args.cssSelector === 'string' ? args.cssSelector : undefined;
       const operation = String(args.operation || 'replace_element') as PrototypeAnchorEditOperation;
+      const note = typeof args.note === 'string' ? args.note : undefined;
       const htmlFragment = typeof args.htmlFragment === 'string' ? args.htmlFragment : undefined;
       const attributes =
         args.attributes && typeof args.attributes === 'object'
@@ -4142,6 +4145,7 @@ async function executeUnifiedToolCall(
         ...(screenId ? { screenId } : {}),
         ...(cssSelector ? { cssSelector } : {}),
         operation,
+        ...(note !== undefined ? { note } : {}),
         ...(htmlFragment !== undefined ? { htmlFragment } : {}),
         ...(attributes ? { attributes } : {}),
         ...(allowRemoveAnchors ? { allowRemoveAnchors } : {}),
@@ -5161,6 +5165,7 @@ async function executeUnifiedTurnCore(
           screenId,
           ...(partial.screenName ? { screenName: partial.screenName } : {}),
           ...(partial.screenType ? { screenType: partial.screenType } : {}),
+          ...(partial.note ? { note: partial.note } : {}),
           partialHtml: sanitizePrototypeScreenFragment(partial.partialScreenHtml),
           ...(scopedPartialCss ? { css: scopedPartialCss } : {}),
         });
@@ -6331,12 +6336,14 @@ async function executeUnifiedTurnCore(
               ) {
                 const pArgs = (partialCall.arguments ?? {}) as Record<string, unknown>;
                 const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
+                const pNote = typeof pArgs.note === 'string' ? pArgs.note.trim() : '';
                 const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
-                if (pSid && pHtml.length >= 24) {
+                if (pSid && shouldStreamPartialScreen(pHtml, pNote)) {
                   streamPartialPrototypeScreen({
                     screenId: pSid,
                     ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
                     ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
+                    ...(pNote ? { note: pNote } : {}),
                     partialScreenHtml: pHtml,
                     ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
                   });

@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Crosshair, Loader2, Maximize, Minus, Plus, WifiOff, Wrench } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { Crosshair, Loader2, Maximize, Minus, Plus, WifiOff } from 'lucide-react';
 import { sanitizeBusinessText } from '../../../../packages/business-vocabulary/index.js';
 import {
   PROTOTYPE_STYLE_BOARD_ID,
@@ -7,7 +7,6 @@ import {
   buildPrototypeCanvasModel,
   composePrototypeDocument,
   hasPrototypeBuildPlan,
-  type PrototypeBuildFixActivity,
   type PrototypeBuildState,
   type PrototypeCanvasArtboard,
   type PrototypeLiveState,
@@ -15,9 +14,17 @@ import {
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
-import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboard.js';
-import { BuildLog } from './BuildLog.js';
+import { AgentCursorDockControl, CanvasAgentCursors, useObservedElementSize } from './AgentCursor.js';
+import { ArtboardFrame, type ArtboardHandle } from './Artboard.js';
+import { BuildLog, BuildLogLiveRows } from './BuildLog.js';
 import { BuildPhaseBar } from './BuildPhaseBar.js';
+import {
+  readAgentCursorPrefs,
+  resolveLiveActivities,
+  writeAgentCursorPrefs,
+  type AgentCursorPrefs,
+  type AgentLiveActivity,
+} from './agentCursor.js';
 import { fixActivityText, screenBuildViews, screenOwnerName } from './buildView.js';
 import { ScreenStatusIcon, ScreenStrip, screenStatusLabel } from './ScreenStrip.js';
 import {
@@ -63,10 +70,10 @@ export interface PrototypeLiveCanvasProps {
   /** Opens the composed document in a new tab (defaults to a blob URL; tests replace it). */
   onOpenStandalone?: (documentHtml: string, screenId: string) => boolean;
   /**
-   * Optional custom renderer for active screenshot review & targeted-fix narration (#93 -> #92
-   * cursor/narration integration seam). When omitted, a minimal clean narration pill is rendered.
+   * Explicit live agent activities (#92, #93 targeted fixes): merged with streaming screen
+   * writing activities to drive the cursor, narration bubble, and build log "现在" rows.
    */
-  renderFixActivity?: (activities: readonly PrototypeBuildFixActivity[]) => React.ReactNode;
+  liveActivities?: readonly AgentLiveActivity[];
 }
 
 interface Viewport {
@@ -91,7 +98,7 @@ export function PrototypeLiveCanvas({
   onRetryScreen,
   onOpenSingleScreen,
   onOpenStandalone = openStandalone,
-  renderFixActivity,
+  liveActivities,
 }: PrototypeLiveCanvasProps) {
   const { locale, t } = usePreferences();
   const isBusiness = viewMode === 'business';
@@ -129,20 +136,62 @@ export function PrototypeLiveCanvas({
 
   const views = useMemo(() => screenBuildViews(screens, plan, cleanName), [screens, plan, cleanName]);
   const viewById = new Map(views.map((v) => [v.screenId, v] as const));
-  const fixActivities = useMemo(() => (plan ? activePrototypeBuildFixActivities(plan) : []), [plan]);
-  const artboardHandles = useRef(new Map<string, React.MutableRefObject<ArtboardHandle | null>>());
-  const handleRefFor = (screenId: string): React.MutableRefObject<ArtboardHandle | null> => {
-    let ref = artboardHandles.current.get(screenId);
-    if (!ref) {
-      ref = { current: null };
-      artboardHandles.current.set(screenId, ref);
+
+  // ─── Agent cursor preferences & artboard frame handles (#92 + #93 fix narration) ───
+  const [cursorPrefs, setCursorPrefs] = useState<AgentCursorPrefs>(readAgentCursorPrefs);
+  const updateCursorPrefs = useCallback((next: AgentCursorPrefs) => {
+    setCursorPrefs(next);
+    writeAgentCursorPrefs(next);
+  }, []);
+  const frameHandles = useRef(new Map<string, MutableRefObject<ArtboardHandle | null>>());
+  const handleRefFor = useCallback((screenId: string): MutableRefObject<ArtboardHandle | null> => {
+    let entry = frameHandles.current.get(screenId);
+    if (!entry) {
+      entry = { current: null };
+      frameHandles.current.set(screenId, entry);
     }
-    return ref;
-  };
+    return entry;
+  }, []);
+  const getFrameHandle = useCallback(
+    (screenId: string): ArtboardHandle | null => frameHandles.current.get(screenId)?.current ?? null,
+    [],
+  );
+  const [layoutVersion, setLayoutVersion] = useState(0);
+  const bumpLayout = useCallback(() => setLayoutVersion((n) => n + 1), []);
+  const fixLiveActivities = useMemo<AgentLiveActivity[]>(() => {
+    if (!plan) return [];
+    return activePrototypeBuildFixActivities(plan)
+      .filter((act) => act.state === 'fixing')
+      .map((act) => {
+        const sentence = fixActivityText(act, locale);
+        return {
+          agent: 0,
+          screenId: act.screenId,
+          ...(act.elementId ? { elementId: act.elementId } : {}),
+          ...(sentence ? { sentence } : {}),
+          state: 'fixing' as const,
+        };
+      });
+  }, [plan, locale]);
+  const mergedExternalActivities = useMemo(
+    () => [...fixLiveActivities, ...(liveActivities ?? [])],
+    [fixLiveActivities, liveActivities],
+  );
+  const activities = useMemo(
+    () =>
+      resolveLiveActivities({
+        screens,
+        views,
+        locale: locale === 'en-US' ? 'en-US' : 'zh-CN',
+        isBusiness,
+        externalActivities: mergedExternalActivities,
+      }),
+    [screens, views, locale, isBusiness, mergedExternalActivities],
+  );
 
   // ─── Camera ────────────────────────────────────────────────────────────────
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const [viewport, setViewport] = useState<Viewport>({ w: 0, h: 0 });
+  const viewport: Viewport = useObservedElementSize(hostRef);
   const [cam, setCam] = useState<Camera>({ x: 24, y: 24, k: 0.2 });
   const camRef = useRef(cam);
   camRef.current = cam;
@@ -187,17 +236,6 @@ export function PrototypeLiveCanvas({
     }
   }, [allDrawn, busy, live]);
 
-  useLayoutEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const measure = () => setViewport({ w: host.clientWidth, h: host.clientHeight });
-    measure();
-    if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(host);
-    return () => ro.disconnect();
-  }, []);
-
   const stopTween = () => {
     if (tween.current !== null && typeof cancelAnimationFrame === 'function') {
       cancelAnimationFrame(tween.current);
@@ -212,9 +250,10 @@ export function PrototypeLiveCanvas({
       return;
     }
     const from = camRef.current;
-    const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    let started: number | null = null;
     const step = (now: number) => {
-      const p = Math.min(1, (now - started) / CAMERA_TWEEN_MS);
+      if (started === null) started = now;
+      const p = Math.max(0, Math.min(1, (now - started) / CAMERA_TWEEN_MS));
       const e = 1 - Math.pow(1 - p, 3);
       setCam({
         x: from.x + (target.x - from.x) * e,
@@ -504,11 +543,6 @@ export function PrototypeLiveCanvas({
               const isTrying = tryScreenId === board.screenId;
               const isHighlighted =
                 isTrying || highlightedScreenId === board.screenId || followTarget === board.screenId;
-              const handleRef = handleRefFor(board.screenId);
-              const targetBox: ArtboardRect | null =
-                !renderFixActivity && isFixing && boardView?.fixActivity?.elementId
-                  ? (handleRef.current?.rectOf(boardView.fixActivity.elementId) ?? null)
-                  : null;
               return (
                 <div
                   key={board.screenId}
@@ -540,25 +574,13 @@ export function PrototypeLiveCanvas({
                     paused={view === 'web'}
                     onNavigate={navigateFromPrototype}
                     onEscape={exitTry}
-                    handleRef={handleRef}
+                    handleRef={handleRefFor(board.screenId)}
+                    onLayout={bumpLayout}
                   />
                   {isReviewing && (
                     <div
                       className="onto-artboard-scan"
                       data-testid={`prototype-artboard-scan-${board.screenId}`}
-                      aria-hidden="true"
-                    />
-                  )}
-                  {targetBox && targetBox.w > 0 && targetBox.h > 0 && (
-                    <div
-                      className="pointer-events-none absolute rounded-sm border-2 border-dashed border-warning bg-warning-soft/20"
-                      style={{
-                        left: Math.max(0, targetBox.x - 4),
-                        top: Math.max(0, targetBox.y - 4),
-                        width: targetBox.w + 8,
-                        height: targetBox.h + 8,
-                      }}
-                      data-testid={`prototype-fix-target-${board.screenId}`}
                       aria-hidden="true"
                     />
                   )}
@@ -611,32 +633,17 @@ export function PrototypeLiveCanvas({
             );
           })}
 
-          {view === 'artboards' &&
-            (renderFixActivity
-              ? renderFixActivity(fixActivities)
-              : fixActivities
-                  .filter((act) => act.state === 'fixing')
-                  .map((act) => {
-                    const idx = indexById.get(act.screenId);
-                    if (idx === undefined) return null;
-                    const rect = artboardRect(idx);
-                    const text = fixActivityText(act, locale);
-                    if (!text) return null;
-                    return (
-                      <div
-                        key={`fix-narration-${act.screenId}`}
-                        className="pointer-events-none absolute z-10 flex max-w-[360px] items-center gap-1.5 rounded-md border border-warning/50 bg-card px-2.5 py-1.5 text-[12px] text-foreground shadow-md"
-                        style={{
-                          left: cam.x + (rect.x + 16) * cam.k,
-                          top: cam.y + (rect.y + 16) * cam.k,
-                        }}
-                        data-testid={`prototype-fix-narration-${act.screenId}`}
-                      >
-                        <Wrench size={12} className="shrink-0 text-warning" aria-hidden="true" />
-                        <span className="line-clamp-2 leading-snug">{text}</span>
-                      </div>
-                    );
-                  }))}
+          {view === 'artboards' && (
+            <CanvasAgentCursors
+              activities={tryScreenId ? activities.filter((a) => a.screenId !== tryScreenId) : activities}
+              indexById={indexById}
+              getHandle={getFrameHandle}
+              cam={cam}
+              viewportWidth={viewport.w || hostRef.current?.clientWidth || 0}
+              prefs={cursorPrefs}
+              layoutVersion={layoutVersion}
+            />
+          )}
 
           {view === 'web' && (
             <PrototypeWebView
@@ -657,8 +664,8 @@ export function PrototypeLiveCanvas({
               composeDocument={() => composePrototypeDocument(documentHtml, live)}
               onOpenStandalone={onOpenStandalone}
               viewsById={viewById}
-              fixActivities={fixActivities}
-              {...(renderFixActivity ? { renderFixActivity } : {})}
+              liveActivities={activities}
+              cursorPrefs={cursorPrefs}
             />
           )}
 
@@ -756,13 +763,15 @@ export function PrototypeLiveCanvas({
             </Button>
               </>
             )}
-            {/* Cursor and design-notes controls arrive with #92 and #94. */}
-            <span data-slot="dock-cursor" />
+            {/* Cursor preferences (#92) and design-notes slot (#94). */}
+            <span className="inline-flex items-center gap-1" data-slot="dock-cursor">
+              <AgentCursorDockControl prefs={cursorPrefs} onChange={updateCursorPrefs} />
+            </span>
             <span data-slot="dock-design-notes" />
           </div>
         </div>
 
-        {/* Build log: entries arrive with #90. */}
+        {/* Build log: entries arrive with #90; live "现在" narrations (#92) appear at the bottom. */}
         <aside
           className="hidden min-h-0 flex-col border-l border-border bg-card md:flex"
           data-testid="prototype-build-log"
@@ -778,11 +787,18 @@ export function PrototypeLiveCanvas({
               busy={busy}
               onFocusScreen={showScreen}
               onResumeScreen={onRetryScreen}
+              liveActivities={activities}
               endEntry={webModeHint}
             />
           ) : (
             <div className="min-h-0 flex-1 overflow-auto px-3 py-2 text-[12px] text-muted-foreground" data-slot="build-log-entries">
-              {webModeHint ?? t('生成原型时，这里会逐条记下每一屏的进展。', 'While a prototype is built, each screen’s progress is logged here.')}
+              {activities.some((a) => Boolean(a.sentence)) ? (
+                <ol className="m-0 list-none p-0">
+                  <BuildLogLiveRows activities={activities} onFocusScreen={showScreen} />
+                </ol>
+              ) : (
+                webModeHint ?? t('生成原型时，这里会逐条记下每一屏的进展。', 'While a prototype is built, each screen’s progress is logged here.')
+              )}
             </div>
           )}
         </aside>

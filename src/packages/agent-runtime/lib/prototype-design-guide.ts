@@ -275,7 +275,7 @@ export function screenHelperSystemPrompt(locale: AgentLocale): string {
         '规则：',
         '1. 只写自己这一屏：用 `upsert_prototype_screen` 写出整屏，或用 `edit_prototype_anchor` 局部修改；别的屏、外壳、风格和整份文件都不归你管，相应工具也不在你手里。',
         '2. 用风格样张里的共用组件类名和 var(--proto-*) 变量；`extraCss` 只写这一屏特有的布局，不重新定义颜色和组件。',
-        '3. 先写元素的开始标签（带 data-element-id 和一句业务说明 data-note），再写内容。所有 <button>/<input>/<select>/<textarea> 都要有全局唯一的 data-element-id 和合法的 data-element-type；跳到别的屏用 data-navigate-to="屏幕 ID"；不用 window.alert/confirm/prompt。',
+        '3. 调用工具时把短字段（`screenId`、`screenName`、`screenType`、`note`）排在长字段（`screenHtml`、`htmlFragment`）前面；写 HTML 时先写元素的开始标签（带 `data-element-id` 和一句业务说明 `data-note="<名称>：<是什么、显示什么、点了怎样>"`），再写内部内容，让旁白先于内容到达。所有 <button>/<input>/<select>/<textarea> 都要有全局唯一的 data-element-id 和合法的 data-element-type；跳到别的屏用 data-navigate-to="屏幕 ID"；不用 window.alert/confirm/prompt。',
         '4. 校验没通过时，按诊断在同一轮里改好再写一次。写完并通过校验，这一屏才算完成。',
       ].join('\n'),
       [
@@ -283,7 +283,7 @@ export function screenHelperSystemPrompt(locale: AgentLocale): string {
         'Rules:',
         '1. Write only your own screen: `upsert_prototype_screen` for the whole screen, or `edit_prototype_anchor` for a local edit. Other screens, the shell, the style and the whole document are not yours, and those tools are not available to you.',
         '2. Use the shared component classes and the var(--proto-*) variables from the Style Tile; `extraCss` is only for this screen\'s own layout, never new colours or components.',
-        '3. Write each element\'s opening tag first (with data-element-id and a one-sentence business data-note), then its content. Every <button>/<input>/<select>/<textarea> needs a globally unique data-element-id and a valid data-element-type; link to other screens with data-navigate-to="SCREEN-ID"; never use window.alert/confirm/prompt.',
+        '3. Put short fields (`screenId`, `screenName`, `screenType`, `note`) before long fields (`screenHtml`, `htmlFragment`), and write each element\'s opening tag first (with `data-element-id` and a one-sentence business `data-note="<Name>: <what it is, shows, and does>"`), then its inner content, so narration arrives before content. Every <button>/<input>/<select>/<textarea> needs a globally unique data-element-id and a valid data-element-type; link to other screens with data-navigate-to="SCREEN-ID"; never use window.alert/confirm/prompt.',
         '4. If the check fails, fix it from the diagnostic and write again in the same turn. The screen is done only when it is written and passes the check.',
       ].join('\n'),
     ),

@@ -69,7 +69,6 @@ export type {
   PrototypeTargetAnchor,
   AgentToolCallTrace,
   AgentSubagentPhase,
-  AgentSubagentCursorZone,
   AgentSubagentLaneTrace,
   AgentAskUserPrompt,
   StepHandoffStatus,

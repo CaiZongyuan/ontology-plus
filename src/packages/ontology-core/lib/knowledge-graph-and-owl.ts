@@ -1,3 +1,5 @@
+import { findHtmlTagClose } from './html-scan.js';
+import { sanitizePrototypeNote } from './prototype-notes.js';
 import type {
   Attribute,
   KnowledgeGraphData,
@@ -955,9 +957,10 @@ export function exportToOwl(suite: OntologySuite): string {
 }
 
 function getAttr(tagHtml: string, attrName: string): string | undefined {
-  const regex = new RegExp(`\\b${attrName}\\s*=\\s*["']([^"']+)["']`, 'i');
+  const regex = new RegExp(`\\b${attrName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i');
   const match = tagHtml.match(regex);
-  return match ? match[1] : undefined;
+  const raw = match ? (match[1] ?? match[2]) : undefined;
+  return raw && raw.length > 0 ? raw : undefined;
 }
 
 export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiModel {
@@ -968,14 +971,18 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
   const scanTarget = (html ?? '')
     .replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, '')
     .replace(/<style\b[\s\S]*?(?:<\/style\s*>|$)/gi, '')
-    .replace(/<template\b[^>]*\bdata-proto-style-tile\b[^>]*>[\s\S]*?(?:<\/template\s*>|$)/gi, '');
+    .replace(
+      /<template\b(?:[^>"']|"[^"]*"|'[^']*')*\bdata-proto-style-tile\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/template\s*>|$)/gi,
+      '',
+    );
 
   const screenRegex =
-    /<([a-z0-9]+)\b[^>]*data-screen-id\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)(?=<[a-z0-9]+\b[^>]*data-screen-id|$)/gi;
+    /<([a-z0-9]+)\b(?:[^>"']|"[^"]*"|'[^']*')*data-screen-id\s*=\s*["']([^"']+)["'](?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)(?=<[a-z0-9]+\b(?:[^>"']|"[^"]*"|'[^']*')*data-screen-id|$)/gi;
 
   let screenMatch: RegExpExecArray | null;
   while ((screenMatch = screenRegex.exec(scanTarget)) !== null) {
-    const openingTag = screenMatch[0].slice(0, screenMatch[0].indexOf('>') + 1);
+    const openEnd = findHtmlTagClose(screenMatch[0], 1 + screenMatch[1]!.length);
+    const openingTag = openEnd > 0 ? screenMatch[0].slice(0, openEnd) : screenMatch[0];
     const screenBody = screenMatch[0];
     const screenId = screenMatch[2];
     const screenRef = getAttr(openingTag, 'data-screen-ref') || screenId;
@@ -994,7 +1001,8 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
     const elements: UIElement[] = [];
     const events: UIEvent[] = [];
 
-    const elRegex = /<([a-z0-9]+)\b[^>]*data-element-id\s*=\s*["']([^"']+)["'][^>]*>/gi;
+    const elRegex =
+      /<([a-z0-9]+)\b(?:[^>"']|"[^"]*"|'[^']*')*data-element-id\s*=\s*["']([^"']+)["'](?:[^>"']|"[^"]*"|'[^']*')*>/gi;
     let elMatch: RegExpExecArray | null;
     while ((elMatch = elRegex.exec(screenBody)) !== null) {
       const elTag = elMatch[0];
@@ -1018,11 +1026,13 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
       const dictionaryRef = getAttr(elTag, 'data-dictionary-ref');
       const dataSource = getAttr(elTag, 'data-source');
       const permissionRef = getAttr(elTag, 'data-permission-ref');
+      const description = sanitizePrototypeNote(getAttr(elTag, 'data-note')) || undefined;
 
       elements.push({
         elementId,
         name,
         label,
+        ...(description ? { description } : {}),
         elementType,
         io:
           elementType === 'BUTTON' || elementType === 'TOOLBAR' || elementType === 'MENU'

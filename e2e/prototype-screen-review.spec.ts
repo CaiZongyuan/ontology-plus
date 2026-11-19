@@ -86,8 +86,12 @@ test.describe('Prototype screenshot review & targeted fix (#93)', () => {
         if (document.querySelector('[data-build-status="fixing"]')) {
           state.sawFixingStatus = true;
         }
-        for (const pill of Array.from(document.querySelectorAll('[data-testid^="prototype-fix-narration-"]'))) {
-          const txt = pill.textContent?.trim() ?? '';
+        for (const el of Array.from(
+          document.querySelectorAll(
+            '[data-testid^="prototype-agent-cursor-"][data-activity-state="fixing"] [data-testid^="prototype-cursor-bubble-"], [data-testid="prototype-build-log-live"][data-activity-state="fixing"]',
+          ),
+        )) {
+          const txt = el.textContent?.trim() ?? '';
           if (txt && !state.sawFixNarration.includes(txt)) state.sawFixNarration.push(txt);
         }
         const ordersFrame = document.querySelector<HTMLIFrameElement>(

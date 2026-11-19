@@ -30,7 +30,6 @@ export {
   rewritePrototypePage,
   initPrototypeShell,
   upsertPrototypeScreen,
-  extractLatestHtmlWritingSignal,
   extractPrototypeArtboards,
   ensurePrototypeCoDesignSession,
   type PrototypeAnchorToolName,
@@ -45,7 +44,6 @@ export {
   type InitPrototypeShellInput,
   type UpsertPrototypeScreenInput,
   type PartialPrototypeScreenInput,
-  type HtmlWritingSignal,
   type PrototypeArtboardSlice,
   type PrototypeHtmlMutationResult,
 } from './lib/prototype-anchor-tools.js';
