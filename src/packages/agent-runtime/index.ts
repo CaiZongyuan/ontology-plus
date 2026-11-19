@@ -26,6 +26,7 @@ export {
   listPrototypeAnchors,
   readPrototypeAnchor,
   editPrototypeAnchor,
+  editPrototypeScreen,
   rewritePrototypePage,
   initPrototypeShell,
   upsertPrototypeScreen,
@@ -178,6 +179,12 @@ export {
   type PrototypeBuildRun,
   type PrototypeBuildRunOutcome,
 } from './lib/prototype-build-run.js';
+
+export {
+  createPrototypeScreenshotter,
+  shutdownPrototypeScreenshotter,
+  type PrototypeScreenshotter,
+} from './lib/prototype-screenshot.js';
 
 export {
   createCoalescingRunEventBuffer,

@@ -36,6 +36,14 @@ describe('tool-call to business-language progress mapping', () => {
       zh: '正在绘制风格样张',
       en: 'Drawing the Style Tile',
     });
+    expect(formatToolProgress('report_review', {})).toEqual({
+      zh: '正在记录页面视觉检查结果',
+      en: 'Recording visual check result',
+    });
+    expect(formatToolProgress('edit_screen', { note: '收窄订货单表格宽度' })).toEqual({
+      zh: '正在局部修正原型分屏「收窄订货单表格宽度」',
+      en: "Fixing prototype screen locally '收窄订货单表格宽度'",
+    });
     expect(checkBusinessViewMarkup(`<p>${formatToolProgress('define_style', {}).en}</p>`)).toEqual([]);
 
     // Verify 11 upsert_* tools derive directly from MODEL_BUSINESS_NAMES

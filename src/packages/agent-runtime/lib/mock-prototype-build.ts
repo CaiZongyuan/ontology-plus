@@ -132,6 +132,7 @@ tr[data-nav]:hover td { background: var(--proto-inset); }
 .empty { border: 1px dashed var(--c-line); border-radius: var(--r); padding: 26px; text-align: center; color: var(--c-soft); }
 .list-item { display: flex; gap: 12px; align-items: center; padding: 12px; border-radius: 8px; cursor: pointer; }
 .list-item.on { background: var(--c-accent-soft); }
+.too-wide table { min-width: 1560px; }
 `;
 
 /** The 「风格样张」 of the review prototype (#88 `mock-app.html`), drawn with the shared components. */
@@ -215,7 +216,7 @@ export const MOCK_PROTOTYPE_BUILD: MockPrototypeBuild = {
 <section class="page" data-element-id="EL-ORDERS-FILTER" data-note="筛选区：按状态切换，也可以按订单号或商品搜索。" data-element-type="CONTAINER" data-element-label="筛选区">
   <div class="row"><div class="tabs" data-element-id="EL-ORDERS-TABS" data-element-type="CONTAINER" data-element-label="状态切换"><a class="on" data-tab="all">全部</a><a data-tab="shipping">配送中</a><a data-element-id="EL-TAB-DONE" data-tab="done" data-element-type="CONTAINER" data-element-label="已完成">已完成</a></div><span class="grow"></span><input class="input" style="width:240px" placeholder="订单号 / 商品" data-element-id="EL-ORDERS-INPUT-1" data-binding="{{OBJECT}}.orderNo" data-element-type="INPUT" data-element-label="订单号 / 商品"><select class="input" data-element-id="EL-ORDERS-SELECT-1" data-binding="{{OBJECT}}.orderedAt" data-element-type="SELECT" data-element-label="最近 30 天"><option>最近 30 天</option></select></div>
 </section>
-<section class="page" data-element-id="EL-ORDERS-TABLE" data-note="订货单表格：每行一张订货单，点一行打开详情。" data-element-type="CONTAINER" data-element-label="订货单表格">
+<section class="page too-wide" data-element-id="EL-ORDERS-TABLE" data-note="订货单表格：每行一张订货单，点一行打开详情。" data-element-type="CONTAINER" data-element-label="订货单表格">
   <div class="card" style="padding:6px 8px"><table data-element-id="EL-ORDERS-GRID" data-element-type="TABLE" data-binding="{{OBJECT}}" data-element-label="订货单清单">
     <tr><th>订单号</th><th>下单时间</th><th>商品</th><th>金额</th><th>预计到店</th><th>状态</th></tr>
     <tr data-element-id="EL-ORDER-ROW-1025" data-navigate-to="SCR-ORDER-DETAIL" data-element-type="CONTAINER" data-element-label="订货单 DH-1025"><td>DH-1025</td><td>昨天 16:20</td><td>法棍、可颂等 14 箱</td><td>¥ 1,960</td><td>今天 09:30</td><td><span class="tag warn">配送中</span></td></tr>
@@ -292,6 +293,7 @@ export const MOCK_PROTOTYPE_BUILD: MockPrototypeBuild = {
 export const MOCK_PROTOTYPE_BUILD_TOKENS_PER_SECOND = 260;
 
 const SUBAGENT_PROMPT_RE = /^(?:你是并行专职子智能体|You are parallel specialist subagent)/;
+const REVIEW_PROMPT_RE = /^(?:【原型分屏截图视觉检查】|\[Prototype Screen Visual Check\])/;
 const SUBAGENT_SCREEN_RE = /`(SCR-[A-Za-z0-9_-]+)`/;
 
 function firstUserText(context: Context): string {
@@ -364,7 +366,7 @@ export function createMockPrototypeBuildReplay(
   let subtitle = '';
 
   return {
-    responseBudget: build.screens.length * 3 + 8,
+    responseBudget: build.screens.length * 6 + 12,
     leadOpening(requirementsTitle, primaryObjectLabel) {
       // The replayed screens are a recorded demo; the subtitle says so and names what the
       // confirmed requirements are about, so a replay is never mistaken for a real design.
@@ -398,6 +400,70 @@ export function createMockPrototypeBuildReplay(
     respond(context) {
       const prompt = firstUserText(context);
       const last = context.messages[context.messages.length - 1];
+      if (REVIEW_PROMPT_RE.test(prompt)) {
+        const reviewSid = SUBAGENT_SCREEN_RE.exec(prompt)?.[1] ?? '';
+        const hasTooWide = reviewSid === 'SCR-ORDERS' && prompt.includes('class="page too-wide"');
+        if (last?.role === 'user') {
+          if (hasTooWide) {
+            return fauxAssistantMessage(
+              [
+                fauxThinking(
+                  pickLocaleText(
+                    locale,
+                    '检查「订货单列表」截图：表格右侧超出了画板宽度，「状态」一列被裁掉了。先报告问题再局部收窄。',
+                    'Checking the "Orders" screenshot: the table overflows the right edge of the artboard, clipping the "Status" column.',
+                  ),
+                ),
+                fauxToolCall('report_review', {
+                  screenId: 'SCR-ORDERS',
+                  findings: [
+                    {
+                      elementId: 'EL-ORDERS-TABLE',
+                      issue: pickLocaleText(
+                        locale,
+                        '订货单表格右侧超出了画板宽度，「状态」一列被裁掉了。',
+                        'The orders table overflows the right edge of the artboard, clipping the "Status" column.',
+                      ),
+                    },
+                  ],
+                }),
+              ],
+              { stopReason: 'toolUse' },
+            );
+          }
+          return fauxAssistantMessage(
+            [
+              fauxToolCall('report_review', {
+                screenId: reviewSid,
+                findings: [],
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+        if (last?.role === 'toolResult' && last.toolName === 'report_review' && hasTooWide && !last.isError) {
+          return fauxAssistantMessage(
+            [
+              // Short fields (`screenId`, `elementId`, `note`) stream before `find` and `replace`.
+              fauxToolCall('edit_screen', {
+                screenId: 'SCR-ORDERS',
+                elementId: 'EL-ORDERS-TABLE',
+                note: pickLocaleText(
+                  locale,
+                  '收窄订货单表格宽度，让右侧「状态」一列完整显示在页面内',
+                  'Fit the orders table within the page width so the "Status" column is fully visible',
+                ),
+                find: '<section class="page too-wide" data-element-id="EL-ORDERS-TABLE"',
+                replace: '<section class="page" data-element-id="EL-ORDERS-TABLE"',
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+        return fauxAssistantMessage([
+          fauxText(pickLocaleText(locale, '这一屏视觉检查已完成。', 'Visual check finished for this screen.')),
+        ]);
+      }
       if (SUBAGENT_PROMPT_RE.test(prompt)) {
         const screen = byId.get(SUBAGENT_SCREEN_RE.exec(prompt)?.[1] ?? '');
         if (last?.role === 'toolResult' && last.isError) {

@@ -24,6 +24,54 @@ import { type AgentLocale, pickLocaleText } from './locale.js';
 import type { OpenAiFunctionTool } from './tools.js';
 
 export const PLAN_SCREENS_TOOL_NAME = 'plan_screens';
+export const REPORT_REVIEW_TOOL_NAME = 'report_review';
+
+export interface PrototypeScreenReviewFinding {
+  elementId?: string;
+  issue: string;
+}
+
+/**
+ * Reports the visual screenshot check verdict for one screen (#93). Short fields come first:
+ * `screenId`, then `findings` (each with `elementId` and one concise business-language `issue`,
+ * or empty `findings: []` when the screen passes cleanly).
+ */
+export const REPORT_REVIEW_OPENAI_TOOL: OpenAiFunctionTool = {
+  type: 'function',
+  function: {
+    name: REPORT_REVIEW_TOOL_NAME,
+    description:
+      'Report the screenshot visual check verdict for ONE screen (`screenId`). Pass `findings: []` when the screen looks clean; otherwise list real visual issues, each with its `elementId` and one concise business-language sentence (`issue`). At most one review round per screen.',
+    parameters: {
+      type: 'object',
+      properties: {
+        screenId: {
+          type: 'string',
+          description: 'Target screen id that was inspected (e.g. SCR-ORDERS).',
+        },
+        findings: {
+          type: 'array',
+          description: 'Visual issues spotted in the screenshot, or [] when clean.',
+          items: {
+            type: 'object',
+            properties: {
+              elementId: {
+                type: 'string',
+                description: 'Anchored data-element-id of the affected element (e.g. EL-ORDERS-TABLE).',
+              },
+              issue: {
+                type: 'string',
+                description: 'One concise business-language sentence saying what is wrong visually.',
+              },
+            },
+            required: ['elementId', 'issue'],
+          },
+        },
+      },
+      required: ['screenId', 'findings'],
+    },
+  },
+};
 
 export const PLAN_SCREENS_OPENAI_TOOL: OpenAiFunctionTool = {
   type: 'function',
@@ -127,6 +175,33 @@ export interface PrototypeBuildRun {
   observeScreenStream(screenId: string, partialHtml: string): void;
   /** A screen was written and passed the anchor check. */
   observeScreenWritten(screenId: string, html: string): void;
+  /** The lead directly wrote a planned screen in single-agent mode (`upsert_prototype_screen`). */
+  observeLeadScreenWritten(screenId: string, html: string): void;
+  /** True when `screenId` has not yet entered its single allowed screenshot review round (#93). */
+  canReviewScreen(screenId: string): boolean;
+  /** Starts screenshot review on `screenId` (`review` phase -> `now`, screen -> `reviewing`); false if disallowed. */
+  beginScreenReview(screenId: string): boolean;
+  /** Records `report_review` findings (≤ 1 review round per screen). */
+  commitReportReview(args: unknown): {
+    isError: boolean;
+    findings: PrototypeScreenReviewFinding[];
+    content: string;
+    summary: string;
+  };
+  /** Updates live fix narration as `edit_screen`'s short fields (`screenId`, `elementId`, `note`) stream (#93). */
+  observeEditScreenStream(partialArgs: unknown): void;
+  /** Checks whether `edit_screen` is permitted under the ≤ 1 review+fix round cap; null when allowed. */
+  checkEditScreenAllowed(screenId: string): string | null;
+  /** Records a completed targeted `edit_screen` fix on `screenId` (#93). */
+  commitEditScreen(screenId: string, input: { elementId?: string; note?: string; html: string }): void;
+  /** Restores `screenId` to `done` if screenshot capture or the review model call could not complete. */
+  abortScreenReview(screenId: string): void;
+  /** Marks the `截图检查` phase skipped (`未做视觉检查`) when no browser or vision model is available. */
+  skipVisualReview(): void;
+  /** Marks `逐屏施工` (`screens`) finished once all helper lanes have completed, even while `review` continues. */
+  finishScreensPhase(): void;
+  /** Marks `截图检查` (`review`) finished once all queued screen reviews have completed. */
+  finishReviewPhase(): void;
   /**
    * The user asked to continue one screen; returns its plan entry, or null if neither the
    * persisted plan nor the saved document has that screen. A prototype built before plans
@@ -162,7 +237,12 @@ export function createPrototypeBuildRun(options: {
   };
   const startedScreens = new Set<string>();
   const startedLanes = new Set<string>();
+  const reviewRecords = new Map<
+    string,
+    { reported: boolean; findings: PrototypeScreenReviewFinding[]; fixed: boolean }
+  >();
   let screensPhaseStarted = false;
+  let reviewSkippedLogged = false;
 
   const ensureStarted = (base?: PrototypeBuildState | null) => {
     if (!tracker.started()) send(tracker.start(base ?? null));
@@ -371,6 +451,258 @@ export function createPrototypeBuildRun(options: {
       send(tracker.screen(screenId, { writtenElements: countWrittenElements(html) }));
     },
 
+    observeLeadScreenWritten(screenId, html) {
+      const sid = screenId.trim();
+      if (!sid || !tracker.started() || !planned(sid)) return;
+      beginScreensPhase();
+      const writtenElements = countWrittenElements(html);
+      const wasDone = prototypeBuildScreen(tracker.state(), sid).status === 'done';
+      send(tracker.screen(sid, { status: 'done', agent: 0, writtenElements }));
+      if (!wasDone) {
+        send(tracker.log({ agent: 0, kind: 'screen_done', screenId: sid, count: writtenElements }));
+      }
+    },
+
+    canReviewScreen(screenId) {
+      const sid = screenId.trim();
+      if (!sid || !tracker.started() || !planned(sid) || reviewSkippedLogged) return false;
+      const rec = reviewRecords.get(sid);
+      return !rec || !rec.reported;
+    },
+
+    beginScreenReview(screenId) {
+      const sid = screenId.trim();
+      if (!sid || !tracker.started() || !planned(sid) || reviewSkippedLogged) return false;
+      if (reviewRecords.has(sid)) return false;
+      reviewRecords.set(sid, { reported: false, findings: [], fixed: false });
+      if (tracker.state().phases.review.status !== 'now') {
+        send(tracker.phase('review', 'now'));
+      }
+      send(
+        tracker.screen(sid, {
+          status: 'reviewing',
+          fixActivity: {
+            sentence: pickLocaleText(
+              locale,
+              '正在按画板尺寸截图并逐项检查…',
+              'Capturing artboard screenshot and checking layout…',
+            ),
+            state: 'reviewing',
+          },
+        }),
+      );
+      send(tracker.log({ agent: 0, kind: 'review_started', screenId: sid }));
+      return true;
+    },
+
+    commitReportReview(args) {
+      const recObj = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+      const sid = typeof recObj.screenId === 'string' ? recObj.screenId.trim() : '';
+      if (!sid) {
+        const diagnostic = pickLocaleText(
+          locale,
+          'report_review 需要指定 screenId。',
+          'report_review requires a non-empty screenId.',
+        );
+        return { isError: true, findings: [], content: JSON.stringify({ status: 'ERROR', diagnostic }), summary: diagnostic };
+      }
+      const existingRec = reviewRecords.get(sid);
+      if (existingRec?.reported) {
+        const diagnostic = pickLocaleText(
+          locale,
+          `每屏最多做一轮截图检查，${sid} 已经检查过了。`,
+          `At most one review round per screen; ${sid} has already been reviewed.`,
+        );
+        return {
+          isError: true,
+          findings: [],
+          content: JSON.stringify({ status: 'REVIEW_CAP_REACHED', diagnostic }),
+          summary: diagnostic,
+        };
+      }
+      const rawFindings = Array.isArray(recObj.findings) ? recObj.findings : null;
+      if (!rawFindings) {
+        const diagnostic = pickLocaleText(
+          locale,
+          'report_review 需要传入 findings 数组（无问题传 []）。',
+          'report_review requires a `findings` array (pass [] when clean).',
+        );
+        return { isError: true, findings: [], content: JSON.stringify({ status: 'ERROR', diagnostic }), summary: diagnostic };
+      }
+      const findings: PrototypeScreenReviewFinding[] = rawFindings
+        .filter((f): f is Record<string, unknown> => Boolean(f && typeof f === 'object'))
+        .map((f) => {
+          const elementId = typeof f.elementId === 'string' && f.elementId.trim() ? f.elementId.trim() : undefined;
+          const issue = typeof f.issue === 'string' ? f.issue.trim() : '';
+          return { ...(elementId ? { elementId } : {}), issue };
+        })
+        .filter((f) => f.issue.length > 0);
+
+      ensureStyleRun();
+      if (tracker.state().phases.review.status === 'not_started') {
+        send(tracker.phase('review', 'now'));
+      }
+      reviewRecords.set(sid, { reported: true, findings, fixed: findings.length === 0 });
+      const screenName = tracker.state().plan.find((p) => p.screenId === sid)?.screenName ?? sid;
+
+      if (findings.length === 0) {
+        if (planned(sid)) {
+          send(tracker.screen(sid, { status: 'done', reviewed: 'pass' }));
+          send(tracker.log({ agent: 0, kind: 'review_passed', screenId: sid }));
+        }
+        const summary = pickLocaleText(
+          locale,
+          `「${screenName}」视觉检查通过，无需修改。`,
+          `"${screenName}" passed the visual check with no issues.`,
+        );
+        return {
+          isError: false,
+          findings: [],
+          content: JSON.stringify({ status: 'PASS', screenId: sid, summary }),
+          summary,
+        };
+      }
+
+      const first = findings[0]!;
+      if (planned(sid)) {
+        send(
+          tracker.screen(sid, {
+            status: 'fixing',
+            finding: first.issue,
+            fixActivity: {
+              ...(first.elementId ? { elementId: first.elementId } : {}),
+              sentence: pickLocaleText(locale, `发现问题：${first.issue}`, `Issue found: ${first.issue}`),
+              state: 'fixing',
+            },
+          }),
+        );
+        for (const f of findings) {
+          send(tracker.log({ agent: 0, kind: 'review_finding', screenId: sid, detail: f.issue }));
+        }
+      }
+      const summary = pickLocaleText(
+        locale,
+        `「${screenName}」发现 ${findings.length} 处视觉问题：${first.issue}`,
+        `Found ${findings.length} visual issue(s) on "${screenName}": ${first.issue}`,
+      );
+      return {
+        isError: false,
+        findings,
+        content: JSON.stringify({
+          status: 'NEEDS_FIX',
+          screenId: sid,
+          findings,
+          next: 'Call edit_screen once on this screen with an exact unique `find` snippet to fix the issue.',
+        }),
+        summary,
+      };
+    },
+
+    observeEditScreenStream(partialArgs) {
+      if (!partialArgs || typeof partialArgs !== 'object' || !tracker.started()) return;
+      const rec = partialArgs as Record<string, unknown>;
+      const sid = typeof rec.screenId === 'string' ? rec.screenId.trim() : '';
+      if (!sid || !planned(sid)) return;
+      if (reviewRecords.get(sid)?.fixed) return;
+      const elementId = typeof rec.elementId === 'string' && rec.elementId.trim() ? rec.elementId.trim() : undefined;
+      const note = typeof rec.note === 'string' ? rec.note.trim() : '';
+      if (!note) return;
+      const cur = prototypeBuildScreen(tracker.state(), sid);
+      const sentence = cur.finding
+        ? pickLocaleText(
+            locale,
+            `发现问题：${cur.finding.replace(/[。！!]+$/, '')}。正在修改：${note}`,
+            `Issue found: ${cur.finding.replace(/[.!]+$/, '')}. Fixing: ${note}`,
+          )
+        : note;
+      send(
+        tracker.screen(sid, {
+          status: 'fixing',
+          fixActivity: {
+            ...(elementId ? { elementId } : {}),
+            sentence,
+            state: 'fixing',
+          },
+        }),
+      );
+    },
+
+    checkEditScreenAllowed(screenId) {
+      const sid = screenId.trim();
+      const rec = reviewRecords.get(sid);
+      if (rec?.fixed) {
+        return pickLocaleText(
+          locale,
+          `每屏最多做一轮检查和局部修正，${sid} 本轮检查修正已经完成，不能重复修改。`,
+          `At most one review and targeted-fix round per screen; ${sid} has already finished its review round.`,
+        );
+      }
+      return null;
+    },
+
+    commitEditScreen(screenId, input) {
+      const sid = screenId.trim();
+      const rec = reviewRecords.get(sid);
+      if (rec) rec.fixed = true;
+      if (!tracker.started() || !planned(sid)) return;
+      const note = input.note?.trim();
+      if (note) {
+        send(tracker.log({ agent: 0, kind: 'screen_fixing', screenId: sid, detail: note }));
+      }
+      send(
+        tracker.screen(sid, {
+          status: 'done',
+          reviewed: 'fixed',
+          writtenElements: countWrittenElements(input.html),
+        }),
+      );
+      send(tracker.log({ agent: 0, kind: 'screen_fixed', screenId: sid, ...(note ? { detail: note } : {}) }));
+    },
+
+    abortScreenReview(screenId) {
+      const sid = screenId.trim();
+      if (!sid || !tracker.started() || !planned(sid)) return;
+      const cur = prototypeBuildScreen(tracker.state(), sid);
+      if (cur.status === 'reviewing' || cur.status === 'fixing') {
+        send(tracker.screen(sid, { status: 'done' }));
+      }
+    },
+
+    skipVisualReview() {
+      if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state()) || reviewSkippedLogged) return;
+      reviewSkippedLogged = true;
+      send(tracker.phase('review', 'skipped'));
+      send(tracker.log({ agent: 0, kind: 'phase_skipped', phase: 'review' }));
+    },
+
+    finishScreensPhase() {
+      if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) return;
+      const state = tracker.state();
+      if (state.phases.screens.status !== 'now') return;
+      const anyFailed = state.plan.some((p) => prototypeBuildScreen(state, p.screenId).status === 'failed');
+      const anyWritingOrQueued = state.plan.some((p) => {
+        const st = prototypeBuildScreen(state, p.screenId).status;
+        return st === 'queued' || st === 'writing';
+      });
+      if (!anyWritingOrQueued) {
+        send(tracker.phase('screens', anyFailed ? 'failed' : 'done'));
+      }
+    },
+
+    finishReviewPhase() {
+      if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) return;
+      const anyReported = Array.from(reviewRecords.values()).some((r) => r.reported);
+      if (anyReported) {
+        for (const item of tracker.state().plan) {
+          const cur = prototypeBuildScreen(tracker.state(), item.screenId);
+          if (cur.status === 'reviewing' || cur.status === 'fixing') {
+            send(tracker.screen(item.screenId, { status: 'done' }));
+          }
+        }
+        send(tracker.phase('review', 'done'));
+      }
+    },
+
     resumeScreen(screenId, documentHtml) {
       const base =
         options.base?.plan.some((p) => p.screenId === screenId) ? options.base : planFromDocument(documentHtml ?? '');
@@ -397,6 +729,13 @@ export function createPrototypeBuildRun(options: {
       let failed = 0;
       for (const item of tracker.state().plan) {
         const screen = prototypeBuildScreen(tracker.state(), item.screenId);
+        if (screen.status === 'reviewing' || screen.status === 'fixing') {
+          if (outcome === 'succeeded') {
+            send(tracker.screen(item.screenId, { status: 'done' }));
+            done += 1;
+            continue;
+          }
+        }
         if (screen.status === 'done') {
           done += 1;
           continue;
@@ -416,13 +755,21 @@ export function createPrototypeBuildRun(options: {
       }
       if (screensPhaseStarted || tracker.state().phases.screens.status !== 'not_started') {
         send(tracker.phase('screens', failed > 0 ? 'failed' : 'done'));
-        // The screenshot check (#93) and demo tours (#95) did not run in this build.
-        for (const phase of ['review', 'tours'] as const) {
-          const status = tracker.state().phases[phase].status;
-          if (status === 'not_started' || status === 'now') {
-            send(tracker.phase(phase, 'skipped'));
-            if (phase === 'review') send(tracker.log({ agent: 0, kind: 'phase_skipped', phase }));
+        const anyReported = Array.from(reviewRecords.values()).some((r) => r.reported);
+        const reviewStatus = tracker.state().phases.review.status;
+        if (anyReported && reviewStatus === 'now') {
+          send(tracker.phase('review', 'done'));
+        } else if (!anyReported && (reviewStatus === 'not_started' || reviewStatus === 'now')) {
+          send(tracker.phase('review', 'skipped'));
+          if (!reviewSkippedLogged) {
+            reviewSkippedLogged = true;
+            send(tracker.log({ agent: 0, kind: 'phase_skipped', phase: 'review' }));
           }
+        }
+        // Demo tours (#95) did not run unless marked done.
+        const toursStatus = tracker.state().phases.tours.status;
+        if (toursStatus === 'not_started' || toursStatus === 'now') {
+          send(tracker.phase('tours', 'skipped'));
         }
       }
       send(tracker.log({ agent: 0, kind: 'build_finished', count: done, failedCount: failed }));

@@ -5,6 +5,7 @@ import type {
   PrototypeBuildPhaseId,
   PrototypeStyleValueKey,
 } from '../../ontology-core/index.js';
+import { sanitizeBusinessText } from './guard.js';
 import type { BilingualText, BusinessLocale } from './vocabulary.js';
 
 /**
@@ -166,6 +167,46 @@ export function describePrototypeBuildLogEntry(
       return pick({ zh: `计划外加画「${name}」`, en: `"${name}" added beyond the plan` }, locale);
     case 'screen_resumed':
       return pick({ zh: `按你的要求继续画「${name}」`, en: `Continuing "${name}" as you asked` }, locale);
+    case 'review_started':
+      return pick(
+        {
+          zh: `截图检查「${name}」：逐项核对排版、留白、对比度与对齐`,
+          en: `Checking "${name}" from its screenshot: layout, spacing, contrast and alignment`,
+        },
+        locale,
+      );
+    case 'review_passed':
+      return pick({ zh: `「${name}」视觉检查通过`, en: `"${name}" passed the visual check` }, locale);
+    case 'review_finding': {
+      const detail = entry.detail ? sanitizeBusinessText(entry.detail, locale).trim() : '';
+      return detail
+        ? pick({ zh: `检查「${name}」发现问题：${detail}`, en: `Issue found on "${name}": ${detail}` }, locale)
+        : pick({ zh: `检查「${name}」发现需要调整的地方`, en: `Found an issue to adjust on "${name}"` }, locale);
+    }
+    case 'screen_fixing': {
+      const detail = entry.detail ? sanitizeBusinessText(entry.detail, locale).trim() : '';
+      return detail
+        ? pick({ zh: `正在局部修正「${name}」：${detail}`, en: `Fixing "${name}" locally: ${detail}` }, locale)
+        : pick({ zh: `正在局部修正「${name}」`, en: `Applying a targeted fix on "${name}"` }, locale);
+    }
+    case 'screen_fixed': {
+      const detail = entry.detail ? sanitizeBusinessText(entry.detail, locale).trim() : '';
+      return detail
+        ? pick(
+            {
+              zh: `已局部修正「${name}」：${detail}（其他内容未改动）`,
+              en: `Fixed "${name}" locally: ${detail} (the rest of the screen is untouched)`,
+            },
+            locale,
+          )
+        : pick(
+            {
+              zh: `已局部修正「${name}」（只改问题处，其他内容未改动）`,
+              en: `Fixed "${name}" locally (only the affected part changed)`,
+            },
+            locale,
+          );
+    }
     case 'phase_skipped':
       return pick(SKIPPED_PHASE_SENTENCES[entry.phase ?? 'review'], locale);
     case 'build_finished': {

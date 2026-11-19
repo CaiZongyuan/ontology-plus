@@ -26,6 +26,11 @@ const ENTRIES: PrototypeBuildLogEntry[] = [
   { id: 13, at: '', agent: 0, kind: 'style_ready', locked: false },
   { id: 14, at: '', agent: 0, kind: 'style_values_changed', valueKeys: ['accent', 'mode'] },
   { id: 15, at: '', agent: 0, kind: 'style_lock_unavailable' },
+  { id: 16, at: '', agent: 0, kind: 'review_started', screenId: 'SCR-REFUND' },
+  { id: 17, at: '', agent: 0, kind: 'review_passed', screenId: 'SCR-REFUND' },
+  { id: 18, at: '', agent: 0, kind: 'review_finding', screenId: 'SCR-REFUND', detail: '表格 EL-ORDERS-TABLE 右侧「状态」列被裁切' },
+  { id: 19, at: '', agent: 0, kind: 'screen_fixing', screenId: 'SCR-REFUND', detail: '收窄表格宽度让「状态」列完整显示' },
+  { id: 20, at: '', agent: 0, kind: 'screen_fixed', screenId: 'SCR-REFUND', detail: '收窄表格宽度让「状态」列完整显示' },
 ];
 
 describe('prototype build log sentences', () => {

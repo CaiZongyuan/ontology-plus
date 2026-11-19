@@ -10,7 +10,7 @@
 
 import type { PrototypeStyleValueKey } from './prototype-style.js';
 
-export type PrototypeBuildScreenStatus = 'queued' | 'writing' | 'reviewing' | 'done' | 'failed';
+export type PrototypeBuildScreenStatus = 'queued' | 'writing' | 'reviewing' | 'fixing' | 'done' | 'failed';
 
 export const PROTOTYPE_BUILD_PHASES = ['plan', 'style', 'screens', 'review', 'tours'] as const;
 export type PrototypeBuildPhaseId = (typeof PROTOTYPE_BUILD_PHASES)[number];
@@ -36,6 +36,14 @@ export interface PrototypeBuildPlanItem {
   screenType?: string;
 }
 
+export interface PrototypeBuildFixActivity {
+  screenId: string;
+  elementId?: string;
+  /** One business-language sentence saying what was found or what is being fixed. */
+  sentence: string;
+  state: 'reviewing' | 'fixing';
+}
+
 export interface PrototypeBuildScreen {
   screenId: string;
   status: PrototypeBuildScreenStatus;
@@ -44,6 +52,12 @@ export interface PrototypeBuildScreen {
   failure?: PrototypeBuildFailureCode;
   /** Anchored elements written so far (counted in the real tool-call stream). */
   writtenElements: number;
+  /** Visual check outcome (#93), once screenshot review ran on this screen. */
+  reviewed?: 'pass' | 'fixed';
+  /** One business-language sentence naming the visual issue found during screenshot review (#93). */
+  finding?: string;
+  /** Live review/fix activity for the canvas cursor & narration layer (#92 / #93). */
+  fixActivity?: Omit<PrototypeBuildFixActivity, 'screenId'>;
 }
 
 export type PrototypeBuildLogKind =
@@ -56,6 +70,11 @@ export type PrototypeBuildLogKind =
   | 'screen_done'
   | 'screen_failed'
   | 'screen_resumed'
+  | 'review_started'
+  | 'review_passed'
+  | 'review_finding'
+  | 'screen_fixing'
+  | 'screen_fixed'
   | 'plan_rejected'
   | 'plan_from_dispatch'
   | 'screens_added'
@@ -79,6 +98,8 @@ export interface PrototypeBuildLogEntry {
   locked?: boolean;
   /** style_values_changed: the design values the user asked to change. */
   valueKeys?: PrototypeStyleValueKey[];
+  /** review_finding / screen_fixing / screen_fixed: concise business-language note (#93). */
+  detail?: string;
 }
 
 export interface PrototypeBuildState {
@@ -187,6 +208,21 @@ export function prototypeBuildScreen(
   return { screenId, status: 'queued', writtenElements: 0 };
 }
 
+/** Active review/fix activities across planned screens, for live cursor/narration overlays (#92 / #93). */
+export function activePrototypeBuildFixActivities(
+  state: PrototypeBuildState | null | undefined,
+): PrototypeBuildFixActivity[] {
+  if (!state) return [];
+  const order = state.plan.length > 0 ? state.plan.map((p) => p.screenId) : Object.keys(state.screens);
+  const out: PrototypeBuildFixActivity[] = [];
+  for (const screenId of order) {
+    const s = state.screens[screenId];
+    if (!s || (s.status !== 'reviewing' && s.status !== 'fixing') || !s.fixActivity) continue;
+    out.push({ screenId, ...s.fixActivity });
+  }
+  return out;
+}
+
 export interface PrototypeBuildTracker {
   /** Begins (or continues, from a persisted state) a build; everything below needs it first. */
   start(base?: PrototypeBuildState | null): PrototypeBuildEvent;
@@ -246,6 +282,12 @@ export function createPrototypeBuildTracker(options: { now?: () => Date } = {}):
       if (next.status !== 'failed') delete next.failure;
       // A screen nobody has picked up yet has no owner.
       if (next.status === 'queued') delete next.agent;
+      // Live review/fix activity clears once the screen leaves reviewing/fixing.
+      if (next.status !== 'reviewing' && next.status !== 'fixing') delete next.fixActivity;
+      if (next.status === 'queued' || next.status === 'writing') {
+        delete next.reviewed;
+        delete next.finding;
+      }
       if (JSON.stringify(next) === JSON.stringify(prev) && state.screens[screenId]) return null;
       seq += 1;
       return fold({ kind: 'build_screen', seq, screen: next });

@@ -141,12 +141,14 @@ export function prototypeLeadStyleInstructions(
   return [prototypeDesignGuide(locale), lockedLine].join('\n');
 }
 
-/** Tools that act on the whole document: the lead's alone, never a screen helper's. */
+/** Tools that act on the whole document or review pass: the lead's alone, never a screen helper's. */
 export const DOCUMENT_LEVEL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'init_prototype_shell',
   'rewrite_prototype_page',
   DEFINE_STYLE_TOOL_NAME,
   'plan_screens',
+  'report_review',
+  'edit_screen',
   'spawn_subagents',
   'codemode',
 ]);
@@ -287,6 +289,68 @@ export function screenHelperSystemPrompt(locale: AgentLocale): string {
     ),
     prototypeDesignGuide(locale),
   ].join('\n\n');
+}
+
+/** System prompt for the per-screen visual screenshot check (#93): 7-item checklist, <= 1 fix round. */
+export function prototypeScreenReviewSystemPrompt(locale: AgentLocale): string {
+  return [
+    pickLocaleText(
+      locale,
+      [
+        '你是 Ontology Plus 原型施工的主审设计师：正在按 1280 × 860 画板尺寸查看已完成分屏的真实渲染截图，并做最多一轮局部修正。',
+        '请逐项对照以下视觉检查清单审视附带的画板截图：',
+        '1. 溢出与裁切：表格、卡片、工具栏或文字是否超出画板右缘/底缘被截断，或出现大片突兀空白。',
+        '2. 间距与留白：组内是否紧凑、组间是否舒展，有无元素紧贴边框或挤成一团。',
+        '3. 视觉层级：页面主标题、区块小标题、核心正文与辅助说明是否一眼分明。',
+        '4. 对比度：文字、输入框边框或次要标签是否过淡、融进底色难以辨认。',
+        '5. 对齐：表格列、表单行、卡片边线与操作按钮是否整齐对齐。',
+        '6. 内容真实感：是否残留“示例文本”“Lorem ipsum”“XXX”等占位假字。',
+        '7. 共用组件复用：是否沿用风格样张的组件类名与 var(--proto-*) 变量，而非临时拼凑杂色。',
+        '',
+        '操作要求（每屏最多一轮检查与修正）：',
+        '1. 先调用 `report_review`：若画面干净无明显缺陷，传 `findings: []` 结束检查；若发现真实的视觉问题，每处用一句简短的通俗业务语言写进 `findings`（指明对应的 `elementId` 与一句话 `issue`，不要堆砌 HTML/CSS 术语）。',
+        '2. 若报告了问题，紧接着调用一次 `edit_screen` 只对这一屏的问题片段做精确唯一匹配替换（`find` 在该屏内必须恰好匹配 1 处；严禁重写整屏、严禁改动其他分屏或外壳、严禁丢失既有语义锚点）。',
+      ].join('\n'),
+      [
+        'You are the lead visual reviewer of an Ontology Plus prototype build, inspecting a real 1280 × 860 artboard screenshot of ONE completed screen (at most one review and fix round per screen).',
+        'Evaluate the attached screenshot against every checkpoint below:',
+        '1. Overflow & clipping: any table, card, bar or text clipped at the 1280px artboard edge or leaving an awkward dead zone.',
+        '2. Spacing: cramped clusters, uneven gaps, or content pressed against borders.',
+        '3. Hierarchy: clear distinction between page heading, section title, primary content and muted caption.',
+        '4. Contrast: text, field borders or tags dissolving into their surface.',
+        '5. Alignment: clean vertical/horizontal lanes across columns, rows and action bars.',
+        '6. Realistic content: no "sample text", lorem ipsum, "XXX" or placeholder copy.',
+        '7. Shared component reuse: built from the Style Tile component classes and var(--proto-*) tokens.',
+        '',
+        'Workflow (at most 1 round per screen):',
+        '1. Call `report_review` first: pass `findings: []` if the render is clean; otherwise report each real visual defect with its `elementId` and ONE concise business-language sentence in `issue` (no raw HTML/CSS jargon).',
+        '2. When `findings` is non-empty, call `edit_screen` ONCE to replace the exact unique `find` snippet inside this screen (`count === 1`; never rewrite the whole screen, never touch other screens or the shell, and preserve all semantic anchors).',
+      ].join('\n'),
+    ),
+    prototypeDesignGuide(locale),
+  ].join('\n\n');
+}
+
+export function buildPrototypeScreenReviewPrompt(input: {
+  locale: AgentLocale;
+  screenId: string;
+  screenName: string;
+  purpose?: string;
+  screenHtml: string;
+}): string {
+  const zh = input.locale !== 'en-US';
+  return [
+    zh ? '【原型分屏截图视觉检查】' : '[Prototype Screen Visual Check]',
+    zh ? `- 目标分屏 ID: \`${input.screenId}\`` : `- Target screenId: \`${input.screenId}\``,
+    zh ? `- 目标分屏名称: ${input.screenName}` : `- Target screenName: ${input.screenName}`,
+    input.purpose ? (zh ? `- 业务用途: ${input.purpose}` : `- Business purpose: ${input.purpose}`) : '',
+    zh
+      ? '附带图像是该分屏在 1280 × 860 画板上的真实渲染截图。请先调用 `report_review` 给出检查结果；如有问题，再调用一次 `edit_screen` 做唯一匹配局部修正。'
+      : 'Attached is the real 1280 × 860 rendered screenshot of this screen. Call `report_review` first, and if an issue is found, call `edit_screen` once with a unique `find` snippet.',
+    `${zh ? '【该屏当前 HTML】' : '[Current screen HTML]'}\n${input.screenHtml}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export interface ScreenHelperContextInput {

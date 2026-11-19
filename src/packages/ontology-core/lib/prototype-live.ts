@@ -659,7 +659,19 @@ export function applyPrototypeLiveEvent(
   if (isPrototypeBuildEvent(event)) {
     const prevBuild = state.build ?? emptyPrototypeBuildState();
     const build = applyPrototypeBuildEvent(prevBuild, event);
-    return build === state.build ? state : { ...state, build };
+    if (build === state.build) return state;
+    if (event.kind === 'build_screen') {
+      const activeReview = event.screen.status === 'reviewing' || event.screen.status === 'fixing';
+      const focus = activeReview
+        ? { focusScreenId: event.screen.screenId, focusSeq: state.focusSeq + 1 }
+        : state.focusScreenId === event.screen.screenId && state.screens[event.screen.screenId]?.status !== 'streaming'
+          ? { focusScreenId: undefined, focusSeq: state.focusSeq + 1 }
+          : {};
+      const next: PrototypeLiveState = { ...state, build, ...focus };
+      if (next.focusScreenId === undefined) delete next.focusScreenId;
+      return next;
+    }
+    return { ...state, build };
   }
   if (event.kind === 'frame') {
     if (event.seq <= state.frameSeq) return state;
