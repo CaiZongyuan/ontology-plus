@@ -5,4 +5,4 @@ In the ontology workbench, the parsed 11-model typed AST in `ontology-core` serv
 
 ## Amendments
 
-- **2026-11-18: Prototype Notes and Demo Tours travel inside `界面原型.html` (ADR 0018).** An element may carry a business-language `Prototype Note` alongside its anchors, and the file may hold its `Demo Tours` as an embedded data block that references screens and elements by their anchor ids. MU extraction reads a note as the element's business description; Demo Tours are presentation only and are never extracted into the Ontology Suite. The saved artifact stays one file; only its live transport during generation is per screen.
+- **2026-11-18: Prototype Notes and Demo Tours travel inside `界面原型.html` (ADR 0019).** An element may carry a business-language `Prototype Note` alongside its anchors, and the file may hold its `Demo Tours` as an embedded data block that references screens and elements by their anchor ids. MU extraction reads a note as the element's business description; Demo Tours are presentation only and are never extracted into the Ontology Suite. The saved artifact stays one file; only its live transport during generation is per screen.

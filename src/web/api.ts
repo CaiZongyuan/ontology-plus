@@ -15,6 +15,7 @@ import {
   type PrototypeLiveState,
 } from '../packages/ontology-core/index.js';
 import {
+  doesProviderSupportVision,
   resolveCurrentProjectStep,
   type AgentAskUserPrompt,
   AgentDomainArtifact,
@@ -37,6 +38,10 @@ import {
   ChangeSummaryItemView,
   ChangeSummaryView,
   ConfirmedPrototypeRevision,
+  ContextEventDetail,
+  ContextEventSummary,
+  ContextItem,
+  ContextItemKind,
   CreatePrototypeInput,
   CrossSystemFlow,
   DataDocument,
@@ -55,6 +60,13 @@ import {
   LlmProviderConfig,
   McpServerConfig,
   MetricDefinition,
+  ModelCallDetail,
+  ModelCallEstimate,
+  ModelCallPurpose,
+  ModelCallStatus,
+  ModelCallSummary,
+  ModelCallUsage,
+  ModelCallUsageSource,
   PersistedArtifactHistoryKind,
   ProjectDetail,
   ProjectSnapshot,
@@ -72,6 +84,7 @@ import {
   StepHandoffProposal,
   SystemSettingsState,
   TechnologyProfile,
+  ToolDefinitionSource,
   WritebackInterface,
 } from '../packages/workspace-store/index.js';
 import type {
@@ -88,6 +101,7 @@ import {
   agentSessionScopeKey,
   useAgentPanelStore,
 } from './components/agent/agentPanelStore.js';
+import { resolveTurnImagesWithFallback } from './lib/localImageStore.js';
 import {
   DEFAULT_NAV_VIEW,
   STEP_SPECIALIST_AGENT_KINDS,
@@ -151,9 +165,14 @@ export interface BootstrapPayload {
 }
 
 export function getCurrentClientLocale(): 'zh-CN' | 'en-US' {
-  if (typeof window === 'undefined') return 'zh-CN';
   try {
-    return window.localStorage.getItem('onto_locale') === 'en-US' ? 'en-US' : 'zh-CN';
+    const storage =
+      typeof window !== 'undefined' && window.localStorage
+        ? window.localStorage
+        : typeof globalThis !== 'undefined' && 'localStorage' in globalThis
+          ? globalThis.localStorage
+          : undefined;
+    return storage?.getItem('onto_locale') === 'en-US' ? 'en-US' : 'zh-CN';
   } catch {
     return 'zh-CN';
   }
@@ -596,6 +615,16 @@ interface WorkbenchStoreState {
     runId?: string,
     fallbackPrompt?: string,
   ) => Promise<void>;
+  replaceLatestSessionTurnAndRun: (input: {
+    sessionId: string;
+    prompt?: string;
+    truncateFromUserMessageId?: string;
+    activeModelCode?: ModelCode;
+    reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
+    codeMode?: boolean;
+    multiAgentConcurrency?: number;
+    mockMode?: boolean;
+  }) => Promise<void>;
   acceptStepHandoff: (
     sessionId: string,
     handoffId: string,
@@ -1344,8 +1373,15 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
           .filter(Boolean)
           .join(' · ')
       : '';
-    const effectivePrompt = prompt.trim() || answerSummary;
-    if (!effectivePrompt && !input.askUserAnswer) return;
+    const hasTurnImages = Boolean(input.images && input.images.length > 0);
+    const fallbackImagePrompt =
+      hasTurnImages && !prompt.trim() && !answerSummary
+        ? getCurrentClientLocale() === 'en-US'
+          ? `Please inspect the ${input.images!.length} attached reference image(s).`
+          : `请结合附带的 ${input.images!.length} 张参考图进行分析。`
+        : '';
+    const effectivePrompt = prompt.trim() || answerSummary || fallbackImagePrompt;
+    if (!effectivePrompt && !input.askUserAnswer && !hasTurnImages) return;
 
     if (activeSessionStreamAborters.has(sessionId) || Boolean(get().liveSessionDrafts[sessionId])) {
       const existingQueue = get().sessionQueues[sessionId] ?? [];
@@ -1942,6 +1978,104 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     });
   },
 
+  replaceLatestSessionTurnAndRun: async (input) => {
+    const { sessionId } = input;
+    if (activeSessionStreamAborters.has(sessionId) || Boolean(get().liveSessionDrafts[sessionId])) {
+      return;
+    }
+    const cur = get().data;
+    const sess = cur?.agentSessions.find((s) => s.id === sessionId);
+    let lastUserMsg: AgentSession['messages'][number] | undefined;
+    if (sess) {
+      for (let i = sess.messages.length - 1; i >= 0; i -= 1) {
+        const m = sess.messages[i]!;
+        if (m.role === 'user') {
+          lastUserMsg = m;
+          break;
+        }
+      }
+    }
+    const nextPrompt =
+      input.prompt !== undefined ? input.prompt.trim() : (lastUserMsg?.content ?? '').trim();
+    const preservedRefs = lastUserMsg?.images;
+    if (!nextPrompt && (!preservedRefs || preservedRefs.length === 0)) return;
+
+    let preservedTurnImages: TransientTurnImageInput[] | undefined;
+    if (preservedRefs && preservedRefs.length > 0) {
+      const providers = cur?.llmProviders ?? [];
+      const activeProvider = sess?.providerId
+        ? providers.find((p) => p.id === sess.providerId && p.enabled) ??
+          providers.find((p) => p.id === sess.providerId)
+        : providers.find((p) => p.enabled) ?? providers[0];
+      const visionSupported = activeProvider
+        ? doesProviderSupportVision(activeProvider, sess?.modelOverride)
+        : true;
+      preservedTurnImages = await resolveTurnImagesWithFallback(preservedRefs, {
+        visionSupported,
+        defaultRole: 'user_upload',
+        fallbackNoteToName: true,
+      });
+    }
+
+    const hasUserTurns = Boolean(sess?.messages.some((m) => m.role === 'user'));
+    const targetMessageId = input.truncateFromUserMessageId ?? lastUserMsg?.id;
+    const hasTargetInSession = Boolean(
+      targetMessageId && sess?.messages.some((m) => m.id === targetMessageId && m.role === 'user'),
+    );
+    if (hasUserTurns || input.truncateFromUserMessageId !== undefined) {
+      try {
+        const patched = await apiPatchAgentSession(sessionId, {
+          dropLatestTurn: true,
+          ...(hasTargetInSession || input.truncateFromUserMessageId
+            ? { truncateFromUserMessageId: targetMessageId }
+            : {}),
+        });
+        const latestData = get().data;
+        if (latestData) {
+          set({
+            data: {
+              ...latestData,
+              agentSessions: patched.agentSessions,
+            },
+          });
+        }
+      } catch (err) {
+        const locale = getCurrentClientLocale();
+        const code = (err as { code?: string } | null)?.code;
+        if (
+          code === 'SESSION_RUNNING' ||
+          code === 'ONLY_LATEST_TURN_ALLOWED' ||
+          code === 'TURN_NOT_FOUND' ||
+          code === 'SESSION_NOT_FOUND'
+        ) {
+          get().showToast((err as Error).message);
+        } else {
+          get().showToast(
+            locale === 'en-US'
+              ? 'Could not resend the latest message. Please try again.'
+              : '重发最后一条消息失败，请稍后重试。',
+          );
+        }
+        return;
+      }
+    }
+
+    await get().startSessionAgentRun({
+      sessionId,
+      prompt: nextPrompt,
+      ...(preservedTurnImages && preservedTurnImages.length > 0
+        ? { images: preservedTurnImages }
+        : {}),
+      ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
+      ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
+      ...(input.codeMode !== undefined ? { codeMode: input.codeMode } : {}),
+      ...(input.multiAgentConcurrency !== undefined
+        ? { multiAgentConcurrency: input.multiAgentConcurrency }
+        : {}),
+      ...(input.mockMode !== undefined ? { mockMode: input.mockMode } : {}),
+    });
+  },
+
   acceptStepHandoff: async (sessionId, handoffId) => {
     const cur = get().data;
     const sourceSession = cur?.agentSessions.find((s) => s.id === sessionId);
@@ -2149,14 +2283,51 @@ export async function apiPatchAgentSession(
     modelOverride?: string;
     reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
     clearMessages?: boolean;
+    dropLatestTurn?: boolean;
+    truncateFromUserMessageId?: string;
   },
 ): Promise<{ session: AgentSession; agentSessions: AgentSession[] }> {
   const res = await fetch(`/api/agent-sessions/${sessionId}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildJsonHeaders(),
     body: JSON.stringify(patch),
   });
-  return res.json();
+  const payload = (await res.json()) as {
+    session: AgentSession;
+    agentSessions: AgentSession[];
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok) {
+    const locale = getCurrentClientLocale();
+    let message: string;
+    if (payload.code === 'SESSION_RUNNING') {
+      message =
+        locale === 'en-US'
+          ? 'Cannot edit or retry while a reply is still in progress.'
+          : '当前正在回复中，请稍候再修改或重发。';
+    } else if (payload.code === 'ONLY_LATEST_TURN_ALLOWED') {
+      message =
+        locale === 'en-US'
+          ? 'Only the latest message can be edited or retried.'
+          : '仅支持修改或重发最后一条消息。';
+    } else if (payload.code === 'TURN_NOT_FOUND' || payload.code === 'SESSION_NOT_FOUND') {
+      message =
+        locale === 'en-US'
+          ? 'This message or conversation is no longer available.'
+          : '未找到对应的消息或对话。';
+    } else {
+      message =
+        locale === 'en-US'
+          ? 'Could not update the conversation. Please try again.'
+          : '更新对话失败，请稍后重试。';
+    }
+    const err = new Error(message) as Error & { code?: string; status?: number };
+    if (payload.code) err.code = payload.code;
+    err.status = res.status;
+    throw err;
+  }
+  return payload;
 }
 
 export async function apiDeleteAgentSession(
@@ -3165,6 +3336,7 @@ export async function apiDeletePrototype(
   prototypes: InteractivePrototype[];
   confirmedRevision: ConfirmedPrototypeRevision | null;
   artifactHistory?: ArtifactHistoryEntryView[];
+  agentSessions?: AgentSession[];
 }> {
   return apiDeleteResource(
     `/api/prototypes/${encodeURIComponent(prototypeId)}?projectId=${encodeURIComponent(projectId)}`,
@@ -3394,6 +3566,74 @@ export async function apiTestLlmProvider(
   providerId: string,
 ): Promise<{ ping: LlmPingResult; llmProviders: LlmProviderConfig[] }> {
   return apiPostJson(`/api/llm/providers/${providerId}/test`, {});
+}
+
+// ─── Context Snapshots Client Helpers (ADR 0017, #82) ────────────────────────
+
+export type {
+  ContextEventDetail,
+  ContextEventSummary,
+  ContextItem,
+  ContextItemKind,
+  ModelCallDetail,
+  ModelCallEstimate,
+  ModelCallPurpose,
+  ModelCallStatus,
+  ModelCallSummary,
+  ModelCallUsage,
+  ModelCallUsageSource,
+  ToolDefinitionSource,
+} from '../packages/workspace-store/index.js';
+
+export async function apiListSessionModelCalls(
+  projectId: string,
+  sessionId: string,
+): Promise<{
+  modelCalls: ModelCallSummary[];
+  contextEvents: ContextEventSummary[];
+}> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/agent-sessions/${encodeURIComponent(sessionId)}/model-calls`,
+    { headers: buildLocaleHeaders() },
+  );
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to load session model calls');
+  }
+  return body as {
+    modelCalls: ModelCallSummary[];
+    contextEvents: ContextEventSummary[];
+  };
+}
+
+export async function apiGetModelCall(
+  projectId: string,
+  callId: string,
+): Promise<{ modelCall: ModelCallDetail }> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/model-calls/${encodeURIComponent(callId)}`,
+    { headers: buildLocaleHeaders() },
+  );
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to load model call detail');
+  }
+  return body as { modelCall: ModelCallDetail };
+}
+
+export async function apiGetContextEvent(
+  projectId: string,
+  eventId: string,
+): Promise<{ contextEvent: ContextEventDetail }> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/context-events/${encodeURIComponent(eventId)}`,
+    { headers: buildLocaleHeaders() },
+  );
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to load context event detail');
+  }
+  return body as { contextEvent: ContextEventDetail };
 }
 
 export function triggerBrowserDownload(

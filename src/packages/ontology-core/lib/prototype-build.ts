@@ -1,5 +1,5 @@
 /**
- * The Build Plan of a live prototype build and each screen's build state (spec #87, #90, ADR 0018).
+ * The Build Plan of a live prototype build and each screen's build state (spec #87, #90, ADR 0019).
  *
  * The engine records what really happens — the lead's plan, each helper taking, writing,
  * finishing or failing a screen, each phase starting and ending — as events. The browser folds

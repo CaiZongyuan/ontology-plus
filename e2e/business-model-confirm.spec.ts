@@ -69,7 +69,9 @@ test.describe('Business Model Step Confirmation, Plain-Language Problems & Casca
       const agentPanel = page.getByTestId('agent-panel');
       await page.getByTestId('fix-problems-with-assistant-btn').click();
       await expect(
-        agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+        agentPanel
+          .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+          .last(),
       ).toBeVisible({ timeout: 25_000 });
       await expect(agentPanel.getByTestId('run-change-summary').last()).toBeVisible();
 
@@ -113,7 +115,9 @@ test.describe('Business Model Step Confirmation, Plain-Language Problems & Casca
       await expect(page.getByTestId('complete-missing-with-assistant-btn')).toBeVisible();
       await page.getByTestId('complete-missing-with-assistant-btn').click();
       await expect(
-        agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+        agentPanel
+          .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+          .last(),
       ).toBeVisible({ timeout: 25_000 });
       await expect(page.getByTestId('business-model-incomplete-card')).toHaveCount(0);
 
@@ -186,13 +190,20 @@ test.describe('Business Model Step Confirmation, Plain-Language Problems & Casca
       await expect(page.getByTestId('business-model-confirm-as-is-btn')).toBeDisabled();
 
       // Test "让 AI 助手更新" -> aligns Contract.archiveCabinetNo with Change Summary & Undo, then confirm!
+      const summaryCountBefore = await agentPanel.getByTestId('run-change-summary').count();
       await page.getByTestId('business-model-ask-assistant-update-btn').click();
-      await expect(
-        agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
-      ).toBeVisible({ timeout: 25_000 });
-      await expect(agentPanel.getByTestId('run-change-summary').last()).toContainText(
-        '纸质归档柜号',
+      await expect(agentPanel.getByTestId('run-change-summary')).toHaveCount(
+        summaryCountBefore + 1,
+        { timeout: 25_000 },
       );
+      await expect(
+        agentPanel
+          .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+          .last(),
+      ).toBeVisible({ timeout: 25_000 });
+      const alignSummary = agentPanel.getByTestId('run-change-summary').last();
+      await alignSummary.getByTestId('change-summary-toggle-btn').click();
+      await expect(alignSummary).toContainText('纸质归档柜号');
       await expect(page.getByTestId('object-section-fields')).toContainText('纸质归档柜号');
 
       await expect(page.getByTestId('confirm-business-model-btn')).toBeEnabled();

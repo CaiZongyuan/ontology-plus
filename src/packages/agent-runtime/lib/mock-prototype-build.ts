@@ -1010,8 +1010,8 @@ export function createMockPrototypeModificationReplay(
     .slice(0, 4);
   const modControl = useCustomerFilter
     ? locale === 'en-US'
-      ? `<select class="input" data-element-id="EL-FILTER-CUSTOMER" data-element-type="SELECT" data-element-label="${cleanNote || 'Filter by customer'}" data-binding="Order.customerName" data-note="Filter by customer: narrow the list to orders for a selected customer"><option value="">All customers</option><option value="CUST-01">Morning Bakery</option><option value="CUST-02">Harbor Cafe</option></select>`
-      : `<select class="input" data-element-id="EL-FILTER-CUSTOMER" data-element-type="SELECT" data-element-label="${cleanNote || '按客户筛选'}" data-binding="Order.customerName" data-note="按客户筛选：选择客户名称过滤当前列表数据"><option value="">全部客户</option><option value="CUST-01">晨光烘焙坊</option><option value="CUST-02">海湾咖啡馆</option></select>`
+      ? `<select class="input" data-element-id="EL-FILTER-CUSTOMER" data-element-type="SELECT" data-element-label="${cleanNote || 'Filter by customer'}" data-note="Filter by customer: narrow the list to records for a selected customer"><option value="">All customers</option><option value="CUST-01">Morning Bakery</option><option value="CUST-02">Harbor Cafe</option></select>`
+      : `<select class="input" data-element-id="EL-FILTER-CUSTOMER" data-element-type="SELECT" data-element-label="${cleanNote || '按客户筛选'}" data-note="按客户筛选：选择客户名称过滤当前列表数据"><option value="">全部客户</option><option value="CUST-01">晨光烘焙坊</option><option value="CUST-02">海湾咖啡馆</option></select>`
     : `<button type="button" class="btn" data-element-id="EL-MOD-${promptHash}" data-element-type="BUTTON" data-element-label="${cleanNote || '业务操作'}" data-note="${cleanNote || screenName}：触发对应的业务处理">${cleanNote || pickLocaleText(locale, '业务操作', 'Action')}</button>`;
   const modElementId = useCustomerFilter ? 'EL-FILTER-CUSTOMER' : `EL-MOD-${promptHash}`;
 
@@ -1020,7 +1020,8 @@ export function createMockPrototypeModificationReplay(
       return baseHtml;
     }
     if (wantsFilter && /<select\b[^>]*>[\s\S]*?<\/select>/i.test(baseHtml)) {
-      return baseHtml.replace(/<select\b[^>]*>[\s\S]*?<\/select>/i, modControl);
+      // Preserve existing anchored <select> controls so M1<->MU bindings stay intact on confirmation.
+      return baseHtml.replace(/(<select\b[^>]*>[\s\S]*?<\/select>)/i, `$1 ${modControl}`);
     }
     if (/<\/section>/i.test(baseHtml)) {
       return baseHtml.replace(

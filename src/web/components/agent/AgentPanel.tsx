@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Check,
-  Clock,
   GitFork,
   History,
   Maximize2,
@@ -9,20 +8,17 @@ import {
   Minimize2,
   PanelRightClose,
   Pencil,
-  Send,
-  Sparkles,
   Trash2,
-  X,
 } from 'lucide-react';
 import {
   BUSINESS_VOCABULARY,
   type ProjectStepId,
 } from '../../../packages/business-vocabulary/index.js';
+import type { AgentImageAttachmentRef } from '../../../packages/workspace-store/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import { Button } from '../beautifui/index.js';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover.js';
-import { AgentRunCard } from './AgentRunCard.js';
 import { VisionCapabilityBanner } from './VisionAttachmentControls.js';
 import {
   AGENT_PANEL_DEFAULT_WIDTH,
@@ -30,6 +26,15 @@ import {
   AGENT_PANEL_MIN_WIDTH,
 } from './agentPanelStore.js';
 import type { AgentRunView, LocalizedText, PrototypeTargetAnchor } from './agentRun.js';
+import { ConversationComposer } from './conversation/ConversationComposer.js';
+import { ConversationThread } from './conversation/ConversationThread.js';
+import {
+  EMPTY_CONVERSATION_DRAFT,
+  clearSessionDraft,
+  readSessionDraft,
+  writeSessionDraft,
+  type ConversationSessionDraft,
+} from './conversation/draftStore.js';
 
 const RESIZING_BODY_CLASS = 'agent-panel-resizing';
 const KEYBOARD_RESIZE_STEP = 16;
@@ -80,7 +85,10 @@ export interface AgentPanelProps {
   onClose: () => void;
   onResize: (width: number, opts: { commit: boolean }) => void;
   onCancelRun?: (runId: string) => void;
+  onCancelActiveRun?: () => void;
   onRetryRun?: (runId: string) => void;
+  onEditLatestTurn?: (runId: string, nextPrompt: string) => void | Promise<void>;
+  onRetryLatestTurn?: (runId: string) => void | Promise<void>;
   onOpenRunArtifact?: (runId: string) => void;
   onOpenPlatformSettings?: () => void;
   onOpenLlmCenter?: () => void;
@@ -116,20 +124,31 @@ export interface AgentPanelProps {
   /** Optional view-specific header context slot (e.g. Reasoning Mode pills, Capability selector). */
   headerContextSlot?: React.ReactNode;
   /** Interactive composer submission handler. When supplied, renders the composer footer. */
-  onSubmitPrompt?: (prompt: string) => void | Promise<void>;
+  onSubmitPrompt?: (
+    prompt: string,
+    attachments?: AgentImageAttachmentRef[],
+  ) => void | Promise<void>;
   composerValue?: string;
   onComposerValueChange?: (value: string) => void;
   composerPlaceholder?: LocalizedText;
   composerDisabled?: boolean;
   /** Optional slot above the textarea for selection chips (#28) or image attachments (#31). */
   composerHeaderSlot?: React.ReactNode;
+  /** Optional slot right next to Stop/Send for Wave 3 (#82) Context Occupancy Ring. */
+  composerRightAccessorySlot?: React.ReactNode;
+  /** Optional calm notice row at the top of ConversationThread (#82 RemovedMessagesNotice). */
+  conversationTopNoticeSlot?: React.ReactNode;
   /** Prompts queued behind the currently active run on this conversation. */
   queuedPrompts?: AgentPanelQueuedPrompt[];
   onRemoveQueuedPrompt?: (queueId: string) => void;
   /** Whether the active provider/model supports multimodal vision input (`false` shows explicit fallback banner). */
   visionSupported?: boolean;
+  /** Vision capability for composer image attachments when panel-top banner is not pinned. */
+  composerVisionSupported?: boolean;
   visionProviderLabel?: string;
   visionModelLabel?: string;
+  /** Fallback key for unsent drafts before a session ID is created. */
+  draftFallbackKey?: string;
   /** Fixed clock passed through to the run cards for deterministic rendering. */
   now?: number;
 }
@@ -153,7 +172,10 @@ export function AgentPanel({
   onClose,
   onResize,
   onCancelRun,
+  onCancelActiveRun,
   onRetryRun,
+  onEditLatestTurn,
+  onRetryLatestTurn,
   onOpenRunArtifact,
   onOpenPlatformSettings,
   onOpenLlmCenter,
@@ -182,32 +204,110 @@ export function AgentPanel({
   composerPlaceholder,
   composerDisabled = false,
   composerHeaderSlot,
+  composerRightAccessorySlot,
+  conversationTopNoticeSlot,
   queuedPrompts,
   onRemoveQueuedPrompt,
   visionSupported,
+  composerVisionSupported,
   visionProviderLabel,
   visionModelLabel,
+  draftFallbackKey,
   now,
 }: AgentPanelProps) {
   const { t } = usePreferences();
   const panelRef = useRef<HTMLElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const [internalDraft, setInternalDraft] = useState('');
-  const draft = composerValue !== undefined ? composerValue : internalDraft;
-  const setDraft = (next: string) => {
-    if (composerValue === undefined) setInternalDraft(next);
-    onComposerValueChange?.(next);
-  };
-  const runningCount = runs.filter((r) => r.status === 'RUNNING').length;
-  const latestRunId = runs[runs.length - 1]?.id;
-  const canSend = !composerDisabled && draft.trim().length > 0;
   const sessionList = sessions ?? [];
   const activeSessionOption =
     sessionList.find((s) => s.id === activeSessionId) ?? sessionList[0];
+  const effectiveDraftKey =
+    activeSessionOption?.id ?? activeSessionId ?? draftFallbackKey ?? undefined;
+
+  const [draftState, setDraftState] = useState<{
+    key: string | undefined;
+    draft: ConversationSessionDraft;
+  }>(() => ({
+    key: effectiveDraftKey,
+    draft:
+      composerValue === undefined
+        ? readSessionDraft(effectiveDraftKey)
+        : EMPTY_CONVERSATION_DRAFT,
+  }));
+
+  useEffect(() => {
+    if (draftState.key !== effectiveDraftKey) {
+      setDraftState({
+        key: effectiveDraftKey,
+        draft:
+          composerValue === undefined
+            ? readSessionDraft(effectiveDraftKey)
+            : EMPTY_CONVERSATION_DRAFT,
+      });
+    }
+  }, [effectiveDraftKey, draftState.key, composerValue]);
+
+  const activePersistedDraft =
+    draftState.key === effectiveDraftKey
+      ? draftState.draft
+      : composerValue === undefined
+        ? readSessionDraft(effectiveDraftKey)
+        : EMPTY_CONVERSATION_DRAFT;
+
+  const draft = composerValue !== undefined ? composerValue : activePersistedDraft.text;
+  const quotes = activePersistedDraft.quotes;
+  const composerAttachments = [...(activePersistedDraft.attachments ?? [])];
+
+  const commitDraftEntry = (nextEntry: ConversationSessionDraft) => {
+    writeSessionDraft(effectiveDraftKey, nextEntry);
+    setDraftState({ key: effectiveDraftKey, draft: nextEntry });
+  };
+
+  const setDraft = (next: string) => {
+    if (composerValue === undefined) {
+      commitDraftEntry({
+        text: next,
+        quotes: activePersistedDraft.quotes,
+        ...(activePersistedDraft.attachments && activePersistedDraft.attachments.length > 0
+          ? { attachments: activePersistedDraft.attachments }
+          : {}),
+      });
+    }
+    onComposerValueChange?.(next);
+  };
+
+  const setQuotes = (nextQuotes: string[]) => {
+    commitDraftEntry({
+      text: composerValue !== undefined ? composerValue : activePersistedDraft.text,
+      quotes: nextQuotes,
+      ...(activePersistedDraft.attachments && activePersistedDraft.attachments.length > 0
+        ? { attachments: activePersistedDraft.attachments }
+        : {}),
+    });
+  };
+
+  const setComposerAttachments = (nextAttachments: AgentImageAttachmentRef[]) => {
+    commitDraftEntry({
+      text: composerValue !== undefined ? composerValue : activePersistedDraft.text,
+      quotes: activePersistedDraft.quotes,
+      ...(nextAttachments.length > 0 ? { attachments: nextAttachments } : {}),
+    });
+  };
+
+  const runningCount = runs.filter((r) => r.status === 'RUNNING').length;
   const showHistoryMenu = Boolean(
     onCreateSession || onSelectSession || sessionList.length > 0 || sessionsOwnedByArtifact,
   );
   const [historyOpen, setHistoryOpen] = useState<boolean>(defaultHistoryOpen);
+  const [composerScrollSignal, setComposerScrollSignal] = useState(0);
+
+  const handleCancelActive =
+    onCancelActiveRun ??
+    (onCancelRun
+      ? () => {
+          const activeRun = [...runs].reverse().find((r) => r.status === 'RUNNING');
+          if (activeRun) onCancelRun(activeRun.id);
+        }
+      : undefined);
 
   // Close the History Menu when the active conversation changes externally (e.g. step switch).
   const prevActiveSessionRef = useRef(activeSessionId);
@@ -217,20 +317,6 @@ export function AgentPanel({
       setHistoryOpen(false);
     }
   }, [activeSessionId]);
-
-  const handleComposerSubmit = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    const trimmed = draft.trim();
-    if (!onSubmitPrompt || composerDisabled || !trimmed) return;
-    setDraft('');
-    void onSubmitPrompt(trimmed);
-  };
-
-  // Keep the newest turn in view, the way a conversation follows its last message.
-  useEffect(() => {
-    const body = bodyRef.current;
-    if (body) body.scrollTop = body.scrollHeight;
-  }, [latestRunId, activeSessionId]);
 
   useEffect(() => {
     if (!overlay) return;
@@ -459,168 +545,93 @@ export function AgentPanel({
           />
         )}
 
-        <div className="agent-panel-body" ref={bodyRef}>
-          {runs.length === 0 ? (
-            <div className="agent-panel-empty" data-testid="agent-panel-empty">
-              <span className="agent-panel-empty-mark" aria-hidden="true">
-                <Sparkles size={16} />
-              </span>
-              <p className="agent-panel-empty-text">
-                {onSubmitPrompt
-                  ? t(
-                      '这是一段新的对话。直接描述你的目标，进展和结果都会显示在这里。',
-                      'A fresh conversation. Describe what you need; progress and results show up here.',
-                    )
-                  : t(
-                      'AI 助手在这里展示当前步骤的进展与结果。',
-                      'The AI Assistant shows progress and results for this step here.',
-                    )}
-              </p>
-              {onSubmitPrompt && starterPrompts && starterPrompts.length > 0 && (
-                <div className="agent-panel-starters" data-testid="agent-panel-starters">
-                  {starterPrompts.map((starter, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      className="agent-panel-starter"
-                      disabled={composerDisabled}
-                      onClick={() => void onSubmitPrompt(t(starter.zh, starter.en))}
-                    >
-                      {t(starter.zh, starter.en)}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            runs.map((run) => (
-              <AgentRunCard
-                key={run.id}
-                run={run}
-                {...(now !== undefined ? { now } : {})}
-                {...(onCancelRun ? { onCancel: () => onCancelRun(run.id) } : {})}
-                {...(onRetryRun ? { onRetry: () => onRetryRun(run.id) } : {})}
-                {...(onOpenRunArtifact ? { onOpenArtifact: () => onOpenRunArtifact(run.id) } : {})}
-                {...(onOpenPlatformSettings ? { onOpenPlatformSettings } : {})}
-                {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
-                {...(onHoverAnchor ? { onHoverAnchor } : {})}
-                {...(onAnswerAskUser
-                  ? {
-                      onAnswerAskUser: (promptId, selectedAnswers, freeformText) =>
-                        onAnswerAskUser(run.id, promptId, selectedAnswers, freeformText),
-                    }
-                  : {})}
-                {...(onAcceptStepHandoff
-                  ? {
-                      onAcceptStepHandoff: (handoffId) => onAcceptStepHandoff(run.id, handoffId),
-                    }
-                  : {})}
-                {...(onDeclineStepHandoff
-                  ? {
-                      onDeclineStepHandoff: (handoffId) =>
-                        onDeclineStepHandoff(run.id, handoffId),
-                    }
-                  : {})}
-                {...(onOpenHandoffTargetStep ? { onOpenHandoffTargetStep } : {})}
-                {...(run.stepHandoff && handoffBusyById?.[run.stepHandoff.id]
-                  ? { handoffBusyAction: handoffBusyById[run.stepHandoff.id] }
-                  : {})}
-                {...(onTriggerWriteback ? { onTriggerWriteback } : {})}
-                {...(renderRunFooter ? { changeSummarySlot: renderRunFooter(run) } : {})}
-              />
-            ))
-          )}
-        </div>
-
-        {(onSubmitPrompt || (queuedPrompts && queuedPrompts.length > 0)) && (
-          <footer className="agent-panel-composer" data-testid="agent-panel-composer">
-            {queuedPrompts && queuedPrompts.length > 0 && (
-              <div className="agent-panel-queue" data-testid="agent-panel-queue">
-                <div className="agent-panel-queue-head">
-                  <Clock size={12} aria-hidden="true" />
-                  <span>
-                    {t(`排队中 (${queuedPrompts.length})`, `Queued (${queuedPrompts.length})`)}
-                  </span>
-                </div>
-                <ul className="agent-panel-queue-list">
-                  {queuedPrompts.map((item) => (
-                    <li key={item.id} className="agent-panel-queue-item">
-                      <span className="agent-panel-queue-label">{item.label}</span>
-                      {onRemoveQueuedPrompt && (
-                        <button
-                          type="button"
-                          className="agent-panel-queue-remove"
-                          data-testid="agent-panel-queue-remove-btn"
-                          aria-label={t('移出队列', 'Remove from queue')}
-                          onClick={() => onRemoveQueuedPrompt(item.id)}
-                        >
-                          <X size={11} aria-hidden="true" />
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {composerHeaderSlot && (
-              <div className="agent-panel-composer-slot" data-testid="agent-panel-composer-slot">
-                {composerHeaderSlot}
-              </div>
-            )}
-
-            {onSubmitPrompt && (
-              <form className="agent-panel-composer-form" onSubmit={handleComposerSubmit}>
-                <textarea
-                  className="agent-panel-composer-input"
-                  data-testid="agent-panel-composer-input"
-                  rows={2}
-                  value={draft}
-                  disabled={composerDisabled}
-                  placeholder={
-                    composerPlaceholder
-                      ? t(composerPlaceholder.zh, composerPlaceholder.en)
-                      : t(
-                          '输入你的想法或修改需求（Enter 发送，Shift+Enter 换行）…',
-                          'Describe what you want to change (Enter to send, Shift+Enter for newline)…',
-                        )
-                  }
-                  aria-label={t('向 AI 助手提问', 'Message AI Assistant')}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (
-                      shouldSubmitComposerKey({
-                        key: e.key,
-                        shiftKey: e.shiftKey,
-                        isComposing: e.nativeEvent.isComposing,
-                      })
-                    ) {
-                      e.preventDefault();
-                      handleComposerSubmit();
-                    }
-                  }}
-                />
-                <div className="agent-panel-composer-actions">
-                  <span className="agent-panel-composer-hint">
-                    {runningCount > 0
-                      ? t('当前有正在执行的请求，新消息会自动排队', 'Request in progress — new messages queue automatically')
-                      : t('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter newline')}
-                  </span>
-                  <Button
-                    type="submit"
-                    variant="accent"
-                    size="xs"
-                    data-testid="agent-panel-send-btn"
-                    disabled={!canSend}
-                  >
-                    <Send size={11} aria-hidden="true" />
-                    {runningCount > 0 ? t('排队发送', 'Queue') : t('发送', 'Send')}
-                  </Button>
-                </div>
-              </form>
-            )}
-          </footer>
-        )}
+        <ConversationThread
+          runs={runs}
+          {...(now !== undefined ? { now } : {})}
+          {...(activeSessionOption?.id
+            ? { activeSessionId: activeSessionOption.id }
+            : activeSessionId
+              ? { activeSessionId }
+              : {})}
+          {...(starterPrompts ? { starterPrompts } : {})}
+          composerDisabled={composerDisabled}
+          {...(onSubmitPrompt
+            ? {
+                onSubmitStarterPrompt: (prompt: string) => {
+                  setComposerScrollSignal((n) => n + 1);
+                  return onSubmitPrompt(prompt);
+                },
+              }
+            : {})}
+          {...(onCancelRun ? { onCancelRun } : {})}
+          {...(onRetryRun
+            ? {
+                onRetryRun: (runId: string) => {
+                  setComposerScrollSignal((n) => n + 1);
+                  onRetryRun(runId);
+                },
+              }
+            : {})}
+          {...(onEditLatestTurn
+            ? {
+                onEditLatestTurn: (run: AgentRunView, nextPrompt: string) => {
+                  setComposerScrollSignal((n) => n + 1);
+                  return onEditLatestTurn(run.id, nextPrompt);
+                },
+              }
+            : {})}
+          {...(onRetryLatestTurn
+            ? {
+                onRetryLatestTurn: (run: AgentRunView) => {
+                  setComposerScrollSignal((n) => n + 1);
+                  return onRetryLatestTurn(run.id);
+                },
+              }
+            : {})}
+          {...(onOpenRunArtifact ? { onOpenRunArtifact } : {})}
+          {...(onOpenPlatformSettings ? { onOpenPlatformSettings } : {})}
+          {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
+          {...(onHoverAnchor ? { onHoverAnchor } : {})}
+          {...(onAnswerAskUser ? { onAnswerAskUser } : {})}
+          {...(onAcceptStepHandoff ? { onAcceptStepHandoff } : {})}
+          {...(onDeclineStepHandoff ? { onDeclineStepHandoff } : {})}
+          {...(onOpenHandoffTargetStep ? { onOpenHandoffTargetStep } : {})}
+          {...(handoffBusyById ? { handoffBusyById } : {})}
+          {...(onTriggerWriteback ? { onTriggerWriteback } : {})}
+          {...(renderRunFooter ? { renderRunFooter } : {})}
+          {...(conversationTopNoticeSlot ? { topNoticeSlot: conversationTopNoticeSlot } : {})}
+          scrollToBottomSignal={composerScrollSignal}
+        />
+        <ConversationComposer
+          draft={draft}
+          onDraftChange={setDraft}
+          quotes={quotes}
+          onQuotesChange={setQuotes}
+          attachments={composerAttachments}
+          onAttachmentsChange={setComposerAttachments}
+          {...(onSubmitPrompt ? { onSubmitPrompt } : {})}
+          onAfterSubmit={() => {
+            clearSessionDraft(effectiveDraftKey);
+            setDraftState({ key: effectiveDraftKey, draft: EMPTY_CONVERSATION_DRAFT });
+            setComposerScrollSignal((n) => n + 1);
+          }}
+          {...(handleCancelActive ? { onCancelActiveRun: handleCancelActive } : {})}
+          {...(composerPlaceholder ? { placeholder: composerPlaceholder } : {})}
+          disabled={composerDisabled}
+          runningCount={runningCount}
+          {...(composerHeaderSlot ? { headerSlot: composerHeaderSlot } : {})}
+          {...(composerRightAccessorySlot
+            ? { rightAccessorySlot: composerRightAccessorySlot }
+            : {})}
+          {...(queuedPrompts ? { queuedPrompts } : {})}
+          {...(onRemoveQueuedPrompt ? { onRemoveQueuedPrompt } : {})}
+          visionSupported={composerVisionSupported ?? visionSupported ?? true}
+          suppressVisionBanner={visionSupported === false}
+          {...(visionProviderLabel ? { visionProviderLabel } : {})}
+          {...(visionModelLabel ? { visionModelLabel } : {})}
+          {...(onOpenPlatformSettings ? { onOpenPlatformSettings } : {})}
+          {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
+        />
       </aside>
     </>
   );

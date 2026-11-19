@@ -10,7 +10,7 @@ import { sanitizeBusinessText } from './guard.js';
 import type { BilingualText, BusinessLocale } from './vocabulary.js';
 
 /**
- * Business sentences for a live prototype build (#90, ADR 0018). The engine records what
+ * Business sentences for a live prototype build (#90, ADR 0019). The engine records what
  * happened as structured entries; these sentences are the only words the business user reads
  * about it, so they say what happened to which screen, never which tool ran.
  */

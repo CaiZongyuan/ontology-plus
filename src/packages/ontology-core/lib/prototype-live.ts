@@ -1,5 +1,5 @@
 /**
- * Live prototype building, one screen at a time (spec #87, ADR 0018).
+ * Live prototype building, one screen at a time (spec #87, ADR 0019).
  *
  * The same code runs on the server (to turn tool-call argument streams and document mutations
  * into per-screen deltas) and in the browser (to fold those deltas over the saved document and

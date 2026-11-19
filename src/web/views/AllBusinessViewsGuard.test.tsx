@@ -17,13 +17,17 @@ import {
 } from '../../packages/ontology-core/index.js';
 import {
   createWorkspaceStore,
+  type ContextEventDetail,
+  type ContextEventSummary,
+  type ModelCallDetail,
+  type ModelCallSummary,
   type StepHandoffProposal,
 } from '../../packages/workspace-store/index.js';
 import { createApiApp } from '../../server/app.js';
 import { WorkbenchShell } from '../App.js';
 import { useWorkbenchStore, type BootstrapPayload } from '../api.js';
 import { AgentPanel } from '../components/agent/AgentPanel.js';
-import { AgentRunCard } from '../components/agent/AgentRunCard.js';
+import { ConversationThread } from '../components/agent/conversation/ConversationThread.js';
 import {
   ShellAgentPanel,
   agentPanelSurfaceFor,
@@ -33,6 +37,7 @@ import {
   VisionAttachmentControls,
   VisionCapabilityBanner,
 } from '../components/agent/VisionAttachmentControls.js';
+import { CONTEXT_INSPECTOR_DRAWER_TEST_ID } from '../components/agent/context-inspector/index.js';
 import { AGENT_PANEL_DEFAULT_WIDTH, useAgentPanelStore } from '../components/agent/agentPanelStore.js';
 import type { AgentRunView } from '../components/agent/agentRun.js';
 import { ApprovalCard } from '../components/beautifui/ApprovalCard.js';
@@ -1257,31 +1262,33 @@ describe('All-Screens Business View Vocabulary Guard (#74)', () => {
         ));
       }
 
-      // AgentRunCard hosting handoff origin + VisionCapabilityBanner + VisionAttachmentControls
-      renderInBothLocales('AgentRunCard with handoffFrom origin', (locale) => (
-        <AgentRunCard
-          run={{
-            id: 'run-handoff-dest-74',
-            userPrompt:
-              locale === 'en-US'
-                ? 'Require General Manager approval for contracts over 500,000 CNY'
-                : '采购合同超过 50 万元需要总经理审批',
-            handoffFrom: {
-              handoffId: 'handoff-74',
-              sourceStep: 'PROTOTYPE',
-              sourceSessionId: 'sess-proto-74',
+      // ConversationThread hosting handoff origin + VisionCapabilityBanner + VisionAttachmentControls
+      renderInBothLocales('ConversationThread with handoffFrom origin', (locale) => (
+        <ConversationThread
+          runs={[
+            {
+              id: 'run-handoff-dest-74',
+              userPrompt:
+                locale === 'en-US'
+                  ? 'Require General Manager approval for contracts over 500,000 CNY'
+                  : '采购合同超过 50 万元需要总经理审批',
+              handoffFrom: {
+                handoffId: 'handoff-74',
+                sourceStep: 'PROTOTYPE',
+                sourceSessionId: 'sess-proto-74',
+              },
+              title: { zh: '新增审批规则', en: 'Add approval rule' },
+              status: 'SUCCEEDED',
+              liveStatus: { zh: '已完成', en: 'Done' },
+              startedAt: FIXED_NOW - 4_000,
+              completedAt: FIXED_NOW,
+              steps: [],
+              text:
+                locale === 'en-US'
+                  ? 'Added the approval rule on Contract.'
+                  : '已在「合同」上补充该条业务规则。',
             },
-            title: { zh: '新增审批规则', en: 'Add approval rule' },
-            status: 'SUCCEEDED',
-            liveStatus: { zh: '已完成', en: 'Done' },
-            startedAt: FIXED_NOW - 4_000,
-            completedAt: FIXED_NOW,
-            steps: [],
-            text:
-              locale === 'en-US'
-                ? 'Added the approval rule on Contract.'
-                : '已在「合同」上补充该条业务规则。',
-          }}
+          ]}
           now={FIXED_NOW}
         />
       ));
@@ -1310,6 +1317,197 @@ describe('All-Screens Business View Vocabulary Guard (#74)', () => {
           />
         </div>
       ));
+    } finally {
+      store.close();
+    }
+  });
+
+  it('8. Context Occupancy Ring (<70% & >=70%) and RemovedMessagesNotice pass WITHOUT ignoreTestIds, while ContextInspectorOverlay scopes exemption strictly to context-inspector-drawer (#82)', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const app = createApiApp(store);
+    try {
+      const sess = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'REQUIREMENT',
+        title: '采购合同审批需求梳理',
+        initialMessages: [
+          {
+            id: 'u-82-1',
+            role: 'user',
+            content: '采购合同超过 100 万元时需要法务与财务负责人会签',
+            timestamp: '2026-11-18T09:00:00.000Z',
+          },
+          {
+            id: 'a-82-1',
+            role: 'assistant',
+            content: '已记录高额采购合同的法务与财务会签规则。',
+            timestamp: '2026-11-18T09:00:02.000Z',
+          },
+        ],
+      });
+      const boot = await fetchBootstrap(app, 'proj-contract');
+      const reqSurface = agentPanelSurfaceFor('app-requirements')!;
+
+      seedWorkbenchState({
+        loading: false,
+        activeNav: 'app-requirements',
+        activeSessionId: sess.id,
+        data: boot,
+      });
+
+      const makeCall = (promptTokens: number, excludedCount: number): ModelCallSummary => ({
+        id: `mcall-guard-${promptTokens}`,
+        projectId: 'proj-contract',
+        sessionId: sess.id,
+        purpose: 'TURN',
+        seq: 3,
+        provider: 'Mock',
+        model: 'mock-v1',
+        contextWindow: 100_000,
+        maxOutputTokens: 4096,
+        startedAt: '2026-11-18T09:05:00.000Z',
+        endedAt: '2026-11-18T09:05:01.000Z',
+        durationMs: 1000,
+        status: 'COMPLETED',
+        usage: {
+          promptTokens,
+          inputTokens: promptTokens,
+          outputTokens: 350,
+          cacheReadTokens: 1200,
+          cacheWriteTokens: 0,
+          totalTokens: promptTokens + 350,
+          source: 'PROVIDER',
+        },
+        estimate: {
+          byKind: {
+            INSTRUCTIONS: 2000,
+            TOOL_GUIDE: 500,
+            TOOL_DEFINITION: 1500,
+            BUSINESS_CONTEXT: 1500,
+            COMPACTED_SUMMARY: 500,
+            USER_MESSAGE: 1000,
+            ASSISTANT_MESSAGE: 1000,
+            TOOL_CALL: 400,
+            TOOL_RESULT: 600,
+            REASONING: 200,
+          },
+          inputTokens: 9200,
+          outputTokens: 350,
+          excludedTokens: excludedCount * 150,
+        },
+        includedCount: 10,
+        excludedCount,
+        hasDetail: true,
+      });
+
+      const compactEvents: ContextEventSummary[] = [
+        {
+          id: 'ctxevt-guard-82',
+          projectId: 'proj-contract',
+          sessionId: sess.id,
+          kind: 'COMPACT',
+          createdAt: '2026-11-18T09:04:00.000Z',
+          removedCount: 6,
+          reclaimedTokens: 720,
+          summarizedByModel: false,
+          afterCallSeq: 2,
+        },
+      ];
+
+      // 1. Calm (<70%) AND Warning (>=70%) ContextOccupancyRing + RemovedMessagesNotice (compacted, trimmed, and both) MUST pass checkBusinessViewMarkup WITHOUT ignoreTestIds!
+      for (const [label, call, events] of [
+        ['Ring <70% (42%) + compacted notice', makeCall(42_000, 0), compactEvents],
+        ['Ring >=70% (78%) + trimmed notice', makeCall(78_000, 4), []],
+        ['Ring >=70% (85%) + compacted & trimmed notice', makeCall(85_000, 3), compactEvents],
+      ] as const) {
+        renderInBothLocales(`ShellAgentPanel ${label} (unexempted)`, () => (
+          <ShellAgentPanel
+            surface={reqSurface}
+            overlay={false}
+            side="left"
+            closable={false}
+            initialModelCalls={[call]}
+            initialContextEvents={events}
+            onClose={noop}
+            onNavigate={noop}
+          />
+        ));
+      }
+
+      // 2. Open ContextInspectorOverlay containing raw technical snapshot items (M1, AGG-01, YAML):
+      //    - Unexempted check catches snapshot internals (proving guard sees inside when not exempted)
+      //    - Exempted ONLY by ignoreTestIds: [CONTEXT_INSPECTOR_DRAWER_TEST_ID] passes with 0 violations
+      //    - Any violation outside context-inspector-drawer (beside ring & removed notice) is STILL caught!
+      const openCall = makeCall(78_000, 2);
+      const openCallDetail: ModelCallDetail = {
+        ...openCall,
+        included: [],
+        response: [],
+        excluded: [
+          {
+            blobId: 'blob-guard-ex',
+            kind: 'USER_MESSAGE',
+            tokens: 160,
+            content: 'Raw snapshot message mentioning M1 YAML schema and AGG-01.',
+          },
+        ],
+      };
+      const openCompactDetail: ContextEventDetail = {
+        ...compactEvents[0]!,
+        removed: [
+          {
+            blobId: 'blob-guard-rm',
+            kind: 'ASSISTANT_MESSAGE',
+            tokens: 210,
+            content: 'Archived turn referencing BHV-01 and t_contract SQL table.',
+          },
+        ],
+      };
+
+      for (const locale of LOCALES) {
+        stubBrowserStorage(locale);
+        const openHtml = renderToStaticMarkup(
+          <PreferencesProvider>
+            <ShellAgentPanel
+              surface={reqSurface}
+              overlay={false}
+              side="left"
+              closable={false}
+              defaultInspectorOpen
+              defaultInspectorFocus="removed"
+              initialModelCalls={[openCall]}
+              initialContextEvents={compactEvents}
+              initialLatestCallDetail={openCallDetail}
+              initialCompactedEventDetails={[openCompactDetail]}
+              onClose={noop}
+              onNavigate={noop}
+            />
+          </PreferencesProvider>,
+        );
+
+        expect(openHtml).toContain(`data-testid="${CONTEXT_INSPECTOR_DRAWER_TEST_ID}"`);
+        expect(openHtml).toContain('data-testid="context-occupancy-ring"');
+        expect(openHtml).toContain('data-testid="conversation-removed-notice"');
+
+        // Without ignoreTestIds, raw snapshot content inside drawer triggers violations
+        expect(checkBusinessViewMarkup(openHtml).length).toBeGreaterThan(0);
+
+        // With ignoreTestIds: ['context-inspector-drawer'], passes with 0 violations!
+        const exemptedViolations = checkBusinessViewMarkup(openHtml, {
+          ignoreTestIds: [CONTEXT_INSPECTOR_DRAWER_TEST_ID],
+        });
+        expect(
+          exemptedViolations,
+          `[Open Inspector ${locale}]\n${formatBusinessViewViolations(exemptedViolations)}`,
+        ).toEqual([]);
+
+        // Negative proof: outside elements (ring, removed notice, composer) remain strictly guarded even when context-inspector-drawer is ignored!
+        const leakedOutsideHtml = `${openHtml}<span>Leaked M1 AGG-01 outside drawer</span>`;
+        const leakedViolations = checkBusinessViewMarkup(leakedOutsideHtml, {
+          ignoreTestIds: [CONTEXT_INSPECTOR_DRAWER_TEST_ID],
+        });
+        expect(leakedViolations.length).toBeGreaterThan(0);
+      }
     } finally {
       store.close();
     }

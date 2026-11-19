@@ -91,7 +91,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
       .fill('请补充大额采购合同法务会签与分期结算的边界规则');
     await page.getByTestId('agent-panel-send-btn').click();
     await expect(
-      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      agentPanel.locator('[data-testid="conversation-turn"][data-run-status="SUCCEEDED"]').last(),
     ).toBeVisible({ timeout: 25_000 });
 
     await page.getByTestId('synthesize-srs-btn').click();
@@ -138,12 +138,16 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
       .getByTestId('agent-panel-composer-input')
       .fill('请新增一条超额采购合同双重风控校验规则');
     await page.getByTestId('agent-panel-send-btn').click();
+    await expect(
+      agentPanel
+        .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+        .last(),
+    ).toBeVisible({ timeout: 25_000 });
+    await agentPanel.getByTestId('conversation-work-toggle').last().click();
+    await agentPanel.getByTestId('conversation-tool-toggle').last().click();
     await expect(agentPanel.locator('[data-tool-name="upsert_rule"]').first()).toBeVisible({
       timeout: 25_000,
     });
-    await expect(
-      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
-    ).toBeVisible({ timeout: 25_000 });
     await expect(page.getByTestId('shell-health-status')).toContainText('没有需要修正的问题');
     const confirmBmRes = await page.request.post(
       '/api/projects/proj-contract/steps/business-model/confirm',
@@ -198,7 +202,9 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.getByTestId('run-extraction-btn').click();
     await expect(agentPanel).toBeVisible();
     await expect(
-      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      agentPanel
+        .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+        .last(),
     ).toBeVisible({ timeout: 25_000 });
     await expect(page.locator('.platform-content')).toContainText(
       '增量合同变更表与审批接口本体萃取',
@@ -219,11 +225,12 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
       .getByTestId('agent-panel-composer-input')
       .fill('请查询当前合同台账并核对大额合同资信准入规则');
     await page.getByTestId('agent-panel-send-btn').click();
-    // Steps fold away once a run finishes, so assert they were recorded rather than still on screen.
-    await expect(agentPanel.locator('.agent-run-step').first()).toBeAttached({ timeout: 25_000 });
     await expect(
-      agentPanel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      agentPanel
+        .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+        .last(),
     ).toBeVisible({ timeout: 25_000 });
+    await expect(agentPanel.getByTestId('conversation-work-process').last()).toBeVisible();
 
     // 4. Data Analytics Center (opened via "更多" menu): Live Read-Only SQL Sandbox Preview
     await page.getByTestId('more-menu-btn').click();

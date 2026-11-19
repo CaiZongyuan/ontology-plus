@@ -1058,6 +1058,9 @@ export function OntologyWorkbenchView({
   };
 
   const searchKeyword = treeSearch.trim().toLowerCase();
+  const hasCoreOntology = MODEL_STAGE_ORDER.some(
+    (m) => m.code !== 'MU' && getModelElementCount(m.code) > 0,
+  );
 
   return (
     <div className="flex flex-col h-[calc(100vh_-_var(--topbar-h,56px)_-_var(--subbar-h,0px))]">
@@ -1327,7 +1330,10 @@ export function OntologyWorkbenchView({
               </div>
             )}
 
-            {!lifecycle?.hasOntology && !manualAuthoringMode && activeTab === 'STRUCTURED' ? (
+            {!hasCoreOntology &&
+            !manualAuthoringMode &&
+            activeTab === 'STRUCTURED' &&
+            selectedModel !== 'MU' ? (
               <div
                 className="card p-6 my-2 flex flex-col gap-4 max-w-[760px] mx-auto"
                 data-testid="ontology-stage-pending-guide"
@@ -1338,10 +1344,14 @@ export function OntologyWorkbenchView({
                   </div>
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="badge badge-warn">
-                        {t('第 4 步 · 尚未到达此阶段', 'Step 4 · Stage Not Reached Yet')}
+                      <span className={`badge ${data?.confirmedPrototypeRevision ? 'badge-accent' : 'badge-warn'}`}>
+                        {data?.confirmedPrototypeRevision
+                          ? t('上游已就绪 · 待生成业务模型', 'Upstream Confirmed · Ready to Generate')
+                          : t('尚未确认上游原型', 'Awaiting Confirmed Prototype')}
                       </span>
-                      <span className="text-[12px] text-faint-foreground font-mono">0 / 11 Models</span>
+                      <span className="text-[12px] text-faint-foreground font-mono">
+                        {validation.presentModels.length} / 11 Models
+                      </span>
                     </div>
                     <h3 className="font-title text-[17.5px] font-semibold text-foreground m-0">
                       {t(
@@ -1424,7 +1434,12 @@ export function OntologyWorkbenchView({
 
                 {lifecycle && (
                   <div className="rounded-sm border border-border bg-muted px-3.5 py-2.5 text-[12.5px] text-foreground-soft">
-                    {t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
+                    {data?.confirmedPrototypeRevision
+                      ? t(
+                          '需求规格与界面原型均已确认就绪。点击下方按钮，AI 助手将结合已确认的需求文档与界面原型分阶段生成完整业务模型。',
+                          'Requirements and prototype are confirmed. Click below so AI Assistant generates the complete Business Model from both confirmed inputs.',
+                        )
+                      : t(lifecycle.nextStep.hintZh, lifecycle.nextStep.hintEn)}
                   </div>
                 )}
 
@@ -1460,7 +1475,10 @@ export function OntologyWorkbenchView({
                       ) : (
                         <Sparkles size={14} />
                       )}
-                      {t('从当前界面原型一键推导 11 模型本体', 'Synthesize 11-Model Ontology from Prototype')}
+                      {t(
+                        '结合已确认需求与原型生成业务模型',
+                        'Generate Business Model from Confirmed Inputs',
+                      )}
                     </Button>
                   ) : (
                     lifecycle &&
@@ -1562,7 +1580,10 @@ export function OntologyWorkbenchView({
           >
             {validation.errorCount === 0
               ? t('✓ 一致性校验通过 (0 Errors)', '✓ Consistency Gate Passed (0 Errors)')
-              : `${validation.errorCount} Consistency Errors`}
+              : t(
+                  `${validation.errorCount} 个需要修正的问题`,
+                  `${validation.errorCount} Consistency Errors`,
+                )}
           </span>
           <span className="badge badge-warn" data-testid="validation-warning-badge">
             {validation.warningCount} {t('阶段提示', 'Stage Warnings')}
@@ -1935,9 +1956,42 @@ function StructuredModelInspector({
     </div>
   );
 
+  const isModelEmpty = (() => {
+    switch (modelCode) {
+      case 'M1':
+        return !draft.M1 || (draft.M1.aggregates.length === 0 && draft.M1.data_dictionaries.length === 0);
+      case 'M2':
+        return !draft.M2 || draft.M2.behaviors.length === 0;
+      case 'M3':
+        return !draft.M3 || draft.M3.rules.length === 0;
+      case 'ME':
+        return !draft.ME || draft.ME.events.length === 0;
+      case 'M4':
+        return !draft.M4 || draft.M4.event_scenarios.length === 0;
+      case 'M5':
+        return (
+          !draft.M5 ||
+          (draft.M5.actors.length === 0 &&
+            draft.M5.roles.length === 0 &&
+            draft.M5.permissions.length === 0)
+        );
+      case 'M6':
+        return !draft.M6 || draft.M6.flows.length === 0;
+      case 'M7':
+        return !draft.M7 || draft.M7.query_reports.length === 0;
+      case 'MU':
+        return !draft.MU || draft.MU.screens.length === 0;
+      case 'MM':
+        return !draft.MM || draft.MM.mappings.length === 0;
+      case 'MI':
+        return !draft.MI || draft.MI.interfaces.length === 0;
+    }
+  })();
+
   return (
     <div className="flex flex-col gap-3">
       {/* Sticky Structured AST Save Bar */}
+      {(!isModelEmpty || dirty) && (
       <div className="owb-savebar">
         <div className="flex items-center gap-2 text-[12.5px]">
           <span className={`badge ${dirty ? 'badge-warn' : 'badge-ok'}`}>
@@ -1976,10 +2030,11 @@ function StructuredModelInspector({
           </Button>
         </div>
       </div>
+      )}
 
       {/* ─── M1: Object Model ─── */}
       {modelCode === 'M1' &&
-        (!draft.M1 ? (
+        (!draft.M1 || (draft.M1.aggregates.length === 0 && draft.M1.data_dictionaries.length === 0) ? (
           renderEmptyModelBanner('M1')
         ) : (
           <div className="flex flex-col gap-3.5">
@@ -2017,6 +2072,13 @@ function StructuredModelInspector({
                           mutate: (nx) => {
                             if (nx.M1) {
                               nx.M1.aggregates = nx.M1.aggregates.filter((x) => x.id !== agg.id);
+                              if (
+                                nx.M1.aggregates.length === 0 &&
+                                nx.M1.data_dictionaries.length === 0 &&
+                                nx.M1.aggregate_associations.length === 0
+                              ) {
+                                delete nx.M1;
+                              }
                             }
                           },
                         })
@@ -2299,7 +2361,7 @@ function StructuredModelInspector({
 
       {/* ─── M2: Behavior Model ─── */}
       {modelCode === 'M2' &&
-        (!draft.M2 ? (
+        (isModelEmpty || !draft.M2 ? (
           renderEmptyModelBanner('M2')
         ) : (
           <div className="flex flex-col gap-3">
@@ -2537,7 +2599,7 @@ function StructuredModelInspector({
 
       {/* ─── M3: Rule Model ─── */}
       {modelCode === 'M3' &&
-        (!draft.M3 ? (
+        (isModelEmpty || !draft.M3 ? (
           renderEmptyModelBanner('M3')
         ) : (
           <div className="flex flex-col gap-3">
@@ -2687,7 +2749,7 @@ function StructuredModelInspector({
 
       {/* ─── ME: Event Model ─── */}
       {modelCode === 'ME' &&
-        (!draft.ME ? (
+        (isModelEmpty || !draft.ME ? (
           renderEmptyModelBanner('ME')
         ) : (
           <div className="flex flex-col gap-3">
@@ -2892,7 +2954,7 @@ function StructuredModelInspector({
 
       {/* ─── M4: Scenario Model ─── */}
       {modelCode === 'M4' &&
-        (!draft.M4 ? (
+        (isModelEmpty || !draft.M4 ? (
           renderEmptyModelBanner('M4')
         ) : (
           <div className="flex flex-col gap-3">
@@ -3118,7 +3180,7 @@ function StructuredModelInspector({
 
       {/* ─── M5: Actor, Role & Permission Model ─── */}
       {modelCode === 'M5' &&
-        (!draft.M5 ? (
+        (isModelEmpty || !draft.M5 ? (
           renderEmptyModelBanner('M5')
         ) : (
           <div className="flex flex-col gap-3">
@@ -3336,7 +3398,7 @@ function StructuredModelInspector({
 
       {/* ─── M6: Flow Model ─── */}
       {modelCode === 'M6' &&
-        (!draft.M6 ? (
+        (isModelEmpty || !draft.M6 ? (
           renderEmptyModelBanner('M6')
         ) : (
           <div className="flex flex-col gap-3">
@@ -3558,7 +3620,7 @@ function StructuredModelInspector({
 
       {/* ─── M7: Query & Report Model ─── */}
       {modelCode === 'M7' &&
-        (!draft.M7 ? (
+        (isModelEmpty || !draft.M7 ? (
           renderEmptyModelBanner('M7')
         ) : (
           <div className="flex flex-col gap-3">
@@ -3698,7 +3760,7 @@ function StructuredModelInspector({
 
       {/* ─── MU: UI Model ─── */}
       {modelCode === 'MU' &&
-        (!draft.MU ? (
+        (isModelEmpty || !draft.MU ? (
           renderEmptyModelBanner('MU')
         ) : (
           <div className="flex flex-col gap-3.5">
@@ -3931,7 +3993,7 @@ function StructuredModelInspector({
 
       {/* ─── MM: Mapping Model ─── */}
       {modelCode === 'MM' &&
-        (!draft.MM ? (
+        (isModelEmpty || !draft.MM ? (
           renderEmptyModelBanner('MM')
         ) : (
           <div className="flex flex-col gap-3">
@@ -4151,7 +4213,7 @@ function StructuredModelInspector({
 
       {/* ─── MI: Interface Model ─── */}
       {modelCode === 'MI' &&
-        (!draft.MI ? (
+        (isModelEmpty || !draft.MI ? (
           renderEmptyModelBanner('MI')
         ) : (
           <div className="flex flex-col gap-3">

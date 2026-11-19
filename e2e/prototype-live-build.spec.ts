@@ -138,7 +138,10 @@ test.describe('Prototype live build (#89): per-screen streaming onto one canvas'
 
     // The run finishes and the revision is saved.
     await expect(
-      page.getByTestId('agent-panel').locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+      page
+        .getByTestId('agent-panel')
+        .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+        .last(),
     ).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId('prototype-history-btn')).toContainText('R1', { timeout: 15_000 });
     for (const sid of SCREENS) {

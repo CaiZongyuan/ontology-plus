@@ -742,6 +742,16 @@ describe('Server-side Playwright Chromium artboard screenshotter & engine pipeli
           close: () => void;
         };
       };
+      // Visual review Model Calls record Context Snapshots (ADR 0017) without persisting screenshot bytes
+      const recordedCalls = store.listModelCalls(session.projectId, session.id);
+      const reviewCalls = recordedCalls.filter(
+        (c) => c.purpose === 'SUBAGENT' && c.laneLabel?.zh.startsWith('视觉检查'),
+      );
+      expect(reviewCalls.length).toBeGreaterThanOrEqual(2);
+      const firstReviewDetail = store.getModelCall(session.projectId, reviewCalls[0]!.id);
+      expect(firstReviewDetail?.included.some((i) => i.content.includes('[image: image/png'))).toBe(true);
+      expect(JSON.stringify(firstReviewDetail)).not.toContain(FAKE_SCREENSHOT_MARKER);
+
       const rawDb = new DatabaseSync(dbPath);
       try {
         const dump = JSON.stringify({

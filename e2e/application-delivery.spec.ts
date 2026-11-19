@@ -57,8 +57,20 @@ test('keeps architecture authoring in Technical Details separate from Delivery C
   const panel = page.getByTestId('agent-panel');
   await page.getByTestId('agent-panel-composer-input').fill('Review this application input specification.');
   await page.getByTestId('agent-panel-send-btn').click();
+  await expect(
+    panel
+      .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+      .last(),
+  ).toBeVisible({ timeout: 25_000 });
+  await expect(
+    panel
+      .getByTestId('conversation-assistant-markdown')
+      .last()
+      .getByRole('heading', { name: /Application specification input review|应用规格输入检查/ }),
+  ).toBeVisible();
+  await panel.getByTestId('conversation-work-toggle').last().click();
+  await panel.getByTestId('conversation-tool-toggle').last().click();
   await expect(panel.locator('[data-tool-name="read_application_inputs"]').last()).toBeAttached();
-  await expect(panel.getByTestId('agent-run-text').getByRole('heading', { name: /Application specification input review|应用规格输入检查/ })).toBeVisible();
 
   await page.getByTestId('open-technical-details-btn').click();
   await page.getByTestId('delivery-tech-tab-standards').click();
@@ -67,6 +79,13 @@ test('keeps architecture authoring in Technical Details separate from Delivery C
   await expect(panel.locator('[data-tool-name="read_application_inputs"]')).toHaveCount(0);
   await page.getByTestId('agent-panel-composer-input').fill('Inspect the repository standards catalog.');
   await page.getByTestId('agent-panel-send-btn').click();
+  await expect(
+    panel
+      .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+      .last(),
+  ).toBeVisible({ timeout: 25_000 });
+  await panel.getByTestId('conversation-work-toggle').last().click();
+  await panel.getByTestId('conversation-tool-toggle').last().click();
   await expect(panel.locator('[data-tool-name="read_architecture_assets"]').last()).toBeAttached();
 
   await page.getByTestId('back-to-business-view-btn').click();

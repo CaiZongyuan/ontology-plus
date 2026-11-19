@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
+import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 
 export interface CodeLine {
@@ -53,6 +54,7 @@ export function CodeBlock({
   maxHeight = 360,
   className,
 }: CodeBlockProps) {
+  const { t } = usePreferences();
   const [copied, setCopied] = useState(false);
 
   const lines = useMemo<CodeLine[]>(() => {
@@ -83,11 +85,11 @@ export function CodeBlock({
   return (
     <div className={cn('my-2 w-full overflow-hidden rounded-card bg-card shadow-card', className)}>
       <div className="primitive-card-bar flex items-center gap-2 border-b border-border bg-muted/45">
-        <span className="truncate font-mono text-[11.5px] text-foreground-soft">
+        <span className="truncate font-mono text-xs text-foreground-soft">
           {filename || language || 'text'}
         </span>
         {(adds > 0 || dels > 0) && (
-          <span className="inline-flex items-center gap-1.5 font-mono text-[11.5px] tabular-nums">
+          <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums">
             {adds > 0 && <span className="text-success">+{adds}</span>}
             {dels > 0 && <span className="text-destructive">-{dels}</span>}
           </span>
@@ -95,7 +97,10 @@ export function CodeBlock({
         <button
           type="button"
           onClick={copy}
-          aria-label="Copy code"
+          aria-label={
+            copied ? t('代码已复制', 'Code copied') : t('复制代码', 'Copy code')
+          }
+          title={copied ? t('代码已复制', 'Code copied') : t('复制代码', 'Copy code')}
           className="primitive-icon-button ml-auto cursor-pointer text-faint-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground"
         >
           <span className="relative flex h-3.5 w-3.5 items-center justify-center">

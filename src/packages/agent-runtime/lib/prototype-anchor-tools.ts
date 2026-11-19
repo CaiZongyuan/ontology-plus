@@ -1711,7 +1711,7 @@ export function styleFromShellTokens(
 /**
  * The document skeleton (spec #87 decision 3): head, an app bar with the title and one link
  * per screen, and one empty section per screen. It has no look of its own: every colour, font
- * and radius comes from the build's style (`define_style`, ADR 0018 / #91), or — when the lead
+ * and radius comes from the build's style (`define_style`, ADR 0019 / #91), or — when the lead
  * set none — from the shell's `themeTokens`. No fixed page width: the pages follow the viewport.
  */
 export function initPrototypeShell(
@@ -1758,7 +1758,7 @@ export function initPrototypeShell(
     .join('\n');
 
   // Each planned screen gets an empty section: nothing is drawn until a helper really writes
-  // it (no skeleton or "building" badge standing in for work that has not happened, ADR 0018).
+  // it (no skeleton or "building" badge standing in for work that has not happened, ADR 0019).
   const sectionsHtml = screens
     .map((scr, idx) => {
       const sid = escapeHtmlAttr(scr.screenId.trim());

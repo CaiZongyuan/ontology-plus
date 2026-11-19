@@ -634,4 +634,114 @@ screens:
       ),
     ).toBe(true);
   });
+
+  it('resolves lowercase MU dataBinding prefixes to PascalCase M1 aggregates and query filter bindings to M2/M7 parameters without polluting M1', () => {
+    const suite: OntologySuite = {
+      M1: {
+        model_type: 'OBJECT',
+        version: '5.0',
+        domain: '咖啡店管理系统',
+        aggregates: [
+          {
+            id: 'AGG-01',
+            name: 'Member',
+            alias: '会员档案',
+            aggregateType: 'AGGREGATE_ROOT',
+            lifecycle: ['ACTIVE', 'FROZEN'],
+            tags: [],
+            attributes: [
+              { name: 'name', label: '会员姓名', type: 'String', required: true },
+              { name: 'phone', label: '手机号', type: 'String', required: true },
+            ],
+            entities: [],
+            valueObjects: [],
+            invariants: [],
+          },
+        ],
+        data_dictionaries: [],
+        aggregate_associations: [],
+      },
+      M2: {
+        model_type: 'BEHAVIOR',
+        version: '5.0',
+        domain: '咖啡店管理系统',
+        behaviors: [
+          {
+            id: 'BHV-QRY-01',
+            name: 'queryMembers',
+            alias: '查询会员台账',
+            ownerEntity: 'Member',
+            behaviorType: 'QUERY',
+            triggerType: 'SYSTEM',
+            inputParameters: [{ name: 'keyword', label: '检索词', type: 'String', required: false }],
+            outputParameters: [{ name: 'rows', label: '列表', type: 'Array', required: true }],
+            preconditions: [],
+            stateChanges: [],
+            invokedRules: [],
+            producedEvents: [],
+            requiredPermissions: [],
+            queryReportRef: 'QRY-01',
+          },
+        ],
+      },
+      M7: {
+        model_type: 'QUERY_REPORT',
+        version: '5.0',
+        domain: '咖啡店管理系统',
+        query_reports: [
+          {
+            id: 'QRY-01',
+            name: 'MemberLedgerQuery',
+            alias: '会员台账检索',
+            queryType: 'LIST_QUERY',
+            behaviorRef: 'BHV-QRY-01',
+            primarySource: { aggregateRef: 'Member', alias: 't' },
+            joins: [],
+            parameters: [{ name: 'keyword', label: '检索词', type: 'String', required: false }],
+            conditions: [],
+            resultColumns: [
+              { name: 'name', label: '会员姓名', sourceExpr: 't.name', dataType: 'String' },
+            ],
+            groupBy: [],
+            orderBy: [],
+            referenceSql: {
+              dialect: 'SQLite',
+              sql: 'SELECT t.name AS name FROM t_member t WHERE t.name LIKE :keyword',
+              parameterMappings: ['keyword'],
+              resultMappings: ['name'],
+            },
+          },
+        ],
+      },
+      MU: extractMuFromPrototypeHtml(
+        '<section data-screen-id="SCR-MEMBER-LEDGER" data-screen-name="会员储值台账" data-screen-type="LIST">' +
+          '<input data-element-id="EL-MB-INPUT-SEARCH" data-binding="member.keyword" />' +
+          '<input data-element-id="EL-MB-INPUT-NAME" data-binding="member.name" required />' +
+          '</section>',
+        '咖啡店管理系统',
+      ),
+    };
+
+    const report = validateOntologySuite(suite);
+    expect(report.diagnostics.filter((d) => d.tier === 'ERROR')).toEqual([]);
+    expect(report.errorCount).toBe(0);
+
+    // Genuinely unknown field on Member still raises MU_DANGLING_DATA_BINDING
+    suite.MU!.screens[0]!.elements.push({
+      elementId: 'EL-MB-UNKNOWN',
+      name: 'unknownField',
+      label: '未知字段',
+      elementType: 'INPUT',
+      io: 'IN_OUT',
+      required: false,
+      dataBinding: 'member.nonExistentField99',
+    });
+    suite.MU!.screens[0]!.layout += '\n| [EL-MB-UNKNOWN] 未知字段 — INPUT';
+    const brokenReport = validateOntologySuite(suite);
+    expect(
+      brokenReport.diagnostics.some(
+        (d) => d.tier === 'ERROR' && d.code === 'MU_DANGLING_DATA_BINDING',
+      ),
+    ).toBe(true);
+  });
 });

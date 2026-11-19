@@ -1,5 +1,5 @@
 /**
- * Prototype Notes (`data-note`) and real live-writing narration derivation (spec #87, #92, ADR 0005, ADR 0018).
+ * Prototype Notes (`data-note`) and real live-writing narration derivation (spec #87, #92, ADR 0005, ADR 0019).
  *
  * Every anchored element (and screen root `<section data-screen-id>`) in `界面原型.html` may carry
  * a business-language Prototype Note in `data-note`. Pure TypeScript (no DOM) so the server,

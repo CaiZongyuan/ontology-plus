@@ -13,7 +13,7 @@ import {
 import { createApiApp } from '../../../server/app.js';
 import { useWorkbenchStore, type BootstrapPayload } from '../../api.js';
 import { PreferencesProvider } from '../../i18n.js';
-import { AgentRunCard } from './AgentRunCard.js';
+import { AssistantReplyItem } from './conversation/AssistantReplyItem.js';
 import { ShellAgentPanel, agentPanelSurfaceFor } from './ShellAgentPanel.js';
 import { StepHandoffCard } from './StepHandoffCard.js';
 import { agentRunsFromSession, type AgentRunView } from './agentRun.js';
@@ -41,7 +41,7 @@ afterEach(() => {
   Object.assign(useWorkbenchStore.getInitialState(), initialStoreSnapshot);
 });
 
-describe('StepHandoffCard & AgentRunCard integration (#72)', () => {
+describe('StepHandoffCard & AssistantReplyItem integration (#72)', () => {
   const baseProposal: StepHandoffProposal = {
     id: 'handoff-demo-1',
     sourceStep: 'PROTOTYPE',
@@ -167,7 +167,7 @@ describe('StepHandoffCard & AgentRunCard integration (#72)', () => {
     expect(violations, formatBusinessViewViolations(violations)).toEqual([]);
   });
 
-  it('adapts stepHandoff and handoffFrom through agentRunsFromSession and renders cleanly inside AgentRunCard and ShellAgentPanel', async () => {
+  it('adapts stepHandoff and handoffFrom through agentRunsFromSession and renders cleanly inside AssistantReplyItem and ShellAgentPanel', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     store.updateSystemSettings({ mockLlmMode: true });
     const api = createApiApp(store);
@@ -209,9 +209,9 @@ describe('StepHandoffCard & AgentRunCard integration (#72)', () => {
 
       for (const locale of ['zh-CN', 'en-US'] as const) {
         useLocale(locale);
-        const runCardHtml = renderToStaticMarkup(
+        const replyHtml = renderToStaticMarkup(
           <PreferencesProvider>
-            <AgentRunCard
+            <AssistantReplyItem
               run={runs[0]!}
               now={STARTED_AT + 10_000}
               onAcceptStepHandoff={noop}
@@ -219,9 +219,9 @@ describe('StepHandoffCard & AgentRunCard integration (#72)', () => {
             />
           </PreferencesProvider>,
         );
-        expect(runCardHtml).toContain('data-testid="step-handoff-card"');
-        expect(runCardHtml).toContain('data-testid="step-handoff-accept-btn"');
-        const violations = checkBusinessViewMarkup(runCardHtml);
+        expect(replyHtml).toContain('data-testid="step-handoff-card"');
+        expect(replyHtml).toContain('data-testid="step-handoff-accept-btn"');
+        const violations = checkBusinessViewMarkup(replyHtml);
         expect(violations, formatBusinessViewViolations(violations)).toEqual([]);
       }
 

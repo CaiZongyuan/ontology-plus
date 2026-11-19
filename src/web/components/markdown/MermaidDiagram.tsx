@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useState } from 'react';
 import DOMPurify from 'dompurify';
 import mermaid from 'mermaid';
+import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 
 let initializedTheme: string | null = null;
@@ -27,6 +28,7 @@ export interface MermaidDiagramProps {
  * per `modern-web-guidance` (`sanitize-untrusted-html`).
  */
 export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
+  const { t } = usePreferences();
   const rawId = useId().replace(/[^a-zA-Z0-9]/g, '');
   const [svgHtml, setSvgHtml] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -70,10 +72,10 @@ export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
   if (errorMsg) {
     return (
       <div className={cn('my-2 rounded-card border border-border bg-muted p-3', className)}>
-        <div className="mb-1.5 flex items-center justify-between text-[11.5px] text-warning">
-          <span>Mermaid 图表解析中 / 语法待完善</span>
+        <div className="mb-1.5 flex items-center justify-between text-xs text-warning">
+          <span>{t('图表解析中 / 语法待完善', 'Diagram syntax pending')}</span>
         </div>
-        <pre className="m-0 overflow-x-auto font-mono text-[11.5px] text-foreground-soft">
+        <pre className="m-0 overflow-x-auto font-mono text-xs text-foreground-soft">
           {chart}
         </pre>
       </div>
@@ -82,8 +84,8 @@ export function MermaidDiagram({ chart, className }: MermaidDiagramProps) {
 
   if (!svgHtml) {
     return (
-      <div className={cn('my-2 rounded-card border border-border bg-muted p-3 text-[12.5px] text-faint-foreground', className)}>
-        正在渲染图表…
+      <div className={cn('my-2 rounded-card border border-border bg-muted p-3 text-xs text-faint-foreground', className)}>
+        {t('正在渲染图表…', 'Rendering diagram…')}
       </div>
     );
   }

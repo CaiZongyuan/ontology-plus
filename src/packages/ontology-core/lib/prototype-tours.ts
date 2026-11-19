@@ -1,5 +1,5 @@
 /**
- * Demo Tours (`演示路线`, ADR 0005 2026-11-18 amendment, ADR 0018, spec #87 / #95).
+ * Demo Tours (`演示路线`, ADR 0005 2026-11-18 amendment, ADR 0019, spec #87 / #95).
  *
  * A prototype's Demo Tours travel inside `界面原型.html` as a `<script type="application/json" data-proto-tours>`
  * block. Every step references an existing `data-screen-id` and, when targeting a control or section,

@@ -91,7 +91,7 @@ function writePrefs(prefs: AgentPanelPrefs) {
 interface AgentPanelState extends AgentPanelPrefs {
   /** Overlay visibility on narrow viewports. Never persisted, so the overlay cannot cover a page on load. */
   overlayOpen: boolean;
-  /** Semantic anchor currently hovered inside an AgentRunCard step (for canvas highlight). */
+  /** Semantic anchor currently hovered inside a Work Process step (for canvas highlight). */
   hoveredAnchor: PrototypeTargetAnchor | null;
   /** The conversation last opened per agent scope, so leaving a module does not lose your place. */
   sessionByScope: Record<string, string>;

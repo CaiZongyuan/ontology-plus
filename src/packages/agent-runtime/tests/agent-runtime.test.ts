@@ -1293,4 +1293,398 @@ describe('agent-runtime deep module', () => {
     expect(afterResumed.messages.at(-1)?.role).toBe('assistant');
     expect(afterResumed.messages.at(-1)?.errorDiagnostic).toBeUndefined();
   });
+
+  it('supports ADR 0018 staged 4-wave Ontology Synthesis from Confirmed Requirements + Confirmed Prototype without bootstrap deadlocks or fake model fabrication', async () => {
+    const capturedBodies: Array<{ messages?: Array<{ role: string; content: unknown }> }> = [];
+    let callSeq = 0;
+    let scenarioMode: 'FOUR_WAVE_SYNTH' | 'INCREMENTAL_UPDATE' | 'CONFLICT_HANDOFF' =
+      'FOUR_WAVE_SYNTH';
+
+    const writeToolCallsSse = (
+      res: import('node:http').ServerResponse,
+      id: string,
+      calls: Array<{ id: string; name: string; args: Record<string, unknown> }>,
+    ) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+      res.write(
+        `data: ${JSON.stringify({
+          id,
+          object: 'chat.completion.chunk',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                tool_calls: calls.map((c, idx) => ({
+                  index: idx,
+                  id: c.id,
+                  type: 'function',
+                  function: { name: c.name, arguments: JSON.stringify(c.args) },
+                })),
+              },
+              finish_reason: null,
+            },
+          ],
+        })}\n\n`,
+      );
+      res.write(
+        `data: ${JSON.stringify({
+          id,
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+        })}\n\n`,
+      );
+      res.write('data: [DONE]\n\n');
+      res.end();
+    };
+
+    const writeStopSse = (res: import('node:http').ServerResponse, id: string, text: string) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+      res.write(
+        `data: ${JSON.stringify({
+          id,
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+        })}\n\n`,
+      );
+      res.write('data: [DONE]\n\n');
+      res.end();
+    };
+
+    const httpMod = await import('node:http');
+    const server = httpMod.createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+        messages?: Array<{ role: string; content: unknown }>;
+      };
+      capturedBodies.push(body);
+      callSeq += 1;
+
+      if (scenarioMode === 'FOUR_WAVE_SYNTH') {
+        if (callSeq === 1) {
+          // Wave 1: M1 aggregates (both prototyped + SRS-only Recipe) & M5 roles
+          writeToolCallsSse(res, 'cmpl-w1', [
+            {
+              id: 'tc-w1-member',
+              name: 'upsert_aggregate',
+              args: {
+                id: 'AGG-01',
+                name: 'Member',
+                alias: '会员档案',
+                lifecycle: ['ACTIVE', 'FROZEN'],
+                attributes: [
+                  { name: 'name', label: '会员姓名', type: 'string', required: true },
+                  { name: 'phone', label: '手机号', type: 'string', required: true },
+                  { name: 'balance', label: '储值余额', type: 'decimal', required: true },
+                  { name: 'status', label: '会员状态', type: 'enum', required: true },
+                ],
+              },
+            },
+            {
+              id: 'tc-w1-recharge',
+              name: 'upsert_aggregate',
+              args: {
+                id: 'AGG-02',
+                name: 'Recharge',
+                alias: '储值充值单',
+                lifecycle: ['CREATED', 'PAID'],
+                attributes: [{ name: 'amount', label: '充值金额', type: 'money', required: true }],
+              },
+            },
+            {
+              id: 'tc-w1-points',
+              name: 'upsert_aggregate',
+              args: {
+                id: 'AGG-03',
+                name: 'Points',
+                alias: '积分账户',
+                lifecycle: ['ACTIVE'],
+                attributes: [{ name: 'manual', label: '调整积分', type: 'integer', required: true }],
+              },
+            },
+            {
+              id: 'tc-w1-recipe',
+              name: 'upsert_aggregate',
+              args: {
+                id: 'AGG-04',
+                name: 'Recipe',
+                alias: '饮品配方',
+                lifecycle: ['ACTIVE'],
+                attributes: [
+                  { name: 'drinkName', label: '饮品名称', type: 'string', required: true },
+                  { name: 'beanGrams', label: '咖啡豆克数', type: 'decimal', required: true },
+                ],
+              },
+            },
+            {
+              id: 'tc-w1-role',
+              name: 'upsert_actor_role',
+              args: {
+                actorId: 'ACT-01',
+                actorName: '店员',
+                actorType: 'HUMAN',
+                roleId: 'ROLE-CASHIER',
+                roleCode: 'CASHIER',
+                roleName: '店员',
+                dataScope: 'DEPT',
+              },
+            },
+          ]);
+          return;
+        }
+        if (callSeq === 2) {
+          // Wave 2: M3 rule + M2 behavior + M7 query report with :status SQL param
+          writeToolCallsSse(res, 'cmpl-w2', [
+            {
+              id: 'tc-w2-rule',
+              name: 'upsert_rule',
+              args: {
+                id: 'RULE-01',
+                name: 'RechargeBonusRule',
+                alias: '充100送10赠送规则',
+                ruleType: 'CALCULATION',
+                referencedObjects: ['Recharge', 'Member'],
+                expression: 'Recharge.amount >= 100',
+              },
+            },
+            {
+              id: 'tc-w2-beh',
+              name: 'upsert_behavior',
+              args: {
+                id: 'BHV-01',
+                name: 'createRecharge',
+                alias: '办理会员储值',
+                ownerEntity: 'Recharge',
+                behaviorType: 'COMMAND',
+                invokedRules: ['RULE-01'],
+              },
+            },
+            {
+              id: 'tc-w2-qry',
+              name: 'upsert_query_report',
+              args: {
+                id: 'QRY-01',
+                name: 'MemberLedgerQuery',
+                alias: '会员储值台账检索',
+                queryType: 'LIST_QUERY',
+                primaryAggregate: 'Member',
+                sql: 'SELECT t.name AS name FROM t_member t WHERE t.status = :status',
+              },
+            },
+          ]);
+          return;
+        }
+        if (callSeq === 3) {
+          // Wave 4 finalizer: sync MU + derive MM + validate (no MI/M4/M6 needed for single store)
+          writeToolCallsSse(res, 'cmpl-w4', [
+            {
+              id: 'tc-w4-final',
+              name: 'synthesize_ontology_suite',
+              args: {},
+            },
+          ]);
+          return;
+        }
+        writeStopSse(res, 'cmpl-done', '已完成咖啡店管理系统业务模型合成。');
+        return;
+      }
+
+      if (scenarioMode === 'INCREMENTAL_UPDATE') {
+        if (callSeq === 1) {
+          writeToolCallsSse(res, 'cmpl-upd-1', [
+            {
+              id: 'tc-upd-recipe',
+              name: 'upsert_aggregate',
+              args: {
+                id: 'AGG-04',
+                name: 'Recipe',
+                alias: '饮品配方',
+                lifecycle: ['ACTIVE'],
+                attributes: [
+                  { name: 'drinkName', label: '饮品名称', type: 'String', required: true },
+                  { name: 'beanGrams', label: '咖啡豆克数', type: 'Decimal', required: true },
+                  { name: 'formulaNote', label: '萃取说明', type: 'String', required: false },
+                ],
+              },
+            },
+            {
+              id: 'tc-upd-final',
+              name: 'synthesize_ontology_suite',
+              args: { mode: 'update' },
+            },
+          ]);
+          return;
+        }
+        writeStopSse(res, 'cmpl-upd-done', '已增量对齐新增的饮品配方页面，保留既有业务规则。');
+        return;
+      }
+
+      // CONFLICT_HANDOFF
+      if (callSeq === 1) {
+        writeToolCallsSse(res, 'cmpl-handoff-1', [
+          {
+            id: 'tc-handoff',
+            name: 'propose_step_handoff',
+            args: {
+              targetStep: 'PROTOTYPE',
+              request: '请移除部分退款金额输入框以符合整单退需求约束',
+              reason: '已确认需求明确规定仅支持整单退，原型出现了部分退款表单。',
+            },
+          },
+        ]);
+        return;
+      }
+      writeStopSse(res, 'cmpl-handoff-done', '发现需求与原型存在部分退款规则矛盾，请先确认处理方式。');
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    const gatewayUrl = `http://127.0.0.1:${port}/v1`;
+
+    try {
+      const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+      for (const p of store.listLlmProviders()) store.deleteLlmProvider(p.id);
+      store.saveLlmProvider({
+        id: 'prov-staged-live',
+        name: 'Staged Synthesis Gateway',
+        providerType: 'OPENAI_COMPATIBLE',
+        baseUrl: gatewayUrl,
+        apiKey: 'test-key',
+        defaultModel: 'auto/glm-5.3-flash',
+        availableModels: ['auto/glm-5.3-flash'],
+        enabled: true,
+      });
+
+      const proj = store.createProject({
+        name: '咖啡店管理系统',
+        code: 'COFFEE-01',
+        domain: '咖啡店管理系统',
+        template: 'EMPTY',
+      });
+      const reqDoc = store.saveRequirementDoc({
+        id: 'rdoc-coffee-1',
+        projectId: proj.id,
+        title: '咖啡店管理系统 — 需求规格说明书 v1.0',
+        version: 'v1.0',
+        status: 'DRAFT',
+        content: [
+          '# 咖啡店管理系统 SRS',
+          '## 9.1 已确认项',
+          '- 会员储值：充100送10；',
+          '- 出品按饮品配方自动扣减咖啡豆克数；',
+          '## 9.3 暂缓与排除项',
+          '- 不接外部支付渠道与外卖平台接口。',
+        ].join('\n'),
+      });
+      store.confirmRequirementsStep(proj.id, { docId: reqDoc.id });
+
+      const proto = store.createPrototype(proj.id, {
+        name: '咖啡店核心原型',
+        htmlContent:
+          '<section data-screen-id="SCR-MEMBER-LEDGER" data-screen-name="会员储值台账" data-screen-type="LIST">' +
+          '<input data-element-id="EL-MB-SEARCH" data-binding="member.keyword" />' +
+          '<input data-element-id="EL-MB-NAME" data-binding="member.name" required />' +
+          '<input data-element-id="EL-RC-AMT" data-binding="recharge.amount" required />' +
+          '<input data-element-id="EL-PT-MANUAL" data-binding="points.manual" />' +
+          '<button data-element-id="EL-RC-SUBMIT" data-event-id="EVT-RC-SUBMIT">确认充值</button>' +
+          '</section>',
+        source: 'GENERATED',
+      });
+      store.confirmPrototypeRevision(proj.id, proto.revision.id);
+
+      const sess = store.createAgentSession({
+        projectId: proj.id,
+        agentKind: 'COPILOT',
+        title: '咖啡店业务模型对话',
+        providerId: 'prov-staged-live',
+      });
+
+      const synthTurn = await collectUnifiedAgentTurn(store, {
+        sessionId: sess.id,
+        prompt: '[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {}]\n根据已确认的原型生成业务模型',
+        mockMode: false,
+      });
+
+      // 1. COPILOT system prompt received BOTH Confirmed Requirements and Confirmed Prototype digest
+      const firstSysMsg = JSON.stringify(capturedBodies[0] ?? {});
+      expect(firstSysMsg).toContain('充100送10');
+      expect(firstSysMsg).toContain('饮品配方');
+      expect(firstSysMsg).toContain('SCR-MEMBER-LEDGER');
+      expect(firstSysMsg).toContain('member.name');
+
+      // 2. All progressive tool calls succeeded without bootstrap deadlock or duplicate "会员储值"
+      const lastMsg = synthTurn.session.messages.at(-1)!;
+      expect(lastMsg.errorDiagnostic).toBeUndefined();
+      expect(lastMsg.toolCalls?.every((tc) => !tc.isError)).toBe(true);
+      expect(lastMsg.artifacts?.some((a) => a.kind === 'ONTOLOGY_SUITE')).toBe(true);
+
+      const builtProj = store.getProject(proj.id)!;
+      expect(builtProj.validation.errorCount).toBe(0);
+      expect(builtProj.suite.M1?.aggregates.map((a) => a.name)).toEqual([
+        'Member',
+        'Recharge',
+        'Points',
+        'Recipe',
+      ]);
+      // Lowercase type "decimal" normalized to Decimal, and filter "keyword" NOT polluted onto Member
+      const memberAgg = builtProj.suite.M1!.aggregates.find((a) => a.name === 'Member')!;
+      expect(memberAgg.attributes.find((a) => a.name === 'balance')?.type).toBe('Decimal');
+      expect(memberAgg.attributes.map((a) => a.name)).not.toContain('keyword');
+      // No fabricated MI external interfaces or fake M4/M6 placeholders in live mode, and 0 stage warnings
+      expect(builtProj.suite.MI?.interfaces).toEqual([]);
+      expect(builtProj.suite.M4?.event_scenarios).toEqual([]);
+      expect(builtProj.suite.M6?.flows).toEqual([]);
+      expect(builtProj.validation.warningCount).toBe(0);
+      expect(builtProj.suite.MM?.mappings).toHaveLength(4);
+      expect(builtProj.suite.M5?.roles[0]?.dataScope).toBe('DEPARTMENT');
+
+      // 3. Manual edit preserved across Outdated incremental update (mode="update")
+      const manualSuite = structuredClone(builtProj.suite);
+      manualSuite.M3!.rules[0]!.alias = '充100送15店庆规则';
+      store.commitSuite(proj.id, manualSuite, { source: { kind: 'MANUAL' } });
+
+      const rev2 = store.appendPrototypeRevision(proto.prototype.id, {
+        htmlContent:
+          proto.revision.htmlContent +
+          '<section data-screen-id="SCR-RECIPE-FORM" data-screen-name="饮品配方维护" data-screen-type="FORM">' +
+          '<input data-element-id="EL-RP-NOTE" data-binding="recipe.formulaNote" />' +
+          '</section>',
+        instruction: '新增饮品配方维护页',
+        source: 'REFINED',
+      });
+      store.confirmPrototypeRevision(proj.id, rev2.revision.id);
+
+      callSeq = 0;
+      scenarioMode = 'INCREMENTAL_UPDATE';
+      const updateTurn = await collectUnifiedAgentTurn(store, {
+        sessionId: sess.id,
+        prompt: '[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {"mode":"update"}]\n根据已确认的原型更新业务模型',
+        mockMode: false,
+      });
+      expect(updateTurn.session.messages.at(-1)?.errorDiagnostic).toBeUndefined();
+      const updatedProj = store.getProject(proj.id)!;
+      expect(updatedProj.validation.errorCount).toBe(0);
+      expect(updatedProj.suite.M3?.rules[0]?.alias).toBe('充100送15店庆规则');
+      expect(
+        updatedProj.suite.M1?.aggregates
+          .find((a) => a.name === 'Recipe')
+          ?.attributes.map((a) => a.name),
+      ).toContain('formulaNote');
+
+      // 4. Step Hand-off on contradiction does NOT throw fake LLM_GATEWAY_ERROR
+      callSeq = 0;
+      scenarioMode = 'CONFLICT_HANDOFF';
+      const handoffTurn = await collectUnifiedAgentTurn(store, {
+        sessionId: sess.id,
+        prompt: '[ACTION:SYNTHESIZE_ONTOLOGY_SUITE {}]\n重新核对业务模型',
+        mockMode: false,
+      });
+      const handoffMsg = handoffTurn.session.messages.at(-1)!;
+      expect(handoffMsg.errorDiagnostic).toBeUndefined();
+      expect(handoffMsg.stepHandoff?.targetStep).toBe('PROTOTYPE');
+    } finally {
+      server.close();
+    }
+  }, 25000);
 });

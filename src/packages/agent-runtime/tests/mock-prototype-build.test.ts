@@ -284,4 +284,31 @@ describe('Reconnecting with afterEventId mid-build (#89)', () => {
     expect(created.revisions).toHaveLength(2);
     expect(created.htmlContent).toContain('EL-FILTER-CUSTOMER');
   });
+
+  it('preserves existing anchored filter controls and avoids dangling M1 bindings when refining the seeded contract prototype', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const proto = store.listPrototypes('proj-contract')[0]!;
+    const session = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      targetId: proto.id,
+      title: '合同原型微调',
+    });
+
+    const turn = await collectUnifiedAgentTurn(store, {
+      sessionId: session.id,
+      prompt: '微调筛选栏间距',
+      mockMode: true,
+    });
+    expect(turn.events.some((e) => e.event === 'run_error')).toBe(false);
+
+    const updated = store.getPrototype(proto.id)!;
+    expect(updated.htmlContent).toContain('EL-FILTER-TYPE');
+    expect(updated.htmlContent).toContain('EL-FILTER-CUSTOMER');
+
+    store.confirmPrototypeRevision('proj-contract', updated.currentRevisionId);
+    const projectAfter = store.getProject('proj-contract')!;
+    expect(projectAfter.validation.errorCount).toBe(0);
+  });
 });

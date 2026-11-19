@@ -202,7 +202,9 @@ test.describe('Business Model Step (#68): Business Object Projection, Technical 
       await expect(panel).toContainText('签约相对方');
       await expect(panel).toContainText('商务合同');
       await expect(
-        panel.locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]').last(),
+        panel
+          .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
+          .last(),
       ).toBeVisible({ timeout: 25_000 });
 
       // 4. Compact (<1280px) viewport: "让 AI 助手处理" switches pane to Conversation immediately
@@ -228,7 +230,7 @@ test.describe('Business Model Step (#68): Business Object Projection, Technical 
       await expect(
         page
           .getByTestId('agent-panel')
-          .locator('[data-testid="agent-run-card"][data-run-status="SUCCEEDED"]')
+          .locator('[data-testid="conversation-assistant-reply"][data-run-status="SUCCEEDED"]')
           .last(),
       ).toBeVisible({ timeout: 25_000 });
     } finally {

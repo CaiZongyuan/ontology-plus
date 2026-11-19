@@ -23,6 +23,7 @@ export type WorkspaceConceptKey =
   | 'CONSISTENCY_ERROR'
   | 'STAGE_WARNING'
   | 'CONFIRMED_REVISION'
+  | 'ONTOLOGY_SYNTHESIS'
   | 'AI_ASSISTANT'
   | 'PROJECT_STEP'
   | 'STEP_HANDOFF'
@@ -31,7 +32,8 @@ export type WorkspaceConceptKey =
   | 'CHANGE_SUMMARY'
   | 'BUSINESS_VIEW'
   | 'TECHNICAL_DETAILS'
-  | 'PROTOTYPE_NOTE';
+  | 'PROTOTYPE_NOTE'
+  | 'CONTEXT_INSPECTOR';
 
 export type BusinessConceptKey = ModelCode | WorkspaceConceptKey;
 
@@ -220,6 +222,16 @@ export const BUSINESS_VOCABULARY: Readonly<Record<BusinessConceptKey, BusinessVo
     singularZh: '已确认的原型',
     singularEn: 'Confirmed prototype',
   },
+  ONTOLOGY_SYNTHESIS: {
+    key: 'ONTOLOGY_SYNTHESIS',
+    glossaryTermEn: 'Ontology Synthesis',
+    glossaryTermZh: '本体合成',
+    shownAsInGlossary: true,
+    zh: '生成业务模型',
+    en: 'Generate business model',
+    singularZh: '生成业务模型',
+    singularEn: 'Generate business model',
+  },
   AI_ASSISTANT: {
     key: 'AI_ASSISTANT',
     glossaryTermEn: 'AI Assistant',
@@ -309,6 +321,16 @@ export const BUSINESS_VOCABULARY: Readonly<Record<BusinessConceptKey, BusinessVo
     en: 'Note',
     singularZh: '说明',
     singularEn: 'Note',
+  },
+  CONTEXT_INSPECTOR: {
+    key: 'CONTEXT_INSPECTOR',
+    glossaryTermEn: 'Context Inspector',
+    glossaryTermZh: '上下文查看器',
+    shownAsInGlossary: true,
+    zh: '对话记忆',
+    en: 'Conversation memory',
+    singularZh: '对话记忆',
+    singularEn: 'Conversation memory',
   },
 };
 

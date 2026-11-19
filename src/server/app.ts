@@ -64,6 +64,7 @@ import {
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
 import { registerArtifactHistoryRoutes } from './artifact-history.js';
+import { registerContextSnapshotRoutes } from './context-snapshots.js';
 import { registerBusinessModelEditRoutes } from './business-model-edits.js';
 import {
   deriveProjectStepsForStoreProject,
@@ -274,8 +275,17 @@ export function createApiApp(
 
   app.patch('/api/agent-sessions/:id', async (c) => {
     const id = c.req.param('id');
+    const isEn = c.req.header('X-Onto-Locale') === 'en-US';
     const existing = store.getAgentSession(id);
-    if (!existing) return c.json({ error: 'Agent session not found' }, 404);
+    if (!existing) {
+      return c.json(
+        {
+          error: isEn ? 'Conversation not found.' : '未找到对应的对话。',
+          code: 'SESSION_NOT_FOUND',
+        },
+        404,
+      );
+    }
     const body = await c.req.json<{
       title?: string;
       pinned?: boolean;
@@ -285,7 +295,72 @@ export function createApiApp(
       codeMode?: boolean;
       multiAgentConcurrency?: number;
       clearMessages?: boolean;
+      dropLatestTurn?: boolean;
+      truncateFromUserMessageId?: string;
     }>();
+
+    let truncatedMessages: typeof existing.messages | undefined;
+    const droppedRunIds: string[] = [];
+    if (body.dropLatestTurn || body.truncateFromUserMessageId) {
+      if (existing.status === 'RUNNING' || getLiveAgentSessionStatus(store, id).active) {
+        return c.json(
+          {
+            error: isEn
+              ? 'Cannot edit or retry while a reply is still in progress.'
+              : '当前正在回复中，请稍候再修改或重发。',
+            code: 'SESSION_RUNNING',
+          },
+          409,
+        );
+      }
+      const msgs = existing.messages ?? [];
+      let lastUserIdx = -1;
+      for (let i = msgs.length - 1; i >= 0; i -= 1) {
+        if (msgs[i]?.role === 'user') {
+          lastUserIdx = i;
+          break;
+        }
+      }
+      if (body.truncateFromUserMessageId) {
+        const targetIdx = msgs.findIndex(
+          (m) => m.id === body.truncateFromUserMessageId && m.role === 'user',
+        );
+        if (targetIdx === -1) {
+          return c.json(
+            {
+              error: isEn ? 'Target message not found.' : '未找到对应的消息。',
+              code: 'TURN_NOT_FOUND',
+            },
+            404,
+          );
+        }
+        if (targetIdx !== lastUserIdx) {
+          return c.json(
+            {
+              error: isEn
+                ? 'Only the latest message can be edited or retried.'
+                : '仅支持修改或重发最后一条消息。',
+              code: 'ONLY_LATEST_TURN_ALLOWED',
+            },
+            400,
+          );
+        }
+      }
+      if (lastUserIdx >= 0) {
+        for (const dropped of msgs.slice(lastUserIdx)) {
+          if (dropped.role === 'user' && dropped.id) {
+            droppedRunIds.push(dropped.id);
+          }
+          if (dropped.runId) {
+            droppedRunIds.push(dropped.runId);
+          }
+        }
+        truncatedMessages = msgs.slice(0, lastUserIdx);
+      } else {
+        truncatedMessages = msgs;
+      }
+    }
+
     const clampedConcurrency =
       typeof body.multiAgentConcurrency === 'number' && Number.isFinite(body.multiAgentConcurrency)
         ? Math.max(1, Math.min(6, Math.round(body.multiAgentConcurrency)))
@@ -299,11 +374,19 @@ export function createApiApp(
       ...(body.reasoningMode !== undefined ? { reasoningMode: body.reasoningMode } : {}),
       ...(body.codeMode !== undefined ? { codeMode: Boolean(body.codeMode) } : {}),
       ...(clampedConcurrency !== undefined ? { multiAgentConcurrency: clampedConcurrency } : {}),
+      ...(truncatedMessages !== undefined
+        ? { messages: truncatedMessages, status: 'IDLE' as const }
+        : {}),
       ...(body.clearMessages
         ? { messages: [], compactedSummary: undefined, status: 'IDLE' as const }
         : {}),
       updatedAt: new Date().toISOString(),
     });
+    if (body.clearMessages) {
+      store.deleteSessionContextSnapshots(existing.projectId, existing.id);
+    } else if (droppedRunIds.length > 0) {
+      store.deleteModelCallsByRunIds(existing.projectId, existing.id, droppedRunIds);
+    }
     return c.json({
       session: updated,
       agentSessions: store.listAgentSessions(),
@@ -938,12 +1021,16 @@ export function createApiApp(
       store.listProjects()[0]?.id ||
       'proj-contract';
     try {
+      if (existing?.coDesignSessionId) {
+        abortActiveAgentSession(existing.coDesignSessionId, 'USER_ABORT', store);
+      }
       store.deletePrototype(id);
       return c.json({
         deletedId: id,
         prototypes: store.listPrototypes(projectId),
         confirmedRevision: store.getConfirmedPrototypeRevision(projectId) ?? null,
         artifactHistory: store.listArtifactHistoryViews(projectId),
+        agentSessions: store.listAgentSessions(),
       });
     } catch (err) {
       if (
@@ -1174,6 +1261,7 @@ export function createApiApp(
 
   registerApplicationDeliveryRoutes(app, store);
   registerArtifactHistoryRoutes(app, store);
+  registerContextSnapshotRoutes(app, store);
   registerBusinessModelEditRoutes(app, store);
   registerStepConfirmationRoutes(app, store);
   registerStepHandoffRoutes(app, store);
