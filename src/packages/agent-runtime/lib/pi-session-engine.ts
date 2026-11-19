@@ -1393,45 +1393,21 @@ function buildFauxMockModels(
               ),
             ]);
           }
-          if (resolveSessionMultiAgentConcurrency(session) > 1) {
-            // Replay the recorded multi-screen build through the real engine: the lead plans the
-            // shell and hands one screen to each subagent; every subagent call below is answered
-            // by the same faux provider, so its tool-call arguments stream token by token.
-            const requirementsObject = extractPrimaryObjectFromRequirements(confirmedReq.content);
-            const replay = createMockPrototypeBuildReplay(loc, {
-              businessObject:
-                project?.suite.M1?.aggregates?.[0]?.name ||
-                requirementsObject.name ||
-                inferPrimaryObjectFromProject(project).name,
-            });
-            faux.setResponses(
-              Array.from({ length: replay.responseBudget }, () => replay.respond),
-            );
-            return replay.leadOpening(
-              confirmedReq.title,
-              requirementsObject.label ?? requirementsObject.name,
-            );
-          }
-          return fauxAssistantMessage(
-            [
-              fauxThinking(
-                pickLocaleText(
-                  loc,
-                  `正在根据已确认的需求文档「${confirmedReq.title}」与设计简报生成首版响应式原型（1440px / 768px / 390px），并挂载完整语义锚点。`,
-                  `Generating initial responsive prototype (1440px / 768px / 390px) from confirmed requirements "${confirmedReq.title}" and the Design Brief.`,
-                ),
-              ),
-              fauxToolCall('rewrite_prototype_page', {
-                htmlContent: buildMockGeneratedPrototypeHtml(
-                  project,
-                  userPrompt,
-                  loc,
-                  confirmedReq.content,
-                ),
-                allowAnchorReset: true,
-              }),
-            ],
-            { stopReason: 'toolUse' },
+          const singleAgent = resolveSessionMultiAgentConcurrency(session) <= 1;
+          const requirementsObject = extractPrimaryObjectFromRequirements(confirmedReq.content);
+          const replay = createMockPrototypeBuildReplay(loc, {
+            businessObject:
+              project?.suite.M1?.aggregates?.[0]?.name ||
+              requirementsObject.name ||
+              inferPrimaryObjectFromProject(project).name,
+            singleAgent,
+          });
+          faux.setResponses(
+            Array.from({ length: replay.responseBudget }, () => replay.respond),
+          );
+          return replay.leadOpening(
+            confirmedReq.title,
+            requirementsObject.label ?? requirementsObject.name,
           );
         }
         if (isBriefRestylePrompt(userPrompt)) {
@@ -1467,11 +1443,12 @@ function buildFauxMockModels(
           /Targeted Visual Selections & Annotations|用户在界面原型上框选\/点选的目标区域与批注|\[(?:用户已确认选择|User Confirmed Choice|用户可视化圈选|Visual Element Annotations|Selection|选中元素)/i.test(
             userPrompt,
           );
-        if (!isSelectionOrTestTurn && resolveSessionMultiAgentConcurrency(session) > 1) {
+        if (!isSelectionOrTestTurn) {
           const modReplay = createMockPrototypeModificationReplay(
             loc,
             targetProto.htmlContent,
             userPrompt,
+            { singleAgent: resolveSessionMultiAgentConcurrency(session) <= 1 },
           );
           faux.setResponses(
             Array.from({ length: modReplay.responseBudget }, () => modReplay.respond),
@@ -4885,7 +4862,6 @@ async function executeUnifiedTurnCore(
     ...existing,
     title: nextTitle,
     ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
-    codeMode: false,
     multiAgentConcurrency: effectiveConcurrency,
     status: 'RUNNING',
     messages: workingMessages,

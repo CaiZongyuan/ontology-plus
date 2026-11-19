@@ -236,4 +236,52 @@ describe('Reconnecting with afterEventId mid-build (#89)', () => {
     expect(latestHistory!.changeSummary.canUndo).toBe(true);
     expect(latestHistory!.changeSummary.compareRevisionPair).toBeDefined();
   });
+
+  it('concurrency=1 mock initial build & post-generation modification use the unified live pipeline and never emit rewrite_prototype_page', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const session = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      title: '单智能体统一流水线',
+      multiAgentConcurrency: 1,
+    });
+
+    const r1 = await collectUnifiedAgentTurn(store, {
+      sessionId: session.id,
+      prompt: '按已确认的需求生成首版原型',
+      prototypeName: '单路统一流水线原型',
+      multiAgentConcurrency: 1,
+      mockMode: true,
+    });
+    expect(r1.events.some((e) => e.event === 'run_error')).toBe(false);
+    const r1Tools = r1.events
+      .filter((e) => e.event === 'tool_call')
+      .map((e) => String(e.data.toolName));
+    expect(r1Tools).not.toContain('rewrite_prototype_page');
+    expect(r1Tools).not.toContain('spawn_subagents');
+    expect(r1Tools).toContain('plan_screens');
+    expect(r1Tools).toContain('define_style');
+    expect(r1Tools).toContain('upsert_prototype_screen');
+    expect(r1Tools).toContain('write_demo_tours');
+
+    const r2 = await collectUnifiedAgentTurn(store, {
+      sessionId: session.id,
+      prompt: '把订单列表的筛选改成按客户',
+      multiAgentConcurrency: 1,
+      mockMode: true,
+    });
+    expect(r2.events.some((e) => e.event === 'run_error')).toBe(false);
+    const r2Tools = r2.events
+      .filter((e) => e.event === 'tool_call')
+      .map((e) => String(e.data.toolName));
+    expect(r2Tools).not.toContain('rewrite_prototype_page');
+    expect(r2Tools).not.toContain('spawn_subagents');
+    expect(r2Tools).toContain('plan_screens');
+    expect(r2Tools).toContain('upsert_prototype_screen');
+
+    const created = store.listPrototypes('proj-contract').find((p) => p.name === '单路统一流水线原型')!;
+    expect(created.revisions).toHaveLength(2);
+    expect(created.htmlContent).toContain('EL-FILTER-CUSTOMER');
+  });
 });

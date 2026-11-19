@@ -589,9 +589,12 @@ export function createMockPrototypeBuildReplay(
     businessObject?: string;
     /** The screen whose first attempt fails the anchor check; null when continuing a screen. */
     failScreenId?: string | null;
+    /** When true (concurrency <= 1), the lead writes each screen directly without `spawn_subagents`. */
+    singleAgent?: boolean;
   } = {},
 ): MockPrototypeBuildReplay {
   const build = MOCK_PROTOTYPE_BUILD;
+  const singleAgent = Boolean(options.singleAgent);
   const failScreenId =
     options.failScreenId === undefined ? MOCK_PROTOTYPE_BUILD_FAILING_SCREEN : options.failScreenId;
   // The recorded screens bind their fields to the project's own business object, so the
@@ -602,6 +605,7 @@ export function createMockPrototypeBuildReplay(
   const byId = new Map(build.screens.map((s) => [s.screenId, s]));
   const names = build.screens.map((s) => `「${s.screenName}」`).join('、');
   let subtitle = '';
+  let singleScreenIndex = 0;
   let lastSpawnResults: { screenId?: string; screenName: string; check: string; failure?: PrototypeBuildFailureCode }[] =
     [];
 
@@ -780,6 +784,31 @@ export function createMockPrototypeBuildReplay(
         );
       }
       if (last?.role === 'toolResult' && last.toolName === 'define_style') {
+        if (singleAgent) {
+          singleScreenIndex = 0;
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  locale,
+                  '风格样张画好了。搭好文档外壳，再按施工计划逐屏绘制。',
+                  'The Style Tile is ready. Setting up the document shell and drawing each planned screen.',
+                ),
+              ),
+              fauxToolCall('init_prototype_shell', {
+                appTitle: build.appTitle,
+                subtitle,
+                screens: build.screens.map((s) => ({
+                  screenId: s.screenId,
+                  screenName: s.screenName,
+                  screenType: s.screenType,
+                  summary: s.purpose,
+                })),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
         return fauxAssistantMessage(
           [
             fauxThinking(
@@ -811,6 +840,71 @@ export function createMockPrototypeBuildReplay(
           ],
           { stopReason: 'toolUse' },
         );
+      }
+      if (
+        singleAgent &&
+        last?.role === 'toolResult' &&
+        (last.toolName === 'init_prototype_shell' || last.toolName === 'upsert_prototype_screen')
+      ) {
+        if (singleScreenIndex < build.screens.length) {
+          const sc = build.screens[singleScreenIndex++]!;
+          const html = sc.html.split(BUSINESS_OBJECT_TOKEN).join(businessObject);
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  locale,
+                  `画「${sc.screenName}」：${sc.purpose}。`,
+                  `Drawing "${sc.screenName}": ${sc.purpose}.`,
+                ),
+              ),
+              fauxToolCall('upsert_prototype_screen', {
+                screenId: sc.screenId,
+                screenName: sc.screenName,
+                screenType: sc.screenType,
+                screenHtml: html,
+                ...(sc.extraJs ? { extraJs: sc.extraJs } : {}),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+        const drawnIds = new Set(build.screens.map((s) => s.screenId));
+        lastSpawnResults = build.screens.map((s) => ({
+          screenId: s.screenId,
+          screenName: s.screenName,
+          check: 'passed',
+        }));
+        const tours = buildMockDemoTours(locale, drawnIds);
+        if (tours.length >= 2) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  locale,
+                  `各屏绘制已完成，编写 ${tours.length} 条演示路线。`,
+                  `Screens complete; authoring ${tours.length} Demo Tours.`,
+                ),
+              ),
+              fauxToolCall('write_demo_tours', {
+                tours: tours.map((t) => ({
+                  id: t.id,
+                  goal: t.goal,
+                  ...(t.audience ? { audience: t.audience } : {}),
+                  steps: t.steps.map((s) => ({
+                    screenId: s.screenId,
+                    ...(s.elementId ? { elementId: s.elementId } : {}),
+                    action: s.action,
+                    caption: s.caption,
+                    ...(s.text !== undefined ? { text: s.text } : {}),
+                    ...(s.times !== undefined ? { times: s.times } : {}),
+                  })),
+                })),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
       }
       if (last?.role === 'toolResult' && last.toolName === 'spawn_subagents') {
         lastSpawnResults = screenResultsOf(last);
@@ -885,12 +979,14 @@ export function createMockPrototypeModificationReplay(
   locale: AgentLocale,
   targetHtml: string,
   userPrompt: string,
+  options: { singleAgent?: boolean } = {},
 ): {
   affectedScreenId: string;
   responseBudget: number;
   leadOpening: () => AssistantMessage;
   respond: (context: Context) => AssistantMessage;
 } {
+  const singleAgent = Boolean(options.singleAgent);
   const { screens } = splitPrototypeDocument(targetHtml);
   const picked =
     screens.find((s) => userPrompt.includes(s.screenId) || userPrompt.includes(s.screenName)) ??
@@ -906,21 +1002,18 @@ export function createMockPrototypeModificationReplay(
 
   const cleanNote = userPrompt.replace(/[<>&"'`\n]/g, ' ').trim().slice(0, 40);
   const wantsFilter = /筛选|filter|搜索|search/i.test(userPrompt);
+  const useCustomerFilter = wantsFilter && !/data-element-id="EL-FILTER-CUSTOMER"/.test(baseHtml);
   const promptHash = Array.from(cleanNote)
     .reduce((acc, ch) => ((acc * 31 + ch.charCodeAt(0)) >>> 0), 7)
     .toString(36)
     .toUpperCase()
     .slice(0, 4);
-  const modControl =
-    wantsFilter && !/data-element-id="EL-FILTER-CUSTOMER"/.test(baseHtml)
-      ? locale === 'en-US'
-        ? `<select class="input" data-element-id="EL-FILTER-CUSTOMER" data-element-type="SELECT" data-element-label="${cleanNote || 'Filter by customer'}" data-binding="Order.customerName" data-note="Filter by customer: narrow the list to orders for a selected customer"><option value="">All customers</option><option value="CUST-01">Morning Bakery</option><option value="CUST-02">Harbor Cafe</option></select>`
-        : `<select class="input" data-element-id="EL-FILTER-CUSTOMER" data-element-type="SELECT" data-element-label="${cleanNote || '按客户筛选'}" data-binding="Order.customerName" data-note="按客户筛选：选择客户名称过滤当前列表数据"><option value="">全部客户</option><option value="CUST-01">晨光烘焙坊</option><option value="CUST-02">海湾咖啡馆</option></select>`
-      : `<button type="button" class="btn" data-element-id="EL-MOD-${promptHash}" data-element-type="BUTTON" data-element-label="${cleanNote || '业务操作'}" data-note="${cleanNote || screenName}：触发对应的业务处理">${cleanNote || pickLocaleText(locale, '业务操作', 'Action')}</button>`;
-  const modElementId =
-    wantsFilter && !/data-element-id="EL-FILTER-CUSTOMER"/.test(baseHtml)
-      ? 'EL-FILTER-CUSTOMER'
-      : `EL-MOD-${promptHash}`;
+  const modControl = useCustomerFilter
+    ? locale === 'en-US'
+      ? `<select class="input" data-element-id="EL-FILTER-CUSTOMER" data-element-type="SELECT" data-element-label="${cleanNote || 'Filter by customer'}" data-binding="Order.customerName" data-note="Filter by customer: narrow the list to orders for a selected customer"><option value="">All customers</option><option value="CUST-01">Morning Bakery</option><option value="CUST-02">Harbor Cafe</option></select>`
+      : `<select class="input" data-element-id="EL-FILTER-CUSTOMER" data-element-type="SELECT" data-element-label="${cleanNote || '按客户筛选'}" data-binding="Order.customerName" data-note="按客户筛选：选择客户名称过滤当前列表数据"><option value="">全部客户</option><option value="CUST-01">晨光烘焙坊</option><option value="CUST-02">海湾咖啡馆</option></select>`
+    : `<button type="button" class="btn" data-element-id="EL-MOD-${promptHash}" data-element-type="BUTTON" data-element-label="${cleanNote || '业务操作'}" data-note="${cleanNote || screenName}：触发对应的业务处理">${cleanNote || pickLocaleText(locale, '业务操作', 'Action')}</button>`;
+  const modElementId = useCustomerFilter ? 'EL-FILTER-CUSTOMER' : `EL-MOD-${promptHash}`;
 
   const updatedScreenHtml = (() => {
     if (baseHtml.includes(`data-element-id="${modElementId}"`)) {
@@ -1022,6 +1115,26 @@ export function createMockPrototypeModificationReplay(
       }
 
       if (last?.role === 'toolResult' && last.toolName === 'plan_screens') {
+        if (singleAgent) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  locale,
+                  `计划已确认，直接局部修改「${screenName}」并更新对应原型说明。`,
+                  `Plan ready; applying targeted update to "${screenName}" directly.`,
+                ),
+              ),
+              fauxToolCall('upsert_prototype_screen', {
+                screenId,
+                screenName,
+                screenType,
+                screenHtml: updatedScreenHtml,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
         return fauxAssistantMessage(
           [
             fauxThinking(
@@ -1047,7 +1160,11 @@ export function createMockPrototypeModificationReplay(
         );
       }
 
-      if (last?.role === 'toolResult' && last.toolName === 'spawn_subagents' && existingTours.length > 0) {
+      if (
+        last?.role === 'toolResult' &&
+        (last.toolName === 'spawn_subagents' || (singleAgent && last.toolName === 'upsert_prototype_screen')) &&
+        existingTours.length > 0
+      ) {
         const updatedTours = existingTours.map((tour, idx) =>
           idx === 0
             ? {

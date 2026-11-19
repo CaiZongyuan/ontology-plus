@@ -218,15 +218,23 @@ async function runPrototypeSmoke(
           tFirstScreenStartMs = elapsed;
           console.log(`  [${fmtSec(elapsed)}] first prototype_screen delta (${String(ev.data.screenId ?? '')})`);
         }
-      } else if (ev.event === 'prototype_build') {
-        const build = ev.data as { phase?: string; plan?: { screens?: unknown[] } };
-        if (build.phase === 'style' && tStyleStartMs === null) {
+      } else if (ev.event === 'prototype_style') {
+        if (tStyleStartMs === null) {
           tStyleStartMs = elapsed;
           console.log(`  [${fmtSec(elapsed)}] style phase started`);
         }
-        if ((build.plan?.screens?.length ?? 0) > 0 && tPlanReadyMs === null) {
+      } else if (ev.event === 'prototype_phase') {
+        const phase = String(ev.data.phase ?? '');
+        const status = String(ev.data.status ?? '');
+        if (phase === 'style' && status === 'now' && tStyleStartMs === null) {
+          tStyleStartMs = elapsed;
+          console.log(`  [${fmtSec(elapsed)}] style phase started`);
+        }
+      } else if (ev.event === 'prototype_plan') {
+        const screens = (ev.data.screens as unknown[] | undefined) ?? [];
+        if (screens.length > 0 && tPlanReadyMs === null) {
           tPlanReadyMs = elapsed;
-          console.log(`  [${fmtSec(elapsed)}] Build Plan ready (${build.plan?.screens?.length} screens)`);
+          console.log(`  [${fmtSec(elapsed)}] Build Plan ready (${screens.length} screens)`);
         }
       } else if (ev.event === 'run_error') {
         streamError = redactSecret(String(ev.data.message ?? 'unknown error'), apiKey);
