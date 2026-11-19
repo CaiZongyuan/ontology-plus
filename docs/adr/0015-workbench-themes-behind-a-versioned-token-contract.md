@@ -19,3 +19,7 @@ A theme is a table of values for the contract, with one column for light and one
 - Tailwind preflight stays off (ADR 0006), so primitives copied from shadcn/ui need a scoped reset.
 - Density and font size, if they become adjustable, are user preferences separate from the theme.
 - Renaming or removing a contract token breaks themes and bumps the contract version.
+
+## Amendments
+
+- **2026-11-18: additive `font-annotation` token for handwritten `Prototype Note` callouts (`#88`, `#94`).** The `font` group gains a fourth token, `font-annotation`, keeping `THEME_CONTRACT_VERSION = 1` (additive only). Both built-in themes configure it with an offline character-sliced (`unicode-range` `.woff2`) KaiTi webfont (`LXGW WenKai Lite`, SIL OFL 1.1) and system KaiTi fallbacks, bundled locally with zero CDN requests.

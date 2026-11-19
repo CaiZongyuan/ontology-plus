@@ -5,7 +5,9 @@ import {
   OUTSIDE_MAX_NOTE_W,
   computeDesignNotesFrameBounds,
   measureScreenDesignNotes,
+  placeCanvasArtboardsDesignNotes,
   placeDesignNotes,
+  segmentIntersectsRect,
   type DesignNoteTarget,
 } from './designNotesLayout.js';
 import type { Rect } from './camera.js';
@@ -221,5 +223,142 @@ describe('designNotesLayout: deterministic blank-space placement and DOM measure
       allowOutside: false,
     });
     expect(p2).toEqual(p1);
+  });
+
+  it('clips canvas targets to [0, 1280] × [0, 860], skips below-fold and scrolled-above elements, and clamps outer-gutter Y within artboard height', () => {
+    const denseOccupied: Rect[] = [{ x: 10, y: 10, w: 1260, h: 840 }];
+    const targets: DesignNoteTarget[] = [
+      // Scrolled completely above the 860px viewport -> skipped
+      { id: 'EL-ABOVE', note: '已滚出顶部：不应悬浮在标题上方。', rect: { x: 40, y: -170, w: 200, h: 40 } },
+      // Below the 860px fold -> skipped
+      { id: 'EL-BELOW', note: '折页下方：不应落到下一行画板上。', rect: { x: 40, y: 1020, w: 200, h: 48 } },
+      // Partially visible at top (y = -18..30 -> clipped to y = 0..30)
+      { id: 'EL-PARTIAL-TOP', note: '半露顶部：按可见区域画框。', rect: { x: 60, y: -18, w: 180, h: 48 } },
+      // Partially visible near bottom (y = 832..900 -> clipped to y = 832..860), outer gutter Y clamped <= 860 - h
+      { id: 'EL-PARTIAL-BOT', note: '底部控件：外侧说明不超出画板底边。', rect: { x: 60, y: 832, w: 180, h: 68 } },
+    ];
+
+    const placed = placeDesignNotes(targets, denseOccupied, {
+      width: 1280,
+      height: 860,
+      allowOutside: true,
+    });
+    expect(placed.map((p) => p.id)).toEqual(['EL-PARTIAL-TOP', 'EL-PARTIAL-BOT']);
+
+    const [topNote, botNote] = placed;
+    expect(topNote!.targetRect).toEqual({ x: 60, y: 0, w: 180, h: 30 });
+    expect(topNote!.box.y).toBeGreaterThanOrEqual(0);
+    expect(botNote!.targetRect).toEqual({ x: 60, y: 832, w: 180, h: 28 });
+    expect(botNote!.box.y).toBeGreaterThanOrEqual(0);
+    expect(botNote!.box.y + botNote!.box.h).toBeLessThanOrEqual(860);
+  });
+
+  it('coordinates shared 200px outer gutters across adjacent artboard columns so col 0 right gutter and col 1 left gutter never collide', () => {
+    const dense: Rect[] = [{ x: 10, y: 10, w: 1260, h: 840 }];
+    const byScreen = placeCanvasArtboardsDesignNotes([
+      {
+        screenId: 'SCR-COL0',
+        slotIndex: 0, // world x = 0..1280, right gutter = 1298..1462
+        targets: [
+          {
+            id: 'EL-COL0-RIGHT',
+            note: '左屏右侧说明：占用走廊上半段。',
+            rect: { x: 1040, y: 160, w: 180, h: 40 },
+          },
+        ],
+        occupied: dense,
+      },
+      {
+        screenId: 'SCR-COL1',
+        slotIndex: 1, // world x = 1480..2760, left gutter = 1298..1462 (same 200px corridor!)
+        targets: [
+          {
+            id: 'EL-COL1-LEFT',
+            note: '右屏左侧说明：在同一走廊自动错开不重叠。',
+            rect: { x: 40, y: 160, w: 180, h: 40 },
+          },
+        ],
+        occupied: dense,
+      },
+    ]);
+
+    const n0 = byScreen.get('SCR-COL0')![0]!;
+    const n1 = byScreen.get('SCR-COL1')![0]!;
+    const world0: Rect = { x: 0 + n0.box.x, y: n0.box.y, w: n0.box.w, h: n0.box.h };
+    const world1: Rect = { x: 1480 + n1.box.x, y: n1.box.y, w: n1.box.w, h: n1.box.h };
+
+    const overlaps =
+      world0.x < world1.x + world1.w &&
+      world0.x + world0.w > world1.x &&
+      world0.y < world1.y + world1.h &&
+      world0.y + world0.h > world1.y;
+    expect(overlaps).toBe(false);
+  });
+
+  it('detects nearest-opaque-ancestor card fills, boxShadow surfaces, <a href> and ARIA controls, avoids arrow-box crossings, and uses locale punctuation', () => {
+    // body is white, screenRoot is #f4f5f7, inner card is white (#fff) + boxShadow surface + <a href> + role="tab"
+    const parsed = new DOMParser().parseFromString(
+      `<!DOCTYPE html><html><body style="background: rgb(255, 255, 255);">
+        <section data-screen-id="SCR-1" class="is-active" style="background: rgb(244, 245, 247);">
+          <div id="white-card" style="background: rgb(255, 255, 255);">Card</div>
+          <div id="shadow-box" style="box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);">Shadow</div>
+          <a id="nav-link" href="#detail">查看详情</a>
+          <div id="aria-tab" role="tab">待收货</div>
+          <button data-element-id="EL-1" data-note="Order: Submit to supplier.">Submit</button>
+        </section>
+      </body></html>`,
+      'text/html',
+    );
+    const assign = (sel: string, r: Rect) => {
+      const el = parsed.querySelector<HTMLElement>(sel)!;
+      el.getBoundingClientRect = () =>
+        ({ x: r.x, y: r.y, left: r.x, top: r.y, right: r.x + r.w, bottom: r.y + r.h, width: r.w, height: r.h }) as DOMRect;
+    };
+    assign('[data-screen-id="SCR-1"]', { x: 0, y: 0, w: 1280, h: 860 });
+    assign('#white-card', { x: 40, y: 80, w: 300, h: 160 });
+    assign('#shadow-box', { x: 380, y: 80, w: 260, h: 160 });
+    assign('#nav-link', { x: 680, y: 90, w: 90, h: 28 });
+    assign('#aria-tab', { x: 800, y: 90, w: 80, h: 32 });
+    assign('[data-element-id="EL-1"]', { x: 960, y: 90, w: 100, h: 36 });
+
+    const m = measureScreenDesignNotes(parsed, 'SCR-1');
+    expect(m.groundColor).toBe('rgb(244, 245, 247)');
+    // #white-card and #shadow-box are both treated as occupied obstacles!
+    expect(m.occupied).toContainEqual({ x: 40, y: 80, w: 300, h: 160 });
+    expect(m.occupied).toContainEqual({ x: 380, y: 80, w: 260, h: 160 });
+    // <a href> and role="tab" are both treated as interactive controls in inkOccupied!
+    expect(m.inkOccupied).toContainEqual({ x: 680, y: 90, w: 90, h: 28 });
+    expect(m.inkOccupied).toContainEqual({ x: 800, y: 90, w: 80, h: 32 });
+
+    // Locale-aware ': ' separator in en-US
+    const enPlaced = placeDesignNotes(m.targets, m.occupied, { locale: 'en-US' });
+    expect(enPlaced[0]!.text).toBe('Order: Submit to supplier.');
+
+    // Arrow-crossing avoidance: two close targets where a naive placement of target 2 would shoot an arrow across note 1's box
+    const crossTargets: DesignNoteTarget[] = [
+      { id: 'EL-TOP-BTN', note: '新建订单：从这里发起补货。', rect: { x: 580, y: 70, w: 110, h: 36 } },
+      { id: 'EL-CARD-BELOW', note: '待审批退款：店长决定是否退回。', rect: { x: 520, y: 180, w: 190, h: 110 } },
+    ];
+    const crossOccupied: Rect[] = [
+      { x: 28, y: 65, w: 280, h: 60 },
+      { x: 580, y: 70, w: 110, h: 36 },
+      { x: 28, y: 180, w: 470, h: 110 },
+      { x: 520, y: 180, w: 190, h: 110 },
+    ];
+    const webNotes = placeDesignNotes(crossTargets, crossOccupied, {
+      width: 740,
+      height: 680,
+      allowOutside: false,
+      inkOccupied: crossOccupied.slice(0, 2),
+    });
+    expect(webNotes).toHaveLength(2);
+    const parseEndpoints = (arrowPath: string) => {
+      const nums = arrowPath.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+      return { p1: { x: nums[0]!, y: nums[1]! }, p2: { x: nums[4]!, y: nums[5]! } };
+    };
+    const e0 = parseEndpoints(webNotes[0]!.arrowPath);
+    const e1 = parseEndpoints(webNotes[1]!.arrowPath);
+    expect(segmentIntersectsRect(e1.p1, e1.p2, webNotes[0]!.box, 0)).toBe(false);
+    expect(segmentIntersectsRect(e0.p1, e0.p2, webNotes[1]!.box, 0)).toBe(false);
   });
 });

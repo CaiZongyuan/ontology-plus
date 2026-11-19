@@ -19,6 +19,7 @@ import {
   renderContractDoc,
   resolveThemeId,
   resolveThemeTokens,
+  themePrototypeMarkColor,
   themeSelectionColor,
   type WorkbenchTheme,
 } from '../index.js';
@@ -183,6 +184,14 @@ describe('built-in themes', () => {
     expect(themeSelectionColor('warm-paper')).toBe('#4c50c4');
     expect(themeSelectionColor('default')).toBe('#2466de');
     expect(themeSelectionColor('no-such-theme')).toBe(themeSelectionColor(DEFAULT_THEME_ID));
+
+    // Over both light (#ffffff, #f7f5f0) and dark (#121211) prototype surfaces, mark contrast stays >= 3:1 in every theme
+    for (const theme of BUILT_IN_THEMES) {
+      for (const surface of ['#ffffff', 'rgb(247, 245, 240)', '#121211', 'rgb(17, 19, 24)']) {
+        const mark = themePrototypeMarkColor(theme.id, surface);
+        expect(contrastRatio(mark, surface)!).toBeGreaterThanOrEqual(3);
+      }
+    }
   });
 
   it('fall back to the default for an unknown, missing, or malformed stored id', () => {

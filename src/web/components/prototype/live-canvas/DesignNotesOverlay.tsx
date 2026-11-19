@@ -1,14 +1,22 @@
 import React, { useRef } from 'react';
 import { NotebookPen } from 'lucide-react';
 import type { PrototypeCanvasArtboard } from '../../../../packages/ontology-core/index.js';
+import { themePrototypeMarkColor } from '../../../../packages/workbench-theme/index.js';
 import { usePreferences } from '../../../i18n.js';
 import { Button } from '../../beautifui/index.js';
 import type { ArtboardHandle } from './Artboard.js';
 import { businessText } from './buildView.js';
 import { ARTBOARD_H, ARTBOARD_W, artboardRect } from './camera.js';
 import {
+  CANVAS_FONT_SIZE,
+  CANVAS_LINE_HEIGHT,
+  WEB_FONT_SIZE,
+  WEB_LINE_HEIGHT,
   measureScreenDesignNotes,
+  noteTitleSeparator,
+  placeCanvasArtboardsDesignNotes,
   placeDesignNotes,
+  type CanvasArtboardNotesInput,
   type PlacedDesignNote,
 } from './designNotesLayout.js';
 
@@ -16,15 +24,20 @@ function DesignNotesScene({
   placed,
   width,
   height,
+  markColor,
+  locale,
   web = false,
 }: {
   placed: readonly PlacedDesignNote[];
   width: number;
   height: number;
+  markColor: string;
+  locale: 'zh-CN' | 'en-US';
   web?: boolean;
 }) {
-  const fontSize = web ? '16px' : '18px';
-  const lineHeight = web ? '23px' : '25px';
+  const fontSize = `${web ? WEB_FONT_SIZE : CANVAS_FONT_SIZE}px`;
+  const lineHeight = `${web ? WEB_LINE_HEIGHT : CANVAS_LINE_HEIGHT}px`;
+  const sep = noteTitleSeparator(locale);
 
   return (
     <>
@@ -34,12 +47,14 @@ function DesignNotesScene({
           <div
             key={`outline-${note.id}`}
             data-testid={`prototype-design-note-outline-${note.id}`}
-            className="pointer-events-none absolute rounded-sm border border-dashed border-primary"
+            className="pointer-events-none absolute rounded-sm border border-dashed"
             style={{
               left: note.targetRect.x - 4,
               top: note.targetRect.y - 4,
               width: note.targetRect.w + 8,
               height: note.targetRect.h + 8,
+              borderColor: markColor,
+              boxShadow: '0 0 0 1px color-mix(in srgb, var(--card) 72%, transparent)',
             }}
           />
         ))}
@@ -52,17 +67,39 @@ function DesignNotesScene({
         {placed.map((note) => (
           <g key={`arrow-${note.id}`} data-testid={`prototype-design-note-arrow-${note.id}`}>
             <path
+              data-role="arrow-halo"
               d={note.arrowPath}
               fill="none"
-              stroke="var(--primary)"
+              stroke="var(--card)"
+              strokeOpacity="0.78"
+              strokeWidth="3.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              data-role="arrow-halo"
+              d={note.arrowHead}
+              fill="none"
+              stroke="var(--card)"
+              strokeOpacity="0.78"
+              strokeWidth="3.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              data-role="arrow-stroke"
+              d={note.arrowPath}
+              fill="none"
+              stroke={markColor}
               strokeWidth="1.75"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
             <path
+              data-role="arrow-stroke"
               d={note.arrowHead}
               fill="none"
-              stroke="var(--primary)"
+              stroke={markColor}
               strokeWidth="1.75"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -93,7 +130,10 @@ function DesignNotesScene({
           >
             {note.title ? (
               <>
-                <span className="font-semibold">{note.title}：</span>
+                <span className="font-semibold">
+                  {note.title}
+                  {sep}
+                </span>
                 {note.body}
               </>
             ) : (
@@ -123,31 +163,49 @@ export function CanvasDesignNotesOverlay({
   locale: 'zh-CN' | 'en-US';
   layoutVersion: number;
 }) {
+  const { workbenchTheme } = usePreferences();
   void layoutVersion;
   if (!enabled) return null;
 
   const formatText = isBusiness ? (raw: string) => businessText(raw, locale) : undefined;
+  const inputs: CanvasArtboardNotesInput[] = [];
+  const groundByScreen = new Map<string, string | null>();
+
+  for (const board of screens) {
+    const slotIndex = indexById.get(board.screenId);
+    if (slotIndex === undefined) continue;
+    const doc = getHandle(board.screenId)?.document() ?? null;
+    const measured = measureScreenDesignNotes(doc, board.screenId, {
+      scrollMode: 'viewport',
+      fallbackWidth: ARTBOARD_W,
+      fallbackHeight: ARTBOARD_H,
+    });
+    groundByScreen.set(board.screenId, measured.groundColor);
+    inputs.push({
+      screenId: board.screenId,
+      slotIndex,
+      targets: measured.targets,
+      occupied: measured.occupied,
+    });
+  }
+
+  const placedByScreen = placeCanvasArtboardsDesignNotes(inputs, {
+    allSlotIndices: Array.from(indexById.values()),
+    locale,
+    ...(formatText ? { formatText } : {}),
+  });
 
   return (
     <>
       {screens.map((board) => {
         const slotIndex = indexById.get(board.screenId);
-        if (slotIndex === undefined) return null;
-        const doc = getHandle(board.screenId)?.document() ?? null;
-        const measured = measureScreenDesignNotes(doc, board.screenId, {
-          scrollMode: 'viewport',
-          fallbackWidth: ARTBOARD_W,
-          fallbackHeight: ARTBOARD_H,
-        });
-        if (measured.targets.length === 0) return null;
-        const placed = placeDesignNotes(measured.targets, measured.occupied, {
-          width: ARTBOARD_W,
-          height: ARTBOARD_H,
-          allowOutside: true,
-          ...(formatText ? { formatText } : {}),
-        });
-        if (placed.length === 0) return null;
+        const placed = placedByScreen.get(board.screenId);
+        if (slotIndex === undefined || !placed || placed.length === 0) return null;
         const worldRect = artboardRect(slotIndex);
+        const markColor = themePrototypeMarkColor(
+          workbenchTheme,
+          groundByScreen.get(board.screenId) ?? null,
+        );
 
         return (
           <div
@@ -163,7 +221,13 @@ export function CanvasDesignNotesOverlay({
               height: ARTBOARD_H,
             }}
           >
-            <DesignNotesScene placed={placed} width={ARTBOARD_W} height={ARTBOARD_H} />
+            <DesignNotesScene
+              placed={placed}
+              width={ARTBOARD_W}
+              height={ARTBOARD_H}
+              markColor={markColor}
+              locale={locale}
+            />
           </div>
         );
       })}
@@ -175,6 +239,7 @@ interface WebNotesCache {
   doc: Document;
   key: string;
   placed: PlacedDesignNote[];
+  groundColor: string | null;
   docWidth: number;
   docHeight: number;
   lastScrollLeft: number;
@@ -202,6 +267,7 @@ export function WebDesignNotesOverlay({
   locale: 'zh-CN' | 'en-US';
   layoutVersion: number;
 }) {
+  const { workbenchTheme } = usePreferences();
   const cacheRef = useRef<WebNotesCache | null>(null);
   void layoutVersion;
   if (!enabled || !screenId) return null;
@@ -224,11 +290,13 @@ export function WebDesignNotesOverlay({
     (scrollLeft !== prev.lastScrollLeft || scrollTop !== prev.lastScrollTop);
 
   let placed: PlacedDesignNote[];
+  let groundColor: string | null;
   let docWidth: number;
   let docHeight: number;
 
   if (onlyScrolled && prev) {
     placed = prev.placed;
+    groundColor = prev.groundColor;
     docWidth = prev.docWidth;
     docHeight = prev.docHeight;
     prev.lastScrollLeft = scrollLeft;
@@ -247,15 +315,18 @@ export function WebDesignNotesOverlay({
             height: measured.docHeight,
             allowOutside: false,
             inkOccupied: measured.inkOccupied,
+            locale,
             ...(formatText ? { formatText } : {}),
           })
         : [];
+    groundColor = measured.groundColor;
     docWidth = measured.docWidth;
     docHeight = measured.docHeight;
     cacheRef.current = {
       doc,
       key: cacheKey,
       placed,
+      groundColor,
       docWidth,
       docHeight,
       lastScrollLeft: scrollLeft,
@@ -264,6 +335,7 @@ export function WebDesignNotesOverlay({
   }
 
   if (placed.length === 0) return null;
+  const markColor = themePrototypeMarkColor(workbenchTheme, groundColor);
 
   return (
     <div
@@ -277,7 +349,14 @@ export function WebDesignNotesOverlay({
         transform: `translate3d(${-scrollLeft}px, ${-scrollTop}px, 0)`,
       }}
     >
-      <DesignNotesScene placed={placed} width={docWidth} height={docHeight} web />
+      <DesignNotesScene
+        placed={placed}
+        width={docWidth}
+        height={docHeight}
+        markColor={markColor}
+        locale={locale}
+        web
+      />
     </div>
   );
 }

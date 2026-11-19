@@ -152,7 +152,9 @@ test.describe('Prototype Design Notes (#94): handwritten callouts in canvas and 
     await expect(page.getByTestId('prototype-design-note-outline-EL-HOME-GREET')).toHaveCount(0);
     await expect(page.getByTestId('prototype-design-note-outline-EL-HOME-NEW-ORDER')).toHaveCount(1);
     await expect(
-      page.getByTestId('prototype-design-note-arrow-EL-HOME-NEW-ORDER').locator('path'),
+      page
+        .getByTestId('prototype-design-note-arrow-EL-HOME-NEW-ORDER')
+        .locator('path[data-role="arrow-stroke"]'),
     ).toHaveCount(2);
 
     // Determinism across re-toggle AND page reload

@@ -9,6 +9,7 @@ import {
   type PrototypeLiveState,
 } from '../../../../packages/ontology-core/index.js';
 import { checkBusinessViewMarkup } from '../../../../packages/business-vocabulary/index.js';
+import { contrastRatio } from '../../../../packages/workbench-theme/index.js';
 import { PreferencesProvider, usePreferences } from '../../../i18n.js';
 import { PrototypeLiveCanvas, type PrototypeLiveCanvasProps } from './PrototypeLiveCanvas.js';
 
@@ -52,26 +53,42 @@ function setViewportSize(w = 1200, h = 760) {
 
 function LocaleHarness({
   locale = 'zh-CN',
+  workbenchTheme,
+  theme,
   props,
 }: {
   locale?: 'zh-CN' | 'en-US';
+  workbenchTheme?: 'default' | 'warm-paper';
+  theme?: 'light' | 'dark' | 'system';
   props: PrototypeLiveCanvasProps;
 }) {
-  const { setLocale } = usePreferences();
+  const { setLocale, setWorkbenchTheme, setTheme } = usePreferences();
   React.useLayoutEffect(() => {
     setLocale(locale);
-  }, [locale, setLocale]);
+    if (workbenchTheme) setWorkbenchTheme(workbenchTheme);
+    if (theme) setTheme(theme);
+  }, [locale, setLocale, setTheme, setWorkbenchTheme, theme, workbenchTheme]);
   return <PrototypeLiveCanvas {...props} />;
 }
 
 async function render(
   props: PrototypeLiveCanvasProps,
-  options: { locale?: 'zh-CN' | 'en-US'; viewport?: { w: number; h: number } } = {},
+  options: {
+    locale?: 'zh-CN' | 'en-US';
+    workbenchTheme?: 'default' | 'warm-paper';
+    theme?: 'light' | 'dark' | 'system';
+    viewport?: { w: number; h: number };
+  } = {},
 ) {
   await act(async () => {
     root.render(
       <PreferencesProvider>
-        <LocaleHarness locale={options.locale ?? 'zh-CN'} props={props} />
+        <LocaleHarness
+          locale={options.locale ?? 'zh-CN'}
+          {...(options.workbenchTheme ? { workbenchTheme: options.workbenchTheme } : {})}
+          {...(options.theme ? { theme: options.theme } : {})}
+          props={props}
+        />
       </PreferencesProvider>,
     );
   });
@@ -327,5 +344,68 @@ describe('DesignNotesOverlay (#94): 设计说明 / Design Notes in canvas and we
     });
     await settle();
     expect(webOverlay.style.transform).toBe('translate3d(0px, -180px, 0)');
+  });
+
+  it('refreshes Design Notes on in-page DOM visibility mutations (tabs/modals) and keeps >= 3:1 mark contrast in warm-paper dark mode', async () => {
+    const tabDoc = `<!DOCTYPE html><html><body style="background: rgb(255, 255, 255);">
+      <main id="proto-screens-root">
+        <section class="proto-screen" data-screen-id="SCR-TABS" data-screen-name="订货与退款" data-screen-status="ready">
+          <button type="button" id="open-refund-tab" onclick="document.getElementById('refund-panel').style.display='block'">切换到退款</button>
+          <button type="button" data-element-id="EL-ALWAYS-BTN" data-note="常驻操作：随时新建订货。">新建订货</button>
+          <div id="refund-panel" style="display: none;">
+            <button type="button" data-element-id="EL-REFUND-APPROVE" data-note="同意退款：确认后 3 个工作日原路退回。">同意退款</button>
+          </div>
+        </section>
+      </main></body></html>`;
+
+    await render(
+      { documentHtml: tabDoc, live: null },
+      { workbenchTheme: 'warm-paper', theme: 'dark' },
+    );
+
+    const frame = host.querySelector<HTMLIFrameElement>(
+      '[data-testid="prototype-artboard-frame-SCR-TABS"]',
+    )!;
+    const innerDoc = frame.contentDocument!;
+    const alwaysBtn = innerDoc.querySelector<HTMLElement>('[data-element-id="EL-ALWAYS-BTN"]')!;
+    const refundBtn = innerDoc.querySelector<HTMLElement>('[data-element-id="EL-REFUND-APPROVE"]')!;
+    alwaysBtn.getBoundingClientRect = () =>
+      ({ x: 80, y: 90, left: 80, top: 90, right: 200, bottom: 126, width: 120, height: 36 }) as DOMRect;
+    refundBtn.getBoundingClientRect = () => {
+      const panel = innerDoc.getElementById('refund-panel')!;
+      if (panel.style.display === 'none') {
+        return { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } as DOMRect;
+      }
+      return { x: 80, y: 210, left: 80, top: 210, right: 210, bottom: 246, width: 130, height: 36 } as DOMRect;
+    };
+
+    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="prototype-dock-design-notes"]')!;
+    await act(async () => toggle.click());
+    await settle();
+
+    // Initially hidden tab panel note is absent; visible button note is rendered
+    expect(host.querySelector('[data-testid="prototype-design-note-EL-ALWAYS-BTN"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="prototype-design-note-EL-REFUND-APPROVE"]')).toBeNull();
+
+    // Verify >= 3:1 mark contrast on the light (#ffffff) prototype surface even in warm-paper dark mode!
+    const outline = host.querySelector<HTMLElement>(
+      '[data-testid="prototype-design-note-outline-EL-ALWAYS-BTN"]',
+    )!;
+    const arrowMainPath = host
+      .querySelectorAll<SVGPathElement>(
+        '[data-testid="prototype-design-note-arrow-EL-ALWAYS-BTN"] path[data-role="arrow-stroke"]',
+      )[0]!;
+    expect(contrastRatio(outline.style.borderColor, '#ffffff')!).toBeGreaterThanOrEqual(3);
+    expect(contrastRatio(arrowMainPath.getAttribute('stroke') ?? '', '#ffffff')!).toBeGreaterThanOrEqual(3);
+
+    // Click in-page tab (no scroll or resize event fired!): MutationObserver triggers layout refresh
+    await act(async () => {
+      innerDoc.getElementById('open-refund-tab')!.click();
+    });
+    await settle();
+
+    expect(
+      host.querySelector('[data-testid="prototype-design-note-EL-REFUND-APPROVE"]')?.textContent,
+    ).toContain('确认后 3 个工作日原路退回');
   });
 });
