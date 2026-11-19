@@ -155,8 +155,14 @@ export function PrototypeLiveCanvas({
   const views = useMemo(() => screenBuildViews(screens, plan, cleanName), [screens, plan, cleanName]);
   const viewById = useMemo(() => new Map(views.map((v) => [v.screenId, v] as const)), [views]);
   const screenNameById = useCallback(
-    (screenId: string) => viewById.get(screenId)?.name ?? screenId,
-    [viewById],
+    (screenId: string) => {
+      const known = viewById.get(screenId)?.name;
+      if (known) return known;
+      if (!isBusiness) return screenId;
+      const cleaned = sanitizeBusinessText(screenId, locale === 'en-US' ? 'en-US' : 'zh-CN').trim();
+      return cleaned || t('这一屏', 'this screen');
+    },
+    [isBusiness, locale, t, viewById],
   );
   const demoTours = useMemo(() => {
     const fromLiveHead = live?.frame?.headHtml ? readPrototypeDemoTours(live.frame.headHtml) : [];
@@ -362,8 +368,9 @@ export function PrototypeLiveCanvas({
       ? {
           mode: 'web',
           currentScreenId: () => webRef.current?.screenId() ?? webScreenId,
-          showScreen: (sid) => webRef.current?.open(sid),
+          showScreen: (sid) => webRef.current?.show(sid),
           documentFor: () => webRef.current?.document() ?? null,
+          resetScreens: () => webRef.current?.resetDom(),
           screenViewportSize: () => ({
             w: viewport.w || 1000,
             h: Math.max(240, (viewport.h || 700) - 96),
@@ -378,6 +385,11 @@ export function PrototypeLiveCanvas({
             frameTourScreenRef.current(sid);
           },
           documentFor: (sid) => getFrameHandle(sid)?.document() ?? null,
+          resetScreens: (sids) => {
+            for (const sid of sids) {
+              getFrameHandle(sid)?.resetDom();
+            }
+          },
           screenViewportSize: () => ({ w: ARTBOARD_W, h: ARTBOARD_H }),
           onDomMutated: bumpLayout,
         };
@@ -771,7 +783,9 @@ export function PrototypeLiveCanvas({
             <CanvasDemoTourOverlay
               controller={tourController}
               indexById={indexById}
+              getHandle={getFrameHandle}
               cam={cam}
+              layoutVersion={layoutVersion}
             />
           )}
 
@@ -796,7 +810,20 @@ export function PrototypeLiveCanvas({
               viewsById={viewById}
               liveActivities={touring ? [] : activities}
               cursorPrefs={cursorPrefs}
-              overlaySlot={touring ? <WebDemoTourOverlay controller={tourController} /> : undefined}
+              renderOverlay={
+                touring
+                  ? (ctx) => (
+                      <WebDemoTourOverlay
+                        controller={tourController}
+                        activeScreenId={ctx.screenId}
+                        getHandle={ctx.getHandle}
+                        pageWidth={ctx.pageWidth}
+                        pageHeight={ctx.pageHeight}
+                        layoutVersion={ctx.layoutVersion}
+                      />
+                    )
+                  : undefined
+              }
             />
           )}
 
@@ -908,12 +935,12 @@ export function PrototypeLiveCanvas({
           )}
         </div>
 
-        {/* Right sidebar: Demo Tour step script (#95) while playing, otherwise Build log (#90/#92). */}
+        {/* Right sidebar: Demo Tour steps (#95) while playing, otherwise Build log (#90/#92). */}
         {touring ? (
           <aside
             className="flex min-h-0 flex-col border-l border-border bg-card"
             data-testid="demo-tour-script-panel"
-            aria-label={t('演示路线步骤脚本', 'Demo tour script')}
+            aria-label={t('演示路线步骤', 'Demo Tour steps')}
           >
             <DemoTourScriptPanel
               controller={tourController}

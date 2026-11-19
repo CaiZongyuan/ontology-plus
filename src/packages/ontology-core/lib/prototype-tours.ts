@@ -44,6 +44,7 @@ export type PrototypeDemoTourIssueCode =
   | 'missing_screen_id'
   | 'unknown_screen'
   | 'screen_not_ready'
+  | 'missing_element_id'
   | 'unknown_element'
   | 'missing_caption'
   | 'invalid_action'
@@ -251,6 +252,70 @@ function scanDocumentAnchorInventory(html: string): ScannedScreenInventory {
   return { screenIds, readyScreens, elementsByScreen };
 }
 
+interface RawTourHeader {
+  id: string;
+  goal: string;
+  audience: string;
+  rawSteps: unknown[];
+}
+
+interface RawStepFields {
+  screenId: string;
+  elementId?: string;
+  rawAction: string;
+  normalizedAction: string;
+  caption: string;
+  text?: string;
+  rawTimes?: number;
+}
+
+function parseRawTourHeader(rec: Record<string, unknown>, index: number, usedIds: Set<string>): RawTourHeader {
+  return {
+    id: normalizeTourId(rec.id, index, usedIds),
+    goal: sanitizeShortField(rec.goal ?? rec.title ?? rec.name, 120),
+    audience: sanitizeShortField(rec.audience ?? rec.who ?? rec.role, 64),
+    rawSteps: Array.isArray(rec.steps) ? rec.steps : [],
+  };
+}
+
+function parseRawStepFields(stepRec: Record<string, unknown>, fallbackAction = ''): RawStepFields {
+  const screenId =
+    typeof (stepRec.screenId ?? stepRec.screen) === 'string'
+      ? String(stepRec.screenId ?? stepRec.screen).trim()
+      : '';
+  const rawElement = stepRec.elementId ?? stepRec.element;
+  const elementId = typeof rawElement === 'string' && rawElement.trim() ? rawElement.trim() : undefined;
+  const rawAction = typeof stepRec.action === 'string' ? stepRec.action.trim().toLowerCase() : fallbackAction;
+  const normalizedAction = rawAction === 'inc' ? 'click' : rawAction;
+  const caption = sanitizeShortField(stepRec.caption ?? stepRec.narration, 240);
+  const text = typeof stepRec.text === 'string' ? stepRec.text : undefined;
+  const rawTimes = typeof stepRec.times === 'number' ? stepRec.times : undefined;
+  return {
+    screenId,
+    ...(elementId ? { elementId } : {}),
+    rawAction,
+    normalizedAction,
+    caption,
+    ...(text !== undefined ? { text } : {}),
+    ...(rawTimes !== undefined ? { rawTimes } : {}),
+  };
+}
+
+function buildStepFromFields(fields: RawStepFields, action: PrototypeDemoTourAction): PrototypeDemoTourStep {
+  const times =
+    action === 'click' && fields.rawTimes !== undefined && Number.isFinite(fields.rawTimes) && Math.round(fields.rawTimes) > 1
+      ? Math.min(10, Math.round(fields.rawTimes))
+      : undefined;
+  return {
+    screenId: fields.screenId,
+    ...(fields.elementId ? { elementId: fields.elementId } : {}),
+    action,
+    caption: fields.caption,
+    ...(action === 'type' && fields.text ? { text: fields.text } : {}),
+    ...(times ? { times } : {}),
+  };
+}
+
 function coerceTourList(rawTours: unknown): PrototypeDemoTour[] {
   if (!Array.isArray(rawTours)) return [];
   const usedIds = new Set<string>();
@@ -258,44 +323,19 @@ function coerceTourList(rawTours: unknown): PrototypeDemoTour[] {
 
   rawTours.forEach((rawTour, idx) => {
     if (!rawTour || typeof rawTour !== 'object') return;
-    const rec = rawTour as Record<string, unknown>;
-    const id = normalizeTourId(rec.id, idx, usedIds);
-    const goal = sanitizeShortField(rec.goal ?? rec.title ?? rec.name, 120);
-    const audience = sanitizeShortField(rec.audience ?? rec.who ?? rec.role, 64);
-    const rawSteps = Array.isArray(rec.steps) ? rec.steps : [];
+    const { id, goal, audience, rawSteps } = parseRawTourHeader(rawTour as Record<string, unknown>, idx, usedIds);
     const steps: PrototypeDemoTourStep[] = [];
 
     for (const rawStep of rawSteps) {
       if (!rawStep || typeof rawStep !== 'object') continue;
-      const stepRec = rawStep as Record<string, unknown>;
-      const screenId = typeof (stepRec.screenId ?? stepRec.screen) === 'string'
-        ? String(stepRec.screenId ?? stepRec.screen).trim()
-        : '';
-      const rawElement = stepRec.elementId ?? stepRec.element;
-      const elementId = typeof rawElement === 'string' && rawElement.trim() ? rawElement.trim() : undefined;
-      const rawAction = typeof stepRec.action === 'string' ? stepRec.action.trim().toLowerCase() : 'look';
-      const action: PrototypeDemoTourAction =
-        rawAction === 'inc'
-          ? 'click'
-          : VALID_ACTIONS.has(rawAction)
-            ? (rawAction as PrototypeDemoTourAction)
-            : 'look';
-      const caption = sanitizeShortField(stepRec.caption ?? stepRec.narration, 240);
-      const text = typeof stepRec.text === 'string' ? stepRec.text : undefined;
-      const rawTimes = typeof stepRec.times === 'number' ? stepRec.times : undefined;
-      const times =
-        rawTimes !== undefined && Number.isFinite(rawTimes) && Math.round(rawTimes) > 1
-          ? Math.min(10, Math.round(rawTimes))
-          : undefined;
-      if (!screenId || !caption) continue;
-      steps.push({
-        screenId,
-        ...(elementId ? { elementId } : {}),
-        action,
-        caption,
-        ...(action === 'type' && text !== undefined ? { text } : {}),
-        ...(action === 'click' && times ? { times } : {}),
-      });
+      const fields = parseRawStepFields(rawStep as Record<string, unknown>, 'look');
+      const action: PrototypeDemoTourAction = VALID_ACTIONS.has(fields.normalizedAction)
+        ? (fields.normalizedAction as PrototypeDemoTourAction)
+        : 'look';
+      if (!fields.screenId || !fields.caption) continue;
+      if ((action === 'click' || action === 'type') && !fields.elementId) continue;
+      if (action === 'type' && (!fields.text || !fields.text.trim())) continue;
+      steps.push(buildStepFromFields(fields, action));
     }
 
     if (goal && steps.length > 0) {
@@ -442,10 +482,11 @@ export function validatePrototypeDemoTours(
       return;
     }
 
-    const rec = rawTour as Record<string, unknown>;
-    const tourId = normalizeTourId(rec.id, tourIndex, usedIds);
-    const goal = sanitizeShortField(rec.goal ?? rec.title ?? rec.name, 120);
-    const audience = sanitizeShortField(rec.audience ?? rec.who ?? rec.role, 64);
+    const { id: tourId, goal, audience, rawSteps } = parseRawTourHeader(
+      rawTour as Record<string, unknown>,
+      tourIndex,
+      usedIds,
+    );
 
     if (!goal) {
       issues.push({
@@ -458,7 +499,6 @@ export function validatePrototypeDemoTours(
       });
     }
 
-    const rawSteps = Array.isArray(rec.steps) ? rec.steps : [];
     if (rawSteps.length === 0) {
       issues.push({
         tourIndex,
@@ -486,16 +526,8 @@ export function validatePrototypeDemoTours(
         return;
       }
 
-      const stepRec = rawStep as Record<string, unknown>;
-      const screenId =
-        typeof (stepRec.screenId ?? stepRec.screen) === 'string'
-          ? String(stepRec.screenId ?? stepRec.screen).trim()
-          : '';
-      const rawElement = stepRec.elementId ?? stepRec.element;
-      const elementId = typeof rawElement === 'string' && rawElement.trim() ? rawElement.trim() : undefined;
-      const rawAction = typeof stepRec.action === 'string' ? stepRec.action.trim().toLowerCase() : '';
-      const normalizedAction = rawAction === 'inc' ? 'click' : rawAction;
-      const caption = sanitizeShortField(stepRec.caption ?? stepRec.narration, 240);
+      const fields = parseRawStepFields(rawStep as Record<string, unknown>);
+      const { screenId, elementId, rawAction, normalizedAction, caption, text } = fields;
 
       if (!screenId) {
         issues.push({
@@ -538,23 +570,6 @@ export function validatePrototypeDemoTours(
         return;
       }
 
-      const screenElements = inv.elementsByScreen.get(screenId) ?? new Set<string>();
-      if (elementId && !screenElements.has(elementId)) {
-        const availableEls = Array.from(screenElements).slice(0, 24).join(', ') || '(none)';
-        issues.push({
-          tourIndex,
-          tourId,
-          stepIndex,
-          code: 'unknown_element',
-          screenId,
-          elementId,
-          message: zh
-            ? `路线「${goal || tourId}」第 ${stepIndex + 1} 步在屏幕 "${screenId}" 中未找到元素锚点 "${elementId}"。该屏可用 data-element-id：[${availableEls}]。`
-            : `Tour "${goal || tourId}" step #${stepIndex + 1} references element "${elementId}" which does not exist in screen "${screenId}". Available data-element-id in "${screenId}": [${availableEls}].`,
-        });
-        return;
-      }
-
       if (!VALID_ACTIONS.has(normalizedAction)) {
         issues.push({
           tourIndex,
@@ -571,6 +586,38 @@ export function validatePrototypeDemoTours(
       }
 
       const action = normalizedAction as PrototypeDemoTourAction;
+      const screenElements = inv.elementsByScreen.get(screenId) ?? new Set<string>();
+      const availableEls = Array.from(screenElements).slice(0, 24).join(', ') || '(none)';
+
+      if ((action === 'click' || action === 'type') && !elementId) {
+        issues.push({
+          tourIndex,
+          tourId,
+          stepIndex,
+          code: 'missing_element_id',
+          screenId,
+          message: zh
+            ? `路线「${goal || tourId}」第 ${stepIndex + 1} 步动作是 ${action}，必须指定屏幕 "${screenId}" 内的元素锚点 elementId。可用 data-element-id：[${availableEls}]。`
+            : `Tour "${goal || tourId}" step #${stepIndex + 1} uses action="${action}" and requires an \`elementId\` inside screen "${screenId}". Available data-element-id: [${availableEls}].`,
+        });
+        return;
+      }
+
+      if (elementId && !screenElements.has(elementId)) {
+        issues.push({
+          tourIndex,
+          tourId,
+          stepIndex,
+          code: 'unknown_element',
+          screenId,
+          elementId,
+          message: zh
+            ? `路线「${goal || tourId}」第 ${stepIndex + 1} 步在屏幕 "${screenId}" 中未找到元素锚点 "${elementId}"。该屏可用 data-element-id：[${availableEls}]。`
+            : `Tour "${goal || tourId}" step #${stepIndex + 1} references element "${elementId}" which does not exist in screen "${screenId}". Available data-element-id in "${screenId}": [${availableEls}].`,
+        });
+        return;
+      }
+
       if (!caption) {
         issues.push({
           tourIndex,
@@ -586,7 +633,6 @@ export function validatePrototypeDemoTours(
         return;
       }
 
-      const text = typeof stepRec.text === 'string' ? stepRec.text : undefined;
       if (action === 'type' && (!text || !text.trim())) {
         issues.push({
           tourIndex,
@@ -602,20 +648,7 @@ export function validatePrototypeDemoTours(
         return;
       }
 
-      const rawTimes = typeof stepRec.times === 'number' ? stepRec.times : undefined;
-      const times =
-        action === 'click' && rawTimes !== undefined && Number.isFinite(rawTimes) && Math.round(rawTimes) > 1
-          ? Math.min(10, Math.round(rawTimes))
-          : undefined;
-
-      steps.push({
-        screenId,
-        ...(elementId ? { elementId } : {}),
-        action,
-        caption,
-        ...(action === 'type' && text ? { text } : {}),
-        ...(times ? { times } : {}),
-      });
+      steps.push(buildStepFromFields(fields, action));
     });
 
     if (goal && steps.length > 0) {

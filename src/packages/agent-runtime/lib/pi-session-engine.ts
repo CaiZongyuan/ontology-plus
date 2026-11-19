@@ -6203,6 +6203,23 @@ async function executeUnifiedTurnCore(
 
     const runWriteDemoToursTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
       const started = Date.now();
+      const finishToursCall = (
+        output: string,
+        payload: Record<string, unknown>,
+        isError: boolean,
+      ): ExecutedToolStep => ({
+        trace: {
+          id: callId,
+          toolName: WRITE_DEMO_TOURS_TOOL_NAME,
+          arguments: rawArgs,
+          output,
+          isError,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify(payload),
+        isError,
+      });
+
       const activeHtml =
         prototypeTurnDraft?.workingHtml ?? resolveTargetPrototypeForSession(store, sessionState)?.htmlContent;
       if (!activeHtml?.trim()) {
@@ -6212,18 +6229,7 @@ async function executeUnifiedTurnCore(
           'Draw the prototype screens before calling write_demo_tours.',
         );
         prototypeBuildRun?.commitTours({ ok: false });
-        return {
-          trace: {
-            id: callId,
-            toolName: WRITE_DEMO_TOURS_TOOL_NAME,
-            arguments: rawArgs,
-            output: msg,
-            isError: true,
-            durationMs: Date.now() - started,
-          },
-          toolResultContent: JSON.stringify({ status: 'ERROR', diagnostic: msg }),
-          isError: true,
-        };
+        return finishToursCall(msg, { status: 'ERROR', diagnostic: msg }, true);
       }
 
       const rawSerialized = JSON.stringify(rawArgs.tours ?? '');
@@ -6234,18 +6240,7 @@ async function executeUnifiedTurnCore(
           'Demo tours must not contain window.alert / confirm / prompt.',
         );
         prototypeBuildRun?.commitTours({ ok: false }, activeHtml);
-        return {
-          trace: {
-            id: callId,
-            toolName: WRITE_DEMO_TOURS_TOOL_NAME,
-            arguments: rawArgs,
-            output: dialogMsg,
-            isError: true,
-            durationMs: Date.now() - started,
-          },
-          toolResultContent: JSON.stringify({ status: 'ERROR', diagnostic: dialogMsg }),
-          isError: true,
-        };
+        return finishToursCall(dialogMsg, { status: 'ERROR', diagnostic: dialogMsg }, true);
       }
 
       const validation = validatePrototypeDemoTours(activeHtml, rawArgs.tours, {
@@ -6256,24 +6251,17 @@ async function executeUnifiedTurnCore(
       if (!validation.ok) {
         const diagnostic = validation.issues.map((i) => i.message).join(' ');
         prototypeBuildRun?.commitTours({ ok: false }, activeHtml);
-        return {
-          trace: {
-            id: callId,
-            toolName: WRITE_DEMO_TOURS_TOOL_NAME,
-            arguments: rawArgs,
-            output: diagnostic,
-            isError: true,
-            durationMs: Date.now() - started,
-          },
-          toolResultContent: JSON.stringify({
+        return finishToursCall(
+          diagnostic,
+          {
             status: 'REJECTED_BY_TOUR_VALIDATOR',
             diagnostic,
             issues: validation.issues,
             availableScreenIds: validation.availableScreenIds,
             availableElementsByScreen: validation.availableElementsByScreen,
-          }),
-          isError: true,
-        };
+          },
+          true,
+        );
       }
 
       const nextHtml = writePrototypeDemoTours(activeHtml, validation.tours);
@@ -6288,23 +6276,31 @@ async function executeUnifiedTurnCore(
         `演示路线已就绪：共 ${validation.tours.length} 条（${validation.tours.map((t) => `「${t.goal}」`).join('、')}）。`,
         `Demo tours ready: ${validation.tours.length} tours (${validation.tours.map((t) => `"${t.goal}"`).join(', ')}).`,
       );
-      return {
-        trace: {
-          id: callId,
-          toolName: WRITE_DEMO_TOURS_TOOL_NAME,
-          arguments: rawArgs,
-          output: summary,
-          isError: false,
-          durationMs: Date.now() - started,
-        },
-        toolResultContent: JSON.stringify({
+      return finishToursCall(
+        summary,
+        {
           status: 'OK',
           summary,
           toursCount: validation.tours.length,
           tours: validation.tours.map((t) => ({ id: t.id, goal: t.goal, stepCount: t.steps.length })),
-        }),
-        isError: false,
-      };
+        },
+        false,
+      );
+    };
+
+    const runLeadPrototypeTool = (
+      callId: string,
+      toolName: string,
+      toolArgs: Record<string, unknown>,
+      currentStep: number,
+    ): Promise<ExecutedToolStep> | ExecutedToolStep | null => {
+      if (toolName === 'spawn_subagents') return runSpawnSubagentsTool(callId, toolArgs, currentStep);
+      if (toolName === PLAN_SCREENS_TOOL_NAME) return runPlanScreensTool(callId, toolArgs);
+      if (toolName === DEFINE_STYLE_TOOL_NAME) return runDefineStyleTool(callId, toolArgs);
+      if (toolName === REPORT_REVIEW_TOOL_NAME) return runReportReviewTool(callId, toolArgs);
+      if (toolName === EDIT_SCREEN_TOOL_NAME) return runEditScreenTool(callId, toolArgs);
+      if (toolName === WRITE_DEMO_TOURS_TOOL_NAME) return runWriteDemoToursTool(callId, toolArgs);
+      return null;
     };
 
     try {
@@ -6595,19 +6591,12 @@ async function executeUnifiedTurnCore(
             },
           });
 
+          const leadDirectOut = runLeadPrototypeTool(tc.id, tc.name, tcArgs, step + 1);
           const executed: ExecutedToolStep =
-            tc.name === 'spawn_subagents'
-              ? await runSpawnSubagentsTool(tc.id, tcArgs, step + 1)
-              : tc.name === PLAN_SCREENS_TOOL_NAME
-                ? runPlanScreensTool(tc.id, tcArgs)
-              : tc.name === DEFINE_STYLE_TOOL_NAME
-                ? runDefineStyleTool(tc.id, tcArgs)
-              : tc.name === REPORT_REVIEW_TOOL_NAME
-                ? runReportReviewTool(tc.id, tcArgs)
-              : tc.name === EDIT_SCREEN_TOOL_NAME
-                ? runEditScreenTool(tc.id, tcArgs)
-              : tc.name === WRITE_DEMO_TOURS_TOOL_NAME
-                ? runWriteDemoToursTool(tc.id, tcArgs)
+            leadDirectOut !== null
+              ? leadDirectOut instanceof Promise
+                ? await leadDirectOut
+                : leadDirectOut
               : tc.name === 'codemode'
                 ? await (async (): Promise<ExecutedToolStep> => {
                     const startedCm = Date.now();
@@ -6636,19 +6625,12 @@ async function executeUnifiedTurnCore(
                           },
                         });
 
+                        const leadNestedOut = runLeadPrototypeTool(nestedCallId, nestedToolName, nestedArgs, step + 1);
                         const nestedOut =
-                          nestedToolName === 'spawn_subagents'
-                            ? await runSpawnSubagentsTool(nestedCallId, nestedArgs, step + 1)
-                            : nestedToolName === PLAN_SCREENS_TOOL_NAME
-                              ? runPlanScreensTool(nestedCallId, nestedArgs)
-                            : nestedToolName === DEFINE_STYLE_TOOL_NAME
-                              ? runDefineStyleTool(nestedCallId, nestedArgs)
-                            : nestedToolName === REPORT_REVIEW_TOOL_NAME
-                              ? runReportReviewTool(nestedCallId, nestedArgs)
-                            : nestedToolName === EDIT_SCREEN_TOOL_NAME
-                              ? runEditScreenTool(nestedCallId, nestedArgs)
-                            : nestedToolName === WRITE_DEMO_TOURS_TOOL_NAME
-                              ? runWriteDemoToursTool(nestedCallId, nestedArgs)
+                          leadNestedOut !== null
+                            ? leadNestedOut instanceof Promise
+                              ? await leadNestedOut
+                              : leadNestedOut
                             : await executeUnifiedToolCall(
                                 store,
                                 sessionState,

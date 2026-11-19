@@ -20,6 +20,21 @@ export const DEFAULT_DEMO_TOUR_TIMING: DemoTourTiming = {
   actionDwellMs: 1100,
 };
 
+export interface DemoTourCursorState {
+  screenId: string;
+  elementId?: string;
+  x: number;
+  y: number;
+  clickCount: number;
+  gliding: boolean;
+}
+
+export interface DemoTourSpotlightState {
+  screenId: string;
+  elementId?: string;
+  rect: ArtboardRect;
+}
+
 export interface DemoTourPlaybackState {
   tour: PrototypeDemoTour | null;
   stepIndex: number;
@@ -27,9 +42,9 @@ export interface DemoTourPlaybackState {
   completed: boolean;
   screenId: string | null;
   /** Cursor position in the active screen's frame viewport coordinates. */
-  cursor: { screenId: string; x: number; y: number; clickCount: number } | null;
+  cursor: DemoTourCursorState | null;
   /** Spotlight cutout in the active screen's frame viewport coordinates. */
-  spotlight: { screenId: string; rect: ArtboardRect } | null;
+  spotlight: DemoTourSpotlightState | null;
 }
 
 export interface DemoTourStageAdapter {
@@ -37,6 +52,7 @@ export interface DemoTourStageAdapter {
   currentScreenId: () => string | undefined;
   showScreen: (screenId: string) => void;
   documentFor: (screenId: string) => Document | null;
+  resetScreens: (screenIds: readonly string[]) => void;
   screenViewportSize: (screenId: string) => { w: number; h: number };
   onDomMutated?: () => void;
 }
@@ -62,6 +78,22 @@ export function prefersReducedMotion(): boolean {
   } catch {
     return false;
   }
+}
+
+export function padSpotlightRect(rect: ArtboardRect, pad = 6): ArtboardRect {
+  return {
+    x: rect.x - pad,
+    y: rect.y - pad,
+    w: Math.max(16, rect.w + pad * 2),
+    h: Math.max(16, rect.h + pad * 2),
+  };
+}
+
+export function computeCursorAim(rect: ArtboardRect): { x: number; y: number } {
+  return {
+    x: rect.x + Math.min(Math.max(rect.w * 0.35, 14), 72),
+    y: rect.y + rect.h * 0.5,
+  };
 }
 
 function findTourElement(doc: Document | null, screenId: string, elementId: string): HTMLElement | null {
@@ -116,6 +148,32 @@ function setFormControlValue(control: HTMLInputElement | HTMLTextAreaElement, va
   }
 }
 
+function applyTypeControlValue(el: HTMLElement, text: string): void {
+  const control =
+    el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
+      ? (el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)
+      : el.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select');
+  if (!control) return;
+  const win = control.ownerDocument.defaultView;
+  if (control.tagName === 'SELECT') {
+    const selectEl = control as HTMLSelectElement;
+    const match = Array.from(selectEl.options).find(
+      (opt) => opt.value === text || opt.textContent?.trim() === text.trim(),
+    );
+    if (match) selectEl.value = match.value;
+    if (win) {
+      selectEl.dispatchEvent(new win.Event('input', { bubbles: true }));
+      selectEl.dispatchEvent(new win.Event('change', { bubbles: true }));
+    }
+    return;
+  }
+  const textControl = control as HTMLInputElement | HTMLTextAreaElement;
+  setFormControlValue(textControl, text);
+  if (win) {
+    textControl.dispatchEvent(new win.Event('change', { bubbles: true }));
+  }
+}
+
 function clickRealElement(target: HTMLElement): void {
   target.focus?.({ preventScroll: true });
   if (typeof target.click === 'function') {
@@ -128,13 +186,42 @@ function clickRealElement(target: HTMLElement): void {
   }
 }
 
-function padSpotlightRect(rect: ArtboardRect, pad = 6): ArtboardRect {
-  return {
-    x: rect.x - pad,
-    y: rect.y - pad,
-    w: Math.max(16, rect.w + pad * 2),
-    h: Math.max(16, rect.h + pad * 2),
-  };
+function resolveClickTarget(el: HTMLElement, repeats: number): HTMLElement {
+  return repeats > 1 && el.tagName !== 'BUTTON' && el.tagName !== 'A'
+    ? (el.querySelector<HTMLElement>('[data-inc], button') ?? el)
+    : el;
+}
+
+function readNavigationTarget(target: HTMLElement): string | null {
+  const anchor = target.closest?.('[data-navigate-to],[data-nav-screen]');
+  const nav = anchor?.getAttribute('data-navigate-to') || anchor?.getAttribute('data-nav-screen');
+  return nav && nav.trim() ? nav.trim() : null;
+}
+
+/**
+ * Synchronously applies the DOM side-effects of a prior step (`0 .. targetIndex - 1`) without
+ * dwell or animation so jumping to any step starts from deterministic prototype state.
+ */
+function fastApplyStep(step: PrototypeDemoTourStep, adapter: DemoTourStageAdapter): void {
+  if (step.action === 'look' || !step.elementId) return;
+  const doc = adapter.documentFor(step.screenId);
+  const el = findTourElement(doc, step.screenId, step.elementId);
+  if (!el) return;
+  if (step.action === 'click') {
+    const repeats = Math.max(1, Math.min(10, step.times ?? 1));
+    const clickTarget = resolveClickTarget(el, repeats);
+    const navTarget = readNavigationTarget(clickTarget);
+    for (let r = 0; r < repeats; r += 1) {
+      clickRealElement(clickTarget);
+    }
+    if (navTarget && navTarget !== step.screenId) {
+      adapter.showScreen(navTarget);
+    }
+    adapter.onDomMutated?.();
+  } else if (step.action === 'type') {
+    applyTypeControlValue(el, step.text ?? '');
+    adapter.onDomMutated?.();
+  }
 }
 
 export interface DemoTourController {
@@ -152,9 +239,17 @@ export function useDemoTourController(
   const [state, setState] = useState<DemoTourPlaybackState>(INITIAL_STATE);
   const tokenRef = useRef(0);
   const pausedRef = useRef(false);
-  const cursorPosRef = useRef<{ screenId: string; x: number; y: number; clickCount: number } | null>(null);
+  const cursorPosRef = useRef<DemoTourCursorState | null>(null);
   const timingRef = useRef<DemoTourTiming>({ ...DEFAULT_DEMO_TOUR_TIMING, ...timingOverride });
   timingRef.current = { ...DEFAULT_DEMO_TOUR_TIMING, ...timingOverride };
+
+  const waitUnpaused = async (ms: number, runToken: number): Promise<void> => {
+    if (runToken !== tokenRef.current) throw new Error('cancelled');
+    if (ms > 0) {
+      await new Promise((r) => setTimeout(r, ms));
+    }
+    if (runToken !== tokenRef.current) throw new Error('cancelled');
+  };
 
   const waitPausable = async (ms: number, runToken: number): Promise<void> => {
     if (ms <= 0 && !pausedRef.current) {
@@ -175,14 +270,23 @@ export function useDemoTourController(
 
   const glideCursor = async (
     screenId: string,
+    elementId: string,
     aim: { x: number; y: number },
     durationMs: number,
     runToken: number,
+    instant: boolean,
   ): Promise<void> => {
     const prev = cursorPosRef.current;
     const reduce = prefersReducedMotion();
-    if (reduce || durationMs <= 0 || !prev || prev.screenId !== screenId) {
-      const next = { screenId, x: aim.x, y: aim.y, clickCount: prev?.clickCount ?? 0 };
+    if (instant || reduce || durationMs <= 0 || !prev || prev.screenId !== screenId) {
+      const next: DemoTourCursorState = {
+        screenId,
+        elementId,
+        x: aim.x,
+        y: aim.y,
+        clickCount: prev?.clickCount ?? 0,
+        gliding: false,
+      };
       cursorPosRef.current = next;
       setState((s) => ({ ...s, cursor: next }));
       return;
@@ -197,15 +301,18 @@ export function useDemoTourController(
       }
       const p = Math.min(1, (performance.now() - startedAt) / durationMs);
       const ease = 1 - Math.pow(1 - p, 3);
-      const cur = {
+      const done = p >= 1;
+      const cur: DemoTourCursorState = {
         screenId,
+        elementId,
         x: from.x + (aim.x - from.x) * ease,
         y: from.y + (aim.y - from.y) * ease,
         clickCount: cursorPosRef.current?.clickCount ?? 0,
+        gliding: !done,
       };
       cursorPosRef.current = cur;
       setState((s) => ({ ...s, cursor: cur }));
-      if (p >= 1) return;
+      if (done) return;
       await new Promise((r) =>
         typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => r(undefined)) : setTimeout(r, 16),
       );
@@ -218,13 +325,22 @@ export function useDemoTourController(
     tour: PrototypeDemoTour,
     previousScreenId: string | null,
     runToken: number,
+    bypassPauseBeforeDwell: boolean,
   ): Promise<string> => {
     const adapter = adapterRef.current;
     const timing = timingRef.current;
     const currentScreen = adapter.currentScreenId();
+    const domScreenActive =
+      adapter.mode === 'web'
+        ? Boolean(
+            adapter
+              .documentFor(step.screenId)
+              ?.querySelector(`[data-screen-id="${cssEscapeAttr(step.screenId)}"].is-active`),
+          )
+        : true;
     const needsSwitch =
       adapter.mode === 'web'
-        ? currentScreen !== step.screenId
+        ? currentScreen !== step.screenId || !domScreenActive
         : previousScreenId !== step.screenId;
 
     setState((s) => ({
@@ -238,8 +354,13 @@ export function useDemoTourController(
 
     if (needsSwitch) {
       adapter.showScreen(step.screenId);
-      await waitPausable(prefersReducedMotion() ? Math.min(40, timing.screenSwitchMs) : timing.screenSwitchMs, runToken);
-    } else if (adapter.mode === 'artboards' && stepIndex === 0) {
+      const switchWait = prefersReducedMotion() ? Math.min(40, timing.screenSwitchMs) : timing.screenSwitchMs;
+      if (bypassPauseBeforeDwell) {
+        await waitUnpaused(Math.min(16, switchWait), runToken);
+      } else {
+        await waitPausable(switchWait, runToken);
+      }
+    } else if (adapter.mode === 'artboards' && previousScreenId === null) {
       adapter.showScreen(step.screenId);
     }
 
@@ -248,8 +369,10 @@ export function useDemoTourController(
 
     if (!step.elementId) {
       const vp = adapter.screenViewportSize(step.screenId);
+      cursorPosRef.current = null;
       setState((s) => ({
         ...s,
+        cursor: null,
         spotlight: {
           screenId: step.screenId,
           rect: { x: 8, y: 8, w: Math.max(120, vp.w - 16), h: Math.max(120, vp.h - 16) },
@@ -266,23 +389,23 @@ export function useDemoTourController(
     }
 
     const { el, rect } = revealed;
-    const aim = {
-      x: rect.x + Math.min(Math.max(rect.w * 0.35, 14), 72),
-      y: rect.y + rect.h * 0.5,
-    };
-    await glideCursor(step.screenId, aim, timing.cursorMoveMs, runToken);
+    const aim = computeCursorAim(rect);
+    await glideCursor(step.screenId, step.elementId, aim, timing.cursorMoveMs, runToken, bypassPauseBeforeDwell);
     setState((s) => ({
       ...s,
-      spotlight: { screenId: step.screenId, rect: padSpotlightRect(rect) },
+      spotlight: { screenId: step.screenId, elementId: step.elementId, rect: padSpotlightRect(rect) },
     }));
 
     if (step.action === 'click') {
       const repeats = Math.max(1, Math.min(10, step.times ?? 1));
-      const clickTarget =
-        repeats > 1 && el.tagName !== 'BUTTON' && el.tagName !== 'A'
-          ? (el.querySelector<HTMLElement>('[data-inc], button') ?? el)
-          : el;
-      for (let r = 0; r < repeats; r += 1) {
+      const clickTarget = resolveClickTarget(el, repeats);
+      const navTarget = readNavigationTarget(clickTarget);
+      const navigatesAway = Boolean(navTarget && navTarget !== step.screenId);
+
+      if (navigatesAway) {
+        // Dwell on the source screen first so the button spotlight + caption are clearly seen (and
+        // pausing on this step stays on the source screen); then click to transition cleanly.
+        await waitPausable(timing.actionDwellMs, runToken);
         const nextClick = (cursorPosRef.current?.clickCount ?? 0) + 1;
         if (cursorPosRef.current) {
           cursorPosRef.current = { ...cursorPosRef.current, clickCount: nextClick };
@@ -293,42 +416,65 @@ export function useDemoTourController(
         }));
         await waitPausable(timing.clickDelayMs, runToken);
         clickRealElement(clickTarget);
+        if (adapterRef.current.currentScreenId() !== navTarget) {
+          adapterRef.current.showScreen(navTarget!);
+        }
+        adapter.onDomMutated?.();
+        cursorPosRef.current = null;
+        setState((s) => ({
+          ...s,
+          screenId: navTarget!,
+          spotlight: null,
+          cursor: null,
+        }));
+        const postNavWait = prefersReducedMotion() ? Math.min(40, timing.screenSwitchMs) : timing.screenSwitchMs;
+        await waitPausable(postNavWait, runToken);
+        return navTarget!;
+      }
+
+      for (let r = 0; r < repeats; r += 1) {
+        const nextClick = (cursorPosRef.current?.clickCount ?? 0) + 1;
+        if (cursorPosRef.current) {
+          cursorPosRef.current = { ...cursorPosRef.current, clickCount: nextClick };
+        }
+        setState((s) => ({
+          ...s,
+          cursor: s.cursor ? { ...s.cursor, clickCount: nextClick } : null,
+        }));
+        if (bypassPauseBeforeDwell) {
+          await waitUnpaused(0, runToken);
+        } else {
+          await waitPausable(timing.clickDelayMs, runToken);
+        }
+        clickRealElement(clickTarget);
         adapter.onDomMutated?.();
       }
     } else if (step.action === 'type') {
+      const text = step.text ?? '';
       const control =
         el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
           ? (el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)
-          : el.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
-              'input, textarea, select',
-            );
-      const text = step.text ?? '';
+          : el.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select');
       if (control) {
-        const win = control.ownerDocument.defaultView;
         control.focus?.({ preventScroll: true });
-        if (control.tagName === 'SELECT') {
-          const selectEl = control as HTMLSelectElement;
-          const match = Array.from(selectEl.options).find(
-            (opt) => opt.value === text || opt.textContent?.trim() === text.trim(),
-          );
-          if (match) selectEl.value = match.value;
-          if (win) {
-            selectEl.dispatchEvent(new win.Event('input', { bubbles: true }));
-            selectEl.dispatchEvent(new win.Event('change', { bubbles: true }));
-          }
+        if (
+          control.tagName === 'SELECT' ||
+          bypassPauseBeforeDwell ||
+          prefersReducedMotion() ||
+          timing.typeCharMs <= 0 ||
+          text.length === 0
+        ) {
+          applyTypeControlValue(el, text);
           adapter.onDomMutated?.();
         } else {
           const textControl = control as HTMLInputElement | HTMLTextAreaElement;
           const chars = Array.from(text);
-          if (prefersReducedMotion() || timing.typeCharMs <= 0 || chars.length === 0) {
-            setFormControlValue(textControl, text);
-          } else {
-            const perChar = Math.max(4, Math.min(timing.typeCharMs, Math.floor(320 / chars.length)));
-            for (let c = 1; c <= chars.length; c += 1) {
-              await waitPausable(perChar, runToken);
-              setFormControlValue(textControl, chars.slice(0, c).join(''));
-            }
+          const perChar = Math.max(4, Math.min(timing.typeCharMs, Math.floor(320 / chars.length)));
+          for (let c = 1; c <= chars.length; c += 1) {
+            await waitPausable(perChar, runToken);
+            setFormControlValue(textControl, chars.slice(0, c).join(''));
           }
+          const win = textControl.ownerDocument.defaultView;
           if (win) {
             textControl.dispatchEvent(new win.Event('change', { bubbles: true }));
           }
@@ -346,25 +492,40 @@ export function useDemoTourController(
     const clamped = Math.max(0, Math.min(tour.steps.length - 1, fromIndex));
     const runToken = ++tokenRef.current;
     pausedRef.current = keepPaused;
-    if (clamped === 0) {
-      cursorPosRef.current = null;
+    cursorPosRef.current = null;
+
+    const adapter = adapterRef.current;
+    const uniqueScreens = Array.from(new Set(tour.steps.map((st) => st.screenId)));
+    adapter.resetScreens(uniqueScreens);
+    for (let k = 0; k < clamped; k += 1) {
+      fastApplyStep(tour.steps[k]!, adapter);
     }
+
     const firstStep = tour.steps[clamped]!;
+    adapter.showScreen(firstStep.screenId);
+
     setState({
       tour,
       stepIndex: clamped,
       paused: keepPaused,
       completed: false,
       screenId: firstStep.screenId,
-      cursor: cursorPosRef.current,
+      cursor: null,
       spotlight: null,
     });
 
     void (async () => {
-      let prevScreen: string | null = null;
+      let prevScreen: string | null = firstStep.screenId;
       for (let i = clamped; i < tour.steps.length; i += 1) {
         const step = tour.steps[i]!;
-        prevScreen = await executeStep(step, i, tour, prevScreen, runToken);
+        prevScreen = await executeStep(
+          step,
+          i,
+          tour,
+          i === clamped ? firstStep.screenId : prevScreen,
+          runToken,
+          keepPaused && i === clamped,
+        );
       }
       if (runToken === tokenRef.current) {
         pausedRef.current = true;
@@ -399,7 +560,7 @@ export function useDemoTourController(
     goToStep: useCallback(
       (index: number) => {
         if (!state.tour) return;
-        startFrom(state.tour, index, false);
+        startFrom(state.tour, index, pausedRef.current);
       },
       [startFrom, state.tour],
     ),

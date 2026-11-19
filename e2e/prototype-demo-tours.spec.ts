@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test';
  * After screens and #93 screenshot review finish, the lead writes 2–4 Demo Tours (`演示路线`)
  * anchored to real `data-screen-id` / `data-element-id` targets inside `界面原型.html`, logs
  * `演示路线已就绪` without autoplaying, portals the `▶ 播放演示` picker outside any overflow
- * container, switches the right sidebar between `BuildLog` and the step script, spotlights and
+ * container, switches the right sidebar between `BuildLog` and the Demo Tour steps, spotlights and
  * genuinely acts on the live iframe DOM in both Canvas (`画板`) and Web (`网页`, #97) modes, and
  * scrolls off-screen web targets into view.
  */
@@ -41,7 +41,7 @@ async function setUpProjectWithConfirmedRequirements(request: import('@playwrigh
   return project.id;
 }
 
-test.describe('Prototype Demo Tours (#95): generation, portal menu, script sidebar, spotlight & real playback', () => {
+test.describe('Prototype Demo Tours (#95): generation, portal menu, steps sidebar, spotlight & real playback', () => {
   test.beforeEach(({ page }) => {
     page.on('dialog', (dialog) => {
       throw new Error(`Forbidden blocking browser dialog triggered: ${dialog.message()}`);
@@ -116,43 +116,53 @@ test.describe('Prototype Demo Tours (#95): generation, portal menu, script sideb
     expect(portalInfo.text).not.toContain('SCR-');
     expect(portalInfo.text).not.toContain('场景');
 
-    // 3. Canvas mode playback: right panel switches to script, spotlight + subtitle + controls work, real DOM mutates
+    // 3. Canvas mode playback: right panel switches to Demo Tour steps, spotlight + subtitle + controls work, real DOM mutates
     await page.getByTestId('demo-tour-option-first-order').click();
     await expect(page.getByTestId('prototype-build-log')).toHaveCount(0);
-    const scriptPanel = page.getByTestId('demo-tour-script-panel');
-    await expect(scriptPanel).toBeVisible();
-    await expect(scriptPanel.locator('[data-testid^="demo-tour-step-"]')).toHaveCount(7);
+    const stepsPanel = page.getByTestId('demo-tour-script-panel');
+    await expect(stepsPanel).toBeVisible();
+    await expect(stepsPanel).toHaveAttribute('aria-label', '演示路线步骤');
+    await expect(stepsPanel.locator('[data-testid^="demo-tour-step-"]')).toHaveCount(7);
     await expect(page.getByTestId('demo-tour-player-bar')).toBeVisible();
     await expect(page.getByTestId('demo-tour-caption')).toBeVisible();
     await expect(page.getByTestId('demo-tour-spotlight')).toBeVisible();
 
-    // Pause, jump directly to Step 3 (`SCR-NEW-ORDER` search input) via right script, then resume through Step 4 (`+` x3)
+    // Pause, jump directly to Step 3 (`SCR-NEW-ORDER` search input): stays paused, then resume through Step 4 (`+` x3)
     const pauseToggle = page.getByTestId('demo-tour-pause-toggle');
     await pauseToggle.click();
     await expect(page.getByTestId('demo-tour-player-bar')).toHaveAttribute('data-tour-paused', 'true');
 
-    // Click step index 2 (3rd step: type '可颂' on SCR-NEW-ORDER) — jumps and plays from step 3!
+    // Click step index 2 (3rd step: type '可颂' on SCR-NEW-ORDER) — jumps, types '可颂', and preserves paused state!
     await page.getByTestId('demo-tour-step-2').click();
-    await expect(page.getByTestId('demo-tour-progress')).toContainText('/ 7');
-
-    // Wait until step 4 (`EL-NEW-ORDER-BUTTON-2` clicked 3 times) finishes mutating SCR-NEW-ORDER's real iframe DOM
+    await expect(page.getByTestId('demo-tour-progress')).toContainText('3 / 7');
+    await expect(page.getByTestId('demo-tour-player-bar')).toHaveAttribute('data-tour-paused', 'true');
     const newOrderFrame = page.frameLocator('[data-testid="prototype-artboard-frame-SCR-NEW-ORDER"]');
-    await expect(newOrderFrame.locator('[data-element-id="EL-NEW-SEARCH"]')).toHaveValue('可颂', { timeout: 15_000 });
+    await expect(newOrderFrame.locator('[data-element-id="EL-NEW-SEARCH"]')).toHaveValue('可颂', { timeout: 10_000 });
+    await expect(newOrderFrame.locator('[data-element-id="EL-QTY-CROISSANT"] [data-qty]')).toHaveText('0');
+
+    // Resume playback so Step 4 (`EL-NEW-ORDER-BUTTON-2` clicked 3 times) mutates SCR-NEW-ORDER's real iframe DOM
+    await pauseToggle.click();
+    await expect(page.getByTestId('demo-tour-player-bar')).toHaveAttribute('data-tour-paused', 'false');
     await expect(newOrderFrame.locator('[data-element-id="EL-QTY-CROISSANT"] [data-qty]')).toHaveText('3', {
       timeout: 15_000,
     });
 
-    // Test Previous / Next controls while paused
+    // Test Previous / Next controls while paused: paused stays true and DOM resets deterministically!
     await pauseToggle.click();
     await expect(page.getByTestId('demo-tour-player-bar')).toHaveAttribute('data-tour-paused', 'true');
+    await page.getByTestId('demo-tour-step-3').click();
+    await expect(page.getByTestId('demo-tour-progress')).toContainText('4 / 7');
+    await expect(newOrderFrame.locator('[data-element-id="EL-QTY-CROISSANT"] [data-qty]')).toHaveText('3');
+
     await page.getByTestId('demo-tour-prev').click();
-    await pauseToggle.click(); // pause again after step jump
     await expect(page.getByTestId('demo-tour-player-bar')).toHaveAttribute('data-tour-paused', 'true');
-    const stepBeforeNext = await page.getByTestId('demo-tour-player-bar').getAttribute('data-tour-step');
+    await expect(page.getByTestId('demo-tour-progress')).toContainText('3 / 7');
+    await expect(newOrderFrame.locator('[data-element-id="EL-QTY-CROISSANT"] [data-qty]')).toHaveText('0');
+
     await page.getByTestId('demo-tour-next').click();
-    await expect
-      .poll(async () => await page.getByTestId('demo-tour-player-bar').getAttribute('data-tour-step'))
-      .not.toBe(stepBeforeNext);
+    await expect(page.getByTestId('demo-tour-player-bar')).toHaveAttribute('data-tour-paused', 'true');
+    await expect(page.getByTestId('demo-tour-progress')).toContainText('4 / 7');
+    await expect(newOrderFrame.locator('[data-element-id="EL-QTY-CROISSANT"] [data-qty]')).toHaveText('3');
 
     // Exit restores `BuildLog` on the right sidebar and brings back the canvas dock
     await page.getByTestId('demo-tour-exit').click();
@@ -168,10 +178,12 @@ test.describe('Prototype Demo Tours (#95): generation, portal menu, script sideb
     await page.getByTestId('prototype-web-page-select').selectOption('SCR-HOME');
     await expect(webView).toHaveAttribute('data-web-screen', 'SCR-HOME');
 
-    // Push `EL-ORDER-DETAIL-BUTTON-1` far down on `SCR-ORDER-DETAIL` so it starts off-screen and must scroll into view
+    // Push `EL-ORDER-DETAIL-BUTTON-1` far down via `<head>` style so it starts off-screen even across DOM resets
     const webFrame = page.frameLocator('[data-testid="prototype-web-frame"]');
     await webFrame.locator('[data-element-id="EL-ORDER-DETAIL-BUTTON-1"]').evaluate((el) => {
-      (el as HTMLElement).style.marginTop = '1400px';
+      const style = el.ownerDocument.createElement('style');
+      style.textContent = '[data-element-id="EL-ORDER-DETAIL-BUTTON-1"] { margin-top: 1400px !important; }';
+      el.ownerDocument.head.appendChild(style);
     });
 
     await page.getByTestId('demo-tour-play-trigger').click();

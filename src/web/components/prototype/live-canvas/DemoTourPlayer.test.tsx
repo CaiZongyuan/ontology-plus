@@ -274,29 +274,62 @@ describe('Demo Tour Player (#95, #88 verdict A + B combined)', () => {
     expect(searchInput.value).toBe('可颂');
     expect(qtySpan.textContent).toBe('3');
 
-    // 4. Clicking any step in the right script jumps directly to that step; Pause/Previous/Next work
+    // 4. Replay resets DOM deterministically (`[data-qty]` stays '3', never '6'), and paused stepping preserves `paused`!
+    const replayBtn = host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-pause-toggle"]')!;
+    expect(replayBtn.textContent).toContain('重播');
+    await act(async () => {
+      replayBtn.click();
+    });
+    await wait(320);
+    expect(playerBar.getAttribute('data-tour-completed')).toBe('true');
+    expect(searchInput.value).toBe('可颂');
+    expect(qtySpan.textContent).toBe('3');
+
+    // Jump to step 2 (index 1, before typing/incrementing), pause, and verify DOM reset cleanly to initial state
     const step2Btn = scriptPanel.querySelector<HTMLButtonElement>('[data-testid="demo-tour-step-1"]')!;
     await act(async () => {
       step2Btn.click();
     });
     const pauseBtn = host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-pause-toggle"]')!;
-    await act(async () => {
-      pauseBtn.click();
-    });
+    if (playerBar.getAttribute('data-tour-paused') !== 'true') {
+      await act(async () => {
+        pauseBtn.click();
+      });
+    }
+    await wait(30);
     expect(playerBar.getAttribute('data-tour-paused')).toBe('true');
     expect(host.querySelector('[data-testid="demo-tour-progress"]')?.textContent).toContain('2 / 5');
-    expect(host.querySelector('[data-testid="demo-tour-caption"]')?.textContent).toBe(
-      '发现可颂快卖完了，点「新建订单」开始订货。',
-    );
+    expect(searchInput.value).toBe('');
+    expect(qtySpan.textContent).toBe('0');
 
+    // Clicking `‹ 上一步` while paused keeps `data-tour-paused="true"` and does not auto-advance
     const prevBtn = host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-prev"]')!;
     await act(async () => {
       prevBtn.click();
     });
-    await act(async () => {
-      host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-pause-toggle"]')!.click();
-    });
+    await wait(80);
+    expect(playerBar.getAttribute('data-tour-paused')).toBe('true');
     expect(host.querySelector('[data-testid="demo-tour-progress"]')?.textContent).toContain('1 / 5');
+
+    // Clicking `下一步 ›` while paused also keeps `data-tour-paused="true"`
+    const nextBtn = host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-next"]')!;
+    await act(async () => {
+      nextBtn.click();
+    });
+    await wait(80);
+    expect(playerBar.getAttribute('data-tour-paused')).toBe('true');
+    expect(host.querySelector('[data-testid="demo-tour-progress"]')?.textContent).toContain('2 / 5');
+
+    // Jumping forward while paused fast-applies steps 0..3 (`可颂` + `3`) and stays paused on step 5!
+    const step5Btn = scriptPanel.querySelector<HTMLButtonElement>('[data-testid="demo-tour-step-4"]')!;
+    await act(async () => {
+      step5Btn.click();
+    });
+    await wait(40);
+    expect(playerBar.getAttribute('data-tour-paused')).toBe('true');
+    expect(host.querySelector('[data-testid="demo-tour-progress"]')?.textContent).toContain('5 / 5');
+    expect(searchInput.value).toBe('可颂');
+    expect(qtySpan.textContent).toBe('3');
 
     // 5. Exiting restores BuildLog on the right sidebar
     await act(async () => {
@@ -424,5 +457,147 @@ describe('Demo Tour Player (#95, #88 verdict A + B combined)', () => {
     });
     expect(host.querySelector('[data-testid="demo-tour-player-bar"]')).toBeNull();
     expect(host.querySelector('[data-testid="prototype-build-log"]')).not.toBeNull();
+  });
+
+  it('tracks live scroll/resize while paused, prevents [data-navigate-to] spotlight bleed, clamps canvas bounds, and meets contrast/single-accent/glossary rules', async () => {
+    const rawHtml = createSamplePrototypeDocument();
+    const edgeTours: PrototypeDemoTour[] = [
+      ...TOURS,
+      {
+        id: 'id-guard',
+        goal: 'SCR-HOME EL-RAW-ID',
+        audience: 'EL-AUDIENCE-ID',
+        steps: [
+          {
+            screenId: 'SCR-UNKNOWN-FALLBACK',
+            action: 'look',
+            caption: 'SCR-HOME EL-HOME-GREET 核对提醒',
+          },
+        ],
+      },
+    ];
+    const html = writePrototypeDemoTours(rawHtml, edgeTours);
+    const build = createFinishedBuild();
+    await renderCanvas({ documentHtml: html, build, viewMode: 'business' });
+
+    // S-2: Play trigger is NOT `accent` (`bg-primary text-primary-foreground`)
+    const playBtn = host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-play-trigger"]')!;
+    expect(playBtn.className).not.toContain('bg-primary ');
+
+    // Start in Canvas mode with an oversized element on SCR-HOME and verify clamping within artboard bounds
+    const homeFrame = host.querySelector<HTMLIFrameElement>('[data-testid="prototype-artboard-frame-SCR-HOME"]')!;
+    const greetEl = homeFrame.contentDocument!.querySelector<HTMLElement>('[data-element-id="EL-HOME-GREET"]')!;
+    greetEl.getBoundingClientRect = () =>
+      ({
+        x: -100,
+        y: -50,
+        left: -100,
+        top: -50,
+        width: 2000,
+        height: 1500,
+        right: 1900,
+        bottom: 1450,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    await act(async () => {
+      playBtn.click();
+    });
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[data-testid="demo-tour-option-first-order"]')!.click();
+    });
+    await wait(25);
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-pause-toggle"]')!.click();
+    });
+
+    // S-4: Sidebar aria-label uses 演示路线步骤 (never 脚本 / script)
+    const scriptAside = host.querySelector<HTMLElement>('[data-testid="demo-tour-script-panel"]')!;
+    expect(scriptAside.getAttribute('aria-label')).toBe('演示路线步骤');
+    // S-1: Selected step row on bg-primary-soft never uses text-muted-foreground
+    const activeStepRow = scriptAside.querySelector<HTMLElement>('[data-testid="demo-tour-step-0"]')!;
+    expect(activeStepRow.querySelector('.text-muted-foreground')).toBeNull();
+    // S-2: Pause button is not `accent`
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-pause-toggle"]')!.className).not.toContain(
+      'bg-primary ',
+    );
+
+    // Canvas spotlight width/height clamped to artboard * zoom (`<= Math.round(1280 * k)` / `<= Math.round(860 * k)`)
+    const zoom = Number(
+      host.querySelector<HTMLElement>('[data-testid="prototype-canvas-viewport"]')!.getAttribute('data-zoom'),
+    );
+    const canvasSpot = host.querySelector<HTMLElement>('[data-testid="demo-tour-spotlight"]')!;
+    expect(parseFloat(canvasSpot.style.width)).toBeLessThanOrEqual(Math.ceil(1280 * zoom));
+    expect(parseFloat(canvasSpot.style.height)).toBeLessThanOrEqual(Math.ceil(860 * zoom));
+
+    // S-3: Raw technical IDs never leak in menu or step panel
+    await act(async () => {
+      playBtn.click();
+    });
+    const menu = document.body.querySelector<HTMLElement>('[data-testid="demo-tour-menu"]')!;
+    expect(menu.querySelector('[data-testid="demo-tour-option-first-order"] .text-muted-foreground')).toBeNull();
+    expect(menu.textContent).not.toContain('SCR-HOME');
+    expect(menu.textContent).not.toContain('EL-RAW-ID');
+    await act(async () => {
+      menu.querySelector<HTMLButtonElement>('[data-testid="demo-tour-option-id-guard"]')!.click();
+    });
+    await wait(20);
+    expect(host.querySelector('[data-testid="demo-tour-script-panel"]')?.textContent).not.toContain(
+      'SCR-UNKNOWN-FALLBACK',
+    );
+
+    // Switch to Web mode: verify live scroll tracking while paused AND zero [data-navigate-to] spotlight bleed!
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-dock-exit"]')?.click();
+      host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-exit"]')!.click();
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="prototype-dock-view-web"]')!.click();
+    });
+    await wait(30);
+    const webFrame = host.querySelector<HTMLIFrameElement>('[data-testid="prototype-web-frame"]')!;
+    installFrameBoxes(webFrame.contentDocument!);
+
+    // Start first-order, pause on Step 2 (index 1, `[data-navigate-to="SCR-NEW-ORDER"]` on `SCR-HOME`)
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-play-trigger"]')!.click();
+    });
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[data-testid="demo-tour-option-first-order"]')!.click();
+    });
+    await wait(15);
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-pause-toggle"]')!.click();
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-step-1"]')!.click();
+    });
+    await wait(30);
+
+    // On Step 2 while paused: still on SCR-HOME before navigation click, spotlight matches active web screen!
+    const webView = host.querySelector<HTMLElement>('[data-testid="prototype-web-view"]')!;
+    expect(webView.getAttribute('data-web-screen')).toBe('SCR-HOME');
+    expect(host.querySelector('[data-testid="demo-tour-spotlight"]')?.getAttribute('data-screen-id')).toBe('SCR-HOME');
+
+    // Step to Step 3 (index 2: `EL-NEW-SEARCH` on `SCR-NEW-ORDER`) while paused, then scroll iframe and verify live tracking!
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-step-2"]')!.click();
+    });
+    await wait(35);
+    expect(webView.getAttribute('data-web-screen')).toBe('SCR-NEW-ORDER');
+    const spotBeforeScroll = host.querySelector<HTMLElement>('[data-testid="demo-tour-spotlight"]')!.style.transform;
+    const cursorBeforeScroll = host.querySelector<HTMLElement>('[data-testid="demo-tour-cursor"]')!.style.transform;
+
+    await act(async () => {
+      const scroller = webFrame.contentDocument!.scrollingElement ?? webFrame.contentDocument!.documentElement;
+      scroller.scrollTop = 60;
+      webFrame.contentDocument!.dispatchEvent(new Event('scroll'));
+    });
+    await wait(15);
+
+    const spotAfterScroll = host.querySelector<HTMLElement>('[data-testid="demo-tour-spotlight"]')!.style.transform;
+    const cursorAfterScroll = host.querySelector<HTMLElement>('[data-testid="demo-tour-cursor"]')!.style.transform;
+    expect(spotAfterScroll).not.toBe(spotBeforeScroll);
+    expect(cursorAfterScroll).not.toBe(cursorBeforeScroll);
   });
 });

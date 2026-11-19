@@ -6,17 +6,44 @@ import type { PrototypeDemoTour } from '../../../../packages/ontology-core/index
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
-import { artboardRect, type Camera } from './camera.js';
-import type { DemoTourController } from './demoTourState.js';
+import type { ArtboardHandle, ArtboardRect } from './Artboard.js';
+import { ARTBOARD_H, ARTBOARD_W, artboardRect, type Camera } from './camera.js';
+import { computeCursorAim, padSpotlightRect, type DemoTourController } from './demoTourState.js';
 import './demo-tour-player.css';
 
-function cleanTourText(raw: string | undefined, locale: 'zh-CN' | 'en-US', isBusiness: boolean): string {
-  if (!raw) return '';
-  return isBusiness ? sanitizeBusinessText(raw, locale).trim() || raw : raw;
+function cleanTourText(
+  raw: string | undefined,
+  locale: 'zh-CN' | 'en-US',
+  isBusiness: boolean,
+  fallback = '',
+): string {
+  if (!raw) return fallback;
+  if (!isBusiness) return raw;
+  return sanitizeBusinessText(raw, locale).trim() || fallback;
+}
+
+function clampArtboardRect(rect: ArtboardRect): ArtboardRect {
+  const left = Math.max(0, Math.min(ARTBOARD_W - 8, rect.x));
+  const top = Math.max(0, Math.min(ARTBOARD_H - 8, rect.y));
+  const right = Math.max(left + 8, Math.min(ARTBOARD_W, rect.x + rect.w));
+  const bottom = Math.max(top + 8, Math.min(ARTBOARD_H, rect.y + rect.h));
+  return {
+    x: left,
+    y: top,
+    w: right - left,
+    h: bottom - top,
+  };
+}
+
+function clampArtboardPoint(x: number, y: number): { x: number; y: number } {
+  return {
+    x: Math.max(0, Math.min(ARTBOARD_W, x)),
+    y: Math.max(0, Math.min(ARTBOARD_H, y)),
+  };
 }
 
 /**
- * Phase-bar trigger (`▶ 播放演示` / `▶ Play Demo`) that opens a route picker menu portaled onto
+ * Phase-bar trigger (`▶ 播放演示` / `▶ Play Demo`) that opens a Demo Tour picker menu portaled onto
  * `document.body` so no `overflow` or scrolling container can ever clip it (#88 review catch).
  */
 export function DemoTourPlayButton({
@@ -84,14 +111,17 @@ export function DemoTourPlayButton({
       <Button
         ref={triggerRef}
         type="button"
-        variant="accent"
+        variant="secondary"
         size="xs"
+        className="text-xs"
         aria-expanded={open}
         aria-haspopup="menu"
         data-testid="demo-tour-play-trigger"
         onClick={() => setOpen((v) => !v)}
       >
-        <span aria-hidden="true">▶</span>
+        <span aria-hidden="true" className="text-primary">
+          ▶
+        </span>
         <span>{t('播放演示', 'Play Demo')}</span>
       </Button>
       {open &&
@@ -109,7 +139,7 @@ export function DemoTourPlayButton({
               {t('选择一条演示路线播放', 'Pick a Demo Tour to play')}
             </div>
             {tours.map((tour) => {
-              const goal = cleanTourText(tour.goal, normLocale, isBusiness);
+              const goal = cleanTourText(tour.goal, normLocale, isBusiness, t('演示路线', 'Demo Tour'));
               const audience = cleanTourText(tour.audience, normLocale, isBusiness);
               const isActive = activeTourId === tour.id;
               return (
@@ -125,12 +155,12 @@ export function DemoTourPlayButton({
                   className={cn(
                     'flex w-full cursor-pointer flex-col gap-0.5 rounded-sm border-0 px-2.5 py-2 text-left text-xs',
                     isActive
-                      ? 'bg-primary-soft text-primary'
+                      ? 'bg-primary-soft text-foreground'
                       : 'bg-transparent text-popover-foreground hover:bg-accent',
                   )}
                 >
                   <span className="font-semibold">{goal}</span>
-                  <span className="text-xs text-muted-foreground tabular-nums">
+                  <span className={cn('text-xs tabular-nums', isActive ? 'text-primary' : 'text-muted-foreground')}>
                     {audience ? `${audience} · ` : ''}
                     {t(`${tour.steps.length} 步`, `${tour.steps.length} steps`)}
                   </span>
@@ -145,8 +175,8 @@ export function DemoTourPlayButton({
 }
 
 /**
- * Right sidebar script panel (#88 verdict B): replaces `BuildLog` while a Demo Tour is active,
- * highlights the current step, and lets the user click any step to jump straight to it.
+ * Right sidebar Demo Tour steps panel (#88 verdict B): replaces `BuildLog` while a Demo Tour is
+ * active, highlights the current step, and lets the user click any step to jump straight to it.
  */
 export function DemoTourScriptPanel({
   controller,
@@ -169,7 +199,7 @@ export function DemoTourScriptPanel({
 
   if (!tour) return null;
 
-  const goal = cleanTourText(tour.goal, normLocale, isBusiness);
+  const goal = cleanTourText(tour.goal, normLocale, isBusiness, t('演示路线', 'Demo Tour'));
   const audience = cleanTourText(tour.audience, normLocale, isBusiness);
 
   return (
@@ -186,7 +216,8 @@ export function DemoTourScriptPanel({
           type="button"
           variant="ghost"
           size="xs"
-          aria-label={t('结束演示', 'Exit demo tour')}
+          className="text-xs"
+          aria-label={t('结束演示', 'Exit Demo Tour')}
           data-testid="demo-tour-script-close"
           onClick={controller.stop}
         >
@@ -200,7 +231,7 @@ export function DemoTourScriptPanel({
         {tour.steps.map((step, idx) => {
           const isCurrent = idx === stepIndex;
           const isPast = idx < stepIndex;
-          const caption = cleanTourText(step.caption, normLocale, isBusiness);
+          const caption = cleanTourText(step.caption, normLocale, isBusiness, t('查看当前步骤', 'Inspect this step'));
           const screenName = screenNameOf(step.screenId);
           return (
             <li key={`${tour.id}-step-${idx}`}>
@@ -234,7 +265,9 @@ export function DemoTourScriptPanel({
                   <span className={cn('block leading-snug', isCurrent ? 'font-medium text-foreground' : 'text-foreground-soft')}>
                     {caption}
                   </span>
-                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">{screenName}</span>
+                  <span className={cn('mt-0.5 block truncate text-xs', isCurrent ? 'text-primary' : 'text-muted-foreground')}>
+                    {screenName}
+                  </span>
                 </span>
               </button>
             </li>
@@ -262,50 +295,67 @@ function DemoCursorGlyph({ x, y, clickCount }: { x: number; y: number; clickCoun
 }
 
 /**
- * Spotlight cutout + demo cursor in Canvas (`artboards`) mode, mapped through `cam` in real time.
+ * Spotlight cutout + demo cursor in Canvas (`artboards`) mode, re-measuring live element positions
+ * on `layoutVersion` (scroll/resize/morph) and clamping within `[0, ARTBOARD_W] × [0, ARTBOARD_H]`.
  */
 export function CanvasDemoTourOverlay({
   controller,
   indexById,
+  getHandle,
   cam,
+  layoutVersion,
 }: {
   controller: DemoTourController;
   indexById: ReadonlyMap<string, number>;
+  getHandle: (screenId: string) => ArtboardHandle | null;
   cam: Camera;
+  layoutVersion: number;
 }) {
+  void layoutVersion;
   const { tour, spotlight, cursor } = controller.state;
   if (!tour) return null;
 
   const spotSlot = spotlight ? indexById.get(spotlight.screenId) : undefined;
   const spotBoard = spotSlot !== undefined ? artboardRect(spotSlot) : null;
-  const spotBox =
-    spotlight && spotBoard
-      ? {
-          x: cam.x + (spotBoard.x + spotlight.rect.x) * cam.k,
-          y: cam.y + (spotBoard.y + spotlight.rect.y) * cam.k,
-          w: Math.max(8, spotlight.rect.w * cam.k),
-          h: Math.max(8, spotlight.rect.h * cam.k),
-        }
+  let spotBox: { x: number; y: number; w: number; h: number } | null = null;
+  if (spotlight && spotBoard) {
+    const liveElRect = spotlight.elementId
+      ? getHandle(spotlight.screenId)?.rectOf(spotlight.elementId) ?? null
       : null;
+    const rawRect = liveElRect ? padSpotlightRect(liveElRect) : spotlight.rect;
+    const clamped = clampArtboardRect(rawRect);
+    spotBox = {
+      x: cam.x + (spotBoard.x + clamped.x) * cam.k,
+      y: cam.y + (spotBoard.y + clamped.y) * cam.k,
+      w: Math.max(8, clamped.w * cam.k),
+      h: Math.max(8, clamped.h * cam.k),
+    };
+  }
 
   const curSlot = cursor ? indexById.get(cursor.screenId) : undefined;
   const curBoard = curSlot !== undefined ? artboardRect(curSlot) : null;
-  const curScreen =
-    cursor && curBoard
-      ? {
-          x: cam.x + (curBoard.x + cursor.x) * cam.k,
-          y: cam.y + (curBoard.y + cursor.y) * cam.k,
-          clickCount: cursor.clickCount,
-        }
-      : null;
+  let curScreen: { x: number; y: number; clickCount: number } | null = null;
+  if (cursor && curBoard) {
+    const liveCurRect =
+      !cursor.gliding && cursor.elementId
+        ? getHandle(cursor.screenId)?.rectOf(cursor.elementId) ?? null
+        : null;
+    const rawPoint = liveCurRect ? computeCursorAim(liveCurRect) : { x: cursor.x, y: cursor.y };
+    const clampedPoint = clampArtboardPoint(rawPoint.x, rawPoint.y);
+    curScreen = {
+      x: cam.x + (curBoard.x + clampedPoint.x) * cam.k,
+      y: cam.y + (curBoard.y + clampedPoint.y) * cam.k,
+      clickCount: cursor.clickCount,
+    };
+  }
 
   return (
     <>
-      {spotBox && (
+      {spotBox && spotlight && (
         <div
           className="onto-demo-spotlight"
           data-testid="demo-tour-spotlight"
-          data-screen-id={spotlight!.screenId}
+          data-screen-id={spotlight.screenId}
           style={{
             width: Math.round(spotBox.w),
             height: Math.round(spotBox.h),
@@ -320,27 +370,68 @@ export function CanvasDemoTourOverlay({
 }
 
 /**
- * Spotlight cutout + demo cursor in Web mode (`#97`), rendered inside the web page container.
+ * Spotlight cutout + demo cursor in Web mode (`#97`), re-measuring live element positions on
+ * scroll/resize (`layoutVersion`) and guarding `screenId === activeScreenId` so source-screen
+ * spotlights never bleed onto newly navigated screens.
  */
-export function WebDemoTourOverlay({ controller }: { controller: DemoTourController }) {
+export function WebDemoTourOverlay({
+  controller,
+  activeScreenId,
+  getHandle,
+  pageWidth,
+  pageHeight,
+  layoutVersion,
+}: {
+  controller: DemoTourController;
+  activeScreenId: string | undefined;
+  getHandle: () => ArtboardHandle | null;
+  pageWidth: number;
+  pageHeight: number;
+  layoutVersion: number;
+}) {
+  void layoutVersion;
   const { tour, spotlight, cursor } = controller.state;
   if (!tour) return null;
+
+  let resolvedSpot: ArtboardRect | null = null;
+  if (spotlight && (!activeScreenId || spotlight.screenId === activeScreenId)) {
+    if (spotlight.elementId) {
+      const liveRect = getHandle()?.rectOf(spotlight.elementId) ?? null;
+      resolvedSpot = liveRect ? padSpotlightRect(liveRect) : spotlight.rect;
+    } else {
+      resolvedSpot =
+        pageWidth > 0 && pageHeight > 0
+          ? { x: 8, y: 8, w: Math.max(120, pageWidth - 16), h: Math.max(120, pageHeight - 112) }
+          : spotlight.rect;
+    }
+  }
+
+  let resolvedCursor: { x: number; y: number; clickCount: number } | null = null;
+  if (cursor && (!activeScreenId || cursor.screenId === activeScreenId)) {
+    const liveCurRect =
+      !cursor.gliding && cursor.elementId ? getHandle()?.rectOf(cursor.elementId) ?? null : null;
+    const pt = liveCurRect ? computeCursorAim(liveCurRect) : { x: cursor.x, y: cursor.y };
+    resolvedCursor = { x: pt.x, y: pt.y, clickCount: cursor.clickCount };
+  }
+
   return (
     <>
-      {spotlight && (
+      {resolvedSpot && spotlight && (
         <div
-          className="onto-demo-spotlight"
+          className="onto-demo-spotlight onto-demo-spotlight-web"
           data-testid="demo-tour-spotlight"
           data-screen-id={spotlight.screenId}
           style={{
-            width: Math.round(spotlight.rect.w),
-            height: Math.round(spotlight.rect.h),
-            transform: `translate3d(${Math.round(spotlight.rect.x)}px, ${Math.round(spotlight.rect.y)}px, 0)`,
+            width: Math.round(resolvedSpot.w),
+            height: Math.round(resolvedSpot.h),
+            transform: `translate3d(${Math.round(resolvedSpot.x)}px, ${Math.round(resolvedSpot.y)}px, 0)`,
           }}
           aria-hidden="true"
         />
       )}
-      {cursor && <DemoCursorGlyph x={cursor.x} y={cursor.y} clickCount={cursor.clickCount} />}
+      {resolvedCursor && (
+        <DemoCursorGlyph x={resolvedCursor.x} y={resolvedCursor.y} clickCount={resolvedCursor.clickCount} />
+      )}
     </>
   );
 }
@@ -363,7 +454,7 @@ export function DemoTourPlaybackBar({
 
   const safeIndex = Math.max(0, Math.min(tour.steps.length - 1, stepIndex));
   const step = tour.steps[safeIndex];
-  const goal = cleanTourText(tour.goal, normLocale, isBusiness);
+  const goal = cleanTourText(tour.goal, normLocale, isBusiness, t('演示路线', 'Demo Tour'));
   const caption = cleanTourText(step?.caption, normLocale, isBusiness);
 
   return (
@@ -394,6 +485,7 @@ export function DemoTourPlaybackBar({
           type="button"
           variant="secondary"
           size="xs"
+          className="text-xs"
           disabled={safeIndex <= 0}
           data-testid="demo-tour-prev"
           onClick={() => controller.goToStep(safeIndex - 1)}
@@ -402,8 +494,9 @@ export function DemoTourPlaybackBar({
         </Button>
         <Button
           type="button"
-          variant="accent"
+          variant="secondary"
           size="xs"
+          className="text-xs"
           data-testid="demo-tour-pause-toggle"
           onClick={controller.togglePause}
         >
@@ -417,6 +510,7 @@ export function DemoTourPlaybackBar({
           type="button"
           variant="secondary"
           size="xs"
+          className="text-xs"
           disabled={safeIndex >= tour.steps.length - 1}
           data-testid="demo-tour-next"
           onClick={() => controller.goToStep(safeIndex + 1)}
@@ -433,6 +527,7 @@ export function DemoTourPlaybackBar({
           type="button"
           variant="ghost"
           size="xs"
+          className="text-xs"
           data-testid="demo-tour-exit"
           onClick={controller.stop}
         >

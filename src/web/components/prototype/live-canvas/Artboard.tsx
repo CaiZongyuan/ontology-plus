@@ -66,6 +66,8 @@ export interface ArtboardHandle {
   rectOf: (elementId: string) => ArtboardRect | null;
   /** Scrolls the element into view (when it is off screen) and returns its new box. */
   reveal: (elementId: string) => ArtboardRect | null;
+  /** Restores the live body DOM and form controls to baseline `bodyHtml` without reloading. */
+  resetDom: () => void;
 }
 
 function cssAttrValue(raw: string): string {
@@ -134,6 +136,14 @@ export const ArtboardFrame = memo(function ArtboardFrame({
   const applied = useRef<{ version: number; html: string; screenId: string } | null>(null);
   const screenIdRef = useRef(screenId);
   screenIdRef.current = screenId;
+  const bodyHtmlRef = useRef(bodyHtml);
+  bodyHtmlRef.current = bodyHtml;
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const landedRef = useRef(landed);
+  landedRef.current = landed;
+  const loadVersionRef = useRef(loadVersion);
+  loadVersionRef.current = loadVersion;
   const interactiveRef = useRef(interactive);
   interactiveRef.current = interactive;
   const navigateRef = useRef(onNavigate);
@@ -177,6 +187,73 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       const r = el.getBoundingClientRect();
       return { x: r.left, y: r.top, w: r.width, h: r.height };
     };
+    const resetDom = () => {
+      const d = doc();
+      if (!d || loadVersionRef.current === 0) return;
+      const html = bodyHtmlRef.current;
+      const sid = screenIdRef.current;
+      const isPage = pageRef.current;
+      const parsed = new DOMParser().parseFromString(
+        `<!doctype html><html><head></head><body>${html}</body></html>`,
+        'text/html',
+      );
+      if (isPage) {
+        const now = new Map<string, string>();
+        for (const section of Array.from(parsed.querySelectorAll('[data-screen-id]'))) {
+          if (section.parentElement?.closest('[data-screen-id]')) continue;
+          now.set(section.getAttribute('data-screen-id') ?? '', section.outerHTML);
+        }
+        sectionSources.current = { version: loadVersionRef.current, html: now };
+      }
+      for (const tab of Array.from(parsed.querySelectorAll('[data-nav-screen]'))) {
+        tab.classList.toggle('is-active', tab.getAttribute('data-nav-screen') === sid);
+      }
+      if (isPage) {
+        for (const section of Array.from(parsed.querySelectorAll('[data-screen-id]'))) {
+          section.classList.toggle('is-active', section.getAttribute('data-screen-id') === sid);
+        }
+      }
+      morphChildren(d.body, parsed.body);
+      for (const el of Array.from(d.querySelectorAll(`[${BORN_ATTR}]`))) {
+        el.removeAttribute(BORN_ATTR);
+      }
+      for (const input of Array.from(d.body.querySelectorAll<HTMLInputElement>('input'))) {
+        input.value = input.getAttribute('value') ?? '';
+        input.checked = input.hasAttribute('checked');
+      }
+      for (const textarea of Array.from(d.body.querySelectorAll<HTMLTextAreaElement>('textarea'))) {
+        textarea.value = textarea.textContent ?? '';
+      }
+      for (const select of Array.from(d.body.querySelectorAll<HTMLSelectElement>('select'))) {
+        let anySelected = false;
+        for (const opt of Array.from(select.options)) {
+          const isDefault = opt.hasAttribute('selected');
+          opt.selected = isDefault;
+          if (isDefault) anySelected = true;
+        }
+        if (!anySelected && select.options.length > 0) select.selectedIndex = 0;
+      }
+      if (landedRef.current) {
+        for (const script of Array.from(d.body.querySelectorAll('script'))) {
+          if (script.closest('[data-screen-status="streaming"]')) continue;
+          const source = `${script.getAttribute('src') ?? ''}\u0000${script.textContent ?? ''}`;
+          if (ranScripts.current.get(script) === source) continue;
+          const fresh = d.createElement('script');
+          for (const attr of Array.from(script.attributes)) fresh.setAttribute(attr.name, attr.value);
+          fresh.textContent = script.textContent;
+          ranScripts.current.set(fresh, source);
+          script.replaceWith(fresh);
+        }
+      }
+      const scroller = d.scrollingElement ?? d.documentElement;
+      if (scroller) {
+        scroller.scrollTop = 0;
+        scroller.scrollLeft = 0;
+      }
+      shownScreen.current = sid;
+      applied.current = { version: loadVersionRef.current, html, screenId: sid };
+      layoutRef.current?.();
+    };
     const handle: ArtboardHandle = {
       document: doc,
       rectOf: (elementId) => box(find(elementId)),
@@ -191,6 +268,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
         if (offScreen) (el as HTMLElement).scrollIntoView?.({ block: 'center', inline: 'nearest' });
         return box(el);
       },
+      resetDom,
     };
     handleRef.current = handle;
     return () => {

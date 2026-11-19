@@ -57,7 +57,7 @@ export const WRITE_DEMO_TOURS_OPENAI_TOOL: OpenAiFunctionTool = {
               },
               steps: {
                 type: 'array',
-                description: 'Ordered walkthrough steps (typically 3–7 steps per tour).',
+                description: 'Ordered Demo Tour steps (typically 3–7 steps per tour).',
                 items: {
                   type: 'object',
                   properties: {
@@ -934,9 +934,7 @@ export function createPrototypeBuildRun(options: {
         }
         // Demo tours (#95): failed if attempted without a valid write; skipped if never attempted.
         const toursStatus = tracker.state().phases.tours.status;
-        if (toursStatus === 'now') {
-          send(tracker.phase('tours', toursAttempted && !toursSucceeded ? 'failed' : 'skipped'));
-        } else if (toursStatus === 'not_started') {
+        if (toursStatus === 'now' || toursStatus === 'not_started') {
           send(tracker.phase('tours', toursAttempted && !toursSucceeded ? 'failed' : 'skipped'));
         }
       }

@@ -196,6 +196,17 @@ describe('Demo Tours in ontology-core (#95)', () => {
               action: 'type',
               caption: '输入动作缺少 text。',
             },
+            {
+              screenId: 'SCR-HOME',
+              action: 'click',
+              caption: '点击动作缺少 elementId。',
+            },
+            {
+              screenId: 'SCR-NEW-ORDER',
+              action: 'type',
+              text: '可颂',
+              caption: '输入动作缺少 elementId。',
+            },
           ],
         },
       ],
@@ -209,6 +220,26 @@ describe('Demo Tours in ontology-core (#95)', () => {
     expect(codes).toContain('unknown_element');
     expect(codes).toContain('screen_not_ready');
     expect(codes).toContain('missing_type_text');
+    expect(invalidResult.issues.filter((i) => i.code === 'missing_element_id')).toHaveLength(2);
+
+    // Screen-level `look` step without elementId remains valid
+    const lookOnlyResult = validatePrototypeDemoTours(
+      SAMPLE_PROTOTYPE_HTML,
+      [
+        {
+          id: 'overview-a',
+          goal: '浏览首页概览',
+          steps: [{ screenId: 'SCR-HOME', action: 'look', caption: '查看首页整体布局。' }],
+        },
+        {
+          id: 'overview-b',
+          goal: '浏览订货页',
+          steps: [{ screenId: 'SCR-NEW-ORDER', action: 'look', caption: '查看订货页布局。' }],
+        },
+      ],
+      { minTours: 2, maxTours: 4, locale: 'zh-CN' },
+    );
+    expect(lookOnlyResult.ok).toBe(true);
     // Diagnostics list available anchors so the agent can self-correct
     const messages = invalidResult.issues.map((i) => i.message).join('\n');
     expect(messages).toContain('SCR-MISSING');

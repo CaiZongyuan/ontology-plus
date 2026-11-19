@@ -8,6 +8,14 @@ import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboar
 import { readAgentCursorPrefs, type AgentCursorPrefs, type AgentLiveActivity } from './agentCursor.js';
 import type { ScreenBuildView } from './buildView.js';
 
+export interface PrototypeWebOverlayContext {
+  screenId: string | undefined;
+  getHandle: () => ArtboardHandle | null;
+  pageWidth: number;
+  pageHeight: number;
+  layoutVersion: number;
+}
+
 /** What design notes (#94) and demo tours (#95) use to draw over the web page. */
 export interface PrototypeWebViewHandle {
   /** The page shown now. */
@@ -22,6 +30,8 @@ export interface PrototypeWebViewHandle {
   rectOf: (elementId: string) => ArtboardRect | null;
   /** Scrolls an off-screen element into view and returns its box. */
   reveal: (elementId: string) => ArtboardRect | null;
+  /** Restores the live body DOM and form controls to baseline `pageBodyHtml` without reloading. */
+  resetDom: () => void;
 }
 
 export interface PrototypeWebViewProps {
@@ -54,6 +64,8 @@ export interface PrototypeWebViewProps {
   cursorPrefs?: AgentCursorPrefs;
   /** Modular overlay slot inside the page container (#95 Demo Tour spotlight & cursor). */
   overlaySlot?: React.ReactNode;
+  /** Live-layout overlay renderer inside the page container (#95 Demo Tour spotlight & cursor). */
+  renderOverlay?: (ctx: PrototypeWebOverlayContext) => React.ReactNode;
 }
 
 interface History {
@@ -88,6 +100,7 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
     liveActivities = [],
     cursorPrefs,
     overlaySlot,
+    renderOverlay,
   },
   ref,
 ) {
@@ -179,6 +192,7 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
       open: go,
       rectOf: (elementId: string) => frameHandle.current?.rectOf(elementId) ?? null,
       reveal: (elementId: string) => frameHandle.current?.reveal(elementId) ?? null,
+      resetDom: () => frameHandle.current?.resetDom(),
     };
   }, [go, screens]);
 
@@ -330,6 +344,13 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
           layoutVersion={layoutVersion}
         />
         {overlaySlot}
+        {renderOverlay?.({
+          screenId: currentId,
+          getHandle: () => frameHandle.current,
+          pageWidth: pageSize.w || pageContainerRef.current?.clientWidth || 0,
+          pageHeight: pageSize.h || pageContainerRef.current?.clientHeight || 0,
+          layoutVersion,
+        })}
         {board && canResume && (
           <div className="absolute inset-x-0 top-4 flex justify-center px-4">
             <div
