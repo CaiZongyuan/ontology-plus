@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   PrototypeConfirmedDeleteError,
+  buildPrototypeChangeSummaryItems,
   createWorkspaceStore,
   type DesignBrief,
 } from '../index.js';
@@ -366,5 +367,70 @@ describe('prototype-revisions: two-tier prototype & linear immutable revisions',
         // Ignore open file lock cleanup on exit
       }
     }
+  });
+
+  it('persists Prototype Notes (data-note) into suite.MU element business descriptions on prototype confirmation and tracks note updates in Change Summary (#94)', () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const proj = store.createProject({
+      name: '门店订货工作台',
+      code: 'STORE-ORDER-NOTES',
+      domain: '门店订货管理',
+      template: 'EMPTY',
+    });
+
+    const rev1Html = `<!DOCTYPE html><html><body>
+      <section data-screen-id="SCR-HOME" data-screen-name="工作台首页" data-screen-type="DASHBOARD">
+        <button data-element-id="EL-HOME-NEW-ORDER" data-element-type="BUTTON" data-element-label="新建订单" data-navigate-to="SCR-NEW-ORDER" data-note="新建订单：店长发现缺货时，从这里开始订货。">新建订单</button>
+        <input data-element-id="EL-HOME-SEARCH" data-element-type="INPUT" data-element-label="搜索商品" />
+      </section>
+    </body></html>`;
+
+    const created = store.createPrototype(proj.id, {
+      name: '门店订货原型',
+      htmlContent: rev1Html,
+      source: 'GENERATED',
+    });
+
+    const confirmed1 = store.confirmPrototypeRevision(proj.id, created.revision.id);
+    const homeEls1 = confirmed1.project.suite.MU?.screens[0]?.elements ?? [];
+    expect(homeEls1.find((e) => e.elementId === 'EL-HOME-NEW-ORDER')?.description).toBe(
+      '新建订单：店长发现缺货时，从这里开始订货。',
+    );
+    expect(homeEls1.find((e) => e.elementId === 'EL-HOME-SEARCH')?.description).toBeUndefined();
+
+    // Updating a Prototype Note produces a Business View Change Summary item and updates suite.MU on re-confirm
+    const rev2Html = rev1Html.replace(
+      '新建订单：店长发现缺货时，从这里开始订货。',
+      '发起订货：缺货提醒触发后，直接带入推荐补货量。',
+    );
+    const rev2 = store.appendPrototypeRevision(created.prototype.id, {
+      htmlContent: rev2Html,
+      instruction: '补充缺货推荐补货说明',
+      source: 'REFINED',
+    });
+
+    const summaryItems = buildPrototypeChangeSummaryItems({
+      prototypeId: created.prototype.id,
+      revisionId: rev2.revision.id,
+      previousRevisionId: created.revision.id,
+      previousHtml: rev1Html,
+      nextHtml: rev2Html,
+      domain: proj.domain,
+    });
+    expect(summaryItems).toEqual([
+      expect.objectContaining({
+        changeType: 'MODIFIED',
+        label: {
+          zh: '在『工作台首页』上调整按钮『新建订单』',
+          en: "Updated button '新建订单' on '工作台首页'",
+        },
+      }),
+    ]);
+
+    const confirmed2 = store.confirmPrototypeRevision(proj.id, rev2.revision.id);
+    const homeEls2 = confirmed2.project.suite.MU?.screens[0]?.elements ?? [];
+    expect(homeEls2.find((e) => e.elementId === 'EL-HOME-NEW-ORDER')?.description).toBe(
+      '发起订货：缺货提醒触发后，直接带入推荐补货量。',
+    );
   });
 });

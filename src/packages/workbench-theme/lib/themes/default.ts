@@ -41,6 +41,7 @@ const type = {
   'font-title': `"Inter", ${CJK}, system-ui, -apple-system, "Segoe UI", sans-serif`,
   'font-sans': `"Inter", ${CJK}, system-ui, -apple-system, "Segoe UI", sans-serif`,
   'font-mono': `"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, ${LINUX_MONO}, ${CJK}, monospace`,
+  'font-annotation': '"LXGW WenKai Lite", "KaiTi", "STKaiti", "Kaiti SC", "AR PL UKai CN", cursive',
 };
 
 const shape = {

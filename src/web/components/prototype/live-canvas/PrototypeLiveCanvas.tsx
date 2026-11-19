@@ -18,6 +18,7 @@ import { AgentCursorDockControl, CanvasAgentCursors, useObservedElementSize } fr
 import { ArtboardFrame, type ArtboardHandle } from './Artboard.js';
 import { BuildLog, BuildLogLiveRows } from './BuildLog.js';
 import { BuildPhaseBar } from './BuildPhaseBar.js';
+import { CanvasDesignNotesOverlay, DesignNotesDockControl } from './DesignNotesOverlay.js';
 import {
   readAgentCursorPrefs,
   resolveLiveActivities,
@@ -39,13 +40,25 @@ import {
   type FollowState,
   type Rect,
 } from './camera.js';
+import {
+  hasScreenElementNotes,
+  measureDesignNotesFrameBounds,
+  pickDesignNotesScreenId,
+} from './designNotesLayout.js';
 import { openCleanPrototypeInNewTab } from '../PrototypeVisualInspector.js';
 import { readPrototypeView, writePrototypeView, type PrototypeView } from './prototypeView.js';
 import { PrototypeWebView, WebModeHint, type PrototypeWebViewHandle } from './PrototypeWebView.js';
 
 /** How long the follow camera stays on a screen before moving to another one. */
 export const FOLLOW_DWELL_MS = 1600;
-const CAMERA_TWEEN_MS = 420;
+const CAMERA_TWEEN_MS = 300;
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches)
+  );
+}
 
 export interface PrototypeLiveCanvasProps {
   /** The saved document (current revision, or the revision being previewed). */
@@ -204,7 +217,10 @@ export function PrototypeLiveCanvas({
   const [followTick, setFollowTick] = useState(0);
   const [followedScreenId, setFollowedScreenId] = useState<string | undefined>(undefined);
   const [tryScreenId, setTryScreenId] = useState<string | null>(null);
+  const manualFocusScreenRef = useRef<string | undefined>(undefined);
   const [dragging, setDragging] = useState(false);
+  const [designNotesOn, setDesignNotesOn] = useState(false);
+  const pendingNotesFrame = useRef(false);
 
   // ─── View: artboards or web page (#97), remembered per device ──────────────
   const [view, setViewState] = useState<PrototypeView>(readPrototypeView);
@@ -215,7 +231,11 @@ export function PrototypeLiveCanvas({
   /** The page web mode opens on: the screen being tried out, else the one being drawn. */
   const [webStart, setWebStart] = useState<string | undefined>(undefined);
   const setView = (next: PrototypeView) => {
-    if (next === 'web') setWebStart(tryScreenId ?? followTarget ?? focusScreenId ?? followedScreenId);
+    if (next === 'web') {
+      setWebStart(
+        tryScreenId ?? manualFocusScreenRef.current ?? followTarget ?? focusScreenId ?? followedScreenId,
+      );
+    }
     setTryScreenId(null);
     setWebHint(false);
     setViewState(next);
@@ -245,7 +265,7 @@ export function PrototypeLiveCanvas({
 
   const moveCamera = useCallback((target: Camera, animate = true) => {
     stopTween();
-    if (!animate || typeof requestAnimationFrame !== 'function') {
+    if (!animate || prefersReducedMotion() || typeof requestAnimationFrame !== 'function') {
       setCam(target);
       return;
     }
@@ -288,9 +308,20 @@ export function PrototypeLiveCanvas({
     [frameRect, indexById],
   );
 
+  const frameScreenWithNotes = useCallback(
+    (screenId: string) => {
+      const idx = indexById.get(screenId);
+      if (idx === undefined) return;
+      const doc = getFrameHandle(screenId)?.document() ?? null;
+      frameRect(measureDesignNotesFrameBounds(doc, screenId, artboardRect(idx)), 1);
+    },
+    [frameRect, getFrameHandle, indexById],
+  );
+
   /** Any manual camera move stops following. */
   const takeManualControl = useCallback(() => {
     stopTween();
+    pendingNotesFrame.current = false;
     userMoved.current = true;
     if (followingRef.current) setFollowing(false);
   }, []);
@@ -299,9 +330,11 @@ export function PrototypeLiveCanvas({
   const focusScreen = useCallback(
     (screenId: string) => {
       takeManualControl();
-      frameScreen(screenId);
+      manualFocusScreenRef.current = screenId;
+      if (designNotesOn) frameScreenWithNotes(screenId);
+      else frameScreen(screenId);
     },
-    [frameScreen, takeManualControl],
+    [designNotesOn, frameScreen, frameScreenWithNotes, takeManualControl],
   );
 
   // Before anyone moves the camera, keep every artboard in view.
@@ -328,8 +361,57 @@ export function PrototypeLiveCanvas({
     return undefined;
   }, [focusScreenId, following, frameScreen, followTick, tryScreenId]);
 
+  const toggleDesignNotes = useCallback(
+    (next: boolean) => {
+      setDesignNotesOn(next);
+      if (!next) {
+        pendingNotesFrame.current = false;
+        return;
+      }
+      if (view === 'artboards') {
+        takeManualControl();
+        const { screenId, hasNotes } = pickDesignNotesScreenId(screens, {
+          tryScreenId,
+          preferredIds: [
+            manualFocusScreenRef.current,
+            highlightedScreenId,
+            focusScreenId,
+            followedScreenId,
+          ],
+        });
+        if (screenId) {
+          frameScreenWithNotes(screenId);
+        }
+        if (!hasNotes) {
+          pendingNotesFrame.current = true;
+        }
+      }
+    },
+    [
+      focusScreenId,
+      followedScreenId,
+      frameScreenWithNotes,
+      highlightedScreenId,
+      screens,
+      takeManualControl,
+      tryScreenId,
+      view,
+    ],
+  );
+
+  // If Design Notes was turned ON early in a live build before any screen had emitted notes,
+  // frame the first screen with notes as soon as it arrives.
+  useEffect(() => {
+    if (!designNotesOn || view !== 'artboards' || !pendingNotesFrame.current) return;
+    const firstWithNotes = screens.find((s) => hasScreenElementNotes(s));
+    if (!firstWithNotes) return;
+    pendingNotesFrame.current = false;
+    frameScreenWithNotes(firstWithNotes.screenId);
+  }, [designNotesOn, frameScreenWithNotes, layoutVersion, screens, view]);
+
   const resumeFollowing = () => {
     setTryScreenId(null);
+    manualFocusScreenRef.current = undefined;
     followState.current = { since: 0 };
     setFollowedScreenId(undefined);
     userMoved.current = false;
@@ -370,10 +452,12 @@ export function PrototypeLiveCanvas({
   const enterTry = useCallback(
     (screenId: string) => {
       takeManualControl();
+      manualFocusScreenRef.current = screenId;
       setTryScreenId(screenId);
-      frameScreen(screenId);
+      if (designNotesOn) frameScreenWithNotes(screenId);
+      else frameScreen(screenId);
     },
-    [frameScreen, takeManualControl],
+    [designNotesOn, frameScreen, frameScreenWithNotes, takeManualControl],
   );
   const enterTryRef = useRef(enterTry);
   enterTryRef.current = enterTry;
@@ -587,6 +671,15 @@ export function PrototypeLiveCanvas({
                 </div>
               );
             })}
+            <CanvasDesignNotesOverlay
+              enabled={designNotesOn && view === 'artboards'}
+              screens={screens}
+              indexById={indexById}
+              getHandle={getFrameHandle}
+              isBusiness={isBusiness}
+              locale={locale === 'en-US' ? 'en-US' : 'zh-CN'}
+              layoutVersion={layoutVersion}
+            />
           </div>
 
           {/* Artboard names, in screen space so they stay readable at any zoom. */}
@@ -666,6 +759,8 @@ export function PrototypeLiveCanvas({
               viewsById={viewById}
               liveActivities={activities}
               cursorPrefs={cursorPrefs}
+              designNotesOn={designNotesOn}
+              isBusiness={isBusiness}
             />
           )}
 
@@ -767,7 +862,9 @@ export function PrototypeLiveCanvas({
             <span className="inline-flex items-center gap-1" data-slot="dock-cursor">
               <AgentCursorDockControl prefs={cursorPrefs} onChange={updateCursorPrefs} />
             </span>
-            <span data-slot="dock-design-notes" />
+            <span className="inline-flex items-center gap-1" data-slot="dock-design-notes">
+              <DesignNotesDockControl enabled={designNotesOn} onToggle={toggleDesignNotes} />
+            </span>
           </div>
         </div>
 

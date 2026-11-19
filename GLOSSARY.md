@@ -183,7 +183,7 @@ The plain-language list of the screens an Interactive Prototype will have and wh
 _Avoid_: Shell, skeleton, outline, task list
 
 **Prototype Note (原型说明)**:
-A numbered business-language explanation attached to one element of an Interactive Prototype, saying what the element is, what it shows, and what happens when it is used.
+A business-language explanation attached to one element of an Interactive Prototype, saying what the element is, what it shows, and what happens when it is used; shown when 设计说明 / Design Notes is turned on as an unnumbered handwritten callout with a curved arrow.
 _Avoid_: Annotation, tooltip, comment, spec label
 _Shown to business users as_: 说明 (Note)
 

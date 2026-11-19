@@ -1,4 +1,5 @@
 import { DERIVED_VARIABLES, THEME_TOKENS, cssVarName } from './contract.js';
+import { contrastRatio } from './color.js';
 import { BUILT_IN_THEMES, DEFAULT_THEME_ID, findTheme, resolveThemeId } from './themes.js';
 import type { ThemeMode, WorkbenchTheme } from './types.js';
 
@@ -113,4 +114,23 @@ export function compileBuiltInThemesCss(): string {
  */
 export function themeSelectionColor(themeId: string): string {
   return resolveThemeTokens(findTheme(resolveThemeId(themeId))!, 'light').primary!;
+}
+
+/**
+ * Picks a `>= 3:1` mark colour for overlays drawn over a prototype page (such as Design Notes
+ * arrows and dashed element frames), choosing between the theme's light and dark `primary` tokens
+ * according to the prototype surface's own ground colour rather than the workbench mode.
+ */
+export function themePrototypeMarkColor(
+  themeId: string,
+  prototypeSurfaceColor?: string | null,
+): string {
+  const theme = findTheme(resolveThemeId(themeId))!;
+  const lightPrimary = resolveThemeTokens(theme, 'light').primary!;
+  if (!prototypeSurfaceColor) return lightPrimary;
+  const darkPrimary = resolveThemeTokens(theme, 'dark').primary!;
+  const lightRatio = contrastRatio(lightPrimary, prototypeSurfaceColor);
+  const darkRatio = contrastRatio(darkPrimary, prototypeSurfaceColor);
+  if (lightRatio === null || darkRatio === null) return lightPrimary;
+  return darkRatio > lightRatio ? darkPrimary : lightPrimary;
 }

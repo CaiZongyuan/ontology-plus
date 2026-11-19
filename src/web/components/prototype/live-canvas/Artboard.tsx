@@ -360,12 +360,47 @@ export const ArtboardFrame = memo(function ArtboardFrame({
       if (event.key === 'Escape') escapeRef.current();
     };
     const onMove = () => layoutRef.current?.();
+    let rafId: number | null = null;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    const scheduleLayout = () => {
+      if (rafId !== null || timerId !== null) return;
+      if (typeof requestAnimationFrame === 'function') {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          layoutRef.current?.();
+        });
+      } else {
+        timerId = setTimeout(() => {
+          timerId = null;
+          layoutRef.current?.();
+        }, 0);
+      }
+    };
+    const observer =
+      typeof MutationObserver !== 'undefined' ? new MutationObserver(scheduleLayout) : null;
+    observer?.observe(d.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [
+        'class',
+        'style',
+        'hidden',
+        'open',
+        'aria-hidden',
+        'aria-expanded',
+        'aria-selected',
+      ],
+    });
     d.addEventListener('click', onClick);
     d.addEventListener('keydown', onKey);
     d.addEventListener('scroll', onMove, { capture: true, passive: true });
     win?.addEventListener('scroll', onMove, { passive: true });
     win?.addEventListener('resize', onMove, { passive: true });
     return () => {
+      observer?.disconnect();
+      if (rafId !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
+      if (timerId !== null) clearTimeout(timerId);
       d.removeEventListener('click', onClick);
       d.removeEventListener('keydown', onKey);
       d.removeEventListener('scroll', onMove, true);

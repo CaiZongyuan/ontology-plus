@@ -19,6 +19,7 @@ import {
   renderContractDoc,
   resolveThemeId,
   resolveThemeTokens,
+  themePrototypeMarkColor,
   themeSelectionColor,
   type WorkbenchTheme,
 } from '../index.js';
@@ -157,10 +158,40 @@ describe('built-in themes', () => {
     }
   });
 
+  it('adds font-annotation to the font group without bumping THEME_CONTRACT_VERSION and configures bundled offline KaiTi in every built-in theme (#94)', () => {
+    expect(THEME_CONTRACT_VERSION).toBe(1);
+    const spec = THEME_TOKENS.find((token) => token.name === 'font-annotation');
+    expect(spec).toEqual({
+      name: 'font-annotation',
+      group: 'font',
+      description: 'Handwritten callouts on prototype screens (Design Notes).',
+    });
+
+    for (const theme of BUILT_IN_THEMES) {
+      for (const mode of ['light', 'dark'] as const) {
+        const tokens = resolveThemeTokens(theme, mode);
+        expect(tokens['font-annotation']).toMatch(/^"LXGW WenKai Lite", .*"KaiTi".*, cursive$/);
+      }
+    }
+
+    const mainTsx = readRepoFile('src/web/main.tsx');
+    expect(mainTsx).toContain("import 'lxgw-wenkai-lite-webfont/lxgwwenkailite-regular.css';");
+    expect(mainTsx).not.toMatch(/https?:\/\/fonts\./i);
+    expect(readRepoFile('src/web/tokens.css')).not.toMatch(/https?:\/\/fonts\./i);
+  });
+
   it('give a prototype selection the light primary of the chosen theme, whatever the workbench mode', () => {
     expect(themeSelectionColor('warm-paper')).toBe('#4c50c4');
     expect(themeSelectionColor('default')).toBe('#2466de');
     expect(themeSelectionColor('no-such-theme')).toBe(themeSelectionColor(DEFAULT_THEME_ID));
+
+    // Over both light (#ffffff, #f7f5f0) and dark (#121211) prototype surfaces, mark contrast stays >= 3:1 in every theme
+    for (const theme of BUILT_IN_THEMES) {
+      for (const surface of ['#ffffff', 'rgb(247, 245, 240)', '#121211', 'rgb(17, 19, 24)']) {
+        const mark = themePrototypeMarkColor(theme.id, surface);
+        expect(contrastRatio(mark, surface)!).toBeGreaterThanOrEqual(3);
+      }
+    }
   });
 
   it('fall back to the default for an unknown, missing, or malformed stored id', () => {
