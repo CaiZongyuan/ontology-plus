@@ -48,6 +48,8 @@ export type PrototypeBuildLogKind =
   | 'plan_ready'
   | 'style_started'
   | 'style_ready'
+  | 'style_values_changed'
+  | 'style_lock_unavailable'
   | 'screen_started'
   | 'screen_done'
   | 'screen_failed'
@@ -73,6 +75,8 @@ export interface PrototypeBuildLogEntry {
   failedCount?: number;
   /** style_ready: the values are the approved Style Tile's (locked). */
   locked?: boolean;
+  /** style_values_changed: the design values the user asked to change. */
+  valueKeys?: string[];
 }
 
 export interface PrototypeBuildState {

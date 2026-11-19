@@ -165,3 +165,11 @@ export {
   type VisualReferenceItem,
   type VisualReferenceVibeGroup,
 } from './lib/inspo-cache.js';
+
+export {
+  deriveStyleTileFromReferences,
+  styleTileTokensToValues,
+  approvedBriefStyleValues,
+  type StyleTileTokens,
+  type StyleTileReferences,
+} from './lib/style-tile.js';

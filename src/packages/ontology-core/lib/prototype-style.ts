@@ -242,17 +242,126 @@ export interface PrototypeStyle {
 export const PROTOTYPE_STYLE_ATTR = 'data-proto-style';
 export const PROTOTYPE_STYLE_TILE_ATTR = 'data-proto-style-tile';
 
-/** Keeps component CSS inside its own `<style>` element. */
-export function sanitizeStyleCss(css: string): string {
-  return css.replace(/<\/?style[^>]*>?/gi, '').replace(/<\/?template[^>]*>?/gi, '');
+function fromCodePointSafe(code: number): string {
+  return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
 }
 
-/** Keeps sample HTML inside its `<template>` and free of anchors (it is not a screen). */
+function decodeCssIdent(raw: string): string {
+  return raw
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\\(?:\r\n|[\n\r\f])/g, '')
+    .replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_m, hex: string) => fromCodePointSafe(Number.parseInt(hex, 16)))
+    .replace(/\\([\s\S])/g, '$1');
+}
+
+/**
+ * Removes every redeclaration of a design value (`--proto-*: …`) from CSS that is not the values
+ * block itself (including CSS comment/hex-escape tricks), so component, shell and screen CSS can
+ * use the values but never override them.
+ */
+export function stripStyleValueOverrides(css: string): string {
+  return css.replace(
+    /(--(?:\/\*[\s\S]*?\*\/|\\[0-9a-fA-F]{1,6}\s?|\\[\s\S]|[A-Za-z0-9_-])*)\s*:[^;{}]*;?/g,
+    (decl, name: string) => (decodeCssIdent(name).toLowerCase().startsWith('--proto-') ? '' : decl),
+  );
+}
+
+/** Strips `--proto-*` custom property overrides from inline `style="…"` attributes on HTML tags. */
+export function stripInlineStyleValueOverrides(html: string): string {
+  return html.replace(/<([A-Za-z][A-Za-z0-9:-]*)(\s[^>]*?)?>/g, (tag, name: string, attrs?: string) => {
+    if (!attrs || !/\bstyle\s*=/i.test(attrs)) return tag;
+    const lower = name.toLowerCase();
+    if (lower === 'script' || lower === 'style') return tag;
+    const nextAttrs = attrs.replace(
+      /(\bstyle\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi,
+      (_m, prefix: string, dq?: string, sq?: string, uq?: string) => {
+        const cleaned = stripStyleValueOverrides(dq ?? sq ?? uq ?? '').trim();
+        return cleaned ? `${prefix}"${cleaned.replace(/"/g, '&quot;')}"` : '';
+      },
+    );
+    return `<${name}${nextAttrs}>`;
+  });
+}
+
+/** Keeps component CSS inside its own `<style>` element, without imports or script URLs. */
+export function sanitizeStyleCss(css: string): string {
+  return css
+    .replace(/<\/?(?:style|template|script)[^>]*>?/gi, '')
+    .replace(/@import\b[^;{}]*;?/gi, '')
+    .replace(/expression\s*\(/gi, '(')
+    .replace(/url\(([^)]*)\)/gi, (full, inner: string) => {
+      const normalized = decodeCssIdent(inner)
+        .replace(/['"\u0000-\u0020]+/g, '')
+        .toLowerCase();
+      return /^(?:javascript|vbscript):|^data:text\/html/i.test(normalized) ? 'none' : full;
+    });
+}
+
+function decodeHtmlAttrEntities(raw: string): string {
+  return raw
+    .replace(/&#x([0-9a-fA-F]+);?/g, (_m, hex: string) => fromCodePointSafe(Number.parseInt(hex, 16)))
+    .replace(/&#([0-9]+);?/g, (_m, dec: string) => fromCodePointSafe(Number.parseInt(dec, 10)))
+    .replace(/&colon;?/gi, ':')
+    .replace(/&(tab|newline);?/gi, '');
+}
+
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'poster', 'data']);
+const ANCHOR_OR_DANGEROUS_ATTRS = new Set([
+  'data-screen-id',
+  'data-element-id',
+  'data-event-id',
+  'data-binding',
+  'srcdoc',
+]);
+
+/**
+ * Keeps sample HTML inside its `<template>`: no anchors (it is not a screen), no scripts, event
+ * handlers or script URLs, no `--proto-*` inline overrides, and no `<style>`/`<link>`/`<iframe>`
+ * (which would leak into every artboard).
+ */
 export function sanitizeStyleSampleHtml(html: string): string {
-  return html
+  const withoutDangerousElements = html
     .replace(/<\/?template[^>]*>?/gi, '')
-    .replace(/<script\b[\s\S]*?(?:<\/script>|$)/gi, '')
-    .replace(/\sdata-(?:screen-id|element-id|event-id|binding)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+    .replace(/<(script|style|iframe|object|noscript|foreignobject)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<(?:script|style)\b[\s\S]*$/gi, '')
+    .replace(/<\/?(?:iframe|object|noscript|foreignobject|link|meta|base|embed)\b[^>]*>?/gi, '');
+
+  return withoutDangerousElements.replace(
+    /<([A-Za-z][A-Za-z0-9:-]*)([\s/"'][^>]*?)?(\/?)>/g,
+    (_tag, tagName: string, attrRegion = '', selfClose: string) => {
+      if (!attrRegion) return `<${tagName}${selfClose}>`;
+      const kept: string[] = [];
+      const attrRe = /([A-Za-z_:@][A-Za-z0-9_.:@-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+      let m: RegExpExecArray | null;
+      while ((m = attrRe.exec(attrRegion)) !== null) {
+        const attrName = m[1]!;
+        const lower = attrName.toLowerCase();
+        if (lower.startsWith('on') || ANCHOR_OR_DANGEROUS_ATTRS.has(lower)) continue;
+        const hasValue = m[2] !== undefined || m[3] !== undefined || m[4] !== undefined;
+        const rawVal = m[2] ?? m[3] ?? m[4] ?? '';
+        if (!hasValue) {
+          kept.push(attrName);
+          continue;
+        }
+        if (URL_ATTRS.has(lower)) {
+          const normalized = decodeHtmlAttrEntities(rawVal)
+            .replace(/[\u0000-\u0020]+/g, '')
+            .toLowerCase();
+          if (/^(?:javascript|vbscript):|^data:text\/html/.test(normalized)) {
+            kept.push(`${attrName}="#"`);
+            continue;
+          }
+        }
+        if (lower === 'style') {
+          const cleaned = stripStyleValueOverrides(sanitizeStyleCss(rawVal)).trim();
+          if (cleaned) kept.push(`style="${escapeAttr(cleaned)}"`);
+          continue;
+        }
+        kept.push(`${attrName}="${escapeAttr(rawVal)}"`);
+      }
+      return `<${tagName}${kept.length > 0 ? ` ${kept.join(' ')}` : ''}${selfClose ? ' /' : ''}>`;
+    },
+  );
 }
 
 function escapeAttr(raw: string): string {
@@ -265,7 +374,7 @@ function unescapeAttr(raw: string): string {
 
 /** The full stylesheet of a style: values first, then the shared components. */
 export function prototypeStyleCss(style: Pick<PrototypeStyle, 'values' | 'componentCss'>): string {
-  const components = sanitizeStyleCss(style.componentCss).trim();
+  const components = stripStyleValueOverrides(sanitizeStyleCss(style.componentCss)).trim();
   return `${prototypeStyleValuesCss(style.values)}${components ? `\n${components}` : ''}`;
 }
 
@@ -290,12 +399,83 @@ const TILE_BLOCK_RE = new RegExp(
 );
 
 /**
+ * Zero-specificity skeleton CSS for `initPrototypeShell`: every colour, font and radius comes
+ * from `--proto-*`, and pages are width-adaptive.
+ */
+export const PROTOTYPE_SHELL_SKELETON_CSS = [
+  '*, *::before, *::after { box-sizing: border-box; }',
+  ':where(body) {',
+  '  margin: 0;',
+  '  font-family: var(--proto-font);',
+  '  background: var(--proto-bg);',
+  '  color: var(--proto-text);',
+  '  line-height: 1.5;',
+  '  font-variant-numeric: tabular-nums;',
+  '}',
+  ':where(.proto-app-shell) { min-height: 100vh; display: flex; flex-direction: column; }',
+  ':where(.proto-app-bar) {',
+  '  display: flex;',
+  '  flex-wrap: wrap;',
+  '  align-items: center;',
+  '  gap: 8px 28px;',
+  '  padding: 12px clamp(16px, 3vw, 32px);',
+  '  background: var(--proto-card);',
+  '  border-bottom: 1px solid var(--proto-border);',
+  '}',
+  ':where(.proto-app-title) { margin: 0; font-size: 16px; font-weight: 600; }',
+  ':where(.proto-app-subtitle) { font-size: 12px; color: var(--proto-muted); }',
+  ':where(.proto-app-nav) { display: flex; flex-wrap: wrap; gap: 4px 20px; }',
+  ':where(.proto-app-nav-link) {',
+  '  appearance: none;',
+  '  border: 0;',
+  '  border-bottom: 2px solid transparent;',
+  '  background: none;',
+  '  padding: 4px 0;',
+  '  font: inherit;',
+  '  color: var(--proto-muted);',
+  '  cursor: pointer;',
+  '}',
+  ':where(.proto-app-nav-link.is-active) { color: var(--proto-text); border-bottom-color: var(--proto-accent); }',
+  ':where(.proto-screens-stage) { flex: 1; width: 100%; min-width: 0; padding: clamp(16px, 2.5vw, 32px); }',
+  '.proto-screen { display: none; }',
+  '.proto-screen.is-active { display: block; }',
+].join('\n    ');
+
+const LEGACY_UPGRADED_SHELL_CSS = PROTOTYPE_SHELL_SKELETON_CSS
+  .replace(':where(.proto-app-bar)', ':where(.proto-app-bar, .proto-topbar)')
+  .replace(':where(.proto-app-title)', ':where(.proto-app-brand, .proto-brand) { display: flex; align-items: baseline; gap: 10px; }\n    :where(.proto-app-title, .proto-brand h1)')
+  .replace(':where(.proto-app-subtitle)', ':where(.proto-app-subtitle, .proto-brand span)')
+  .replace(':where(.proto-app-nav)', ':where(.proto-app-nav, .proto-nav)')
+  .replace(':where(.proto-app-nav-link)', ':where(.proto-app-nav-link, .proto-nav-tab)')
+  .replace(':where(.proto-app-nav-link.is-active)', ':where(.proto-app-nav-link.is-active, .proto-nav-tab.is-active)');
+
+const LEGACY_SHELL_PREAMBLE_RE =
+  /^\s*:root\s*\{[\s\S]*?@media\s*\(\s*max-width\s*:\s*768px\s*\)\s*\{[\s\S]*?\.proto-screens-stage\s*\{[^}]*\}\s*\}/i;
+
+function upgradeShellOrStyleBlock(open: string, body: string): string {
+  if (/\bid\s*=\s*["']proto-shell-styles["']/i.test(open) && !body.includes(':where(')) {
+    const upgraded = body.replace(LEGACY_SHELL_PREAMBLE_RE, `\n    ${LEGACY_UPGRADED_SHELL_CSS}`);
+    return stripStyleValueOverrides(upgraded);
+  }
+  return stripStyleValueOverrides(body);
+}
+
+/**
  * The document with this style as its shared look: an existing style is replaced in place,
  * otherwise the style goes first in `<head>` (so screen CSS added later stays after it).
  */
 export function applyPrototypeStyleToDocument(html: string, style: PrototypeStyle): string {
   const blocks = prototypeStyleHeadHtml(style);
-  const withoutOld = html.replace(TILE_BLOCK_RE, '').replace(STYLE_BLOCK_RE, '');
+  // Older shells (and any other stylesheet or inline attribute) declared their own --proto-*
+  // values; those declarations go and legacy shell rules upgrade to zero-specificity skeleton CSS.
+  const withoutOld = stripInlineStyleValueOverrides(
+    html
+      .replace(TILE_BLOCK_RE, '')
+      .replace(STYLE_BLOCK_RE, '')
+      .replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi, (_m, open: string, body: string, close: string) =>
+        `${open}${upgradeShellOrStyleBlock(open, body)}${close}`,
+      ),
+  );
   const headOpen = /<head\b[^>]*>/i.exec(withoutOld);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;

@@ -19,7 +19,9 @@ import {
   prototypeStyleTileBody,
   readPrototypeDocumentStyle,
   resolvePrototypeStyleValues,
+  sanitizeStyleCss,
   sanitizeStyleSampleHtml,
+  stripStyleValueOverrides,
   type PrototypeStyleValues,
 } from './prototype-style.js';
 
@@ -428,8 +430,8 @@ export function healPartialScreenSection(
 
 function healPartialCss(css: string | undefined): string | undefined {
   if (!css?.trim()) return undefined;
-  // Drop a trailing unfinished rule and anything that would close the style element early.
-  const cleaned = css.replace(/<\/?style[^>]*>?/gi, '');
+  // Drop a trailing unfinished rule and anything that would close the style element early or override --proto-*.
+  const cleaned = stripStyleValueOverrides(sanitizeStyleCss(css));
   const lastClose = cleaned.lastIndexOf('}');
   const complete = lastClose >= 0 ? cleaned.slice(0, lastClose + 1) : '';
   return complete.trim() || undefined;

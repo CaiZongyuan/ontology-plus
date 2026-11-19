@@ -24,6 +24,8 @@ const ENTRIES: PrototypeBuildLogEntry[] = [
   { id: 11, at: '', agent: 0, kind: 'style_started' },
   { id: 12, at: '', agent: 0, kind: 'style_ready', locked: true },
   { id: 13, at: '', agent: 0, kind: 'style_ready', locked: false },
+  { id: 14, at: '', agent: 0, kind: 'style_values_changed', valueKeys: ['accent', 'mode'] },
+  { id: 15, at: '', agent: 0, kind: 'style_lock_unavailable' },
 ];
 
 describe('prototype build log sentences', () => {
@@ -39,6 +41,10 @@ describe('prototype build log sentences', () => {
       '「退款审批」没画完：这一屏有按钮或输入框没有标注好，没能通过检查。',
     );
     expect(describePrototypeBuildLogEntry(ENTRIES[6]!, nameOf, 'en-US')).toContain('1 not finished');
+    expect(describePrototypeBuildLogEntry(ENTRIES[13]!, nameOf, 'zh-CN')).toContain('主色、深浅模式');
+    expect(describePrototypeBuildLogEntry(ENTRIES[13]!, nameOf, 'en-US')).toContain('main colour, light/dark mode');
+    expect(describePrototypeBuildLogEntry(ENTRIES[14]!, nameOf, 'zh-CN')).toContain('找不到你确认风格样张时用的参考');
+    expect(describePrototypeBuildLogEntry(ENTRIES[14]!, nameOf, 'en-US')).toContain('Style Tile');
   });
 
   it('has one sentence for every failure and names the assistants', () => {

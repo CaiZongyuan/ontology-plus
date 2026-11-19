@@ -23,7 +23,11 @@ import type {
   VisualReferenceItem,
 } from '../../../packages/workspace-store/index.js';
 import { sanitizeBusinessText } from '../../../packages/business-vocabulary/index.js';
-import type { PrototypeStyleValues } from '../../../packages/ontology-core/index.js';
+import {
+  deriveStyleTileFromReferences,
+  styleTileTokensToValues,
+  type StyleTileTokens,
+} from '../../../packages/workspace-store/index.js';
 import type { TransientTurnImageInput } from '../../../packages/agent-runtime/index.js';
 import { usePreferences } from '../../i18n.js';
 import type { StepViewMode } from '../../navigation/index.js';
@@ -57,159 +61,31 @@ import {
   type VisualReferenceSelection,
 } from './VisualReferencePicker.js';
 
-export interface StyleTileTokens {
-  mode: 'light' | 'dark';
-  surfaceHex: string;
-  cardHex: string;
-  insetHex: string;
-  accentHex: string;
-  accentInkHex: string;
-  secondaryAccentHex: string;
-  borderHex: string;
-  inkHex: string;
-  mutedInkHex: string;
-  semanticOkHex: string;
-  semanticWarnHex: string;
-  semanticDangerHex: string;
-  fontFamily: string;
-  fontDisplayLabel: string;
-  radiusPx: number;
-  isCompact: boolean;
-}
-
-function isLightHexColor(hex: string): boolean {
-  const clean = hex.replace('#', '').trim();
-  if (clean.length !== 6) return true;
-  const r = parseInt(clean.slice(0, 2), 16) || 0;
-  const g = parseInt(clean.slice(2, 4), 16) || 0;
-  const b = parseInt(clean.slice(4, 6), 16) || 0;
-  return (r * 299 + g * 587 + b * 114) / 1000 >= 140;
-}
+export type { StyleTileTokens };
 
 // The style tile previews the app being designed: its surfaces, ink, accent, and status
-// colours are the prototype's, not workbench appearance, and stay literal whatever
+// colours belong to the designed app, not workbench appearance, and stay literal whatever
 // Workbench Theme is active.
-function pickReadableInkForAccent(hex: string): string {
-  const clean = hex.replace('#', '').trim();
-  if (clean.length !== 6) return '#ffffff';
-  const r = parseInt(clean.slice(0, 2), 16) || 0;
-  const g = parseInt(clean.slice(2, 4), 16) || 0;
-  const b = parseInt(clean.slice(4, 6), 16) || 0;
-  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-  return yiq >= 165 ? '#111827' : '#ffffff';
-}
 
+/** The Style Tile tokens of the wizard's current choices (the derivation lives in workspace-store). */
 export function deriveStyleTileTokens(
   selection: VisualReferenceSelection,
   alignment: RequirementAlignmentState = DEFAULT_ALIGNMENT_STATE,
   userFeelNote = '',
 ): StyleTileTokens {
-  const bgDonor =
-    selection.borrowed.find((b) => b.aspect === 'bgColor')?.item ?? selection.primary;
-  const accentDonor =
-    selection.borrowed.find((b) => b.aspect === 'accentColor')?.item ?? selection.primary;
-  const borderDonor =
-    selection.borrowed.find((b) => b.aspect === 'cardBorder')?.item ?? selection.primary;
-  const typoDonor =
-    selection.borrowed.find((b) => b.aspect === 'typography')?.item ?? selection.primary;
-  const spacingBorrowed = selection.borrowed.some((b) => b.aspect === 'spacing');
-  const clarityBorrowed = selection.borrowed.some((b) => b.aspect === 'dataClarity');
-
-  const feelLower = userFeelNote.toLowerCase();
-  const explicitDarkCue =
-    /深色|暗黑|暗色|黑底|夜间|dark\s*mode|dark\s*theme|dark\s*cockpit/.test(feelLower) &&
-    !/浅色|白底|纸感|light\s*mode/.test(feelLower);
-  const explicitLightCue =
-    /浅色|白底|暖白|纸感|light\s*mode|warm\s*paper/.test(feelLower) && !explicitDarkCue;
-
-  let surfaceHex = bgDonor.surfaceHex || '#f8fafc';
-  if (explicitDarkCue && isLightHexColor(surfaceHex)) {
-    surfaceHex = '#0f172a';
-  } else if (explicitLightCue && !isLightHexColor(surfaceHex)) {
-    surfaceHex = '#f8f5ef';
-  }
-
-  const isDark =
-    explicitDarkCue || (!explicitLightCue && (!isLightHexColor(surfaceHex) || bgDonor.mode === 'dark'));
-  const isWarmPaper = !isDark && bgDonor.vibeGroup === 'warm-paper';
-
-  const cardHex = isDark ? '#162033' : isWarmPaper ? '#fffdf9' : '#ffffff';
-  const insetHex = isDark ? '#1e293b' : isWarmPaper ? '#f2ece1' : '#f1f5f9';
-  const borderHex = isDark ? '#334155' : isWarmPaper ? '#dfd6c7' : '#e2e8f0';
-  const inkHex = isDark ? '#f1f5f9' : isWarmPaper ? '#1f1d1a' : '#0f172a';
-  const mutedInkHex = isDark ? '#94a3b8' : isWarmPaper ? '#6b6459' : '#64748b';
-
-  const accentHex = accentDonor.palette[0] || '#2563eb';
-  const secondaryAccentHex =
-    accentDonor.palette[1] || selection.primary.palette[1] || accentHex;
-  const accentInkHex = pickReadableInkForAccent(accentHex);
-
-  const semanticOkHex = isDark ? '#34d399' : '#15803d';
-  const semanticWarnHex = isDark ? '#fbbf24' : '#b45309';
-  const semanticDangerHex = isDark ? '#f87171' : '#dc2626';
-
-  const fontDisplayLabel = typoDonor.fonts[0] || 'Inter';
-  const fontFamily =
-    typoDonor.vibeGroup === 'warm-paper'
-      ? `'Georgia', 'Noto Serif SC', -apple-system, sans-serif`
-      : `'${fontDisplayLabel}', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif`;
-
-  const resolvedMotion = resolveMotionSelection(alignment);
-  const compactCue =
-    /紧凑|高密度|台账|交易|compact|dense|ledger|trading/.test(feelLower) &&
-    !/宽松|呼吸|大留白|airy|spacious/.test(feelLower);
-  const airyCue = /宽松|呼吸|大留白|airy|spacious/.test(feelLower);
-
-  const isCompact = airyCue
-    ? false
-    : compactCue ||
-      clarityBorrowed ||
-      (!spacingBorrowed && resolvedMotion.informationDensity === 'COMPACT_LEDGER');
-
-  return {
-    mode: isDark ? 'dark' : 'light',
-    surfaceHex,
-    cardHex,
-    insetHex,
-    accentHex,
-    accentInkHex,
-    secondaryAccentHex,
-    borderHex,
-    inkHex,
-    mutedInkHex,
-    semanticOkHex,
-    semanticWarnHex,
-    semanticDangerHex,
-    fontFamily,
-    fontDisplayLabel,
-    radiusPx: borderDonor.radiusPx,
-    isCompact,
-  };
+  return deriveStyleTileFromReferences({
+    primary: selection.primary,
+    borrowed: selection.borrowed.map((b) => ({ aspect: b.aspect, item: b.item })),
+    informationDensity: resolveMotionSelection(alignment).informationDensity,
+    userFeelNote,
+  });
 }
 
 /**
  * The Style Tile as design values for the prototype build (#91). Stored on the brief when the
  * user approves it, these values are locked: the lead assistant draws the 风格样张 with them.
  */
-export function styleValuesFromTileTokens(tokens: StyleTileTokens): PrototypeStyleValues {
-  return {
-    mode: tokens.mode,
-    background: tokens.surfaceHex,
-    surface: tokens.cardHex,
-    inset: tokens.insetHex,
-    accent: tokens.accentHex,
-    accentInk: tokens.accentInkHex,
-    border: tokens.borderHex,
-    ink: tokens.inkHex,
-    mutedInk: tokens.mutedInkHex,
-    ok: tokens.semanticOkHex,
-    warn: tokens.semanticWarnHex,
-    danger: tokens.semanticDangerHex,
-    fontFamily: tokens.fontFamily,
-    radiusPx: tokens.radiusPx,
-    density: tokens.isCompact ? 'compact' : 'comfortable',
-  };
-}
+export const styleValuesFromTileTokens = styleTileTokensToValues;
 
 export interface SynthesizeDesignBriefParams {
   project: ProjectDetail;

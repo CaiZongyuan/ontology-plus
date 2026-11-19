@@ -65,6 +65,25 @@ const SKIPPED_PHASE_SENTENCES: Record<PrototypeBuildPhaseId, BilingualText> = {
   tours: { zh: '这次没有编写演示路线', en: 'No demo tours this time' },
 };
 
+/** Business names of the design values (keys of the prototype's style values). */
+const STYLE_VALUE_NAMES: Record<string, BilingualText> = {
+  mode: { zh: '深浅模式', en: 'light/dark mode' },
+  background: { zh: '底色', en: 'background' },
+  surface: { zh: '卡片底色', en: 'card colour' },
+  inset: { zh: '凹陷区底色', en: 'inset colour' },
+  accent: { zh: '主色', en: 'main colour' },
+  accentInk: { zh: '主色上的文字颜色', en: 'text on the main colour' },
+  border: { zh: '边框色', en: 'border colour' },
+  ink: { zh: '文字颜色', en: 'text colour' },
+  mutedInk: { zh: '次要文字颜色', en: 'secondary text colour' },
+  ok: { zh: '正常状态色', en: 'success colour' },
+  warn: { zh: '提醒色', en: 'warning colour' },
+  danger: { zh: '异常色', en: 'error colour' },
+  fontFamily: { zh: '字体', en: 'font' },
+  radiusPx: { zh: '圆角', en: 'corner radius' },
+  density: { zh: '疏密', en: 'density' },
+};
+
 /** The business sentence of one build log entry; `screenName` resolves a screen id to its name. */
 export function describePrototypeBuildLogEntry(
   entry: PrototypeBuildLogEntry,
@@ -97,6 +116,24 @@ export function describePrototypeBuildLogEntry(
             },
             locale,
           );
+    case 'style_values_changed': {
+      const names = (entry.valueKeys ?? []).map((k) => pick(STYLE_VALUE_NAMES[k] ?? { zh: k, en: k }, locale));
+      return pick(
+        {
+          zh: `按你的要求改了设计值：${names.join('、')}，以后都用新的`,
+          en: `Changed the design values you asked for: ${names.join(', ')}; the new ones are kept from now on`,
+        },
+        locale,
+      );
+    }
+    case 'style_lock_unavailable':
+      return pick(
+        {
+          zh: '找不到你确认风格样张时用的参考，这次的设计值由助手提出',
+          en: 'The references of your approved Style Tile could not be found; the assistant proposed the design values this time',
+        },
+        locale,
+      );
     case 'screen_started':
       return pick({ zh: `开始画「${name}」`, en: `Started drawing "${name}"` }, locale);
     case 'screen_done':
