@@ -72,6 +72,7 @@ import {
   type PrototypeLiveState,
 } from '../../../packages/ontology-core/index.js';
 import { PrototypeLiveCanvas } from './live-canvas/PrototypeLiveCanvas.js';
+import type { AgentLiveActivity } from './live-canvas/agentCursor.js';
 import { resolveHighlightSelectorFromAnchor } from './prototypeSelectionStore.js';
 
 export interface RevisionHistorySlotProps {
@@ -152,6 +153,7 @@ export interface PrototypeCanvasStageProps {
   liveStreamedChars?: number;
   reconnecting?: boolean;
   onRetryScreen?: (screenId: string, screenName: string) => void;
+  liveActivities?: readonly AgentLiveActivity[];
 
   // Viewport, Zoom & Focus Mode (controlled or uncontrolled)
   viewport?: PrototypeViewportPreset;
@@ -418,6 +420,7 @@ export function PrototypeCanvasStage({
   liveStreamedChars,
   reconnecting,
   onRetryScreen,
+  liveActivities,
   viewport: controlledViewport,
   defaultViewport = 'DESKTOP',
   onViewportChange,
@@ -1635,6 +1638,7 @@ export function PrototypeCanvasStage({
               {...(reconnecting !== undefined ? { reconnecting } : {})}
               highlightedScreenId={hoveredAnchor?.screenId ?? activeRunningAnchor?.screenId ?? null}
               {...(onRetryScreen ? { onRetryScreen } : {})}
+              {...(liveActivities ? { liveActivities } : {})}
               onOpenSingleScreen={(screenId) => {
                 setFocusedScreenId(screenId);
                 setLayoutOverride('SINGLE');

@@ -13,6 +13,8 @@ export interface MuElementDiff {
   elementId: string;
   label: string;
   previousLabel?: string;
+  description?: string;
+  previousDescription?: string;
   elementType: UIElement['elementType'];
   previousElementType?: UIElement['elementType'];
   dataBinding?: string;
@@ -109,6 +111,7 @@ function mapElementWithStatus(el: UIElement, status: 'ADDED' | 'REMOVED'): MuEle
   return {
     elementId: el.elementId,
     label: el.label,
+    ...(el.description ? { description: el.description } : {}),
     elementType: el.elementType,
     ...(el.dataBinding ? { dataBinding: el.dataBinding } : {}),
     ...(el.dictionaryRef ? { dictionaryRef: el.dictionaryRef } : {}),
@@ -125,6 +128,7 @@ function compareElement(prev: UIElement, next: UIElement): MuElementDiff {
   const changedFields: MuFieldChange[] = [];
   pushIfChanged(changedFields, 'label', prev.label, next.label);
   pushIfChanged(changedFields, 'name', prev.name, next.name);
+  pushIfChanged(changedFields, 'description', prev.description, next.description);
   pushIfChanged(changedFields, 'elementType', prev.elementType, next.elementType);
   pushIfChanged(changedFields, 'io', prev.io, next.io);
   pushIfChanged(changedFields, 'actionType', prev.actionType, next.actionType);
@@ -144,6 +148,10 @@ function compareElement(prev: UIElement, next: UIElement): MuElementDiff {
     elementId: next.elementId,
     label: next.label,
     ...(prev.label !== next.label ? { previousLabel: prev.label } : {}),
+    ...(next.description ? { description: next.description } : {}),
+    ...(prev.description !== next.description && prev.description
+      ? { previousDescription: prev.description }
+      : {}),
     elementType: next.elementType,
     ...(prev.elementType !== next.elementType ? { previousElementType: prev.elementType } : {}),
     ...(next.dataBinding ? { dataBinding: next.dataBinding } : {}),

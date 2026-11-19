@@ -478,8 +478,6 @@ export type AgentSubagentPhase =
   | 'DONE'
   | 'FAILED';
 
-export type AgentSubagentCursorZone = 'header' | 'kpi' | 'toolbar' | 'body' | 'drawer' | 'footer';
-
 export interface AgentSubagentLaneTrace {
   laneId: string;
   workerIndex: number;
@@ -489,7 +487,6 @@ export interface AgentSubagentLaneTrace {
   status: 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
   phase?: AgentSubagentPhase;
   liveAction?: { zh: string; en: string };
-  cursorZone?: AgentSubagentCursorZone;
   streamedHtmlChars?: number;
   progressChars?: number;
   thinking?: string;

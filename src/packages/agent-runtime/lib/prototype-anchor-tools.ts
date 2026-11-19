@@ -1,19 +1,21 @@
 import {
+  PROTOTYPE_NOTE_ATTR,
   PROTOTYPE_SHELL_SKELETON_CSS,
   extractPrototypeArtboards,
   prototypeNavigationRuntimeScript,
   prototypeStyleHeadHtml,
   resolvePrototypeStyleValues,
+  sanitizePrototypeNote,
   sanitizeStyleCss,
   stripInlineStyleValueOverrides,
   stripStyleValueOverrides,
+  writePrototypeNote,
   type PrototypeArtboardSlice,
   type PrototypeStyle,
   type PrototypeStyleValues,
 } from '../../ontology-core/index.js';
 import type {
   AgentSession,
-  AgentSubagentCursorZone,
   PrototypeTargetAnchor,
   WorkspaceStore,
 } from '../../workspace-store/index.js';
@@ -492,6 +494,7 @@ export interface PrototypeElementAnchorInfo {
   tagName: string;
   elementType: string;
   label: string;
+  note?: string;
   binding?: string;
   eventId?: string;
   navigateTo?: string;
@@ -515,12 +518,14 @@ export function listPrototypeAnchors(html: string): PrototypeAnchorOverview {
     if (screenId) {
       screenCounts.set(screenId, (screenCounts.get(screenId) ?? 0) + 1);
     }
+    const note = sanitizePrototypeNote(node.attrs[PROTOTYPE_NOTE_ATTR]);
     elements.push({
       elementId,
       ...(screenId ? { screenId } : {}),
       tagName: node.tagName,
       elementType: (node.attrs['data-element-type'] || 'INPUT').toUpperCase(),
       label: node.attrs['data-element-label'] || elementId,
+      ...(note ? { note } : {}),
       ...(node.attrs['data-binding'] ? { binding: node.attrs['data-binding'] } : {}),
       ...(node.attrs['data-event-id'] ? { eventId: node.attrs['data-event-id'] } : {}),
       ...(node.attrs['data-navigate-to'] ? { navigateTo: node.attrs['data-navigate-to'] } : {}),
@@ -618,13 +623,15 @@ export type PrototypeAnchorEditOperation =
   | 'update_attributes';
 
 export interface EditPrototypeAnchorInput {
-  elementId?: string;
   screenId?: string;
-  cssSelector?: string;
+  elementId?: string;
   operation: PrototypeAnchorEditOperation;
-  htmlFragment?: string;
+  /** Optional Prototype Note (`data-note`) in business language; ordered before `htmlFragment`. */
+  note?: string;
+  cssSelector?: string;
   attributes?: Record<string, string | null>;
   allowRemoveAnchors?: string[];
+  htmlFragment?: string;
   locale?: AgentLocale;
 }
 
@@ -818,6 +825,11 @@ function escapeAttrValue(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
+/** True as soon as a streaming `upsert_prototype_screen` call has an early note or opening HTML tag. */
+export function shouldStreamPartialScreen(partialHtml: string, partialNote: string): boolean {
+  return partialHtml.length >= 12 || partialNote.trim().length >= 2;
+}
+
 function rewriteOpeningTagAttributes(
   openTagHtml: string,
   updates: Record<string, string | null>,
@@ -826,18 +838,67 @@ function rewriteOpeningTagAttributes(
   for (const [rawKey, rawVal] of Object.entries(updates)) {
     const key = rawKey.trim();
     if (!key) continue;
-    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const existingRe = new RegExp(
-      `(\\s+)${escapedKey}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s"'=<>` + '`' + `]+))?`,
-      'i',
-    );
+    const targetLower = key.toLowerCase();
+    const openMatch = /^<([A-Za-z][A-Za-z0-9:-]*)/.exec(result);
+    if (!openMatch || !result.endsWith('>')) continue;
+    const selfClosing = /\/\s*>$/.test(result);
+    const closeSuffixStart = selfClosing ? result.lastIndexOf('/') : result.length - 1;
+    const afterTagName = openMatch[0].length;
+    const region = result.slice(afterTagName, closeSuffixStart);
+
+    // Quote-aware left-to-right attribute scan
+    let hitLeading = -1;
+    let hitName = -1;
+    let hitEnd = -1;
+    let i = 0;
+    while (i < region.length) {
+      const lead = i;
+      while (i < region.length && /\s/.test(region[i]!)) i += 1;
+      if (i >= region.length) break;
+      if (!/[A-Za-z_:@]/.test(region[i]!)) {
+        i += 1;
+        continue;
+      }
+      const nameStart = i;
+      i += 1;
+      while (i < region.length && /[A-Za-z0-9_.:@-]/.test(region[i]!)) i += 1;
+      const attrName = region.slice(nameStart, i).toLowerCase();
+      let after = i;
+      while (after < region.length && /\s/.test(region[after]!)) after += 1;
+      let spanEnd = i;
+      if (region[after] === '=') {
+        let vp = after + 1;
+        while (vp < region.length && /\s/.test(region[vp]!)) vp += 1;
+        if (vp < region.length && (region[vp] === '"' || region[vp] === "'")) {
+          const q = region[vp]!;
+          const cq = region.indexOf(q, vp + 1);
+          spanEnd = cq === -1 ? region.length : cq + 1;
+        } else {
+          let ev = vp;
+          while (ev < region.length && !/[\s"'=<>`]/.test(region[ev]!)) ev += 1;
+          spanEnd = ev;
+        }
+        i = spanEnd;
+      }
+      if (attrName === targetLower) {
+        hitLeading = lead;
+        hitName = nameStart;
+        hitEnd = spanEnd;
+        break;
+      }
+    }
+
     if (rawVal === null) {
-      result = result.replace(existingRe, '');
-    } else if (existingRe.test(result)) {
-      result = result.replace(existingRe, `$1${key}="${escapeAttrValue(rawVal)}"`);
+      if (hitLeading >= 0) {
+        const nextRegion = `${region.slice(0, hitLeading)}${region.slice(hitEnd)}`;
+        result = `${result.slice(0, afterTagName)}${nextRegion}${result.slice(closeSuffixStart)}`;
+      }
+    } else if (hitName >= 0) {
+      const nextRegion = `${region.slice(0, hitName)}${key}="${escapeAttrValue(rawVal)}"${region.slice(hitEnd)}`;
+      result = `${result.slice(0, afterTagName)}${nextRegion}${result.slice(closeSuffixStart)}`;
     } else {
-      const insertIdx = result.endsWith('/>') ? result.length - 2 : result.length - 1;
-      result = `${result.slice(0, insertIdx)} ${key}="${escapeAttrValue(rawVal)}"${result.slice(insertIdx)}`;
+      const sep = region.endsWith(' ') ? '' : ' ';
+      result = `${result.slice(0, closeSuffixStart)}${sep}${key}="${escapeAttrValue(rawVal)}"${result.slice(closeSuffixStart)}`;
     }
   }
   return result;
@@ -923,7 +984,15 @@ export function editPrototypeAnchor(
       ),
     };
   }
-  const fragment = rawAnchorFragment ? sanitizePrototypeScreenFragment(rawAnchorFragment).trim() : '';
+  const cleanNoteInput = input.note !== undefined ? sanitizePrototypeNote(input.note) : undefined;
+  let fragment = rawAnchorFragment ? sanitizePrototypeScreenFragment(rawAnchorFragment).trim() : '';
+  if (fragment && cleanNoteInput !== undefined && input.operation !== 'update_attributes') {
+    const rootNode = parseHtmlSpanTree(fragment).roots[0];
+    const rootElId = rootNode?.attrs['data-element-id']?.trim();
+    if (rootElId && !rootNode?.attrs[PROTOTYPE_NOTE_ATTR]?.trim()) {
+      fragment = writePrototypeNote(fragment, { elementId: rootElId }, cleanNoteInput || null);
+    }
+  }
 
   if (input.attributes) {
     for (const val of Object.values(input.attributes)) {
@@ -1063,12 +1132,17 @@ export function editPrototypeAnchor(
     }
     candidateHtml = `${html.slice(0, screenNode.innerEnd)}\n  ${fragment}\n${html.slice(screenNode.innerEnd)}`;
   } else if (input.operation === 'update_attributes') {
-    let updates: Record<string, string | null> | undefined = input.attributes;
+    let updates: Record<string, string | null> | undefined = input.attributes
+      ? { ...input.attributes }
+      : undefined;
     if ((!updates || Object.keys(updates).length === 0) && fragment) {
       const parsedFrag = parseHtmlSpanTree(fragment).roots[0];
       if (parsedFrag) {
-        updates = parsedFrag.attrs;
+        updates = { ...parsedFrag.attrs };
       }
+    }
+    if (cleanNoteInput !== undefined) {
+      updates = { ...(updates ?? {}), [PROTOTYPE_NOTE_ATTR]: cleanNoteInput || null };
     }
     if (!updates || Object.keys(updates).length === 0) {
       return {
@@ -1293,6 +1367,8 @@ export interface UpsertPrototypeScreenInput {
   screenId: string;
   screenName?: string;
   screenType?: string;
+  /** Optional business-language note ordered before `screenHtml` (spec #87 decision 6). */
+  note?: string;
   screenHtml: string;
   extraCss?: string;
   extraJs?: string;
@@ -1787,6 +1863,7 @@ export function upsertPrototypeScreen(
       ? fragTree.roots[0]
       : undefined;
 
+  const cleanScreenNote = sanitizePrototypeNote(input.note);
   let normalizedSectionHtml: string;
   if (outerScreenRoot) {
     const origOpen = rawFragment.slice(outerScreenRoot.openStart, outerScreenRoot.openEnd);
@@ -1802,11 +1879,15 @@ export function upsertPrototypeScreen(
       'data-screen-type': resolvedType,
       'data-screen-status': 'ready',
       class: mergedClass,
+      ...(cleanScreenNote && !outerScreenRoot.attrs[PROTOTYPE_NOTE_ATTR]?.trim()
+        ? { [PROTOTYPE_NOTE_ATTR]: cleanScreenNote }
+        : {}),
     });
     normalizedSectionHtml = `${updatedOpen}${rawFragment.slice(outerScreenRoot.openEnd)}`;
   } else {
     const activeCls = preserveActiveClass ? ' is-active' : '';
-    normalizedSectionHtml = `<section id="screen-${escapeHtmlAttr(screenId)}" class="proto-screen${activeCls}" data-screen-id="${escapeHtmlAttr(screenId)}" data-screen-name="${escapeHtmlAttr(resolvedName)}" data-screen-type="${resolvedType}" data-screen-status="ready">\n${rawFragment}\n</section>`;
+    const noteAttr = cleanScreenNote ? ` data-note="${escapeHtmlAttr(cleanScreenNote)}"` : '';
+    normalizedSectionHtml = `<section id="screen-${escapeHtmlAttr(screenId)}" class="proto-screen${activeCls}" data-screen-id="${escapeHtmlAttr(screenId)}" data-screen-name="${escapeHtmlAttr(resolvedName)}" data-screen-type="${resolvedType}" data-screen-status="ready"${noteAttr}>\n${rawFragment}\n</section>`;
   }
 
   // Validate interactive controls inside this screen
@@ -1921,55 +2002,9 @@ export interface PartialPrototypeScreenInput {
   screenId: string;
   screenName?: string;
   screenType?: string;
+  note?: string;
   partialScreenHtml: string;
   extraCss?: string;
-}
-
-export interface HtmlWritingSignal {
-  activeLabel?: string;
-  cursorZone: AgentSubagentCursorZone;
-}
-
-export function extractLatestHtmlWritingSignal(partialHtml: string): HtmlWritingSignal {
-  const tail = partialHtml.slice(-1400);
-  const lowerTail = tail.toLowerCase();
-
-  let cursorZone: AgentSubagentCursorZone = 'body';
-  if (/(?:drawer|aside|modal|slideover|sheet|抽屉|侧栏)/i.test(tail.slice(-500))) {
-    cursorZone = 'drawer';
-  } else if (/(?:sticky-save|footer|action-bar|confirm-bar|底部|锁账|提交栏)/i.test(tail.slice(-500))) {
-    cursorZone = 'footer';
-  } else if (/(?:<table|<thead|<tbody|<tr|<td|<th|ledger|list-row)/i.test(lowerTail.slice(-500))) {
-    cursorZone = 'body';
-  } else if (/(?:filter|toolbar|search|筛选|搜索|<input|<select)/i.test(tail.slice(-500))) {
-    cursorZone = 'toolbar';
-  } else if (/(?:kpi|stat-card|metric|汇总|营业额|指标)/i.test(tail.slice(-500))) {
-    cursorZone = 'kpi';
-  } else if (partialHtml.length < 420 || /(?:<header|<h1|<h2|hero|banner)/i.test(lowerTail.slice(-400))) {
-    cursorZone = 'header';
-  }
-
-  // Prefer explicit data-element-label near the tail, otherwise visible text between tags
-  const labelMatches = Array.from(tail.matchAll(/data-element-label=["']([^"']{2,28})["']/gi));
-  if (labelMatches.length > 0) {
-    const picked = labelMatches[labelMatches.length - 1]![1]!.trim();
-    if (picked) return { activeLabel: picked, cursorZone };
-  }
-
-  const textMatches = Array.from(
-    tail.matchAll(/>([^<>{}\n]{2,26})<\/(?:h1|h2|h3|h4|button|th|label|strong|span|p|div|li)>/gi),
-  );
-  for (let i = textMatches.length - 1; i >= 0; i -= 1) {
-    const candidate = textMatches[i]![1]!
-      .replace(/&[a-z]+;/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (candidate.length >= 2 && !/^[\d\s.,¥$%+-]+$/.test(candidate)) {
-      return { activeLabel: candidate.slice(0, 22), cursorZone };
-    }
-  }
-
-  return { cursorZone };
 }
 
 export function ensurePrototypeCoDesignSession(
@@ -2055,21 +2090,17 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'edit_prototype_anchor',
       description:
-        'Apply a surgical local edit to a single anchored element or screen while keeping all other screens and untouched elements byte-for-byte identical. Preserves existing data-screen-id / data-element-id / data-binding / data-event-id anchors and requires valid data-element-id + data-element-type on any newly added <button>, <input>, <select>, or <textarea>. Never use window.alert/confirm/prompt.',
+        'Apply a surgical local edit to a single anchored element or screen while keeping all other screens and untouched elements byte-for-byte identical. Pass short fields (screenId, elementId, operation, note) BEFORE htmlFragment, and write each element opening tag with data-element-id + data-note before its inner content so narration arrives before content. Preserves existing data-screen-id / data-element-id / data-binding / data-event-id anchors and requires valid data-element-id + data-element-type on any newly added <button>, <input>, <select>, or <textarea>. Never use window.alert/confirm/prompt.',
       parameters: {
         type: 'object',
         properties: {
-          elementId: {
-            type: 'string',
-            description: 'Target data-element-id (e.g. EL-BTN-APPROVE)',
-          },
           screenId: {
             type: 'string',
             description: 'Target data-screen-id (e.g. SCR-CONTRACT-APPROVAL)',
           },
-          cssSelector: {
+          elementId: {
             type: 'string',
-            description: 'Optional CSS selector for targeting a specific container',
+            description: 'Target data-element-id (e.g. EL-BTN-APPROVE)',
           },
           operation: {
             type: 'string',
@@ -2081,10 +2112,14 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
             ],
             description: 'Surgical edit operation to perform on the target anchor',
           },
-          htmlFragment: {
+          note: {
             type: 'string',
             description:
-              'HTML fragment for replace_element, insert_after_element, or append_to_screen',
+              'Business-language Prototype Note (data-note) for the edited element (e.g. "筛选区：按客户或单号搜索。"), ordered before htmlFragment so narration arrives first',
+          },
+          cssSelector: {
+            type: 'string',
+            description: 'Optional CSS selector for targeting a specific container',
           },
           attributes: {
             type: 'object',
@@ -2097,6 +2132,11 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
             items: { type: 'string' },
             description:
               'Only provide when the user explicitly asked to delete specific anchor IDs',
+          },
+          htmlFragment: {
+            type: 'string',
+            description:
+              'HTML fragment for replace_element, insert_after_element, or append_to_screen (write opening tag with data-element-id + data-note first, then inner content)',
           },
         },
         required: ['operation'],
@@ -2187,7 +2227,7 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'upsert_prototype_screen',
       description:
-        'Create or replace a single screen artboard (data-screen-id) inside the prototype without rewriting other screens. Every <button>, <input>, <select>, and <textarea> inside screenHtml MUST carry a globally unique data-element-id and valid data-element-type, and NEVER call window.alert/confirm/prompt.',
+        'Create or replace a single screen artboard (data-screen-id) inside the prototype without rewriting other screens. Pass short fields (screenId, screenName, screenType, note) BEFORE screenHtml, and write each section and key control opening tag with data-element-id + a one-sentence business data-note BEFORE its inner content so narration arrives before content. Every <button>, <input>, <select>, and <textarea> inside screenHtml MUST carry a globally unique data-element-id and valid data-element-type, and NEVER call window.alert/confirm/prompt.',
       parameters: {
         type: 'object',
         properties: {
@@ -2203,10 +2243,15 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
             type: 'string',
             description: 'LIST | FORM | DETAIL | APPROVAL | REPORT | DASHBOARD | MODAL',
           },
+          note: {
+            type: 'string',
+            description:
+              'Optional one-sentence business Prototype Note for this screen, ordered before screenHtml so narration arrives first',
+          },
           screenHtml: {
             type: 'string',
             description:
-              'HTML body for this single screen (only this screen, ~80-220 lines; may be inner content or <section data-screen-id="...">)',
+              'HTML body for this single screen (~80-220 lines; write each section/control opening tag with data-element-id and data-note="<name>：<business note>" BEFORE its inner content)',
           },
           extraCss: {
             type: 'string',
