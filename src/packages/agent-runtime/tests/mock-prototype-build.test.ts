@@ -176,4 +176,64 @@ describe('Reconnecting with afterEventId mid-build (#89)', () => {
       else process.env.ONTOLOGY_MOCK_TOKENS_PER_SECOND = previousPace;
     }
   });
+
+  it('post-generation modification plans ONLY the affected screen, updates it visibly with notes/tours, keeps other screens intact, and records a Change Summary (#96)', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const session = store.createAgentSession({
+      projectId: 'proj-contract',
+      agentKind: 'PROTOTYPE_CO_DESIGN',
+      title: '首版原型生成与修改',
+    });
+
+    // 1. Initial build
+    const r1 = await collectUnifiedAgentTurn(store, {
+      sessionId: session.id,
+      prompt: '按已确认的需求生成首版原型',
+      prototypeName: '门店订货修改测试原型',
+      mockMode: true,
+    });
+    expect(r1.events.some((e) => e.event === 'run_error')).toBe(false);
+    const created = store.listPrototypes('proj-contract').find((p) => p.name === '门店订货修改测试原型')!;
+    expect(created).toBeDefined();
+    const beforeScreens = new Map(
+      splitPrototypeDocument(created.htmlContent).screens.map((s) => [s.screenId, s.html]),
+    );
+
+    // 2. Post-generation modification turn
+    const r2 = await collectUnifiedAgentTurn(store, {
+      sessionId: session.id,
+      prompt: '把订单列表的筛选改成按客户',
+      mockMode: true,
+    });
+    expect(r2.events.some((e) => e.event === 'run_error')).toBe(false);
+
+    // Build Plan lists ONLY the affected screen (SCR-ORDERS)
+    const planResult = r2.events.find(
+      (e) => e.event === 'tool_result' && (e.data.trace as { toolName?: string })?.toolName === 'plan_screens',
+    );
+    expect(planResult).toBeDefined();
+    const plannedScreens = ((planResult!.data.trace as { arguments?: { screens?: { screenId: string }[] } })?.arguments?.screens ?? []);
+    expect(plannedScreens).toHaveLength(1);
+    expect(plannedScreens[0]!.screenId).toBe('SCR-ORDERS');
+
+    // Only SCR-ORDERS was updated; unaffected screens remain byte-for-byte identical
+    const updated = store.getPrototype(created.id)!;
+    expect(updated.revisions).toHaveLength(2);
+    const afterScreens = new Map(
+      splitPrototypeDocument(updated.htmlContent).screens.map((s) => [s.screenId, s.html]),
+    );
+    expect(afterScreens.get('SCR-ORDERS')).toContain('EL-FILTER-CUSTOMER');
+    expect(afterScreens.get('SCR-ORDERS')).toContain('data-note="按客户筛选');
+    expect(afterScreens.get('SCR-HOME')).toBe(beforeScreens.get('SCR-HOME'));
+    expect(afterScreens.get('SCR-NEW-ORDER')).toBe(beforeScreens.get('SCR-NEW-ORDER'));
+    expect(afterScreens.get('SCR-ORDER-DETAIL')).toBe(beforeScreens.get('SCR-ORDER-DETAIL'));
+
+    // Artifact History + Change Summary recorded (ADR 0016)
+    const history = store.listArtifactHistoryViews('proj-contract', { artifactKind: 'PROTOTYPE' });
+    const latestHistory = history.find((h) => h.id === updated.revisions.at(-1)!.id);
+    expect(latestHistory).toBeDefined();
+    expect(latestHistory!.changeSummary.canUndo).toBe(true);
+    expect(latestHistory!.changeSummary.compareRevisionPair).toBeDefined();
+  });
 });

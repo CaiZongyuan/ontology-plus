@@ -118,18 +118,16 @@ import {
   type PrototypeShellScreenStub,
 } from './prototype-anchor-tools.js';
 import {
-  CODEMODE_OPENAI_TOOL,
   SPAWN_SUBAGENTS_OPENAI_TOOL,
-  renderCodemodePromptSection,
-  resolveSessionCodeModeEnabled,
+  renderSubagentPromptSection,
   resolveSessionMultiAgentConcurrency,
-  runCodemodeScript,
   runParallelSubagents,
   type SubagentTaskSpec,
 } from './codemode-subagent.js';
 import {
   MOCK_PROTOTYPE_BUILD_TOKENS_PER_SECOND,
   createMockPrototypeBuildReplay,
+  createMockPrototypeModificationReplay,
   isMockPrototypeSubagentPrompt,
 } from './mock-prototype-build.js';
 import {
@@ -1437,19 +1435,48 @@ function buildFauxMockModels(
           );
         }
         if (isBriefRestylePrompt(userPrompt)) {
+          const hexMatches = userPrompt.match(/#[0-9a-fA-F]{6}/g) ?? [];
+          const bg = hexMatches[0] ?? '#0b1120';
+          const accent = hexMatches[1] ?? '#38bdf8';
           return fauxAssistantMessage(
             [
               fauxThinking(
                 pickLocaleText(
                   loc,
-                  `收到「按新简报重做风格」指令，先调用 \`list_prototype_anchors\` 盘点现有屏幕与控件锚点，确保整页重做风格时 100% 保留既有语义锚点。`,
-                  `Received brief restyle instruction; calling \`list_prototype_anchors\` first so whole-page restyling preserves 100% of existing semantic anchors.`,
+                  `收到「按新简报重做风格」指令，先调用 \`define_style\` 更新风格样张令牌与共用样式，并 100% 保留既有语义锚点。`,
+                  `Received brief restyle instruction; calling \`define_style\` to update Style Tile tokens while preserving 100% of existing semantic anchors.`,
                 ),
               ),
-              fauxToolCall('list_prototype_anchors', {}),
+              fauxToolCall('define_style', {
+                direction: pickLocaleText(loc, '按新简报重做风格', 'Restyled from updated Design Brief'),
+                values: {
+                  background: bg,
+                  accent,
+                  surface: bg === '#0b1120' ? '#111827' : '#ffffff',
+                  ink: bg === '#0b1120' ? '#f8fafc' : '#18181b',
+                },
+                componentCss: `:root { --proto-bg: ${bg}; --proto-accent: ${accent}; }`,
+                sampleHtml: `<div class="card"><button type="button" class="btn primary">Style Preview</button></div>`,
+              }),
             ],
             { stopReason: 'toolUse' },
           );
+        }
+        const isSelectionOrTestTurn =
+          userPrompt.includes('[TEST_ANCHOR_SELF_REPAIR]') ||
+          /Targeted Visual Selections & Annotations|用户在界面原型上框选\/点选的目标区域与批注|\[(?:用户已确认选择|User Confirmed Choice|用户可视化圈选|Visual Element Annotations|Selection|选中元素)/i.test(
+            userPrompt,
+          );
+        if (!isSelectionOrTestTurn && resolveSessionMultiAgentConcurrency(session) > 1) {
+          const modReplay = createMockPrototypeModificationReplay(
+            loc,
+            targetProto.htmlContent,
+            userPrompt,
+          );
+          faux.setResponses(
+            Array.from({ length: modReplay.responseBudget }, () => modReplay.respond),
+          );
+          return modReplay.leadOpening();
         }
         const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
         const anchorName = target.elementId || target.screenId || target.cssSelector || 'SCR-01';
@@ -2195,27 +2222,9 @@ function buildFauxMockModels(
 
       if (
         session.agentKind === 'PROTOTYPE_CO_DESIGN' &&
-        !(lastResult?.toolName === 'rewrite_prototype_page' && !lastResult.isError)
+        !(lastResult?.toolName === 'define_style' && !lastResult.isError && isBriefRestylePrompt(userPrompt))
       ) {
         const targetProto = resolveTargetPrototypeForSession(store, session);
-        if (targetProto && isBriefRestylePrompt(userPrompt)) {
-          return fauxAssistantMessage(
-            [
-              fauxThinking(
-                pickLocaleText(
-                  loc,
-                  `已盘点现有语义锚点，现调用 \`rewrite_prototype_page\` 按更新后的设计简报整页重做视觉令牌与布局风格，同时完整保留所有既有屏幕与控件锚点。`,
-                  `Semantic anchors verified; calling \`rewrite_prototype_page\` to apply the updated Design Brief style tokens while preserving all existing screen and element anchors.`,
-                ),
-              ),
-              fauxToolCall('rewrite_prototype_page', {
-                htmlContent: applyMockBriefRestyleToHtml(targetProto.htmlContent, userPrompt),
-                allowAnchorReset: false,
-              }),
-            ],
-            { stopReason: 'toolUse' },
-          );
-        }
         const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
         const cleanInstruction = stripSelectionBlockFromPrompt(userPrompt);
         const safeLabel =
@@ -2723,7 +2732,9 @@ export function getToolsForAgentKind(
         ];
       case 'PROTOTYPE_CO_DESIGN':
         return [
-          ...PROTOTYPE_ANCHOR_OPENAI_TOOLS.map(toPiTool),
+          ...PROTOTYPE_ANCHOR_OPENAI_TOOLS.filter(
+            (t) => t.function.name !== 'rewrite_prototype_page',
+          ).map(toPiTool),
           extraByName.get('inspect_ontology_model')!,
           extraByName.get('ask_user')!,
           stepHandoffTool,
@@ -2746,9 +2757,6 @@ export function getToolsForAgentKind(
   }
   if ((options.multiAgentConcurrency ?? 1) > 1) {
     extras.push(toPiTool(SPAWN_SUBAGENTS_OPENAI_TOOL));
-  }
-  if (options.codeMode) {
-    extras.push(toPiTool(CODEMODE_OPENAI_TOOL));
   }
   return extras.length > 0 ? [...baseTools, ...extras] : baseTools;
 }
@@ -2780,13 +2788,12 @@ function buildSystemPromptForSession(
       session.agentKind === 'PROTOTYPE_CO_DESIGN' && execOptions
         ? `${rawPrompt}\n\n${prototypeLeadStyleInstructions(locale, execOptions.lockedStyleValues ?? null)}`
         : rawPrompt;
-    if (!execOptions?.codeMode || !execOptions.offeredTools) {
+    if (!execOptions?.multiAgentConcurrency || execOptions.multiAgentConcurrency <= 1) {
       return corePrompt;
     }
-    return `${corePrompt}\n\n${renderCodemodePromptSection(
-      execOptions.offeredTools,
+    return `${corePrompt}\n\n${renderSubagentPromptSection(
       locale,
-      execOptions.multiAgentConcurrency ?? 3,
+      execOptions.multiAgentConcurrency,
     )}`;
   };
   const project = resolveProjectDetail(store, session.projectId);
@@ -2879,7 +2886,7 @@ function buildSystemPromptForSession(
             `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
             `Initial Prototype Generation Rules:`,
             useParallel
-              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`plan_screens\` with the Build Plan — 3–5 screens, each with screenId, a business name and a one-sentence business purpose — so the user sees one blank artboard per screen within seconds; THEN call \`define_style\` with the design values, the shared component CSS (buttons, cards, tables, form fields, tags, empty states) and the Style Tile — it is drawn live on the first artboard and lays out the document skeleton; THEN call \`spawn_subagents\` with one task per planned screen, in plan order, so ${execOptions?.multiAgentConcurrency ?? 3} parallel helpers build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Helpers automatically receive the Design Brief, the design values, the shared components, the Visual References and the requirements summary — keep each task's instruction to what that screen shows and does. FINALLY, once screens finish, call \`write_demo_tours\` to author 2–4 playable Demo Tours (演示路线, never call them Scenarios) grounded in user goals and roles from the Confirmed Requirements Document, referencing only drawn screens and their real \`data-element-id\` anchors. Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
+              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`plan_screens\` with the Build Plan — 3–5 screens, each with screenId, a business name and a one-sentence business purpose — so the user sees one blank artboard per screen within seconds; THEN call \`define_style\` with the design values, the shared component CSS (buttons, cards, tables, form fields, tags, empty states) and the Style Tile — it is drawn live on the first artboard and lays out the document skeleton; THEN call \`spawn_subagents\` with one task per planned screen, in plan order, so ${execOptions?.multiAgentConcurrency ?? 3} parallel helpers build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Helpers automatically receive the Design Brief, the design values, the shared components, the Visual References and the requirements summary — keep each task's instruction to what that screen shows and does. FINALLY, once screens finish, call \`write_demo_tours\` to author 2–4 playable Demo Tours (演示路线, never call them Scenarios) grounded in user goals and roles from the Confirmed Requirements Document, referencing only drawn screens and their real \`data-element-id\` anchors.`
               : `1. Call \`plan_screens\` first, then \`define_style\`, then \`upsert_prototype_screen\` per planned screen, and finally \`write_demo_tours\` (2–4 Demo Tours grounded in user goals and roles) ONLY when a Confirmed Requirements Document is present above.`,
             `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, interactive motion specifications, and the Confirmed Requirements Document scope (never unconfirmed drafts).`,
             `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
@@ -2898,12 +2905,13 @@ function buildSystemPromptForSession(
           baseHeaderEn,
           `Target Interactive Prototype: ${proto.name} (ID: ${proto.id}, Version: ${proto.version}).`,
           `Screens in prototype: ${screensDesc}.`,
-          `Prototype Co-Design Rules:`,
-          `1. Always call \`read_prototype_anchor\` (or \`list_prototype_anchors\`) first to inspect ONLY the targeted element or screen without reading unrelated screens.`,
-          `2. For localized refinements, ALWAYS call \`edit_prototype_anchor\` (\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`) or \`upsert_prototype_screen\` so untouched screens stay intact.`,
+          `Prototype Co-Design Rules (Post-Generation Modification):`,
+          `1. FIRST call \`plan_screens\` listing ONLY the affected screen(s) that need changes (NEVER include unaffected screens so untouched artboards stay intact).`,
+          `2. Inspect only the affected screen/element via \`read_prototype_anchor\` (or \`list_prototype_anchors\`), then apply targeted updates visibly on the affected artboard(s) using \`edit_screen\`, \`edit_prototype_anchor\`, or \`upsert_prototype_screen\` (or \`spawn_subagents\` when updating multiple screens), updating \`data-note\` on modified elements. Run at most 1 screenshot review round (\`report_review\` + \`edit_screen\` if needed) on the modified screen(s).`,
           `3. For whole-page visual restyling, first call \`define_style\` (it replaces the shared look and redraws the Style Tile in place), then restyle the screens with \`spawn_subagents\`, one task per screen.`,
-          `4. Preserve existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors, add valid \`data-element-id\` + \`data-element-type\` on every new <button>/<input>/<select>/<textarea>, and NEVER use window.alert/confirm/prompt.`,
-          `5. If an edit tool returns isError=true, fix the semantic anchors and retry in the same turn.`,
+          `4. If any screen or \`data-element-id\` referenced by Demo Tours changed, call \`write_demo_tours\` to update affected Demo Tours; otherwise keep valid tours intact.`,
+          `5. Preserve existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors, add valid \`data-element-id\` + \`data-element-type\` on every new <button>/<input>/<select>/<textarea>, and NEVER use window.alert/confirm/prompt.`,
+          `6. If an edit tool returns isError=true, fix the semantic anchors and retry in the same turn.`,
         ].join('\n'),
       );
     }
@@ -2981,7 +2989,7 @@ function buildSystemPromptForSession(
           `当前共创目标交互原型：未绑定（按设计简报与已确认需求文档从零生成首版交互原型 Revision #1）。`,
           `首版原型生成准则（快速上屏，禁止在 thinking 中默写整页长代码）：`,
           useParallel
-            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码，也严禁调用单次巨型 \`rewrite_prototype_page\`**！请立即在 \`codemode\` 中或分步执行：① 先调用 \`plan_screens\` 列出施工计划：3～5 屏，每屏给出 screenId、业务名称和一句业务用途（画布会随之放好空白画板）；② 再调用 \`define_style\` 画风格样张：设计值、共用组件样式（按钮、卡片、表格、表单、标签、空状态）和样张，它会实时画在第一块画板上，并搭好文档骨架；③ 然后调用 \`spawn_subagents\` 按计划顺序每屏一个任务派发（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行屏幕助手，每位助手各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。设计简报、设计值、共用组件、视觉参考和需求摘要会自动交给每位助手，任务说明里只写这一屏显示什么、能做什么；④ 所有分屏完成后，调用 \`write_demo_tours\` 按需求文档中的用户目标与角色编写 2～4 条演示路线（严禁称为“场景演示”），每步只引用已绘制屏幕及其真实的 \`data-element-id\` 锚点。`
+            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码**！请立即按顺序执行：① 先调用 \`plan_screens\` 列出施工计划：3～5 屏，每屏给出 screenId、业务名称和一句业务用途（画布会随之放好空白画板）；② 再调用 \`define_style\` 画风格样张：设计值、共用组件样式（按钮、卡片、表格、表单、标签、空状态）和样张，它会实时画在第一块画板上，并搭好文档骨架；③ 然后调用 \`spawn_subagents\` 按计划顺序每屏一个任务派发（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行屏幕助手，每位助手各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。设计简报、设计值、共用组件、视觉参考和需求摘要会自动交给每位助手，任务说明里只写这一屏显示什么、能做什么；④ 所有分屏完成后，调用 \`write_demo_tours\` 按需求文档中的用户目标与角色编写 2～4 条演示路线（严禁称为“场景演示”），每步只引用已绘制屏幕及其真实的 \`data-element-id\` 锚点。`
             : `1. 仅在已存在【已确认需求文档快照】时，先调用 \`plan_screens\` 列出施工计划，再调用 \`define_style\` 画风格样张，然后按计划逐屏 \`upsert_prototype_screen\` 输出可运行 HTML5 原型，最后调用 \`write_demo_tours\` 编写 2～4 条演示路线。`,
           `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、交互动效约束与【已确认需求文档快照】（严禁读取未确认草稿）。`,
           `3. 每个业务屏幕必须声明合法 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`，所有 <button>/<input>/<select>/<textarea> 必须携带全局唯一合法 \`data-element-id\` 与 \`data-element-type\`（并合理挂载 \`data-binding\` 与 \`data-event-id\`），严禁使用 window.alert/confirm/prompt。`,
@@ -3000,11 +3008,13 @@ function buildSystemPromptForSession(
         baseHeader,
         `当前共创目标交互原型：${proto.name}（ID: ${proto.id}，版本: ${proto.version}）。`,
         `当前原型包含屏幕锚点：${screensDesc}。`,
-        `原型局部精修与分屏补全准则：`,
-        `1. 针对尚未绘制完成的分屏（或单独重绘某一分屏），直接调用 \`upsert_prototype_screen\`（多屏调整可调用 \`spawn_subagents\` 并行处理），严禁无故重写其他无关屏幕。整体换风格时先调用 \`define_style\` 重画风格样张（原地替换共用外观），再用 \`spawn_subagents\` 按屏调整。`,
-        `2. 控件级局部改动一律先 \`read_prototype_anchor\` 再 \`edit_prototype_anchor\`（\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`），确保未选中的屏幕与兄弟控件保持逐字节一致。`,
-        `3. 严格保留既有 \`data-screen-id\`、\`data-element-id\`、\`data-binding\`、\`data-event-id\` 语义锚点；任何新增 <button>/<input>/<select>/<textarea> 必须携带合法唯一的 \`data-element-id\` 与 \`data-element-type\`；严禁使用 window.alert/confirm/prompt。`,
-        `4. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
+        `原型生成后修改与精修准则：`,
+        `1. 收到局部修改请求（如“把订单列表的筛选改成按客户”）时，先调用 \`plan_screens\` 只列出受影响的屏幕（严禁把未受影响的屏幕放进计划，也严禁重画未受影响的屏）。`,
+        `2. 先调用 \`read_prototype_anchor\`（或 \`list_prototype_anchors\`）查看目标屏或控件，再在受影响画板上用 \`edit_screen\`、\`edit_prototype_anchor\` 或 \`upsert_prototype_screen\`（多屏时用 \`spawn_subagents\`）做局部修改，并同步更新改动元素的 \`data-note\` 原型说明；每屏最多做 1 轮截图检查（\`report_review\` + \`edit_screen\`）。`,
+        `3. 整体换风格时先调用 \`define_style\` 重画风格样张（原地替换共用外观），再用 \`spawn_subagents\` 按屏调整。`,
+        `4. 若改动影响到了演示路线引用的屏幕或控件锚点，调用 \`write_demo_tours\` 同步更新演示路线；未受影响的屏幕保持逐字节不变。`,
+        `5. 严格保留既有 \`data-screen-id\`、\`data-element-id\`、\`data-binding\`、\`data-event-id\` 语义锚点；任何新增 <button>/<input>/<select>/<textarea> 必须携带合法唯一的 \`data-element-id\` 与 \`data-element-type\`；严禁使用 window.alert/confirm/prompt。`,
+        `6. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
       ].join('\n'),
     );
   }
@@ -4866,7 +4876,6 @@ async function executeUnifiedTurnCore(
       ? cleanTitleSource.replace(/\s+/g, ' ').slice(0, 26)
       : existing.title;
 
-  const effectiveCodeMode = resolveSessionCodeModeEnabled(existing, input.codeMode);
   const effectiveConcurrency = resolveSessionMultiAgentConcurrency(
     existing,
     input.multiAgentConcurrency,
@@ -4876,7 +4885,7 @@ async function executeUnifiedTurnCore(
     ...existing,
     title: nextTitle,
     ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
-    codeMode: effectiveCodeMode,
+    codeMode: false,
     multiAgentConcurrency: effectiveConcurrency,
     status: 'RUNNING',
     messages: workingMessages,
@@ -4897,7 +4906,6 @@ async function executeUnifiedTurnCore(
   let accumulatedThinking = '';
   let accumulatedText = '';
   let streamedToolArgChars = 0;
-  let lastCodeModeScript: string | undefined;
   const allToolTraces: AgentToolCallTrace[] = [];
   const allSubagentLanes: AgentSubagentLaneTrace[] = [];
   const allArtifacts: AgentDomainArtifact[] = [];
@@ -5063,7 +5071,6 @@ async function executeUnifiedTurnCore(
         model: built.selectedModel.id,
         isMock: built.isMock,
         visionSupported: built.visionSupported,
-        codeMode: effectiveCodeMode,
         multiAgentConcurrency: effectiveConcurrency,
         ...(activeVisionFallbackNotice ? { visionFallbackNotice: activeVisionFallbackNotice } : {}),
       },
@@ -5150,7 +5157,6 @@ async function executeUnifiedTurnCore(
 
     const baseSpecialistTools = getToolsForAgentKind(sessionState.agentKind);
     const tools = getToolsForAgentKind(sessionState.agentKind, {
-      codeMode: effectiveCodeMode,
       multiAgentConcurrency: effectiveConcurrency,
     });
     const resolvedMaxTokens = Math.min(built.selectedModel.maxTokens || 32768, 32768);
@@ -6377,7 +6383,6 @@ async function executeUnifiedTurnCore(
           input.activeModelCode,
           effectiveLocale,
           {
-            codeMode: effectiveCodeMode,
             multiAgentConcurrency: effectiveConcurrency,
             offeredTools: tools,
             lockedStyleValues: prototypeTurnDraft?.lockedStyleValues ?? null,
@@ -6597,132 +6602,7 @@ async function executeUnifiedTurnCore(
               ? leadDirectOut instanceof Promise
                 ? await leadDirectOut
                 : leadDirectOut
-              : tc.name === 'codemode'
-                ? await (async (): Promise<ExecutedToolStep> => {
-                    const startedCm = Date.now();
-                    const scriptCode = String(tcArgs.code ?? '');
-                    if (scriptCode.trim()) {
-                      lastCodeModeScript = scriptCode;
-                    }
-                    const cmRes = await runCodemodeScript({
-                      code: scriptCode,
-                      callableTools: tools.filter((t) => t.name !== 'codemode'),
-                      signal: controller.signal,
-                      timeoutMs: stepTimeoutMs,
-                      executeNestedTool: async (nestedToolName, nestedArgs, nestedIdx) => {
-                        resetIdleTimer();
-                        const nestedCallId = `${tc.id}/c${nestedIdx}`;
-                        const nestedAnchor = extractTargetAnchorFromArgs(nestedToolName, nestedArgs);
-                        emit({
-                          id: nextEventId(),
-                          event: 'tool_call',
-                          data: {
-                            id: nestedCallId,
-                            toolName: nestedToolName,
-                            arguments: nestedArgs,
-                            ...(nestedAnchor ? { targetAnchor: nestedAnchor } : {}),
-                            step: step + 1,
-                          },
-                        });
-
-                        const leadNestedOut = runLeadPrototypeTool(nestedCallId, nestedToolName, nestedArgs, step + 1);
-                        const nestedOut =
-                          leadNestedOut !== null
-                            ? leadNestedOut instanceof Promise
-                              ? await leadNestedOut
-                              : leadNestedOut
-                            : await executeUnifiedToolCall(
-                                store,
-                                sessionState,
-                                alignShellWithPlan({
-                                  type: 'toolCall',
-                                  id: nestedCallId,
-                                  name: nestedToolName,
-                                  arguments: nestedArgs as JsonObject,
-                                }),
-                                hadValidatorError,
-                                effectiveLocale,
-                                prototypeTurnDraft,
-                                {
-                                  isMock: built!.isMock,
-                                  runId: turnRunId,
-                                  ...(structuredTurnAction
-                                    ? { actionParams: structuredTurnAction.params }
-                                    : {}),
-                                },
-                              );
-
-                        if (nestedOut.isError) {
-                          hadValidatorError = true;
-                        }
-                        if (nestedToolName === 'upsert_prototype_screen' && !nestedOut.isError && prototypeTurnDraft) {
-                          const nSid = typeof nestedArgs.screenId === 'string' ? nestedArgs.screenId.trim() : '';
-                          recordSingleAgentScreenWrite(nSid);
-                        }
-                        allToolTraces.push(nestedOut.trace);
-                        emit({
-                          id: nextEventId(),
-                          event: 'tool_result',
-                          data: {
-                            trace: nestedOut.trace,
-                            step: step + 1,
-                          },
-                        });
-                        syncPrototypeLiveDocument();
-
-                        if (nestedOut.artifact) {
-                          allArtifacts.push(nestedOut.artifact);
-                          emit({
-                            id: nextEventId(),
-                            event: 'artifact',
-                            data: { artifact: nestedOut.artifact },
-                          });
-                        }
-                        if (nestedOut.askUserPrompt) {
-                          pendingAskUser = nestedOut.askUserPrompt;
-                          emit({
-                            id: nextEventId(),
-                            event: 'ask_user',
-                            data: { askUser: nestedOut.askUserPrompt },
-                          });
-                        }
-                        if (nestedOut.stepHandoffProposal) {
-                          pendingStepHandoff = nestedOut.stepHandoffProposal;
-                          emit({
-                            id: nextEventId(),
-                            event: 'step_handoff',
-                            data: { stepHandoff: nestedOut.stepHandoffProposal },
-                          });
-                        }
-
-                        let parsedJson: unknown = nestedOut.toolResultContent;
-                        try {
-                          parsedJson = JSON.parse(nestedOut.toolResultContent);
-                        } catch {
-                          parsedJson = nestedOut.toolResultContent;
-                        }
-                        return {
-                          outputJson: parsedJson,
-                          isError: nestedOut.isError,
-                          ...(nestedOut.isError ? { errorText: nestedOut.trace.output } : {}),
-                        };
-                      },
-                    });
-
-                    return {
-                      trace: {
-                        id: tc.id,
-                        toolName: 'codemode',
-                        arguments: tcArgs,
-                        output: cmRes.outputText,
-                        isError: cmRes.isError,
-                        durationMs: Date.now() - startedCm,
-                      },
-                      toolResultContent: cmRes.outputText,
-                      isError: cmRes.isError,
-                    };
-                  })()
-                : await executeUnifiedToolCall(
+              : await executeUnifiedToolCall(
                     store,
                     sessionState,
                     alignShellWithPlan(tc),
@@ -7139,7 +7019,6 @@ async function executeUnifiedTurnCore(
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(allSubagentLanes.length > 0 ? { subagentLanes: allSubagentLanes } : {}),
-      ...(lastCodeModeScript ? { codeModeScript: lastCodeModeScript } : {}),
       ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
       ...(pendingStepHandoff ? { stepHandoff: pendingStepHandoff } : {}),
       ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
@@ -7437,7 +7316,6 @@ async function executeUnifiedTurnCore(
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(allSubagentLanes.length > 0 ? { subagentLanes: allSubagentLanes } : {}),
-      ...(lastCodeModeScript ? { codeModeScript: lastCodeModeScript } : {}),
       ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
       ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
       ...(built

@@ -258,4 +258,36 @@ test.describe('Prototype live build (#89): per-screen streaming onto one canvas'
       );
     }
   });
+
+  test('post-generation modification plans and updates only the affected screen visibly and produces a Change Summary', async ({
+    page,
+    request,
+  }) => {
+    const projectId = await setUpProjectWithConfirmedRequirements(request);
+    await page.goto(`/?projectId=${projectId}&mode=app-prototype`);
+    await page.getByTestId('confirm-brief-generate-btn').click();
+    await expect(page.getByTestId('prototype-history-btn')).toContainText('R1', { timeout: 60_000 });
+
+    const homeBefore = await page
+      .frameLocator('[data-testid="prototype-artboard-frame-SCR-HOME"]')
+      .locator('body')
+      .innerHTML();
+
+    const agentPanel = page.getByTestId('agent-panel');
+    await expect(agentPanel).toBeVisible();
+    await page.getByTestId('agent-panel-composer-input').fill('把订单列表的筛选改成按客户');
+    await page.getByTestId('agent-panel-send-btn').click();
+
+    await expect(page.getByTestId('prototype-history-btn')).toContainText('R2', { timeout: 45_000 });
+    await expect(agentPanel.getByTestId('run-change-summary').last()).toBeVisible();
+
+    const ordersFrame = page.frameLocator('[data-testid="prototype-artboard-frame-SCR-ORDERS"]');
+    await expect(ordersFrame.locator('[data-element-id="EL-FILTER-CUSTOMER"]')).toBeVisible();
+
+    const homeAfter = await page
+      .frameLocator('[data-testid="prototype-artboard-frame-SCR-HOME"]')
+      .locator('body')
+      .innerHTML();
+    expect(homeAfter).toBe(homeBefore);
+  });
 });

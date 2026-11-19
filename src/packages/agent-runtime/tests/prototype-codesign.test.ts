@@ -977,13 +977,29 @@ describe('Briefing Stage: Unbound Initial Generation (R1), Brief Restyle (R2), N
                 tool_calls: [
                   {
                     index: 0,
-                    id: 'call_r1_rewrite',
+                    id: 'call_r1_style',
                     type: 'function',
                     function: {
-                      name: 'rewrite_prototype_page',
+                      name: 'define_style',
                       arguments: JSON.stringify({
-                        htmlContent: generatedR1Html,
-                        allowAnchorReset: true,
+                        direction: 'Warm paper light',
+                        values: { background: '#faf8f5', accent: '#2563eb' },
+                        componentCss: '.grid-shell { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }',
+                        sampleHtml: '<button class="btn primary">新建合同</button>',
+                      }),
+                    },
+                  },
+                  {
+                    index: 1,
+                    id: 'call_r1_screen',
+                    type: 'function',
+                    function: {
+                      name: 'upsert_prototype_screen',
+                      arguments: JSON.stringify({
+                        screenId: 'SCR-LEDGER',
+                        screenName: '采购台账',
+                        screenType: 'LIST',
+                        screenHtml: `<section data-screen-id="SCR-LEDGER" data-screen-name="采购台账" data-screen-type="LIST" class="grid-shell"><input type="search" placeholder="检索合同" data-element-id="EL-SEARCH" data-element-type="INPUT" data-binding="Contract.contractNo" /><button type="button" data-element-id="EL-CREATE" data-element-type="BUTTON" data-event-id="UIE-CREATE">新建合同</button></section>`,
                       }),
                     },
                   },
@@ -1036,10 +1052,12 @@ describe('Briefing Stage: Unbound Initial Generation (R1), Brief Restyle (R2), N
                     id: 'call_r2_restyle',
                     type: 'function',
                     function: {
-                      name: 'rewrite_prototype_page',
+                      name: 'define_style',
                       arguments: JSON.stringify({
-                        htmlContent: restyledR2Html,
-                        allowAnchorReset: false,
+                        direction: 'Dark trading',
+                        values: { background: '#0b1120', accent: '#38bdf8' },
+                        componentCss: ':root { --bg: #0b1120; --accent: #38bdf8; }',
+                        sampleHtml: '<button class="btn primary">Dark Action</button>',
                       }),
                     },
                   },
@@ -1157,7 +1175,7 @@ describe('Briefing Stage: Unbound Initial Generation (R1), Brief Restyle (R2), N
       const protoAfterR2 = store.getPrototype(boundProtoId!)!;
       expect(protoAfterR2.revisions).toHaveLength(2);
       expect(protoAfterR2.revisions.at(-1)!.revisionNumber).toBe(2);
-      expect(protoAfterR2.htmlContent).toContain('--bg: #0b1120');
+      expect(protoAfterR2.htmlContent).toContain('--proto-bg: #0b1120');
       expect(protoAfterR2.designBrief?.userFeelNote).toBe('改成深色高密度交易风');
       expect(protoAfterR2.designBrief?.primaryReferenceId).toBe('linear-app');
 
@@ -1222,7 +1240,8 @@ describe('Briefing Stage: Unbound Initial Generation (R1), Brief Restyle (R2), N
     expect(updatedProto.htmlContent).toContain('data-screen-id="SCR-CONTRACT-LIST"');
     expect(updatedProto.htmlContent).toContain('data-screen-id="SCR-CONTRACT-APPROVAL"');
     expect(updatedProto.htmlContent).toContain('data-element-id="EL-BTN-APPROVE"');
-    expect(updatedProto.htmlContent).toContain('data-brief-restyle="true"');
+    expect(updatedProto.htmlContent).toContain('--proto-accent: #38bdf8');
+    expect(updatedProto.htmlContent).toContain('data-proto-style-tile');
   });
 });
 
