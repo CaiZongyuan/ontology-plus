@@ -56,7 +56,7 @@ test.describe('Prototype Notes, real agent cursors, and live narration (#92)', (
     await expect(viewport).toBeVisible({ timeout: 15_000 });
 
     // 1. Canvas mode: observe a live cursor with arrow style, assistant name, narration bubble, and matching BuildLog "现在" row.
-    const observedCanvas = await expect
+    await expect
       .poll(
         async () =>
           page.evaluate(() => {
@@ -88,20 +88,12 @@ test.describe('Prototype Notes, real agent cursors, and live narration (#92)', (
           }),
         { timeout: 30_000, intervals: [60] },
       )
-      .not.toBeNull()
-      .then(() =>
-        page.evaluate(() => {
-          const c = document.querySelector<HTMLElement>('[data-testid^="prototype-agent-cursor-SCR-"]');
-          const bubble = document.querySelector<HTMLElement>('[data-testid^="prototype-cursor-bubble-SCR-"]');
-          return {
-            style: c?.getAttribute('data-cursor-style') ?? 'arrow',
-            sentence: bubble?.textContent?.trim() ?? '',
-          };
+      .toEqual(
+        expect.objectContaining({
+          style: 'arrow',
+          logHasNow: true,
         }),
       );
-
-    expect(observedCanvas.style).toBe('arrow');
-    await page.screenshot({ path: '.scratch/issue-92/e2e-canvas-cursor-narration.png' });
 
     // Wait for initial build R1 to finish (SCR-REFUND is left unfinished in Mock replay).
     await expect(page.getByTestId('prototype-history-btn')).toContainText('R1', { timeout: 60_000 });
@@ -123,7 +115,6 @@ test.describe('Prototype Notes, real agent cursors, and live narration (#92)', (
       return Boolean(vp && mn && !vp.contains(mn) && document.body.contains(mn));
     });
     expect(portaledOutsideViewport).toBe(true);
-    await page.screenshot({ path: '.scratch/issue-92/e2e-cursor-menu.png' });
 
     await page.getByTestId('prototype-cursor-style-nib').click();
     await page.keyboard.press('Escape');
@@ -167,7 +158,6 @@ test.describe('Prototype Notes, real agent cursors, and live narration (#92)', (
         }),
       );
 
-    await page.screenshot({ path: '.scratch/issue-92/e2e-web-cursor-narration.png' });
     await expect(page.getByTestId('prototype-history-btn')).toContainText('R2', { timeout: 60_000 });
   });
 });

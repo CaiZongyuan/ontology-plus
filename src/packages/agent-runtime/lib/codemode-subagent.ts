@@ -29,7 +29,10 @@ import {
   type PrototypeBuildFailureCode,
 } from '../../ontology-core/index.js';
 import { type AgentLocale, pickLocaleText } from './locale.js';
-import type { PartialPrototypeScreenInput } from './prototype-anchor-tools.js';
+import {
+  shouldStreamPartialScreen,
+  type PartialPrototypeScreenInput,
+} from './prototype-anchor-tools.js';
 import type { OpenAiFunctionTool } from './tools.js';
 import { DOCUMENT_LEVEL_TOOL_NAMES, checkScreenHelperCall, screenHelperTools } from './prototype-design-guide.js';
 
@@ -535,6 +538,7 @@ export async function runParallelSubagents(
       let ownWriteRejected = false;
       let lastEmitMs = 0;
       let lastPartialStreamLen = 0;
+      let lastPartialNote = '';
 
       const MAX_SUB_ROUNDS = 4;
       for (let round = 0; round < MAX_SUB_ROUNDS; round += 1) {
@@ -593,24 +597,39 @@ export async function runParallelSubagents(
                 (typeof pArgs.screenType === 'string' && pArgs.screenType.trim()) ||
                 spec.screenType?.trim();
 
-              if (partialHtml.length >= 12 || (partialNote && 'screenHtml' in pArgs)) {
+              if (shouldStreamPartialScreen(partialHtml, partialNote)) {
                 lane.streamedHtmlChars = partialHtml.length;
-                const zhWriting = derivePrototypeLiveWriting(partialHtml, { locale: 'zh-CN' });
-                const enWriting = derivePrototypeLiveWriting(partialHtml, { locale: 'en-US' });
+                const zhWriting = derivePrototypeLiveWriting(partialHtml, {
+                  locale: 'zh-CN',
+                  ...(partialNote ? { screenNote: partialNote } : {}),
+                });
+                const enWriting = derivePrototypeLiveWriting(partialHtml, {
+                  locale: 'en-US',
+                  ...(partialNote ? { screenNote: partialNote } : {}),
+                });
                 lane.liveAction =
                   zhWriting.narration && enWriting.narration
                     ? { zh: zhWriting.narration, en: enWriting.narration }
                     : { zh: `正在画「${resolvedSname}」`, en: `Drawing "${resolvedSname}"` };
                 const allowedStreamScreen = !ownScreenId || resolvedSid === ownScreenId;
                 const closedNewTag = ev.delta.includes('>');
+                const noteProgressedBeforeHtml =
+                  partialHtml.length === 0 &&
+                  partialNote.length >= 2 &&
+                  (lastPartialNote === '' ||
+                    partialNote.length - lastPartialNote.length >= 12 ||
+                    /[。！？.!?\n]/.test(ev.delta));
                 if (
                   resolvedSid &&
                   allowedStreamScreen &&
                   (partialHtml.length - lastPartialStreamLen >= 24 ||
                     (closedNewTag && partialHtml.length > lastPartialStreamLen) ||
-                    (partialNote && lastPartialStreamLen === 0))
+                    noteProgressedBeforeHtml)
                 ) {
-                  lastPartialStreamLen = Math.max(1, partialHtml.length);
+                  if (partialHtml.length > 0) {
+                    lastPartialStreamLen = partialHtml.length;
+                  }
+                  lastPartialNote = partialNote;
                   options.onPartialScreenStream?.(
                     {
                       screenId: resolvedSid,

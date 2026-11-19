@@ -1,34 +1,25 @@
 /**
  * Prototype Notes (`data-note`) and real live-writing narration derivation (spec #87, #92, ADR 0005, ADR 0018).
  *
- * Every anchored element in `界面原型.html` may carry a business-language Prototype Note in `data-note`.
- * Pure TypeScript (no DOM) so the server, ontology extraction, and browser share one implementation.
+ * Every anchored element (and screen root `<section data-screen-id>`) in `界面原型.html` may carry
+ * a business-language Prototype Note in `data-note`. Pure TypeScript (no DOM) so the server,
+ * ontology extraction, and browser share one implementation.
  */
+
+import {
+  RAW_TEXT_HTML_TAGS,
+  VOID_HTML_TAGS,
+  findHtmlTagClose,
+  parseHtmlAttributes,
+  rewriteHtmlTagAttribute,
+} from './html-scan.js';
 
 export const PROTOTYPE_NOTE_ATTR = 'data-note';
 
 const MAX_NOTE_LENGTH = 280;
 
-const VOID_TAGS = new Set([
-  'area',
-  'base',
-  'br',
-  'col',
-  'embed',
-  'hr',
-  'img',
-  'input',
-  'link',
-  'meta',
-  'param',
-  'source',
-  'track',
-  'wbr',
-]);
-
-const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
 const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4']);
-const SECTION_BOUNDARY_TAGS = new Set(['section', 'article', 'header', 'aside']);
+const SECTION_BOUNDARY_TAGS = new Set(['section', 'article', 'aside']);
 
 const NAMED_ENTITIES: Readonly<Record<string, string>> = {
   quot: '"',
@@ -48,7 +39,7 @@ const NAMED_ENTITIES: Readonly<Record<string, string>> = {
 };
 
 export interface PrototypeNoteItem {
-  elementId: string;
+  elementId?: string;
   screenId?: string;
   note: string;
   title?: string;
@@ -56,7 +47,7 @@ export interface PrototypeNoteItem {
 }
 
 export interface PrototypeLiveWritingTarget {
-  /** Innermost latest anchored element (`data-element-id`) written inside the screen so far. */
+  /** Innermost active anchored element (`data-element-id`) at the streaming frontier, if any. */
   elementId?: string;
   /** Business-language narration from `data-note` or enclosing section heading; omitted when neither exists. */
   narration?: string;
@@ -80,21 +71,13 @@ function decodeHtmlEntities(raw: string): string {
     .replace(/&amp;/gi, '&');
 }
 
-function escapeHtmlAttr(raw: string): string {
-  return raw
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
 /**
  * Strips stray markup, decodes HTML entities, normalizes whitespace, and bounds length so a
  * Prototype Note is always a clean plain-language sentence.
  */
 export function sanitizePrototypeNote(raw: string | null | undefined): string {
   if (!raw) return '';
-  const withoutTags = raw.replace(/<[A-Za-z!/][^>]*>/g, '');
+  const withoutTags = raw.replace(/<[A-Za-z!/](?:[^>"']|"[^"]*"|'[^']*')*>/g, '');
   const decoded = decodeHtmlEntities(withoutTags).replace(/\s+/g, ' ').trim();
   if (!decoded) return '';
   return decoded.length > MAX_NOTE_LENGTH ? `${decoded.slice(0, MAX_NOTE_LENGTH - 1).trimEnd()}…` : decoded;
@@ -127,44 +110,14 @@ interface NoteSpanNode {
   openEnd: number;
   innerEnd: number;
   closeEnd: number;
+  closed: boolean;
   parent?: NoteSpanNode;
   children: NoteSpanNode[];
 }
 
-function findTagEnd(html: string, from: number): { end: number; selfClosing: boolean } {
-  let quote: string | null = null;
-  let lastSig = '';
-  for (let i = from; i < html.length; i += 1) {
-    const ch = html[i]!;
-    if (quote) {
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if ((ch === '"' || ch === "'") && lastSig === '=') {
-      quote = ch;
-    } else if (ch === '>') {
-      let back = i - 1;
-      while (back >= from && /\s/.test(html[back]!)) back -= 1;
-      return { end: i + 1, selfClosing: html[back] === '/' };
-    }
-    if (!/\s/.test(ch)) lastSig = ch;
-  }
-  return { end: -1, selfClosing: false };
-}
-
-function parseAttributes(attrRegion: string): Record<string, string> {
-  const attrs: Record<string, string> = {};
-  const re = /([A-Za-z_:@][A-Za-z0-9_.:@-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(attrRegion)) !== null) {
-    const rawVal = m[2] ?? m[3] ?? m[4] ?? '';
-    attrs[m[1]!.toLowerCase()] = decodeHtmlEntities(rawVal);
-  }
-  return attrs;
-}
-
-function parseTree(html: string): NoteSpanNode[] {
+function parseTree(html: string): { nodes: NoteSpanNode[]; roots: NoteSpanNode[] } {
   const nodes: NoteSpanNode[] = [];
+  const roots: NoteSpanNode[] = [];
   const stack: NoteSpanNode[] = [];
   let i = 0;
 
@@ -180,14 +133,14 @@ function parseTree(html: string): NoteSpanNode[] {
     const next = html[lt + 1];
     if (!next) break;
     if (next === '!' || next === '?') {
-      const { end } = findTagEnd(html, lt + 2);
+      const end = findHtmlTagClose(html, lt + 2);
       if (end === -1) break;
       i = end;
       continue;
     }
     if (next === '/') {
       const closeMatch = /^<\/\s*([A-Za-z][A-Za-z0-9:-]*)/.exec(html.slice(lt, lt + 64));
-      const { end } = findTagEnd(html, lt + 2);
+      const end = findHtmlTagClose(html, lt + 2);
       if (end === -1) break;
       const closeTag = closeMatch?.[1]?.toLowerCase();
       if (closeTag) {
@@ -197,6 +150,7 @@ function parseTree(html: string): NoteSpanNode[] {
               const popped = stack.pop()!;
               popped.innerEnd = lt;
               popped.closeEnd = k === s ? end : lt;
+              popped.closed = true;
             }
             break;
           }
@@ -213,10 +167,11 @@ function parseTree(html: string): NoteSpanNode[] {
     }
     const tag = openMatch[1]!.toLowerCase();
     const afterName = lt + openMatch[0].length;
-    const { end: openEnd, selfClosing } = findTagEnd(html, afterName);
+    const openEnd = findHtmlTagClose(html, afterName);
     if (openEnd === -1) break;
+    const selfClosing = /\/\s*>$/.test(html.slice(Math.max(afterName, openEnd - 3), openEnd));
     const attrSlice = html.slice(afterName, selfClosing ? Math.max(afterName, openEnd - 2) : openEnd - 1);
-    const attrs = parseAttributes(attrSlice);
+    const attrs = parseHtmlAttributes(attrSlice, decodeHtmlEntities);
 
     // Skip embedded Style Tile templates (not part of any screen's notes).
     if (tag === 'template' && 'data-proto-style-tile' in attrs) {
@@ -235,22 +190,26 @@ function parseTree(html: string): NoteSpanNode[] {
       openEnd,
       innerEnd: openEnd,
       closeEnd: openEnd,
+      closed: false,
       ...(parent ? { parent } : {}),
       children: [],
     };
     if (parent) parent.children.push(node);
+    else roots.push(node);
     nodes.push(node);
 
-    if (selfClosing || VOID_TAGS.has(tag)) {
+    if (selfClosing || VOID_HTML_TAGS.has(tag)) {
+      node.closed = true;
       i = openEnd;
       continue;
     }
-    if (RAW_TEXT_TAGS.has(tag)) {
+    if (RAW_TEXT_HTML_TAGS.has(tag)) {
       const closeRe = new RegExp(`</${tag}\\s*>`, 'gi');
       closeRe.lastIndex = openEnd;
       const hit = closeRe.exec(html);
       node.innerEnd = hit ? hit.index : html.length;
       node.closeEnd = hit ? hit.index + hit[0].length : html.length;
+      node.closed = Boolean(hit);
       i = node.closeEnd;
       continue;
     }
@@ -263,7 +222,7 @@ function parseTree(html: string): NoteSpanNode[] {
     open.innerEnd = html.length;
     open.closeEnd = html.length;
   }
-  return nodes;
+  return { nodes, roots };
 }
 
 function enclosingScreenOf(node: NoteSpanNode): NoteSpanNode | undefined {
@@ -275,20 +234,10 @@ function enclosingScreenOf(node: NoteSpanNode): NoteSpanNode | undefined {
   return undefined;
 }
 
-function rewriteNoteAttribute(openTag: string, cleanNote: string | null): string {
-  const existingRe = /(\s+)data-note(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?/i;
-  if (!cleanNote) {
-    return openTag.replace(existingRe, '');
-  }
-  const encoded = escapeHtmlAttr(cleanNote);
-  if (existingRe.test(openTag)) {
-    return openTag.replace(existingRe, `$1${PROTOTYPE_NOTE_ATTR}="${encoded}"`);
-  }
-  const insertAt = openTag.endsWith('/>') ? openTag.length - 2 : openTag.length - 1;
-  return `${openTag.slice(0, insertAt)} ${PROTOTYPE_NOTE_ATTR}="${encoded}"${openTag.slice(insertAt)}`;
-}
-
-/** Reads every anchored element's Prototype Note (`data-note`) from a prototype document or screen fragment. */
+/**
+ * Reads every screen-root and anchored element's Prototype Note (`data-note`) from a prototype
+ * document or screen fragment.
+ */
 export function readPrototypeNotes(
   html: string,
   options?: { screenId?: string },
@@ -296,17 +245,17 @@ export function readPrototypeNotes(
   if (!html?.trim()) return [];
   const targetScreen = options?.screenId?.trim();
   const out: PrototypeNoteItem[] = [];
-  for (const node of parseTree(html)) {
+  for (const node of parseTree(html).nodes) {
     const elementId = node.attrs['data-element-id']?.trim();
-    if (!elementId) continue;
-    const screenNode = enclosingScreenOf(node);
-    const screenId = screenNode?.attrs['data-screen-id']?.trim();
+    const ownScreenId = node.attrs['data-screen-id']?.trim();
+    if (!elementId && !ownScreenId) continue;
+    const screenId = ownScreenId || enclosingScreenOf(node)?.attrs['data-screen-id']?.trim();
     if (targetScreen && screenId !== targetScreen) continue;
     const parsed = parsePrototypeNote(node.attrs[PROTOTYPE_NOTE_ATTR]);
     if (!parsed) continue;
     const note = sanitizePrototypeNote(node.attrs[PROTOTYPE_NOTE_ATTR]);
     out.push({
-      elementId,
+      ...(elementId ? { elementId } : {}),
       ...(screenId ? { screenId } : {}),
       note,
       ...(parsed.title ? { title: parsed.title } : {}),
@@ -318,25 +267,31 @@ export function readPrototypeNotes(
 
 /**
  * Sets, updates, or removes (`note === null`) `data-note` on the targeted `data-element-id`
- * opening tag, keeping every other character of `html` unchanged.
+ * or screen-root `data-screen-id` opening tag, keeping every other character of `html` unchanged.
  */
 export function writePrototypeNote(
   html: string,
-  target: { elementId: string; screenId?: string },
+  target: { elementId?: string; screenId?: string },
   note: string | null,
 ): string {
   const elementId = target.elementId?.trim();
-  if (!html || !elementId) return html;
   const targetScreen = target.screenId?.trim();
-  const nodes = parseTree(html);
-  const hit = nodes.find((node) => {
-    if (node.attrs['data-element-id']?.trim() !== elementId) return false;
-    if (!targetScreen) return true;
-    return enclosingScreenOf(node)?.attrs['data-screen-id']?.trim() === targetScreen;
-  });
+  if (!html || (!elementId && !targetScreen)) return html;
+  const { nodes } = parseTree(html);
+  const hit = elementId
+    ? nodes.find((node) => {
+        if (node.attrs['data-element-id']?.trim() !== elementId) return false;
+        if (!targetScreen) return true;
+        return enclosingScreenOf(node)?.attrs['data-screen-id']?.trim() === targetScreen;
+      })
+    : nodes.find((node) => node.attrs['data-screen-id']?.trim() === targetScreen);
   if (!hit) return html;
   const cleaned = note === null ? null : sanitizePrototypeNote(note) || null;
-  const updatedOpen = rewriteNoteAttribute(html.slice(hit.openStart, hit.openEnd), cleaned);
+  const updatedOpen = rewriteHtmlTagAttribute(
+    html.slice(hit.openStart, hit.openEnd),
+    PROTOTYPE_NOTE_ATTR,
+    cleaned,
+  );
   return `${html.slice(0, hit.openStart)}${updatedOpen}${html.slice(hit.openEnd)}`;
 }
 
@@ -352,29 +307,35 @@ function formatNoteSentence(rawNote: string, locale: 'zh-CN' | 'en-US'): string 
 }
 
 function extractPlainText(html: string, node: NoteSpanNode): string {
-  const slice = html.slice(node.openEnd, node.innerEnd);
-  return sanitizePrototypeNote(slice);
+  return sanitizePrototypeNote(html.slice(node.openEnd, node.innerEnd));
 }
 
+/**
+ * Finds the nearest preceding heading (`<h1>`–`<h4>`) inside `container` whose `openStart < beforeOffset`,
+ * scanning right-to-left without crossing nested section boundaries.
+ */
 function findHeadingBefore(
   html: string,
   container: NoteSpanNode,
   beforeOffset: number,
 ): string | undefined {
-  const visit = (node: NoteSpanNode): string | undefined => {
-    if (node.openStart > beforeOffset) return undefined;
-    if (HEADING_TAGS.has(node.tag)) {
-      const text = extractPlainText(html, node);
+  for (let i = container.children.length - 1; i >= 0; i -= 1) {
+    const child = container.children[i]!;
+    if (child.openStart >= beforeOffset) continue;
+    if (SECTION_BOUNDARY_TAGS.has(child.tag)) continue;
+    if (HEADING_TAGS.has(child.tag)) {
+      const text = extractPlainText(html, child);
       if (text) return text;
+      continue;
     }
-    for (const child of node.children) {
-      if (SECTION_BOUNDARY_TAGS.has(child.tag)) continue;
-      const found = visit(child);
-      if (found) return found;
-    }
-    return undefined;
-  };
-  return visit(container);
+    const nested = findHeadingBefore(html, child, beforeOffset);
+    if (nested) return nested;
+  }
+  if (HEADING_TAGS.has(container.tag) && container.openStart < beforeOffset) {
+    const text = extractPlainText(html, container);
+    if (text) return text;
+  }
+  return undefined;
 }
 
 function findEnclosingSectionHeading(
@@ -382,33 +343,57 @@ function findEnclosingSectionHeading(
   target: NoteSpanNode,
   screenRoot: NoteSpanNode | undefined,
 ): string | undefined {
-  // 1. Check if the target itself contains a heading (e.g. an opening <section data-element-id><h1>标题</h1>)
   const ownHeading = findHeadingBefore(html, target, Number.MAX_SAFE_INTEGER);
   if (ownHeading) return ownHeading;
 
-  // 2. Walk up enclosing containers inside the screen, stopping at the first section boundary.
+  let child = target;
   let cur = target.parent;
-  while (cur && cur !== screenRoot) {
-    const heading = findHeadingBefore(html, cur, target.openStart);
+  while (cur) {
+    const heading = findHeadingBefore(html, cur, child.openStart);
     if (heading) return heading;
+    if (cur === screenRoot) break;
     if (SECTION_BOUNDARY_TAGS.has(cur.tag)) break;
+    child = cur;
     cur = cur.parent;
   }
   return undefined;
 }
 
+function findFrontierNode(
+  html: string,
+  root: { innerEnd: number; children: NoteSpanNode[] },
+): NoteSpanNode | undefined {
+  let curChildren = root.children;
+  let curInnerEnd = root.innerEnd;
+  let frontier: NoteSpanNode | undefined;
+  while (curChildren.length > 0) {
+    const lastChild = curChildren[curChildren.length - 1]!;
+    if (lastChild.closed && html.slice(lastChild.closeEnd, curInnerEnd).trim().length > 0) {
+      break;
+    }
+    frontier = lastChild;
+    curChildren = lastChild.children;
+    curInnerEnd = lastChild.innerEnd;
+  }
+  return frontier;
+}
+
 /**
- * Finds the innermost latest anchored element (`data-element-id`) written inside a screen so far
- * and derives its business narration strictly from its `data-note` (or an ancestor's `data-note`)
- * or its enclosing section heading. When neither exists, `narration` is omitted — never guessed.
+ * Finds the innermost active element at the streaming frontier of a screen and derives its
+ * business narration strictly from `data-note` (on the active chain or screen root) or its
+ * nearest enclosing section heading. When neither exists, `narration` is omitted — never guessed.
  */
 export function derivePrototypeLiveWriting(
   html: string,
-  options?: { screenId?: string; locale?: 'zh-CN' | 'en-US' },
+  options?: { screenId?: string; locale?: 'zh-CN' | 'en-US'; screenNote?: string },
 ): PrototypeLiveWritingTarget {
-  if (!html?.trim()) return {};
   const locale = options?.locale === 'en-US' ? 'en-US' : 'zh-CN';
-  const nodes = parseTree(html);
+  if (!html?.trim()) {
+    const early = formatNoteSentence(options?.screenNote ?? '', locale);
+    return early ? { narration: early } : {};
+  }
+
+  const { nodes, roots } = parseTree(html);
   const requestedScreenId = options?.screenId?.trim();
   const anyScreensInHtml = nodes.some((n) => Boolean(n.attrs['data-screen-id']));
 
@@ -420,45 +405,69 @@ export function derivePrototypeLiveWriting(
     screenRoot = nodes.find((n) => Boolean(n.attrs['data-screen-id']));
   }
 
-  const scopedNodes = screenRoot
-    ? nodes.filter((n) => n !== screenRoot && enclosingScreenOf(n) === screenRoot)
-    : nodes;
+  const virtualRoot: NoteSpanNode = screenRoot ?? {
+    tag: '__root',
+    attrs: {},
+    openStart: 0,
+    openEnd: 0,
+    innerEnd: html.length,
+    closeEnd: html.length,
+    closed: false,
+    children: roots,
+  };
+  if (!screenRoot) {
+    for (const r of roots) r.parent = virtualRoot;
+  }
 
-  let latestAnchored: NoteSpanNode | undefined;
-  for (const node of scopedNodes) {
-    if (node.attrs['data-element-id']?.trim()) {
-      latestAnchored = node;
+  const frontier = findFrontierNode(html, virtualRoot);
+
+  if (!frontier) {
+    const rootNote = formatNoteSentence(
+      screenRoot?.attrs[PROTOTYPE_NOTE_ATTR] ?? options?.screenNote ?? '',
+      locale,
+    );
+    if (rootNote) return { narration: rootNote };
+    const rootHeading = findHeadingBefore(html, virtualRoot, virtualRoot.innerEnd);
+    return rootHeading
+      ? { narration: locale === 'en-US' ? `Drawing "${rootHeading}"` : `正在画「${rootHeading}」` }
+      : {};
+  }
+
+  let activeAnchored: NoteSpanNode | undefined;
+  let walk: NoteSpanNode | undefined = frontier;
+  while (walk && walk !== virtualRoot) {
+    if (walk.attrs['data-element-id']?.trim()) {
+      activeAnchored = walk;
+      break;
     }
+    walk = walk.parent;
   }
+  const elementId = activeAnchored?.attrs['data-element-id']?.trim();
 
-  if (!latestAnchored) {
-    const screenNote = screenRoot?.attrs[PROTOTYPE_NOTE_ATTR];
-    const sentence = formatNoteSentence(screenNote ?? '', locale);
-    return sentence ? { narration: sentence } : {};
-  }
-
-  const elementId = latestAnchored.attrs['data-element-id']!.trim();
-
-  // Priority 1: `data-note` on the element itself or an enclosing container up to the screen root.
-  let cur: NoteSpanNode | undefined = latestAnchored;
+  // Priority 1: `data-note` on the active frontier chain up to the screen root (or explicit screenNote).
+  let cur: NoteSpanNode | undefined = frontier;
   while (cur) {
     const noteSentence = formatNoteSentence(cur.attrs[PROTOTYPE_NOTE_ATTR] ?? '', locale);
     if (noteSentence) {
-      return { elementId, narration: noteSentence };
+      return { ...(elementId ? { elementId } : {}), narration: noteSentence };
     }
-    if (cur === screenRoot) break;
+    if (cur === virtualRoot) break;
     cur = cur.parent;
   }
+  const fallbackScreenNote = formatNoteSentence(options?.screenNote ?? '', locale);
+  if (fallbackScreenNote) {
+    return { ...(elementId ? { elementId } : {}), narration: fallbackScreenNote };
+  }
 
-  // Priority 2: Enclosing section heading (`<h1>`–`<h4>`).
-  const heading = findEnclosingSectionHeading(html, latestAnchored, screenRoot);
+  // Priority 2: Nearest enclosing section heading (`<h1>`–`<h4>`), including inside `screenRoot`.
+  const heading = findEnclosingSectionHeading(html, frontier, virtualRoot);
   if (heading) {
     return {
-      elementId,
+      ...(elementId ? { elementId } : {}),
       narration: locale === 'en-US' ? `Drawing "${heading}"` : `正在画「${heading}」`,
     };
   }
 
-  // Neither note nor section heading exists -> no narration bubble!
-  return { elementId };
+  // Neither note nor section heading exists -> no narration!
+  return elementId ? { elementId } : {};
 }

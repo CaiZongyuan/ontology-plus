@@ -70,6 +70,12 @@ describe('Prototype tool schemas, notes, and zero reasoning-regex cursor guessin
     expect(upserted.isError).toBe(false);
     expect(readPrototypeNotes(upserted.nextHtml, { screenId: 'SCR-ORDERS' })).toEqual([
       {
+        screenId: 'SCR-ORDERS',
+        note: '订货单列表：集中查看所有门店订货单的配送进度。',
+        title: '订货单列表',
+        body: '集中查看所有门店订货单的配送进度。',
+      },
+      {
         elementId: 'EL-ORDERS-FILTER',
         screenId: 'SCR-ORDERS',
         note: '筛选区：按状态或单号检索。',
@@ -137,6 +143,7 @@ describe('Prototype tool schemas, notes, and zero reasoning-regex cursor guessin
             screenId: 'SCR-S1',
             screenName: '工作台首页',
             screenType: 'DASHBOARD',
+            note: '工作台首页：店长进门先看今日待办。',
             screenHtml,
           }),
         ],
@@ -145,7 +152,7 @@ describe('Prototype tool schemas, notes, and zero reasoning-regex cursor guessin
     ]);
 
     const observedLanes: AgentSubagentLaneTrace[] = [];
-    const streamedSnapshots: string[] = [];
+    const streamedPartials: { note?: string; partialScreenHtml: string }[] = [];
 
     const res = await runParallelSubagents({
       tasks: [
@@ -176,7 +183,10 @@ describe('Prototype tool schemas, notes, and zero reasoning-regex cursor guessin
         observedLanes.push(JSON.parse(JSON.stringify(lane)) as AgentSubagentLaneTrace);
       },
       onPartialScreenStream: (partial) => {
-        streamedSnapshots.push(partial.partialScreenHtml);
+        streamedPartials.push({
+          ...(partial.note ? { note: partial.note } : {}),
+          partialScreenHtml: partial.partialScreenHtml,
+        });
       },
       executeSubagentToolCall: async () => ({
         toolResultContent: JSON.stringify({ status: 'OK' }),
@@ -196,10 +206,16 @@ describe('Prototype tool schemas, notes, and zero reasoning-regex cursor guessin
       }
     }
 
-    // Opening tag with data-element-id + data-note streamed BEFORE the closing </button> arrived!
-    expect(streamedSnapshots.length).toBeGreaterThan(0);
-    const earlyWithNote = streamedSnapshots.find(
-      (html) => html.includes('data-note="今日概况：') && !html.includes('</button>'),
+    // 1) Screen-level `note` streams BEFORE `screenHtml` starts (partialScreenHtml === '')!
+    expect(streamedPartials.length).toBeGreaterThan(0);
+    const noteBeforeHtml = streamedPartials.find(
+      (p) => Boolean(p.note && p.note.length >= 2) && p.partialScreenHtml === '',
+    );
+    expect(noteBeforeHtml).toBeDefined();
+
+    // 2) Opening tag with data-element-id + data-note streamed BEFORE the closing </button> arrived!
+    const earlyWithNote = streamedPartials.find(
+      (p) => p.partialScreenHtml.includes('data-note="今日概况：') && !p.partialScreenHtml.includes('</button>'),
     );
     expect(earlyWithNote).toBeDefined();
   });

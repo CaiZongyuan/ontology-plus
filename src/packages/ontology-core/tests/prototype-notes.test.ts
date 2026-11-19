@@ -200,4 +200,110 @@ describe('Prototype Notes in ontology-core (#92)', () => {
     // 5. Shell header anchors outside the target screen are never mistaken for live elements of an empty screen
     expect(derivePrototypeLiveWriting(shell, { screenId: 'SCR-ORDERS' })).toEqual({});
   });
+
+  it('supports screen-root data-note in readPrototypeNotes/writePrototypeNote and never corrupts data-note* prefixes or quoted attributes', () => {
+    const tricky = `<section data-screen-id="SCR-1" data-notes="keep-screen"><div data-element-id="EL-1" data-notes="x" title="a data-note=b">正文</div></section>`;
+    const withElemNote = writePrototypeNote(tricky, { elementId: 'EL-1' }, '说明');
+    expect(withElemNote).toBe(
+      `<section data-screen-id="SCR-1" data-notes="keep-screen"><div data-element-id="EL-1" data-notes="x" title="a data-note=b" data-note="说明">正文</div></section>`,
+    );
+
+    const updatedElemNote = writePrototypeNote(withElemNote, { elementId: 'EL-1' }, '新说明');
+    expect(updatedElemNote).toBe(
+      `<section data-screen-id="SCR-1" data-notes="keep-screen"><div data-element-id="EL-1" data-notes="x" title="a data-note=b" data-note="新说明">正文</div></section>`,
+    );
+
+    const withScreenNote = writePrototypeNote(
+      updatedElemNote,
+      { screenId: 'SCR-1' },
+      '整屏说明：先看今日待办。',
+    );
+    expect(withScreenNote).toContain('data-notes="keep-screen"');
+    expect(readPrototypeNotes(withScreenNote, { screenId: 'SCR-1' })).toEqual([
+      {
+        screenId: 'SCR-1',
+        note: '整屏说明：先看今日待办。',
+        title: '整屏说明',
+        body: '先看今日待办。',
+      },
+      {
+        elementId: 'EL-1',
+        screenId: 'SCR-1',
+        note: '新说明',
+        body: '新说明',
+      },
+    ]);
+
+    const removedBoth = writePrototypeNote(
+      writePrototypeNote(withScreenNote, { elementId: 'EL-1' }, null),
+      { screenId: 'SCR-1' },
+      null,
+    );
+    expect(removedBoth).toBe(tricky);
+  });
+
+  it('extracts MU elements when data-note or screen attributes contain > inside quotes', () => {
+    const htmlWithGt = `<section data-screen-id="SCR-APPROVAL" data-screen-name="审批" data-screen-type="APPROVAL" data-note="流向：提交 > 审批">
+      <button data-note="金额 > 5000 时审批" data-element-id="EL-HIGH-AMOUNT" data-element-type="BUTTON" data-element-label="大额审批">审批</button>
+    </section>`;
+    const mu = extractMuFromPrototypeHtml(htmlWithGt, '门店订货');
+    expect(mu.screens).toHaveLength(1);
+    expect(mu.screens[0]!.elements).toHaveLength(1);
+    expect(mu.screens[0]!.elements[0]).toMatchObject({
+      elementId: 'EL-HIGH-AMOUNT',
+      label: '大额审批',
+      description: '金额 > 5000 时审批',
+    });
+  });
+
+  it('tracks the active open element at the streaming frontier, picks nearest preceding headings, and checks screenRoot headings', () => {
+    const tracker = createPrototypeLiveTracker();
+
+    // Case A: inner button closed while trailing content continues inside open EL-CARD (raw + healed)
+    const caseARaw = `<div data-element-id="EL-CARD" data-note="详情卡：展示退款原因与照片。"><button data-element-id="EL-BTN" data-note="跳单：查看原订单。">看</button><p>流式正文`;
+    expect(derivePrototypeLiveWriting(caseARaw)).toEqual({
+      elementId: 'EL-CARD',
+      narration: '正在画「详情卡」：展示退款原因与照片。',
+    });
+    const evA = tracker.observePartialScreen({ screenId: 'SCR-1', partialHtml: caseARaw });
+    if (evA?.kind !== 'screen') throw new Error('expected screen event');
+    expect(derivePrototypeLiveWriting(evA.html, { screenId: 'SCR-1' })).toEqual({
+      elementId: 'EL-CARD',
+      narration: '正在画「详情卡」：展示退款原因与照片。',
+    });
+
+    const caseAPlainText = `<div data-element-id="EL-CARD" data-note="详情卡：展示退款原因与照片。"><button data-element-id="EL-BTN" data-note="跳单：查看原订单。">看</button>流式正文`;
+    expect(derivePrototypeLiveWriting(caseAPlainText)).toEqual({
+      elementId: 'EL-CARD',
+      narration: '正在画「详情卡」：展示退款原因与照片。',
+    });
+
+    // Case B: EL-1 closed and subsequent unanchored section is streaming -> do NOT freeze on "旧块"
+    const caseBWithHeading = `<div data-element-id="EL-1" data-note="旧块">完</div><section><h2>待办</h2><p>流式正文`;
+    expect(derivePrototypeLiveWriting(caseBWithHeading)).toEqual({
+      narration: '正在画「待办」',
+    });
+    const evB = tracker.observePartialScreen({ screenId: 'SCR-1', partialHtml: caseBWithHeading });
+    if (evB?.kind !== 'screen') throw new Error('expected screen event');
+    expect(derivePrototypeLiveWriting(evB.html, { screenId: 'SCR-1' })).toEqual({
+      narration: '正在画「待办」',
+    });
+
+    const caseBNoHeading = `<div data-element-id="EL-1" data-note="旧块">完</div><section><p>流式正文`;
+    expect(derivePrototypeLiveWriting(caseBNoHeading)).toEqual({});
+
+    // Nearest preceding heading (EL-2 picks "地址", not "基本")
+    const twoHeadings = `<div><h2>基本</h2><input data-element-id="EL-1"/><h2>地址</h2><input data-element-id="EL-2"/></div>`;
+    expect(derivePrototypeLiveWriting(twoHeadings)).toEqual({
+      elementId: 'EL-2',
+      narration: '正在画「地址」',
+    });
+
+    // Heading directly inside screenRoot (<section data-screen-id="...">)
+    const screenRootHeading = `<section data-screen-id="SCR-ORDERS"><h1>订货总览</h1><div class="toolbar"><input data-element-id="EL-Q"/></div></section>`;
+    expect(derivePrototypeLiveWriting(screenRootHeading, { screenId: 'SCR-ORDERS' })).toEqual({
+      elementId: 'EL-Q',
+      narration: '正在画「订货总览」',
+    });
+  });
 });

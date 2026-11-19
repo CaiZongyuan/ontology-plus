@@ -380,4 +380,116 @@ describe('Real agent cursor, narration bubble, build log "现在" rows, and curs
     await settle();
     expect(fixCursor.getAttribute('data-cursor-style')).toBe('dot');
   });
+
+  it('shows early screen-level note cursor before HTML arrives, clamps tall elements inside artboards, prevents narrow-viewport flip clipping, and meets 12px/mark-contrast rules', async () => {
+    const { live: baseLive, tracker } = buildStateForWriting();
+    // 1. SCR-HOME has ONLY a screen-level `note` and empty `partialHtml` (before HTML starts!)
+    let live = applyPrototypeLiveEvent(
+      baseLive,
+      tracker.observePartialScreen({
+        screenId: 'SCR-HOME',
+        screenName: '工作台首页',
+        note: '首页总览：店长一进门先看今日待办。',
+        partialHtml: '',
+      })!,
+    );
+    // 2. SCR-ORDERS has an element below the 860px artboard clip boundary (docY = 1120)
+    live = applyPrototypeLiveEvent(
+      live,
+      tracker.observePartialScreen({
+        screenId: 'SCR-ORDERS',
+        screenName: '订货单列表',
+        partialHtml: `<footer data-element-id="EL-DEEP-FOOTER" data-note="底部汇总：显示本月累计订货金额。">合计</footer>`,
+      })!,
+    );
+
+    await render({ documentHtml: '', live, build: live.build ?? null, busy: true }, { w: 1200, h: 760 });
+    const ordersFrame = host.querySelector<HTMLIFrameElement>('[data-testid="prototype-artboard-frame-SCR-ORDERS"]')!;
+    mockElementLayout(ordersFrame, 'EL-DEEP-FOOTER', { docX: 200, docY: 1120, w: 300, h: 48 });
+    await act(async () => {
+      ordersFrame.contentWindow!.dispatchEvent(new Event('resize'));
+    });
+    await settle();
+
+    // Early screen-level note renders cursor + bubble on SCR-HOME BEFORE any data-element-id exists!
+    const earlyHomeCursor = host.querySelector<HTMLElement>('[data-testid="prototype-agent-cursor-SCR-HOME"]')!;
+    expect(earlyHomeCursor).not.toBeNull();
+    expect(host.querySelector('[data-testid="prototype-cursor-bubble-SCR-HOME"]')?.textContent).toBe(
+      '正在画「首页总览」：店长一进门先看今日待办。',
+    );
+
+    // Tall element on SCR-ORDERS is clamped inside the 860px artboard height (never floating below the artboard!)
+    const cam = readCam();
+    const ordersBoard = artboardRect(1);
+    const ordersCursor = host.querySelector<HTMLElement>('[data-testid="prototype-agent-cursor-SCR-ORDERS"]')!;
+    const ordersTop = Number.parseFloat(ordersCursor.style.top);
+    const maxArtboardBottom = cam.y + (ordersBoard.y + ordersBoard.h - 8) * cam.k;
+    const minArtboardTop = cam.y + (ordersBoard.y + 8) * cam.k;
+    expect(ordersTop).toBeLessThanOrEqual(maxArtboardBottom + 0.5);
+    expect(ordersTop).toBeGreaterThanOrEqual(minArtboardTop - 0.5);
+
+    // S-1, S-2, S-3 checks on BuildLogLiveRows and AgentCursor:
+    // - Assistant name in BuildLogLiveRows uses a mark dot, NEVER inline `color` on text
+    // - No `text-[11px]` in cursor or live log rows; no `font-mono` on "现在"
+    const liveRow = host.querySelector<HTMLElement>('[data-testid="prototype-build-log-live"]')!;
+    expect(liveRow.innerHTML).not.toContain('text-[11px]');
+    expect(earlyHomeCursor.innerHTML).not.toContain('text-[11px]');
+    const coloredSpansInLog = Array.from(liveRow.querySelectorAll<HTMLElement>('span')).filter(
+      (s) => Boolean(s.style.color),
+    );
+    expect(coloredSpansInLog).toHaveLength(0);
+    const nowLabel = Array.from(liveRow.querySelectorAll<HTMLElement>('span')).find(
+      (s) => s.textContent?.trim() === '现在',
+    )!;
+    expect(nowLabel.className).not.toContain('font-mono');
+
+    // Narrow viewport (360px) in web mode:
+    // - Early screen-level note on SCR-HOME also renders in web mode!
+    // - Cursor at left ~104 (< 360 - 104 = 256) does NOT flip left (`data-flip="right"`) and constrains maxWidth <= 360 - left - 32
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="prototype-dock-view-web"]')!.click();
+    });
+    await settle();
+    const select = host.querySelector<HTMLSelectElement>('[data-testid="prototype-web-page-select"]')!;
+    await act(async () => {
+      select.value = 'SCR-HOME';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await settle();
+    setViewportSize(360, 640);
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    await settle();
+
+    const webEarlyCursor = host.querySelector<HTMLElement>('[data-testid="prototype-web-agent-cursor"]')!;
+    expect(webEarlyCursor).not.toBeNull();
+    expect(webEarlyCursor.getAttribute('data-flip')).toBe('right');
+    const webEarlyBubble = host.querySelector<HTMLElement>('[data-testid="prototype-web-cursor-bubble"]')!;
+    expect(webEarlyBubble.textContent).toBe('正在画「首页总览」：店长一进门先看今日待办。');
+    const leftPx = Number.parseFloat(webEarlyCursor.style.left);
+    const maxW = Number.parseFloat(webEarlyBubble.style.maxWidth);
+    expect(leftPx + 24 + maxW).toBeLessThanOrEqual(360 - 8 + 0.5);
+
+    // Switch to SCR-ORDERS on the same 360px narrow viewport with element near right (docX = 240 -> anchorX = 282 > 360 - 282):
+    // flips left (`data-flip="left"`) and constrains maxWidth so left edge >= 8!
+    await act(async () => {
+      select.value = 'SCR-ORDERS';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await settle();
+    const webFrame = host.querySelector<HTMLIFrameElement>('[data-testid="prototype-web-frame"]')!;
+    mockElementLayout(webFrame, 'EL-DEEP-FOOTER', { docX: 240, docY: 160, w: 120, h: 36 });
+    await act(async () => {
+      webFrame.contentWindow!.dispatchEvent(new Event('resize'));
+    });
+    await settle();
+
+    const webRightCursor = host.querySelector<HTMLElement>('[data-testid="prototype-web-agent-cursor"]')!;
+    expect(webRightCursor.getAttribute('data-flip')).toBe('left');
+    const webRightBubble = host.querySelector<HTMLElement>('[data-testid="prototype-web-cursor-bubble"]')!;
+    const rightAnchorPx = Number.parseFloat(webRightCursor.style.left);
+    const flippedMaxW = Number.parseFloat(webRightBubble.style.maxWidth);
+    expect(rightAnchorPx - 6 - flippedMaxW).toBeGreaterThanOrEqual(8 - 0.5);
+  });
 });

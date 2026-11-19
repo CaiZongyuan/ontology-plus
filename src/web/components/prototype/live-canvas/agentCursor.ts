@@ -34,10 +34,25 @@ export interface AgentCursorPrefs {
 
 export const PROTOTYPE_AGENT_CURSOR_STORAGE_KEY = 'onto_prototype_agent_cursor';
 
-/** Right-edge clearance (px) inside which the narration bubble flips to the left of the cursor. */
+/** Right-edge clearance (px) inside which the narration bubble prefers flipping left when space allows. */
 export const CURSOR_BUBBLE_FLIP_MARGIN = 320;
+/** Maximum narration bubble width (px) before clamping to narrow viewports. */
+export const MAX_CURSOR_BUBBLE_WIDTH = 290;
 /** Minimum canvas zoom at which narration bubbles stay legible on the artboard overview. */
 export const MIN_CURSOR_BUBBLE_ZOOM = 0.12;
+/** Inset (px) keeping a clamped cursor inside the visible artboard / page bounds. */
+export const ARTBOARD_CURSOR_INSET = 8;
+
+/**
+ * Default top-left content-area rect (just below the 56px app bar) used when a screen-level `note`
+ * arrives before any `data-element-id` has mounted in the iframe DOM (spec #87 decision 6).
+ */
+export const SCREEN_ENTRY_ANCHOR_RECT: ArtboardRect = {
+  x: 48,
+  y: 88,
+  w: 160,
+  h: 28,
+};
 
 const HELPER_MODEL_COLORS = [
   'var(--model-m2)',
@@ -95,7 +110,26 @@ export interface CursorPlacement {
   left: number;
   top: number;
   flipLeft: boolean;
+  bubbleMaxWidth: number;
   showBubble: boolean;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function computeBubbleLayout(
+  left: number,
+  containerWidth: number,
+): { flipLeft: boolean; bubbleMaxWidth: number } {
+  if (containerWidth <= 0) {
+    return { flipLeft: false, bubbleMaxWidth: MAX_CURSOR_BUBBLE_WIDTH };
+  }
+  const spaceRight = containerWidth - left;
+  const flipLeft = spaceRight < CURSOR_BUBBLE_FLIP_MARGIN && left > spaceRight;
+  const available = flipLeft ? left - 14 : spaceRight - 32;
+  const bubbleMaxWidth = Math.max(0, Math.min(MAX_CURSOR_BUBBLE_WIDTH, Math.floor(available)));
+  return { flipLeft, bubbleMaxWidth };
 }
 
 export function computeCanvasCursorPlacement(
@@ -104,27 +138,50 @@ export function computeCanvasCursorPlacement(
   cam: Camera,
   viewportWidth: number,
 ): CursorPlacement {
-  const anchor = elementCursorAnchor(elRect);
-  const left = cam.x + (boardRect.x + anchor.x) * cam.k;
-  const top = cam.y + (boardRect.y + anchor.y) * cam.k;
+  const rawAnchor = elementCursorAnchor(elRect);
+  const clampedX = clamp(
+    rawAnchor.x,
+    ARTBOARD_CURSOR_INSET,
+    Math.max(ARTBOARD_CURSOR_INSET, boardRect.w - ARTBOARD_CURSOR_INSET),
+  );
+  const clampedY = clamp(
+    rawAnchor.y,
+    ARTBOARD_CURSOR_INSET,
+    Math.max(ARTBOARD_CURSOR_INSET, boardRect.h - ARTBOARD_CURSOR_INSET),
+  );
+  const left = cam.x + (boardRect.x + clampedX) * cam.k;
+  const top = cam.y + (boardRect.y + clampedY) * cam.k;
+  const { flipLeft, bubbleMaxWidth } = computeBubbleLayout(left, viewportWidth);
   return {
     left,
     top,
-    flipLeft: viewportWidth > 0 && left > viewportWidth - CURSOR_BUBBLE_FLIP_MARGIN,
-    showBubble: cam.k > MIN_CURSOR_BUBBLE_ZOOM,
+    flipLeft,
+    bubbleMaxWidth,
+    showBubble: cam.k > MIN_CURSOR_BUBBLE_ZOOM && bubbleMaxWidth >= 48,
   };
 }
 
 export function computeWebCursorPlacement(
   elRect: ArtboardRect,
   pageWidth: number,
+  pageHeight = 0,
 ): CursorPlacement {
-  const anchor = elementCursorAnchor(elRect);
+  const rawAnchor = elementCursorAnchor(elRect);
+  const left =
+    pageWidth > ARTBOARD_CURSOR_INSET * 2
+      ? clamp(rawAnchor.x, ARTBOARD_CURSOR_INSET, pageWidth - ARTBOARD_CURSOR_INSET)
+      : Math.max(ARTBOARD_CURSOR_INSET, rawAnchor.x);
+  const top =
+    pageHeight > ARTBOARD_CURSOR_INSET * 2
+      ? clamp(rawAnchor.y, ARTBOARD_CURSOR_INSET, pageHeight - ARTBOARD_CURSOR_INSET)
+      : Math.max(ARTBOARD_CURSOR_INSET, rawAnchor.y);
+  const { flipLeft, bubbleMaxWidth } = computeBubbleLayout(left, pageWidth);
   return {
-    left: anchor.x,
-    top: anchor.y,
-    flipLeft: pageWidth > 0 && anchor.x > pageWidth - CURSOR_BUBBLE_FLIP_MARGIN,
-    showBubble: true,
+    left,
+    top,
+    flipLeft,
+    bubbleMaxWidth,
+    showBubble: bubbleMaxWidth >= 48,
   };
 }
 
@@ -135,12 +192,11 @@ export function computeWebCursorPlacement(
 export function resolveLiveActivities(options: {
   screens: readonly PrototypeCanvasArtboard[];
   views: readonly ScreenBuildView[];
-  locale: string;
+  locale: 'zh-CN' | 'en-US';
   isBusiness: boolean;
   externalActivities?: readonly AgentLiveActivity[] | undefined;
 }): AgentLiveActivity[] {
   const { screens, views, locale, isBusiness, externalActivities } = options;
-  const normLocale = locale === 'en-US' ? 'en-US' : 'zh-CN';
   const viewById = new Map(views.map((v) => [v.screenId, v] as const));
   const byScreen = new Map<string, AgentLiveActivity>();
 
@@ -150,12 +206,12 @@ export function resolveLiveActivities(options: {
     const agent = view?.agent ?? 0;
     const derived = derivePrototypeLiveWriting(board.screenHtml ?? board.bodyHtml, {
       screenId: board.screenId,
-      locale: normLocale,
+      locale,
     });
     const rawSentence = derived.narration;
     const sentence = rawSentence
       ? isBusiness
-        ? businessText(rawSentence, normLocale)
+        ? businessText(rawSentence, locale)
         : rawSentence.trim()
       : undefined;
     byScreen.set(board.screenId, {
@@ -171,7 +227,7 @@ export function resolveLiveActivities(options: {
     if (!ext.screenId) continue;
     const cleanedSentence = ext.sentence
       ? isBusiness
-        ? businessText(ext.sentence, normLocale)
+        ? businessText(ext.sentence, locale)
         : ext.sentence.trim()
       : undefined;
     byScreen.set(ext.screenId, {

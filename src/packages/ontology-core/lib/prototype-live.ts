@@ -7,6 +7,12 @@
  */
 
 import {
+  RAW_TEXT_HTML_TAGS as RAW_TEXT_TAGS,
+  VOID_HTML_TAGS as VOID_TAGS,
+  findHtmlTagClose as findTagClose,
+  parseHtmlAttributes as parseAttributes,
+} from './html-scan.js';
+import {
   applyPrototypeBuildEvent,
   emptyPrototypeBuildState,
   isPrototypeBuildEvent,
@@ -81,45 +87,6 @@ export type PrototypeLiveEvent =
       locked: boolean;
     };
 
-const VOID_TAGS = new Set([
-  'area',
-  'base',
-  'br',
-  'col',
-  'embed',
-  'hr',
-  'img',
-  'input',
-  'link',
-  'meta',
-  'param',
-  'source',
-  'track',
-  'wbr',
-]);
-const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
-
-/** Index just past the `>` that ends a tag starting at `from`, honouring quotes; -1 if unfinished. */
-function findTagClose(html: string, from: number): number {
-  let quote: string | null = null;
-  let lastSignificant = '';
-  for (let i = from; i < html.length; i += 1) {
-    const ch = html[i]!;
-    if (quote) {
-      if (ch === quote) quote = null;
-      continue;
-    }
-    // A quote only opens an attribute value right after `=`; in `title=it's` it is text.
-    if ((ch === '"' || ch === "'") && lastSignificant === '=') {
-      quote = ch;
-    } else if (ch === '>') {
-      return i + 1;
-    }
-    if (!/\s/.test(ch)) lastSignificant = ch;
-  }
-  return -1;
-}
-
 /** Entity names a stream is likely to be in the middle of; `R&D` is not one of them. */
 const COMMON_ENTITY_NAMES = [
   'amp', 'lt', 'gt', 'quot', 'apos', 'nbsp', 'copy', 'reg', 'trade', 'yen', 'euro', 'pound', 'cent',
@@ -135,16 +102,6 @@ function dropHalfEntity(text: string): string {
   const name = m[1]!;
   const half = name === '' || name.startsWith('#') || COMMON_ENTITY_NAMES.some((e) => e.startsWith(name));
   return half ? text.slice(0, m.index) : text;
-}
-
-function parseAttributes(region: string): Record<string, string> {
-  const attrs: Record<string, string> = {};
-  const re = /([A-Za-z_:@][A-Za-z0-9_.:@-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(region)) !== null) {
-    attrs[m[1]!.toLowerCase()] = m[2] ?? m[3] ?? m[4] ?? '';
-  }
-  return attrs;
 }
 
 interface ScannedElement {
@@ -422,10 +379,15 @@ export function healPartialScreenSection(
   // Same shape as upsert_prototype_screen's landed section (`>\n${fragment}\n</section>`, or the
   // model's own section kept as-is), so streamed nodes keep their positions when the screen lands.
   let inner = healPartialHtml(input.partialHtml).trimStart();
-  const opened = /^<section\b[^>]*data-screen-id\s*=\s*["']?([^"'\s>]+)[^>]*>/i.exec(inner);
-  if (opened && opened[1] === screenId) {
-    inner = inner.slice(opened[0].length).replace(/<\/section>$/i, '');
-  } else {
+  let unwrapped = false;
+  if (/^<section(?=[\s/>])/i.test(inner)) {
+    const openEnd = findTagClose(inner, 8);
+    if (openEnd > 0 && parseAttributes(inner.slice(8, openEnd - 1))['data-screen-id'] === screenId) {
+      inner = inner.slice(openEnd).replace(/<\/section>$/i, '');
+      unwrapped = true;
+    }
+  }
+  if (!unwrapped) {
     inner = `\n${inner.trimEnd()}\n`;
   }
   const noteAttr = note ? ` data-note="${escapeAttr(note)}"` : '';

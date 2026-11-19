@@ -1,9 +1,9 @@
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, ExternalLink, Loader2, PenLine, RefreshCw } from 'lucide-react';
 import type { PrototypeCanvasArtboard } from '../../../../packages/ontology-core/index.js';
 import { usePreferences } from '../../../i18n.js';
 import { Button } from '../../beautifui/index.js';
-import { WebAgentCursor } from './AgentCursor.js';
+import { WebAgentCursor, useObservedElementSize } from './AgentCursor.js';
 import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboard.js';
 import { readAgentCursorPrefs, type AgentCursorPrefs, type AgentLiveActivity } from './agentCursor.js';
 
@@ -93,26 +93,12 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
   currentRef.current = currentId;
   const frameHandle = useRef<ArtboardHandle | null>(null);
   const pageContainerRef = useRef<HTMLDivElement | null>(null);
-  const [pageWidth, setPageWidth] = useState(0);
+  const pageSize = useObservedElementSize(pageContainerRef);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const bumpLayout = useCallback(() => setLayoutVersion((v) => v + 1), []);
   const effectiveCursorPrefs = cursorPrefs ?? readAgentCursorPrefs();
   const activeWebActivity = board ? liveActivities.find((a) => a.screenId === board.screenId) : undefined;
   const [openFailed, setOpenFailed] = useState(false);
-
-  useLayoutEffect(() => {
-    const el = pageContainerRef.current;
-    if (!el) return;
-    const measure = () => setPageWidth(el.clientWidth);
-    measure();
-    if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(measure);
-      ro.observe(el);
-      return () => ro.disconnect();
-    }
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
 
   const onPageChangeRef = useRef(onPageChange);
   onPageChangeRef.current = onPageChange;
@@ -297,7 +283,8 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
         <WebAgentCursor
           activity={activeWebActivity}
           getHandle={() => frameHandle.current}
-          pageWidth={pageWidth || pageContainerRef.current?.clientWidth || 0}
+          pageWidth={pageSize.w || pageContainerRef.current?.clientWidth || 0}
+          pageHeight={pageSize.h || pageContainerRef.current?.clientHeight || 0}
           prefs={effectiveCursorPrefs}
           layoutVersion={layoutVersion}
         />

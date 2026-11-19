@@ -100,6 +100,7 @@ import {
   listPrototypeAnchors,
   sanitizePrototypeScreenFragment,
   scopeScreenCss,
+  shouldStreamPartialScreen,
   styleFromShellTokens,
   readPrototypeAnchor,
   rewritePrototypePage,
@@ -5805,7 +5806,7 @@ async function executeUnifiedTurnCore(
                 const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
                 const pNote = typeof pArgs.note === 'string' ? pArgs.note.trim() : '';
                 const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
-                if (pSid && (pHtml.length >= 12 || (pNote && 'screenHtml' in pArgs))) {
+                if (pSid && shouldStreamPartialScreen(pHtml, pNote)) {
                   streamPartialPrototypeScreen({
                     screenId: pSid,
                     ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),

@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
 import type { ArtboardHandle } from './Artboard.js';
 import {
+  SCREEN_ENTRY_ANCHOR_RECT,
   agentThemePalette,
   computeCanvasCursorPlacement,
   computeWebCursorPlacement,
@@ -15,6 +16,25 @@ import {
 } from './agentCursor.js';
 import { agentName } from './buildView.js';
 import { artboardRect, type Camera } from './camera.js';
+
+/** Observes an element's `{ w, h }` client box via `ResizeObserver` with a `window.resize` fallback. */
+export function useObservedElementSize(ref: RefObject<HTMLElement | null>): { w: number; h: number } {
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(measure);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [ref]);
+  return size;
+}
 
 export function CursorGlyph({ style, color }: { style: AgentCursorStyle; color: string }) {
   if (style === 'dot') {
@@ -82,12 +102,13 @@ function SingleAgentCursor({
   activity: AgentLiveActivity;
   placement: CursorPlacement;
   prefs: AgentCursorPrefs;
-  locale: string;
+  locale: 'zh-CN' | 'en-US';
   testId: string;
   bubbleTestId: string;
 }) {
   const palette = agentThemePalette(activity.agent);
-  const glyphColor = activity.state === 'fixing' ? 'var(--warning)' : palette.color;
+  const isFixing = activity.state === 'fixing';
+  const glyphColor = isFixing ? 'var(--warning)' : palette.color;
   const label = agentName(activity.agent, locale);
 
   return (
@@ -106,13 +127,16 @@ function SingleAgentCursor({
       <div
         className={cn(
           'flex flex-col gap-1.5',
-          placement.flipLeft ? 'absolute right-5 top-2 items-end' : 'mt-3.5 items-start',
+          placement.flipLeft ? 'absolute right-full top-2 mr-1.5 items-end' : 'mt-3.5 items-start',
         )}
       >
         {prefs.showNames && label && (
           <span
-            className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold shadow-xs"
-            style={{ backgroundColor: palette.color, color: palette.ink }}
+            className={cn(
+              'whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold shadow-xs',
+              isFixing && 'border border-warning bg-warning-soft text-warning',
+            )}
+            style={isFixing ? undefined : { backgroundColor: palette.color, color: palette.ink }}
             data-testid="prototype-cursor-name"
           >
             {label}
@@ -120,8 +144,8 @@ function SingleAgentCursor({
         )}
         {placement.showBubble && activity.sentence && (
           <div
-            className="w-max max-w-[290px] rounded-md border bg-popover px-2.5 py-1.5 text-left text-[12px] leading-snug text-popover-foreground shadow-md"
-            style={{ borderColor: glyphColor }}
+            className="w-max rounded-md border bg-popover px-2.5 py-1.5 text-left text-xs leading-snug text-popover-foreground shadow-md"
+            style={{ borderColor: glyphColor, maxWidth: `${placement.bubbleMaxWidth}px` }}
             data-testid={bubbleTestId}
           >
             {activity.sentence}
@@ -151,15 +175,18 @@ export function CanvasAgentCursors({
   layoutVersion: number;
 }) {
   const { locale } = usePreferences();
+  const normLocale: 'zh-CN' | 'en-US' = locale === 'en-US' ? 'en-US' : 'zh-CN';
   void layoutVersion;
 
   return (
     <>
       {activities.map((activity) => {
-        if (!activity.elementId) return null;
         const slotIndex = indexById.get(activity.screenId);
         if (slotIndex === undefined) return null;
-        const elRect = getHandle(activity.screenId)?.rectOf(activity.elementId) ?? null;
+        const measuredRect = activity.elementId
+          ? (getHandle(activity.screenId)?.rectOf(activity.elementId) ?? null)
+          : null;
+        const elRect = measuredRect ?? (activity.sentence ? SCREEN_ENTRY_ANCHOR_RECT : null);
         if (!elRect) return null;
         const placement = computeCanvasCursorPlacement(
           artboardRect(slotIndex),
@@ -173,7 +200,7 @@ export function CanvasAgentCursors({
             activity={activity}
             placement={placement}
             prefs={prefs}
-            locale={locale}
+            locale={normLocale}
             testId={`prototype-agent-cursor-${activity.screenId}`}
             bubbleTestId={`prototype-cursor-bubble-${activity.screenId}`}
           />
@@ -187,27 +214,33 @@ export function WebAgentCursor({
   activity,
   getHandle,
   pageWidth,
+  pageHeight = 0,
   prefs,
   layoutVersion,
 }: {
   activity: AgentLiveActivity | undefined;
   getHandle: () => ArtboardHandle | null;
   pageWidth: number;
+  pageHeight?: number;
   prefs: AgentCursorPrefs;
   layoutVersion: number;
 }) {
   const { locale } = usePreferences();
+  const normLocale: 'zh-CN' | 'en-US' = locale === 'en-US' ? 'en-US' : 'zh-CN';
   void layoutVersion;
-  if (!activity?.elementId) return null;
-  const elRect = getHandle()?.rectOf(activity.elementId) ?? null;
+  if (!activity) return null;
+  const measuredRect = activity.elementId
+    ? (getHandle()?.rectOf(activity.elementId) ?? null)
+    : null;
+  const elRect = measuredRect ?? (activity.sentence ? SCREEN_ENTRY_ANCHOR_RECT : null);
   if (!elRect) return null;
-  const placement = computeWebCursorPlacement(elRect, pageWidth);
+  const placement = computeWebCursorPlacement(elRect, pageWidth, pageHeight);
   return (
     <SingleAgentCursor
       activity={activity}
       placement={placement}
       prefs={prefs}
-      locale={locale}
+      locale={normLocale}
       testId="prototype-web-agent-cursor"
       bubbleTestId="prototype-web-cursor-bubble"
     />
@@ -298,10 +331,10 @@ export function AgentCursorDockControl({
             role="dialog"
             aria-label={t('助手光标设置', 'Assistant cursor settings')}
             data-testid="prototype-cursor-menu"
-            className="fixed z-50 flex w-[208px] flex-col gap-1 rounded-md border border-border bg-popover p-2 text-[12px] text-popover-foreground shadow-lg"
+            className="fixed z-50 flex w-[208px] flex-col gap-1 rounded-md border border-border bg-popover p-2 text-xs text-popover-foreground shadow-lg"
             style={{ left: menuPos.left, bottom: menuPos.bottom }}
           >
-            <div className="px-1.5 pb-1 text-[11px] text-faint-foreground">
+            <div className="px-1.5 pb-1 text-xs text-faint-foreground">
               {t('助手光标（只影响当前设备）', 'Assistant cursor (this device only)')}
             </div>
             {options.map((opt) => {
@@ -314,7 +347,7 @@ export function AgentCursorDockControl({
                   aria-pressed={selected}
                   onClick={() => onChange({ ...prefs, style: opt.style })}
                   className={cn(
-                    'flex w-full cursor-pointer items-center gap-2.5 rounded-sm border-0 px-2 py-1.5 text-left text-[12px]',
+                    'flex w-full cursor-pointer items-center gap-2.5 rounded-sm border-0 px-2 py-1.5 text-left text-xs',
                     selected
                       ? 'bg-primary-soft font-semibold text-primary'
                       : 'bg-transparent text-popover-foreground hover:bg-accent',
@@ -325,7 +358,7 @@ export function AgentCursorDockControl({
                 </button>
               );
             })}
-            <label className="mt-1 flex cursor-pointer items-center gap-2 border-t border-border-subtle px-2 pt-2 pb-0.5 text-[12px] text-popover-foreground">
+            <label className="mt-1 flex cursor-pointer items-center gap-2 border-t border-border-subtle px-2 pt-2 pb-0.5 text-xs text-popover-foreground">
               <input
                 type="checkbox"
                 checked={prefs.showNames}

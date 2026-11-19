@@ -825,6 +825,11 @@ function escapeAttrValue(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
+/** True as soon as a streaming `upsert_prototype_screen` call has an early note or opening HTML tag. */
+export function shouldStreamPartialScreen(partialHtml: string, partialNote: string): boolean {
+  return partialHtml.length >= 12 || partialNote.trim().length >= 2;
+}
+
 function rewriteOpeningTagAttributes(
   openTagHtml: string,
   updates: Record<string, string | null>,
@@ -833,18 +838,67 @@ function rewriteOpeningTagAttributes(
   for (const [rawKey, rawVal] of Object.entries(updates)) {
     const key = rawKey.trim();
     if (!key) continue;
-    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const existingRe = new RegExp(
-      `(\\s+)${escapedKey}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s"'=<>` + '`' + `]+))?`,
-      'i',
-    );
+    const targetLower = key.toLowerCase();
+    const openMatch = /^<([A-Za-z][A-Za-z0-9:-]*)/.exec(result);
+    if (!openMatch || !result.endsWith('>')) continue;
+    const selfClosing = /\/\s*>$/.test(result);
+    const closeSuffixStart = selfClosing ? result.lastIndexOf('/') : result.length - 1;
+    const afterTagName = openMatch[0].length;
+    const region = result.slice(afterTagName, closeSuffixStart);
+
+    // Quote-aware left-to-right attribute scan
+    let hitLeading = -1;
+    let hitName = -1;
+    let hitEnd = -1;
+    let i = 0;
+    while (i < region.length) {
+      const lead = i;
+      while (i < region.length && /\s/.test(region[i]!)) i += 1;
+      if (i >= region.length) break;
+      if (!/[A-Za-z_:@]/.test(region[i]!)) {
+        i += 1;
+        continue;
+      }
+      const nameStart = i;
+      i += 1;
+      while (i < region.length && /[A-Za-z0-9_.:@-]/.test(region[i]!)) i += 1;
+      const attrName = region.slice(nameStart, i).toLowerCase();
+      let after = i;
+      while (after < region.length && /\s/.test(region[after]!)) after += 1;
+      let spanEnd = i;
+      if (region[after] === '=') {
+        let vp = after + 1;
+        while (vp < region.length && /\s/.test(region[vp]!)) vp += 1;
+        if (vp < region.length && (region[vp] === '"' || region[vp] === "'")) {
+          const q = region[vp]!;
+          const cq = region.indexOf(q, vp + 1);
+          spanEnd = cq === -1 ? region.length : cq + 1;
+        } else {
+          let ev = vp;
+          while (ev < region.length && !/[\s"'=<>`]/.test(region[ev]!)) ev += 1;
+          spanEnd = ev;
+        }
+        i = spanEnd;
+      }
+      if (attrName === targetLower) {
+        hitLeading = lead;
+        hitName = nameStart;
+        hitEnd = spanEnd;
+        break;
+      }
+    }
+
     if (rawVal === null) {
-      result = result.replace(existingRe, '');
-    } else if (existingRe.test(result)) {
-      result = result.replace(existingRe, `$1${key}="${escapeAttrValue(rawVal)}"`);
+      if (hitLeading >= 0) {
+        const nextRegion = `${region.slice(0, hitLeading)}${region.slice(hitEnd)}`;
+        result = `${result.slice(0, afterTagName)}${nextRegion}${result.slice(closeSuffixStart)}`;
+      }
+    } else if (hitName >= 0) {
+      const nextRegion = `${region.slice(0, hitName)}${key}="${escapeAttrValue(rawVal)}"${region.slice(hitEnd)}`;
+      result = `${result.slice(0, afterTagName)}${nextRegion}${result.slice(closeSuffixStart)}`;
     } else {
-      const insertIdx = result.endsWith('/>') ? result.length - 2 : result.length - 1;
-      result = `${result.slice(0, insertIdx)} ${key}="${escapeAttrValue(rawVal)}"${result.slice(insertIdx)}`;
+      const sep = region.endsWith(' ') ? '' : ' ';
+      result = `${result.slice(0, closeSuffixStart)}${sep}${key}="${escapeAttrValue(rawVal)}"${result.slice(closeSuffixStart)}`;
     }
   }
   return result;

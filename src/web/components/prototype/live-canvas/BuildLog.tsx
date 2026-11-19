@@ -34,6 +34,7 @@ export function BuildLogLiveRows({
     <>
       {narrated.map((activity) => {
         const palette = agentThemePalette(activity.agent);
+        const dotColor = activity.state === 'fixing' ? 'var(--warning)' : palette.color;
         return (
           <li
             key={`live-${activity.screenId}`}
@@ -48,13 +49,18 @@ export function BuildLogLiveRows({
               title={t('在画布上定位这一屏', 'Show this screen on the canvas')}
               onClick={() => onFocusScreen(activity.screenId)}
             >
-              <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span className="font-mono font-medium text-foreground-soft">{t('现在', 'Now')}</span>
-                <span className="font-semibold" style={{ color: palette.color }}>
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground-soft">{t('现在', 'Now')}</span>
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: dotColor }}
+                  aria-hidden="true"
+                />
+                <span className="font-semibold text-foreground">
                   {agentName(activity.agent, locale)}
                 </span>
               </span>
-              <span className="block text-[12px] leading-snug text-foreground italic">
+              <span className="block text-xs leading-snug text-foreground italic">
                 {activity.sentence}
               </span>
             </button>

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { Crosshair, Loader2, Maximize, Minus, Plus, WifiOff } from 'lucide-react';
 import { sanitizeBusinessText } from '../../../../packages/business-vocabulary/index.js';
 import {
@@ -13,7 +13,7 @@ import {
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
-import { AgentCursorDockControl, CanvasAgentCursors } from './AgentCursor.js';
+import { AgentCursorDockControl, CanvasAgentCursors, useObservedElementSize } from './AgentCursor.js';
 import { ArtboardFrame, type ArtboardHandle } from './Artboard.js';
 import { BuildLog, BuildLogLiveRows } from './BuildLog.js';
 import { BuildPhaseBar } from './BuildPhaseBar.js';
@@ -162,7 +162,7 @@ export function PrototypeLiveCanvas({
       resolveLiveActivities({
         screens,
         views,
-        locale,
+        locale: locale === 'en-US' ? 'en-US' : 'zh-CN',
         isBusiness,
         externalActivities: liveActivities,
       }),
@@ -171,7 +171,7 @@ export function PrototypeLiveCanvas({
 
   // ─── Camera ────────────────────────────────────────────────────────────────
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const [viewport, setViewport] = useState<Viewport>({ w: 0, h: 0 });
+  const viewport: Viewport = useObservedElementSize(hostRef);
   const [cam, setCam] = useState<Camera>({ x: 24, y: 24, k: 0.2 });
   const camRef = useRef(cam);
   camRef.current = cam;
@@ -215,20 +215,6 @@ export function PrototypeLiveCanvas({
       setWebHint(true);
     }
   }, [allDrawn, busy, live]);
-
-  useLayoutEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const measure = () => setViewport({ w: host.clientWidth, h: host.clientHeight });
-    measure();
-    if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(measure);
-      ro.observe(host);
-      return () => ro.disconnect();
-    }
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
 
   const stopTween = () => {
     if (tween.current !== null && typeof cancelAnimationFrame === 'function') {
