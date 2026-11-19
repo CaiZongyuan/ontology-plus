@@ -843,6 +843,47 @@ function rewriteOpeningTagAttributes(
   return result;
 }
 
+/**
+ * Removes unscoped `<style>` / `<link>` tags and `--proto-*` inline style overrides from a screen
+ * or anchor HTML fragment (shared across `upsert_prototype_screen`, `edit_prototype_anchor`, and
+ * live partial screen streaming).
+ */
+export function sanitizePrototypeScreenFragment(html: string): string {
+  return stripInlineStyleValueOverrides(
+    html
+      .replace(/<style\b[\s\S]*?(?:<\/style\s*>|$)/gi, '')
+      .replace(/<link\b(?:[^>"']|"[^"]*"|'[^']*')*>?/gi, ''),
+  );
+}
+
+/**
+ * Checks that every interactive control inside `screenId` carries valid semantic anchors, and
+ * marks a drawn `queued` screen stub as `ready` (used when a helper edits via `edit_prototype_anchor`).
+ */
+export function validatePrototypeScreenControls(
+  html: string,
+  screenId: string,
+  locale: AgentLocale,
+): { ok: true; nextHtml: string } | { ok: false; diagnostic: string } {
+  const tree = parseHtmlSpanTree(html);
+  const scrNode = tree.allNodes.find((n) => n.attrs['data-screen-id'] === screenId);
+  if (!scrNode) return { ok: true, nextHtml: html };
+  const sectionHtml = html.slice(scrNode.openStart, scrNode.closeEnd);
+  const sectionNodes = parseHtmlSpanTree(sectionHtml).allNodes;
+  const issues = validateInteractiveControlNodes(sectionNodes, sectionHtml, new Set(), locale);
+  if (issues.length > 0) {
+    return { ok: false, diagnostic: issues.join('；') };
+  }
+  const inner = scrNode.innerEnd !== null ? html.slice(scrNode.openEnd, scrNode.innerEnd).trim() : '';
+  if (inner && (scrNode.attrs['data-screen-status'] ?? '').toLowerCase() === 'queued') {
+    const updatedOpen = rewriteOpeningTagAttributes(html.slice(scrNode.openStart, scrNode.openEnd), {
+      'data-screen-status': 'ready',
+    });
+    return { ok: true, nextHtml: `${html.slice(0, scrNode.openStart)}${updatedOpen}${html.slice(scrNode.openEnd)}` };
+  }
+  return { ok: true, nextHtml: html };
+}
+
 export function editPrototypeAnchor(
   html: string,
   input: EditPrototypeAnchorInput,
@@ -882,13 +923,7 @@ export function editPrototypeAnchor(
       ),
     };
   }
-  const fragment = rawAnchorFragment
-    ? stripInlineStyleValueOverrides(
-        rawAnchorFragment
-          .replace(/<style\b[\s\S]*?(?:<\/style\s*>|$)/gi, '')
-          .replace(/<link\b[^>]*>?/gi, ''),
-      ).trim()
-    : '';
+  const fragment = rawAnchorFragment ? sanitizePrototypeScreenFragment(rawAnchorFragment).trim() : '';
 
   if (input.attributes) {
     for (const val of Object.values(input.attributes)) {
@@ -1518,6 +1553,47 @@ function splitSelectorList(prelude: string): string[] {
 }
 
 /**
+ * True when `afterOwn` (the remainder of a selector starting with `[data-screen-id="<own>"]` or
+ * `#screen-<own>`) applies `+` or `~` to the screen root itself (including after compound
+ * qualifiers such as `.proto-screen` or `:not(.x)`) before stepping inside a descendant or child.
+ */
+function escapesOwnRoot(afterOwn: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < afterOwn.length; i += 1) {
+    const ch = afterOwn[i]!;
+    if (ch === '"' || ch === "'") {
+      i = skipCssString(afterOwn, i) - 1;
+      continue;
+    }
+    if (ch === '(' || ch === '[') {
+      depth += 1;
+      continue;
+    }
+    if ((ch === ')' || ch === ']') && depth > 0) {
+      depth -= 1;
+      continue;
+    }
+    if (depth > 0) continue;
+    if (ch === '+' || ch === '~') return true;
+    if (ch === '>' || /\s/.test(ch)) {
+      let j = ch === '>' ? i + 1 : i;
+      while (j < afterOwn.length && /\s/.test(afterOwn[j]!)) j += 1;
+      const next = afterOwn[j];
+      if (!next) return ch === '>';
+      if (next === '+' || next === '~') return true;
+      if (next === '>') {
+        j += 1;
+        while (j < afterOwn.length && /\s/.test(afterOwn[j]!)) j += 1;
+        const afterChild = afterOwn[j];
+        return !afterChild || afterChild === '+' || afterChild === '~' || afterChild === '>';
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
  * A screen's extraCss confined to its own section: every selector is prefixed with the section,
  * design values (--proto-*) cannot be redeclared, and selectors aimed at the page (:root, html,
  * body), the shell, the style or another screen are rejected.
@@ -1542,8 +1618,7 @@ export function scopeScreenCss(css: string, screenId: string): { css: string; re
       : sel.startsWith(idSel)
         ? sel.slice(idSel.length)
         : null;
-    // Sibling combinators (`~`, `+`) right after the screen root step out onto sibling screens.
-    if (afterOwn !== null && /^\s*[+~]/.test(afterOwn)) return true;
+    if (afterOwn !== null && escapesOwnRoot(afterOwn)) return true;
     return false;
   };
   const cleanedSource = css.replace(/<\/?(?:style|template|script)[^>]*>?/gi, '');
@@ -1639,11 +1714,7 @@ export function upsertPrototypeScreen(
   }
 
   // Screen HTML must not smuggle unscoped <style>/<link> or inline --proto-* overrides (use extraCss + var(--proto-*)).
-  const rawFragment = stripInlineStyleValueOverrides(
-    rawFragmentBeforeStrip
-      .replace(/<style\b[\s\S]*?(?:<\/style\s*>|$)/gi, '')
-      .replace(/<link\b[^>]*>?/gi, ''),
-  ).trim();
+  const rawFragment = sanitizePrototypeScreenFragment(rawFragmentBeforeStrip).trim();
   if (!rawFragment) {
     return {
       isError: true,

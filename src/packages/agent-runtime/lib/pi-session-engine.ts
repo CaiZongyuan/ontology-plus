@@ -98,11 +98,13 @@ import {
   editPrototypeAnchor,
   initPrototypeShell,
   listPrototypeAnchors,
+  sanitizePrototypeScreenFragment,
   scopeScreenCss,
   styleFromShellTokens,
   readPrototypeAnchor,
   rewritePrototypePage,
   upsertPrototypeScreen,
+  validatePrototypeScreenControls,
   type InitPrototypeShellInput,
   type PartialPrototypeScreenInput,
   type PrototypeAnchorEditOperation,
@@ -2834,7 +2836,7 @@ function buildSystemPromptForSession(
             `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
             `Initial Prototype Generation Rules:`,
             useParallel
-              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`plan_screens\` with the Build Plan — 3–5 screens, each with screenId, a business name and a one-sentence business purpose — so the user sees one blank artboard per screen within seconds; THEN call \`define_style\` with the design values, the shared component CSS (buttons, cards, tables, form fields, tags, empty states) and the style sample — it is drawn live on the first artboard and lays out the document skeleton; THEN call \`spawn_subagents\` with one task per planned screen, in plan order, so ${execOptions?.multiAgentConcurrency ?? 3} parallel helpers build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Helpers automatically receive the Design Brief, the design values, the shared components, the Visual References and the requirements summary — keep each task's instruction to what that screen shows and does. Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
+              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`plan_screens\` with the Build Plan — 3–5 screens, each with screenId, a business name and a one-sentence business purpose — so the user sees one blank artboard per screen within seconds; THEN call \`define_style\` with the design values, the shared component CSS (buttons, cards, tables, form fields, tags, empty states) and the Style Tile — it is drawn live on the first artboard and lays out the document skeleton; THEN call \`spawn_subagents\` with one task per planned screen, in plan order, so ${execOptions?.multiAgentConcurrency ?? 3} parallel helpers build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Helpers automatically receive the Design Brief, the design values, the shared components, the Visual References and the requirements summary — keep each task's instruction to what that screen shows and does. Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
               : `1. Call \`plan_screens\` first, then \`define_style\`, then \`upsert_prototype_screen\` per planned screen ONLY when a Confirmed Requirements Document is present above.`,
             `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, interactive motion specifications, and the Confirmed Requirements Document scope (never unconfirmed drafts).`,
             `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
@@ -3002,13 +3004,13 @@ function lockedStyleValuesOf(brief: DesignBrief | undefined | null): {
     : { values: null, unavailable: true };
 }
 
-const COMPILED_DESIGN_BRIEF_PROMPT_RE =
-  /^\s*(?:【已确认设计简报|===\s*CONFIRMED DESIGN BRIEF|\[PROTOTYPE_BRIEF_RESTYLE\])/i;
+const SYNTHESIZED_TURN_PROMPT_RE =
+  /^\s*(?:【已确认设计简报|===\s*CONFIRMED DESIGN BRIEF|\[PROTOTYPE_BRIEF_RESTYLE\]|「需求」步骤有了新的确认|Requirements have been re-confirmed\b|请结合附带的\s*\d+\s*张参考图进行分析与设计调整。?\s*$|Please inspect the\s+\d+\s+attached reference image\(s\) and apply appropriate design updates\.?\s*$)/i;
 
 /**
- * Only the user's own chat text in this turn (never compiled Design Brief / SRS prompts, canvas
- * selection metadata, or synthesized attachment/choice prompts) may authorize changing a locked
- * Style Tile value (P6).
+ * Only the user's own chat text in this turn (never compiled Design Brief / SRS-resync prompts,
+ * canvas selection metadata, or synthesized attachment/choice prompts) may authorize changing a
+ * locked Style Tile value (P6).
  */
 function extractRawUserStylePrompt(
   input: Pick<UnifiedAgentStreamInput, 'prompt' | 'designBrief' | 'askUserAnswer'>,
@@ -3020,14 +3022,58 @@ function extractRawUserStylePrompt(
     input.askUserAnswer?.freeformText?.trim() ||
     retryUserContent?.trim() ||
     '';
-  if (!raw || COMPILED_DESIGN_BRIEF_PROMPT_RE.test(raw)) return '';
-  return raw
+  if (!raw || SYNTHESIZED_TURN_PROMPT_RE.test(raw)) return '';
+  const stripped = raw
+    .replace(/^\s*\[(?:用户已确认选择|User Confirmed Choice|Confirmed choice)\][^\r\n]*(?:\r?\n|$)/i, '')
     .replace(
       /^---\s*(?:Targeted Visual Selections & Annotations|用户在界面原型上框选\/点选的目标区域与批注)\s*---[\s\S]*?(?:\n\n|$)/m,
       '',
     )
     .replace(/^\[ACTION:[^\r\n]*\]\s*/i, '')
     .trim();
+  return !stripped || SYNTHESIZED_TURN_PROMPT_RE.test(stripped) ? '' : stripped;
+}
+
+function valuesFromStyleCss(css: string | undefined): Partial<PrototypeStyleValues> {
+  if (!css) return {};
+  const get = (prop: string) => new RegExp(`${prop}\\s*:\\s*([^;{}]+)`, 'i').exec(css)?.[1]?.trim();
+  return readPrototypeStyleValues({
+    mode: get('color-scheme'),
+    background: get('--proto-bg'),
+    surface: get('--proto-card'),
+    inset: get('--proto-inset'),
+    accent: get('--proto-accent'),
+    accentInk: get('--proto-accent-ink'),
+    border: get('--proto-border'),
+    ink: get('--proto-text'),
+    mutedInk: get('--proto-muted'),
+    ok: get('--proto-ok'),
+    warn: get('--proto-warn'),
+    danger: get('--proto-danger'),
+    fontFamily: get('--proto-font'),
+    radiusPx: get('--proto-radius'),
+    density: get('--proto-gap') === '12px' ? 'compact' : get('--proto-gap') ? 'comfortable' : undefined,
+  });
+}
+
+function preserveDraftStyleOnRewrite(
+  beforeHtml: string,
+  rewrittenHtml: string,
+  draft: PrototypeTurnDraft,
+): string {
+  if (draft.style) return applyPrototypeStyleToDocument(rewrittenHtml, draft.style);
+  const existing = readPrototypeDocumentStyle(rewrittenHtml) ?? readPrototypeDocumentStyle(beforeHtml);
+  if (!draft.lockedStyleValues && !existing) return rewrittenHtml;
+  const extractComponents = (css: string | undefined) =>
+    (css ?? '').replace(/^\s*:root\s*\{[\s\S]*?\}\s*/i, '').trim();
+  const resolved = resolvePrototypeStyleValues(valuesFromStyleCss(existing?.css), draft.lockedStyleValues ?? null);
+  return applyPrototypeStyleToDocument(rewrittenHtml, {
+    direction: existing?.direction ?? '',
+    values: resolved.values,
+    componentCss: extractComponents(existing?.css),
+    sampleHtml: existing?.sampleHtml ?? '',
+    locked: resolved.locked || Boolean(existing?.locked),
+  });
 }
 
 /**
@@ -4162,7 +4208,11 @@ async function executeUnifiedToolCall(
     }
 
     if (prototypeDraft) {
-      prototypeDraft.workingHtml = rewriteRes.nextHtml;
+      prototypeDraft.workingHtml = preserveDraftStyleOnRewrite(
+        activeHtml,
+        rewriteRes.nextHtml,
+        prototypeDraft,
+      );
       recordModifiedAnchor(prototypeDraft, rewriteRes.targetAnchor);
     }
 
@@ -5073,7 +5123,7 @@ async function executeUnifiedTurnCore(
           screenId,
           ...(partial.screenName ? { screenName: partial.screenName } : {}),
           ...(partial.screenType ? { screenType: partial.screenType } : {}),
-          partialHtml: partial.partialScreenHtml,
+          partialHtml: sanitizePrototypeScreenFragment(partial.partialScreenHtml),
           ...(scopedPartialCss ? { css: scopedPartialCss } : {}),
         });
         if (liveEvent) emitPrototypeLiveEvents([liveEvent]);
@@ -5485,14 +5535,42 @@ async function executeUnifiedTurnCore(
                 toolResultContent: JSON.stringify({ status: 'REJECTED_OUT_OF_SCOPE', diagnostic }),
                 isError: true,
               };
+            } else if (subTc.name === 'edit_prototype_anchor') {
+              const checked = validatePrototypeScreenControls(
+                prototypeTurnDraft.workingHtml,
+                ownScreenId,
+                effectiveLocale,
+              );
+              if (!checked.ok) {
+                prototypeTurnDraft.workingHtml = htmlBefore;
+                prototypeTurnDraft.modifiedAnchors = anchorsBefore;
+                subExec = {
+                  ...subExec,
+                  trace: { ...subExec.trace, output: checked.diagnostic, isError: true },
+                  toolResultContent: JSON.stringify({
+                    status: 'REJECTED_BY_ANCHOR_VALIDATOR',
+                    diagnostic: checked.diagnostic,
+                  }),
+                  isError: true,
+                };
+              } else {
+                prototypeTurnDraft.workingHtml = checked.nextHtml;
+              }
             }
           }
-          if (subTc.name === 'upsert_prototype_screen') {
+          if (subTc.name === 'upsert_prototype_screen' || subTc.name === 'edit_prototype_anchor') {
             const writtenSid =
-              (typeof subArgs.screenId === 'string' && subArgs.screenId.trim()) || lane.targetAnchor?.screenId;
-            endPartialPrototypeScreen(writtenSid);
-            if (!subExec.isError && writtenSid && typeof subArgs.screenHtml === 'string') {
-              prototypeBuildRun?.observeScreenWritten(writtenSid, subArgs.screenHtml);
+              (typeof subArgs.screenId === 'string' && subArgs.screenId.trim()) || ownScreenId;
+            if (subTc.name === 'upsert_prototype_screen') {
+              endPartialPrototypeScreen(writtenSid);
+            }
+            if (!subExec.isError && writtenSid) {
+              const landedHtml =
+                (prototypeTurnDraft
+                  ? splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find((s) => s.screenId === writtenSid)
+                      ?.html
+                  : undefined) ?? (typeof subArgs.screenHtml === 'string' ? subArgs.screenHtml : '');
+              if (landedHtml) prototypeBuildRun?.observeScreenWritten(writtenSid, landedHtml);
             }
           }
           allToolTraces.push(subExec.trace);

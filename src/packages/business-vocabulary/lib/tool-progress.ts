@@ -235,6 +235,18 @@ const CATALOG_ENTRIES: readonly ToolProgressSpec[] = [
     },
   },
   {
+    toolName: 'define_style',
+    iconKind: 'screen',
+    label: {
+      zh: '绘制风格样张',
+      en: 'Draw the Style Tile',
+    },
+    activeLabel: {
+      zh: '正在绘制风格样张',
+      en: 'Drawing the Style Tile',
+    },
+  },
+  {
     toolName: 'init_prototype_shell',
     iconKind: 'screen',
     label: {

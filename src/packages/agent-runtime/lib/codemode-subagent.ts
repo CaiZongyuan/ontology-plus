@@ -399,7 +399,7 @@ class ScreenNotFinishedError extends Error {
   }
 }
 
-const SCREEN_WRITE_TOOLS = new Set(['upsert_prototype_screen']);
+const SCREEN_WRITE_TOOLS = new Set(['upsert_prototype_screen', 'edit_prototype_anchor']);
 
 /** What the lead learns about each screen a helper built: written, and did it pass the check. */
 export interface SubagentScreenResult {
@@ -427,8 +427,12 @@ function diagnosticOf(toolResultContent: string): string {
 function writesOwnScreen(tc: ToolCall, spec: SubagentTaskSpec): boolean {
   if (!SCREEN_WRITE_TOOLS.has(tc.name)) return false;
   const target = spec.screenId?.trim();
+  if (!target) return true;
   const written = (tc.arguments as Record<string, unknown> | undefined)?.screenId;
-  return !target || (typeof written === 'string' && written.trim() === target);
+  if (tc.name === 'edit_prototype_anchor' && (typeof written !== 'string' || !written.trim())) {
+    return true;
+  }
+  return typeof written === 'string' && written.trim() === target;
 }
 
 function classifySubagentFailure(err: unknown, signal: AbortSignal): PrototypeBuildFailureCode {

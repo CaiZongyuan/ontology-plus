@@ -28,26 +28,26 @@ export interface StyleTileTokens {
   isCompact: boolean;
 }
 
-function isLightHexColor(hex: string): boolean {
+function hexYiq(hex: string): number | null {
   const clean = hex.replace('#', '').trim();
-  if (clean.length !== 6) return true;
+  if (clean.length !== 6) return null;
   const r = parseInt(clean.slice(0, 2), 16) || 0;
   const g = parseInt(clean.slice(2, 4), 16) || 0;
   const b = parseInt(clean.slice(4, 6), 16) || 0;
-  return (r * 299 + g * 587 + b * 114) / 1000 >= 140;
+  return (r * 299 + g * 587 + b * 114) / 1000;
+}
+
+function isLightHexColor(hex: string): boolean {
+  const yiq = hexYiq(hex);
+  return yiq === null || yiq >= 140;
 }
 
 // The style tile previews the app being designed: its surfaces, ink, accent, and status
 // colours are the prototype's, not workbench appearance, and stay literal whatever
 // Workbench Theme is active.
 function pickReadableInkForAccent(hex: string): string {
-  const clean = hex.replace('#', '').trim();
-  if (clean.length !== 6) return '#ffffff';
-  const r = parseInt(clean.slice(0, 2), 16) || 0;
-  const g = parseInt(clean.slice(2, 4), 16) || 0;
-  const b = parseInt(clean.slice(4, 6), 16) || 0;
-  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-  return yiq >= 165 ? '#111827' : '#ffffff';
+  const yiq = hexYiq(hex);
+  return yiq !== null && yiq >= 165 ? '#111827' : '#ffffff';
 }
 
 export interface StyleTileReferences {

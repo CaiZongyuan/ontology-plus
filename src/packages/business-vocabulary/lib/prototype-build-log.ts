@@ -3,6 +3,7 @@ import type {
   PrototypeBuildFailureCode,
   PrototypeBuildLogEntry,
   PrototypeBuildPhaseId,
+  PrototypeStyleValueKey,
 } from '../../ontology-core/index.js';
 import type { BilingualText, BusinessLocale } from './vocabulary.js';
 
@@ -66,7 +67,7 @@ const SKIPPED_PHASE_SENTENCES: Record<PrototypeBuildPhaseId, BilingualText> = {
 };
 
 /** Business names of the design values (keys of the prototype's style values). */
-const STYLE_VALUE_NAMES: Record<string, BilingualText> = {
+const STYLE_VALUE_NAMES: Record<PrototypeStyleValueKey, BilingualText> = {
   mode: { zh: '深浅模式', en: 'light/dark mode' },
   background: { zh: '底色', en: 'background' },
   surface: { zh: '卡片底色', en: 'card colour' },

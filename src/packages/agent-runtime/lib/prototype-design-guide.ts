@@ -89,7 +89,7 @@ export const DEFINE_STYLE_OPENAI_TOOL: OpenAiFunctionTool = {
         sampleHtml: {
           type: 'string',
           description:
-            'The style sample drawn on the first artboard: a short heading naming the direction, colour swatches, then each shared component with realistic business content (buttons, a card, a small table, a form row, tags, an empty state). Plain HTML using the component classes; no data-* anchors, no scripts.',
+            'The Style Tile drawn on the first artboard: a short heading naming the direction, colour swatches, then each shared component with realistic business content (buttons, a card, a small table, a form row, tags, an empty state). Plain HTML using the component classes; no data-* anchors, no scripts.',
         },
       },
       required: ['values', 'componentCss', 'sampleHtml'],
@@ -280,7 +280,7 @@ export function screenHelperSystemPrompt(locale: AgentLocale): string {
         'You are a screen helper in an Ontology Plus prototype build: the lead has set the Build Plan and the shared look (design values and shared components); you only draw the one screen assigned to you.',
         'Rules:',
         '1. Write only your own screen: `upsert_prototype_screen` for the whole screen, or `edit_prototype_anchor` for a local edit. Other screens, the shell, the style and the whole document are not yours, and those tools are not available to you.',
-        '2. Use the shared component classes and the var(--proto-*) variables from the style sample; `extraCss` is only for this screen\'s own layout, never new colours or components.',
+        '2. Use the shared component classes and the var(--proto-*) variables from the Style Tile; `extraCss` is only for this screen\'s own layout, never new colours or components.',
         '3. Write each element\'s opening tag first (with data-element-id and a one-sentence business data-note), then its content. Every <button>/<input>/<select>/<textarea> needs a globally unique data-element-id and a valid data-element-type; link to other screens with data-navigate-to="SCREEN-ID"; never use window.alert/confirm/prompt.',
         '4. If the check fails, fix it from the diagnostic and write again in the same turn. The screen is done only when it is written and passes the check.',
       ].join('\n'),
@@ -345,13 +345,13 @@ export function buildScreenHelperContext(input: ScreenHelperContextInput): strin
     );
     const sample = sanitizeStyleSampleHtml(s.sampleHtml).trim();
     if (sample) {
-      sections.push(`${zh ? '【组件示例】（风格样张上的写法）' : '[Component examples] (as drawn on the style sample)'}\n${sample}`);
+      sections.push(`${zh ? '【组件示例】（风格样张上的写法）' : '[Component examples] (as drawn on the Style Tile)'}\n${sample}`);
     }
   } else {
     sections.push(
       zh
         ? '【设计值】这份原型还没有风格样张：用 var(--proto-*) 变量和文档里已有的类名，不要另起颜色。'
-        : '[Design values] This prototype has no style sample yet: use the var(--proto-*) variables and the classes already in the document; do not introduce new colours.',
+        : '[Design values] This prototype has no Style Tile yet: use the var(--proto-*) variables and the classes already in the document; do not introduce new colours.',
     );
   }
 
@@ -377,9 +377,34 @@ export function buildScreenHelperContext(input: ScreenHelperContextInput): strin
   return sections.join('\n\n');
 }
 
+const STYLE_CHANGE_INTENT_RE =
+  /(?:改|换|调|设|用|变|选|采用|切换|一点|一些|更|\b(?:change|set|make|switch|use|update|turn|pick|prefer|darker|lighter|warmer|cooler|bigger|smaller|tighter|looser|more|less)\b)/i;
+
+const COLOR_CUE_RE =
+  /(?:#[0-9a-fA-F]{3,8}\b|\b(?:rgb|hsl|oklch)a?\(|色|底|红|蓝|绿|黄|橙|紫|青|粉|黑|白|灰|棕|褐|金|银|墨|琥珀|靛|\b(?:colou?r|accent|palette|tint|shade|background|border|red|blue|green|yellow|orange|purple|violet|teal|cyan|pink|black|white|gr[ae]y|brown|amber|indigo|navy|emerald|slate|warm|cool)\b)/i;
+
+const KEY_STYLE_CUE_RE: Record<PrototypeStyleValueKey, RegExp> = {
+  mode: /(?:深色|浅色|暗色|暗黑|黑底|白底|夜间|亮色|日间|明暗|深浅|模式|\b(?:dark|light|night|day|mode|theme)\b)/i,
+  fontFamily: /(?:字体|字族|衬线|无衬线|黑体|宋体|楷体|圆体|等宽|\b(?:font|typeface|typography|serif|sans|mono|inter|georgia)\b)/i,
+  radiusPx: /(?:圆角|直角|方角|边角|弧度|\b(?:radius|rounded|round|sharp|square|corner|corners)\b)/i,
+  density: /(?:紧凑|宽松|留白|疏密|密度|间距|呼吸|\b(?:compact|dense|spacious|airy|comfortable|density|spacing)\b)/i,
+  background: COLOR_CUE_RE,
+  surface: COLOR_CUE_RE,
+  inset: COLOR_CUE_RE,
+  accent: COLOR_CUE_RE,
+  accentInk: COLOR_CUE_RE,
+  border: COLOR_CUE_RE,
+  ink: COLOR_CUE_RE,
+  mutedInk: COLOR_CUE_RE,
+  ok: COLOR_CUE_RE,
+  warn: COLOR_CUE_RE,
+  danger: COLOR_CUE_RE,
+};
+
 /**
  * The approved keys the user explicitly asked to change: the lead names them and quotes the
- * user's words, and the quote must really be in the user's message.
+ * user's words, and the quote must live verbatim in the user's message with explicit change intent
+ * and a style cue matching each requested key.
  */
 function userRequestedKeys(
   raw: unknown,
@@ -390,11 +415,16 @@ function userRequestedKeys(
   if (!locked || !raw || typeof raw !== 'object' || !userPrompt) return [];
   const rec = raw as { keys?: unknown; quote?: unknown };
   const quote = typeof rec.quote === 'string' ? rec.quote.trim() : '';
-  if (quote.length < 2 || !userPrompt.includes(quote)) return [];
+  if (quote.length < 2 || !userPrompt.includes(quote) || !STYLE_CHANGE_INTENT_RE.test(quote)) return [];
   const proposed = readPrototypeStyleValues(values);
   const keys = Array.isArray(rec.keys) ? rec.keys.filter((k): k is string => typeof k === 'string') : [];
   return PROTOTYPE_STYLE_VALUE_KEYS.filter(
-    (k) => keys.includes(k) && k in locked && k in proposed && proposed[k] !== locked[k],
+    (k) =>
+      keys.includes(k) &&
+      KEY_STYLE_CUE_RE[k].test(quote) &&
+      k in locked &&
+      k in proposed &&
+      proposed[k] !== locked[k],
   );
 }
 
@@ -434,7 +464,7 @@ export function commitDefineStyle(
     const diagnostic = pickLocaleText(
       locale,
       'define_style 需要 componentCss（共用组件样式）和 sampleHtml（风格样张）。',
-      'define_style needs componentCss (shared component CSS) and sampleHtml (the style sample).',
+      'define_style needs componentCss (shared component CSS) and sampleHtml (the Style Tile).',
     );
     return { isError: true, content: JSON.stringify({ status: 'ERROR', diagnostic }), summary: diagnostic };
   }
@@ -456,9 +486,9 @@ export function commitDefineStyle(
     ? pickLocaleText(
         locale,
         '风格样张已画好，设计值沿用用户确认过的风格样张。',
-        'Style sample drawn, keeping the design values the user approved.',
+        'Style Tile drawn, keeping the design values the user approved.',
       )
-    : pickLocaleText(locale, '风格样张已画好，设计值由你提出。', 'Style sample drawn with the design values you proposed.');
+    : pickLocaleText(locale, '风格样张已画好，设计值由你提出。', 'Style Tile drawn with the design values you proposed.');
   return {
     isError: false,
     style,

@@ -171,5 +171,4 @@ export {
   styleTileTokensToValues,
   approvedBriefStyleValues,
   type StyleTileTokens,
-  type StyleTileReferences,
 } from './lib/style-tile.js';

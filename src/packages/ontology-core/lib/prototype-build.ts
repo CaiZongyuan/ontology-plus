@@ -8,6 +8,8 @@
  * Nothing here invents progress: a phase whose work did not happen is `not_started` or `skipped`.
  */
 
+import type { PrototypeStyleValueKey } from './prototype-style.js';
+
 export type PrototypeBuildScreenStatus = 'queued' | 'writing' | 'reviewing' | 'done' | 'failed';
 
 export const PROTOTYPE_BUILD_PHASES = ['plan', 'style', 'screens', 'review', 'tours'] as const;
@@ -76,7 +78,7 @@ export interface PrototypeBuildLogEntry {
   /** style_ready: the values are the approved Style Tile's (locked). */
   locked?: boolean;
   /** style_values_changed: the design values the user asked to change. */
-  valueKeys?: string[];
+  valueKeys?: PrototypeStyleValueKey[];
 }
 
 export interface PrototypeBuildState {

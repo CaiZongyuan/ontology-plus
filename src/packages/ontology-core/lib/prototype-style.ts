@@ -266,21 +266,33 @@ export function stripStyleValueOverrides(css: string): string {
   );
 }
 
+function decodeHtmlAttrEntities(raw: string): string {
+  return raw
+    .replace(/&#x([0-9a-fA-F]+);?/g, (_m, hex: string) => fromCodePointSafe(Number.parseInt(hex, 16)))
+    .replace(/&#([0-9]+);?/g, (_m, dec: string) => fromCodePointSafe(Number.parseInt(dec, 10)))
+    .replace(/&colon;?/gi, ':')
+    .replace(/&(tab|newline);?/gi, '');
+}
+
 /** Strips `--proto-*` custom property overrides from inline `style="…"` attributes on HTML tags. */
 export function stripInlineStyleValueOverrides(html: string): string {
-  return html.replace(/<([A-Za-z][A-Za-z0-9:-]*)(\s[^>]*?)?>/g, (tag, name: string, attrs?: string) => {
-    if (!attrs || !/\bstyle\s*=/i.test(attrs)) return tag;
-    const lower = name.toLowerCase();
-    if (lower === 'script' || lower === 'style') return tag;
-    const nextAttrs = attrs.replace(
-      /(\bstyle\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi,
-      (_m, prefix: string, dq?: string, sq?: string, uq?: string) => {
-        const cleaned = stripStyleValueOverrides(dq ?? sq ?? uq ?? '').trim();
-        return cleaned ? `${prefix}"${cleaned.replace(/"/g, '&quot;')}"` : '';
-      },
-    );
-    return `<${name}${nextAttrs}>`;
-  });
+  return html.replace(
+    /<([A-Za-z][A-Za-z0-9:-]*)(\s(?:[^>"']|"[^"]*"|'[^']*')*)?>/g,
+    (tag, name: string, attrs?: string) => {
+      if (!attrs || !/\bstyle\s*=/i.test(attrs)) return tag;
+      const lower = name.toLowerCase();
+      if (lower === 'script' || lower === 'style') return tag;
+      const nextAttrs = attrs.replace(
+        /(\bstyle\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi,
+        (_m, prefix: string, dq?: string, sq?: string, uq?: string) => {
+          const decoded = decodeHtmlAttrEntities(dq ?? sq ?? uq ?? '');
+          const cleaned = stripStyleValueOverrides(decoded).trim();
+          return cleaned ? `${prefix}"${cleaned.replace(/"/g, '&quot;')}"` : '';
+        },
+      );
+      return `<${name}${nextAttrs}>`;
+    },
+  );
 }
 
 /** Keeps component CSS inside its own `<style>` element, without imports or script URLs. */
@@ -295,14 +307,6 @@ export function sanitizeStyleCss(css: string): string {
         .toLowerCase();
       return /^(?:javascript|vbscript):|^data:text\/html/i.test(normalized) ? 'none' : full;
     });
-}
-
-function decodeHtmlAttrEntities(raw: string): string {
-  return raw
-    .replace(/&#x([0-9a-fA-F]+);?/g, (_m, hex: string) => fromCodePointSafe(Number.parseInt(hex, 16)))
-    .replace(/&#([0-9]+);?/g, (_m, dec: string) => fromCodePointSafe(Number.parseInt(dec, 10)))
-    .replace(/&colon;?/gi, ':')
-    .replace(/&(tab|newline);?/gi, '');
 }
 
 const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'poster', 'data']);
@@ -321,19 +325,22 @@ const ANCHOR_OR_DANGEROUS_ATTRS = new Set([
  */
 export function sanitizeStyleSampleHtml(html: string): string {
   const withoutDangerousElements = html
-    .replace(/<\/?template[^>]*>?/gi, '')
-    .replace(/<(script|style|iframe|object|noscript|foreignobject)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<\/?template(?:[^>"']|"[^"]*"|'[^']*')*>?/gi, '')
+    .replace(/<(script|style|iframe|object|noscript|foreignobject)\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/\1\s*>/gi, '')
     .replace(/<(?:script|style)\b[\s\S]*$/gi, '')
-    .replace(/<\/?(?:iframe|object|noscript|foreignobject|link|meta|base|embed)\b[^>]*>?/gi, '');
+    .replace(/<\/?(?:iframe|object|noscript|foreignobject|link|meta|base|embed)\b(?:[^>"']|"[^"]*"|'[^']*')*>?/gi, '');
 
   return withoutDangerousElements.replace(
-    /<([A-Za-z][A-Za-z0-9:-]*)([\s/"'][^>]*?)?(\/?)>/g,
-    (_tag, tagName: string, attrRegion = '', selfClose: string) => {
-      if (!attrRegion) return `<${tagName}${selfClose}>`;
+    /<([A-Za-z][A-Za-z0-9:-]*)([\s/"'](?:[^>"']|"[^"]*"|'[^']*')*)?>/g,
+    (_tag, tagName: string, attrRegion = '') => {
+      const trimmedAttrs = attrRegion.trimEnd();
+      const selfClose = trimmedAttrs.endsWith('/');
+      const rawAttrs = selfClose ? trimmedAttrs.slice(0, -1) : attrRegion;
+      if (!rawAttrs.trim()) return `<${tagName}${selfClose ? ' /' : ''}>`;
       const kept: string[] = [];
       const attrRe = /([A-Za-z_:@][A-Za-z0-9_.:@-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
       let m: RegExpExecArray | null;
-      while ((m = attrRe.exec(attrRegion)) !== null) {
+      while ((m = attrRe.exec(rawAttrs)) !== null) {
         const attrName = m[1]!;
         const lower = attrName.toLowerCase();
         if (lower.startsWith('on') || ANCHOR_OR_DANGEROUS_ATTRS.has(lower)) continue;
@@ -353,7 +360,7 @@ export function sanitizeStyleSampleHtml(html: string): string {
           }
         }
         if (lower === 'style') {
-          const cleaned = stripStyleValueOverrides(sanitizeStyleCss(rawVal)).trim();
+          const cleaned = stripStyleValueOverrides(sanitizeStyleCss(decodeHtmlAttrEntities(rawVal))).trim();
           if (cleaned) kept.push(`style="${escapeAttr(cleaned)}"`);
           continue;
         }

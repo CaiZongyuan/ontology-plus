@@ -163,19 +163,22 @@ describe('Style lock protection, legacy shell restyling, sanitizers & MU extract
     expect(css).not.toContain('#000000');
     expect(css).toContain('--c-accent: var(--proto-accent)');
 
-    const bypassDoc = `<!DOCTYPE html><html><head><style>:root { --proto-accent: #ff00ff; }</style></head><body style="--proto-bg: #111111; margin: 0"><main id="proto-screens-root"><section data-screen-id="SCR-A" style="--proto-accent: #ff00ff; padding: 12px"><button data-element-id="EL-A" data-element-type="BUTTON">提交</button></section></main></body></html>`;
+    const bypassDoc = `<!DOCTYPE html><html><head><style>:root { --proto-accent: #ff00ff; }</style></head><body style="--proto-bg: #111111; margin: 0"><main id="proto-screens-root"><section data-screen-id="SCR-A" data-note="a > b" style="--proto-accent: #ff00ff; padding: 12px"><div style="--&#112;roto-bg: #222222; gap: 4px"><button data-element-id="EL-A" data-element-type="BUTTON">提交</button></div></section></main></body></html>`;
     const restyled = applyPrototypeStyleToDocument(
       bypassDoc,
       style({
         locked: true,
-        sampleHtml: '<div class="swatch" style="--proto-accent: #ff00ff; background: var(--proto-accent)">主色</div>',
+        sampleHtml:
+          '<div class="swatch" data-note="x > y" style="--&#112;roto-accent: #ff00ff; background: var(--proto-accent)">主色</div>',
       }),
     );
     expect(restyled).not.toContain('#ff00ff');
     expect(restyled).not.toContain('#111111');
+    expect(restyled).not.toContain('#222222');
     expect(restyled).toContain('padding: 12px');
+    expect(restyled).toContain('gap: 4px');
     expect(readPrototypeDocumentStyle(restyled)!.sampleHtml).toContain('background: var(--proto-accent)');
-    expect(readPrototypeDocumentStyle(restyled)!.sampleHtml).not.toContain('--proto-accent:');
+    expect(readPrototypeDocumentStyle(restyled)!.sampleHtml).not.toMatch(/proto-accent\s*:/i);
     expect(stripStyleValueOverrides('--\\70 roto-accent: red; color: blue;').trim()).toBe('color: blue;');
   });
 

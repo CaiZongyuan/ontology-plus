@@ -17,6 +17,7 @@ import {
   type PrototypeBuildEvent,
   type PrototypeBuildPlanItem,
   type PrototypeBuildState,
+  type PrototypeStyleValueKey,
 } from '../../ontology-core/index.js';
 import type { AgentSubagentLaneTrace } from '../../workspace-store/index.js';
 import { type AgentLocale, pickLocaleText } from './locale.js';
@@ -112,7 +113,7 @@ export interface PrototypeBuildRun {
   /** `define_style` was accepted (done) or rejected (failed). */
   commitStyle(
     result:
-      | { ok: true; locked: boolean; userChanged?: readonly string[]; lockUnavailable?: boolean }
+      | { ok: true; locked: boolean; userChanged?: readonly PrototypeStyleValueKey[]; lockUnavailable?: boolean }
       | { ok: false },
     documentHtml?: string,
   ): void;
@@ -170,7 +171,7 @@ export function createPrototypeBuildRun(options: {
   const beginScreensPhase = () => {
     if (screensPhaseStarted) return;
     screensPhaseStarted = true;
-    // No style sample was drawn before the screens: the phase says so instead of pretending.
+    // No Style Tile was drawn before the screens: the phase says so instead of pretending.
     const style = tracker.state().phases.style.status;
     if (style === 'not_started' || style === 'now') {
       send(tracker.phase('style', 'skipped'));
@@ -388,7 +389,7 @@ export function createPrototypeBuildRun(options: {
       const state = tracker.state();
       if (state.planStreaming) send(tracker.plan(state.plan, false));
       if (state.phases.plan.status === 'now') send(tracker.phase('plan', outcome === 'succeeded' ? 'done' : 'failed'));
-      // A style sample still being written when the run ended was never set.
+      // A Style Tile still being written when the run ended was never set.
       if (state.phases.style.status === 'now') send(tracker.phase('style', 'failed'));
       const leftover =
         outcome === 'cancelled' ? 'cancelled' : outcome === 'failed' ? 'interrupted' : 'not_written';
