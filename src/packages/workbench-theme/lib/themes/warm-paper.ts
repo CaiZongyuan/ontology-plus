@@ -14,6 +14,7 @@ const type = {
   'font-title': '"Noto Serif SC", "Source Han Serif SC", Georgia, serif',
   'font-sans': '"IBM Plex Sans", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
   'font-mono': '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+  'font-annotation': '"LXGW WenKai Lite", "KaiTi", "STKaiti", "Kaiti SC", "AR PL UKai CN", cursive',
 };
 
 /**

@@ -937,6 +937,7 @@ progress.loading-spinner:indeterminate {
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
   --font-title: var(--font-title);
+  --font-annotation: var(--font-annotation);
 
   --radius-card: var(--radius-card);
   --radius-window: var(--radius-window);

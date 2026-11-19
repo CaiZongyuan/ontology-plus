@@ -1,5 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import 'lxgw-wenkai-lite-webfont/lxgwwenkailite-regular.css';
 import './workbench-themes.generated.css';
 import './tokens.css';
 import './shell.css';

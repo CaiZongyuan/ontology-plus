@@ -109,6 +109,7 @@ export const THEME_TOKENS: readonly ThemeTokenSpec[] = [
     ['font-title', 'Page titles, card titles, and large metrics.'],
     ['font-sans', 'Everything in the interface that is not a title or an identifier.'],
     ['font-mono', 'Ontology identifiers, code, and paths.'],
+    ['font-annotation', 'Handwritten callouts on prototype screens (Design Notes).'],
   ]),
   ...group('radius', [
     ['radius-xs', 'The smallest corner: checkboxes and inline marks.'],

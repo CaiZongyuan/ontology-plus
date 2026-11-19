@@ -47,6 +47,7 @@
     "js-yaml": "^4.1.0",
     "lowlight": "^3.3.0",
     "lucide-react": "^0.475.0",
+    "lxgw-wenkai-lite-webfont": "^1.7.0",
     "mdast-util-from-markdown": "2.1.0",
     "mermaid": "^12.3.0",
     "react": "^19.0.0",

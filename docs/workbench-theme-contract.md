@@ -73,6 +73,7 @@ A token marked "follows" takes the value of another token when a theme leaves it
 | `font-title` | `--font-title` | Page titles, card titles, and large metrics. |  |
 | `font-sans` | `--font-sans` | Everything in the interface that is not a title or an identifier. |  |
 | `font-mono` | `--font-mono` | Ontology identifiers, code, and paths. |  |
+| `font-annotation` | `--font-annotation` | Handwritten callouts on prototype screens (Design Notes). |  |
 
 ## Corner radii
 
