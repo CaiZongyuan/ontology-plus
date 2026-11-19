@@ -19,7 +19,12 @@ import {
   type Context,
 } from '@earendil-works/pi-ai';
 import { describePrototypeBuildFailure } from '../../business-vocabulary/index.js';
-import type { PrototypeBuildFailureCode, PrototypeDemoTour } from '../../ontology-core/index.js';
+import {
+  readPrototypeDemoTours,
+  splitPrototypeDocument,
+  type PrototypeBuildFailureCode,
+  type PrototypeDemoTour,
+} from '../../ontology-core/index.js';
 import { pickLocaleText, type AgentLocale } from './locale.js';
 
 export interface MockPrototypeBuildScreen {
@@ -584,9 +589,12 @@ export function createMockPrototypeBuildReplay(
     businessObject?: string;
     /** The screen whose first attempt fails the anchor check; null when continuing a screen. */
     failScreenId?: string | null;
+    /** When true (concurrency <= 1), the lead writes each screen directly without `spawn_subagents`. */
+    singleAgent?: boolean;
   } = {},
 ): MockPrototypeBuildReplay {
   const build = MOCK_PROTOTYPE_BUILD;
+  const singleAgent = Boolean(options.singleAgent);
   const failScreenId =
     options.failScreenId === undefined ? MOCK_PROTOTYPE_BUILD_FAILING_SCREEN : options.failScreenId;
   // The recorded screens bind their fields to the project's own business object, so the
@@ -597,6 +605,7 @@ export function createMockPrototypeBuildReplay(
   const byId = new Map(build.screens.map((s) => [s.screenId, s]));
   const names = build.screens.map((s) => `「${s.screenName}」`).join('、');
   let subtitle = '';
+  let singleScreenIndex = 0;
   let lastSpawnResults: { screenId?: string; screenName: string; check: string; failure?: PrototypeBuildFailureCode }[] =
     [];
 
@@ -775,6 +784,31 @@ export function createMockPrototypeBuildReplay(
         );
       }
       if (last?.role === 'toolResult' && last.toolName === 'define_style') {
+        if (singleAgent) {
+          singleScreenIndex = 0;
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  locale,
+                  '风格样张画好了。搭好文档外壳，再按施工计划逐屏绘制。',
+                  'The Style Tile is ready. Setting up the document shell and drawing each planned screen.',
+                ),
+              ),
+              fauxToolCall('init_prototype_shell', {
+                appTitle: build.appTitle,
+                subtitle,
+                screens: build.screens.map((s) => ({
+                  screenId: s.screenId,
+                  screenName: s.screenName,
+                  screenType: s.screenType,
+                  summary: s.purpose,
+                })),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
         return fauxAssistantMessage(
           [
             fauxThinking(
@@ -806,6 +840,71 @@ export function createMockPrototypeBuildReplay(
           ],
           { stopReason: 'toolUse' },
         );
+      }
+      if (
+        singleAgent &&
+        last?.role === 'toolResult' &&
+        (last.toolName === 'init_prototype_shell' || last.toolName === 'upsert_prototype_screen')
+      ) {
+        if (singleScreenIndex < build.screens.length) {
+          const sc = build.screens[singleScreenIndex++]!;
+          const html = sc.html.split(BUSINESS_OBJECT_TOKEN).join(businessObject);
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  locale,
+                  `画「${sc.screenName}」：${sc.purpose}。`,
+                  `Drawing "${sc.screenName}": ${sc.purpose}.`,
+                ),
+              ),
+              fauxToolCall('upsert_prototype_screen', {
+                screenId: sc.screenId,
+                screenName: sc.screenName,
+                screenType: sc.screenType,
+                screenHtml: html,
+                ...(sc.extraJs ? { extraJs: sc.extraJs } : {}),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+        const drawnIds = new Set(build.screens.map((s) => s.screenId));
+        lastSpawnResults = build.screens.map((s) => ({
+          screenId: s.screenId,
+          screenName: s.screenName,
+          check: 'passed',
+        }));
+        const tours = buildMockDemoTours(locale, drawnIds);
+        if (tours.length >= 2) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  locale,
+                  `各屏绘制已完成，编写 ${tours.length} 条演示路线。`,
+                  `Screens complete; authoring ${tours.length} Demo Tours.`,
+                ),
+              ),
+              fauxToolCall('write_demo_tours', {
+                tours: tours.map((t) => ({
+                  id: t.id,
+                  goal: t.goal,
+                  ...(t.audience ? { audience: t.audience } : {}),
+                  steps: t.steps.map((s) => ({
+                    screenId: s.screenId,
+                    ...(s.elementId ? { elementId: s.elementId } : {}),
+                    action: s.action,
+                    caption: s.caption,
+                    ...(s.text !== undefined ? { text: s.text } : {}),
+                    ...(s.times !== undefined ? { times: s.times } : {}),
+                  })),
+                })),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
       }
       if (last?.role === 'toolResult' && last.toolName === 'spawn_subagents') {
         lastSpawnResults = screenResultsOf(last);
@@ -865,6 +964,263 @@ export function createMockPrototypeBuildReplay(
                 `原型的 ${build.screens.length} 屏都画好了：${names}。可以在画布上平移、缩放查看，双击任意一屏试着点一点。`,
                 `All ${build.screens.length} screens of the prototype are drawn: ${names}. Pan and zoom the canvas to look around, and double-click any screen to try it.`,
               ),
+        ),
+      ]);
+    },
+  };
+}
+
+/**
+ * Recorded post-generation modification replay (#96): plans ONLY the affected screen,
+ * updates that single artboard visibly via `spawn_subagents` -> `upsert_prototype_screen`,
+ * passes screenshot review cleanly, and keeps Demo Tours & unaffected screens intact.
+ */
+export function createMockPrototypeModificationReplay(
+  locale: AgentLocale,
+  targetHtml: string,
+  userPrompt: string,
+  options: { singleAgent?: boolean } = {},
+): {
+  affectedScreenId: string;
+  responseBudget: number;
+  leadOpening: () => AssistantMessage;
+  respond: (context: Context) => AssistantMessage;
+} {
+  const singleAgent = Boolean(options.singleAgent);
+  const { screens } = splitPrototypeDocument(targetHtml);
+  const picked =
+    screens.find((s) => userPrompt.includes(s.screenId) || userPrompt.includes(s.screenName)) ??
+    (/订单|order|列表|list|筛选|filter/i.test(userPrompt)
+      ? screens.find((s) => /ORDER|LIST/i.test(s.screenId) || /订单|列表|Order|List/i.test(s.screenName))
+      : undefined) ??
+    screens[0];
+
+  const screenId = picked?.screenId ?? 'SCR-1';
+  const screenName = picked?.screenName || screenId;
+  const screenType = picked?.screenType || 'LIST';
+  const baseHtml = picked?.html ?? `<section data-screen-id="${screenId}" data-screen-name="${screenName}" data-screen-type="${screenType}"></section>`;
+
+  const cleanNote = userPrompt.replace(/[<>&"'`\n]/g, ' ').trim().slice(0, 40);
+  const wantsFilter = /筛选|filter|搜索|search/i.test(userPrompt);
+  const useCustomerFilter = wantsFilter && !/data-element-id="EL-FILTER-CUSTOMER"/.test(baseHtml);
+  const promptHash = Array.from(cleanNote)
+    .reduce((acc, ch) => ((acc * 31 + ch.charCodeAt(0)) >>> 0), 7)
+    .toString(36)
+    .toUpperCase()
+    .slice(0, 4);
+  const modControl = useCustomerFilter
+    ? locale === 'en-US'
+      ? `<select class="input" data-element-id="EL-FILTER-CUSTOMER" data-element-type="SELECT" data-element-label="${cleanNote || 'Filter by customer'}" data-binding="Order.customerName" data-note="Filter by customer: narrow the list to orders for a selected customer"><option value="">All customers</option><option value="CUST-01">Morning Bakery</option><option value="CUST-02">Harbor Cafe</option></select>`
+      : `<select class="input" data-element-id="EL-FILTER-CUSTOMER" data-element-type="SELECT" data-element-label="${cleanNote || '按客户筛选'}" data-binding="Order.customerName" data-note="按客户筛选：选择客户名称过滤当前列表数据"><option value="">全部客户</option><option value="CUST-01">晨光烘焙坊</option><option value="CUST-02">海湾咖啡馆</option></select>`
+    : `<button type="button" class="btn" data-element-id="EL-MOD-${promptHash}" data-element-type="BUTTON" data-element-label="${cleanNote || '业务操作'}" data-note="${cleanNote || screenName}：触发对应的业务处理">${cleanNote || pickLocaleText(locale, '业务操作', 'Action')}</button>`;
+  const modElementId = useCustomerFilter ? 'EL-FILTER-CUSTOMER' : `EL-MOD-${promptHash}`;
+
+  const updatedScreenHtml = (() => {
+    if (baseHtml.includes(`data-element-id="${modElementId}"`)) {
+      return baseHtml;
+    }
+    if (wantsFilter && /<select\b[^>]*>[\s\S]*?<\/select>/i.test(baseHtml)) {
+      return baseHtml.replace(/<select\b[^>]*>[\s\S]*?<\/select>/i, modControl);
+    }
+    if (/<\/section>/i.test(baseHtml)) {
+      return baseHtml.replace(
+        /<\/section>/i,
+        `<div class="row" style="margin-top:12px">${modControl}</div></section>`,
+      );
+    }
+    return `${baseHtml}\n<div class="row">${modControl}</div>`;
+  })();
+
+  const existingTours = readPrototypeDemoTours(targetHtml);
+
+  const leadOpening = (): AssistantMessage =>
+    fauxAssistantMessage(
+      [
+        fauxThinking(
+          pickLocaleText(
+            locale,
+            `收到局部修改请求「${cleanNote}」。施工计划只列出受影响的「${screenName}」，其余屏幕保持不变。`,
+            `Received modification request "${cleanNote}". Planning only the affected screen "${screenName}" while leaving other screens untouched.`,
+          ),
+        ),
+        fauxToolCall('plan_screens', {
+          screens: [
+            {
+              screenId,
+              screenName,
+              screenType,
+              purpose: pickLocaleText(
+                locale,
+                `按要求局部更新：${cleanNote || screenName}`,
+                `Apply targeted update: ${cleanNote || screenName}`,
+              ),
+            },
+          ],
+        }),
+      ],
+      { stopReason: 'toolUse' },
+    );
+
+  return {
+    affectedScreenId: screenId,
+    responseBudget: 16,
+    leadOpening,
+    respond: (context: Context): AssistantMessage => {
+      const last = context.messages.at(-1);
+      const prompt = last?.role === 'user' && typeof last.content === 'string' ? last.content : '';
+
+      if (last?.role === 'user' && Array.isArray(last.content) && last.content.some((b) => b.type === 'image')) {
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                locale,
+                `检查「${screenName}」的局部修改截图，排版与对比度正常。`,
+                `Inspecting the updated screenshot for "${screenName}"; layout and contrast look clean.`,
+              ),
+            ),
+            fauxToolCall('report_review', {
+              screenId,
+              findings: [],
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+
+      if (SUBAGENT_PROMPT_RE.test(prompt)) {
+        if (last?.role === 'toolResult') {
+          return fauxAssistantMessage([
+            fauxText(pickLocaleText(locale, `已完成「${screenName}」的局部修改。`, `Updated "${screenName}".`)),
+          ]);
+        }
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                locale,
+                `局部修改「${screenName}」并更新对应原型说明。`,
+                `Applying targeted update to "${screenName}" and its Prototype Notes.`,
+              ),
+            ),
+            fauxToolCall('upsert_prototype_screen', {
+              screenId,
+              screenName,
+              screenType,
+              screenHtml: updatedScreenHtml,
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+
+      if (last?.role === 'toolResult' && last.toolName === 'plan_screens') {
+        if (singleAgent) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  locale,
+                  `计划已确认，直接局部修改「${screenName}」并更新对应原型说明。`,
+                  `Plan ready; applying targeted update to "${screenName}" directly.`,
+                ),
+              ),
+              fauxToolCall('upsert_prototype_screen', {
+                screenId,
+                screenName,
+                screenType,
+                screenHtml: updatedScreenHtml,
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                locale,
+                `计划已确认，仅派发屏幕助手局部修改「${screenName}」。`,
+                `Plan ready; dispatching helper to update "${screenName}" only.`,
+              ),
+            ),
+            fauxToolCall('spawn_subagents', {
+              tasks: [
+                {
+                  title: screenName,
+                  screenId,
+                  screenName,
+                  screenType,
+                  instruction: userPrompt,
+                },
+              ],
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+
+      if (
+        last?.role === 'toolResult' &&
+        (last.toolName === 'spawn_subagents' || (singleAgent && last.toolName === 'upsert_prototype_screen')) &&
+        existingTours.length > 0
+      ) {
+        const updatedTours = existingTours.map((tour, idx) =>
+          idx === 0
+            ? {
+                ...tour,
+                steps: [
+                  ...tour.steps.filter((st) => st.elementId !== modElementId),
+                  {
+                    screenId,
+                    elementId: modElementId,
+                    action: 'click' as const,
+                    caption: pickLocaleText(
+                      locale,
+                      `按客户筛选「${screenName}」中的业务记录。`,
+                      `Filter records by customer in "${screenName}".`,
+                    ),
+                  },
+                ],
+              }
+            : tour,
+        );
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              pickLocaleText(
+                locale,
+                `「${screenName}」修改与检查已完成，同步更新演示路线以覆盖新筛选控件。`,
+                `"${screenName}" update and check complete; updating Demo Tours to cover the new filter control.`,
+              ),
+            ),
+            fauxToolCall('write_demo_tours', {
+              tours: updatedTours.map((t) => ({
+                id: t.id,
+                goal: t.goal,
+                ...(t.audience ? { audience: t.audience } : {}),
+                steps: t.steps.map((s) => ({
+                  screenId: s.screenId,
+                  ...(s.elementId ? { elementId: s.elementId } : {}),
+                  action: s.action,
+                  caption: s.caption,
+                  ...(s.text !== undefined ? { text: s.text } : {}),
+                  ...(s.times !== undefined ? { times: s.times } : {}),
+                })),
+              })),
+            }),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+
+      return fauxAssistantMessage([
+        fauxText(
+          pickLocaleText(
+            locale,
+            `已按「${cleanNote || screenName}」局部修改「${screenName}」，并同步更新了设计说明与演示路线；其余屏幕保持原样未动。`,
+            `Updated "${screenName}" (${cleanNote || screenName}) along with its Prototype Notes and Demo Tours; all other screens remain untouched.`,
+          ),
         ),
       ]);
     },

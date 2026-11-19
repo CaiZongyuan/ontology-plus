@@ -147,16 +147,12 @@ export {
 export { runAppCodingAgentTurn, type AppCodingAgentResult } from './lib/application-agent.js';
 
 export {
-  CODEMODE_OPENAI_TOOL,
   SPAWN_SUBAGENTS_OPENAI_TOOL,
-  resolveSessionCodeModeEnabled,
   resolveSessionMultiAgentConcurrency,
-  renderCodemodePromptSection,
-  runCodemodeScript,
+  renderSubagentPromptSection,
   runParallelSubagents,
   type SubagentTaskSpec,
   type SubagentScreenResult,
-  type CodemodeExecutionSummary,
 } from './lib/codemode-subagent.js';
 
 export {

@@ -442,6 +442,7 @@ export function PrototypeStudioView({
       active: true,
       baselineSignature: revisionSignature,
     };
+    setStageOverride('CANVAS');
     useAgentPanelStore.getState().revealPanel();
     await startPrototypeBriefGenerationRun({
       projectId: project.id,
@@ -829,6 +830,7 @@ export function PrototypeStudioView({
             active: true,
             baselineSignature: revisionSignature,
           };
+          setStageOverride('CANVAS');
           await startPrototypeBriefGenerationRun({
             projectId: project.id,
             prototypeName,
@@ -842,6 +844,7 @@ export function PrototypeStudioView({
             active: true,
             baselineSignature: revisionSignature,
           };
+          setStageOverride('CANVAS');
           await startPrototypeBriefRestyleRun({
             projectId: project.id,
             prototypeId,

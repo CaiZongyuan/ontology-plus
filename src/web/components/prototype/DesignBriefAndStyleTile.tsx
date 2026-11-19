@@ -842,7 +842,7 @@ export function compileDesignBriefGenerationPrompt({
       ...(srsSnippet ? ['', `=== LINKED SRS SPECIFICATION ===`, srsSnippet] : []),
       '',
       `=== SEMANTIC ANCHOR & RESPONSIVE LAYOUT CONTRACT (MANDATORY) ===`,
-      `1. Call \`rewrite_prototype_page\` with \`allowAnchorReset: true\` to deliver a single-file runnable HTML5 prototype.`,
+      `1. Follow the live prototype pipeline: call \`plan_screens\` with the Build Plan (3–5 screens), then call \`define_style\` with the locked Style Tile tokens and shared component CSS, then call \`spawn_subagents\` so parallel screen helpers build each screen via \`upsert_prototype_screen\` (with \`data-note\` on key elements), and finally call \`write_demo_tours\` to author 2–4 Demo Tours.`,
       `2. Every business screen MUST declare \`data-screen-id\`, \`data-screen-name\`, and \`data-screen-type\`; every interactive <button>/<input>/<select>/<textarea> MUST declare unique \`data-element-id\` and \`data-element-type\`, plus domain \`data-binding\` and \`data-event-id\` anchors.`,
       `3. Responsive Viewport Requirement: MUST render cleanly without horizontal overflow across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
       `4. Zero blocking browser dialogs: NEVER use window.alert, window.confirm, or window.prompt.`,
@@ -870,7 +870,7 @@ export function compileDesignBriefGenerationPrompt({
     ...(srsSnippet ? ['', `【四、关联需求规格说明书 (SRS) 核心内容】`, srsSnippet] : []),
     '',
     `【五、MU 语义锚点与三端响应式硬性契约】`,
-    `1. 请调用 \`rewrite_prototype_page\`（传 \`allowAnchorReset: true\`）输出完整单文件可运行 HTML5 交互原型。`,
+    `1. 按实时原型流水线施工：先调用 \`plan_screens\` 列出 3～5 个屏幕的施工计划，再调用 \`define_style\` 锁定风格样张令牌与共用组件样式，随后调用 \`spawn_subagents\` 按计划并行构建各分屏（\`upsert_prototype_screen\`，为关键元素编写 \`data-note\` 原型说明），全部完成后调用 \`write_demo_tours\` 编写 2～4 条演示路线。`,
     `2. 必须严格挂载语义锚点：所有屏幕节点声明 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`；所有交互控件声明唯一 \`data-element-id\`、\`data-element-type\`，并合理绑定 \`data-binding\` 与 \`data-event-id\`。`,
     `3. 三端响应式硬性要求：页面布局必须在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 三种视口宽度下自适应排布整洁、零横向裁切溢出。`,
     `4. 严禁任何阻塞式浏览器原生弹窗（禁止 window.alert / window.confirm / window.prompt）。`,
@@ -891,14 +891,14 @@ export function compileDesignBriefRestylePrompt(
   if (params.locale === 'en-US') {
     return [
       `[PROTOTYPE_BRIEF_RESTYLE] Restyle from updated brief (canvas ${tokens.surfaceHex}, accent ${tokens.accentHex}, mode ${tokens.mode})`,
-      `IMPORTANT: Inspect existing prototype anchors first and call \`rewrite_prototype_page\` (\`allowAnchorReset: false\`) to restyle the entire prototype according to the updated Design Brief while preserving 100% of existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors!`,
+      `IMPORTANT: Preserve 100% of existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors! Follow the live pipeline: call \`plan_screens\` with the existing screens, call \`define_style\` to update the Style Tile tokens and shared component CSS, then call \`spawn_subagents\` to restyle each screen via \`upsert_prototype_screen\` while keeping every existing anchor ID intact, and update \`write_demo_tours\` if needed.`,
       '',
       base,
     ].join('\n');
   }
   return [
     `[PROTOTYPE_BRIEF_RESTYLE] 按新简报重做风格（画布 ${tokens.surfaceHex}，强调色 ${tokens.accentHex}，模式 ${tokens.mode}）`,
-    `重要约束：请先盘点当前原型的既有锚点，再调用 \`rewrite_prototype_page\`（\`allowAnchorReset: false\`）按更新后的设计简报整页重做视觉风格与动效细节，同时 100% 保留现有的 \`data-screen-id\`、\`data-element-id\`、\`data-binding\` 与 \`data-event-id\` 语义锚点！`,
+    `重要约束：必须 100% 保留现有的 \`data-screen-id\`、\`data-element-id\`、\`data-binding\` 与 \`data-event-id\` 语义锚点！按实时流水线施工：先调用 \`plan_screens\` 列出需要重做风格的既有屏幕，再调用 \`define_style\` 更新风格样张令牌与共用组件样式，随后调用 \`spawn_subagents\` 按原锚点逐屏更新样式（\`upsert_prototype_screen\`），最后检查并更新 \`write_demo_tours\`。`,
     '',
     base,
   ].join('\n');

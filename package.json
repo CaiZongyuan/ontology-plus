@@ -14,13 +14,13 @@
     "lint:theme": "tsx scripts/lint-theme.ts",
     "themes:generate": "tsx scripts/generate-workbench-themes.ts",
     "check": "pnpm typecheck && pnpm lint:boundaries && pnpm lint:theme",
+    "smoke:prototype": "tsx scripts/smoke-prototype.ts",
     "test": "vitest run src",
     "test:e2e": "playwright test"
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",
     "@earendil-works/pi-ai": "^1.5.0",
-    "@earendil-works/pi-codemode": "^1.5.0",
     "@earendil-works/pi-durable": "^1.5.0",
     "@earendil-works/pi-schema": "^1.5.0",
     "@hono/node-server": "^1.14.0",
