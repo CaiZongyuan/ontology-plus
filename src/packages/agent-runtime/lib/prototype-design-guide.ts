@@ -151,7 +151,6 @@ export const DOCUMENT_LEVEL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'edit_screen',
   'write_demo_tours',
   'spawn_subagents',
-  'codemode',
 ]);
 
 /** What a screen helper may call: read anchors, write or locally edit its own screen. */

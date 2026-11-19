@@ -393,7 +393,6 @@ export function ShellAgentPanel({
   const [reasoningMode, setReasoningMode] = useState<'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY'>(
     'ASK_POLICY',
   );
-  const [localCodeMode, setLocalCodeMode] = useState<boolean>(true);
   const [localConcurrency, setLocalConcurrency] = useState<number>(3);
   const [undoingEntryId, setUndoingEntryId] = useState<string | null>(null);
   const [handoffBusyById, setHandoffBusyById] = useState<Record<string, 'accept' | 'decline'>>({});
@@ -433,29 +432,16 @@ export function ShellAgentPanel({
     if (activeSession?.reasoningMode) {
       setReasoningMode(activeSession.reasoningMode);
     }
-    if (activeSession?.codeMode !== undefined) {
-      setLocalCodeMode(activeSession.codeMode);
-    }
     if (activeSession?.multiAgentConcurrency !== undefined) {
       setLocalConcurrency(activeSession.multiAgentConcurrency);
     }
   }, [
     activeSession?.id,
     activeSession?.reasoningMode,
-    activeSession?.codeMode,
     activeSession?.multiAgentConcurrency,
   ]);
 
-  const effectiveCodeMode = activeSession?.codeMode ?? localCodeMode;
   const effectiveConcurrency = activeSession?.multiAgentConcurrency ?? localConcurrency;
-
-  const handleToggleCodeMode = () => {
-    const next = !effectiveCodeMode;
-    setLocalCodeMode(next);
-    if (activeSession) {
-      void updateAgentSessionExecutionConfig(activeSession.id, { codeMode: next });
-    }
-  };
 
   const handleSelectConcurrency = (next: number) => {
     setLocalConcurrency(next);
@@ -507,28 +493,9 @@ export function ShellAgentPanel({
 
   const executionModeBar = (
     <div
-      className="flex flex-wrap items-center justify-between gap-1.5 text-[11.5px]"
+      className="flex flex-wrap items-center justify-end gap-1.5 text-[11.5px]"
       data-testid="agent-execution-mode-bar"
     >
-      <button
-        type="button"
-        data-testid="agent-codemode-toggle"
-        aria-pressed={effectiveCodeMode}
-        onClick={handleToggleCodeMode}
-        className={`inline-flex cursor-pointer items-center gap-1 rounded border px-2 py-0.5 font-medium transition ${
-          effectiveCodeMode
-            ? 'border-primary/50 bg-primary-soft text-primary'
-            : 'border-border bg-muted/40 text-muted-foreground hover:bg-accent'
-        }`}
-        title={t(
-          '开启后允许助手编写脚本批量并行编排步骤动作',
-          'Allow the assistant to write orchestration scripts for batch & parallel actions',
-        )}
-      >
-        <span>{t('代码模式', 'Code Mode')}</span>
-        <span className="font-mono text-[10.5px]">{effectiveCodeMode ? 'ON' : 'OFF'}</span>
-      </button>
-
       <div
         className="inline-flex items-center gap-0.5 rounded border border-border bg-muted/35 p-0.5"
         role="group"
@@ -850,7 +817,6 @@ export function ShellAgentPanel({
         await startSessionAgentRun({
           sessionId: targetSession.id,
           prompt,
-          codeMode: effectiveCodeMode,
           multiAgentConcurrency: effectiveConcurrency,
         });
       }
@@ -887,7 +853,6 @@ export function ShellAgentPanel({
         surface.sessionKind === 'CODING' && !targetSession.targetId && codingTargetApp
           ? `[Target application ID: ${codingTargetApp.id}]\n${prompt}`
           : prompt,
-      codeMode: effectiveCodeMode,
       multiAgentConcurrency: effectiveConcurrency,
       ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
       ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),

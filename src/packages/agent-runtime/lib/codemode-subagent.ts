@@ -12,13 +12,6 @@ import type {
   ToolResultMessage,
 } from '@earendil-works/pi-ai';
 import {
-  InlineCodemodeSandbox,
-  loadQuickJSWasm,
-  renderDeclarations,
-  type CodemodeTool,
-  type CodemodeWasmModule,
-} from '@earendil-works/pi-codemode';
-import {
   DEFAULT_MULTI_AGENT_CONCURRENCY,
   type AgentSession,
   type AgentSubagentLaneTrace,
@@ -36,24 +29,6 @@ import {
 import type { OpenAiFunctionTool } from './tools.js';
 import { DOCUMENT_LEVEL_TOOL_NAMES, checkScreenHelperCall, screenHelperTools } from './prototype-design-guide.js';
 
-let cachedWasmPromise: Promise<CodemodeWasmModule> | undefined;
-
-function getSharedQuickJsWasm(): Promise<CodemodeWasmModule> {
-  if (!cachedWasmPromise) {
-    cachedWasmPromise = loadQuickJSWasm();
-  }
-  return cachedWasmPromise;
-}
-
-export function resolveSessionCodeModeEnabled(
-  session: Pick<AgentSession, 'codeMode'>,
-  override?: boolean,
-): boolean {
-  if (override !== undefined) return Boolean(override);
-  if (session.codeMode !== undefined) return Boolean(session.codeMode);
-  return true;
-}
-
 export function resolveSessionMultiAgentConcurrency(
   session: Pick<AgentSession, 'multiAgentConcurrency'>,
   override?: number,
@@ -64,26 +39,6 @@ export function resolveSessionMultiAgentConcurrency(
   }
   return Math.max(1, Math.min(6, Math.round(raw)));
 }
-
-export const CODEMODE_OPENAI_TOOL: OpenAiFunctionTool = {
-  type: 'function',
-  function: {
-    name: 'codemode',
-    description:
-      'Execute an async JavaScript orchestration script in a deterministic QuickJS sandbox. Inside `code`, call any available session tool via `await tools.<tool_name>(args)` and fan out independent work in parallel with `await Promise.all([...])`. Use `text(...)` or `return ...` to report concise results.',
-    parameters: {
-      type: 'object',
-      properties: {
-        code: {
-          type: 'string',
-          description:
-            'Async JavaScript function body using `await tools.<name>(args)` and `Promise.all` (no imports/fetch/process needed).',
-        },
-      },
-      required: ['code'],
-    },
-  },
-};
 
 export const SPAWN_SUBAGENTS_OPENAI_TOOL: OpenAiFunctionTool = {
   type: 'function',
@@ -134,145 +89,25 @@ export const SPAWN_SUBAGENTS_OPENAI_TOOL: OpenAiFunctionTool = {
   },
 };
 
-export function renderCodemodePromptSection(
-  callableTools: readonly Tool[],
+export function renderSubagentPromptSection(
   locale: AgentLocale,
   concurrency: number,
 ): string {
-  const codemodeDecls: CodemodeTool[] = callableTools
-    .filter((t) => t.name !== 'codemode')
-    .map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.parameters as Record<string, unknown>,
-      execute: () => undefined,
-    }));
-
-  let renderedTypes = '';
-  try {
-    renderedTypes = renderDeclarations({ tools: codemodeDecls });
-  } catch {
-    renderedTypes = codemodeDecls.map((t) => `// tools.${t.name}(args)`).join('\n');
-  }
-
   if (locale === 'en-US') {
     return [
-      `[Code Mode & Parallel Multi-Agent Execution]`,
-      `- \`codemode\` is ENABLED: you can call \`codemode\` with an async JS body using \`await tools.<tool_name>(args)\` and \`await Promise.all([...])\` to batch multiple tool operations in one round-trip.`,
+      `[Parallel Multi-Agent Execution]`,
       concurrency > 1
-        ? `- \`spawn_subagents\` is ENABLED (concurrency = ${concurrency} parallel subagents): for multi-screen prototype generation or multi-module modeling, declare the Build Plan first (\`plan_screens\`), set up the shared look (\`init_prototype_shell\`), then call \`spawn_subagents\` (directly or inside \`codemode\`) so ${concurrency} subagents build screens simultaneously without hitting single-call output limits.`
+        ? `- \`spawn_subagents\` is ENABLED (concurrency = ${concurrency} parallel subagents): for multi-screen prototype generation or multi-module modeling, declare the Build Plan first (\`plan_screens\`), define the Style Tile (\`define_style\`), then call \`spawn_subagents\` so ${concurrency} subagents build screens simultaneously without hitting single-call output limits.`
         : `- Running in single-agent mode (concurrency = 1).`,
-      `<codemode_declarations>\n${renderedTypes}\n</codemode_declarations>`,
     ].join('\n');
   }
 
   return [
-    `【Code Mode 代码编排与多智能体并行执行（已开启）】`,
-    `- \`codemode\` 已启用：你可以调用 \`codemode\` 工具编写异步 JS 脚本，通过 \`await tools.<工具名>(参数)\` 与 \`await Promise.all([...])\` 在单轮内批量组合多个工具调用，减少往返等待。`,
+    `【多智能体并行执行（已开启）】`,
     concurrency > 1
-      ? `- \`spawn_subagents\` 多智能体并行已启用（默认同时运行 **${concurrency}** 个子智能体）：生成首版多屏原型或整页重做时，**严禁把所有屏幕塞进单次巨型 HTML 调用**；请先调用 \`plan_screens\` 列出施工计划（画布随之放好空白画板），再调用 \`init_prototype_shell\` 设定共享外观，然后调用 \`spawn_subagents\` 将各分屏并行交给子智能体分别调用 \`upsert_prototype_screen\` 完成！`
+      ? `- \`spawn_subagents\` 多智能体并行已启用（默认同时运行 **${concurrency}** 个子智能体）：生成首版多屏原型或批量改屏时，请先调用 \`plan_screens\` 列出施工计划（画布随之放好空白画板），再调用 \`define_style\` 设定风格样张与共用组件，然后调用 \`spawn_subagents\` 将各分屏并行交给子智能体分别调用 \`upsert_prototype_screen\` 完成！`
       : `- 当前并发度设为 1（单智能体串行模式）。`,
-    `<codemode_declarations>\n${renderedTypes}\n</codemode_declarations>`,
   ].join('\n');
-}
-
-export interface RunCodemodeScriptOptions {
-  code: string;
-  callableTools: readonly Tool[];
-  signal: AbortSignal;
-  timeoutMs?: number;
-  executeNestedTool: (
-    toolName: string,
-    args: Record<string, unknown>,
-    nestedCallIndex: number,
-  ) => Promise<{ outputJson: unknown; isError: boolean; errorText?: string }>;
-}
-
-export interface CodemodeExecutionSummary {
-  isError: boolean;
-  outputText: string;
-  callsCount: number;
-  failedCallsCount: number;
-}
-
-export async function runCodemodeScript(
-  options: RunCodemodeScriptOptions,
-): Promise<CodemodeExecutionSummary> {
-  const wasm = await getSharedQuickJsWasm();
-  let nestedSeq = 0;
-
-  const sandboxTools: CodemodeTool[] = options.callableTools
-    .filter((t) => t.name !== 'codemode')
-    .map((spec) => ({
-      name: spec.name,
-      description: spec.description,
-      inputSchema: spec.parameters as Record<string, unknown>,
-      async execute(rawArgs) {
-        if (options.signal.aborted) {
-          throw new Error('Execution aborted');
-        }
-        nestedSeq += 1;
-        const safeArgs =
-          rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
-            ? (rawArgs as Record<string, unknown>)
-            : {};
-        const res = await options.executeNestedTool(spec.name, safeArgs, nestedSeq);
-        if (res.isError && res.errorText) {
-          throw new Error(res.errorText);
-        }
-        return res.outputJson;
-      },
-    }));
-
-  const sandbox = new InlineCodemodeSandbox({
-    wasm,
-    tools: sandboxTools,
-    timeoutMs: options.timeoutMs ?? 240_000,
-    memoryLimitBytes: 128 * 1024 * 1024,
-  });
-
-  try {
-    const cleanCode = options.code
-      .replace(/^```(?:javascript|js|ts|typescript)?\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-
-    const result = await sandbox.execute(cleanCode, { signal: options.signal });
-    const textLines = result.output
-      .filter((item): item is Extract<typeof item, { type: 'text' }> => item.type === 'text')
-      .map((item) => item.text);
-
-    const failedCallsCount = result.calls.filter((c) => c.status !== 'ok').length;
-
-    if (!result.ok) {
-      const partial = textLines.length > 0 ? `\nOutput before error:\n${textLines.join('\n')}` : '';
-      return {
-        isError: true,
-        outputText: `Codemode ${result.error.kind} error: ${result.error.message}${partial}`,
-        callsCount: result.calls.length,
-        failedCallsCount: failedCallsCount + 1,
-      };
-    }
-
-    const returnStr =
-      result.value !== undefined
-        ? typeof result.value === 'string'
-          ? result.value
-          : JSON.stringify(result.value)
-        : '';
-
-    const combined = [...textLines, ...(returnStr ? [returnStr] : [])].filter(Boolean).join('\n');
-    return {
-      isError: false,
-      outputText:
-        combined ||
-        `Completed ${result.calls.length} nested tool call(s) in QuickJS Code Mode sandbox.`,
-      callsCount: result.calls.length,
-      failedCallsCount,
-    };
-  } finally {
-    await sandbox.close().catch(() => {});
-  }
 }
 
 export interface SubagentTaskSpec {

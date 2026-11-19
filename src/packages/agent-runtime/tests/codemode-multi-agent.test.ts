@@ -7,12 +7,11 @@ import {
   extractPrototypeArtboards,
   getToolsForAgentKind,
   initPrototypeShell,
-  runCodemodeScript,
   upsertPrototypeScreen,
 } from '../index.js';
 
-describe('Code Mode (QuickJS) & 3-Way Parallel Multi-Agent Prototype Co-Design', () => {
-  it('enables codeMode=true and multiAgentConcurrency=3 by default on new AgentSessions and exposes codemode + spawn_subagents tools', () => {
+describe('3-Way Parallel Multi-Agent Prototype Co-Design', () => {
+  it('enables multiAgentConcurrency=3 by default on new AgentSessions and exposes spawn_subagents without codemode', () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     const session = store.createAgentSession({
       projectId: 'proj-contract',
@@ -20,18 +19,16 @@ describe('Code Mode (QuickJS) & 3-Way Parallel Multi-Agent Prototype Co-Design',
       title: '咖啡店管理系统 · 交互原型',
     });
 
-    expect(session.codeMode).toBe(true);
     expect(session.multiAgentConcurrency).toBe(3);
 
     const offered = getToolsForAgentKind('PROTOTYPE_CO_DESIGN', {
-      codeMode: session.codeMode,
       multiAgentConcurrency: session.multiAgentConcurrency,
     });
     const names = offered.map((t) => t.name);
     expect(names).toContain('init_prototype_shell');
     expect(names).toContain('upsert_prototype_screen');
     expect(names).toContain('spawn_subagents');
-    expect(names).toContain('codemode');
+    expect(names).not.toContain('codemode');
   });
 
   it('assembles multi-artboard prototype via initPrototypeShell + upsertPrototypeScreen and extracts isolated artboards cleanly', () => {
@@ -150,28 +147,8 @@ describe('Code Mode (QuickJS) & 3-Way Parallel Multi-Agent Prototype Co-Design',
         return;
       }
 
-      // Coordinator round 1: calls `codemode` to init 4 artboards and spawn 4 parallel subagents!
+      // Coordinator round 1: calls `init_prototype_shell` + `spawn_subagents` to init 4 artboards and spawn 4 parallel subagents!
       if (lastMsg?.role === 'user') {
-        const codeScript = `
-          await tools.init_prototype_shell({
-            appTitle: "咖啡店管理系统",
-            screens: [
-              { screenId: "SCR-S1", screenName: "会员储值台账", screenType: "LIST" },
-              { screenId: "SCR-S2", screenName: "储值录入抽屉", screenType: "FORM" },
-              { screenId: "SCR-S3", screenName: "现磨点单收银", screenType: "LIST" },
-              { screenId: "SCR-S4", screenName: "门市日结对账", screenType: "REPORT" }
-            ]
-          });
-          const res = await tools.spawn_subagents({
-            tasks: [
-              { title: "绘制会员储值台账", roleLabel: "会员设计师", screenId: "SCR-S1", screenName: "会员储值台账", instruction: "构建储值列表" },
-              { title: "绘制储值录入抽屉", roleLabel: "交互架构师", screenId: "SCR-S2", screenName: "储值录入抽屉", instruction: "构建充值档位" },
-              { title: "绘制现磨点单收银", roleLabel: "收银设计师", screenId: "SCR-S3", screenName: "现磨点单收银", instruction: "构建饮品网格" },
-              { title: "绘制门市日结对账", roleLabel: "财务设计师", screenId: "SCR-S4", screenName: "门市日结对账", instruction: "构建日结核对表" }
-            ]
-          });
-          return res;
-        `;
         const coordChunk = {
           id: 'cmpl-coord-1',
           object: 'chat.completion.chunk',
@@ -185,11 +162,35 @@ describe('Code Mode (QuickJS) & 3-Way Parallel Multi-Agent Prototype Co-Design',
                 tool_calls: [
                   {
                     index: 0,
-                    id: 'call-codemode-1',
+                    id: 'call-shell-1',
                     type: 'function',
                     function: {
-                      name: 'codemode',
-                      arguments: JSON.stringify({ code: codeScript }),
+                      name: 'init_prototype_shell',
+                      arguments: JSON.stringify({
+                        appTitle: '咖啡店管理系统',
+                        screens: [
+                          { screenId: 'SCR-S1', screenName: '会员储值台账', screenType: 'LIST' },
+                          { screenId: 'SCR-S2', screenName: '储值录入抽屉', screenType: 'FORM' },
+                          { screenId: 'SCR-S3', screenName: '现磨点单收银', screenType: 'LIST' },
+                          { screenId: 'SCR-S4', screenName: '门市日结对账', screenType: 'REPORT' },
+                        ],
+                      }),
+                    },
+                  },
+                  {
+                    index: 1,
+                    id: 'call-spawn-1',
+                    type: 'function',
+                    function: {
+                      name: 'spawn_subagents',
+                      arguments: JSON.stringify({
+                        tasks: [
+                          { title: '绘制会员储值台账', roleLabel: '会员设计师', screenId: 'SCR-S1', screenName: '会员储值台账', instruction: '构建储值列表' },
+                          { title: '绘制储值录入抽屉', roleLabel: '交互架构师', screenId: 'SCR-S2', screenName: '储值录入抽屉', instruction: '构建充值档位' },
+                          { title: '绘制现磨点单收银', roleLabel: '收银设计师', screenId: 'SCR-S3', screenName: '现磨点单收银', instruction: '构建饮品网格' },
+                          { title: '绘制门市日结对账', roleLabel: '财务设计师', screenId: 'SCR-S4', screenName: '门市日结对账', instruction: '构建日结核对表' },
+                        ],
+                      }),
                     },
                   },
                 ],
@@ -283,7 +284,6 @@ describe('Code Mode (QuickJS) & 3-Way Parallel Multi-Agent Prototype Co-Design',
       expect(subagentEvents.length).toBeGreaterThanOrEqual(4);
 
       const lastAssistant = turn.session.messages.filter((m) => m.role === 'assistant').at(-1)!;
-      expect(lastAssistant.codeModeScript).toContain('tools.spawn_subagents');
       expect(lastAssistant.subagentLanes).toHaveLength(4);
       expect(lastAssistant.subagentLanes!.every((l) => l.status === 'DONE')).toBe(true);
 
@@ -301,34 +301,5 @@ describe('Code Mode (QuickJS) & 3-Way Parallel Multi-Agent Prototype Co-Design',
     } finally {
       server.close();
     }
-  });
-
-  it('executes standalone QuickJS runCodemodeScript with deterministic Promise.all batching', async () => {
-    const visited: string[] = [];
-    const res = await runCodemodeScript({
-      code: `
-        const [a, b] = await Promise.all([
-          tools.step_one({ key: 'alpha' }),
-          tools.step_one({ key: 'beta' }),
-        ]);
-        text(\`batched=\${a.echo}+\${b.echo}\`);
-      `,
-      callableTools: [
-        {
-          name: 'step_one',
-          description: 'Echo key',
-          parameters: { type: 'object', properties: { key: { type: 'string' } } },
-        },
-      ],
-      signal: new AbortController().signal,
-      executeNestedTool: async (_name, args) => {
-        visited.push(String(args.key));
-        return { outputJson: { echo: args.key }, isError: false };
-      },
-    });
-
-    expect(res.isError).toBe(false);
-    expect(visited.sort()).toEqual(['alpha', 'beta']);
-    expect(res.outputText).toContain('batched=alpha+beta');
   });
 });

@@ -134,8 +134,7 @@ describe('Live prototype build canvas & Pi Agent Code Mode / 3-Way Multi-Agent U
       );
 
       expect(panelHtml).toContain('data-testid="agent-execution-mode-bar"');
-      expect(panelHtml).toContain('data-testid="agent-codemode-toggle"');
-      expect(panelHtml).toMatch(/data-testid="agent-codemode-toggle"[^>]*aria-pressed="true"/);
+      expect(panelHtml).not.toContain('data-testid="agent-codemode-toggle"');
       expect(panelHtml).toMatch(/data-testid="agent-concurrency-btn-3"[^>]*aria-pressed="true"/);
       expect(checkBusinessViewMarkup(panelHtml)).toHaveLength(0);
 
