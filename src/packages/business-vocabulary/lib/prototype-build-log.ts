@@ -76,6 +76,27 @@ export function describePrototypeBuildLogEntry(
   switch (entry.kind) {
     case 'plan_ready':
       return pick({ zh: `列好施工计划：共 ${count} 屏`, en: `Build plan ready: ${count} screens` }, locale);
+    case 'style_started':
+      return pick(
+        { zh: '开始画风格样张：先定颜色、字体和共用组件', en: 'Drawing the style sample: colours, type and shared components first' },
+        locale,
+      );
+    case 'style_ready':
+      return entry.locked
+        ? pick(
+            {
+              zh: '风格样张画好了：用的是你确认过的设计值，每一屏都用这套组件',
+              en: 'Style sample ready, using the design values you approved; every screen uses these components',
+            },
+            locale,
+          )
+        : pick(
+            {
+              zh: '风格样张画好了：设计值由助手提出，每一屏都用这套组件',
+              en: 'Style sample ready, with design values proposed by the assistant; every screen uses these components',
+            },
+            locale,
+          );
     case 'screen_started':
       return pick({ zh: `开始画「${name}」`, en: `Started drawing "${name}"` }, locale);
     case 'screen_done':

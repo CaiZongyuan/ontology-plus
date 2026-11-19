@@ -46,6 +46,8 @@ export interface PrototypeBuildScreen {
 
 export type PrototypeBuildLogKind =
   | 'plan_ready'
+  | 'style_started'
+  | 'style_ready'
   | 'screen_started'
   | 'screen_done'
   | 'screen_failed'
@@ -69,6 +71,8 @@ export interface PrototypeBuildLogEntry {
   count?: number;
   /** build_finished: screens not finished. */
   failedCount?: number;
+  /** style_ready: the values are the approved Style Tile's (locked). */
+  locked?: boolean;
 }
 
 export interface PrototypeBuildState {

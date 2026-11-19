@@ -228,6 +228,11 @@ export {
   composePrototypeDocument,
   createPartialScreenThrottle,
   prototypeFrameAssets,
+  readStreamingPrototypeStyle,
+  PROTOTYPE_STYLE_BOARD_ID,
+  type PrototypeStyleStream,
+  type PrototypeLiveStyleState,
+  type PrototypeCanvasStyleBoard,
   type PrototypeScreenStatus,
   type PrototypeScreenStub,
   type PrototypeScreenSlice,
@@ -240,6 +245,30 @@ export {
   type PrototypeCanvasArtboard,
   type PrototypeCanvasModel,
 } from './lib/prototype-live.js';
+
+export {
+  PROTOTYPE_STYLE_VALUE_KEYS,
+  PROTOTYPE_STYLE_VARIABLES,
+  PROTOTYPE_STYLE_ATTR,
+  PROTOTYPE_STYLE_TILE_ATTR,
+  PROTOTYPE_STYLE_TILE_CSS,
+  readPrototypeStyleValues,
+  completePrototypeStyleValues,
+  resolvePrototypeStyleValues,
+  prototypeStyleValuesCss,
+  prototypeStyleCss,
+  prototypeStyleHeadHtml,
+  prototypeStyleTileBody,
+  applyPrototypeStyleToDocument,
+  readPrototypeDocumentStyle,
+  sanitizeStyleCss,
+  sanitizeStyleSampleHtml,
+  type PrototypeStyleValues,
+  type PrototypeStyleValueKey,
+  type ResolvedPrototypeStyleValues,
+  type PrototypeStyle,
+  type PrototypeDocumentStyle,
+} from './lib/prototype-style.js';
 
 export {
   PROTOTYPE_BUILD_PHASES,
