@@ -250,7 +250,8 @@ describe('review fixes (#90)', () => {
         finding: '订货单表格右侧超出了画板宽度',
         fixActivity: {
           elementId: 'EL-ORDERS-TABLE',
-          sentence: '发现问题：订货单表格右侧超出了画板宽度。正在收窄列宽',
+          issue: '订货单表格右侧超出了画板宽度',
+          fixNote: '收窄列宽',
           state: 'fixing',
         },
       }),
@@ -260,7 +261,8 @@ describe('review fixes (#90)', () => {
       {
         screenId: 'SCR-B',
         elementId: 'EL-ORDERS-TABLE',
-        sentence: '发现问题：订货单表格右侧超出了画板宽度。正在收窄列宽',
+        issue: '订货单表格右侧超出了画板宽度',
+        fixNote: '收窄列宽',
         state: 'fixing',
       },
     ]);

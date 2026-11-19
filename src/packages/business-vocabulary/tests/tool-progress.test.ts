@@ -44,6 +44,27 @@ describe('tool-call to business-language progress mapping', () => {
       zh: '正在局部修正原型分屏「收窄订货单表格宽度」',
       en: "Fixing prototype screen locally '收窄订货单表格宽度'",
     });
+    // S-2: a raw technical ID in `targetLabel` must NOT short-circuit `??` and drop `note` / `screenName`
+    expect(
+      formatToolProgress(
+        'edit_screen',
+        { screenId: 'SCR-ORDERS', elementId: 'EL-ORDERS-TABLE', note: '收窄订货单表格宽度' },
+        { targetLabel: 'EL-ORDERS-TABLE' },
+      ),
+    ).toEqual({
+      zh: '正在局部修正原型分屏「收窄订货单表格宽度」',
+      en: "Fixing prototype screen locally '收窄订货单表格宽度'",
+    });
+    expect(
+      formatToolProgress(
+        'report_review',
+        { screenId: 'SCR-ORDERS', screenName: '订货单列表' },
+        { targetLabel: 'SCR-ORDERS' },
+      ),
+    ).toEqual({
+      zh: '正在记录「订货单列表」的视觉检查结果',
+      en: "Recording visual check result for '订货单列表'",
+    });
     expect(checkBusinessViewMarkup(`<p>${formatToolProgress('define_style', {}).en}</p>`)).toEqual([]);
 
     // Verify 11 upsert_* tools derive directly from MODEL_BUSINESS_NAMES

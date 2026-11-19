@@ -568,10 +568,14 @@ function extractTargetAnchorFromArgs(
   if (toolName === REPORT_REVIEW_TOOL_NAME || toolName === EDIT_SCREEN_TOOL_NAME) {
     const screenId = typeof args.screenId === 'string' && args.screenId.trim() ? args.screenId.trim() : undefined;
     const elementId = typeof args.elementId === 'string' && args.elementId.trim() ? args.elementId.trim() : undefined;
+    const note = typeof args.note === 'string' && args.note.trim() ? args.note.trim() : undefined;
+    const screenName =
+      typeof args.screenName === 'string' && args.screenName.trim() ? args.screenName.trim() : undefined;
     if (!screenId && !elementId) return undefined;
     return {
       ...(screenId ? { screenId } : {}),
       ...(elementId ? { elementId } : {}),
+      ...(note ? { label: note } : screenName ? { label: screenName } : {}),
     };
   }
   if (
@@ -5411,6 +5415,27 @@ async function executeUnifiedTurnCore(
     let activeReviewChain = Promise.resolve();
     const singleAgentWrittenScreens: string[] = [];
 
+    const humanScreenLabel = (sid: string): string | undefined => {
+      if (!sid) return undefined;
+      return (
+        prototypeBuildRun?.plannedScreens()?.find((p) => p.screenId === sid)?.screenName ||
+        (prototypeTurnDraft
+          ? splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find((s) => s.screenId === sid)?.screenName
+          : undefined) ||
+        undefined
+      );
+    };
+
+    const recordSingleAgentScreenWrite = (sid: string): void => {
+      if (!sid || !prototypeTurnDraft) return;
+      const landedHtml =
+        splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find((s) => s.screenId === sid)?.html ?? '';
+      if (landedHtml) prototypeBuildRun?.observeLeadScreenWritten(sid, landedHtml);
+      if (prototypeBuildRun?.active() && !singleAgentWrittenScreens.includes(sid)) {
+        singleAgentWrittenScreens.push(sid);
+      }
+    };
+
     const runReportReviewTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
       const started = Date.now();
       const sid = typeof rawArgs.screenId === 'string' ? rawArgs.screenId.trim() : '';
@@ -5429,6 +5454,7 @@ async function executeUnifiedTurnCore(
               summary: msg,
             };
           })();
+      const screenLabel = humanScreenLabel(sid);
       return {
         trace: {
           id: callId,
@@ -5436,7 +5462,7 @@ async function executeUnifiedTurnCore(
           arguments: rawArgs,
           output: result.summary,
           isError: result.isError,
-          ...(sid ? { targetAnchor: { screenId: sid, label: sid } } : {}),
+          ...(sid ? { targetAnchor: { screenId: sid, ...(screenLabel ? { label: screenLabel } : {}) } } : {}),
           durationMs: Date.now() - started,
         },
         toolResultContent: result.content,
@@ -5470,6 +5496,7 @@ async function executeUnifiedTurnCore(
       const screenId = typeof rawArgs.screenId === 'string' ? rawArgs.screenId.trim() : '';
       const elementId = typeof rawArgs.elementId === 'string' ? rawArgs.elementId.trim() : undefined;
       const note = typeof rawArgs.note === 'string' ? rawArgs.note.trim() : undefined;
+      const fallbackLabel = note ?? humanScreenLabel(screenId);
       const capErr = screenId ? prototypeBuildRun?.checkEditScreenAllowed(screenId) : null;
       if (capErr) {
         return {
@@ -5479,7 +5506,15 @@ async function executeUnifiedTurnCore(
             arguments: rawArgs,
             output: capErr,
             isError: true,
-            ...(screenId ? { targetAnchor: { screenId, ...(elementId ? { elementId } : {}), label: elementId ?? screenId } } : {}),
+            ...(screenId
+              ? {
+                  targetAnchor: {
+                    screenId,
+                    ...(elementId ? { elementId } : {}),
+                    ...(fallbackLabel ? { label: fallbackLabel } : {}),
+                  },
+                }
+              : {}),
             durationMs: Date.now() - started,
           },
           toolResultContent: JSON.stringify({ status: 'REVIEW_CAP_REACHED', diagnostic: capErr }),
@@ -5566,31 +5601,58 @@ async function executeUnifiedTurnCore(
     const runScreenVisualReview = async (screenId: string, stepNum: number): Promise<void> => {
       const sid = screenId.trim();
       if (!sid || !prototypeTurnDraft || !prototypeBuildRun || controller.signal.aborted) return;
+      if (!prototypeBuildRun.canReviewScreen(sid)) return;
+      // Verify real Playwright + headless Chromium launch readiness BEFORE emitting `review_started` (#93).
+      const hasWarmup = typeof screenshotter.warmup === 'function';
       const canUseBrowser =
         Boolean(built?.visionSupported) &&
-        (await Promise.resolve(screenshotter.available()).catch(() => false));
+        (hasWarmup
+          ? await screenshotter.warmup!().catch(() => false)
+          : await Promise.resolve(screenshotter.available()).catch(() => false));
       if (!canUseBrowser) {
         prototypeBuildRun.skipVisualReview();
         return;
       }
+
+      let preCaptured: Awaited<ReturnType<PrototypeScreenshotter['captureScreen']>> = null;
+      if (!hasWarmup) {
+        resetIdleTimer();
+        preCaptured = await screenshotter
+          .captureScreen({
+            documentHtml: prototypeTurnDraft.workingHtml,
+            screenId: sid,
+            signal: controller.signal,
+          })
+          .catch(() => null);
+        if (!preCaptured) {
+          if (!controller.signal.aborted) prototypeBuildRun.skipVisualReview();
+          return;
+        }
+      }
+
       if (!prototypeBuildRun.beginScreenReview(sid)) return;
 
       try {
         resetIdleTimer();
-        const capture = await screenshotter.captureScreen({
-          documentHtml: prototypeTurnDraft.workingHtml,
-          screenId: sid,
-          signal: controller.signal,
-        });
+        const capture =
+          preCaptured ??
+          (await screenshotter
+            .captureScreen({
+              documentHtml: prototypeTurnDraft.workingHtml,
+              screenId: sid,
+              signal: controller.signal,
+            })
+            .catch(() => null));
         if (!capture || controller.signal.aborted) return;
 
         const slice = splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find((s) => s.screenId === sid);
         if (!slice) return;
         const planEntry = prototypeBuildRun.plannedScreens()?.find((p) => p.screenId === sid);
+        const screenLabel = planEntry?.screenName ?? slice.screenName;
         const reviewPrompt = buildPrototypeScreenReviewPrompt({
           locale: effectiveLocale,
           screenId: sid,
-          screenName: planEntry?.screenName ?? slice.screenName,
+          screenName: screenLabel,
           ...(planEntry?.purpose ? { purpose: planEntry.purpose } : {}),
           screenHtml: slice.html,
         });
@@ -5611,8 +5673,10 @@ async function executeUnifiedTurnCore(
             t.name === EDIT_SCREEN_TOOL_NAME ||
             t.name === 'read_prototype_anchor',
         );
-        const MAX_REVIEW_STEPS = 3;
-        for (let rStep = 0; rStep < MAX_REVIEW_STEPS; rStep += 1) {
+        let expectedEdits = 1;
+        let editsAppliedInSubturn = 0;
+        let maxReviewSteps = 4;
+        for (let rStep = 0; rStep < maxReviewSteps; rStep += 1) {
           if (controller.signal.aborted) break;
           resetIdleTimer();
           const revStream = built!.models.streamSimple(
@@ -5636,7 +5700,11 @@ async function executeUnifiedTurnCore(
             if (ev.type === 'toolcall_delta') {
               const partial = ev.partial.content[ev.contentIndex];
               if (partial?.type === 'toolCall' && partial.name === EDIT_SCREEN_TOOL_NAME) {
-                prototypeBuildRun.observeEditScreenStream(partial.arguments);
+                const pArgs = (partial.arguments ?? {}) as Record<string, unknown>;
+                const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
+                if (!pSid || pSid === sid) {
+                  prototypeBuildRun.observeEditScreenStream({ ...pArgs, screenId: sid });
+                }
               }
             }
             if (ev.type === 'toolcall_start' || ev.type === 'toolcall_delta' || ev.type === 'toolcall_end') {
@@ -5644,7 +5712,10 @@ async function executeUnifiedTurnCore(
               if (cand && cand.type === 'toolCall' && cand.id && cand.name && !announcedIds.has(cand.id)) {
                 announcedIds.add(cand.id);
                 const cArgs = (cand.arguments ?? {}) as Record<string, unknown>;
-                const cAnchor = extractTargetAnchorFromArgs(cand.name, cArgs) ?? { screenId: sid, label: sid };
+                const cAnchor = extractTargetAnchorFromArgs(cand.name, cArgs) ?? {
+                  screenId: sid,
+                  ...(screenLabel ? { label: screenLabel } : {}),
+                };
                 emit({
                   id: nextEventId(),
                   event: 'tool_call',
@@ -5675,13 +5746,70 @@ async function executeUnifiedTurnCore(
           for (const rtc of revCalls) {
             if (controller.signal.aborted) break;
             resetIdleTimer();
-            const rArgs = {
+            const rawCallArgs = (rtc.arguments ?? {}) as Record<string, unknown>;
+            const requestedSid = typeof rawCallArgs.screenId === 'string' ? rawCallArgs.screenId.trim() : '';
+            if (requestedSid && requestedSid !== sid) {
+              // Block cross-screen mutation/inspection during `sid`'s review round (#93).
+              const scopeDiagnostic = pickLocaleText(
+                effectiveLocale,
+                `当前正在检查分屏「${screenLabel || sid}」(${sid})，严禁在检查回合中访问或修改其他分屏 (${requestedSid})。`,
+                `Currently reviewing screen "${screenLabel || sid}" (${sid}); accessing or modifying another screen (${requestedSid}) is forbidden.`,
+              );
+              if (!announcedIds.has(rtc.id)) {
+                announcedIds.add(rtc.id);
+                emit({
+                  id: nextEventId(),
+                  event: 'tool_call',
+                  data: {
+                    id: rtc.id,
+                    toolName: rtc.name,
+                    arguments: rawCallArgs,
+                    targetAnchor: { screenId: sid, ...(screenLabel ? { label: screenLabel } : {}) },
+                    step: stepNum,
+                  },
+                });
+              }
+              const rejectedTrace: AgentToolCallTrace = {
+                id: rtc.id,
+                toolName: rtc.name,
+                arguments: rawCallArgs,
+                output: scopeDiagnostic,
+                isError: true,
+                targetAnchor: { screenId: sid, ...(screenLabel ? { label: screenLabel } : {}) },
+                durationMs: 0,
+              };
+              const rejectedContent = JSON.stringify({
+                status: 'REJECTED_OUT_OF_SCOPE',
+                diagnostic: scopeDiagnostic,
+              });
+              allToolTraces.push(rejectedTrace);
+              emit({
+                id: nextEventId(),
+                event: 'tool_result',
+                data: { trace: rejectedTrace, step: stepNum },
+              });
+              reviewMessages.push({
+                role: 'toolResult',
+                toolCallId: rtc.id,
+                toolName: rtc.name,
+                content: [{ type: 'text', text: rejectedContent }],
+                isError: true,
+                timestamp: Date.now(),
+              });
+              continue;
+            }
+
+            // Force `screenId: sid` AFTER spreading so `sid` is authoritative.
+            const rArgs: Record<string, unknown> = {
+              ...rawCallArgs,
               screenId: sid,
-              ...((rtc.arguments ?? {}) as Record<string, unknown>),
             };
             if (!announcedIds.has(rtc.id)) {
               announcedIds.add(rtc.id);
-              const rAnchor = extractTargetAnchorFromArgs(rtc.name, rArgs) ?? { screenId: sid, label: sid };
+              const rAnchor = extractTargetAnchorFromArgs(rtc.name, rArgs) ?? {
+                screenId: sid,
+                ...(screenLabel ? { label: screenLabel } : {}),
+              };
               emit({
                 id: nextEventId(),
                 event: 'tool_call',
@@ -5724,20 +5852,31 @@ async function executeUnifiedTurnCore(
             });
             if (rtc.name === REPORT_REVIEW_TOOL_NAME && !revExec.isError) {
               try {
-                const parsed = JSON.parse(revExec.toolResultContent) as { status?: string };
-                if (parsed.status === 'PASS') finishedReviewRound = true;
+                const parsed = JSON.parse(revExec.toolResultContent) as {
+                  status?: string;
+                  findings?: unknown[];
+                };
+                if (parsed.status === 'PASS') {
+                  finishedReviewRound = true;
+                } else if (Array.isArray(parsed.findings) && parsed.findings.length > 0) {
+                  expectedEdits = parsed.findings.length;
+                  maxReviewSteps = Math.min(8, Math.max(4, expectedEdits + 3));
+                }
               } catch {
                 // ignore
               }
             }
             if (rtc.name === EDIT_SCREEN_TOOL_NAME && !revExec.isError) {
-              finishedReviewRound = true;
+              editsAppliedInSubturn += 1;
+              if (editsAppliedInSubturn >= expectedEdits) {
+                finishedReviewRound = true;
+              }
             }
           }
           if (finishedReviewRound) break;
         }
       } finally {
-        prototypeBuildRun.abortScreenReview(sid);
+        prototypeBuildRun.completeScreenReview(sid);
       }
     };
 
@@ -6410,16 +6549,7 @@ async function executeUnifiedTurnCore(
                         }
                         if (nestedToolName === 'upsert_prototype_screen' && !nestedOut.isError && prototypeTurnDraft) {
                           const nSid = typeof nestedArgs.screenId === 'string' ? nestedArgs.screenId.trim() : '';
-                          if (nSid) {
-                            const landedHtml =
-                              splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find(
-                                (s) => s.screenId === nSid,
-                              )?.html ?? '';
-                            if (landedHtml) prototypeBuildRun?.observeLeadScreenWritten(nSid, landedHtml);
-                            if (prototypeBuildRun?.active() && !singleAgentWrittenScreens.includes(nSid)) {
-                              singleAgentWrittenScreens.push(nSid);
-                            }
-                          }
+                          recordSingleAgentScreenWrite(nSid);
                         }
                         allToolTraces.push(nestedOut.trace);
                         emit({
@@ -6506,14 +6636,8 @@ async function executeUnifiedTurnCore(
                 ? ((tc.arguments as Record<string, unknown>).screenId as string).trim()
                 : '';
             endPartialPrototypeScreen(doneSid || undefined);
-            if (!executed.isError && doneSid && prototypeTurnDraft) {
-              const landedHtml =
-                splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find((s) => s.screenId === doneSid)
-                  ?.html ?? '';
-              if (landedHtml) prototypeBuildRun?.observeLeadScreenWritten(doneSid, landedHtml);
-              if (prototypeBuildRun?.active() && !singleAgentWrittenScreens.includes(doneSid)) {
-                singleAgentWrittenScreens.push(doneSid);
-              }
+            if (!executed.isError && doneSid) {
+              recordSingleAgentScreenWrite(doneSid);
             }
           }
           allToolTraces.push(executed.trace);

@@ -30,6 +30,8 @@ export interface PrototypeCaptureInput {
 
 export interface PrototypeScreenshotter {
   available(): Promise<boolean> | boolean;
+  /** Ensures Playwright & headless Chromium actually launch before emitting `review_started` (#93). */
+  warmup?(): Promise<boolean>;
   captureScreen(input: PrototypeCaptureInput): Promise<PrototypeScreenCapture | null>;
   shutdown?(): Promise<void>;
 }
@@ -92,6 +94,13 @@ function dynamicImport<T>(specifier: string): Promise<T> {
 async function discoverChromiumExecutable(): Promise<string | null> {
   if (!isNodeRuntime()) return null;
   try {
+    // Playwright's chromium launcher itself must be importable; a lone system browser without
+    // Playwright cannot capture screenshots and must report unavailable (`false`).
+    const pw = await dynamicImport<{
+      chromium?: { launch?: unknown; executablePath?: () => string };
+    }>('@playwright/test').catch(() => null);
+    if (!pw?.chromium || typeof pw.chromium.launch !== 'function') return null;
+
     const fs = await dynamicImport<typeof import('node:fs')>('node:fs');
     const os = await dynamicImport<typeof import('node:os')>('node:os');
     const path = await dynamicImport<typeof import('node:path')>('node:path');
@@ -110,8 +119,7 @@ async function discoverChromiumExecutable(): Promise<string | null> {
       if (existsExec(envVar)) return envVar;
     }
 
-    const pw = await dynamicImport<{ chromium?: { executablePath(): string } }>('@playwright/test').catch(() => null);
-    const defaultExec = pw?.chromium?.executablePath?.();
+    const defaultExec = pw.chromium.executablePath?.();
     if (existsExec(defaultExec)) return defaultExec;
 
     const cacheRoots = [
@@ -171,7 +179,7 @@ export function composeArtboardDocumentForScreenshot(documentHtml: string, scree
   const bodyInner = composeArtboardBody(frame, sid, target.html);
   const runtimeStyle = `<style data-onto-screenshot-runtime>[data-screen-id]{display:block!important;visibility:visible!important;opacity:1!important}</style>`;
   const escapedJsSid = JSON.stringify(sid);
-  const activeNavScript = `<script>(function(){var tabs=document.querySelectorAll('[data-nav-screen]');for(var i=0;i<tabs.length;i++){tabs[i].classList.toggle('is-active',tabs[i].getAttribute('data-nav-screen')===${escapedJsSid});}})();</script>`;
+  const activeNavScript = `<script>(function(){var secs=document.querySelectorAll('[data-screen-id]');for(var s=0;s<secs.length;s++){secs[s].classList.toggle('is-active',secs[s].getAttribute('data-screen-id')===${escapedJsSid});}var tabs=document.querySelectorAll('[data-nav-screen]');for(var i=0;i<tabs.length;i++){tabs[i].classList.toggle('is-active',tabs[i].getAttribute('data-nav-screen')===${escapedJsSid});}})();</script>`;
   return `<!DOCTYPE html>\n<html${frame.htmlAttrs}>\n<head>${frame.headHtml}\n${runtimeStyle}</head>\n<body${frame.bodyAttrs}>${bodyInner}\n${activeNavScript}</body>\n</html>`;
 }
 
@@ -221,6 +229,7 @@ export function createPrototypeScreenshotter(
 
   let browserPromise: Promise<PlaywrightBrowserLike> | null = null;
   let resolvedBrowser: PlaywrightBrowserLike | null = null;
+  let browserLaunchFailed = false;
   let activePages = 0;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const waiters: (() => void)[] = [];
@@ -277,11 +286,12 @@ export function createPrototypeScreenshotter(
   };
 
   const ensureBrowser = async (): Promise<PlaywrightBrowserLike | null> => {
+    if (browserLaunchFailed) return null;
     if (resolvedBrowser && !resolvedBrowser.isConnected()) {
       await closeBrowserNow();
     }
     if (!browserPromise) {
-      const execPath = await resolveExec();
+      const execPath = await Promise.resolve(resolveExec()).catch(() => null);
       if (!execPath) return null;
       browserPromise = (async () => {
         const pw = await dynamicImport<{
@@ -289,6 +299,10 @@ export function createPrototypeScreenshotter(
             launch(opts: { executablePath: string; headless: boolean; args: string[] }): Promise<PlaywrightBrowserLike>;
           };
         }>('@playwright/test');
+        const linuxSandboxArgs =
+          typeof process !== 'undefined' && process.platform === 'linux'
+            ? ['--no-sandbox', '--disable-setuid-sandbox']
+            : [];
         const launched = await pw.chromium.launch({
           executablePath: execPath,
           headless: true,
@@ -297,6 +311,7 @@ export function createPrototypeScreenshotter(
             '--disable-extensions',
             '--hide-scrollbars',
             '--disable-dev-shm-usage',
+            ...linuxSandboxArgs,
           ],
         });
         resolvedBrowser = launched;
@@ -305,6 +320,7 @@ export function createPrototypeScreenshotter(
       browserPromise.catch(() => {
         browserPromise = null;
         resolvedBrowser = null;
+        browserLaunchFailed = true;
       });
     }
     return browserPromise.catch(() => null);
@@ -312,9 +328,18 @@ export function createPrototypeScreenshotter(
 
   return {
     async available(): Promise<boolean> {
+      if (browserLaunchFailed) return false;
       if (!isNodeRuntime() && !options.resolveExecutablePath) return false;
       const execPath = await Promise.resolve(resolveExec()).catch(() => null);
       return Boolean(execPath);
+    },
+
+    async warmup(): Promise<boolean> {
+      if (browserLaunchFailed) return false;
+      if (!isNodeRuntime() && !options.resolveExecutablePath) return false;
+      const browser = await ensureBrowser();
+      scheduleIdleClose();
+      return Boolean(browser);
     },
 
     async captureScreen(input: PrototypeCaptureInput): Promise<PrototypeScreenCapture | null> {

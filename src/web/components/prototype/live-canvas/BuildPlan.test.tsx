@@ -228,7 +228,7 @@ describe('Build Plan on the live canvas (#90)', () => {
     }
   });
 
-  it('shows scan-band while reviewing, live fix narration while fixing, real review counts when done, and 未做视觉检查 when skipped (#93)', async () => {
+  it('shows scan-band while reviewing, live fix narration in artboards & web mode, zero-latency bilingual switch, and 未做视觉检查 when skipped (#93)', async () => {
     const t = createPrototypeBuildTracker({ now: () => new Date('2026-11-19T10:15:00') });
     t.start();
     t.plan(PLAN, false);
@@ -240,7 +240,7 @@ describe('Build Plan on the live canvas (#90)', () => {
       status: 'reviewing',
       agent: 1,
       writtenElements: 5,
-      fixActivity: { sentence: '正在按画板尺寸截图并逐项检查…', state: 'reviewing' },
+      fixActivity: { state: 'reviewing' },
     });
     t.log({ agent: 0, kind: 'review_started', screenId: 'SCR-HOME' });
     t.screen('SCR-ORDERS', {
@@ -250,7 +250,8 @@ describe('Build Plan on the live canvas (#90)', () => {
       finding: '表格右侧超出画板宽度，「状态」列被裁切',
       fixActivity: {
         elementId: 'EL-ORDERS-TABLE',
-        sentence: '发现问题：表格右侧超出画板宽度（EL-ORDERS-TABLE）。正在修改：收窄列宽以完整显示状态列',
+        issue: '表格右侧超出画板宽度（EL-ORDERS-TABLE）。',
+        fixNote: '收窄列宽以完整显示状态列',
         state: 'fixing',
       },
     });
@@ -280,9 +281,37 @@ describe('Build Plan on the live canvas (#90)', () => {
     // Default fix narration renders sanitized business text (no EL-ORDERS-TABLE leak!)
     const fixPill = q('prototype-fix-narration-SCR-ORDERS');
     expect(fixPill).not.toBeNull();
-    expect(fixPill!.textContent).toContain('收窄列宽以完整显示状态列');
+    expect(fixPill!.textContent).toContain('发现问题：');
+    expect(fixPill!.textContent).toContain('正在修改：收窄列宽以完整显示状态列');
     expect(fixPill!.textContent).not.toContain('EL-ORDERS-TABLE');
     expect(checkBusinessViewMarkup(host.innerHTML, { ignoreTestIds: ['prototype-canvas-world'] })).toEqual([]);
+
+    // Web mode (#97) also shows reviewing badge/scan and active fixing narration banner!
+    await act(async () => q('prototype-dock-view-web')!.click());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(q('prototype-web-reviewing')?.textContent).toContain('主助手正在检查这一页');
+    expect(q('prototype-web-scan-SCR-HOME')).not.toBeNull();
+    await act(async () => q('prototype-strip-card-SCR-ORDERS')!.click());
+    expect(q('prototype-web-fixing')?.textContent).toContain('主助手正在修正这一页');
+    expect(q('prototype-fix-narration-SCR-ORDERS')?.textContent).toContain('正在修改：收窄列宽以完整显示状态列');
+    await act(async () => q('prototype-dock-view-artboards')!.click());
+    localStorage.removeItem('onto_prototype_view');
+
+    // S-3: switching locale to en-US re-renders the SAME `fixActivity` state in English chrome immediately
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    localStorage.setItem('onto_locale', 'en-US');
+    try {
+      await render({ documentHtml: DOC, build: t.state(), busy: true });
+      expect(q('prototype-fix-narration-SCR-ORDERS')?.textContent).toContain('Issue found:');
+      expect(q('prototype-fix-narration-SCR-ORDERS')?.textContent).toContain('Fixing:');
+    } finally {
+      localStorage.removeItem('onto_locale');
+    }
+    await act(async () => root.unmount());
+    root = createRoot(host);
 
     // Custom `renderFixActivity` prop (#92 seam) overrides default pill cleanly
     const customSpy = vi.fn((acts) => <div data-testid="custom-fix-layer">{acts.length}</div>);

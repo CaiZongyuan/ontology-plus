@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import { expect, test } from '@playwright/test';
 
 /**
@@ -8,8 +7,6 @@ import { expect, test } from '@playwright/test';
  * issue in business language, and `edit_screen` uniquely replaces only that snippet in place
  * without reloading the artboard iframe or storing screenshot bytes in `界面原型.html`.
  */
-
-const EVIDENCE_DIR = '.scratch/issue-93';
 
 async function setUpProjectWithConfirmedRequirements(request: import('@playwright/test').APIRequestContext) {
   const createdRes = await request.post('/api/projects', {
@@ -43,17 +40,13 @@ async function setUpProjectWithConfirmedRequirements(request: import('@playwrigh
 }
 
 test.describe('Prototype screenshot review & targeted fix (#93)', () => {
-  test.beforeAll(() => {
-    fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
-  });
-
   test.beforeEach(({ page }) => {
     page.on('dialog', (dialog) => {
       throw new Error(`Forbidden blocking browser dialog triggered: ${dialog.message()}`);
     });
   });
 
-  test('runs live 截图检查 with scan-band, logs business finding, and morphs targeted fix on SCR-ORDERS without iframe reload', async ({
+  test('runs live 截图检查 with scan-band, streams fix narration, logs business finding, and morphs targeted fix on SCR-ORDERS without iframe reload', async ({
     page,
     request,
   }) => {
@@ -64,7 +57,7 @@ test.describe('Prototype screenshot review & targeted fix (#93)', () => {
     await page.getByTestId('confirm-brief-generate-btn').click();
     await expect(page.getByTestId('prototype-live-canvas')).toBeVisible({ timeout: 15_000 });
 
-    // Observe real transient visual signals (scan-band, phase states, pre-fix overflow, iframe identity)
+    // Observe real transient visual signals (scan-band, phase states, live fix narration, pre-fix overflow, iframe identity)
     await page.evaluate(() => {
       type ReviewWatch = {
         reviewPhaseNow: boolean;
@@ -116,10 +109,10 @@ test.describe('Prototype screenshot review & targeted fix (#93)', () => {
         childList: true,
         attributes: true,
       });
-      setInterval(inspect, 40);
+      setInterval(inspect, 30);
     });
 
-    // Wait for `截图检查` (`review`) phase to become active (`now`) or finish (`done`), and capture mid-review evidence
+    // Wait for `截图检查` (`review`) phase to become active (`now`) or finish (`done`)
     await expect
       .poll(
         async () =>
@@ -130,7 +123,6 @@ test.describe('Prototype screenshot review & targeted fix (#93)', () => {
         { timeout: 45_000, intervals: [60] },
       )
       .toMatch(/^(now|done)$/);
-    await page.screenshot({ path: `${EVIDENCE_DIR}/e2e-review-in-progress.png` });
 
     // Wait for R1 to complete
     await expect(page.getByTestId('prototype-history-btn')).toContainText('R1', { timeout: 60_000 });
@@ -151,6 +143,9 @@ test.describe('Prototype screenshot review & targeted fix (#93)', () => {
     expect(watch.scanBands.length).toBeGreaterThan(0);
     expect(watch.sawInitialOverflow).toBe(true);
     expect(watch.sawFixingStatus).toBe(true);
+    expect(watch.sawFixNarration.length).toBeGreaterThan(0);
+    expect(watch.sawFixNarration.join('\n')).not.toContain('SCR-');
+    expect(watch.sawFixNarration.join('\n')).not.toContain('EL-');
 
     // Phase bar & strip outcomes reflect the completed review + 1 targeted fix
     await expect(page.getByTestId('prototype-phase-review')).toHaveAttribute('data-phase-status', 'done');
@@ -190,8 +185,6 @@ test.describe('Prototype screenshot review & targeted fix (#93)', () => {
     expect(ordersCheck.tableWidth).toBeGreaterThan(400);
     expect(ordersCheck.tableRight).toBeLessThanOrEqual(1280);
 
-    await page.screenshot({ path: `${EVIDENCE_DIR}/e2e-review-fixed-complete.png` });
-
     // Verify saved `界面原型.html` contains the targeted fix and ZERO embedded screenshot bytes
     const protosRes = await request.get(`/api/projects/${projectId}/prototypes`);
     expect(protosRes.ok()).toBe(true);
@@ -207,6 +200,5 @@ test.describe('Prototype screenshot review & targeted fix (#93)', () => {
     await expect(page.getByTestId('prototype-phase-review')).toContainText('4 checked · 1 fixed');
     await expect(page.getByTestId('prototype-build-log')).toContainText('Issue found on');
     await expect(page.getByTestId('prototype-build-log')).toContainText('Fixed "');
-    await page.screenshot({ path: `${EVIDENCE_DIR}/e2e-review-en-us.png` });
   });
 });

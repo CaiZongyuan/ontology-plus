@@ -1,6 +1,7 @@
 import type {
   PrototypeBuildAgent,
   PrototypeBuildFailureCode,
+  PrototypeBuildFixActivity,
   PrototypeBuildLogEntry,
   PrototypeBuildPhaseId,
   PrototypeStyleValueKey,
@@ -224,4 +225,59 @@ export function describePrototypeBuildLogEntry(
     default:
       return '';
   }
+}
+
+/**
+ * Formats live review/fix narration (`PrototypeBuildFixActivity`) in the active UI locale at
+ * render time (S-3), stripping technical IDs so switching `zh-CN` ↔ `en-US` updates immediately.
+ */
+export function describePrototypeBuildFixActivity(
+  activity: Pick<PrototypeBuildFixActivity, 'issue' | 'fixNote' | 'state'>,
+  locale: BusinessLocale = 'zh-CN',
+): string {
+  if (activity.state === 'reviewing') {
+    return pick(
+      {
+        zh: '正在按画板尺寸截图并逐项检查排版、留白与对齐…',
+        en: 'Capturing artboard screenshot and checking layout, spacing and alignment…',
+      },
+      locale,
+    );
+  }
+  const issue = activity.issue ? sanitizeBusinessText(activity.issue, locale).trim() : '';
+  const fixNote = activity.fixNote ? sanitizeBusinessText(activity.fixNote, locale).trim() : '';
+  if (issue && fixNote) {
+    return pick(
+      {
+        zh: `发现问题：${issue.replace(/[。！!]+$/, '')}。正在修改：${fixNote}`,
+        en: `Issue found: ${issue.replace(/[.!]+$/, '')}. Fixing: ${fixNote}`,
+      },
+      locale,
+    );
+  }
+  if (fixNote) {
+    return pick(
+      {
+        zh: `正在局部修改：${fixNote}`,
+        en: `Applying targeted fix: ${fixNote}`,
+      },
+      locale,
+    );
+  }
+  if (issue) {
+    return pick(
+      {
+        zh: `发现问题：${issue}`,
+        en: `Issue found: ${issue}`,
+      },
+      locale,
+    );
+  }
+  return pick(
+    {
+      zh: '正在局部修正这一屏…',
+      en: 'Applying targeted fix on this screen…',
+    },
+    locale,
+  );
 }

@@ -1,9 +1,11 @@
 import {
+  describePrototypeBuildFixActivity,
   prototypeBuildAgentName,
   sanitizeBusinessText,
 } from '../../../../packages/business-vocabulary/index.js';
 import {
   prototypeBuildScreen,
+  type PrototypeBuildFixActivity,
   type PrototypeBuildScreen,
   type PrototypeBuildState,
   type PrototypeCanvasArtboard,
@@ -87,4 +89,11 @@ export function screenOwnerName(screen: ScreenBuildView, locale: string): string
 
 export function businessText(raw: string, locale: string): string {
   return sanitizeBusinessText(raw, locale === 'en-US' ? 'en-US' : 'zh-CN').trim();
+}
+
+export function fixActivityText(
+  activity: Pick<PrototypeBuildFixActivity, 'issue' | 'fixNote' | 'state'>,
+  locale: string,
+): string {
+  return describePrototypeBuildFixActivity(activity, locale === 'en-US' ? 'en-US' : 'zh-CN');
 }

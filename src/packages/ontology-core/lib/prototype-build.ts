@@ -39,8 +39,10 @@ export interface PrototypeBuildPlanItem {
 export interface PrototypeBuildFixActivity {
   screenId: string;
   elementId?: string;
-  /** One business-language sentence saying what was found or what is being fixed. */
-  sentence: string;
+  /** Raw visual issue reported by `report_review` (formatted & sanitized in the active locale at render time). */
+  issue?: string;
+  /** Raw localized fix note from `edit_screen.note` (formatted & sanitized in the active locale at render time). */
+  fixNote?: string;
   state: 'reviewing' | 'fixing';
 }
 

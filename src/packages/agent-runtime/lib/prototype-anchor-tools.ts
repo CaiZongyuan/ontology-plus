@@ -617,7 +617,6 @@ export interface EditPrototypeScreenInput {
   note?: string;
   find: string;
   replace: string;
-  allowRemoveAnchors?: string[];
   locale?: AgentLocale;
 }
 
@@ -750,12 +749,12 @@ export function editPrototypeScreen(
   }
 
   const screenName = scrNode.attrs['data-screen-name'] || screenId;
-  const sectionInner = beforeHtml.slice(scrNode.openEnd, scrNode.innerEnd);
+  const beforeSectionHtml = beforeHtml.slice(scrNode.openStart, scrNode.closeEnd);
   let count = 0;
   let firstIdx = -1;
   let searchFrom = 0;
-  while (searchFrom <= sectionInner.length - find.length) {
-    const hit = sectionInner.indexOf(find, searchFrom);
+  while (searchFrom <= beforeSectionHtml.length - find.length) {
+    const hit = beforeSectionHtml.indexOf(find, searchFrom);
     if (hit === -1) break;
     if (firstIdx === -1) firstIdx = hit;
     count += 1;
@@ -763,7 +762,6 @@ export function editPrototypeScreen(
   }
 
   if (count !== 1) {
-    const hitOuter = count === 0 && beforeHtml.slice(scrNode.openStart, scrNode.openEnd).includes(find);
     return {
       isError: true,
       nextHtml: beforeHtml,
@@ -772,47 +770,46 @@ export function editPrototypeScreen(
         count === 0
           ? pickLocaleText(locale, '未匹配到待替换片段（0 处）', 'No match for `find` (0 matches)')
           : pickLocaleText(locale, `待替换片段不唯一（匹配 ${count} 处）`, `Non-unique \`find\` (${count} matches)`),
-      diagnostic: hitOuter
-        ? pickLocaleText(
-            locale,
-            `edit_screen 只能修改分屏「${screenName}」(${screenId}) 内部的 HTML，不能修改外层 <section data-screen-id> 容器标签（当前在屏幕内部匹配 0 处）。`,
-            `edit_screen may only edit inside screen "${screenName}" (${screenId}), not its outer <section data-screen-id> tag (0 matches inside screen body).`,
-          )
-        : count === 0
+      diagnostic:
+        count === 0
           ? pickLocaleText(
               locale,
-              `在分屏「${screenName}」(${screenId}) 内部匹配到 0 处 find 片段（不能跨屏修改其他分屏或外壳）；请核对这一屏当前的 HTML 后重试。`,
-              `Matched 0 occurrences of \`find\` inside screen "${screenName}" (${screenId}) (other screens and the shell are out of scope); check this screen's HTML and retry.`,
+              `在分屏「${screenName}」(${screenId}) 中匹配到 0 处 find 片段（不能跨屏修改其他分屏或外壳）；请核对这一屏当前的 HTML 后重试。`,
+              `Matched 0 occurrences of \`find\` in screen "${screenName}" (${screenId}) (other screens and the shell are out of scope); check this screen's HTML and retry.`,
             )
           : pickLocaleText(
               locale,
-              `find 片段在分屏「${screenName}」(${screenId}) 内部匹配了 ${count} 处，edit_screen 要求唯一匹配（恰好 1 处）；请附带外层标签或 data-element-id 使片段唯一。`,
-              `\`find\` matched ${count} occurrences inside screen "${screenName}" (${screenId}), but edit_screen requires a unique match (count === 1); include surrounding markup or data-element-id to disambiguate.`,
+              `find 片段在分屏「${screenName}」(${screenId}) 中匹配了 ${count} 处，edit_screen 要求唯一匹配（恰好 1 处）；请附带外层标签或 data-element-id 使片段唯一。`,
+              `\`find\` matched ${count} occurrences in screen "${screenName}" (${screenId}), but edit_screen requires a unique match (count === 1); include surrounding markup or data-element-id to disambiguate.`,
             ),
     };
   }
 
   const sanitizedReplace = sanitizePrototypeScreenFragment(replace);
-  const nextSectionInner = `${sectionInner.slice(0, firstIdx)}${sanitizedReplace}${sectionInner.slice(firstIdx + find.length)}`;
-  const nextSectionHtml = `${beforeHtml.slice(scrNode.openStart, scrNode.openEnd)}${nextSectionInner}${beforeHtml.slice(scrNode.innerEnd, scrNode.closeEnd)}`;
+  // Slice concatenation guarantees literal `$` characters (`$100`, `$&`, `$$`) are never treated as regex backreferences.
+  const nextSectionHtml = `${beforeSectionHtml.slice(0, firstIdx)}${sanitizedReplace}${beforeSectionHtml.slice(firstIdx + find.length)}`;
 
-  // Ensure replacement did not smuggle another data-screen-id or close the outer screen section early.
+  // Ensure replacement kept the single outer <section data-screen-id="..."> intact and did not smuggle another screen.
   const reparsedSection = parseHtmlSpanTree(nextSectionHtml);
+  const rootSection = reparsedSection.roots[0];
   const screenNodesInSection = reparsedSection.allNodes.filter((n) => Boolean(n.attrs['data-screen-id']));
-  if (
-    reparsedSection.roots.length !== 1 ||
-    screenNodesInSection.length !== 1 ||
-    screenNodesInSection[0]?.attrs['data-screen-id'] !== screenId
-  ) {
+  const outerIdentityBroken =
+    !rootSection ||
+    rootSection.tagName.toLowerCase() !== 'section' ||
+    rootSection.attrs['data-screen-id'] !== screenId ||
+    (scrNode.attrs.id && rootSection.attrs.id !== scrNode.attrs.id) ||
+    (scrNode.attrs['data-screen-name'] && rootSection.attrs['data-screen-name'] !== scrNode.attrs['data-screen-name']) ||
+    (scrNode.attrs['data-screen-type'] && rootSection.attrs['data-screen-type'] !== scrNode.attrs['data-screen-type']);
+  if (reparsedSection.roots.length !== 1 || screenNodesInSection.length !== 1 || outerIdentityBroken) {
     return {
       isError: true,
       nextHtml: beforeHtml,
       targetAnchor: { screenId, ...(elementId ? { elementId } : {}), label: screenName },
-      summary: pickLocaleText(locale, 'edit_screen 只能修改当前分屏内部内容', 'edit_screen must stay within its own screen'),
+      summary: pickLocaleText(locale, 'edit_screen 只能修改当前分屏内容', 'edit_screen must stay within its own screen'),
       diagnostic: pickLocaleText(
         locale,
-        `替换结果破坏了分屏「${screenName}」(${screenId}) 的容器边界或引入了额外的 data-screen-id；请只替换该屏内部的元素片段。`,
-        `Replacement broke screen "${screenName}" (${screenId}) boundaries or introduced another data-screen-id; keep changes inside this screen's elements.`,
+        `替换结果破坏了分屏「${screenName}」(${screenId}) 的外层 <section> 标识或引入了额外的 data-screen-id；请保持外层分屏锚点不变，只局部替换该屏的问题片段。`,
+        `Replacement broke screen "${screenName}" (${screenId}) outer <section> identity or introduced another data-screen-id; keep outer screen anchors intact.`,
       ),
     };
   }
@@ -820,9 +817,8 @@ export function editPrototypeScreen(
   const candidateHtml = `${beforeHtml.slice(0, scrNode.openStart)}${nextSectionHtml}${beforeHtml.slice(scrNode.closeEnd)}`;
 
   // Exempt only untouched pre-existing open tags outside the replaced span in this screen.
-  const beforeSectionHtml = beforeHtml.slice(scrNode.openStart, scrNode.closeEnd);
-  const replaceStartInSection = (scrNode.openEnd - scrNode.openStart) + firstIdx;
-  const replaceEndInBeforeSection = replaceStartInSection + find.length;
+  const replaceStartInSection = firstIdx;
+  const replaceEndInBeforeSection = firstIdx + find.length;
   const exemptOpenTags = new Set<string>();
   for (const n of parseHtmlSpanTree(beforeSectionHtml).allNodes) {
     if (n.openEnd <= replaceStartInSection || n.openStart >= replaceEndInBeforeSection) {
@@ -849,7 +845,6 @@ export function editPrototypeScreen(
   const preservationIssues = validateAnchorPreservation({
     beforeNodes: beforeTree.allNodes,
     afterNodes: afterTree.allNodes,
-    ...(input.allowRemoveAnchors ? { allowRemoveAnchors: input.allowRemoveAnchors } : {}),
     locale,
   });
   if (preservationIssues.length > 0) {
@@ -866,7 +861,7 @@ export function editPrototypeScreen(
     };
   }
 
-  const editAbsStart = scrNode.openEnd + firstIdx;
+  const editAbsStart = scrNode.openStart + firstIdx;
   const editAbsEnd = editAbsStart + sanitizedReplace.length;
   const resolvedNode =
     (elementId

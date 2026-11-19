@@ -186,10 +186,93 @@ describe('report_review & edit_screen tools (#93): schema ordering, unique match
     });
     expect(extraScreenAttempt.isError).toBe(true);
     expect(extraScreenAttempt.nextHtml).toBe(before);
+
+    // Matches snippets starting at outer `<section id="screen-SCR-ORDERS" ...>` (as shown in review prompt)
+    // while preserving literal `$100` / `$&` characters and rejecting attempts to alter `data-screen-id`.
+    const ordersOuterOpen = before.slice(
+      before.indexOf('<section id="screen-SCR-ORDERS"'),
+      before.indexOf('>', before.indexOf('<section id="screen-SCR-ORDERS"')) + 1,
+    );
+    const outerMatchEdit = editPrototypeScreen(before, {
+      screenId: 'SCR-ORDERS',
+      elementId: 'EL-ORDERS-FILTER',
+      note: '外层 section 起点匹配并测试 $ 符号字面替换',
+      find: `${ordersOuterOpen}\n<section class="page" data-element-id="EL-ORDERS-FILTER"`,
+      replace: `${ordersOuterOpen}\n<section class="page" data-note="客单价 $100 &amp; $&amp;" data-element-id="EL-ORDERS-FILTER"`,
+    });
+    expect(outerMatchEdit.isError).toBe(false);
+    expect(outerMatchEdit.nextHtml).toContain('客单价 $100 &amp; $&amp;');
+
+    const hijackOuterId = editPrototypeScreen(before, {
+      screenId: 'SCR-ORDERS',
+      note: '尝试篡改外层 data-screen-id',
+      find: 'data-screen-id="SCR-ORDERS"',
+      replace: 'data-screen-id="SCR-HIJACK"',
+    });
+    expect(hijackOuterId.isError).toBe(true);
+    expect(hijackOuterId.nextHtml).toBe(before);
   });
 });
 
 describe('createPrototypeBuildRun review lifecycle & <= 1 round hard cap (#93)', () => {
+  it('allows fixing >=2 findings reported in 1 review round, blocks pre-review main-loop bypasses, and blocks a 2nd review round', () => {
+    const events: PrototypeBuildEvent[] = [];
+    const run = createPrototypeBuildRun({ locale: 'zh-CN', emit: (e) => events.push(e) });
+    run.commitPlan({
+      screens: [{ screenId: 'SCR-ORDERS', screenName: '订货单列表', purpose: '查订单' }],
+    });
+    run.observeLeadScreenWritten(
+      'SCR-ORDERS',
+      '<section data-screen-id="SCR-ORDERS"><div data-element-id="EL-1"></div><div data-element-id="EL-2"></div></section>',
+    );
+
+    // Pre-review `edit_screen` during a Build Plan run is rejected (cannot bypass review cap in main loop)
+    expect(run.checkEditScreenAllowed('SCR-ORDERS')).not.toBeNull();
+
+    // Start single review round with 2 reported findings -> both can be fixed in this round!
+    expect(run.beginScreenReview('SCR-ORDERS')).toBe(true);
+    const report2 = run.commitReportReview({
+      screenId: 'SCR-ORDERS',
+      findings: [
+        { elementId: 'EL-1', issue: '筛选栏间距过挤' },
+        { elementId: 'EL-2', issue: '表格右侧状态列被裁切' },
+      ],
+    });
+    expect(report2.isError).toBe(false);
+    expect(report2.findings).toHaveLength(2);
+
+    // Fix #1 of 2 -> allowed, screen remains `fixing` for finding #2
+    expect(run.checkEditScreenAllowed('SCR-ORDERS')).toBeNull();
+    run.commitEditScreen('SCR-ORDERS', {
+      elementId: 'EL-1',
+      note: '拉开筛选栏间距',
+      html: '<section data-screen-id="SCR-ORDERS"><div data-element-id="EL-1"></div><div data-element-id="EL-2"></div></section>',
+    });
+    expect(prototypeBuildScreen(run.snapshot()!, 'SCR-ORDERS').status).toBe('fixing');
+    expect(prototypeBuildScreen(run.snapshot()!, 'SCR-ORDERS').fixActivity).toMatchObject({
+      elementId: 'EL-2',
+      issue: '表格右侧状态列被裁切',
+      state: 'fixing',
+    });
+
+    // Fix #2 of 2 -> allowed, completes the 1-round fix quota (`status: 'done'`)
+    expect(run.checkEditScreenAllowed('SCR-ORDERS')).toBeNull();
+    run.commitEditScreen('SCR-ORDERS', {
+      elementId: 'EL-2',
+      note: '收窄表格列宽',
+      html: '<section data-screen-id="SCR-ORDERS"><div data-element-id="EL-1"></div><div data-element-id="EL-2"></div></section>',
+    });
+    expect(prototypeBuildScreen(run.snapshot()!, 'SCR-ORDERS')).toMatchObject({
+      status: 'done',
+      reviewed: 'fixed',
+    });
+
+    // 3rd edit_screen or 2nd review round is strictly blocked!
+    expect(run.checkEditScreenAllowed('SCR-ORDERS')).not.toBeNull();
+    expect(run.canReviewScreen('SCR-ORDERS')).toBe(false);
+    expect(run.beginScreenReview('SCR-ORDERS')).toBe(false);
+    expect(run.commitReportReview({ screenId: 'SCR-ORDERS', findings: [] }).isError).toBe(true);
+  });
   it('enforces at most 1 review + targeted-fix round per screen and overlaps screens and review phases', () => {
     const events: PrototypeBuildEvent[] = [];
     const run = createPrototypeBuildRun({ locale: 'zh-CN', emit: (e) => events.push(e) });
@@ -337,6 +420,18 @@ describe('Server-side Playwright Chromium artboard screenshotter & engine pipeli
       expect(png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe(true);
       expect(png.readUInt32BE(16)).toBe(1280);
       expect(png.readUInt32BE(20)).toBe(860);
+
+      // Verifies `[data-screen-id="SCR-ORDERS"]` receives `.is-active` during artboard capture (#93)
+      const styledActiveDoc = doc.replace(
+        '</head>',
+        '<style>[data-screen-id="SCR-ORDERS"].is-active { background: #1e40af !important; min-height: 860px; }</style></head>',
+      );
+      const activeCapture = await screenshotter.captureScreen({
+        documentHtml: styledActiveDoc,
+        screenId: 'SCR-ORDERS',
+      });
+      expect(activeCapture).not.toBeNull();
+      expect(activeCapture!.dataBase64).not.toBe(capture!.dataBase64);
     } finally {
       await screenshotter.shutdown();
     }
@@ -375,6 +470,44 @@ describe('Server-side Playwright Chromium artboard screenshotter & engine pipeli
     ).toBe(false);
   });
 
+  it('emits ZERO fake review_started logs or reviewing states when Chromium launch fails, recording 未做视觉检查 honestly', async () => {
+    const brokenLauncher = createPrototypeScreenshotter({
+      resolveExecutablePath: () => '/nonexistent/chromium-binary-for-issue-93',
+    });
+    try {
+      const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+      store.updateSystemSettings({ mockLlmMode: true });
+      const session = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'PROTOTYPE_CO_DESIGN',
+        title: '浏览器启动失败跳过检查',
+      });
+
+      const turn = await collectUnifiedAgentTurn(store, {
+        sessionId: session.id,
+        prompt: '按已确认需求生成首版原型',
+        prototypeName: '浏览器失败原型',
+        mockMode: true,
+        screenshotter: brokenLauncher,
+      });
+
+      expect(turn.events.some((e) => e.event === 'run_error')).toBe(false);
+      const build = foldBuildEvents(turn.events);
+      expect(build.phases.review.status).toBe('skipped');
+      expect(build.log.some((l) => l.kind === 'review_started')).toBe(false);
+      expect(
+        turn.events.some(
+          (e) =>
+            e.event === 'prototype_build_screen' &&
+            (e.data.screen as { status?: string } | undefined)?.status === 'reviewing',
+        ),
+      ).toBe(false);
+      expect(build.log.some((l) => l.kind === 'phase_skipped' && l.phase === 'review')).toBe(true);
+    } finally {
+      await brokenLauncher.shutdown();
+    }
+  });
+
   it('sends transient vision screenshot to model, applies <=1 targeted fix round, and stores ZERO screenshot bytes in 界面原型.html or SQLite', async () => {
     const FAKE_SCREENSHOT_MARKER = Buffer.from('transient-review-screenshot-bytes-93-never-persist').toString('base64');
     const seenRequests: Record<string, unknown>[] = [];
@@ -394,35 +527,58 @@ describe('Server-side Playwright Chromium artboard screenshotter & engine pipeli
         let text: string | undefined;
 
         if (msgJson.includes('Prototype Screen Visual Check') || msgJson.includes('原型分屏截图视觉检查')) {
-          reviewStep += 1;
-          if (reviewStep === 1) {
+          if (msgJson.includes('`SCR-HOME`')) {
             toolCalls = [
               {
-                id: 'tc-rev-1',
+                id: 'tc-rev-home',
                 name: 'report_review',
-                args: {
-                  screenId: 'SCR-ORDERS',
-                  findings: [{ elementId: 'EL-ORDERS-TABLE', issue: '表格右侧超出画板宽度' }],
-                },
-              },
-            ];
-          } else if (reviewStep === 2) {
-            toolCalls = [
-              {
-                id: 'tc-fix-1',
-                name: 'edit_screen',
-                args: {
-                  screenId: 'SCR-ORDERS',
-                  elementId: 'EL-ORDERS-TABLE',
-                  note: '收窄表格宽度',
-                  find: '<div class="card too-wide" data-element-id="EL-ORDERS-TABLE" data-element-type="CONTAINER">',
-                  replace: '<div class="card" data-element-id="EL-ORDERS-TABLE" data-element-type="CONTAINER">',
-                },
+                args: { screenId: 'SCR-HOME', findings: [] },
               },
             ];
           } else {
-            // Even if called again, rogue 2nd fix attempt would be blocked; here review ends after fix 1!
-            text = '修正完成。';
+            reviewStep += 1;
+            if (reviewStep === 1) {
+              toolCalls = [
+                {
+                  id: 'tc-rev-1',
+                  name: 'report_review',
+                  args: {
+                    screenId: 'SCR-ORDERS',
+                    findings: [{ elementId: 'EL-ORDERS-TABLE', issue: '表格右侧超出画板宽度' }],
+                  },
+                },
+              ];
+            } else if (reviewStep === 2) {
+              // Counterexample check (#1): model tries to mutate SCR-HOME during SCR-ORDERS's review -> MUST be blocked!
+              toolCalls = [
+                {
+                  id: 'tc-fix-rogue-cross-screen',
+                  name: 'edit_screen',
+                  args: {
+                    screenId: 'SCR-HOME',
+                    note: '偷改首页标题',
+                    find: '<div class="card" data-element-id="EL-HOME-BOX" data-element-type="CONTAINER">首页原貌',
+                    replace: '<div class="card" data-element-id="EL-HOME-BOX" data-element-type="CONTAINER">被篡改',
+                  },
+                },
+              ];
+            } else if (reviewStep === 3) {
+              toolCalls = [
+                {
+                  id: 'tc-fix-1',
+                  name: 'edit_screen',
+                  args: {
+                    screenId: 'SCR-ORDERS',
+                    elementId: 'EL-ORDERS-TABLE',
+                    note: '收窄表格宽度',
+                    find: '<div class="card too-wide" data-element-id="EL-ORDERS-TABLE" data-element-type="CONTAINER">',
+                    replace: '<div class="card" data-element-id="EL-ORDERS-TABLE" data-element-type="CONTAINER">',
+                  },
+                },
+              ];
+            } else {
+              text = '修正完成。';
+            }
           }
         } else if (seenRequests.length === 1) {
           toolCalls = [
@@ -430,7 +586,10 @@ describe('Server-side Playwright Chromium artboard screenshotter & engine pipeli
               id: 'tc-plan',
               name: 'plan_screens',
               args: {
-                screens: [{ screenId: 'SCR-ORDERS', screenName: '订货单列表', purpose: '查订单', screenType: 'LIST' }],
+                screens: [
+                  { screenId: 'SCR-HOME', screenName: '首页', purpose: '看总览', screenType: 'DASHBOARD' },
+                  { screenId: 'SCR-ORDERS', screenName: '订货单列表', purpose: '查订单', screenType: 'LIST' },
+                ],
               },
             },
             {
@@ -441,6 +600,17 @@ describe('Server-side Playwright Chromium artboard screenshotter & engine pipeli
                 values: { accent: '#2e6a4e' },
                 componentCss: '.card { padding: var(--proto-pad); } .too-wide { min-width: 1600px; }',
                 sampleHtml: '<div class="card">样张</div>',
+              },
+            },
+            {
+              id: 'tc-scr-home',
+              name: 'upsert_prototype_screen',
+              args: {
+                screenId: 'SCR-HOME',
+                screenName: '首页',
+                screenType: 'DASHBOARD',
+                screenHtml:
+                  '<div class="card" data-element-id="EL-HOME-BOX" data-element-type="CONTAINER">首页原貌<button data-element-id="EL-HOME-BTN" data-element-type="BUTTON">查看</button></div>',
               },
             },
             {
@@ -544,12 +714,20 @@ describe('Server-side Playwright Chromium artboard screenshotter & engine pipeli
       // Screenshot was sent as vision input on the review request
       const reviewWireJson = JSON.stringify(seenRequests);
       expect(reviewWireJson).toContain(FAKE_SCREENSHOT_MARKER);
-      // Hard cap stopped immediately after 1 fix without looping for a 2nd screenshot/review
-      expect(reviewStep).toBe(2);
+      // Cross-screen `edit_screen` attempt (`tc-fix-rogue-cross-screen`) was rejected as an error!
+      const rogueResult = turn.events.find(
+        (e) => e.event === 'tool_result' && (e.data.trace as { id?: string }).id === 'tc-fix-rogue-cross-screen',
+      );
+      expect(rogueResult).toBeDefined();
+      expect((rogueResult!.data.trace as { isError: boolean }).isError).toBe(true);
 
       const proto = store.getPrototype(turn.session.targetId!)!;
-      // Targeted fix landed in the saved 界面原型.html
-      const ordersSlice = splitPrototypeDocument(proto.htmlContent).screens.find((s) => s.screenId === 'SCR-ORDERS')!;
+      const slices = splitPrototypeDocument(proto.htmlContent).screens;
+      // SCR-HOME stayed untouched ("首页原貌"), while SCR-ORDERS got its targeted fix (no `too-wide`)!
+      const homeSlice = slices.find((s) => s.screenId === 'SCR-HOME')!;
+      expect(homeSlice.html).toContain('首页原貌');
+      expect(homeSlice.html).not.toContain('被篡改');
+      const ordersSlice = slices.find((s) => s.screenId === 'SCR-ORDERS')!;
       expect(ordersSlice.html).not.toContain('too-wide');
       expect(ordersSlice.html).toContain('data-element-id="EL-ORDERS-TABLE"');
 

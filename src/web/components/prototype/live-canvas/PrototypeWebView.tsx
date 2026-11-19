@@ -1,9 +1,13 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ExternalLink, Loader2, PenLine, RefreshCw } from 'lucide-react';
-import type { PrototypeCanvasArtboard } from '../../../../packages/ontology-core/index.js';
+import { ArrowLeft, ArrowRight, ExternalLink, Loader2, PenLine, RefreshCw, ScanSearch, Wrench } from 'lucide-react';
+import type {
+  PrototypeBuildFixActivity,
+  PrototypeCanvasArtboard,
+} from '../../../../packages/ontology-core/index.js';
 import { usePreferences } from '../../../i18n.js';
 import { Button } from '../../beautifui/index.js';
 import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboard.js';
+import { fixActivityText, type ScreenBuildView } from './buildView.js';
 
 /** What design notes (#94) and demo tours (#95) use to draw over the web page. */
 export interface PrototypeWebViewHandle {
@@ -42,6 +46,12 @@ export interface PrototypeWebViewProps {
   composeDocument: () => string;
   /** Opens it in a new tab; false when there was nothing to open. */
   onOpenStandalone: (documentHtml: string, screenId: string) => boolean;
+  /** Per-screen Build Plan view states (for `reviewing` / `fixing` badges & scan indicator, #93). */
+  viewsById?: ReadonlyMap<string, ScreenBuildView>;
+  /** Active review/fix narration entries (#93). */
+  fixActivities?: readonly PrototypeBuildFixActivity[];
+  /** Custom cursor/narration renderer (#92 seam). */
+  renderFixActivity?: (activities: readonly PrototypeBuildFixActivity[]) => React.ReactNode;
 }
 
 interface History {
@@ -72,10 +82,13 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
     onRetryScreen,
     composeDocument,
     onOpenStandalone,
+    viewsById,
+    fixActivities = [],
+    renderFixActivity,
   },
   ref,
 ) {
-  const { t } = usePreferences();
+  const { locale, t } = usePreferences();
   const [requested, setRequested] = useState<string | undefined>(initialScreenId);
   const [history, setHistory] = useState<History>({ back: [], forward: [] });
   const has = (id: string | undefined): id is string => Boolean(id && screens.some((s) => s.screenId === id));
@@ -156,9 +169,23 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
     };
   }, [go, screens]);
 
-  const statusText = (s: PrototypeCanvasArtboard) =>
-    s.status === 'streaming' ? t('正在画', 'Drawing') : s.status === 'queued' ? t('还没画', 'Not drawn yet') : '';
-  const canResume = Boolean(board && !busy && board.status === 'queued' && onRetryScreen);
+  const currentView = currentId ? viewsById?.get(currentId) : undefined;
+  const currentFixActivity = currentId
+    ? fixActivities.find((a) => a.screenId === currentId && a.state === 'fixing')
+    : undefined;
+  const statusText = (s: PrototypeCanvasArtboard) => {
+    const buildStatus = viewsById?.get(s.screenId)?.status;
+    if (buildStatus === 'reviewing') return t('检查中', 'Checking');
+    if (buildStatus === 'fixing') return t('修正中', 'Fixing');
+    return s.status === 'streaming' ? t('正在画', 'Drawing') : s.status === 'queued' ? t('还没画', 'Not drawn yet') : '';
+  };
+  const canResume = Boolean(
+    board && !busy && (board.status === 'queued' || currentView?.resumable) && onRetryScreen,
+  );
+  const fixTargetBox: ArtboardRect | null =
+    !renderFixActivity && currentFixActivity?.elementId
+      ? (frameHandle.current?.rectOf(currentFixActivity.elementId) ?? null)
+      : null;
 
   return (
     <div
@@ -215,6 +242,18 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
             {t('助手正在画这一页', 'The assistant is drawing this page')}
           </span>
         )}
+        {currentView?.status === 'reviewing' && (
+          <span className="inline-flex items-center gap-1 text-warning" data-testid="prototype-web-reviewing">
+            <ScanSearch size={12} aria-hidden="true" />
+            {t('主助手正在检查这一页', 'Lead assistant is checking this page')}
+          </span>
+        )}
+        {currentView?.status === 'fixing' && (
+          <span className="inline-flex items-center gap-1 text-warning" data-testid="prototype-web-fixing">
+            <Wrench size={12} aria-hidden="true" />
+            {t('主助手正在修正这一页', 'Lead assistant is fixing this page')}
+          </span>
+        )}
         <span className="flex-1" />
         <Button
           type="button"
@@ -239,23 +278,57 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
 
       <div className="relative min-h-0 flex-1 bg-background" data-testid="prototype-web-page">
         {board ? (
-          <ArtboardFrame
-            screenId={board.screenId}
-            title={nameOf(board, index)}
-            bodyHtml={pageBodyHtml}
-            css={css}
-            {...(pageCss ? { extraCss: pageCss } : {})}
-            linksKey={linksKey}
-            headScriptsKey={headScriptsKey}
-            landed
-            interactive
-            fill
-            page
-            testId="prototype-web-frame"
-            handleRef={frameHandle}
-            onNavigate={go}
-            onEscape={noop}
-          />
+          <>
+            <ArtboardFrame
+              screenId={board.screenId}
+              title={nameOf(board, index)}
+              bodyHtml={pageBodyHtml}
+              css={css}
+              {...(pageCss ? { extraCss: pageCss } : {})}
+              linksKey={linksKey}
+              headScriptsKey={headScriptsKey}
+              landed
+              interactive
+              fill
+              page
+              testId="prototype-web-frame"
+              handleRef={frameHandle}
+              onNavigate={go}
+              onEscape={noop}
+            />
+            {currentView?.status === 'reviewing' && (
+              <div
+                className="onto-artboard-scan"
+                data-testid={`prototype-web-scan-${board.screenId}`}
+                aria-hidden="true"
+              />
+            )}
+            {fixTargetBox && fixTargetBox.w > 0 && fixTargetBox.h > 0 && (
+              <div
+                className="pointer-events-none absolute rounded-sm border-2 border-dashed border-warning bg-warning-soft/20"
+                style={{
+                  left: Math.max(0, fixTargetBox.x - 4),
+                  top: Math.max(0, fixTargetBox.y - 4),
+                  width: fixTargetBox.w + 8,
+                  height: fixTargetBox.h + 8,
+                }}
+                data-testid={`prototype-fix-target-${board.screenId}`}
+                aria-hidden="true"
+              />
+            )}
+            {currentFixActivity &&
+              (renderFixActivity ? (
+                renderFixActivity([currentFixActivity])
+              ) : (
+                <div
+                  className="pointer-events-none absolute left-4 top-3 z-10 flex max-w-[440px] items-center gap-1.5 rounded-md border border-warning/50 bg-card px-2.5 py-1.5 text-[12px] text-foreground shadow-md"
+                  data-testid={`prototype-fix-narration-${board.screenId}`}
+                >
+                  <Wrench size={12} className="shrink-0 text-warning" aria-hidden="true" />
+                  <span className="line-clamp-2 leading-snug">{fixActivityText(currentFixActivity, locale)}</span>
+                </div>
+              ))}
+          </>
         ) : (
           <div className="flex h-full items-center justify-center text-[13px] text-muted-foreground">
             <span className="inline-flex items-center gap-2">

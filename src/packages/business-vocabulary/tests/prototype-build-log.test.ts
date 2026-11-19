@@ -3,6 +3,7 @@ import type { PrototypeBuildFailureCode, PrototypeBuildLogEntry } from '../../on
 import {
   checkBusinessViewMarkup,
   describePrototypeBuildFailure,
+  describePrototypeBuildFixActivity,
   describePrototypeBuildLogEntry,
   prototypeBuildAgentName,
 } from '../index.js';
@@ -67,5 +68,21 @@ describe('prototype build log sentences', () => {
     }
     expect(prototypeBuildAgentName(0, 'zh-CN')).toBe('主助手');
     expect(prototypeBuildAgentName(2, 'en-US')).toBe('Helper 2');
+  });
+
+  it('formats live fixActivity in the active locale at render time without leaking technical IDs (S-3)', () => {
+    const activity = {
+      state: 'fixing' as const,
+      issue: '表格 EL-ORDERS-TABLE 右侧超出画板宽度。',
+      fixNote: '收窄 SCR-ORDERS 表格列宽',
+    };
+    const zh = describePrototypeBuildFixActivity(activity, 'zh-CN');
+    const en = describePrototypeBuildFixActivity(activity, 'en-US');
+    expect(zh).toContain('发现问题：');
+    expect(zh).toContain('正在修改：');
+    expect(en).toContain('Issue found:');
+    expect(en).toContain('Fixing:');
+    expect(checkBusinessViewMarkup(`<p>${zh}</p><p>${en}</p>`)).toEqual([]);
+    expect(describePrototypeBuildFixActivity({ state: 'reviewing' }, 'en-US')).toContain('Capturing artboard screenshot');
   });
 });

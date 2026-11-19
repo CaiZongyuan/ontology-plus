@@ -1299,29 +1299,38 @@ dialog.bui-dialog::backdrop {
   --xy-controls-button-border-color-default: var(--border);
 }
 
-/* ─── Prototype Artboard Visual Review Scan Band (#93) ─── */
-@keyframes onto-artboard-scan {
-  0% {
-    top: -120px;
+/* ─── Prototype Artboard Visual Review Scan Band (#93, ADR 0006/0015 motion contract) ─── */
+@keyframes onto-scan-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
   }
-  100% {
-    top: 100%;
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
 .onto-artboard-scan {
   position: absolute;
+  top: 0;
   left: 0;
   right: 0;
-  height: 120px;
+  height: 56px;
   pointer-events: none;
   z-index: 6;
   background: linear-gradient(
     to bottom,
-    transparent,
-    color-mix(in srgb, var(--warning) 16%, transparent),
+    color-mix(in srgb, var(--warning) 18%, transparent),
     transparent
   );
-  border-bottom: 1.5px solid color-mix(in srgb, var(--warning) 62%, transparent);
-  animation: onto-artboard-scan 1.75s ease-in-out infinite;
+  border-top: 2px solid color-mix(in srgb, var(--warning) 68%, transparent);
+  animation: onto-scan-enter var(--dur-med) var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onto-artboard-scan {
+    animation: none;
+    transition: none;
+  }
 }

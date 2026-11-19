@@ -442,9 +442,22 @@ export function createMockPrototypeBuildReplay(
           );
         }
         if (last?.role === 'toolResult' && last.toolName === 'report_review' && hasTooWide && !last.isError) {
+          const ordersBinding = `${businessObject}`;
+          const oldOrdersTableSection = `<section class="page too-wide" data-element-id="EL-ORDERS-TABLE" data-note="订货单表格：每行一张订货单，点一行打开详情。" data-element-type="CONTAINER" data-element-label="订货单表格">
+  <div class="card" style="padding:6px 8px"><table data-element-id="EL-ORDERS-GRID" data-element-type="TABLE" data-binding="${ordersBinding}" data-element-label="订货单清单">`;
+          const fixedOrdersTableSection = `<section class="page" data-element-id="EL-ORDERS-TABLE" data-note="订货单表格：每行一张订货单，点一行打开详情。" data-element-type="CONTAINER" data-element-label="订货单表格">
+  <div class="card" style="padding:6px 8px"><table data-element-id="EL-ORDERS-GRID" data-element-type="TABLE" data-binding="${ordersBinding}" data-element-label="订货单清单">`;
           return fauxAssistantMessage(
             [
-              // Short fields (`screenId`, `elementId`, `note`) stream before `find` and `replace`.
+              fauxThinking(
+                pickLocaleText(
+                  locale,
+                  '准备对「订货单列表」的表格区域做唯一匹配局部替换，去掉超宽样式，保持其他行与筛选区不变。',
+                  'Applying a targeted unique replacement on the orders table container so all columns fit cleanly inside the artboard.',
+                ),
+              ),
+              // Short fields (`screenId`, `elementId`, `note`) stream before `find` and `replace`,
+              // so live fix narration appears on the canvas while the snippet replacement streams.
               fauxToolCall('edit_screen', {
                 screenId: 'SCR-ORDERS',
                 elementId: 'EL-ORDERS-TABLE',
@@ -453,8 +466,8 @@ export function createMockPrototypeBuildReplay(
                   '收窄订货单表格宽度，让右侧「状态」一列完整显示在页面内',
                   'Fit the orders table within the page width so the "Status" column is fully visible',
                 ),
-                find: '<section class="page too-wide" data-element-id="EL-ORDERS-TABLE"',
-                replace: '<section class="page" data-element-id="EL-ORDERS-TABLE"',
+                find: oldOrdersTableSection,
+                replace: fixedOrdersTableSection,
               }),
             ],
             { stopReason: 'toolUse' },

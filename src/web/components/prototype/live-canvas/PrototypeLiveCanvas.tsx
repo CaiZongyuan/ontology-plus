@@ -18,7 +18,7 @@ import { Button } from '../../beautifui/index.js';
 import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboard.js';
 import { BuildLog } from './BuildLog.js';
 import { BuildPhaseBar } from './BuildPhaseBar.js';
-import { businessText, screenBuildViews, screenOwnerName } from './buildView.js';
+import { fixActivityText, screenBuildViews, screenOwnerName } from './buildView.js';
 import { ScreenStatusIcon, ScreenStrip, screenStatusLabel } from './ScreenStrip.js';
 import {
   ARTBOARD_H,
@@ -620,7 +620,7 @@ export function PrototypeLiveCanvas({
                     const idx = indexById.get(act.screenId);
                     if (idx === undefined) return null;
                     const rect = artboardRect(idx);
-                    const text = isBusiness ? businessText(act.sentence, locale) : act.sentence;
+                    const text = fixActivityText(act, locale);
                     if (!text) return null;
                     return (
                       <div
@@ -656,6 +656,9 @@ export function PrototypeLiveCanvas({
               {...(onRetryScreen ? { onRetryScreen } : {})}
               composeDocument={() => composePrototypeDocument(documentHtml, live)}
               onOpenStandalone={onOpenStandalone}
+              viewsById={viewById}
+              fixActivities={fixActivities}
+              {...(renderFixActivity ? { renderFixActivity } : {})}
             />
           )}
 
