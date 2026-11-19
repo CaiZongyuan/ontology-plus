@@ -25,6 +25,80 @@ import type { OpenAiFunctionTool } from './tools.js';
 
 export const PLAN_SCREENS_TOOL_NAME = 'plan_screens';
 export const REPORT_REVIEW_TOOL_NAME = 'report_review';
+export const WRITE_DEMO_TOURS_TOOL_NAME = 'write_demo_tours';
+
+/**
+ * Authors 2–4 playable Demo Tours (`演示路线`, never called Scenario) grounded in user goals and
+ * roles from the confirmed Requirements document, after screens and visual checks finish (#95).
+ */
+export const WRITE_DEMO_TOURS_OPENAI_TOOL: OpenAiFunctionTool = {
+  type: 'function',
+  function: {
+    name: WRITE_DEMO_TOURS_TOOL_NAME,
+    description:
+      'Author 2–4 playable Demo Tours (演示路线 — never call them Scenarios) grounded in real user goals and roles from the Confirmed Requirements Document, once screens and visual checks are done. Every step must reference an existing drawn `screenId` and, when targeting a control or section, an existing `data-element-id` inside that screen.',
+    parameters: {
+      type: 'object',
+      properties: {
+        tours: {
+          type: 'array',
+          description: '2–4 Demo Tours, each walking through one concrete user goal across the prototype screens.',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Stable kebab-case tour id, e.g. first-order' },
+              goal: {
+                type: 'string',
+                description: 'User goal in plain business language, e.g. 门店第一次订货',
+              },
+              audience: {
+                type: 'string',
+                description: 'Role or person in plain business language, e.g. 店长',
+              },
+              steps: {
+                type: 'array',
+                description: 'Ordered walkthrough steps (typically 3–7 steps per tour).',
+                items: {
+                  type: 'object',
+                  properties: {
+                    screenId: {
+                      type: 'string',
+                      description: 'Existing drawn data-screen-id in the prototype, e.g. SCR-HOME',
+                    },
+                    elementId: {
+                      type: 'string',
+                      description: 'Existing data-element-id inside `screenId`, e.g. EL-HOME-NEW-ORDER',
+                    },
+                    action: {
+                      type: 'string',
+                      enum: ['look', 'click', 'type'],
+                      description: 'look = spotlight & observe; click = click element/navigate; type = fill input/textarea/select',
+                    },
+                    caption: {
+                      type: 'string',
+                      description: 'One concise business-language narration sentence shown as subtitle while this step plays.',
+                    },
+                    text: {
+                      type: 'string',
+                      description: 'Text to type or option to select when action === "type".',
+                    },
+                    times: {
+                      type: 'number',
+                      description: 'Optional click repeat count (1–10), e.g. clicking a + quantity stepper 3 times.',
+                    },
+                  },
+                  required: ['screenId', 'action', 'caption'],
+                },
+              },
+            },
+            required: ['id', 'goal', 'steps'],
+          },
+        },
+      },
+      required: ['tours'],
+    },
+  },
+};
 
 export interface PrototypeScreenReviewFinding {
   elementId?: string;
@@ -202,6 +276,13 @@ export interface PrototypeBuildRun {
   finishScreensPhase(): void;
   /** Marks `截图检查` (`review`) finished once all queued screen reviews have completed. */
   finishReviewPhase(): void;
+  /** The lead started writing `write_demo_tours`: the `演示路线` (`tours`) phase is `now` (#95). */
+  observeToursStream(documentHtml?: string): void;
+  /** `write_demo_tours` was accepted (`done`) or rejected (#95). */
+  commitTours(
+    result: { ok: true; count: number } | { ok: false },
+    documentHtml?: string,
+  ): void;
   /**
    * The user asked to continue one screen; returns its plan entry, or null if neither the
    * persisted plan nor the saved document has that screen. A prototype built before plans
@@ -249,6 +330,8 @@ export function createPrototypeBuildRun(options: {
   >();
   let screensPhaseStarted = false;
   let reviewSkippedLogged = false;
+  let toursAttempted = false;
+  let toursSucceeded = false;
 
   const ensureStarted = (base?: PrototypeBuildState | null) => {
     if (!tracker.started()) send(tracker.start(base ?? null));
@@ -755,6 +838,37 @@ export function createPrototypeBuildRun(options: {
       }
     },
 
+    observeToursStream(documentHtml) {
+      ensureStyleRun(documentHtml);
+      toursAttempted = true;
+      const cur = tracker.state().phases.tours.status;
+      if (cur === 'now') return;
+      send(tracker.phase('tours', 'now'));
+      if (cur === 'not_started' || cur === 'skipped') {
+        send(tracker.log({ agent: 0, kind: 'tours_started' }));
+      }
+    },
+
+    commitTours(result, documentHtml) {
+      toursAttempted = true;
+      if (!result.ok) {
+        if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) return;
+        if (!toursSucceeded) {
+          send(tracker.phase('tours', 'failed'));
+        }
+        return;
+      }
+      ensureStyleRun(documentHtml);
+      toursSucceeded = true;
+      const prevStatus = tracker.state().phases.tours.status;
+      if (prevStatus === 'not_started' || prevStatus === 'skipped') {
+        send(tracker.phase('tours', 'now'));
+        send(tracker.log({ agent: 0, kind: 'tours_started' }));
+      }
+      send(tracker.phase('tours', 'done'));
+      send(tracker.log({ agent: 0, kind: 'tours_ready', count: result.count }));
+    },
+
     resumeScreen(screenId, documentHtml) {
       const base =
         options.base?.plan.some((p) => p.screenId === screenId) ? options.base : planFromDocument(documentHtml ?? '');
@@ -818,10 +932,12 @@ export function createPrototypeBuildRun(options: {
             send(tracker.log({ agent: 0, kind: 'phase_skipped', phase: 'review' }));
           }
         }
-        // Demo tours (#95) did not run unless marked done.
+        // Demo tours (#95): failed if attempted without a valid write; skipped if never attempted.
         const toursStatus = tracker.state().phases.tours.status;
-        if (toursStatus === 'not_started' || toursStatus === 'now') {
-          send(tracker.phase('tours', 'skipped'));
+        if (toursStatus === 'now') {
+          send(tracker.phase('tours', toursAttempted && !toursSucceeded ? 'failed' : 'skipped'));
+        } else if (toursStatus === 'not_started') {
+          send(tracker.phase('tours', toursAttempted && !toursSucceeded ? 'failed' : 'skipped'));
         }
       }
       send(tracker.log({ agent: 0, kind: 'build_finished', count: done, failedCount: failed }));

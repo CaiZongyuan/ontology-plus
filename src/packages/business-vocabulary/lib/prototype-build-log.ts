@@ -208,6 +208,24 @@ export function describePrototypeBuildLogEntry(
             locale,
           );
     }
+    case 'tours_started':
+      return pick(
+        {
+          zh: '正在按用户目标编写演示路线…',
+          en: 'Writing demo tours around user goals…',
+        },
+        locale,
+      );
+    case 'tours_ready':
+      return count > 0
+        ? pick(
+            {
+              zh: `演示路线已就绪：共 ${count} 条，可在顶部阶段条点「播放演示」体验`,
+              en: `Demo tours ready: ${count} tours — click "Play Demo" in the phase bar to watch`,
+            },
+            locale,
+          )
+        : pick({ zh: '演示路线已就绪', en: 'Demo tours ready' }, locale);
     case 'phase_skipped':
       return pick(SKIPPED_PHASE_SENTENCES[entry.phase ?? 'review'], locale);
     case 'build_finished': {

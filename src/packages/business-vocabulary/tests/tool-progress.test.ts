@@ -40,6 +40,15 @@ describe('tool-call to business-language progress mapping', () => {
       zh: '正在记录页面视觉检查结果',
       en: 'Recording visual check result',
     });
+    expect(formatToolStepLabel('write_demo_tours', {})).toEqual({
+      zh: '编写演示路线',
+      en: 'Write Demo Tours',
+    });
+    expect(formatToolProgress('write_demo_tours', {})).toEqual({
+      zh: '正在编写演示路线',
+      en: 'Writing Demo Tours',
+    });
+    expect(JSON.stringify(TOOL_PROGRESS_CATALOG.write_demo_tours)).not.toMatch(/scenario|场景/i);
     expect(formatToolProgress('edit_screen', { note: '收窄订货单表格宽度' })).toEqual({
       zh: '正在局部修正原型分屏「收窄订货单表格宽度」',
       en: "Fixing prototype screen locally '收窄订货单表格宽度'",

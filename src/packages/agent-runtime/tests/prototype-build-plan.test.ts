@@ -119,11 +119,11 @@ describe('Build Plan (#90): the lead declares the screens first, each screen rep
 
     // Phases report what really happened.
     expect(build.phases.plan.status).toBe('done');
-    // The lead draws the 风格样张 before the screens (#91), and inspects drawn screens (#93).
+    // The lead draws the 风格样张 before the screens (#91), inspects drawn screens (#93), and writes Demo Tours (#95).
     expect(build.phases.style.status).toBe('done');
     expect(build.phases.screens.status).toBe('failed');
     expect(build.phases.review.status).toBe('done');
-    expect(build.phases.tours.status).toBe('skipped');
+    expect(build.phases.tours.status).toBe('done');
 
     // The log, in order: plan, style, starts, done/failed/review lines, the end.
     const kinds = build.log.map((l) => l.kind);
