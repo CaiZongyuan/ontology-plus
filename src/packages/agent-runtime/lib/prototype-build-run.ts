@@ -107,6 +107,10 @@ export interface PrototypeBuildRun {
   observePlanStream(partialArgs: unknown): void;
   /** `plan_screens` finished: validate and record the plan; returns the tool result. */
   commitPlan(args: unknown): { isError: boolean; content: string; summary: string };
+  /** The lead started writing `define_style`: the 风格样张 phase is now. */
+  observeStyleStream(): void;
+  /** `define_style` was accepted (done) or rejected (failed). */
+  commitStyle(result: { ok: true; locked: boolean } | { ok: false }): void;
   /** Orders dispatched tasks by the plan, and plans them when the lead skipped `plan_screens`. */
   prepareDispatch<T extends { screenId?: string; screenName?: string; instruction: string; screenType?: string }>(
     tasks: readonly T[],
@@ -132,6 +136,8 @@ export interface PrototypeBuildRun {
   snapshot(options?: { revisionId?: string | undefined }): PrototypeBuildState | undefined;
   /** The committed plan's screens, which the shared shell must follow (null without a plan). */
   plannedScreens(): PrototypeBuildPlanItem[] | null;
+  /** Anchored elements written for a screen so far (0 for a screen the plan does not have). */
+  writtenElements(screenId: string): number;
 }
 
 const SCREEN_ID_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
@@ -159,7 +165,7 @@ export function createPrototypeBuildRun(options: {
   const beginScreensPhase = () => {
     if (screensPhaseStarted) return;
     screensPhaseStarted = true;
-    // No style sample was drawn before the screens (that step arrives with #91).
+    // No style sample was drawn before the screens: the phase says so instead of pretending.
     const style = tracker.state().phases.style.status;
     if (style === 'not_started' || style === 'now') {
       send(tracker.phase('style', 'skipped'));
@@ -223,6 +229,26 @@ export function createPrototypeBuildRun(options: {
         }),
         summary,
       };
+    },
+
+    observeStyleStream() {
+      if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) return;
+      if (tracker.state().phases.style.status === 'now') return;
+      send(tracker.phase('style', 'now'));
+      send(tracker.log({ agent: 0, kind: 'style_started' }));
+    },
+
+    commitStyle(result) {
+      if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) return;
+      if (!result.ok) {
+        send(tracker.phase('style', 'failed'));
+        return;
+      }
+      if (tracker.state().phases.style.status !== 'now') {
+        send(tracker.log({ agent: 0, kind: 'style_started' }));
+      }
+      send(tracker.phase('style', 'done'));
+      send(tracker.log({ agent: 0, kind: 'style_ready', locked: result.locked }));
     },
 
     prepareDispatch(tasks) {
@@ -328,6 +354,8 @@ export function createPrototypeBuildRun(options: {
       const state = tracker.state();
       if (state.planStreaming) send(tracker.plan(state.plan, false));
       if (state.phases.plan.status === 'now') send(tracker.phase('plan', outcome === 'succeeded' ? 'done' : 'failed'));
+      // A style sample still being written when the run ended was never set.
+      if (state.phases.style.status === 'now') send(tracker.phase('style', 'failed'));
       const leftover =
         outcome === 'cancelled' ? 'cancelled' : outcome === 'failed' ? 'interrupted' : 'not_written';
       let done = 0;
@@ -373,6 +401,11 @@ export function createPrototypeBuildRun(options: {
         log: state.log.slice(-PROTOTYPE_BUILD_LOG_LIMIT),
         ...(snapOptions?.revisionId ? { revisionId: snapOptions.revisionId } : {}),
       };
+    },
+
+    writtenElements(screenId) {
+      if (!tracker.started()) return 0;
+      return prototypeBuildScreen(tracker.state(), screenId).writtenElements;
     },
 
     plannedScreens() {

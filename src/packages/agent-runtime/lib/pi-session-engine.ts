@@ -32,14 +32,23 @@ import {
 import {
   MODEL_CODES,
   checkSqlGrounding,
+  applyPrototypeStyleToDocument,
   createPartialScreenThrottle,
   createPrototypeLiveTracker,
   latestPrototypeBuild,
+  readPrototypeStyleValues,
+  prototypeStyleCss,
+  readPrototypeDocumentStyle,
+  readStreamingPrototypeStyle,
+  resolvePrototypeStyleValues,
   splitPrototypeDocument,
   validateOntologySuite,
   type ModelCode,
   type OntologySuite,
+  type PrototypeBuildPlanItem,
   type PrototypeLiveEvent,
+  type PrototypeStyle,
+  type PrototypeStyleValues,
 } from '../../ontology-core/index.js';
 import {
   handleOntologyMcpRequest,
@@ -120,6 +129,17 @@ import {
   prototypeBuildSseEventName,
   type PrototypeBuildRun,
 } from './prototype-build-run.js';
+import {
+  DEFINE_STYLE_OPENAI_TOOL,
+  DEFINE_STYLE_TOOL_NAME,
+  buildScreenHelperContext,
+  commitDefineStyle,
+  keepWithinOwnScreen,
+  screensChangedOutside,
+  prototypeLeadStyleInstructions,
+  screenHelperSystemPrompt,
+  screenHelperTools,
+} from './prototype-design-guide.js';
 import {
   createCoalescingRunEventBuffer,
   prototypeLiveCoalesceKey,
@@ -906,6 +926,7 @@ export type UnifiedAgentSseEventType =
   | 'subagent_update'
   | 'prototype_frame'
   | 'prototype_screen'
+  | 'prototype_style'
   | 'prototype_build_start'
   | 'prototype_plan'
   | 'prototype_build_screen'
@@ -2670,9 +2691,9 @@ export function getToolsForAgentKind(
   if (!options) return baseTools;
 
   const extras: Tool[] = [];
-  // The Build Plan is the lead's alone; helpers never see it (they get the tools without options).
+  // The Build Plan and the style are the lead's alone; helpers never see them.
   if (kind === 'PROTOTYPE_CO_DESIGN') {
-    extras.push(toPiTool(PLAN_SCREENS_OPENAI_TOOL));
+    extras.push(toPiTool(PLAN_SCREENS_OPENAI_TOOL), toPiTool(DEFINE_STYLE_OPENAI_TOOL));
   }
   if ((options.multiAgentConcurrency ?? 1) > 1) {
     extras.push(toPiTool(SPAWN_SUBAGENTS_OPENAI_TOOL));
@@ -2700,9 +2721,16 @@ function buildSystemPromptForSession(
     codeMode?: boolean;
     multiAgentConcurrency?: number;
     offeredTools?: readonly Tool[];
+    /** Approved Style Tile values the lead must keep (#91). */
+    lockedStyleValues?: PrototypeStyleValues | null;
   },
 ): string {
-  const withExecFooter = (corePrompt: string): string => {
+  const withExecFooter = (rawPrompt: string): string => {
+    // The lead of a prototype build follows the design guide and keeps the approved values.
+    const corePrompt =
+      session.agentKind === 'PROTOTYPE_CO_DESIGN' && execOptions
+        ? `${rawPrompt}\n\n${prototypeLeadStyleInstructions(locale, execOptions.lockedStyleValues ?? null)}`
+        : rawPrompt;
     if (!execOptions?.codeMode || !execOptions.offeredTools) {
       return corePrompt;
     }
@@ -2802,8 +2830,8 @@ function buildSystemPromptForSession(
             `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
             `Initial Prototype Generation Rules:`,
             useParallel
-              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`plan_screens\` with the Build Plan — 3–5 screens, each with screenId, a business name and a one-sentence business purpose — so the user sees one blank artboard per screen within seconds; THEN call \`init_prototype_shell\` with the Design Brief tokens and shared CSS (it draws no screens); THEN call \`spawn_subagents\` with one task per planned screen, in plan order, (directly or inside \`codemode\`) so ${execOptions?.multiAgentConcurrency ?? 3} parallel subagents build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
-              : `1. Call \`plan_screens\` first, then \`init_prototype_shell\` + \`upsert_prototype_screen\` per planned screen (or \`rewrite_prototype_page\` with \`allowAnchorReset: true\`) ONLY when a Confirmed Requirements Document is present above.`,
+              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`plan_screens\` with the Build Plan — 3–5 screens, each with screenId, a business name and a one-sentence business purpose — so the user sees one blank artboard per screen within seconds; THEN call \`define_style\` with the design values, the shared component CSS (buttons, cards, tables, form fields, tags, empty states) and the style sample — it is drawn live on the first artboard and lays out the document skeleton; THEN call \`spawn_subagents\` with one task per planned screen, in plan order, so ${execOptions?.multiAgentConcurrency ?? 3} parallel helpers build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Helpers automatically receive the Design Brief, the design values, the shared components, the Visual References and the requirements summary — keep each task's instruction to what that screen shows and does. Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
+              : `1. Call \`plan_screens\` first, then \`define_style\`, then \`upsert_prototype_screen\` per planned screen ONLY when a Confirmed Requirements Document is present above.`,
             `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, interactive motion specifications, and the Confirmed Requirements Document scope (never unconfirmed drafts).`,
             `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
             `4. Ensure clean responsive layout across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
@@ -2904,8 +2932,8 @@ function buildSystemPromptForSession(
           `当前共创目标交互原型：未绑定（按设计简报与已确认需求文档从零生成首版交互原型 Revision #1）。`,
           `首版原型生成准则（快速上屏，禁止在 thinking 中默写整页长代码）：`,
           useParallel
-            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码，也严禁调用单次巨型 \`rewrite_prototype_page\`**！请立即在 \`codemode\` 中或分步执行：① 先调用 \`plan_screens\` 列出施工计划：3～5 屏，每屏给出 screenId、业务名称和一句业务用途（画布会随之放好空白画板）；② 再调用 \`init_prototype_shell\` 声明共享视觉令牌与共享样式（它不画任何屏幕）；③ 然后调用 \`spawn_subagents\` 按计划顺序每屏一个任务派发（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行子智能体，每个子智能体各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。`
-            : `1. 仅在已存在【已确认需求文档快照】时，先调用 \`plan_screens\` 列出施工计划，再调用 \`init_prototype_shell\` + 按计划逐屏 \`upsert_prototype_screen\`（或 \`rewrite_prototype_page\` 携带 \`allowAnchorReset: true\`）输出可运行 HTML5 原型。`,
+            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码，也严禁调用单次巨型 \`rewrite_prototype_page\`**！请立即在 \`codemode\` 中或分步执行：① 先调用 \`plan_screens\` 列出施工计划：3～5 屏，每屏给出 screenId、业务名称和一句业务用途（画布会随之放好空白画板）；② 再调用 \`define_style\` 画风格样张：设计值、共用组件样式（按钮、卡片、表格、表单、标签、空状态）和样张，它会实时画在第一块画板上，并搭好文档骨架；③ 然后调用 \`spawn_subagents\` 按计划顺序每屏一个任务派发（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行屏幕助手，每位助手各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。设计简报、设计值、共用组件、视觉参考和需求摘要会自动交给每位助手，任务说明里只写这一屏显示什么、能做什么。`
+            : `1. 仅在已存在【已确认需求文档快照】时，先调用 \`plan_screens\` 列出施工计划，再调用 \`define_style\` 画风格样张，然后按计划逐屏 \`upsert_prototype_screen\` 输出可运行 HTML5 原型。`,
           `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、交互动效约束与【已确认需求文档快照】（严禁读取未确认草稿）。`,
           `3. 每个业务屏幕必须声明合法 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`，所有 <button>/<input>/<select>/<textarea> 必须携带全局唯一合法 \`data-element-id\` 与 \`data-element-type\`（并合理挂载 \`data-binding\` 与 \`data-event-id\`），严禁使用 window.alert/confirm/prompt。`,
           `4. 页面必须原生支持响应式布局，在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 视口下均排版整洁无溢出。`,
@@ -2945,6 +2973,46 @@ interface PrototypeTurnDraft {
   baselineHtml: string;
   workingHtml: string;
   modifiedAnchors: PrototypeTargetAnchor[];
+  /** The shared look this run set with `define_style` (#91). */
+  style?: PrototypeStyle;
+  /** The approved Style Tile values this run must keep (null: the lead proposes them). */
+  lockedStyleValues?: PrototypeStyleValues | null;
+}
+
+/** The approved values of a Design Brief (locked once the brief is approved), else null. */
+function lockedStyleValuesOf(brief: DesignBrief | undefined | null): PrototypeStyleValues | null {
+  if (!brief?.approvedAt || !brief.styleValues) return null;
+  const read = readPrototypeStyleValues(brief.styleValues);
+  return Object.keys(read).length > 0 ? resolvePrototypeStyleValues(read, read).values : null;
+}
+
+/**
+ * The style `init_prototype_shell` builds on: the run's own (from `define_style`); without one,
+ * the shell's tokens with the approved values winning; without either, the shell's tokens.
+ */
+function shellStyleFor(draft: PrototypeTurnDraft | undefined, tokens: unknown): PrototypeStyle | undefined {
+  if (draft?.style) return draft.style;
+  if (!draft?.lockedStyleValues) return undefined;
+  const tk = tokens && typeof tokens === 'object' ? (tokens as Record<string, unknown>) : {};
+  return {
+    direction: '',
+    values: resolvePrototypeStyleValues(
+      {
+        mode: tk.mode,
+        background: tk.canvasBg,
+        surface: tk.cardBg,
+        accent: tk.accentColor,
+        border: tk.borderColor,
+        ink: tk.textColor,
+        fontFamily: tk.fontFamily,
+        radiusPx: tk.borderRadius,
+      },
+      draft.lockedStyleValues,
+    ).values,
+    componentCss: '',
+    sampleHtml: '',
+    locked: true,
+  };
 }
 
 function recordModifiedAnchor(
@@ -3775,7 +3843,10 @@ async function executeUnifiedToolCall(
           ...(typeof args.sharedCss === 'string' ? { sharedCss: args.sharedCss } : {}),
           screens,
         };
-        const shellRes = initPrototypeShell(shellInput, { locale });
+        const shellRes = initPrototypeShell(shellInput, {
+          locale,
+          style: shellStyleFor(prototypeDraft, args.themeTokens) ?? null,
+        });
         if (shellRes.isError) {
           return {
             trace: {
@@ -4823,6 +4894,10 @@ async function executeUnifiedTurnCore(
               modifiedAnchors: [],
             }
         : undefined;
+    // The Design Brief this build follows: approved Style Tile values in it are locked (#91).
+    const buildDesignBrief =
+      input.designBrief ?? initialTargetProto?.designBrief ?? sessionState.designBrief ?? undefined;
+    if (prototypeTurnDraft) prototypeTurnDraft.lockedStyleValues = lockedStyleValuesOf(buildDesignBrief);
 
     if (controller.signal.aborted) {
       throw toAbortedError();
@@ -4863,6 +4938,9 @@ async function executeUnifiedTurnCore(
     });
 
     const piMessages: Message[] = buildInitialPiMessages(sessionState);
+    // The Visual References of this turn, handed to every screen helper as well (#91).
+    let helperReferenceImages: ImageContent[] = [];
+    let helperReferenceLines: string[] = [];
 
     if (incomingImages.length > 0) {
       const lastPiUserIdx = (() => {
@@ -4896,6 +4974,8 @@ async function executeUnifiedTurnCore(
             extraSections.push(resolvedVision.fallbackNotes.join('\n'));
           }
           const combinedText = [basePromptText, ...extraSections].filter(Boolean).join('\n\n');
+          helperReferenceImages = resolvedVision.imageBlocks;
+          helperReferenceLines = [...resolvedVision.manifestLines, ...resolvedVision.fallbackNotes];
           if (resolvedVision.imageBlocks.length > 0) {
             piMessages[lastPiUserIdx] = {
               ...targetUserMsg,
@@ -4919,6 +4999,7 @@ async function executeUnifiedTurnCore(
               );
             return `- [${idx + 1}] ${img.name}${roleTag}: ${detail}`;
           });
+          helperReferenceLines = fallbackLines;
           const fallbackBlock = pickLocaleText(
             effectiveLocale,
             `[文字设计说明（当前模型不支持看图）]\n${fallbackLines.join('\n')}`,
@@ -4966,7 +5047,12 @@ async function executeUnifiedTurnCore(
       for (const liveEvent of events) {
         emit({
           id: nextEventId(),
-          event: liveEvent.kind === 'frame' ? 'prototype_frame' : 'prototype_screen',
+          event:
+            liveEvent.kind === 'frame'
+              ? 'prototype_frame'
+              : liveEvent.kind === 'style'
+                ? 'prototype_style'
+                : 'prototype_screen',
           data: {
             runId: turnRunId,
             ...(prototypeTurnDraft.prototypeId ? { prototypeId: prototypeTurnDraft.prototypeId } : {}),
@@ -5043,6 +5129,136 @@ async function executeUnifiedTurnCore(
           }
         : call;
 
+    // The 「风格样张」 (#91): define_style's arguments are drawn on the first artboard as they
+    // stream, about one update every 150 ms, with the approved values applied from the start.
+    let styleStreaming = false;
+    const styleThrottle = createPartialScreenThrottle<unknown>({
+      intervalMs: 150,
+      onFlush: (_key, partialArgs) => {
+        if (!prototypeTurnDraft || controller.signal.aborted || !styleStreaming) return;
+        const stream = readStreamingPrototypeStyle(partialArgs, prototypeTurnDraft.lockedStyleValues ?? null);
+        const liveEvent = stream ? prototypeLiveTracker.observeStyle(stream, 'streaming') : null;
+        if (liveEvent) emitPrototypeLiveEvents([liveEvent]);
+      },
+    });
+    const STYLE_STREAM_KEY = 'define_style';
+    const streamPrototypeStyle = (partialArgs: unknown) => {
+      if (!prototypeTurnDraft) return;
+      styleStreaming = true;
+      prototypeBuildRun?.observeStyleStream();
+      styleThrottle.push(STYLE_STREAM_KEY, partialArgs);
+    };
+
+    const runDefineStyleTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
+      const started = Date.now();
+      styleStreaming = false;
+      styleThrottle.end(STYLE_STREAM_KEY);
+      const rejected = (diagnostic: string, content?: string): ExecutedToolStep => {
+        prototypeBuildRun?.commitStyle({ ok: false });
+        // What streamed onto the style artboard is taken back to the style the document has.
+        const kept = prototypeTurnDraft?.style;
+        const back = prototypeLiveTracker.observeStyle(
+          kept
+            ? { css: prototypeStyleCss(kept), sampleHtml: kept.sampleHtml, direction: kept.direction, locked: kept.locked }
+            : { css: '', sampleHtml: '', direction: '', locked: false },
+          'ready',
+        );
+        if (back) emitPrototypeLiveEvents([back]);
+        return {
+          trace: {
+            id: callId,
+            toolName: DEFINE_STYLE_TOOL_NAME,
+            arguments: rawArgs,
+            output: diagnostic,
+            isError: true,
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: content ?? JSON.stringify({ status: 'ERROR', diagnostic }),
+          isError: true,
+        };
+      };
+      if (!prototypeTurnDraft) {
+        return rejected(
+          pickLocaleText(
+            effectiveLocale,
+            'define_style 只在生成原型时可用。',
+            'define_style is only available while building a prototype.',
+          ),
+        );
+      }
+      if (
+        !resolveTargetPrototypeForSession(store, sessionState) &&
+        !store.getProjectStepConfirmations(sessionState.projectId).requirements
+      ) {
+        return rejected(
+          pickLocaleText(
+            effectiveLocale,
+            '需要先完成并确认需求文档，才能生成首版界面原型。',
+            'Confirm the requirements document first before generating an initial prototype.',
+          ),
+        );
+      }
+      const committed = commitDefineStyle(rawArgs, prototypeTurnDraft.lockedStyleValues ?? null, effectiveLocale);
+      if (committed.isError || !committed.style) return rejected(committed.summary, committed.content);
+      const style = committed.style;
+      prototypeTurnDraft.style = style;
+      // The style is the document's look: an empty document gets its skeleton from the plan.
+      const planned = prototypeBuildRun?.plannedScreens() ?? null;
+      if (prototypeTurnDraft.workingHtml.trim()) {
+        prototypeTurnDraft.workingHtml = applyPrototypeStyleToDocument(prototypeTurnDraft.workingHtml, style);
+      } else if (planned && planned.length > 0) {
+        const shell = initPrototypeShell(
+          {
+            appTitle: prototypeTurnDraft.prototypeName,
+            screens: planned.map((p) => ({
+              screenId: p.screenId,
+              screenName: p.screenName,
+              screenType: p.screenType ?? 'LIST',
+              summary: p.purpose,
+            })),
+          },
+          { locale: effectiveLocale, style },
+        );
+        if (!shell.isError) prototypeTurnDraft.workingHtml = shell.nextHtml;
+      }
+      syncPrototypeLiveDocument();
+      const ready = prototypeLiveTracker.observeStyle(
+        { css: prototypeStyleCss(style), sampleHtml: style.sampleHtml, direction: style.direction, locked: style.locked },
+        'ready',
+      );
+      if (ready) emitPrototypeLiveEvents([ready]);
+      prototypeBuildRun?.commitStyle({ ok: true, locked: style.locked });
+      return {
+        trace: {
+          id: callId,
+          toolName: DEFINE_STYLE_TOOL_NAME,
+          arguments: rawArgs,
+          output: committed.summary,
+          isError: false,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: committed.content,
+        isError: false,
+      };
+    };
+
+    /** What a screen helper builds from: this run's style, else the one the document carries. */
+    const helperStyle = () => {
+      const own = prototypeTurnDraft?.style;
+      if (own) {
+        return { css: prototypeStyleCss(own), sampleHtml: own.sampleHtml, direction: own.direction, locked: own.locked };
+      }
+      return readPrototypeDocumentStyle(prototypeTurnDraft?.workingHtml ?? '');
+    };
+    const helperPlan = (): PrototypeBuildPlanItem[] =>
+      prototypeBuildRun?.plannedScreens() ??
+      splitPrototypeDocument(prototypeTurnDraft?.workingHtml ?? '').screens.map((sc) => ({
+        screenId: sc.screenId,
+        screenName: sc.screenName,
+        purpose: '',
+        screenType: sc.screenType,
+      }));
+
     const runSpawnSubagentsTool = async (
       parentCallId: string,
       rawArgs: Record<string, unknown>,
@@ -5083,12 +5299,16 @@ async function executeUnifiedTurnCore(
         };
       }
 
-      const subBaseSystemPrompt = buildSystemPromptForSession(
-        store,
-        sessionState,
-        input.activeModelCode,
-        effectiveLocale,
-      );
+      // A prototype's screen helpers get their own instructions, not the lead's (#91).
+      const isPrototypeBuild = sessionState.agentKind === 'PROTOTYPE_CO_DESIGN' && Boolean(prototypeTurnDraft);
+      const subBaseSystemPrompt = isPrototypeBuild
+        ? screenHelperSystemPrompt(effectiveLocale)
+        : buildSystemPromptForSession(store, sessionState, input.activeModelCode, effectiveLocale);
+      const confirmedRequirements = isPrototypeBuild
+        ? store.getProjectStepConfirmations(sessionState.projectId).requirements
+        : undefined;
+      const styleForHelpers = isPrototypeBuild ? helperStyle() : null;
+      const planForHelpers = isPrototypeBuild ? helperPlan() : [];
 
       const batchStartIdx = allSubagentLanes.length;
       const parallelRes = await runParallelSubagents({
@@ -5098,7 +5318,24 @@ async function executeUnifiedTurnCore(
         models: built!.models,
         selectedModel: built!.selectedModel,
         baseSystemPrompt: subBaseSystemPrompt,
-        subagentTools: baseSpecialistTools,
+        subagentTools: isPrototypeBuild ? screenHelperTools(baseSpecialistTools) : baseSpecialistTools,
+        ...(isPrototypeBuild
+          ? {
+              screenContext: (spec: SubagentTaskSpec) =>
+                buildScreenHelperContext({
+                  locale: effectiveLocale,
+                  screenId: spec.screenId?.trim() ?? '',
+                  plan: planForHelpers,
+                  style: styleForHelpers,
+                  designBrief: buildDesignBrief ?? null,
+                  requirements: confirmedRequirements
+                    ? { title: confirmedRequirements.title, content: confirmedRequirements.content }
+                    : null,
+                  referenceLines: helperReferenceLines,
+                }),
+              contextImages: helperReferenceImages,
+            }
+          : {}),
         signal: controller.signal,
         stepTimeoutMs,
         maxTokens: resolvedMaxTokens,
@@ -5135,7 +5372,9 @@ async function executeUnifiedTurnCore(
               step: stepNum,
             },
           });
-          const subExec = await executeUnifiedToolCall(
+          const ownScreenId = lane.targetAnchor?.screenId?.trim();
+          const htmlBefore = prototypeTurnDraft?.workingHtml ?? '';
+          let subExec = await executeUnifiedToolCall(
             store,
             sessionState,
             alignShellWithPlan(subTc),
@@ -5148,6 +5387,20 @@ async function executeUnifiedTurnCore(
               ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
             },
           );
+          // A screen helper's write may only change its own screen: anything else is undone.
+          if (isPrototypeBuild && ownScreenId && prototypeTurnDraft && !subExec.isError) {
+            const kept = keepWithinOwnScreen(htmlBefore, prototypeTurnDraft.workingHtml, ownScreenId, effectiveLocale);
+            prototypeTurnDraft.workingHtml = kept.html;
+            const diagnostic = kept.diagnostic;
+            if (diagnostic) {
+              subExec = {
+                ...subExec,
+                trace: { ...subExec.trace, output: diagnostic, isError: true },
+                toolResultContent: JSON.stringify({ status: 'REJECTED_OUT_OF_SCOPE', diagnostic }),
+                isError: true,
+              };
+            }
+          }
           if (subTc.name === 'upsert_prototype_screen') {
             const writtenSid =
               (typeof subArgs.screenId === 'string' && subArgs.screenId.trim()) || lane.targetAnchor?.screenId;
@@ -5196,6 +5449,17 @@ async function executeUnifiedTurnCore(
         toolResultContent: JSON.stringify({
           status: parallelRes.allSucceeded ? 'OK' : 'PARTIAL_FAILURE',
           summary: parallelRes.summaryText,
+          // Each screen's own check result (#91): written and passed, or why not.
+          ...(parallelRes.screenResults.length > 0
+            ? {
+                screens: parallelRes.screenResults.map((r) => ({
+                  ...r,
+                  ...(r.check === 'passed' && prototypeBuildRun
+                    ? { elementsWritten: prototypeBuildRun.writtenElements(r.screenId) }
+                    : {}),
+                })),
+              }
+            : {}),
           lanes: parallelRes.lanes.map((l) => ({
             title: l.taskTitle.zh,
             status: l.status,
@@ -5310,6 +5574,7 @@ async function executeUnifiedTurnCore(
             codeMode: effectiveCodeMode,
             multiAgentConcurrency: effectiveConcurrency,
             offeredTools: tools,
+            lockedStyleValues: prototypeTurnDraft?.lockedStyleValues ?? null,
           },
         );
         const context: Context = {
@@ -5359,6 +5624,9 @@ async function executeUnifiedTurnCore(
               const partialCall = ev.partial.content[ev.contentIndex];
               if (partialCall?.type === 'toolCall' && partialCall.name === PLAN_SCREENS_TOOL_NAME) {
                 prototypeBuildRun?.observePlanStream(partialCall.arguments);
+              }
+              if (partialCall?.type === 'toolCall' && partialCall.name === DEFINE_STYLE_TOOL_NAME) {
+                streamPrototypeStyle(partialCall.arguments);
               }
               if (
                 partialCall?.type === 'toolCall' &&
@@ -5514,6 +5782,8 @@ async function executeUnifiedTurnCore(
               ? await runSpawnSubagentsTool(tc.id, tcArgs, step + 1)
               : tc.name === PLAN_SCREENS_TOOL_NAME
                 ? runPlanScreensTool(tc.id, tcArgs)
+              : tc.name === DEFINE_STYLE_TOOL_NAME
+                ? runDefineStyleTool(tc.id, tcArgs)
               : tc.name === 'codemode'
                 ? await (async (): Promise<ExecutedToolStep> => {
                     const startedCm = Date.now();
@@ -5547,6 +5817,8 @@ async function executeUnifiedTurnCore(
                             ? await runSpawnSubagentsTool(nestedCallId, nestedArgs, step + 1)
                             : nestedToolName === PLAN_SCREENS_TOOL_NAME
                               ? runPlanScreensTool(nestedCallId, nestedArgs)
+                            : nestedToolName === DEFINE_STYLE_TOOL_NAME
+                              ? runDefineStyleTool(nestedCallId, nestedArgs)
                             : await executeUnifiedToolCall(
                                 store,
                                 sessionState,
@@ -5742,6 +6014,7 @@ async function executeUnifiedTurnCore(
       // Nothing streams after the model loop, whether it finished or failed: a held delta
       // must not arrive after the run's end.
       partialScreenThrottle.dispose();
+      styleThrottle.dispose();
     }
 
     if (
@@ -6588,17 +6861,7 @@ export async function* runUnifiedAgentSessionStream(
 
 /** Names of the screens other than `exceptScreenId` that differ between two documents. */
 function changedOtherScreens(beforeHtml: string, afterHtml: string, exceptScreenId: string): string[] {
-  const before = new Map(splitPrototypeDocument(beforeHtml).screens.map((sc) => [sc.screenId, sc]));
-  const after = splitPrototypeDocument(afterHtml).screens;
-  const changed: string[] = [];
-  for (const sc of after) {
-    if (sc.screenId === exceptScreenId) continue;
-    if (before.get(sc.screenId)?.html !== sc.html) changed.push(sc.screenName);
-  }
-  for (const [id, sc] of before) {
-    if (id !== exceptScreenId && !after.some((a) => a.screenId === id)) changed.push(sc.screenName);
-  }
-  return changed;
+  return screensChangedOutside(beforeHtml, afterHtml, exceptScreenId);
 }
 
 function resolveEffectiveStructuredAction(

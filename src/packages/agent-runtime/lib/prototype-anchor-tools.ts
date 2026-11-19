@@ -1,7 +1,10 @@
 import {
   extractPrototypeArtboards,
   prototypeNavigationRuntimeScript,
+  prototypeStyleHeadHtml,
+  resolvePrototypeStyleValues,
   type PrototypeArtboardSlice,
+  type PrototypeStyle,
 } from '../../ontology-core/index.js';
 import type {
   AgentSession,
@@ -1252,9 +1255,36 @@ function normalizeScreenType(raw: string | undefined): string {
   return VALID_PROTOTYPE_SCREEN_TYPES.has(upper) ? upper : 'LIST';
 }
 
+/** The style the shell's own `themeTokens` describe (the lead's proposal, no samples). */
+function styleFromShellTokens(tokens: InitPrototypeShellInput['themeTokens']): PrototypeStyle {
+  const tk = tokens ?? {};
+  return {
+    direction: '',
+    values: resolvePrototypeStyleValues({
+      mode: tk.mode,
+      background: tk.canvasBg,
+      surface: tk.cardBg,
+      accent: tk.accentColor,
+      border: tk.borderColor,
+      ink: tk.textColor,
+      fontFamily: tk.fontFamily,
+      radiusPx: tk.borderRadius,
+    }).values,
+    componentCss: '',
+    sampleHtml: '',
+    locked: false,
+  };
+}
+
+/**
+ * The document skeleton (spec #87 decision 3): head, an app bar with the title and one link
+ * per screen, and one empty section per screen. It has no look of its own: every colour, font
+ * and radius comes from the build's style (`define_style`, ADR 0018 / #91), or — when the lead
+ * set none — from the shell's `themeTokens`. No fixed page width: the pages follow the viewport.
+ */
 export function initPrototypeShell(
   input: InitPrototypeShellInput,
-  options?: { locale?: AgentLocale },
+  options?: { locale?: AgentLocale; style?: PrototypeStyle | null },
 ): PrototypeHtmlMutationResult {
   const locale = options?.locale ?? 'zh-CN';
   const screens = Array.isArray(input.screens) ? input.screens.filter((s) => s?.screenId?.trim()) : [];
@@ -1284,24 +1314,14 @@ export function initPrototypeShell(
     };
   }
 
-  const tk = input.themeTokens ?? {};
-  const isDark = tk.mode === 'dark';
-  const canvasBg = tk.canvasBg?.trim() || (isDark ? '#141413' : '#f6f4f0');
-  const cardBg = tk.cardBg?.trim() || (isDark ? '#1e1d1b' : '#fffdf9');
-  const accent = tk.accentColor?.trim() || '#f94c05';
-  const border = tk.borderColor?.trim() || (isDark ? '#33302b' : '#dfd6c7');
-  const text = tk.textColor?.trim() || (isDark ? '#f5f2eb' : '#1f1d1a');
-  const font =
-    tk.fontFamily?.trim() ||
-    "'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif";
-  const radius = tk.borderRadius?.trim() || '12px';
+  const style = options?.style ?? styleFromShellTokens(input.themeTokens);
 
   const navItemsHtml = screens
     .map((scr, idx) => {
       const sid = escapeHtmlAttr(scr.screenId.trim());
       const sname = escapeHtmlAttr(scr.screenName?.trim() || scr.screenId.trim());
       const navElId = `EL-SHELL-TAB-${sid.replace(/[^A-Za-z0-9_-]/g, '-')}`;
-      return `        <button type="button" class="proto-nav-tab${idx === 0 ? ' is-active' : ''}" data-element-id="${navElId}" data-element-type="TAB" data-element-label="${sname}" data-nav-screen="${sid}" onclick="window.__selectProtoScreen('${sid}')">${sname}</button>`;
+      return `        <button type="button" class="proto-app-nav-link${idx === 0 ? ' is-active' : ''}" data-element-id="${navElId}" data-element-type="TAB" data-element-label="${sname}" data-nav-screen="${sid}" onclick="window.__selectProtoScreen('${sid}')">${sname}</button>`;
     })
     .join('\n');
 
@@ -1319,25 +1339,17 @@ export function initPrototypeShell(
   const appTitle = escapeHtmlAttr(input.appTitle?.trim() || 'Interactive Prototype');
   const subtitle = input.subtitle?.trim() ? escapeHtmlAttr(input.subtitle.trim()) : '';
 
+  // Structure only, at zero specificity (:where), so the style's components restyle any of it.
   const html = `<!DOCTYPE html>
 <html lang="${locale === 'en-US' ? 'en' : 'zh-CN'}">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${appTitle}</title>
+  ${prototypeStyleHeadHtml(style)}
   <style id="proto-shell-styles">
-    :root {
-      --proto-bg: ${canvasBg};
-      --proto-card: ${cardBg};
-      --proto-accent: ${accent};
-      --proto-border: ${border};
-      --proto-text: ${text};
-      --proto-muted: ${isDark ? '#a69f93' : '#6e675d'};
-      --proto-radius: ${radius};
-      --proto-font: ${font};
-    }
-    * { box-sizing: border-box; }
-    body {
+    *, *::before, *::after { box-sizing: border-box; }
+    :where(body) {
       margin: 0;
       font-family: var(--proto-font);
       background: var(--proto-bg);
@@ -1345,103 +1357,44 @@ export function initPrototypeShell(
       line-height: 1.5;
       font-variant-numeric: tabular-nums;
     }
-    .proto-app-shell {
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-    .proto-topbar {
+    :where(.proto-app-shell) { min-height: 100vh; display: flex; flex-direction: column; }
+    :where(.proto-app-bar) {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 14px 24px;
+      gap: 8px 28px;
+      padding: 12px clamp(16px, 3vw, 32px);
       background: var(--proto-card);
       border-bottom: 1px solid var(--proto-border);
-      position: sticky;
-      top: 0;
-      z-index: 20;
     }
-    .proto-brand {
-      display: flex;
-      align-items: baseline;
-      gap: 10px;
-    }
-    .proto-brand h1 {
-      margin: 0;
-      font-size: 17px;
-      font-weight: 700;
-    }
-    .proto-brand span {
-      font-size: 12px;
-      color: var(--proto-muted);
-    }
-    .proto-nav {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    .proto-nav-tab {
+    :where(.proto-app-title) { margin: 0; font-size: 16px; font-weight: 600; }
+    :where(.proto-app-subtitle) { font-size: 12px; color: var(--proto-muted); }
+    :where(.proto-app-nav) { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+    :where(.proto-app-nav-link) {
       appearance: none;
-      border: 1px solid transparent;
-      background: transparent;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: none;
+      padding: 4px 0;
+      font: inherit;
       color: var(--proto-muted);
-      padding: 6px 13px;
-      border-radius: calc(var(--proto-radius) - 4px);
-      font-size: 13px;
-      font-weight: 500;
       cursor: pointer;
-      transition: all 160ms ease-out;
     }
-    .proto-nav-tab:hover {
-      color: var(--proto-text);
-      border-color: var(--proto-border);
-    }
-    .proto-nav-tab.is-active {
-      background: var(--proto-accent);
-      color: #ffffff;
-      border-color: var(--proto-accent);
-    }
-    .proto-screens-stage {
-      flex: 1;
-      width: 100%;
-      max-width: 1380px;
-      margin: 0 auto;
-      padding: 22px 24px 40px;
-    }
-    .proto-screen {
-      display: none;
-      animation: protoFadeIn 200ms ease-out;
-    }
-    .proto-screen.is-active {
-      display: block;
-    }
-    @keyframes protoFadeIn {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .proto-card, .card {
-      background: var(--proto-card);
-      border: 1px solid var(--proto-border);
-      border-radius: var(--proto-radius);
-      padding: 18px;
-    }
-    @media (max-width: 768px) {
-      .proto-topbar { padding: 12px 16px; }
-      .proto-screens-stage { padding: 16px; }
-    }
+    :where(.proto-app-nav-link.is-active) { color: var(--proto-text); border-bottom-color: var(--proto-accent); }
+    :where(.proto-screens-stage) { flex: 1; width: 100%; min-width: 0; padding: clamp(16px, 2.5vw, 32px); }
+    .proto-screen { display: none; }
+    .proto-screen.is-active { display: block; }
     ${input.sharedCss?.trim() ?? ''}
   </style>
 </head>
 <body>
   <div class="proto-app-shell">
-    <header class="proto-topbar">
-      <div class="proto-brand">
-        <h1>${appTitle}</h1>
-        ${subtitle ? `<span>${subtitle}</span>` : ''}
+    <header class="proto-app-bar">
+      <div class="proto-app-brand">
+        <h1 class="proto-app-title">${appTitle}</h1>
+        ${subtitle ? `<span class="proto-app-subtitle">${subtitle}</span>` : ''}
       </div>
-      <nav class="proto-nav" aria-label="Primary Screens">
+      <nav class="proto-app-nav" aria-label="Screens">
 ${navItemsHtml}
       </nav>
     </header>
@@ -1907,7 +1860,7 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'init_prototype_shell',
       description:
-        'Initialize a responsive multi-artboard HTML5 prototype shell with shared design tokens, navigation tabs, and placeholder screen frames (data-screen-status="queued") so the user sees all artboards immediately while parallel subagents fill each screen via upsert_prototype_screen.',
+        'Initialize the document skeleton: app title, one navigation link per screen and an empty section per planned screen. It has no look of its own — colours, type and components come from define_style (set the style first); themeTokens are only used when no style was set. Never draws a screen.',
       parameters: {
         type: 'object',
         properties: {

@@ -17,6 +17,7 @@ import type {
   SemanticAlignmentReport,
   ValidationDiagnostic,
   ValidationReport,
+  PrototypeStyleValues,
 } from '../../ontology-core/index.js';
 import type { InspoCacheEntry, InspoCacheEntryInput } from './inspo-cache.js';
 import type { TechnologyProfile } from '../../architecture-assets/index.js';
@@ -776,6 +777,11 @@ export interface DesignBrief {
   borrowedReferences?: DesignBriefBorrowedReference[];
   userImageRefs?: AgentImageAttachmentRef[];
   motionSchematicIds?: string[];
+  /**
+   * The Style Tile's design values as the user approved them (#91). Once the brief is approved
+   * they are locked: a prototype build uses them whatever the lead assistant proposes.
+   */
+  styleValues?: PrototypeStyleValues;
   approvedAt?: string;
   updatedAt: string;
 }
