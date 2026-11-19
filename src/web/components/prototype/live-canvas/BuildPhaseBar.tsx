@@ -5,10 +5,12 @@ import {
   type PrototypeBuildPhaseId,
   type PrototypeBuildPhaseStatus,
   type PrototypeBuildState,
+  type PrototypeDemoTour,
 } from '../../../../packages/ontology-core/index.js';
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import type { ScreenBuildView } from './buildView.js';
+import { DemoTourPlayButton } from './DemoTourPlayer.js';
 
 type T = (zh: string, en: string) => string;
 
@@ -33,6 +35,7 @@ function phaseDetail(
   status: PrototypeBuildPhaseStatus,
   build: PrototypeBuildState,
   screens: readonly ScreenBuildView[],
+  toursCount: number,
   t: T,
 ): string {
   const total = build.plan.length;
@@ -78,6 +81,14 @@ function phaseDetail(
     }
     return checked > 0 ? t(`${checked} 屏都通过`, `All ${checked} passed`) : t('完成', 'Done');
   }
+  if (phase === 'tours' && (status === 'now' || status === 'done')) {
+    if (status === 'now') return t('正在编写', 'Writing');
+    const ready = [...build.log].reverse().find((e) => e.kind === 'tours_ready');
+    const count = toursCount > 0 ? toursCount : (ready?.count ?? 0);
+    return count > 0
+      ? t(`演示路线已就绪 · ${count} 条`, `Demo tours ready · ${count}`)
+      : t('演示路线已就绪', 'Demo tours ready');
+  }
   if (status === 'skipped') {
     return phase === 'review' ? t('未做视觉检查', 'Not visually checked') : t('本次未做', 'Not done this time');
   }
@@ -103,9 +114,17 @@ function PhaseIcon({ status }: { status: PrototypeBuildPhaseStatus }) {
 export function BuildPhaseBar({
   build,
   screens,
+  tours = [],
+  activeTourId = null,
+  onSelectTour,
+  viewMode = 'business',
 }: {
   build: PrototypeBuildState;
   screens: readonly ScreenBuildView[];
+  tours?: readonly PrototypeDemoTour[];
+  activeTourId?: string | null;
+  onSelectTour?: (tour: PrototypeDemoTour) => void;
+  viewMode?: 'business' | 'technical';
 }) {
   const { t } = usePreferences();
   return (
@@ -113,7 +132,7 @@ export function BuildPhaseBar({
       {PROTOTYPE_BUILD_PHASES.map((phase, idx) => {
         const status = build.phases[phase].status;
         return (
-          <li key={phase} className="flex items-center gap-1">
+          <li key={phase} className="flex items-center gap-1.5">
             {idx > 0 && <ChevronRight size={12} className="text-muted-foreground" aria-hidden="true" />}
             <span
               className={cn(
@@ -128,8 +147,16 @@ export function BuildPhaseBar({
             >
               <PhaseIcon status={status} />
               <span className="font-medium">{phaseName(phase, t)}</span>
-              <span className="text-muted-foreground">{phaseDetail(phase, status, build, screens, t)}</span>
+              <span className="text-muted-foreground">{phaseDetail(phase, status, build, screens, tours.length, t)}</span>
             </span>
+            {phase === 'tours' && tours.length > 0 && onSelectTour && (
+              <DemoTourPlayButton
+                tours={tours}
+                activeTourId={activeTourId}
+                onSelectTour={onSelectTour}
+                viewMode={viewMode}
+              />
+            )}
           </li>
         );
       })}

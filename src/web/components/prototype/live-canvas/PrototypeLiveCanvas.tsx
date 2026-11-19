@@ -7,8 +7,10 @@ import {
   buildPrototypeCanvasModel,
   composePrototypeDocument,
   hasPrototypeBuildPlan,
+  readPrototypeDemoTours,
   type PrototypeBuildState,
   type PrototypeCanvasArtboard,
+  type PrototypeDemoTour,
   type PrototypeLiveState,
 } from '../../../../packages/ontology-core/index.js';
 import { usePreferences } from '../../../i18n.js';
@@ -42,6 +44,19 @@ import {
 import { openCleanPrototypeInNewTab } from '../PrototypeVisualInspector.js';
 import { readPrototypeView, writePrototypeView, type PrototypeView } from './prototypeView.js';
 import { PrototypeWebView, WebModeHint, type PrototypeWebViewHandle } from './PrototypeWebView.js';
+import {
+  CanvasDemoTourOverlay,
+  DemoTourPlayButton,
+  DemoTourPlaybackBar,
+  DemoTourScriptPanel,
+  WebDemoTourOverlay,
+} from './DemoTourPlayer.js';
+import {
+  prefersReducedMotion,
+  useDemoTourController,
+  type DemoTourStageAdapter,
+  type DemoTourTiming,
+} from './demoTourState.js';
 
 /** How long the follow camera stays on a screen before moving to another one. */
 export const FOLLOW_DWELL_MS = 1600;
@@ -74,6 +89,8 @@ export interface PrototypeLiveCanvasProps {
    * writing activities to drive the cursor, narration bubble, and build log "现在" rows.
    */
   liveActivities?: readonly AgentLiveActivity[];
+  /** Optional Demo Tour playback timing override (for fast deterministic component tests). */
+  demoTourTiming?: Partial<DemoTourTiming>;
 }
 
 interface Viewport {
@@ -99,6 +116,7 @@ export function PrototypeLiveCanvas({
   onOpenSingleScreen,
   onOpenStandalone = openStandalone,
   liveActivities,
+  demoTourTiming,
 }: PrototypeLiveCanvasProps) {
   const { locale, t } = usePreferences();
   const isBusiness = viewMode === 'business';
@@ -135,7 +153,18 @@ export function PrototypeLiveCanvas({
   );
 
   const views = useMemo(() => screenBuildViews(screens, plan, cleanName), [screens, plan, cleanName]);
-  const viewById = new Map(views.map((v) => [v.screenId, v] as const));
+  const viewById = useMemo(() => new Map(views.map((v) => [v.screenId, v] as const)), [views]);
+  const screenNameById = useCallback(
+    (screenId: string) => viewById.get(screenId)?.name ?? screenId,
+    [viewById],
+  );
+  const demoTours = useMemo(() => {
+    const fromLiveHead = live?.frame?.headHtml ? readPrototypeDemoTours(live.frame.headHtml) : [];
+    if (fromLiveHead.length > 0) return fromLiveHead;
+    const fromLiveBody = live?.frame?.bodyHtml ? readPrototypeDemoTours(live.frame.bodyHtml) : [];
+    if (fromLiveBody.length > 0) return fromLiveBody;
+    return readPrototypeDemoTours(documentHtml);
+  }, [documentHtml, live?.frame?.headHtml, live?.frame?.bodyHtml]);
 
   // ─── Agent cursor preferences & artboard frame handles (#92 + #93 fix narration) ───
   const [cursorPrefs, setCursorPrefs] = useState<AgentCursorPrefs>(readAgentCursorPrefs);
@@ -214,8 +243,11 @@ export function PrototypeLiveCanvas({
   const [webScreenId, setWebScreenId] = useState<string | undefined>(undefined);
   /** The page web mode opens on: the screen being tried out, else the one being drawn. */
   const [webStart, setWebStart] = useState<string | undefined>(undefined);
+  const stopTourRef = useRef<() => void>(() => {});
+  const focusScreenId = live?.focusScreenId;
   const setView = (next: PrototypeView) => {
-    if (next === 'web') setWebStart(tryScreenId ?? followTarget ?? focusScreenId ?? followedScreenId);
+    stopTourRef.current();
+    if (next === 'web') setWebStart(tryScreenId ?? focusScreenId ?? followedScreenId);
     setTryScreenId(null);
     setWebHint(false);
     setViewState(next);
@@ -288,6 +320,24 @@ export function PrototypeLiveCanvas({
     [frameRect, indexById],
   );
 
+  const frameTourScreen = useCallback(
+    (screenId: string) => {
+      const idx = indexById.get(screenId);
+      if (idx === undefined || viewport.w === 0 || viewport.h === 0) return;
+      const rect = artboardRect(idx);
+      moveCamera(
+        fitRect({ x: rect.x, y: rect.y - 40, w: rect.w, h: rect.h + 150 }, viewport, {
+          padding: 36,
+          maxK: 0.9,
+        }),
+        !prefersReducedMotion(),
+      );
+    },
+    [indexById, moveCamera, viewport],
+  );
+  const frameTourScreenRef = useRef(frameTourScreen);
+  frameTourScreenRef.current = frameTourScreen;
+
   /** Any manual camera move stops following. */
   const takeManualControl = useCallback(() => {
     stopTween();
@@ -304,16 +354,58 @@ export function PrototypeLiveCanvas({
     [frameScreen, takeManualControl],
   );
 
+  // ─── Demo Tour player (#95) ───────────────────────────────────────────────
+  const tourScreenRef = useRef<string | undefined>(undefined);
+  const tourAdapterRef = useRef<DemoTourStageAdapter>(null!);
+  tourAdapterRef.current =
+    view === 'web'
+      ? {
+          mode: 'web',
+          currentScreenId: () => webRef.current?.screenId() ?? webScreenId,
+          showScreen: (sid) => webRef.current?.open(sid),
+          documentFor: () => webRef.current?.document() ?? null,
+          screenViewportSize: () => ({
+            w: viewport.w || 1000,
+            h: Math.max(240, (viewport.h || 700) - 96),
+          }),
+          onDomMutated: bumpLayout,
+        }
+      : {
+          mode: 'artboards',
+          currentScreenId: () => tourScreenRef.current,
+          showScreen: (sid) => {
+            tourScreenRef.current = sid;
+            frameTourScreenRef.current(sid);
+          },
+          documentFor: (sid) => getFrameHandle(sid)?.document() ?? null,
+          screenViewportSize: () => ({ w: ARTBOARD_W, h: ARTBOARD_H }),
+          onDomMutated: bumpLayout,
+        };
+  const tourController = useDemoTourController(tourAdapterRef, demoTourTiming);
+  stopTourRef.current = tourController.stop;
+  const touring = Boolean(tourController.state.tour);
+  const tourActiveRef = useRef(touring);
+  tourActiveRef.current = touring;
+
+  const startDemoTour = useCallback(
+    (tour: PrototypeDemoTour) => {
+      takeManualControl();
+      setTryScreenId(null);
+      tourScreenRef.current = tour.steps[0]?.screenId;
+      tourController.play(tour);
+    },
+    [takeManualControl, tourController],
+  );
+
   // Before anyone moves the camera, keep every artboard in view.
   useEffect(() => {
-    if (userMoved.current || followState.current.target) return;
+    if (userMoved.current || followState.current.target || touring) return;
     if (boardCount > 0) fitAll();
-  }, [fitAll, boardCount]);
+  }, [fitAll, boardCount, touring]);
 
   // Follow: aim at the screen the latest real event touched, with a dwell.
-  const focusScreenId = live?.focusScreenId;
   useEffect(() => {
-    if (!following || tryScreenId) return;
+    if (!following || tryScreenId || touring) return;
     const now = Date.now();
     const decision = decideFollow(followState.current, focusScreenId, now, FOLLOW_DWELL_MS);
     followState.current = { ...(decision.target ? { target: decision.target } : {}), since: decision.since };
@@ -326,9 +418,10 @@ export function PrototypeLiveCanvas({
       return () => clearTimeout(timer);
     }
     return undefined;
-  }, [focusScreenId, following, frameScreen, followTick, tryScreenId]);
+  }, [focusScreenId, following, frameScreen, followTick, touring, tryScreenId]);
 
   const resumeFollowing = () => {
+    tourController.stop();
     setTryScreenId(null);
     followState.current = { since: 0 };
     setFollowedScreenId(undefined);
@@ -369,27 +462,36 @@ export function PrototypeLiveCanvas({
   tryRef.current = tryScreenId;
   const enterTry = useCallback(
     (screenId: string) => {
+      tourController.stop();
       takeManualControl();
       setTryScreenId(screenId);
       frameScreen(screenId);
     },
-    [frameScreen, takeManualControl],
+    [frameScreen, takeManualControl, tourController],
   );
   const enterTryRef = useRef(enterTry);
   enterTryRef.current = enterTry;
   const exitTry = useCallback(() => setTryScreenId(null), []);
   const navigateFromPrototype = useCallback((screenId: string) => {
+    if (tourActiveRef.current) {
+      tourScreenRef.current = screenId;
+      frameTourScreenRef.current(screenId);
+      return;
+    }
     if (tryRef.current) enterTryRef.current(screenId);
   }, []);
 
   useEffect(() => {
-    if (!tryScreenId) return;
+    if (!tryScreenId && !touring) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setTryScreenId(null);
+      if (event.key === 'Escape') {
+        setTryScreenId(null);
+        tourController.stop();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [tryScreenId]);
+  }, [tourController, touring, tryScreenId]);
 
   useEffect(() => stopTween, []);
 
@@ -437,19 +539,38 @@ export function PrototypeLiveCanvas({
         data-testid="prototype-phase-bar"
       >
         <div className="flex min-w-0 items-center gap-2" data-slot="build-phases">
-          {plan && <BuildPhaseBar build={plan} screens={views} />}
+          {plan && (
+            <BuildPhaseBar
+              build={plan}
+              screens={views}
+              tours={demoTours}
+              activeTourId={tourController.state.tour?.id ?? null}
+              onSelectTour={startDemoTour}
+              viewMode={viewMode}
+            />
+          )}
         </div>
         {!plan && (
-        <span className="text-muted-foreground" data-testid="prototype-build-counts">
-          {counts.total === 0
-            ? building
-              ? t('正在准备画布…', 'Preparing the canvas…')
-              : t('还没有屏幕', 'No screens yet')
-            : t(
-                `共 ${counts.total} 屏 · 已画好 ${counts.drawn} 屏${counts.drawing > 0 ? ` · ${counts.drawing} 屏正在画` : ''}`,
-                `${counts.total} screens · ${counts.drawn} drawn${counts.drawing > 0 ? ` · ${counts.drawing} drawing` : ''}`,
-              )}
-        </span>
+          <>
+            <span className="text-muted-foreground" data-testid="prototype-build-counts">
+              {counts.total === 0
+                ? building
+                  ? t('正在准备画布…', 'Preparing the canvas…')
+                  : t('还没有屏幕', 'No screens yet')
+                : t(
+                    `共 ${counts.total} 屏 · 已画好 ${counts.drawn} 屏${counts.drawing > 0 ? ` · ${counts.drawing} 屏正在画` : ''}`,
+                    `${counts.total} screens · ${counts.drawn} drawn${counts.drawing > 0 ? ` · ${counts.drawing} drawing` : ''}`,
+                  )}
+            </span>
+            {demoTours.length > 0 && (
+              <DemoTourPlayButton
+                tours={demoTours}
+                activeTourId={tourController.state.tour?.id ?? null}
+                onSelectTour={startDemoTour}
+                viewMode={viewMode}
+              />
+            )}
+          </>
         )}
         {reconnecting && (
           <span className="inline-flex items-center gap-1 text-warning">
@@ -541,8 +662,9 @@ export function PrototypeLiveCanvas({
               const isReviewing = boardView?.status === 'reviewing';
               const isFixing = boardView?.status === 'fixing';
               const isTrying = tryScreenId === board.screenId;
+              const isTourScreen = touring && tourController.state.screenId === board.screenId;
               const isHighlighted =
-                isTrying || highlightedScreenId === board.screenId || followTarget === board.screenId;
+                isTrying || isTourScreen || highlightedScreenId === board.screenId || followTarget === board.screenId;
               return (
                 <div
                   key={board.screenId}
@@ -558,7 +680,7 @@ export function PrototypeLiveCanvas({
                   data-testid={`prototype-artboard-${board.screenId}`}
                   data-screen-status={board.status}
                   data-review-status={boardView?.status ?? board.status}
-                  title={isTrying ? undefined : t('双击试用这一屏', 'Double-click to try this screen')}
+                  title={isTrying || touring ? undefined : t('双击试用这一屏', 'Double-click to try this screen')}
                   onDoubleClick={() => enterTry(board.screenId)}
                 >
                   <ArtboardFrame
@@ -570,7 +692,7 @@ export function PrototypeLiveCanvas({
                     linksKey={linksKey}
                     headScriptsKey={headScriptsKey}
                     landed={board.status === 'ready'}
-                    interactive={isTrying}
+                    interactive={isTrying || isTourScreen}
                     paused={view === 'web'}
                     onNavigate={navigateFromPrototype}
                     onEscape={exitTry}
@@ -633,7 +755,7 @@ export function PrototypeLiveCanvas({
             );
           })}
 
-          {view === 'artboards' && (
+          {view === 'artboards' && !touring && (
             <CanvasAgentCursors
               activities={tryScreenId ? activities.filter((a) => a.screenId !== tryScreenId) : activities}
               indexById={indexById}
@@ -642,6 +764,14 @@ export function PrototypeLiveCanvas({
               viewportWidth={viewport.w || hostRef.current?.clientWidth || 0}
               prefs={cursorPrefs}
               layoutVersion={layoutVersion}
+            />
+          )}
+
+          {view === 'artboards' && touring && (
+            <CanvasDemoTourOverlay
+              controller={tourController}
+              indexById={indexById}
+              cam={cam}
             />
           )}
 
@@ -656,7 +786,7 @@ export function PrototypeLiveCanvas({
               headScriptsKey={headScriptsKey}
               nameOf={cleanName}
               initialScreenId={webStart ?? followTarget ?? focusScreenId ?? followedScreenId}
-              followScreenId={following ? followedScreenId : undefined}
+              followScreenId={following && !touring ? followedScreenId : undefined}
               onManualNavigate={takeManualControl}
               onPageChange={setWebScreenId}
               busy={busy}
@@ -664,8 +794,9 @@ export function PrototypeLiveCanvas({
               composeDocument={() => composePrototypeDocument(documentHtml, live)}
               onOpenStandalone={onOpenStandalone}
               viewsById={viewById}
-              liveActivities={activities}
+              liveActivities={touring ? [] : activities}
               cursorPrefs={cursorPrefs}
+              overlaySlot={touring ? <WebDemoTourOverlay controller={tourController} /> : undefined}
             />
           )}
 
@@ -682,7 +813,7 @@ export function PrototypeLiveCanvas({
             </div>
           )}
 
-          {tryScreenId && (
+          {tryScreenId && !touring && (
             <div
               data-canvas-ui
               className="absolute left-1/2 top-3 -translate-x-1/2 rounded-full border border-border bg-card px-3 py-1 text-[12px] text-foreground shadow-sm"
@@ -692,7 +823,12 @@ export function PrototypeLiveCanvas({
             </div>
           )}
 
+          {touring && (
+            <DemoTourPlaybackBar controller={tourController} viewMode={viewMode} />
+          )}
+
           {/* Dock */}
+          {!touring && (
           <div
             data-canvas-ui
             className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-md border border-border bg-card p-1 shadow-md"
@@ -769,45 +905,60 @@ export function PrototypeLiveCanvas({
             </span>
             <span data-slot="dock-design-notes" />
           </div>
+          )}
         </div>
 
-        {/* Build log: entries arrive with #90; live "现在" narrations (#92) appear at the bottom. */}
-        <aside
-          className="hidden min-h-0 flex-col border-l border-border bg-card md:flex"
-          data-testid="prototype-build-log"
-          aria-label={t('施工日志', 'Build log')}
-        >
-          <div className="border-b border-border px-3 py-2 text-[12px] font-medium text-foreground">
-            {t('施工日志', 'Build log')}
-          </div>
-          {plan ? (
-            <BuildLog
-              build={plan}
-              screens={views}
-              busy={busy}
-              onFocusScreen={showScreen}
-              onResumeScreen={onRetryScreen}
-              liveActivities={activities}
-              endEntry={webModeHint}
+        {/* Right sidebar: Demo Tour step script (#95) while playing, otherwise Build log (#90/#92). */}
+        {touring ? (
+          <aside
+            className="flex min-h-0 flex-col border-l border-border bg-card"
+            data-testid="demo-tour-script-panel"
+            aria-label={t('演示路线步骤脚本', 'Demo tour script')}
+          >
+            <DemoTourScriptPanel
+              controller={tourController}
+              screenNameOf={screenNameById}
+              viewMode={viewMode}
             />
-          ) : (
-            <div className="min-h-0 flex-1 overflow-auto px-3 py-2 text-[12px] text-muted-foreground" data-slot="build-log-entries">
-              {activities.some((a) => Boolean(a.sentence)) ? (
-                <ol className="m-0 list-none p-0">
-                  <BuildLogLiveRows activities={activities} onFocusScreen={showScreen} />
-                </ol>
-              ) : (
-                webModeHint ?? t('生成原型时，这里会逐条记下每一屏的进展。', 'While a prototype is built, each screen’s progress is logged here.')
-              )}
+          </aside>
+        ) : (
+          <aside
+            className="hidden min-h-0 flex-col border-l border-border bg-card md:flex"
+            data-testid="prototype-build-log"
+            aria-label={t('施工日志', 'Build log')}
+          >
+            <div className="border-b border-border px-3 py-2 text-[12px] font-medium text-foreground">
+              {t('施工日志', 'Build log')}
             </div>
-          )}
-        </aside>
+            {plan ? (
+              <BuildLog
+                build={plan}
+                screens={views}
+                busy={busy}
+                onFocusScreen={showScreen}
+                onResumeScreen={onRetryScreen}
+                liveActivities={activities}
+                endEntry={webModeHint}
+              />
+            ) : (
+              <div className="min-h-0 flex-1 overflow-auto px-3 py-2 text-[12px] text-muted-foreground" data-slot="build-log-entries">
+                {activities.some((a) => Boolean(a.sentence)) ? (
+                  <ol className="m-0 list-none p-0">
+                    <BuildLogLiveRows activities={activities} onFocusScreen={showScreen} />
+                  </ol>
+                ) : (
+                  webModeHint ?? t('生成原型时，这里会逐条记下每一屏的进展。', 'While a prototype is built, each screen’s progress is logged here.')
+                )}
+              </div>
+            )}
+          </aside>
+        )}
       </div>
 
       {/* Screen strip */}
       <ScreenStrip
         screens={views}
-        highlightedScreenId={view === 'web' ? webScreenId : (tryScreenId ?? followTarget)}
+        highlightedScreenId={view === 'web' ? webScreenId : (tourController.state.screenId ?? tryScreenId ?? followTarget)}
         busy={busy}
         onFocusScreen={showScreen}
         onTryScreen={tryScreen}

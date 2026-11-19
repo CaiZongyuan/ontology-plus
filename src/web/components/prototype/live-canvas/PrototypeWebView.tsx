@@ -12,6 +12,8 @@ import type { ScreenBuildView } from './buildView.js';
 export interface PrototypeWebViewHandle {
   /** The page shown now. */
   screenId: () => string | undefined;
+  /** The underlying iframe document, when loaded. */
+  document: () => Document | null;
   /** Shows another page without recording it (a demo tour moving on, say). */
   show: (screenId: string) => void;
   /** Opens a page as the person would: recorded for back, and following stops. */
@@ -50,6 +52,8 @@ export interface PrototypeWebViewProps {
   /** Live writing/fixing activities (#92, #93) for rendering the agent cursor and narration over the page. */
   liveActivities?: readonly AgentLiveActivity[];
   cursorPrefs?: AgentCursorPrefs;
+  /** Modular overlay slot inside the page container (#95 Demo Tour spotlight & cursor). */
+  overlaySlot?: React.ReactNode;
 }
 
 interface History {
@@ -83,6 +87,7 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
     viewsById,
     liveActivities = [],
     cursorPrefs,
+    overlaySlot,
   },
   ref,
 ) {
@@ -164,8 +169,12 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
     // The frame fills the page area, so frame-viewport boxes are already overlay boxes.
     return {
       screenId: () => currentRef.current,
+      document: () => frameHandle.current?.document() ?? null,
       show: (screenId: string) => {
-        if (screens.some((s) => s.screenId === screenId)) setRequested(screenId);
+        if (screens.some((s) => s.screenId === screenId)) {
+          currentRef.current = screenId;
+          setRequested(screenId);
+        }
       },
       open: go,
       rectOf: (elementId: string) => frameHandle.current?.rectOf(elementId) ?? null,
@@ -320,6 +329,7 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
           prefs={effectiveCursorPrefs}
           layoutVersion={layoutVersion}
         />
+        {overlaySlot}
         {board && canResume && (
           <div className="absolute inset-x-0 top-4 flex justify-center px-4">
             <div
