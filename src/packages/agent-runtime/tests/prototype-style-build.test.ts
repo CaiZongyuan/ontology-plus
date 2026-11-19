@@ -24,6 +24,8 @@ import {
   getToolsForAgentKind,
   initPrototypeShell,
   keepWithinOwnScreen,
+  prototypeDesignGuide,
+  prototypeLeadStyleInstructions,
   runParallelSubagents,
   screenHelperSystemPrompt,
   type UnifiedAgentSseEvent,
@@ -375,5 +377,31 @@ describe('The shell is a skeleton (#91): its look comes from the style', () => {
     // Everything visual is a style variable.
     const shellCss = /<style id="proto-shell-styles">([\s\S]*?)<\/style>/.exec(html)![1]!;
     expect(shellCss).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+  });
+});
+
+describe('The design guide (#91) in the lead’s and the helpers’ instructions', () => {
+  it('orders values, components, screens; one direction; no AI clichés; realistic content; adaptive width', () => {
+    const zh = prototypeDesignGuide('zh-CN');
+    expect(zh).toMatch(/先设计值，后组件，再屏幕/);
+    expect(zh).toMatch(/只走一种视觉方向/);
+    expect(zh).toMatch(/俗套/);
+    expect(zh).toMatch(/内容要像真的/);
+    expect(zh).toMatch(/宽度自适应/);
+    const en = prototypeDesignGuide('en-US');
+    expect(en).toMatch(/Values first, then components, then screens/);
+    expect(en).toMatch(/One visual direction/);
+    expect(en).toMatch(/clichés/);
+    expect(en).toMatch(/Realistic content/);
+    // Embedded verbatim in both places, so they cannot drift apart.
+    expect(screenHelperSystemPrompt('zh-CN')).toContain(zh);
+    expect(prototypeLeadStyleInstructions('zh-CN', null)).toContain(zh);
+  });
+
+  it('tells the lead the approved values are locked, or asks it to propose a full set', () => {
+    const locked = prototypeLeadStyleInstructions('zh-CN', APPROVED_BRIEF.styleValues!);
+    expect(locked).toContain('锁定');
+    expect(locked).toContain('#1f4e79');
+    expect(prototypeLeadStyleInstructions('en-US', null)).toMatch(/propose a complete set of values/);
   });
 });

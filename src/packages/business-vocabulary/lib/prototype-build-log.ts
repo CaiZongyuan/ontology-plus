@@ -59,7 +59,7 @@ export function describePrototypeBuildFailure(
 
 const SKIPPED_PHASE_SENTENCES: Record<PrototypeBuildPhaseId, BilingualText> = {
   plan: { zh: '这次没有列施工计划', en: 'No build plan this time' },
-  style: { zh: '这次没有画风格样张', en: 'No style sample this time' },
+  style: { zh: '这次没有画风格样张', en: 'No Style Tile this time' },
   screens: { zh: '这次没有画屏幕', en: 'No screens drawn this time' },
   review: { zh: '这次没有做截图检查（未做视觉检查）', en: 'No screenshot check this time (not visually checked)' },
   tours: { zh: '这次没有编写演示路线', en: 'No demo tours this time' },
@@ -78,7 +78,7 @@ export function describePrototypeBuildLogEntry(
       return pick({ zh: `列好施工计划：共 ${count} 屏`, en: `Build plan ready: ${count} screens` }, locale);
     case 'style_started':
       return pick(
-        { zh: '开始画风格样张：先定颜色、字体和共用组件', en: 'Drawing the style sample: colours, type and shared components first' },
+        { zh: '开始画风格样张：先定颜色、字体和共用组件', en: 'Drawing the Style Tile: colours, type and shared components first' },
         locale,
       );
     case 'style_ready':
@@ -86,14 +86,14 @@ export function describePrototypeBuildLogEntry(
         ? pick(
             {
               zh: '风格样张画好了：用的是你确认过的设计值，每一屏都用这套组件',
-              en: 'Style sample ready, using the design values you approved; every screen uses these components',
+              en: 'Style Tile ready, using the design values you approved; every screen uses these components',
             },
             locale,
           )
         : pick(
             {
               zh: '风格样张画好了：设计值由助手提出，每一屏都用这套组件',
-              en: 'Style sample ready, with design values proposed by the assistant; every screen uses these components',
+              en: 'Style Tile ready, with design values proposed by the assistant; every screen uses these components',
             },
             locale,
           );

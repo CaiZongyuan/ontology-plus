@@ -460,7 +460,7 @@ export function PrototypeLiveCanvas({
               >
                 <ArtboardFrame
                   screenId={PROTOTYPE_STYLE_BOARD_ID}
-                  title={t('风格样张', 'Style sample')}
+                  title={t('风格样张', 'Style Tile')}
                   bodyHtml={styleBoard.bodyHtml}
                   css={styleBoard.css}
                   linksKey=""
@@ -520,7 +520,7 @@ export function PrototypeLiveCanvas({
               data-testid="prototype-style-artboard-label"
             >
               <ScreenStatusIcon status={styleBoard.status === 'streaming' ? 'writing' : 'done'} />
-              <span className="truncate font-medium">{t('风格样张', 'Style sample')}</span>
+              <span className="truncate font-medium">{t('风格样张', 'Style Tile')}</span>
               <span className="truncate text-muted-foreground">
                 {styleBoard.status === 'streaming'
                   ? t('正在画 · 主助手', 'Drawing · Lead assistant')

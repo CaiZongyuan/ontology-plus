@@ -446,7 +446,7 @@ export function createMockPrototypeBuildReplay(
               pickLocaleText(
                 locale,
                 '计划已列好。先定设计值，再把共用的按钮、卡片、表格、表单、标签和空状态画在风格样张上。',
-                'The plan is ready. Design values first, then the shared buttons, cards, tables, forms, tags and empty states on the style sample.',
+                'The plan is ready. Design values first, then the shared buttons, cards, tables, forms, tags and empty states on the Style Tile.',
               ),
             ),
             // Short fields first, the long CSS and samples last: the values apply from the start.
@@ -467,7 +467,7 @@ export function createMockPrototypeBuildReplay(
               pickLocaleText(
                 locale,
                 '风格样张画好了。搭好文档外壳，再请几位助手同时各画一屏。',
-                'The style sample is ready. Set up the document shell, then have several helpers draw one screen each at the same time.',
+                'The Style Tile is ready. Set up the document shell, then have several helpers draw one screen each at the same time.',
               ),
             ),
             fauxToolCall('init_prototype_shell', {

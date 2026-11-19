@@ -17,7 +17,7 @@ function phaseName(phase: PrototypeBuildPhaseId, t: T): string {
     case 'plan':
       return t('施工计划', 'Build plan');
     case 'style':
-      return t('风格样张', 'Style sample');
+      return t('风格样张', 'Style Tile');
     case 'screens':
       return t('逐屏施工', 'Screens');
     case 'review':

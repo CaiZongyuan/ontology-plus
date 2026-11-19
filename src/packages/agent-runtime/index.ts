@@ -166,6 +166,7 @@ export {
   DOCUMENT_LEVEL_TOOL_NAMES,
   SCREEN_HELPER_TOOL_NAMES,
   prototypeDesignGuide,
+  prototypeLeadStyleInstructions,
   screenHelperSystemPrompt,
   screenHelperTools,
   checkScreenHelperCall,
