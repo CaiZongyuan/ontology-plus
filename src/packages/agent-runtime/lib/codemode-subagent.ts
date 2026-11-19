@@ -21,16 +21,15 @@ import {
 import {
   DEFAULT_MULTI_AGENT_CONCURRENCY,
   type AgentSession,
-  type AgentSubagentCursorZone,
   type AgentSubagentLaneTrace,
   type PrototypeTargetAnchor,
 } from '../../workspace-store/index.js';
-import type { PrototypeBuildFailureCode } from '../../ontology-core/index.js';
-import { type AgentLocale, pickLocaleText } from './locale.js';
 import {
-  extractLatestHtmlWritingSignal,
-  type PartialPrototypeScreenInput,
-} from './prototype-anchor-tools.js';
+  derivePrototypeLiveWriting,
+  type PrototypeBuildFailureCode,
+} from '../../ontology-core/index.js';
+import { type AgentLocale, pickLocaleText } from './locale.js';
+import type { PartialPrototypeScreenInput } from './prototype-anchor-tools.js';
 import type { OpenAiFunctionTool } from './tools.js';
 import { DOCUMENT_LEVEL_TOOL_NAMES, checkScreenHelperCall, screenHelperTools } from './prototype-design-guide.js';
 
@@ -337,57 +336,6 @@ function defaultWorkerLabel(slotIndex: number, roleHint?: string): { zh: string;
   return presets[(slotIndex - 1) % presets.length]!;
 }
 
-function inferThinkingCursorSignal(
-  thinkingText: string,
-  taskIndex: number,
-): { cursorZone: AgentSubagentCursorZone; liveAction: { zh: string; en: string } } {
-  const tail = thinkingText.slice(-450);
-  if (/(?:drawer|抽屉|侧滑|弹窗|详情栏)/i.test(tail)) {
-    return {
-      cursorZone: 'drawer',
-      liveAction: { zh: '构思侧滑抽屉与录入动线…', en: 'Designing slide-over drawer…' },
-    };
-  }
-  if (/(?:confirm|submit|锁账|提交|底部|审批按钮|保存栏)/i.test(tail)) {
-    return {
-      cursorZone: 'footer',
-      liveAction: { zh: '设计底部确认与反馈交互…', en: 'Planning footer actions & feedback…' },
-    };
-  }
-  if (/(?:table|row|ledger|表格|台账|明细|列表|流水)/i.test(tail)) {
-    return {
-      cursorZone: 'body',
-      liveAction: { zh: '编排业务明细表与状态徽章…', en: 'Structuring data rows & badges…' },
-    };
-  }
-  if (/(?:filter|search|select|筛选|搜索|日期|工具栏)/i.test(tail)) {
-    return {
-      cursorZone: 'toolbar',
-      liveAction: { zh: '布局筛选工具栏与快捷操作…', en: 'Laying out filter toolbar…' },
-    };
-  }
-  if (/(?:kpi|stat|metric|指标|营业额|汇总|卡片)/i.test(tail)) {
-    return {
-      cursorZone: 'kpi',
-      liveAction: { zh: '构思核心指标卡与字号层级…', en: 'Sizing summary metric cards…' },
-    };
-  }
-
-  const zones: readonly { zone: AgentSubagentCursorZone; zh: string; en: string }[] = [
-    { zone: 'header', zh: '规划页面顶栏与视觉焦点…', en: 'Planning header hierarchy…' },
-    { zone: 'kpi', zh: '测算顶部汇总指标卡网格…', en: 'Arranging top summary cards…' },
-    { zone: 'toolbar', zh: '排布查询筛选与动作按钮…', en: 'Positioning filters & actions…' },
-    { zone: 'body', zh: '设计主体内容区与示例数据…', en: 'Drafting main content & records…' },
-    { zone: 'footer', zh: '串联跨屏跳转与内联反馈…', en: 'Wiring inline state & navigation…' },
-  ];
-  const stepIdx = (Math.floor(thinkingText.length / 260) + taskIndex) % zones.length;
-  const picked = zones[stepIdx]!;
-  return {
-    cursorZone: picked.zone,
-    liveAction: { zh: picked.zh, en: picked.en },
-  };
-}
-
 function stripHeavyFieldsForLiveSse(lanes: readonly AgentSubagentLaneTrace[]): AgentSubagentLaneTrace[] {
   return lanes.map(({ thinking: _omitThinking, ...rest }) => ({ ...rest }));
 }
@@ -481,7 +429,6 @@ export async function runParallelSubagents(
       ...(targetAnchor ? { targetAnchor } : {}),
       status: 'QUEUED',
       phase: 'QUEUED',
-      cursorZone: 'header',
       liveAction: {
         zh: '等待空闲智能体接手…',
         en: 'Queued for next available worker…',
@@ -528,11 +475,7 @@ export async function runParallelSubagents(
     lane.workerLabel = defaultWorkerLabel(workerSlot, spec.roleLabel);
     lane.status = 'RUNNING';
     lane.phase = 'THINKING';
-    lane.cursorZone = 'header';
-    lane.liveAction = {
-      zh: '正在勘测画板网格与版式结构…',
-      en: 'Inspecting artboard grid & layout…',
-    };
+    delete lane.liveAction;
     lane.startedAt = new Date().toISOString();
     options.onLaneUpdate({ ...lane }, stripHeavyFieldsForLiveSse(lanes));
     options.onActivity();
@@ -540,8 +483,8 @@ export async function runParallelSubagents(
     try {
       const hasExplicitElementIds = /\bEL-[A-Za-z0-9_-]+/.test(spec.instruction);
       const idRuleZh = hasExplicitElementIds
-        ? `2. 严格沿用上述要求中指定的 \`EL-*\` / \`EV-*\` 锚点 ID，确保所有 <button>/<input>/<select>/<textarea> 具备唯一 \`data-element-id\` 与合法 \`data-element-type\`，严禁使用 alert/confirm/prompt。`
-        : `2. 所有 <button>/<input>/<select>/<textarea> 必须附带以 \`EL-${spec.screenId?.trim().replace(/[^A-Za-z0-9]/g, '') || 'SCR'}-\` 为前缀的全局唯一 \`data-element-id\` 与合法 \`data-element-type\`，严禁使用 alert/confirm/prompt。`;
+        ? `2. 严格沿用上述要求中指定的 \`EL-*\` / \`EV-*\` 锚点 ID，确保所有 <button>/<input>/<select>/<textarea> 具备唯一 \`data-element-id\` 与合法 \`data-element-type\`，并为关键区块与操作附带 \`data-note="<名称>：<一句业务语言说明>"\`（先写带 \`data-element-id\` 与 \`data-note\` 的开始标签，再写内部内容），严禁使用 alert/confirm/prompt。`
+        : `2. 所有 <button>/<input>/<select>/<textarea> 必须附带以 \`EL-${spec.screenId?.trim().replace(/[^A-Za-z0-9]/g, '') || 'SCR'}-\` 为前缀的全局唯一 \`data-element-id\` 与合法 \`data-element-type\`，并为关键区块与操作附带 \`data-note="<名称>：<一句业务语言说明>"\`（先写带 \`data-element-id\` 与 \`data-note\` 的开始标签，再写内部内容），严禁使用 alert/confirm/prompt。`;
 
       const subPrompt = spec.screenId?.trim()
         ? pickLocaleText(
@@ -554,7 +497,7 @@ export async function runParallelSubagents(
               `- 具体设计要求:\n${spec.instruction}`,
               ``,
               `极速流式出图要求（禁止冗长思考打草稿，思考请控制在 5 句话内直接落笔调用工具！）：`,
-              `1. 立即调用 \`upsert_prototype_screen\` 流式输出该分屏的紧凑高保真 HTML（约 70～160 行，含真实业务数据与内联交互）。`,
+              `1. 立即调用 \`upsert_prototype_screen\`（参数中先把 \`screenId\`、\`screenName\`、\`screenType\`、\`note\` 等短字段写在 \`screenHtml\` 前面），流式输出该分屏的紧凑高保真 HTML（约 70～160 行，含真实业务数据与内联交互）。`,
               idRuleZh,
               `3. 若校验器报错，在同一轮内立即修正锚点重试。`,
             ].join('\n'),
@@ -565,7 +508,7 @@ export async function runParallelSubagents(
               `- Target screenType: ${spec.screenType?.trim() || 'LIST'}`,
               `- Instructions:\n${spec.instruction}`,
               ``,
-              `Keep reasoning brief (<5 sentences) and call \`upsert_prototype_screen\` immediately with clean HTML (~70-160 lines), unique \`data-element-id\`s, valid \`data-element-type\`s, and zero alert/confirm/prompt.`,
+              `Keep reasoning brief (<5 sentences) and call \`upsert_prototype_screen\` immediately (putting short fields \`screenId\`, \`screenName\`, \`screenType\`, \`note\` BEFORE \`screenHtml\`, and writing each section/control opening tag with \`data-element-id\` and \`data-note\` BEFORE its inner content) with clean HTML (~70-160 lines), unique \`data-element-id\`s, valid \`data-element-type\`s, and zero alert/confirm/prompt.`,
             ].join('\n'),
           )
         : spec.instruction;
@@ -623,9 +566,6 @@ export async function runParallelSubagents(
             subThinking += ev.delta;
             if (lane.phase !== 'STREAMING') {
               lane.phase = 'THINKING';
-              const sig = inferThinkingCursorSignal(subThinking, taskIdx);
-              lane.cursorZone = sig.cursorZone;
-              lane.liveAction = sig.liveAction;
             }
           } else if (ev.type === 'text_delta') {
             subText += ev.delta;
@@ -639,6 +579,7 @@ export async function runParallelSubagents(
               lane.phase = 'STREAMING';
               const pArgs = (partialBlock.arguments ?? {}) as Record<string, unknown>;
               const partialHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
+              const partialNote = typeof pArgs.note === 'string' ? pArgs.note.trim() : '';
               const extraCss = typeof pArgs.extraCss === 'string' ? pArgs.extraCss : undefined;
               const resolvedSid =
                 (typeof pArgs.screenId === 'string' && pArgs.screenId.trim()) ||
@@ -652,27 +593,30 @@ export async function runParallelSubagents(
                 (typeof pArgs.screenType === 'string' && pArgs.screenType.trim()) ||
                 spec.screenType?.trim();
 
-              if (partialHtml.length >= 24) {
+              if (partialHtml.length >= 12 || (partialNote && 'screenHtml' in pArgs)) {
                 lane.streamedHtmlChars = partialHtml.length;
-                const sig = extractLatestHtmlWritingSignal(partialHtml);
-                lane.cursorZone = sig.cursorZone;
-                lane.liveAction = sig.activeLabel
-                  ? {
-                      zh: `正在绘制 · ${sig.activeLabel}`,
-                      en: `Painting · ${sig.activeLabel}`,
-                    }
-                  : {
-                      zh: '正在实时写入界面区块…',
-                      en: 'Streaming screen blocks…',
-                    };
+                const zhWriting = derivePrototypeLiveWriting(partialHtml, { locale: 'zh-CN' });
+                const enWriting = derivePrototypeLiveWriting(partialHtml, { locale: 'en-US' });
+                lane.liveAction =
+                  zhWriting.narration && enWriting.narration
+                    ? { zh: zhWriting.narration, en: enWriting.narration }
+                    : { zh: `正在画「${resolvedSname}」`, en: `Drawing "${resolvedSname}"` };
                 const allowedStreamScreen = !ownScreenId || resolvedSid === ownScreenId;
-                if (resolvedSid && allowedStreamScreen && partialHtml.length - lastPartialStreamLen >= 90) {
-                  lastPartialStreamLen = partialHtml.length;
+                const closedNewTag = ev.delta.includes('>');
+                if (
+                  resolvedSid &&
+                  allowedStreamScreen &&
+                  (partialHtml.length - lastPartialStreamLen >= 24 ||
+                    (closedNewTag && partialHtml.length > lastPartialStreamLen) ||
+                    (partialNote && lastPartialStreamLen === 0))
+                ) {
+                  lastPartialStreamLen = Math.max(1, partialHtml.length);
                   options.onPartialScreenStream?.(
                     {
                       screenId: resolvedSid,
                       screenName: resolvedSname,
                       ...(resolvedStype ? { screenType: resolvedStype } : {}),
+                      ...(partialNote ? { note: partialNote } : {}),
                       partialScreenHtml: partialHtml,
                       ...(extraCss ? { extraCss } : {}),
                     },
@@ -786,7 +730,6 @@ export async function runParallelSubagents(
       lane.progressChars = Math.max(lane.progressChars ?? 0, subThinking.length + subText.length);
       lane.status = 'DONE';
       lane.phase = 'DONE';
-      lane.cursorZone = 'footer';
       lane.liveAction = {
         zh: '已完成绘制并落盘 ✓',
         en: 'Screen rendered & saved ✓',
