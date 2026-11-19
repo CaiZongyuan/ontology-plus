@@ -5,6 +5,7 @@ import { usePreferences } from '../../../i18n.js';
 import { Button } from '../../beautifui/index.js';
 import { WebAgentCursor, useObservedElementSize } from './AgentCursor.js';
 import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboard.js';
+import { WebDesignNotesOverlay } from './DesignNotesOverlay.js';
 import { readAgentCursorPrefs, type AgentCursorPrefs, type AgentLiveActivity } from './agentCursor.js';
 
 /** What design notes (#94) and demo tours (#95) use to draw over the web page. */
@@ -47,6 +48,9 @@ export interface PrototypeWebViewProps {
   /** Live writing/fixing activities (#92, #93) for rendering the agent cursor and narration over the page. */
   liveActivities?: readonly AgentLiveActivity[];
   cursorPrefs?: AgentCursorPrefs;
+  /** Whether handwritten Design Notes (#94) are shown over the page. */
+  designNotesOn?: boolean;
+  isBusiness?: boolean;
 }
 
 interface History {
@@ -79,10 +83,12 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
     onOpenStandalone,
     liveActivities = [],
     cursorPrefs,
+    designNotesOn = false,
+    isBusiness = true,
   },
   ref,
 ) {
-  const { t } = usePreferences();
+  const { locale, t } = usePreferences();
   const [requested, setRequested] = useState<string | undefined>(initialScreenId);
   const [history, setHistory] = useState<History>({ back: [], forward: [] });
   const has = (id: string | undefined): id is string => Boolean(id && screens.some((s) => s.screenId === id));
@@ -280,6 +286,17 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
             </span>
           </div>
         )}
+        <WebDesignNotesOverlay
+          enabled={designNotesOn}
+          screenId={board?.screenId}
+          bodySignature={`${pageBodyHtml.length}:${board?.bodyHtml.length ?? 0}`}
+          getHandle={() => frameHandle.current}
+          pageWidth={pageSize.w || pageContainerRef.current?.clientWidth || 0}
+          pageHeight={pageSize.h || pageContainerRef.current?.clientHeight || 0}
+          isBusiness={isBusiness}
+          locale={locale === 'en-US' ? 'en-US' : 'zh-CN'}
+          layoutVersion={layoutVersion}
+        />
         <WebAgentCursor
           activity={activeWebActivity}
           getHandle={() => frameHandle.current}
