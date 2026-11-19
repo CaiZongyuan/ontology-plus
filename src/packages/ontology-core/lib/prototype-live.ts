@@ -13,6 +13,7 @@ import {
   type PrototypeBuildEvent,
   type PrototypeBuildState,
 } from './prototype-build.js';
+import { sanitizePrototypeNote } from './prototype-notes.js';
 import {
   PROTOTYPE_STYLE_TILE_CSS,
   prototypeStyleCss,
@@ -401,6 +402,8 @@ export interface PartialPrototypeScreenStream {
   screenId: string;
   screenName?: string;
   screenType?: string;
+  /** Optional business-language note streamed before `partialHtml` (spec #87 decision 6). */
+  note?: string;
   /** The screen HTML written so far (already JSON-decoded tool-call arguments). */
   partialHtml: string;
   /** Screen-specific CSS written so far. */
@@ -415,6 +418,7 @@ export function healPartialScreenSection(
   const screenId = input.screenId.trim();
   const screenName = input.screenName?.trim() || known?.screenName || screenId;
   const screenType = input.screenType?.trim() || known?.screenType || 'LIST';
+  const note = sanitizePrototypeNote(input.note);
   // Same shape as upsert_prototype_screen's landed section (`>\n${fragment}\n</section>`, or the
   // model's own section kept as-is), so streamed nodes keep their positions when the screen lands.
   let inner = healPartialHtml(input.partialHtml).trimStart();
@@ -424,7 +428,8 @@ export function healPartialScreenSection(
   } else {
     inner = `\n${inner.trimEnd()}\n`;
   }
-  const html = `<section id="screen-${escapeAttr(screenId)}" class="proto-screen is-active" data-screen-id="${escapeAttr(screenId)}" data-screen-name="${escapeAttr(screenName)}" data-screen-type="${escapeAttr(screenType)}" data-screen-status="streaming">${inner}</section>`;
+  const noteAttr = note ? ` data-note="${escapeAttr(note)}"` : '';
+  const html = `<section id="screen-${escapeAttr(screenId)}" class="proto-screen is-active" data-screen-id="${escapeAttr(screenId)}" data-screen-name="${escapeAttr(screenName)}" data-screen-type="${escapeAttr(screenType)}" data-screen-status="streaming"${noteAttr}>${inner}</section>`;
   return { html, screenName, screenType };
 }
 
@@ -710,6 +715,8 @@ export function applyPrototypeLiveEvent(
 export interface PrototypeCanvasArtboard extends PrototypeScreenStub {
   /** The `<body>` inner HTML this artboard shows: the shell plus this one screen. */
   bodyHtml: string;
+  /** This screen's own `<section data-screen-id>` HTML (empty while queued). */
+  screenHtml?: string;
   /** Extra CSS that only this artboard needs (a screen's styles still being written). */
   css?: string;
 }
@@ -811,6 +818,7 @@ export function buildPrototypeCanvasModel(
       status: liveScreen?.status ?? savedScreen?.status ?? stub?.status ?? 'queued',
       // Nothing written yet (or a failed write was taken back): a blank artboard.
       bodyHtml: html ? composeArtboardBody(frame, id, html) : '',
+      ...(html ? { screenHtml: html } : {}),
       ...(liveScreen?.css ? { css: liveScreen.css } : {}),
     });
   }

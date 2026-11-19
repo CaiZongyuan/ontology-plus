@@ -703,6 +703,7 @@ export const UIElementSchema = z.object({
   elementId: z.string(),
   name: z.string(),
   label: z.string(),
+  description: z.string().optional(),
   elementType: z.enum([
     'INPUT',
     'SELECT',

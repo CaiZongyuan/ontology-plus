@@ -1,3 +1,4 @@
+import { sanitizePrototypeNote } from './prototype-notes.js';
 import type {
   Attribute,
   KnowledgeGraphData,
@@ -955,9 +956,10 @@ export function exportToOwl(suite: OntologySuite): string {
 }
 
 function getAttr(tagHtml: string, attrName: string): string | undefined {
-  const regex = new RegExp(`\\b${attrName}\\s*=\\s*["']([^"']+)["']`, 'i');
+  const regex = new RegExp(`\\b${attrName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i');
   const match = tagHtml.match(regex);
-  return match ? match[1] : undefined;
+  const raw = match ? (match[1] ?? match[2]) : undefined;
+  return raw && raw.length > 0 ? raw : undefined;
 }
 
 export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiModel {
@@ -1018,11 +1020,13 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
       const dictionaryRef = getAttr(elTag, 'data-dictionary-ref');
       const dataSource = getAttr(elTag, 'data-source');
       const permissionRef = getAttr(elTag, 'data-permission-ref');
+      const description = sanitizePrototypeNote(getAttr(elTag, 'data-note')) || undefined;
 
       elements.push({
         elementId,
         name,
         label,
+        ...(description ? { description } : {}),
         elementType,
         io:
           elementType === 'BUTTON' || elementType === 'TOOLBAR' || elementType === 'MENU'
