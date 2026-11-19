@@ -302,6 +302,11 @@ export interface RunParallelSubagentsOptions {
   screenContext?: (spec: SubagentTaskSpec) => string;
   /** Visual Reference images sent to every screen helper as vision input. */
   contextImages?: readonly ImageContent[];
+  /**
+   * During a prototype build every helper owns exactly one screen: a task without a screenId is
+   * not run (it would have no scope to keep it on its own screen).
+   */
+  requireScreen?: boolean;
   onPartialScreenStream?: (
     partial: PartialPrototypeScreenInput,
     lane: AgentSubagentLaneTrace,
@@ -501,6 +506,20 @@ export async function runParallelSubagents(
       return;
     }
 
+    if (options.requireScreen && !spec.screenId?.trim()) {
+      lane.status = 'FAILED';
+      lane.phase = 'FAILED';
+      lane.failureCode = 'not_written';
+      lane.error = pickLocaleText(
+        locale,
+        '原型施工里每个任务都要指定一屏（screenId），这个任务没有指定，没有执行。',
+        'In a prototype build every task must name one screen (screenId); this task did not and was not run.',
+      );
+      lane.completedAt = new Date().toISOString();
+      options.onLaneUpdate({ ...lane }, stripHeavyFieldsForLiveSse(lanes));
+      return;
+    }
+
     lane.workerIndex = workerSlot;
     lane.workerLabel = defaultWorkerLabel(workerSlot, spec.roleLabel);
     lane.status = 'RUNNING';
@@ -642,7 +661,8 @@ export async function runParallelSubagents(
                       zh: '正在实时写入界面区块…',
                       en: 'Streaming screen blocks…',
                     };
-                if (resolvedSid && partialHtml.length - lastPartialStreamLen >= 90) {
+                const allowedStreamScreen = !ownScreenId || resolvedSid === ownScreenId;
+                if (resolvedSid && allowedStreamScreen && partialHtml.length - lastPartialStreamLen >= 90) {
                   lastPartialStreamLen = partialHtml.length;
                   options.onPartialScreenStream?.(
                     {

@@ -1,3 +1,4 @@
+import http from 'node:http';
 import {
   createModels,
   fauxAssistantMessage,
@@ -10,17 +11,28 @@ import {
 import { describe, expect, it } from 'vitest';
 import {
   applyPrototypeBuildEvent,
+  applyPrototypeLiveEvent,
+  buildPrototypeCanvasModel,
   emptyPrototypeBuildState,
+  emptyPrototypeLiveState,
   readPrototypeDocumentStyle,
   splitPrototypeDocument,
   type PrototypeBuildEvent,
   type PrototypeBuildState,
+  type PrototypeLiveEvent,
 } from '../../ontology-core/index.js';
-import { createWorkspaceStore, type DesignBrief } from '../../workspace-store/index.js';
+import {
+  CURATED_INSPO_CATALOG,
+  approvedBriefStyleValues,
+  createWorkspaceStore,
+  type DesignBrief,
+} from '../../workspace-store/index.js';
 import {
   DOCUMENT_LEVEL_TOOL_NAMES,
   buildScreenHelperContext,
   collectUnifiedAgentTurn,
+  commitDefineStyle,
+  editPrototypeAnchor,
   getToolsForAgentKind,
   initPrototypeShell,
   keepWithinOwnScreen,
@@ -28,6 +40,7 @@ import {
   prototypeLeadStyleInstructions,
   runParallelSubagents,
   screenHelperSystemPrompt,
+  upsertPrototypeScreen,
   type UnifiedAgentSseEvent,
 } from '../index.js';
 
@@ -403,5 +416,554 @@ describe('The design guide (#91) in the lead’s and the helpers’ instructions
     expect(locked).toContain('锁定');
     expect(locked).toContain('#1f4e79');
     expect(prototypeLeadStyleInstructions('en-US', null)).toMatch(/propose a complete set of values/);
+  });
+});
+
+describe('Repair audit (#91): S1–S5 & PM decisions P3–P6', () => {
+  it('S1/S2/P1/P3: scopes own-screen extraCss cleanly, replaces data-screen-css on re-upsert, and blocks CSS/HTML/JS escapes', () => {
+    const shell = initPrototypeShell(
+      {
+        appTitle: '订货',
+        screens: [
+          { screenId: 'SCR-A', screenName: '首页', screenType: 'DASHBOARD' },
+          { screenId: 'SCR-B', screenName: '订单', screenType: 'LIST' },
+        ],
+      },
+      { locale: 'zh-CN' },
+    ).nextHtml;
+
+    // S1: extraCss targeting page, shell (current or legacy), other screens, or sibling combinators is rejected.
+    for (const badCss of [
+      'body { background: red; }',
+      '.proto-app-bar { display: none; }',
+      '.proto-topbar { display: none; }',
+      '[data-screen-id="SCR-B"] .row { color: red; }',
+      '[data-screen-id="SCR-A"] ~ section { display: none; }',
+      '#screen-SCR-A + .proto-screen { opacity: 0; }',
+      '[data-screen-id] { border: 2px solid red; }',
+    ]) {
+      const bad = upsertPrototypeScreen(shell, {
+        screenId: 'SCR-A',
+        screenHtml: '<p>首页</p>',
+        extraCss: badCss,
+      });
+      expect(bad.isError).toBe(true);
+    }
+
+    // S2 + P1 + P3: legitimate own-screen extraCss succeeds, scopes to SCR-A, strips --proto-* overrides,
+    // is accepted by keepWithinOwnScreen, and replaces cleanly on re-upsert.
+    const firstWrite = upsertPrototypeScreen(shell, {
+      screenId: 'SCR-A',
+      screenHtml:
+        '<style>body { background: #000 !important; }</style><div class="kpi-grid" style="--proto-accent: #ff0000; gap: 12px"><button data-element-id="EL-A-1" data-element-type="BUTTON">新建</button></div>',
+      extraCss: [
+        '.kpi-grid, .summary-strip { display: grid; --proto-accent: #ff0000; gap: var(--proto-gap); }',
+        '@media (max-width: 760px) { .kpi-grid { grid-template-columns: 1fr; } }',
+      ].join('\n'),
+      extraJs: 'const label = "</script><section data-screen-id=\\"SCR-B\\">hack</section>"; void screen; void label;',
+    });
+    expect(firstWrite.isError).toBe(false);
+    expect(firstWrite.nextHtml).toContain('<style data-screen-css="SCR-A">');
+    expect(firstWrite.nextHtml).toContain('[data-screen-id="SCR-A"] .kpi-grid');
+    expect(firstWrite.nextHtml).not.toContain('#ff0000');
+    expect(firstWrite.nextHtml).not.toContain('background: #000');
+    // </script> inside extraJs was neutralized so it never broke out of the script element or touched SCR-B.
+    expect(keepWithinOwnScreen(shell, firstWrite.nextHtml, 'SCR-A', 'zh-CN')).toEqual({
+      html: firstWrite.nextHtml,
+      diagnostic: null,
+    });
+
+    const secondWrite = upsertPrototypeScreen(firstWrite.nextHtml, {
+      screenId: 'SCR-A',
+      screenHtml: '<div class="kpi-grid"><button data-element-id="EL-A-1" data-element-type="BUTTON">新建</button></div>',
+      extraCss: '.kpi-grid { gap: 8px; }',
+    });
+    expect(secondWrite.isError).toBe(false);
+    expect(secondWrite.nextHtml.match(/data-screen-css="SCR-A"/g)).toHaveLength(1);
+    expect(secondWrite.nextHtml).not.toContain('summary-strip');
+
+    // S1: editPrototypeAnchor strips inline --proto-* overrides and <style>, and keepWithinOwnScreen undoes shell edits.
+    const shellTabEdit = editPrototypeAnchor(secondWrite.nextHtml, {
+      elementId: 'EL-SHELL-TAB-SCR-A',
+      operation: 'update_attributes',
+      attributes: { class: 'hacked-tab', style: '--proto-accent: #ff00ff; font-weight: 700' },
+    });
+    expect(shellTabEdit.isError).toBe(false);
+    expect(shellTabEdit.nextHtml).not.toContain('#ff00ff');
+    const reverted = keepWithinOwnScreen(secondWrite.nextHtml, shellTabEdit.nextHtml, 'SCR-A', 'zh-CN');
+    expect(reverted.html).toBe(secondWrite.nextHtml);
+    expect(reverted.diagnostic).toContain('外壳、导航或风格');
+  });
+
+  it('S3: requireScreen rejects spawn_subagents tasks missing screenId without invoking the model', async () => {
+    let modelCalls = 0;
+    const faux = fauxProvider({
+      provider: 'faux-s3',
+      models: [{ id: 'faux-s3', name: 'Faux', input: ['text'], reasoning: false, contextWindow: 8000, maxTokens: 2000 }],
+      tokensPerSecond: 100000,
+    });
+    faux.setResponses([
+      () => {
+        modelCalls += 1;
+        return fauxAssistantMessage([fauxText('should never run')]);
+      },
+    ]);
+    const models = createModels();
+    models.setProvider(faux.provider);
+
+    const res = await runParallelSubagents({
+      tasks: [{ title: '无屏号任务', instruction: '随便改整页' }],
+      concurrency: 2,
+      locale: 'en-US',
+      models,
+      selectedModel: faux.getModel()!,
+      baseSystemPrompt: '',
+      subagentTools: [],
+      requireScreen: true,
+      signal: new AbortController().signal,
+      stepTimeoutMs: 5_000,
+      maxTokens: 1000,
+      onActivity: () => undefined,
+      onLaneUpdate: () => undefined,
+      executeSubagentToolCall: async () => ({ toolResultContent: '{}', isError: false }),
+    });
+    expect(modelCalls).toBe(0);
+    expect(res.allSucceeded).toBe(false);
+    expect(res.lanes[0]).toMatchObject({ status: 'FAILED', failureCode: 'not_written' });
+    expect(res.lanes[0]!.error).toContain('screenId');
+  });
+
+  it('S4: commitDefineStyle rejects window.alert / confirm / prompt in CSS or sampleHtml', () => {
+    const badSample = commitDefineStyle(
+      {
+        direction: '清爽',
+        values: {},
+        componentCss: '.btn { padding: 8px; }',
+        sampleHtml: '<button class="btn" onclick="window.confirm(\'sure?\')">确认</button>',
+      },
+      null,
+      'en-US',
+    );
+    expect(badSample.isError).toBe(true);
+    expect(badSample.summary).toContain('alert/confirm/prompt');
+
+    const badCss = commitDefineStyle(
+      {
+        direction: '清爽',
+        values: {},
+        componentCss: '/* alert(1) */ .btn { padding: 8px; }',
+        sampleHtml: '<button class="btn">确认</button>',
+      },
+      null,
+      'zh-CN',
+    );
+    expect(badCss.isError).toBe(true);
+    expect(badCss.summary).toContain('alert/confirm/prompt');
+  });
+
+  it('P4/P5/P6/S5: end-to-end engine handles pre-#91 brief derivation & unavailable fallback, rejected restyles, helper references, and user value changes', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: false });
+
+    // Minimal valid 1x1 PNG for testing real HTTP vision attachment resolution on follow-up turns.
+    const pngBytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const seenBodies: { messages: unknown[] }[] = [];
+    const scriptedReplies: {
+      toolCalls?: { id: string; name: string; args: Record<string, unknown> }[];
+      text?: string;
+    }[] = [];
+
+    const server = http.createServer(async (req, res) => {
+      if (req.url === '/ref.png') {
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(pngBytes);
+        return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const ch of req) chunks.push(Buffer.from(ch));
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { messages: unknown[] };
+      seenBodies.push(body);
+
+      const next = scriptedReplies.shift() ?? { text: '完成。' };
+      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache' });
+      if (next.toolCalls && next.toolCalls.length > 0) {
+        const chunk = {
+          id: `cmpl-${seenBodies.length}`,
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: 'test-vision-model',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                tool_calls: next.toolCalls.map((tc, index) => ({
+                  index,
+                  id: tc.id,
+                  type: 'function',
+                  function: { name: tc.name, arguments: JSON.stringify(tc.args) },
+                })),
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        };
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      } else {
+        const chunk = {
+          id: `cmpl-${seenBodies.length}`,
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: 'test-vision-model',
+          choices: [{ index: 0, delta: { role: 'assistant', content: next.text ?? '完成。' }, finish_reason: 'stop' }],
+        };
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      for (const p of store.listLlmProviders()) store.saveLlmProvider({ ...p, enabled: false });
+      const setVisionProvider = (supportsVision: boolean) => {
+        store.saveLlmProvider({
+          id: 'llm-test-91',
+          name: 'Test 91 Gateway',
+          providerType: 'OPENAI_COMPATIBLE',
+          baseUrl: `http://127.0.0.1:${port}/v1`,
+          apiKey: 'test-key',
+          defaultModel: 'test-vision-model',
+          availableModels: ['test-vision-model'],
+          supportsVision,
+          enabled: true,
+        });
+      };
+      setVisionProvider(true);
+
+      // ── 1) P4 unavailable-reference fallback: logs style_lock_unavailable and runs unlocked ──
+      const unavailSession = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'PROTOTYPE_CO_DESIGN',
+        title: 'P4 Unavailable Lock',
+      });
+      scriptedReplies.push(
+        {
+          toolCalls: [
+            {
+              id: 'tc-plan-u',
+              name: 'plan_screens',
+              args: { screens: [{ screenId: 'SCR-A', screenName: '首页', purpose: '总览', screenType: 'DASHBOARD' }] },
+            },
+            {
+              id: 'tc-style-u',
+              name: 'define_style',
+              args: {
+                direction: '助手自定深青色',
+                values: { accent: '#0f766e' },
+                componentCss: '.card { padding: var(--proto-pad); }',
+                sampleHtml: '<div class="card">样张</div>',
+              },
+            },
+            {
+              id: 'tc-scr-u',
+              name: 'upsert_prototype_screen',
+              args: {
+                screenId: 'SCR-A',
+                screenName: '首页',
+                screenHtml: '<div class="card"><button data-element-id="EL-U1" data-element-type="BUTTON">查看</button></div>',
+              },
+            },
+          ],
+        },
+        { text: '已生成。' },
+      );
+      const unavailTurn = await collectUnifiedAgentTurn(store, {
+        sessionId: unavailSession.id,
+        prompt: '生成首版原型',
+        mockMode: false,
+        designBrief: {
+          items: [],
+          primaryReferenceId: 'removed-catalog-slug',
+          approvedAt: '2026-10-01T00:00:00.000Z',
+          updatedAt: '2026-10-01T00:00:00.000Z',
+        },
+      });
+      const unavailBuild = foldBuild(unavailTurn.events);
+      expect(unavailBuild.log.some((l) => l.kind === 'style_lock_unavailable')).toBe(true);
+      expect(unavailBuild.log.find((l) => l.kind === 'style_ready')).toMatchObject({ locked: false });
+      const unavailProto = store.getPrototype(unavailTurn.session.targetId!)!;
+      expect(readPrototypeDocumentStyle(unavailProto.htmlContent)!.css).toContain('--proto-accent: #0f766e');
+
+      // ── 2) P4 derived lock + P6 non-bypass on compiled Design Brief submission ──
+      const primaryRef = CURATED_INSPO_CATALOG[0]!;
+      const derivedExpected = approvedBriefStyleValues({
+        items: [],
+        primaryReferenceId: primaryRef.slug,
+        approvedAt: '2026-10-01T00:00:00.000Z',
+        updatedAt: '2026-10-01T00:00:00.000Z',
+      });
+      expect(derivedExpected.values).not.toBeNull();
+      const lockedAccent = derivedExpected.values!.accent;
+
+      const mainSession = store.createAgentSession({
+        projectId: 'proj-contract',
+        agentKind: 'PROTOTYPE_CO_DESIGN',
+        title: 'P4/P5/P6/S5 Full Lifecycle',
+      });
+      const legacyBriefWithRefImage: DesignBrief = {
+        items: [{ id: 'i1', category: 'tone', statement: '稳重清晰' }],
+        primaryReferenceId: primaryRef.slug,
+        userImageRefs: [
+          {
+            id: 'user-ref-1',
+            name: '门店现场图.png',
+            mimeType: 'image/png',
+            source: 'remote',
+            remoteUrl: `http://127.0.0.1:${port}/ref.png`,
+            role: 'user_upload',
+          },
+        ],
+        approvedAt: '2026-10-01T00:00:00.000Z',
+        updatedAt: '2026-10-01T00:00:00.000Z',
+      };
+
+      // Turn 1: compiled wizard prompt contains "主强调色"; model tries quoting it to bypass lock -> MUST fail to bypass!
+      scriptedReplies.push(
+        {
+          toolCalls: [
+            {
+              id: 'tc-plan-1',
+              name: 'plan_screens',
+              args: { screens: [{ screenId: 'SCR-A', screenName: '首页', purpose: '总览', screenType: 'DASHBOARD' }] },
+            },
+            {
+              id: 'tc-style-1',
+              name: 'define_style',
+              args: {
+                direction: '稳重原版样张',
+                values: { accent: '#ff0000' },
+                userRequested: { keys: ['accent'], quote: '主强调色' },
+                componentCss: '.card { padding: var(--proto-pad); }',
+                sampleHtml: '<section class="card">原版风格样张</section>',
+              },
+            },
+            {
+              id: 'tc-scr-1',
+              name: 'upsert_prototype_screen',
+              args: {
+                screenId: 'SCR-A',
+                screenName: '首页',
+                screenHtml: '<div class="card"><button data-element-id="EL-A1" data-element-type="BUTTON">订货</button></div>',
+              },
+            },
+          ],
+        },
+        { text: '首版完成。' },
+      );
+
+      const turn1 = await collectUnifiedAgentTurn(store, {
+        sessionId: mainSession.id,
+        prompt: `【已确认设计简报 · 生成首版可交互原型 Revision #1】\n风格样张核心令牌：主强调色 ${lockedAccent}`,
+        mockMode: false,
+        designBrief: legacyBriefWithRefImage,
+      });
+      const protoId = turn1.session.targetId!;
+      const protoAfterT1 = store.getPrototype(protoId)!;
+      expect(readPrototypeDocumentStyle(protoAfterT1.htmlContent)!.locked).toBe(true);
+      expect(readPrototypeDocumentStyle(protoAfterT1.htmlContent)!.css).toContain(`--proto-accent: ${lockedAccent}`);
+      expect(readPrototypeDocumentStyle(protoAfterT1.htmlContent)!.css).not.toContain('#ff0000');
+      expect(foldBuild(turn1.events).log.some((l) => l.kind === 'style_values_changed')).toBe(false);
+
+      // ── 3) S5: rejected define_style restyle on Turn 2 restores Turn 1's style artboard ──
+      scriptedReplies.push(
+        {
+          toolCalls: [
+            {
+              id: 'tc-style-bad',
+              name: 'define_style',
+              args: {
+                direction: '坏掉的样张',
+                values: {},
+                componentCss: '.card { padding: 8px; }',
+                sampleHtml: '<button onclick="alert(1)">违规弹窗</button>',
+              },
+            },
+          ],
+        },
+        { text: '未改动。' },
+      );
+      const turn2Rejected = await collectUnifiedAgentTurn(store, {
+        sessionId: mainSession.id,
+        prompt: '微调组件样张',
+        mockMode: false,
+      });
+      const liveEventsT2 = turn2Rejected.events
+        .filter((e) => e.event === 'prototype_style' || e.event === 'prototype_frame' || e.event === 'prototype_screen')
+        .map((e) => e.data as unknown as PrototypeLiveEvent);
+      const foldedLiveT2 = liveEventsT2.reduce(applyPrototypeLiveEvent, emptyPrototypeLiveState());
+      const modelAfterReject = buildPrototypeCanvasModel(store.getPrototype(protoId)!.htmlContent, foldedLiveT2);
+      expect(modelAfterReject.style).toBeDefined();
+      expect(modelAfterReject.style!.bodyHtml).toContain('原版风格样张');
+
+      // ── 4) P6: explicit user chat request changes accent, logs style_values_changed & persists to store ──
+      // Notice: NO plan_screens call in this restyle turn!
+      scriptedReplies.push(
+        {
+          toolCalls: [
+            {
+              id: 'tc-style-p6',
+              name: 'define_style',
+              args: {
+                direction: '深蓝专业版',
+                values: { accent: '#1e3a8a' },
+                userRequested: { keys: ['accent'], quote: '把主色改成深蓝' },
+                componentCss: '.card { padding: var(--proto-pad); }',
+                sampleHtml: '<section class="card">深蓝风格样张</section>',
+              },
+            },
+          ],
+        },
+        { text: '已按要求把主色改成深蓝。' },
+      );
+      const turn3P6 = await collectUnifiedAgentTurn(store, {
+        sessionId: mainSession.id,
+        prompt: '请把主色改成深蓝，其他保持不变',
+        mockMode: false,
+      });
+      const protoAfterP6 = store.getPrototype(protoId)!;
+      expect(readPrototypeDocumentStyle(protoAfterP6.htmlContent)!.css).toContain('--proto-accent: #1e3a8a');
+      expect(protoAfterP6.designBrief?.styleValues?.accent).toBe('#1e3a8a');
+      const buildP6 = foldBuild(turn3P6.events);
+      expect(buildP6.log.find((l) => l.kind === 'style_values_changed')).toMatchObject({
+        valueKeys: ['accent'],
+      });
+
+      // Turn 4: user does NOT ask to change main colour -> newly approved #1e3a8a stays locked!
+      scriptedReplies.push(
+        {
+          toolCalls: [
+            {
+              id: 'tc-style-t4',
+              name: 'define_style',
+              args: {
+                direction: '深蓝专业版（重排样张）',
+                values: { accent: '#f94c05' },
+                userRequested: { keys: ['accent'], quote: '把主色改成橙色' },
+                componentCss: '.card { padding: var(--proto-pad); }',
+                sampleHtml: '<section class="card">深蓝样张二版</section>',
+              },
+            },
+          ],
+        },
+        { text: '已调整样张排版。' },
+      );
+      await collectUnifiedAgentTurn(store, {
+        sessionId: mainSession.id,
+        prompt: '调整一下样张卡片排版',
+        mockMode: false,
+      });
+      expect(readPrototypeDocumentStyle(store.getPrototype(protoId)!.htmlContent)!.css).toContain(
+        '--proto-accent: #1e3a8a',
+      );
+
+      // ── 5) P5: follow-up resume WITHOUT re-attached images still sends brief's Visual References to helpers ──
+      // Point the stored brief's primary reference at the local test image server so offline CI never waits on external CDN.
+      store.updatePrototypeDesignBrief(protoId, {
+        ...store.getPrototype(protoId)!.designBrief!,
+        primaryReferenceId: undefined,
+        primaryReferenceTitle: primaryRef.title,
+        primaryReferenceSourceUrl: `http://127.0.0.1:${port}/ref.png`,
+      });
+      const beforeResumeIdx = seenBodies.length;
+      scriptedReplies.push({
+        toolCalls: [
+          {
+            id: 'tc-sub-scr-a',
+            name: 'upsert_prototype_screen',
+            args: {
+              screenId: 'SCR-A',
+              screenName: '首页',
+              screenHtml: '<div class="card"><button data-element-id="EL-A1" data-element-type="BUTTON">继续订货</button></div>',
+              extraCss: '.card { gap: var(--proto-gap); }',
+            },
+          },
+        ],
+      });
+      const resumeVisionTurn = await collectUnifiedAgentTurn(store, {
+        sessionId: mainSession.id,
+        prompt: '[ACTION:RESUME_PROTOTYPE_SCREEN {"screenId":"SCR-A"}] 继续这一屏',
+        mockMode: false,
+      });
+      expect(resumeVisionTurn.session.messages.at(-1)!.content).toContain('其他屏没有改动');
+      const helperVisionReq = seenBodies[beforeResumeIdx]!;
+      const helperVisionJson = JSON.stringify(helperVisionReq.messages);
+      expect(helperVisionJson).toContain('image_url');
+      expect(helperVisionJson).toContain('门店现场图.png');
+      // 2 unique visual references (brief-primary + user-ref-1).
+      expect(helperVisionJson.match(/"type":"image_url"/g)).toHaveLength(2);
+
+      // Deduplication: when the turn already attaches `user-ref-1`, helpers still see 2 images (not 3).
+      const beforeDedupIdx = seenBodies.length;
+      scriptedReplies.push({
+        toolCalls: [
+          {
+            id: 'tc-sub-scr-dedup',
+            name: 'upsert_prototype_screen',
+            args: {
+              screenId: 'SCR-A',
+              screenName: '首页',
+              screenHtml: '<div class="card"><button data-element-id="EL-A1" data-element-type="BUTTON">去重校验</button></div>',
+            },
+          },
+        ],
+      });
+      await collectUnifiedAgentTurn(store, {
+        sessionId: mainSession.id,
+        prompt: '[ACTION:RESUME_PROTOTYPE_SCREEN {"screenId":"SCR-A"}] 继续这一屏',
+        mockMode: false,
+        images: [
+          {
+            id: 'user-ref-1',
+            name: '门店现场图.png',
+            mimeType: 'image/png',
+            dataBase64: pngBytes.toString('base64'),
+          },
+        ],
+      });
+      expect(JSON.stringify(seenBodies[beforeDedupIdx]!.messages).match(/"type":"image_url"/g)).toHaveLength(2);
+
+      // And when the model does NOT support vision, helpers still get the text fallback notes from the brief.
+      setVisionProvider(false);
+      const beforeFallbackIdx = seenBodies.length;
+      scriptedReplies.push({
+        toolCalls: [
+          {
+            id: 'tc-sub-scr-a2',
+            name: 'upsert_prototype_screen',
+            args: {
+              screenId: 'SCR-A',
+              screenName: '首页',
+              screenHtml: '<div class="card"><button data-element-id="EL-A1" data-element-type="BUTTON">无图回退订货</button></div>',
+            },
+          },
+        ],
+      });
+      await collectUnifiedAgentTurn(store, {
+        sessionId: mainSession.id,
+        prompt: '[ACTION:RESUME_PROTOTYPE_SCREEN {"screenId":"SCR-A"}] 继续这一屏',
+        mockMode: false,
+      });
+      const helperFallbackJson = JSON.stringify(seenBodies[beforeFallbackIdx]!.messages);
+      expect(helperFallbackJson).toContain('门店现场图.png');
+      expect(helperFallbackJson).toContain(primaryRef.title);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

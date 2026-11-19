@@ -9,8 +9,9 @@
 
 import type { Tool, ToolCall } from '@earendil-works/pi-ai';
 import {
+  PROTOTYPE_STYLE_VALUE_KEYS,
   PROTOTYPE_STYLE_VARIABLES,
-  applyPrototypeStyleToDocument,
+  readPrototypeStyleValues,
   resolvePrototypeStyleValues,
   sanitizeStyleCss,
   splitPrototypeDocument,
@@ -18,9 +19,18 @@ import {
   type PrototypeBuildPlanItem,
   type PrototypeDocumentStyle,
   type PrototypeStyle,
+  type PrototypeStyleValueKey,
   type PrototypeStyleValues,
 } from '../../ontology-core/index.js';
-import type { DesignBrief } from '../../workspace-store/index.js';
+import { FORBIDDEN_DIALOG_RE } from './prototype-anchor-tools.js';
+import {
+  CURATED_INSPO_CATALOG,
+  inspoFullUrl,
+  inspoHeroUrl,
+  type AgentImageAttachmentRef,
+  type DesignBrief,
+  type VisualReferenceItem,
+} from '../../workspace-store/index.js';
 import { type AgentLocale, pickLocaleText } from './locale.js';
 import type { OpenAiFunctionTool } from './tools.js';
 
@@ -67,6 +77,15 @@ export const DEFINE_STYLE_OPENAI_TOOL: OpenAiFunctionTool = {
           description:
             'CSS of the shared components, using only var(--proto-*): buttons (primary, secondary, danger), cards, tables, form fields (input, select, textarea), tags/status badges, empty states, plus page/section layout helpers. Short class names (.btn, .card, .tag …). No fixed page widths.',
         },
+        userRequested: {
+          type: 'object',
+          description:
+            'ONLY when the user explicitly asked in their latest message to change an approved design value (e.g. 主色改成蓝色): the value keys they asked to change and their words quoted verbatim. Never use it to change approved values on your own.',
+          properties: {
+            keys: { type: 'array', items: { type: 'string' } },
+            quote: { type: 'string', description: "The user's words, copied exactly from their message" },
+          },
+        },
         sampleHtml: {
           type: 'string',
           description:
@@ -111,8 +130,8 @@ export function prototypeLeadStyleInstructions(
   const lockedLine = locked
     ? pickLocaleText(
         locale,
-        `【已确认的设计值（锁定，不能改）】调用 \`define_style\` 时原样传入：${JSON.stringify(locked)}`,
-        `[Approved design values (locked, do not change)] Pass these unchanged to \`define_style\`: ${JSON.stringify(locked)}`,
+        `【已确认的设计值（锁定，不能改）】调用 \`define_style\` 时原样传入：${JSON.stringify(locked)}。只有用户在消息里明确要求改某个设计值时，才把它的键写进 \`userRequested.keys\`，并在 \`userRequested.quote\` 里原样引用用户的话。`,
+        `[Approved design values (locked, do not change)] Pass these unchanged to \`define_style\`: ${JSON.stringify(locked)}. Only when the user explicitly asks in their message to change one of them, put its key in \`userRequested.keys\` and quote the user's words verbatim in \`userRequested.quote\`.`,
       )
     : pickLocaleText(
         locale,
@@ -192,9 +211,34 @@ export function screensChangedOutside(beforeHtml: string, afterHtml: string, exc
   return changed;
 }
 
+/** Everything in a document except one screen: its section, its CSS block and its scripts. */
+function outsideOf(html: string, screenId: string): string {
+  const id = screenId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const markerId = screenId.replace(/--/g, '- -').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const { frame, screens } = splitPrototypeDocument(html);
+  const strip = (part: string) =>
+    part
+      .replace(new RegExp(`<style\\b[^>]*data-screen-css="${id}"[^>]*>[\\s\\S]*?</style>\\s*`, 'gi'), '')
+      .replace(new RegExp(`<script\\b[^>]*data-screen-js="${id}"[^>]*>[\\s\\S]*?</script>\\s*`, 'gi'), '')
+      .replace(new RegExp(`<!--onto-screen:${markerId}-->\\s*`, 'g'), '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const ownScreens = screens.filter((sc) => sc.screenId === screenId);
+  return JSON.stringify({
+    htmlAttrs: frame.htmlAttrs,
+    head: strip(frame.headHtml),
+    bodyAttrs: frame.bodyAttrs,
+    body: strip(frame.bodyHtml),
+    duplicateOwn: ownScreens.length > 1,
+    screens: screens.filter((sc) => sc.screenId !== screenId).map((sc) => [sc.screenId, sc.html]),
+  });
+}
+
 /**
- * After a screen helper's tool ran: if it changed any other screen, the document goes back to
- * how it was and the helper gets a diagnostic; otherwise the new document stands.
+ * After a screen helper's tool ran: if anything outside its own screen changed — another
+ * screen, the shell, the navigation, the style, the head — the document goes back to how it was
+ * and the helper gets a diagnostic; otherwise the new document stands. The helper's own section,
+ * its own CSS block and its own scripts are the only things it may change.
  */
 export function keepWithinOwnScreen(
   beforeHtml: string,
@@ -202,10 +246,12 @@ export function keepWithinOwnScreen(
   ownScreenId: string,
   locale: AgentLocale,
 ): { html: string; diagnostic: string | null } {
+  if (outsideOf(beforeHtml, ownScreenId) === outsideOf(afterHtml, ownScreenId)) {
+    return { html: afterHtml, diagnostic: null };
+  }
   const others = screensChangedOutside(beforeHtml, afterHtml, ownScreenId);
-  return others.length > 0
-    ? { html: beforeHtml, diagnostic: outsideScreenDiagnostic(ownScreenId, others, locale) }
-    : { html: afterHtml, diagnostic: null };
+  const what = others.length > 0 ? others : [pickLocaleText(locale, '外壳、导航或风格', 'the shell, navigation or style')];
+  return { html: beforeHtml, diagnostic: outsideScreenDiagnostic(ownScreenId, what, locale) };
 }
 
 /** The diagnostic for an edit that reached beyond the helper's own screen (it is undone). */
@@ -331,9 +377,32 @@ export function buildScreenHelperContext(input: ScreenHelperContextInput): strin
   return sections.join('\n\n');
 }
 
+/**
+ * The approved keys the user explicitly asked to change: the lead names them and quotes the
+ * user's words, and the quote must really be in the user's message.
+ */
+function userRequestedKeys(
+  raw: unknown,
+  values: unknown,
+  locked: Partial<PrototypeStyleValues> | null,
+  userPrompt: string | undefined,
+): PrototypeStyleValueKey[] {
+  if (!locked || !raw || typeof raw !== 'object' || !userPrompt) return [];
+  const rec = raw as { keys?: unknown; quote?: unknown };
+  const quote = typeof rec.quote === 'string' ? rec.quote.trim() : '';
+  if (quote.length < 2 || !userPrompt.includes(quote)) return [];
+  const proposed = readPrototypeStyleValues(values);
+  const keys = Array.isArray(rec.keys) ? rec.keys.filter((k): k is string => typeof k === 'string') : [];
+  return PROTOTYPE_STYLE_VALUE_KEYS.filter(
+    (k) => keys.includes(k) && k in locked && k in proposed && proposed[k] !== locked[k],
+  );
+}
+
 export interface DefineStyleCommit {
   isError: boolean;
   style?: PrototypeStyle;
+  /** Approved values the user asked to change in this message (the new values are approved). */
+  userChanged?: PrototypeStyleValueKey[];
   content: string;
   summary: string;
 }
@@ -346,10 +415,21 @@ export function commitDefineStyle(
   args: unknown,
   locked: Partial<PrototypeStyleValues> | null,
   locale: AgentLocale,
+  options: { userPrompt?: string } = {},
 ): DefineStyleCommit {
   const rec = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
-  const componentCss = typeof rec.componentCss === 'string' ? sanitizeStyleCss(rec.componentCss).trim() : '';
-  const sampleHtml = typeof rec.sampleHtml === 'string' ? sanitizeStyleSampleHtml(rec.sampleHtml).trim() : '';
+  const rawCss = typeof rec.componentCss === 'string' ? rec.componentCss : '';
+  const rawSample = typeof rec.sampleHtml === 'string' ? rec.sampleHtml : '';
+  if (FORBIDDEN_DIALOG_RE.test(rawCss) || FORBIDDEN_DIALOG_RE.test(rawSample)) {
+    const diagnostic = pickLocaleText(
+      locale,
+      'define_style 里不能出现 alert/confirm/prompt。',
+      'define_style must not contain alert/confirm/prompt.',
+    );
+    return { isError: true, content: JSON.stringify({ status: 'ERROR', diagnostic }), summary: diagnostic };
+  }
+  const componentCss = sanitizeStyleCss(rawCss).trim();
+  const sampleHtml = sanitizeStyleSampleHtml(rawSample).trim();
   if (!componentCss || !sampleHtml) {
     const diagnostic = pickLocaleText(
       locale,
@@ -358,7 +438,13 @@ export function commitDefineStyle(
     );
     return { isError: true, content: JSON.stringify({ status: 'ERROR', diagnostic }), summary: diagnostic };
   }
-  const resolved = resolvePrototypeStyleValues(rec.values, locked);
+  // The lock stops the assistant from changing approved values on its own, not the user: values
+  // the user asked for in this very message (quoted verbatim) replace the approved ones.
+  const userChanged = userRequestedKeys(rec.userRequested, rec.values, locked, options.userPrompt);
+  const effectiveLock = locked
+    ? (Object.fromEntries(Object.entries(locked).filter(([k]) => !userChanged.includes(k as PrototypeStyleValueKey))) as Partial<PrototypeStyleValues>)
+    : null;
+  const resolved = resolvePrototypeStyleValues(rec.values, effectiveLock);
   const style: PrototypeStyle = {
     direction: typeof rec.direction === 'string' ? rec.direction.trim() : '',
     values: resolved.values,
@@ -376,11 +462,13 @@ export function commitDefineStyle(
   return {
     isError: false,
     style,
+    ...(userChanged.length > 0 ? { userChanged } : {}),
     summary,
     content: JSON.stringify({
       status: 'OK',
       summary,
       values: resolved.values,
+      ...(userChanged.length > 0 ? { changedAtUserRequest: userChanged } : {}),
       ...(resolved.overridden.length > 0
         ? {
             keptApprovedValues: resolved.overridden,
@@ -392,8 +480,75 @@ export function commitDefineStyle(
   };
 }
 
-/** The working document with this style; an empty document stays empty (the shell adds it). */
-export function applyStyleToWorkingDocument(html: string, style: PrototypeStyle): string {
-  return html.trim() ? applyPrototypeStyleToDocument(html, style) : html;
+/** A Visual Reference image the engine can resolve for a model turn. */
+export interface BriefReferenceImage {
+  id: string;
+  name: string;
+  mimeType: string;
+  remoteUrl?: string;
+  role?: AgentImageAttachmentRef['role'];
+  textFallbackNote: string;
 }
 
+/**
+ * The Visual References a Design Brief keeps — the primary and borrowed references and the
+ * user's own images — as images for screen helpers, on every run (not only the turn they were
+ * attached to). The user's own images live only in their browser, so they travel as notes.
+ */
+export function briefReferenceImages(
+  brief: DesignBrief | null | undefined,
+  locale: AgentLocale,
+  catalog: readonly VisualReferenceItem[] = CURATED_INSPO_CATALOG,
+): BriefReferenceImage[] {
+  if (!brief) return [];
+  const zh = locale !== 'en-US';
+  const out: BriefReferenceImage[] = [];
+  const primary = brief.primaryReferenceId ? catalog.find((c) => c.slug === brief.primaryReferenceId) : undefined;
+  if (primary) {
+    out.push({
+      id: `inspo-primary-${primary.slug}`,
+      name: `${primary.title} (${primary.sourceDomain})`,
+      mimeType: 'image/webp',
+      remoteUrl: primary.fullPageUrl || inspoFullUrl(primary.slug) || primary.heroUrl || inspoHeroUrl(primary.slug),
+      role: 'primary_ref',
+      textFallbackNote: zh
+        ? `主参考「${primary.title}」（底色 ${primary.surfaceHex}，调色盘 ${primary.palette.join(', ')}，字体 ${primary.fonts[0] ?? ''}，圆角 ${primary.radiusPx}px）`
+        : `Primary reference "${primary.title}" (surface ${primary.surfaceHex}, palette ${primary.palette.join(', ')}, font ${primary.fonts[0] ?? ''}, radius ${primary.radiusPx}px)`,
+    });
+  } else if (brief.primaryReferenceTitle) {
+    out.push({
+      id: 'brief-primary',
+      name: brief.primaryReferenceTitle,
+      mimeType: 'image/webp',
+      ...(brief.primaryReferenceSourceUrl ? { remoteUrl: brief.primaryReferenceSourceUrl } : {}),
+      role: 'primary_ref',
+      textFallbackNote: zh ? `主参考「${brief.primaryReferenceTitle}」` : `Primary reference "${brief.primaryReferenceTitle}"`,
+    });
+  }
+  for (const b of brief.borrowedReferences ?? []) {
+    const item = catalog.find((c) => c.slug === b.referenceId);
+    const title = item?.title ?? b.title ?? b.referenceId;
+    const remoteUrl = item ? item.heroUrl || inspoHeroUrl(item.slug) : undefined;
+    out.push({
+      id: `inspo-borrowed-${b.referenceId}`,
+      name: `${title} [${b.aspect}]`,
+      mimeType: 'image/webp',
+      ...(remoteUrl ? { remoteUrl } : {}),
+      role: 'borrowed_ref',
+      textFallbackNote: zh
+        ? `借鉴参考「${title}」——只借鉴它的 ${b.aspect}${item ? `（底色 ${item.surfaceHex}，调色盘 ${item.palette.join(', ')}）` : ''}`
+        : `Borrowed reference "${title}" — borrow only its ${b.aspect}${item ? ` (surface ${item.surfaceHex}, palette ${item.palette.join(', ')})` : ''}`,
+    });
+  }
+  for (const ref of brief.userImageRefs ?? []) {
+    out.push({
+      id: ref.id,
+      name: ref.name,
+      mimeType: ref.mimeType,
+      ...(ref.source === 'remote' && ref.remoteUrl ? { remoteUrl: ref.remoteUrl } : {}),
+      ...(ref.role ? { role: ref.role } : {}),
+      textFallbackNote: zh ? `用户自己的参考图「${ref.name}」` : `The user's own reference image "${ref.name}"`,
+    });
+  }
+  return out;
+}

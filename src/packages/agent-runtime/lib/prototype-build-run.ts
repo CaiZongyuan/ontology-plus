@@ -108,9 +108,14 @@ export interface PrototypeBuildRun {
   /** `plan_screens` finished: validate and record the plan; returns the tool result. */
   commitPlan(args: unknown): { isError: boolean; content: string; summary: string };
   /** The lead started writing `define_style`: the 风格样张 phase is now. */
-  observeStyleStream(): void;
+  observeStyleStream(documentHtml?: string): void;
   /** `define_style` was accepted (done) or rejected (failed). */
-  commitStyle(result: { ok: true; locked: boolean } | { ok: false }): void;
+  commitStyle(
+    result:
+      | { ok: true; locked: boolean; userChanged?: readonly string[]; lockUnavailable?: boolean }
+      | { ok: false },
+    documentHtml?: string,
+  ): void;
   /** Orders dispatched tasks by the plan, and plans them when the lead skipped `plan_screens`. */
   prepareDispatch<T extends { screenId?: string; screenName?: string; instruction: string; screenType?: string }>(
     tasks: readonly T[],
@@ -176,8 +181,32 @@ export function createPrototypeBuildRun(options: {
 
   const planned = (screenId: string) => tracker.state().plan.some((p) => p.screenId === screenId);
 
+  const ensureStyleRun = (documentHtml?: string) => {
+    if (!hasPrototypeBuildPlan(tracker.state())) {
+      const fromDoc = documentHtml ? planFromDocument(documentHtml) : null;
+      if (fromDoc) {
+        if (!tracker.started()) {
+          send(tracker.start(fromDoc));
+          return;
+        }
+        send(tracker.plan(fromDoc.plan, false));
+        send(tracker.phase('plan', 'done'));
+        for (const item of fromDoc.plan) {
+          const scr = prototypeBuildScreen(fromDoc, item.screenId);
+          if (scr.status === 'done') {
+            send(tracker.screen(item.screenId, { status: 'done', writtenElements: scr.writtenElements }));
+          }
+        }
+        return;
+      }
+    }
+    ensureStarted();
+  };
+
   return {
-    active: () => tracker.started() && hasPrototypeBuildPlan(tracker.state()),
+    active: () =>
+      tracker.started() &&
+      (hasPrototypeBuildPlan(tracker.state()) || tracker.state().phases.style.status !== 'not_started'),
 
     observePlanStream(partialArgs) {
       const items = readStreamingBuildPlan(partialArgs);
@@ -231,21 +260,26 @@ export function createPrototypeBuildRun(options: {
       };
     },
 
-    observeStyleStream() {
-      if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) return;
+    observeStyleStream(documentHtml) {
+      ensureStyleRun(documentHtml);
       if (tracker.state().phases.style.status === 'now') return;
       send(tracker.phase('style', 'now'));
       send(tracker.log({ agent: 0, kind: 'style_started' }));
     },
 
-    commitStyle(result) {
-      if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) return;
+    commitStyle(result, documentHtml) {
       if (!result.ok) {
+        if (!tracker.started() || !hasPrototypeBuildPlan(tracker.state())) return;
         send(tracker.phase('style', 'failed'));
         return;
       }
+      ensureStyleRun(documentHtml);
       if (tracker.state().phases.style.status !== 'now') {
         send(tracker.log({ agent: 0, kind: 'style_started' }));
+      }
+      if (result.lockUnavailable) send(tracker.log({ agent: 0, kind: 'style_lock_unavailable' }));
+      if (result.userChanged && result.userChanged.length > 0) {
+        send(tracker.log({ agent: 0, kind: 'style_values_changed', valueKeys: [...result.userChanged] }));
       }
       send(tracker.phase('style', 'done'));
       send(tracker.log({ agent: 0, kind: 'style_ready', locked: result.locked }));

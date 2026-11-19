@@ -65,6 +65,7 @@ import {
   type AgentSessionMessage,
   type AgentSubagentLaneTrace,
   type AgentToolCallTrace,
+  approvedBriefStyleValues,
   type DesignBrief,
   type InteractivePrototype,
   type LlmProviderConfig,
@@ -97,6 +98,8 @@ import {
   editPrototypeAnchor,
   initPrototypeShell,
   listPrototypeAnchors,
+  scopeScreenCss,
+  styleFromShellTokens,
   readPrototypeAnchor,
   rewritePrototypePage,
   upsertPrototypeScreen,
@@ -132,6 +135,7 @@ import {
 import {
   DEFINE_STYLE_OPENAI_TOOL,
   DEFINE_STYLE_TOOL_NAME,
+  briefReferenceImages,
   buildScreenHelperContext,
   commitDefineStyle,
   keepWithinOwnScreen,
@@ -2977,13 +2981,53 @@ interface PrototypeTurnDraft {
   style?: PrototypeStyle;
   /** The approved Style Tile values this run must keep (null: the lead proposes them). */
   lockedStyleValues?: PrototypeStyleValues | null;
+  /** The brief was approved but its values could not be found or derived. */
+  styleLockUnavailable?: boolean;
 }
 
-/** The approved values of a Design Brief (locked once the brief is approved), else null. */
-function lockedStyleValuesOf(brief: DesignBrief | undefined | null): PrototypeStyleValues | null {
-  if (!brief?.approvedAt || !brief.styleValues) return null;
-  const read = readPrototypeStyleValues(brief.styleValues);
-  return Object.keys(read).length > 0 ? resolvePrototypeStyleValues(read, read).values : null;
+/**
+ * The approved values of a Design Brief (locked once the brief is approved): the stored ones, or
+ * for a brief approved before they were stored, the same derivation from its references.
+ * `unavailable` when the brief was approved but its references are gone (nothing is locked).
+ */
+function lockedStyleValuesOf(brief: DesignBrief | undefined | null): {
+  values: PrototypeStyleValues | null;
+  unavailable: boolean;
+} {
+  const approved = approvedBriefStyleValues(brief);
+  if (!approved.values) return { values: null, unavailable: 'underivable' in approved && approved.underivable };
+  const read = readPrototypeStyleValues(approved.values);
+  return Object.keys(read).length > 0
+    ? { values: resolvePrototypeStyleValues(read, read).values, unavailable: false }
+    : { values: null, unavailable: true };
+}
+
+const COMPILED_DESIGN_BRIEF_PROMPT_RE =
+  /^\s*(?:【已确认设计简报|===\s*CONFIRMED DESIGN BRIEF|\[PROTOTYPE_BRIEF_RESTYLE\])/i;
+
+/**
+ * Only the user's own chat text in this turn (never compiled Design Brief / SRS prompts, canvas
+ * selection metadata, or synthesized attachment/choice prompts) may authorize changing a locked
+ * Style Tile value (P6).
+ */
+function extractRawUserStylePrompt(
+  input: Pick<UnifiedAgentStreamInput, 'prompt' | 'designBrief' | 'askUserAnswer'>,
+  retryUserContent?: string,
+): string {
+  if (input.designBrief) return '';
+  const raw =
+    input.prompt?.trim() ||
+    input.askUserAnswer?.freeformText?.trim() ||
+    retryUserContent?.trim() ||
+    '';
+  if (!raw || COMPILED_DESIGN_BRIEF_PROMPT_RE.test(raw)) return '';
+  return raw
+    .replace(
+      /^---\s*(?:Targeted Visual Selections & Annotations|用户在界面原型上框选\/点选的目标区域与批注)\s*---[\s\S]*?(?:\n\n|$)/m,
+      '',
+    )
+    .replace(/^\[ACTION:[^\r\n]*\]\s*/i, '')
+    .trim();
 }
 
 /**
@@ -2992,27 +3036,7 @@ function lockedStyleValuesOf(brief: DesignBrief | undefined | null): PrototypeSt
  */
 function shellStyleFor(draft: PrototypeTurnDraft | undefined, tokens: unknown): PrototypeStyle | undefined {
   if (draft?.style) return draft.style;
-  if (!draft?.lockedStyleValues) return undefined;
-  const tk = tokens && typeof tokens === 'object' ? (tokens as Record<string, unknown>) : {};
-  return {
-    direction: '',
-    values: resolvePrototypeStyleValues(
-      {
-        mode: tk.mode,
-        background: tk.canvasBg,
-        surface: tk.cardBg,
-        accent: tk.accentColor,
-        border: tk.borderColor,
-        ink: tk.textColor,
-        fontFamily: tk.fontFamily,
-        radiusPx: tk.borderRadius,
-      },
-      draft.lockedStyleValues,
-    ).values,
-    componentCss: '',
-    sampleHtml: '',
-    locked: true,
-  };
+  return draft?.lockedStyleValues ? styleFromShellTokens(tokens, draft.lockedStyleValues) : undefined;
 }
 
 function recordModifiedAnchor(
@@ -4698,6 +4722,12 @@ async function executeUnifiedTurnCore(
     );
   }
 
+  const retryUserContent =
+    !synthesizedPrompt && workingMessages.at(-1)?.role === 'user'
+      ? workingMessages.at(-1)!.content
+      : undefined;
+  const rawUserStylePrompt = extractRawUserStylePrompt(input, retryUserContent);
+
   const turnIdentity = preallocatedIdentity ?? allocateTurnRunIdentity(existing, input);
   let currentTurnUserMsgId: string | undefined;
   if (synthesizedPrompt) {
@@ -4895,9 +4925,13 @@ async function executeUnifiedTurnCore(
             }
         : undefined;
     // The Design Brief this build follows: approved Style Tile values in it are locked (#91).
-    const buildDesignBrief =
+    let buildDesignBrief =
       input.designBrief ?? initialTargetProto?.designBrief ?? sessionState.designBrief ?? undefined;
-    if (prototypeTurnDraft) prototypeTurnDraft.lockedStyleValues = lockedStyleValuesOf(buildDesignBrief);
+    if (prototypeTurnDraft) {
+      const lock = lockedStyleValuesOf(buildDesignBrief);
+      prototypeTurnDraft.lockedStyleValues = lock.values;
+      prototypeTurnDraft.styleLockUnavailable = lock.unavailable;
+    }
 
     if (controller.signal.aborted) {
       throw toAbortedError();
@@ -4941,6 +4975,9 @@ async function executeUnifiedTurnCore(
     // The Visual References of this turn, handed to every screen helper as well (#91).
     let helperReferenceImages: ImageContent[] = [];
     let helperReferenceLines: string[] = [];
+    let helperReferencesFromBrief = false;
+    /** Images this turn already carries (the brief's references are not sent twice). */
+    const helperReferenceIds = new Set(incomingImages.map((img) => img.id));
 
     if (incomingImages.length > 0) {
       const lastPiUserIdx = (() => {
@@ -5031,12 +5068,13 @@ async function executeUnifiedTurnCore(
       onFlush: (screenId, partial) => {
         if (!prototypeTurnDraft || controller.signal.aborted) return;
         if (!streamingPrototypeScreens.has(screenId)) return;
+        const scopedPartialCss = partial.extraCss ? scopeScreenCss(partial.extraCss, screenId).css : '';
         const liveEvent = prototypeLiveTracker.observePartialScreen({
           screenId,
           ...(partial.screenName ? { screenName: partial.screenName } : {}),
           ...(partial.screenType ? { screenType: partial.screenType } : {}),
           partialHtml: partial.partialScreenHtml,
-          ...(partial.extraCss ? { css: partial.extraCss } : {}),
+          ...(scopedPartialCss ? { css: scopedPartialCss } : {}),
         });
         if (liveEvent) emitPrototypeLiveEvents([liveEvent]);
       },
@@ -5145,7 +5183,7 @@ async function executeUnifiedTurnCore(
     const streamPrototypeStyle = (partialArgs: unknown) => {
       if (!prototypeTurnDraft) return;
       styleStreaming = true;
-      prototypeBuildRun?.observeStyleStream();
+      prototypeBuildRun?.observeStyleStream(prototypeTurnDraft.workingHtml);
       styleThrottle.push(STYLE_STREAM_KEY, partialArgs);
     };
 
@@ -5154,13 +5192,14 @@ async function executeUnifiedTurnCore(
       styleStreaming = false;
       styleThrottle.end(STYLE_STREAM_KEY);
       const rejected = (diagnostic: string, content?: string): ExecutedToolStep => {
-        prototypeBuildRun?.commitStyle({ ok: false });
+        prototypeBuildRun?.commitStyle({ ok: false }, prototypeTurnDraft?.workingHtml);
         // What streamed onto the style artboard is taken back to the style the document has.
         const kept = prototypeTurnDraft?.style;
+        const inDocument = readPrototypeDocumentStyle(prototypeTurnDraft?.workingHtml ?? '');
         const back = prototypeLiveTracker.observeStyle(
           kept
             ? { css: prototypeStyleCss(kept), sampleHtml: kept.sampleHtml, direction: kept.direction, locked: kept.locked }
-            : { css: '', sampleHtml: '', direction: '', locked: false },
+            : (inDocument ?? { css: '', sampleHtml: '', direction: '', locked: false }),
           'ready',
         );
         if (back) emitPrototypeLiveEvents([back]);
@@ -5198,9 +5237,24 @@ async function executeUnifiedTurnCore(
           ),
         );
       }
-      const committed = commitDefineStyle(rawArgs, prototypeTurnDraft.lockedStyleValues ?? null, effectiveLocale);
+      const committed = commitDefineStyle(rawArgs, prototypeTurnDraft.lockedStyleValues ?? null, effectiveLocale, {
+        userPrompt: rawUserStylePrompt,
+      });
       if (committed.isError || !committed.style) return rejected(committed.summary, committed.content);
       const style = committed.style;
+      // The user asked to change approved values: the new ones become the approved ones (P6).
+      if (committed.userChanged && committed.userChanged.length > 0 && prototypeTurnDraft.lockedStyleValues) {
+        const approvedNow: PrototypeStyleValues = { ...prototypeTurnDraft.lockedStyleValues };
+        for (const key of committed.userChanged) (approvedNow as unknown as Record<string, unknown>)[key] = style.values[key];
+        prototypeTurnDraft.lockedStyleValues = approvedNow;
+        const now = new Date().toISOString();
+        buildDesignBrief = {
+          ...(buildDesignBrief ?? { items: [], approvedAt: now }),
+          styleValues: approvedNow,
+          updatedAt: now,
+        };
+        prototypeTurnDraft.designBrief = buildDesignBrief;
+      }
       prototypeTurnDraft.style = style;
       // The style is the document's look: an empty document gets its skeleton from the plan.
       const planned = prototypeBuildRun?.plannedScreens() ?? null;
@@ -5227,7 +5281,17 @@ async function executeUnifiedTurnCore(
         'ready',
       );
       if (ready) emitPrototypeLiveEvents([ready]);
-      prototypeBuildRun?.commitStyle({ ok: true, locked: style.locked });
+      const lockUnavailable = Boolean(prototypeTurnDraft.styleLockUnavailable);
+      prototypeTurnDraft.styleLockUnavailable = false;
+      prototypeBuildRun?.commitStyle(
+        {
+          ok: true,
+          locked: style.locked,
+          ...(committed.userChanged ? { userChanged: committed.userChanged } : {}),
+          ...(lockUnavailable ? { lockUnavailable: true } : {}),
+        },
+        prototypeTurnDraft.workingHtml,
+      );
       return {
         trace: {
           id: callId,
@@ -5308,6 +5372,25 @@ async function executeUnifiedTurnCore(
         ? store.getProjectStepConfirmations(sessionState.projectId).requirements
         : undefined;
       const styleForHelpers = isPrototypeBuild ? helperStyle() : null;
+      // Helpers always see the brief's Visual References, whichever run this is (P5).
+      if (isPrototypeBuild && !helperReferencesFromBrief) {
+        helperReferencesFromBrief = true;
+        const fromBrief = briefReferenceImages(buildDesignBrief, effectiveLocale).filter(
+          (img) => !helperReferenceIds.has(img.id),
+        );
+        if (fromBrief.length > 0) {
+          if (built!.visionSupported) {
+            const resolved = await resolveTransientImagesForVisionTurn(fromBrief, effectiveLocale, built!.isMock);
+            helperReferenceImages = [...helperReferenceImages, ...resolved.imageBlocks];
+            helperReferenceLines = [...helperReferenceLines, ...resolved.manifestLines, ...resolved.fallbackNotes];
+          } else {
+            helperReferenceLines = [
+              ...helperReferenceLines,
+              ...fromBrief.map((img, idx) => `- [${idx + 1}] ${img.name}: ${img.textFallbackNote}`),
+            ];
+          }
+        }
+      }
       const planForHelpers = isPrototypeBuild ? helperPlan() : [];
 
       const batchStartIdx = allSubagentLanes.length;
@@ -5319,6 +5402,7 @@ async function executeUnifiedTurnCore(
         selectedModel: built!.selectedModel,
         baseSystemPrompt: subBaseSystemPrompt,
         subagentTools: isPrototypeBuild ? screenHelperTools(baseSpecialistTools) : baseSpecialistTools,
+        requireScreen: isPrototypeBuild,
         ...(isPrototypeBuild
           ? {
               screenContext: (spec: SubagentTaskSpec) =>
@@ -5374,6 +5458,7 @@ async function executeUnifiedTurnCore(
           });
           const ownScreenId = lane.targetAnchor?.screenId?.trim();
           const htmlBefore = prototypeTurnDraft?.workingHtml ?? '';
+          const anchorsBefore = prototypeTurnDraft ? [...prototypeTurnDraft.modifiedAnchors] : [];
           let subExec = await executeUnifiedToolCall(
             store,
             sessionState,
@@ -5393,6 +5478,7 @@ async function executeUnifiedTurnCore(
             prototypeTurnDraft.workingHtml = kept.html;
             const diagnostic = kept.diagnostic;
             if (diagnostic) {
+              prototypeTurnDraft.modifiedAnchors = anchorsBefore;
               subExec = {
                 ...subExec,
                 trace: { ...subExec.trace, output: diagnostic, isError: true },
@@ -5541,7 +5627,7 @@ async function executeUnifiedTurnCore(
           emit({ id: nextEventId(), event: 'tool_result', data: { trace: resumed.trace, step: 1 } });
           syncPrototypeLiveDocument();
           // Say what really changed besides this screen, by comparing the document before and after.
-          const otherChanged = changedOtherScreens(beforeHtml, prototypeTurnDraft?.workingHtml ?? '', planned.screenId);
+          const otherChanged = screensChangedOutside(beforeHtml, prototypeTurnDraft?.workingHtml ?? '', planned.screenId);
           const othersText =
             otherChanged.length === 0
               ? pickLocaleText(effectiveLocale, '其他屏没有改动。', 'The other screens are unchanged.')
@@ -6342,6 +6428,9 @@ async function executeUnifiedTurnCore(
     const finalStatus: AgentSession['status'] = pendingAskUser ? 'WAITING_INPUT' : 'IDLE';
     const completedSession: AgentSession = {
       ...sessionState,
+      ...(prototypeTurnDraft?.designBrief && sessionState.designBrief
+        ? { designBrief: prototypeTurnDraft.designBrief }
+        : {}),
       status: finalStatus,
       messages: nextMessages,
       updatedAt: new Date().toISOString(),
@@ -6565,6 +6654,12 @@ async function executeUnifiedTurnCore(
           modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
         });
       } else {
+        if (prototypeTurnDraft.designBrief) {
+          store.updatePrototypeDesignBrief(
+            prototypeTurnDraft.prototypeId,
+            prototypeTurnDraft.designBrief,
+          );
+        }
         const appendedPartial = store.appendPrototypeRevision(prototypeTurnDraft.prototypeId, {
           title: cleanRevisionNote.slice(0, 48),
           instruction: cleanRevisionNote,
@@ -6857,11 +6952,6 @@ export async function* runUnifiedAgentSessionStream(
 
   const run = launchActiveRunInSlot(store, slot, input.sessionId, turnInput);
   yield* subscribeToBackgroundRun(run, clientSignal);
-}
-
-/** Names of the screens other than `exceptScreenId` that differ between two documents. */
-function changedOtherScreens(beforeHtml: string, afterHtml: string, exceptScreenId: string): string[] {
-  return screensChangedOutside(beforeHtml, afterHtml, exceptScreenId);
 }
 
 function resolveEffectiveStructuredAction(
