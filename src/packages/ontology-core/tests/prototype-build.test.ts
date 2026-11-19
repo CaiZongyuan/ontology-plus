@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activePrototypeBuildFixActivities,
   applyPrototypeBuildEvent,
   applyPrototypeLiveEvent,
   buildPrototypeCanvasModel,
@@ -220,5 +221,62 @@ describe('review fixes (#90)', () => {
     const again = createPrototypeBuildTracker();
     again.start(build);
     expect(again.state().revisionId).toBeUndefined();
+  });
+
+  it('tracks screenshot review and targeted fix states, active fix activities, and follow focus (#93)', () => {
+    const tracker = createPrototypeBuildTracker();
+    let live = emptyPrototypeLiveState();
+    const push = (ev: PrototypeBuildEvent | null) => {
+      if (ev) live = applyPrototypeLiveEvent(live, ev);
+    };
+
+    push(tracker.start());
+    push(tracker.plan(PLAN, false));
+    push(tracker.screen('SCR-A', { status: 'reviewing', agent: 1 }));
+    expect(live.focusScreenId).toBe('SCR-A');
+
+    push(tracker.screen('SCR-A', { status: 'done', reviewed: 'pass' }));
+    expect(live.focusScreenId).toBeUndefined();
+    expect(prototypeBuildScreen(live.build!, 'SCR-A')).toMatchObject({
+      status: 'done',
+      agent: 1,
+      reviewed: 'pass',
+    });
+
+    push(
+      tracker.screen('SCR-B', {
+        status: 'fixing',
+        agent: 2,
+        finding: '订货单表格右侧超出了画板宽度',
+        fixActivity: {
+          elementId: 'EL-ORDERS-TABLE',
+          issue: '订货单表格右侧超出了画板宽度',
+          fixNote: '收窄列宽',
+          state: 'fixing',
+        },
+      }),
+    );
+    expect(live.focusScreenId).toBe('SCR-B');
+    expect(activePrototypeBuildFixActivities(live.build)).toEqual([
+      {
+        screenId: 'SCR-B',
+        elementId: 'EL-ORDERS-TABLE',
+        issue: '订货单表格右侧超出了画板宽度',
+        fixNote: '收窄列宽',
+        state: 'fixing',
+      },
+    ]);
+
+    // Once the screen finishes, active fix narration clears while `reviewed: 'fixed'` stays.
+    push(tracker.screen('SCR-B', { status: 'done', reviewed: 'fixed' }));
+    expect(live.focusScreenId).toBeUndefined();
+    expect(activePrototypeBuildFixActivities(live.build)).toEqual([]);
+    expect(prototypeBuildScreen(live.build!, 'SCR-B')).toMatchObject({
+      status: 'done',
+      agent: 2,
+      reviewed: 'fixed',
+      finding: '订货单表格右侧超出了画板宽度',
+    });
+    expect(prototypeBuildScreen(live.build!, 'SCR-B').fixActivity).toBeUndefined();
   });
 });

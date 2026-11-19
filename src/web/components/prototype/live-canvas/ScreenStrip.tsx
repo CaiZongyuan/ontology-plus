@@ -1,11 +1,11 @@
 import React from 'react';
-import { CheckCircle2, Clock, PenLine, RefreshCw, ScanSearch, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, Clock, PenLine, RefreshCw, ScanSearch, TriangleAlert, Wrench } from 'lucide-react';
 import { describePrototypeBuildFailure } from '../../../../packages/business-vocabulary/index.js';
 import type { PrototypeBuildScreenStatus } from '../../../../packages/ontology-core/index.js';
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
-import { agentName, businessText, type ScreenBuildView } from './buildView.js';
+import { businessText, screenOwnerName, type ScreenBuildView } from './buildView.js';
 
 type T = (zh: string, en: string) => string;
 
@@ -17,6 +17,8 @@ export function screenStatusLabel(status: PrototypeBuildScreenStatus, t: T): str
       return t('施工中', 'Building');
     case 'reviewing':
       return t('检查中', 'Checking');
+    case 'fixing':
+      return t('修正中', 'Fixing');
     case 'done':
       return t('完成', 'Done');
     case 'failed':
@@ -26,7 +28,8 @@ export function screenStatusLabel(status: PrototypeBuildScreenStatus, t: T): str
 
 export function ScreenStatusIcon({ status }: { status: PrototypeBuildScreenStatus }) {
   if (status === 'writing') return <PenLine size={12} className="text-primary" aria-hidden="true" />;
-  if (status === 'reviewing') return <ScanSearch size={12} className="text-primary" aria-hidden="true" />;
+  if (status === 'reviewing') return <ScanSearch size={12} className="text-warning" aria-hidden="true" />;
+  if (status === 'fixing') return <Wrench size={12} className="text-warning" aria-hidden="true" />;
   if (status === 'done') return <CheckCircle2 size={12} className="text-success" aria-hidden="true" />;
   if (status === 'failed') return <TriangleAlert size={12} className="text-destructive" aria-hidden="true" />;
   return <Clock size={12} className="text-muted-foreground" aria-hidden="true" />;
@@ -96,7 +99,7 @@ export function ScreenStrip({
       data-testid="prototype-screen-strip"
     >
       {screens.map((screen, idx) => {
-        const owner = agentName(screen.agent, locale);
+        const owner = screenOwnerName(screen, locale);
         const canResume = screen.resumable && !busy && Boolean(onResumeScreen);
         const failure =
           screen.status === 'failed'
@@ -115,6 +118,7 @@ export function ScreenStrip({
             )}
             data-testid={`prototype-strip-card-${screen.screenId}`}
             data-build-status={screen.status}
+            {...(screen.reviewed ? { 'data-review-outcome': screen.reviewed } : {})}
             title={screen.purpose ? businessText(screen.purpose, locale) || undefined : undefined}
             tabIndex={0}
             aria-label={screen.name}

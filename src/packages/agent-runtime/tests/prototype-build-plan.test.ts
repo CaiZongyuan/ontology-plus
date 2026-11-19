@@ -115,25 +115,24 @@ describe('Build Plan (#90): the lead declares the screens first, each screen rep
       expect(prototypeBuildScreen(build, sid).agent, sid).toBe(lane.workerIndex);
     }
     expect(new Set(lanes.map((l) => l.workerIndex)).size).toBe(3);
-    // No screenshot check exists yet: nothing pretends to review.
-    expect(events.some((e) => e.event === 'prototype_build_screen' && (e.data.screen as { status: string }).status === 'reviewing')).toBe(false);
     expect(prototypeBuildScreen(build, FAILING).failure).toBe('validation_failed');
 
     // Phases report what really happened.
     expect(build.phases.plan.status).toBe('done');
-    // The lead draws the 风格样张 before the screens (#91).
+    // The lead draws the 风格样张 before the screens (#91), and inspects drawn screens (#93).
     expect(build.phases.style.status).toBe('done');
     expect(build.phases.screens.status).toBe('failed');
-    expect(build.phases.review.status).toBe('skipped');
+    expect(build.phases.review.status).toBe('done');
     expect(build.phases.tours.status).toBe('skipped');
 
-    // The log, in order: plan, starts, done/failed lines, the skipped check, the end.
+    // The log, in order: plan, style, starts, done/failed/review lines, the end.
     const kinds = build.log.map((l) => l.kind);
     expect(kinds.slice(0, 3)).toEqual(['plan_ready', 'style_started', 'style_ready']);
     expect(kinds.filter((k) => k === 'screen_started')).toHaveLength(SCREENS.length);
     expect(kinds.filter((k) => k === 'screen_done')).toHaveLength(SCREENS.length - 1);
     expect(build.log.find((l) => l.kind === 'screen_failed')).toMatchObject({ screenId: FAILING, failure: 'validation_failed' });
-    expect(build.log.some((l) => l.kind === 'phase_skipped' && l.phase === 'review')).toBe(true);
+    expect(build.log.some((l) => l.kind === 'review_finding' && l.screenId === 'SCR-ORDERS')).toBe(true);
+    expect(build.log.some((l) => l.kind === 'screen_fixed' && l.screenId === 'SCR-ORDERS')).toBe(true);
     expect(build.log.at(-1)).toMatchObject({ kind: 'build_finished', count: 4, failedCount: 1 });
     expect(build.log.find((l) => l.kind === 'screen_done')!.count).toBeGreaterThan(0);
 
@@ -170,6 +169,7 @@ describe('Build Plan (#90): the lead declares the screens first, each screen rep
       .map((e) => [(e.data.trace as { toolName: string }).toolName, (e.data.trace as { arguments: { screenId?: string } }).arguments.screenId]);
     expect(tools).toEqual([
       ['upsert_prototype_screen', FAILING],
+      ['report_review', FAILING],
       ['spawn_subagents', undefined],
     ]);
 
@@ -183,7 +183,15 @@ describe('Build Plan (#90): the lead declares the screens first, each screen rep
     const build = foldBuild(events);
     expect(SCREENS.map((sid) => prototypeBuildScreen(build, sid).status)).toEqual(SCREENS.map(() => 'done'));
     expect(build.phases.screens.status).toBe('done');
-    expect(build.log.slice(-4).map((l) => l.kind)).toEqual(['screen_resumed', 'screen_started', 'screen_done', expect.any(String)]);
+    expect(build.phases.review.status).toBe('done');
+    expect(build.log.slice(-6).map((l) => l.kind)).toEqual([
+      'screen_resumed',
+      'screen_started',
+      'screen_done',
+      'review_started',
+      'review_passed',
+      'build_finished',
+    ]);
     expect(build.log.at(-1)).toMatchObject({ kind: 'build_finished', count: 5, failedCount: 0 });
     // The earlier lines are still there: one continuous log.
     expect(build.log.length).toBeGreaterThan(lastAssistant(turn.session.messages).prototypeBuild!.log.length);

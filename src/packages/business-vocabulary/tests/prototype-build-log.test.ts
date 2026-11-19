@@ -3,6 +3,7 @@ import type { PrototypeBuildFailureCode, PrototypeBuildLogEntry } from '../../on
 import {
   checkBusinessViewMarkup,
   describePrototypeBuildFailure,
+  describePrototypeBuildFixActivity,
   describePrototypeBuildLogEntry,
   prototypeBuildAgentName,
 } from '../index.js';
@@ -26,6 +27,11 @@ const ENTRIES: PrototypeBuildLogEntry[] = [
   { id: 13, at: '', agent: 0, kind: 'style_ready', locked: false },
   { id: 14, at: '', agent: 0, kind: 'style_values_changed', valueKeys: ['accent', 'mode'] },
   { id: 15, at: '', agent: 0, kind: 'style_lock_unavailable' },
+  { id: 16, at: '', agent: 0, kind: 'review_started', screenId: 'SCR-REFUND' },
+  { id: 17, at: '', agent: 0, kind: 'review_passed', screenId: 'SCR-REFUND' },
+  { id: 18, at: '', agent: 0, kind: 'review_finding', screenId: 'SCR-REFUND', detail: '表格 EL-ORDERS-TABLE 右侧「状态」列被裁切' },
+  { id: 19, at: '', agent: 0, kind: 'screen_fixing', screenId: 'SCR-REFUND', detail: '收窄表格宽度让「状态」列完整显示' },
+  { id: 20, at: '', agent: 0, kind: 'screen_fixed', screenId: 'SCR-REFUND', detail: '收窄表格宽度让「状态」列完整显示' },
 ];
 
 describe('prototype build log sentences', () => {
@@ -62,5 +68,21 @@ describe('prototype build log sentences', () => {
     }
     expect(prototypeBuildAgentName(0, 'zh-CN')).toBe('主助手');
     expect(prototypeBuildAgentName(2, 'en-US')).toBe('Helper 2');
+  });
+
+  it('formats live fixActivity in the active locale at render time without leaking technical IDs (S-3)', () => {
+    const activity = {
+      state: 'fixing' as const,
+      issue: '表格 EL-ORDERS-TABLE 右侧超出画板宽度。',
+      fixNote: '收窄 SCR-ORDERS 表格列宽',
+    };
+    const zh = describePrototypeBuildFixActivity(activity, 'zh-CN');
+    const en = describePrototypeBuildFixActivity(activity, 'en-US');
+    expect(zh).toContain('发现问题：');
+    expect(zh).toContain('正在修改：');
+    expect(en).toContain('Issue found:');
+    expect(en).toContain('Fixing:');
+    expect(checkBusinessViewMarkup(`<p>${zh}</p><p>${en}</p>`)).toEqual([]);
+    expect(describePrototypeBuildFixActivity({ state: 'reviewing' }, 'en-US')).toContain('Capturing artboard screenshot');
   });
 });

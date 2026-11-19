@@ -1,9 +1,11 @@
 import {
+  describePrototypeBuildFixActivity,
   prototypeBuildAgentName,
   sanitizeBusinessText,
 } from '../../../../packages/business-vocabulary/index.js';
 import {
   prototypeBuildScreen,
+  type PrototypeBuildFixActivity,
   type PrototypeBuildScreen,
   type PrototypeBuildState,
   type PrototypeCanvasArtboard,
@@ -21,6 +23,9 @@ export interface ScreenBuildView {
   status: PrototypeBuildScreen['status'];
   agent?: number;
   failure?: PrototypeBuildScreen['failure'];
+  reviewed?: PrototypeBuildScreen['reviewed'];
+  finding?: string;
+  fixActivity?: PrototypeBuildScreen['fixActivity'];
   writtenElements: number;
   /**
    * 「继续这一屏」 applies: a screen the plan marks failed, or, for a prototype built before
@@ -62,6 +67,9 @@ export function screenBuildViews(
       status: s.status,
       ...(s.agent !== undefined ? { agent: s.agent } : {}),
       ...(s.failure ? { failure: s.failure } : {}),
+      ...(s.reviewed ? { reviewed: s.reviewed } : {}),
+      ...(s.finding ? { finding: s.finding } : {}),
+      ...(s.fixActivity ? { fixActivity: s.fixActivity } : {}),
       writtenElements: s.writtenElements,
       resumable: s.status === 'failed',
     };
@@ -73,6 +81,19 @@ export function agentName(agent: number | undefined, locale: string): string | u
   return prototypeBuildAgentName(agent, locale === 'en-US' ? 'en-US' : 'zh-CN');
 }
 
+/** Active owner label for a screen: Lead assistant while reviewing/fixing (#93), otherwise its helper. */
+export function screenOwnerName(screen: ScreenBuildView, locale: string): string | undefined {
+  const activeAgent = screen.status === 'reviewing' || screen.status === 'fixing' ? 0 : screen.agent;
+  return agentName(activeAgent, locale);
+}
+
 export function businessText(raw: string, locale: string): string {
   return sanitizeBusinessText(raw, locale === 'en-US' ? 'en-US' : 'zh-CN').trim();
+}
+
+export function fixActivityText(
+  activity: Pick<PrototypeBuildFixActivity, 'issue' | 'fixNote' | 'state'>,
+  locale: string,
+): string {
+  return describePrototypeBuildFixActivity(activity, locale === 'en-US' ? 'en-US' : 'zh-CN');
 }

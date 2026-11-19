@@ -1,11 +1,12 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ExternalLink, Loader2, PenLine, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ExternalLink, Loader2, PenLine, RefreshCw, ScanSearch, Wrench } from 'lucide-react';
 import type { PrototypeCanvasArtboard } from '../../../../packages/ontology-core/index.js';
 import { usePreferences } from '../../../i18n.js';
 import { Button } from '../../beautifui/index.js';
 import { WebAgentCursor, useObservedElementSize } from './AgentCursor.js';
 import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboard.js';
 import { readAgentCursorPrefs, type AgentCursorPrefs, type AgentLiveActivity } from './agentCursor.js';
+import type { ScreenBuildView } from './buildView.js';
 
 /** What design notes (#94) and demo tours (#95) use to draw over the web page. */
 export interface PrototypeWebViewHandle {
@@ -44,6 +45,8 @@ export interface PrototypeWebViewProps {
   composeDocument: () => string;
   /** Opens it in a new tab; false when there was nothing to open. */
   onOpenStandalone: (documentHtml: string, screenId: string) => boolean;
+  /** Per-screen Build Plan view states (for `reviewing` / `fixing` badges & scan indicator, #93). */
+  viewsById?: ReadonlyMap<string, ScreenBuildView>;
   /** Live writing/fixing activities (#92, #93) for rendering the agent cursor and narration over the page. */
   liveActivities?: readonly AgentLiveActivity[];
   cursorPrefs?: AgentCursorPrefs;
@@ -77,6 +80,7 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
     onRetryScreen,
     composeDocument,
     onOpenStandalone,
+    viewsById,
     liveActivities = [],
     cursorPrefs,
   },
@@ -169,9 +173,16 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
     };
   }, [go, screens]);
 
-  const statusText = (s: PrototypeCanvasArtboard) =>
-    s.status === 'streaming' ? t('正在画', 'Drawing') : s.status === 'queued' ? t('还没画', 'Not drawn yet') : '';
-  const canResume = Boolean(board && !busy && board.status === 'queued' && onRetryScreen);
+  const currentView = currentId ? viewsById?.get(currentId) : undefined;
+  const statusText = (s: PrototypeCanvasArtboard) => {
+    const buildStatus = viewsById?.get(s.screenId)?.status;
+    if (buildStatus === 'reviewing') return t('检查中', 'Checking');
+    if (buildStatus === 'fixing') return t('修正中', 'Fixing');
+    return s.status === 'streaming' ? t('正在画', 'Drawing') : s.status === 'queued' ? t('还没画', 'Not drawn yet') : '';
+  };
+  const canResume = Boolean(
+    board && !busy && (board.status === 'queued' || currentView?.resumable) && onRetryScreen,
+  );
 
   return (
     <div
@@ -228,6 +239,18 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
             {t('助手正在画这一页', 'The assistant is drawing this page')}
           </span>
         )}
+        {currentView?.status === 'reviewing' && (
+          <span className="inline-flex items-center gap-1 text-warning" data-testid="prototype-web-reviewing">
+            <ScanSearch size={12} aria-hidden="true" />
+            {t('主助手正在检查这一页', 'Lead assistant is checking this page')}
+          </span>
+        )}
+        {currentView?.status === 'fixing' && (
+          <span className="inline-flex items-center gap-1 text-warning" data-testid="prototype-web-fixing">
+            <Wrench size={12} aria-hidden="true" />
+            {t('主助手正在修正这一页', 'Lead assistant is fixing this page')}
+          </span>
+        )}
         <span className="flex-1" />
         <Button
           type="button"
@@ -252,24 +275,33 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
 
       <div ref={pageContainerRef} className="relative min-h-0 flex-1 overflow-hidden bg-background" data-testid="prototype-web-page">
         {board ? (
-          <ArtboardFrame
-            screenId={board.screenId}
-            title={nameOf(board, index)}
-            bodyHtml={pageBodyHtml}
-            css={css}
-            {...(pageCss ? { extraCss: pageCss } : {})}
-            linksKey={linksKey}
-            headScriptsKey={headScriptsKey}
-            landed
-            interactive
-            fill
-            page
-            testId="prototype-web-frame"
-            handleRef={frameHandle}
-            onLayout={bumpLayout}
-            onNavigate={go}
-            onEscape={noop}
-          />
+          <>
+            <ArtboardFrame
+              screenId={board.screenId}
+              title={nameOf(board, index)}
+              bodyHtml={pageBodyHtml}
+              css={css}
+              {...(pageCss ? { extraCss: pageCss } : {})}
+              linksKey={linksKey}
+              headScriptsKey={headScriptsKey}
+              landed
+              interactive
+              fill
+              page
+              testId="prototype-web-frame"
+              handleRef={frameHandle}
+              onLayout={bumpLayout}
+              onNavigate={go}
+              onEscape={noop}
+            />
+            {currentView?.status === 'reviewing' && (
+              <div
+                className="onto-artboard-scan"
+                data-testid={`prototype-web-scan-${board.screenId}`}
+                aria-hidden="true"
+              />
+            )}
+          </>
         ) : (
           <div className="flex h-full items-center justify-center text-[13px] text-muted-foreground">
             <span className="inline-flex items-center gap-2">

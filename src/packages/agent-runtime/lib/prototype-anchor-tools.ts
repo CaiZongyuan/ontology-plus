@@ -616,6 +616,302 @@ export function readPrototypeAnchor(
   };
 }
 
+export interface EditPrototypeScreenInput {
+  screenId: string;
+  elementId?: string;
+  note?: string;
+  find: string;
+  replace: string;
+  locale?: AgentLocale;
+}
+
+export const EDIT_SCREEN_TOOL_NAME = 'edit_screen';
+
+/**
+ * Targeted find/replace inside a single screen (#93): short fields (`screenId`, `elementId`,
+ * `note`) come before `find` and `replace` so the canvas aims at the element and shows narration
+ * while the replacement streams. `find` must match uniquely (count === 1) within that screen's
+ * body; other screens, the shell, navigation, and locked `--proto-*` values stay untouched.
+ */
+export const EDIT_SCREEN_OPENAI_TOOL: OpenAiFunctionTool = {
+  type: 'function',
+  function: {
+    name: EDIT_SCREEN_TOOL_NAME,
+    description:
+      'Apply a targeted find/replace inside ONE prototype screen (never rewrite the whole screen). Short fields come first so the canvas shows what is being fixed before the HTML arrives. `find` MUST match uniquely (exactly 1 occurrence) inside `screenId` only; other screens, the shell and locked `--proto-*` design values cannot be modified.',
+    parameters: {
+      type: 'object',
+      properties: {
+        screenId: {
+          type: 'string',
+          description: 'Target data-screen-id to fix (e.g. SCR-ORDERS). Only this screen is modified.',
+        },
+        elementId: {
+          type: 'string',
+          description: 'Anchored data-element-id being fixed (e.g. EL-ORDERS-TABLE), used to place the live cursor.',
+        },
+        note: {
+          type: 'string',
+          description: 'One concise business-language sentence explaining what is being fixed and how.',
+        },
+        find: {
+          type: 'string',
+          description: 'Exact HTML snippet inside this screen that must match uniquely (count === 1).',
+        },
+        replace: {
+          type: 'string',
+          description: 'Replacement HTML snippet (preserves existing anchors; no <style>/<link> or alert/confirm/prompt).',
+        },
+      },
+      required: ['screenId', 'note', 'find', 'replace'],
+    },
+  },
+};
+
+export function editPrototypeScreen(
+  beforeHtml: string,
+  input: EditPrototypeScreenInput,
+): PrototypeHtmlMutationResult {
+  const locale = input.locale ?? 'zh-CN';
+  const screenId = input.screenId?.trim() ?? '';
+  const elementId = input.elementId?.trim() || undefined;
+  const fallbackAnchor: PrototypeTargetAnchor = {
+    ...(screenId ? { screenId } : {}),
+    ...(elementId ? { elementId } : {}),
+  };
+
+  if (!screenId) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      summary: pickLocaleText(locale, '缺少 screenId', 'Missing screenId'),
+      diagnostic: pickLocaleText(
+        locale,
+        'edit_screen 必须指定目标分屏 screenId（如 SCR-ORDERS）。',
+        'edit_screen requires a non-empty screenId (e.g. SCR-ORDERS).',
+      ),
+    };
+  }
+
+  const find = input.find ?? '';
+  const replace = input.replace ?? '';
+  if (!find) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: fallbackAnchor,
+      summary: pickLocaleText(locale, '缺少待查找片段 find', 'Missing `find` snippet'),
+      diagnostic: pickLocaleText(
+        locale,
+        'edit_screen 的 find 不能为空；请传入该屏内部唯一匹配的 HTML 片段。',
+        'edit_screen requires a non-empty `find` snippet that matches uniquely inside this screen.',
+      ),
+    };
+  }
+  if (find === replace) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: fallbackAnchor,
+      summary: pickLocaleText(locale, '替换片段未发生变化', 'Replacement is identical to `find`'),
+      diagnostic: pickLocaleText(
+        locale,
+        'edit_screen 的 replace 与 find 完全相同，未产生任何修改。',
+        'edit_screen `replace` is identical to `find`; provide the updated snippet.',
+      ),
+    };
+  }
+  if (FORBIDDEN_DIALOG_RE.test(replace)) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: fallbackAnchor,
+      summary: pickLocaleText(locale, '禁止使用浏览器阻塞弹窗', 'Blocking browser dialogs are forbidden'),
+      diagnostic: pickLocaleText(
+        locale,
+        '检测到 window.alert / confirm / prompt 调用，请改用内联状态反馈后重试。',
+        'Detected window.alert / confirm / prompt, which is forbidden. Use inline feedback instead.',
+      ),
+    };
+  }
+
+  const beforeTree = parseHtmlSpanTree(beforeHtml);
+  const scrNode = beforeTree.allNodes.find((n) => n.attrs['data-screen-id'] === screenId);
+  if (!scrNode || scrNode.innerEnd === null) {
+    const overview = listPrototypeAnchors(beforeHtml);
+    const available = overview.screens.map((s) => s.screenId).join(', ') || '(none)';
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: fallbackAnchor,
+      summary: pickLocaleText(locale, `未找到分屏 ${screenId}`, `Screen ${screenId} not found`),
+      diagnostic: pickLocaleText(
+        locale,
+        `未找到目标分屏 ${screenId}。可用分屏：[${available}]。`,
+        `Target screen ${screenId} not found. Available screens: [${available}].`,
+      ),
+    };
+  }
+
+  const screenName = scrNode.attrs['data-screen-name'] || screenId;
+  const beforeSectionHtml = beforeHtml.slice(scrNode.openStart, scrNode.closeEnd);
+  let count = 0;
+  let firstIdx = -1;
+  let searchFrom = 0;
+  while (searchFrom <= beforeSectionHtml.length - find.length) {
+    const hit = beforeSectionHtml.indexOf(find, searchFrom);
+    if (hit === -1) break;
+    if (firstIdx === -1) firstIdx = hit;
+    count += 1;
+    searchFrom = hit + 1;
+  }
+
+  if (count !== 1) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(elementId ? { elementId } : {}), label: screenName },
+      summary:
+        count === 0
+          ? pickLocaleText(locale, '未匹配到待替换片段（0 处）', 'No match for `find` (0 matches)')
+          : pickLocaleText(locale, `待替换片段不唯一（匹配 ${count} 处）`, `Non-unique \`find\` (${count} matches)`),
+      diagnostic:
+        count === 0
+          ? pickLocaleText(
+              locale,
+              `在分屏「${screenName}」(${screenId}) 中匹配到 0 处 find 片段（不能跨屏修改其他分屏或外壳）；请核对这一屏当前的 HTML 后重试。`,
+              `Matched 0 occurrences of \`find\` in screen "${screenName}" (${screenId}) (other screens and the shell are out of scope); check this screen's HTML and retry.`,
+            )
+          : pickLocaleText(
+              locale,
+              `find 片段在分屏「${screenName}」(${screenId}) 中匹配了 ${count} 处，edit_screen 要求唯一匹配（恰好 1 处）；请附带外层标签或 data-element-id 使片段唯一。`,
+              `\`find\` matched ${count} occurrences in screen "${screenName}" (${screenId}), but edit_screen requires a unique match (count === 1); include surrounding markup or data-element-id to disambiguate.`,
+            ),
+    };
+  }
+
+  const sanitizedReplace = sanitizePrototypeScreenFragment(replace);
+  // Slice concatenation guarantees literal `$` characters (`$100`, `$&`, `$$`) are never treated as regex backreferences.
+  const nextSectionHtml = `${beforeSectionHtml.slice(0, firstIdx)}${sanitizedReplace}${beforeSectionHtml.slice(firstIdx + find.length)}`;
+
+  // Ensure replacement kept the single outer <section data-screen-id="..."> intact and did not smuggle another screen.
+  const reparsedSection = parseHtmlSpanTree(nextSectionHtml);
+  const rootSection = reparsedSection.roots[0];
+  const screenNodesInSection = reparsedSection.allNodes.filter((n) => Boolean(n.attrs['data-screen-id']));
+  const outerIdentityBroken =
+    !rootSection ||
+    rootSection.tagName.toLowerCase() !== 'section' ||
+    rootSection.attrs['data-screen-id'] !== screenId ||
+    (scrNode.attrs.id && rootSection.attrs.id !== scrNode.attrs.id) ||
+    (scrNode.attrs['data-screen-name'] && rootSection.attrs['data-screen-name'] !== scrNode.attrs['data-screen-name']) ||
+    (scrNode.attrs['data-screen-type'] && rootSection.attrs['data-screen-type'] !== scrNode.attrs['data-screen-type']);
+  if (reparsedSection.roots.length !== 1 || screenNodesInSection.length !== 1 || outerIdentityBroken) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(elementId ? { elementId } : {}), label: screenName },
+      summary: pickLocaleText(locale, 'edit_screen 只能修改当前分屏内容', 'edit_screen must stay within its own screen'),
+      diagnostic: pickLocaleText(
+        locale,
+        `替换结果破坏了分屏「${screenName}」(${screenId}) 的外层 <section> 标识或引入了额外的 data-screen-id；请保持外层分屏锚点不变，只局部替换该屏的问题片段。`,
+        `Replacement broke screen "${screenName}" (${screenId}) outer <section> identity or introduced another data-screen-id; keep outer screen anchors intact.`,
+      ),
+    };
+  }
+
+  const candidateHtml = `${beforeHtml.slice(0, scrNode.openStart)}${nextSectionHtml}${beforeHtml.slice(scrNode.closeEnd)}`;
+
+  // Exempt only untouched pre-existing open tags outside the replaced span in this screen.
+  const replaceStartInSection = firstIdx;
+  const replaceEndInBeforeSection = firstIdx + find.length;
+  const exemptOpenTags = new Set<string>();
+  for (const n of parseHtmlSpanTree(beforeSectionHtml).allNodes) {
+    if (n.openEnd <= replaceStartInSection || n.openStart >= replaceEndInBeforeSection) {
+      exemptOpenTags.add(beforeSectionHtml.slice(n.openStart, n.openEnd).trim());
+    }
+  }
+  const controlIssues = validateInteractiveControlNodes(
+    reparsedSection.allNodes,
+    nextSectionHtml,
+    exemptOpenTags,
+    locale,
+  );
+  if (controlIssues.length > 0) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(elementId ? { elementId } : {}), label: screenName },
+      summary: controlIssues[0]!,
+      diagnostic: controlIssues.join('；'),
+    };
+  }
+
+  const afterTree = parseHtmlSpanTree(candidateHtml);
+  const preservationIssues = validateAnchorPreservation({
+    beforeNodes: beforeTree.allNodes,
+    afterNodes: afterTree.allNodes,
+    locale,
+  });
+  if (preservationIssues.length > 0) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(elementId ? { elementId } : {}), label: screenName },
+      summary: preservationIssues[0]!,
+      diagnostic: pickLocaleText(
+        locale,
+        `语义锚点校验未通过：${preservationIssues.join('；')}。请保留所有既有 data-screen-id / data-element-id / data-binding / data-event-id 锚点。`,
+        `Semantic anchor validation failed: ${preservationIssues.join('; ')}. Preserve all existing semantic anchors.`,
+      ),
+    };
+  }
+
+  const editAbsStart = scrNode.openStart + firstIdx;
+  const editAbsEnd = editAbsStart + sanitizedReplace.length;
+  const resolvedNode =
+    (elementId
+      ? afterTree.allNodes.find(
+          (n) => n.attrs['data-element-id'] === elementId && findEnclosingScreenNode(n)?.attrs['data-screen-id'] === screenId,
+        )
+      : undefined) ??
+    afterTree.allNodes.find(
+      (n) =>
+        Boolean(n.attrs['data-element-id']) &&
+        findEnclosingScreenNode(n)?.attrs['data-screen-id'] === screenId &&
+        n.openStart <= editAbsEnd &&
+        n.closeEnd >= editAbsStart,
+    );
+  const targetAnchor = toTargetAnchor(resolvedNode, {
+    screenId,
+    ...(elementId ? { elementId } : {}),
+  });
+  const finalChecked = validatePrototypeScreenControls(candidateHtml, screenId, locale);
+  if (!finalChecked.ok) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor,
+      summary: finalChecked.diagnostic,
+      diagnostic: finalChecked.diagnostic,
+    };
+  }
+
+  const noteText = input.note?.trim();
+  return {
+    isError: false,
+    nextHtml: finalChecked.nextHtml,
+    targetAnchor: {
+      ...targetAnchor,
+      label: targetAnchor.label ?? screenName,
+    },
+    summary: pickLocaleText(
+      locale,
+      noteText ? `已局部修正「${screenName}」：${noteText}` : `已完成分屏「${screenName}」的局部修正`,
+      noteText ? `Fixed "${screenName}" locally: ${noteText}` : `Applied targeted fix on "${screenName}"`,
+    ),
+  };
+}
+
 export type PrototypeAnchorEditOperation =
   | 'replace_element'
   | 'insert_after_element'

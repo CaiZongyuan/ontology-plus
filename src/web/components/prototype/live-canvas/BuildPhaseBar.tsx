@@ -59,6 +59,25 @@ function phaseDetail(
     if (failed > 0) return t(`${failed} 屏没画完`, `${failed} not finished`);
     return t(`${done} 屏都画好了`, `All ${done} drawn`);
   }
+  if (phase === 'review' && (status === 'now' || status === 'done')) {
+    const checked = screens.filter((s) => s.reviewed === 'pass' || s.reviewed === 'fixed').length;
+    const fixed = screens.filter((s) => s.reviewed === 'fixed').length;
+    const checking = screens.filter((s) => s.status === 'reviewing').length;
+    const fixing = screens.filter((s) => s.status === 'fixing').length;
+    if (status === 'now') {
+      const activeNote =
+        fixing > 0
+          ? t(` · ${fixing} 屏在改`, ` · ${fixing} fixing`)
+          : checking > 0
+            ? t(` · ${checking} 屏在查`, ` · ${checking} checking`)
+            : '';
+      return t(`${checked}/${total} 屏已查${activeNote}`, `${checked}/${total} checked${activeNote}`);
+    }
+    if (fixed > 0) {
+      return t(`${checked} 屏已查 · 修正 ${fixed} 屏`, `${checked} checked · ${fixed} fixed`);
+    }
+    return checked > 0 ? t(`${checked} 屏都通过`, `All ${checked} passed`) : t('完成', 'Done');
+  }
   if (status === 'skipped') {
     return phase === 'review' ? t('未做视觉检查', 'Not visually checked') : t('本次未做', 'Not done this time');
   }

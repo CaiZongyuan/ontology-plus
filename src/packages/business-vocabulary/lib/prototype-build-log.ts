@@ -1,10 +1,12 @@
 import type {
   PrototypeBuildAgent,
   PrototypeBuildFailureCode,
+  PrototypeBuildFixActivity,
   PrototypeBuildLogEntry,
   PrototypeBuildPhaseId,
   PrototypeStyleValueKey,
 } from '../../ontology-core/index.js';
+import { sanitizeBusinessText } from './guard.js';
 import type { BilingualText, BusinessLocale } from './vocabulary.js';
 
 /**
@@ -166,6 +168,46 @@ export function describePrototypeBuildLogEntry(
       return pick({ zh: `计划外加画「${name}」`, en: `"${name}" added beyond the plan` }, locale);
     case 'screen_resumed':
       return pick({ zh: `按你的要求继续画「${name}」`, en: `Continuing "${name}" as you asked` }, locale);
+    case 'review_started':
+      return pick(
+        {
+          zh: `截图检查「${name}」：逐项核对排版、留白、对比度与对齐`,
+          en: `Checking "${name}" from its screenshot: layout, spacing, contrast and alignment`,
+        },
+        locale,
+      );
+    case 'review_passed':
+      return pick({ zh: `「${name}」视觉检查通过`, en: `"${name}" passed the visual check` }, locale);
+    case 'review_finding': {
+      const detail = entry.detail ? sanitizeBusinessText(entry.detail, locale).trim() : '';
+      return detail
+        ? pick({ zh: `检查「${name}」发现问题：${detail}`, en: `Issue found on "${name}": ${detail}` }, locale)
+        : pick({ zh: `检查「${name}」发现需要调整的地方`, en: `Found an issue to adjust on "${name}"` }, locale);
+    }
+    case 'screen_fixing': {
+      const detail = entry.detail ? sanitizeBusinessText(entry.detail, locale).trim() : '';
+      return detail
+        ? pick({ zh: `正在局部修正「${name}」：${detail}`, en: `Fixing "${name}" locally: ${detail}` }, locale)
+        : pick({ zh: `正在局部修正「${name}」`, en: `Applying a targeted fix on "${name}"` }, locale);
+    }
+    case 'screen_fixed': {
+      const detail = entry.detail ? sanitizeBusinessText(entry.detail, locale).trim() : '';
+      return detail
+        ? pick(
+            {
+              zh: `已局部修正「${name}」：${detail}（其他内容未改动）`,
+              en: `Fixed "${name}" locally: ${detail} (the rest of the screen is untouched)`,
+            },
+            locale,
+          )
+        : pick(
+            {
+              zh: `已局部修正「${name}」（只改问题处，其他内容未改动）`,
+              en: `Fixed "${name}" locally (only the affected part changed)`,
+            },
+            locale,
+          );
+    }
     case 'phase_skipped':
       return pick(SKIPPED_PHASE_SENTENCES[entry.phase ?? 'review'], locale);
     case 'build_finished': {
@@ -183,4 +225,59 @@ export function describePrototypeBuildLogEntry(
     default:
       return '';
   }
+}
+
+/**
+ * Formats live review/fix narration (`PrototypeBuildFixActivity`) in the active UI locale at
+ * render time (S-3), stripping technical IDs so switching `zh-CN` ↔ `en-US` updates immediately.
+ */
+export function describePrototypeBuildFixActivity(
+  activity: Pick<PrototypeBuildFixActivity, 'issue' | 'fixNote' | 'state'>,
+  locale: BusinessLocale = 'zh-CN',
+): string {
+  if (activity.state === 'reviewing') {
+    return pick(
+      {
+        zh: '正在按画板尺寸截图并逐项检查排版、留白与对齐…',
+        en: 'Capturing artboard screenshot and checking layout, spacing and alignment…',
+      },
+      locale,
+    );
+  }
+  const issue = activity.issue ? sanitizeBusinessText(activity.issue, locale).trim() : '';
+  const fixNote = activity.fixNote ? sanitizeBusinessText(activity.fixNote, locale).trim() : '';
+  if (issue && fixNote) {
+    return pick(
+      {
+        zh: `发现问题：${issue.replace(/[。！!]+$/, '')}。正在修改：${fixNote}`,
+        en: `Issue found: ${issue.replace(/[.!]+$/, '')}. Fixing: ${fixNote}`,
+      },
+      locale,
+    );
+  }
+  if (fixNote) {
+    return pick(
+      {
+        zh: `正在局部修改：${fixNote}`,
+        en: `Applying targeted fix: ${fixNote}`,
+      },
+      locale,
+    );
+  }
+  if (issue) {
+    return pick(
+      {
+        zh: `发现问题：${issue}`,
+        en: `Issue found: ${issue}`,
+      },
+      locale,
+    );
+  }
+  return pick(
+    {
+      zh: '正在局部修正这一屏…',
+      en: 'Applying targeted fix on this screen…',
+    },
+    locale,
+  );
 }

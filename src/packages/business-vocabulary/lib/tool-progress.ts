@@ -271,6 +271,30 @@ const CATALOG_ENTRIES: readonly ToolProgressSpec[] = [
     },
   },
   {
+    toolName: 'report_review',
+    iconKind: 'inspect',
+    label: {
+      zh: '记录页面视觉检查结果',
+      en: 'Record visual check result',
+    },
+    activeLabel: {
+      zh: '正在记录页面视觉检查结果',
+      en: 'Recording visual check result',
+    },
+  },
+  {
+    toolName: 'edit_screen',
+    iconKind: 'screen',
+    label: {
+      zh: `局部修正${PROTO_STEP.zh}分屏`,
+      en: `Fix ${PROTO_STEP.en.toLowerCase()} screen locally`,
+    },
+    activeLabel: {
+      zh: `正在局部修正${PROTO_STEP.zh}分屏`,
+      en: `Fixing ${PROTO_STEP.en.toLowerCase()} screen locally`,
+    },
+  },
+  {
     toolName: 'codemode',
     iconKind: 'automation',
     label: {
@@ -623,11 +647,17 @@ function formatToolTextPair(
   }
 
   // 4. Prototype read/edit/screen tools with clean human label
+  const firstCleanCandidate = (...candidates: unknown[]): string | undefined => {
+    for (const candidate of candidates) {
+      const cleaned = cleanCandidateString(candidate);
+      if (cleaned) return cleaned;
+    }
+    return undefined;
+  };
+
   if (canonical === 'read_prototype_anchor' || canonical === 'edit_prototype_anchor') {
     const isEdit = canonical === 'edit_prototype_anchor';
-    const label = cleanCandidateString(
-      options?.targetLabel ?? safeArgs.label ?? safeArgs.targetLabel,
-    );
+    const label = firstCleanCandidate(options?.targetLabel, safeArgs.label, safeArgs.targetLabel);
     if (label) {
       return {
         zh: `${active ? '正在' : ''}${isEdit ? '修改' : '查看'}${PROTO_STEP.zh}中的「${label}」`,
@@ -638,13 +668,33 @@ function formatToolTextPair(
   }
 
   if (canonical === 'upsert_prototype_screen') {
-    const label = cleanCandidateString(
-      options?.targetLabel ?? safeArgs.screenName ?? safeArgs.label ?? safeArgs.title,
-    );
+    const label = firstCleanCandidate(options?.targetLabel, safeArgs.screenName, safeArgs.label, safeArgs.title);
     if (label) {
       return {
         zh: `${active ? '正在绘制' : '绘制'}${PROTO_STEP.zh}分屏「${label}」`,
         en: `${active ? 'Building' : 'Build'} ${PROTO_STEP.en.toLowerCase()} screen '${label}'`,
+      };
+    }
+    return base;
+  }
+
+  if (canonical === 'report_review') {
+    const label = firstCleanCandidate(options?.targetLabel, safeArgs.screenName, safeArgs.label);
+    if (label) {
+      return {
+        zh: `${active ? '正在记录' : '记录'}「${label}」的视觉检查结果`,
+        en: `${active ? 'Recording' : 'Record'} visual check result for '${label}'`,
+      };
+    }
+    return base;
+  }
+
+  if (canonical === 'edit_screen') {
+    const label = firstCleanCandidate(options?.targetLabel, safeArgs.note, safeArgs.screenName, safeArgs.label);
+    if (label) {
+      return {
+        zh: `${base.zh}「${label}」`,
+        en: `${base.en} '${label}'`,
       };
     }
     return base;

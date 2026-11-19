@@ -3,6 +3,7 @@ import { Crosshair, Loader2, Maximize, Minus, Plus, WifiOff } from 'lucide-react
 import { sanitizeBusinessText } from '../../../../packages/business-vocabulary/index.js';
 import {
   PROTOTYPE_STYLE_BOARD_ID,
+  activePrototypeBuildFixActivities,
   buildPrototypeCanvasModel,
   composePrototypeDocument,
   hasPrototypeBuildPlan,
@@ -24,7 +25,7 @@ import {
   type AgentCursorPrefs,
   type AgentLiveActivity,
 } from './agentCursor.js';
-import { agentName, screenBuildViews } from './buildView.js';
+import { fixActivityText, screenBuildViews, screenOwnerName } from './buildView.js';
 import { ScreenStatusIcon, ScreenStrip, screenStatusLabel } from './ScreenStrip.js';
 import {
   ARTBOARD_H,
@@ -136,7 +137,7 @@ export function PrototypeLiveCanvas({
   const views = useMemo(() => screenBuildViews(screens, plan, cleanName), [screens, plan, cleanName]);
   const viewById = new Map(views.map((v) => [v.screenId, v] as const));
 
-  // ─── Agent cursor preferences & artboard frame handles (#92) ───────────────
+  // ─── Agent cursor preferences & artboard frame handles (#92 + #93 fix narration) ───
   const [cursorPrefs, setCursorPrefs] = useState<AgentCursorPrefs>(readAgentCursorPrefs);
   const updateCursorPrefs = useCallback((next: AgentCursorPrefs) => {
     setCursorPrefs(next);
@@ -157,6 +158,25 @@ export function PrototypeLiveCanvas({
   );
   const [layoutVersion, setLayoutVersion] = useState(0);
   const bumpLayout = useCallback(() => setLayoutVersion((n) => n + 1), []);
+  const fixLiveActivities = useMemo<AgentLiveActivity[]>(() => {
+    if (!plan) return [];
+    return activePrototypeBuildFixActivities(plan)
+      .filter((act) => act.state === 'fixing')
+      .map((act) => {
+        const sentence = fixActivityText(act, locale);
+        return {
+          agent: 0,
+          screenId: act.screenId,
+          ...(act.elementId ? { elementId: act.elementId } : {}),
+          ...(sentence ? { sentence } : {}),
+          state: 'fixing' as const,
+        };
+      });
+  }, [plan, locale]);
+  const mergedExternalActivities = useMemo(
+    () => [...fixLiveActivities, ...(liveActivities ?? [])],
+    [fixLiveActivities, liveActivities],
+  );
   const activities = useMemo(
     () =>
       resolveLiveActivities({
@@ -164,9 +184,9 @@ export function PrototypeLiveCanvas({
         views,
         locale: locale === 'en-US' ? 'en-US' : 'zh-CN',
         isBusiness,
-        externalActivities: liveActivities,
+        externalActivities: mergedExternalActivities,
       }),
-    [screens, views, locale, isBusiness, liveActivities],
+    [screens, views, locale, isBusiness, mergedExternalActivities],
   );
 
   // ─── Camera ────────────────────────────────────────────────────────────────
@@ -396,12 +416,15 @@ export function PrototypeLiveCanvas({
     drawn: screens.filter((s) => s.status === 'ready').length,
     drawing: screens.filter((s) => s.status === 'streaming').length,
   };
-  // The follow ring marks a screen only while it is being written.
+  // The follow ring marks a screen while it is being written, reviewed or fixed.
+  const followedBuildStatus = followedScreenId ? viewById.get(followedScreenId)?.status : undefined;
   const followedStatus =
     followedScreenId === PROTOTYPE_STYLE_BOARD_ID
       ? styleBoard?.status
       : screens.find((s) => s.screenId === followedScreenId)?.status;
-  const followTarget = following && followedScreenId && followedStatus === 'streaming' ? followedScreenId : undefined;
+  const followedActive =
+    followedStatus === 'streaming' || followedBuildStatus === 'reviewing' || followedBuildStatus === 'fixing';
+  const followTarget = following && followedScreenId && followedActive ? followedScreenId : undefined;
 
   return (
     <div
@@ -514,6 +537,9 @@ export function PrototypeLiveCanvas({
             {mountedScreens.map((board) => {
               const idx = indexById.get(board.screenId) ?? 0;
               const rect = artboardRect(idx);
+              const boardView = viewById.get(board.screenId);
+              const isReviewing = boardView?.status === 'reviewing';
+              const isFixing = boardView?.status === 'fixing';
               const isTrying = tryScreenId === board.screenId;
               const isHighlighted =
                 isTrying || highlightedScreenId === board.screenId || followTarget === board.screenId;
@@ -522,11 +548,16 @@ export function PrototypeLiveCanvas({
                   key={board.screenId}
                   className={cn(
                     'absolute overflow-hidden rounded-md border bg-background shadow-sm',
-                    isHighlighted ? 'border-primary ring-4 ring-primary/30' : 'border-border',
+                    isReviewing || isFixing
+                      ? 'border-warning ring-4 ring-warning/25'
+                      : isHighlighted
+                        ? 'border-primary ring-4 ring-primary/30'
+                        : 'border-border',
                   )}
                   style={{ left: rect.x, top: rect.y, width: ARTBOARD_W, height: ARTBOARD_H }}
                   data-testid={`prototype-artboard-${board.screenId}`}
                   data-screen-status={board.status}
+                  data-review-status={boardView?.status ?? board.status}
                   title={isTrying ? undefined : t('双击试用这一屏', 'Double-click to try this screen')}
                   onDoubleClick={() => enterTry(board.screenId)}
                 >
@@ -546,6 +577,13 @@ export function PrototypeLiveCanvas({
                     handleRef={handleRefFor(board.screenId)}
                     onLayout={bumpLayout}
                   />
+                  {isReviewing && (
+                    <div
+                      className="onto-artboard-scan"
+                      data-testid={`prototype-artboard-scan-${board.screenId}`}
+                      aria-hidden="true"
+                    />
+                  )}
                 </div>
               );
             })}
@@ -572,21 +610,21 @@ export function PrototypeLiveCanvas({
           {view === 'artboards' && screens.map((board, i) => {
             const idx = i + slotOffset;
             const rect = artboardRect(idx);
-            const view = viewById.get(board.screenId)!;
-            const owner = agentName(view.agent, locale);
+            const screenView = viewById.get(board.screenId)!;
+            const owner = screenOwnerName(screenView, locale);
             return (
               <div
                 key={`label-${board.screenId}`}
                 className="pointer-events-none absolute flex max-w-[60%] items-center gap-1.5 truncate text-[12px] text-foreground"
                 style={{ left: cam.x + rect.x * cam.k, top: cam.y + rect.y * cam.k - 22 }}
                 data-testid={`prototype-artboard-label-${board.screenId}`}
-                data-build-status={view.status}
+                data-build-status={screenView.status}
               >
-                <ScreenStatusIcon status={view.status} />
+                <ScreenStatusIcon status={screenView.status} />
                 <span className="truncate font-medium">{cleanName(board, i)}</span>
                 {plan && (
                   <span className="truncate text-muted-foreground" data-testid={`prototype-artboard-owner-${board.screenId}`}>
-                    {screenStatusLabel(view.status, t)}
+                    {screenStatusLabel(screenView.status, t)}
                     {owner ? ` · ${owner}` : ''}
                   </span>
                 )}
@@ -625,6 +663,7 @@ export function PrototypeLiveCanvas({
               {...(onRetryScreen ? { onRetryScreen } : {})}
               composeDocument={() => composePrototypeDocument(documentHtml, live)}
               onOpenStandalone={onOpenStandalone}
+              viewsById={viewById}
               liveActivities={activities}
               cursorPrefs={cursorPrefs}
             />
