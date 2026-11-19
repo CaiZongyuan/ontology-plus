@@ -44,6 +44,11 @@ function phaseDetail(
     if (status === 'failed') return t('没列完', 'Not finished');
     return t(`${total} 屏`, `${total} screens`);
   }
+  if (phase === 'style' && (status === 'now' || status === 'done')) {
+    if (status === 'now') return t('正在画', 'Drawing');
+    const ready = [...build.log].reverse().find((e) => e.kind === 'style_ready');
+    return ready?.locked ? t('用你确认的设计值', 'Your approved values') : t('助手提出的设计值', 'Proposed values');
+  }
   if (phase === 'screens' && status !== 'not_started') {
     if (status === 'now') {
       return t(

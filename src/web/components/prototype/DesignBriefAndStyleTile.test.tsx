@@ -33,6 +33,7 @@ import {
   removeDesignBriefItem,
   requestDesignBriefAssist,
   rewriteDesignBriefWithInstruction,
+  styleValuesFromTileTokens,
   synthesizeDesignBriefItems,
   updateDesignBriefItem,
 } from './DesignBriefAndStyleTile.js';
@@ -298,6 +299,19 @@ describe('Ticket 09 (Issue #31): Briefing Stage — Design Brief & Style Tile', 
     const tokensDark = deriveStyleTileTokens(switchedPrimarySel, DEFAULT_ALIGNMENT_STATE, '');
     expect(tokensDark.mode).toBe('dark');
     expect(tokensDark.surfaceHex.toLowerCase()).toBe(darkDonor.surfaceHex.toLowerCase());
+
+    // What the user approves here is what the build is locked to (#91): every value carries over.
+    const approvedValues = styleValuesFromTileTokens(tokensDark);
+    expect(approvedValues).toMatchObject({
+      mode: 'dark',
+      background: tokensDark.surfaceHex,
+      surface: tokensDark.cardHex,
+      accent: tokensDark.accentHex,
+      accentInk: tokensDark.accentInkHex,
+      ink: tokensDark.inkHex,
+      fontFamily: tokensDark.fontFamily,
+      radiusPx: tokensDark.radiusPx,
+    });
 
     const tileHtml = renderToStaticMarkup(
       <PreferencesProvider>

@@ -2377,6 +2377,7 @@ function consumeAgentSessionSseBody(
           break;
         case 'prototype_frame':
         case 'prototype_screen':
+        case 'prototype_style':
         case 'prototype_build_start':
         case 'prototype_plan':
         case 'prototype_build_screen':

@@ -23,6 +23,7 @@ import type {
   VisualReferenceItem,
 } from '../../../packages/workspace-store/index.js';
 import { sanitizeBusinessText } from '../../../packages/business-vocabulary/index.js';
+import type { PrototypeStyleValues } from '../../../packages/ontology-core/index.js';
 import type { TransientTurnImageInput } from '../../../packages/agent-runtime/index.js';
 import { usePreferences } from '../../i18n.js';
 import type { StepViewMode } from '../../navigation/index.js';
@@ -183,6 +184,30 @@ export function deriveStyleTileTokens(
     fontDisplayLabel,
     radiusPx: borderDonor.radiusPx,
     isCompact,
+  };
+}
+
+/**
+ * The Style Tile as design values for the prototype build (#91). Stored on the brief when the
+ * user approves it, these values are locked: the lead assistant draws the 风格样张 with them.
+ */
+export function styleValuesFromTileTokens(tokens: StyleTileTokens): PrototypeStyleValues {
+  return {
+    mode: tokens.mode,
+    background: tokens.surfaceHex,
+    surface: tokens.cardHex,
+    inset: tokens.insetHex,
+    accent: tokens.accentHex,
+    accentInk: tokens.accentInkHex,
+    border: tokens.borderHex,
+    ink: tokens.inkHex,
+    mutedInk: tokens.mutedInkHex,
+    ok: tokens.semanticOkHex,
+    warn: tokens.semanticWarnHex,
+    danger: tokens.semanticDangerHex,
+    fontFamily: tokens.fontFamily,
+    radiusPx: tokens.radiusPx,
+    density: tokens.isCompact ? 'compact' : 'comfortable',
   };
 }
 

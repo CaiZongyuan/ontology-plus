@@ -31,6 +31,7 @@ import {
   StyleTileCard,
   addDesignBriefItem,
   buildDesignBriefFromState,
+  styleValuesFromTileTokens,
   compileDesignBriefGenerationPrompt,
   compileDesignBriefRestylePrompt,
   decideDesignBriefForMe,
@@ -499,6 +500,8 @@ export function PrototypeCoDesignStudio({
       const now = new Date().toISOString();
       const approvedBrief: DesignBrief = {
         ...activeBrief,
+        // The approved Style Tile's values are locked for the build (#91).
+        styleValues: styleValuesFromTileTokens(styleTileTokens),
         approvedAt: now,
         updatedAt: now,
       };
@@ -550,6 +553,8 @@ export function PrototypeCoDesignStudio({
       const now = new Date().toISOString();
       const approvedBrief: DesignBrief = {
         ...activeBrief,
+        // The approved Style Tile's values are locked for the build (#91).
+        styleValues: styleValuesFromTileTokens(styleTileTokens),
         approvedAt: now,
         updatedAt: now,
       };

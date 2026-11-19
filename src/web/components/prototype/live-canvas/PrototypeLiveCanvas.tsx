@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Crosshair, Loader2, Maximize, Minus, Plus, WifiOff } from 'lucide-react';
 import { sanitizeBusinessText } from '../../../../packages/business-vocabulary/index.js';
 import {
+  PROTOTYPE_STYLE_BOARD_ID,
   buildPrototypeCanvasModel,
   composePrototypeDocument,
   hasPrototypeBuildPlan,
@@ -98,10 +99,14 @@ export function PrototypeLiveCanvas({
   for (const s of screens) if (!mountOrder.current.includes(s.screenId)) mountOrder.current.push(s.screenId);
   mountOrder.current = mountOrder.current.filter((id) => screenById.has(id));
   const mountedScreens = mountOrder.current.map((id) => screenById.get(id)!);
-  const indexById = useMemo(
-    () => new Map(screens.map((s, i) => [s.screenId, i] as const)),
-    [screens],
-  );
+  // The 「风格样张」 (#91) is the first artboard; the screens follow it.
+  const styleBoard = model.style;
+  const slotOffset = styleBoard ? 1 : 0;
+  const indexById = useMemo(() => {
+    const map = new Map(screens.map((s, i) => [s.screenId, i + slotOffset] as const));
+    if (slotOffset) map.set(PROTOTYPE_STYLE_BOARD_ID, 0);
+    return map;
+  }, [screens, slotOffset]);
 
   const cleanName = useCallback(
     (board: PrototypeCanvasArtboard, idx: number) => {
@@ -211,9 +216,10 @@ export function PrototypeLiveCanvas({
     [moveCamera, viewport],
   );
 
+  const boardCount = screens.length + slotOffset;
   const fitAll = useCallback(() => {
-    frameRect(artboardsBounds(screens.length), 1);
-  }, [frameRect, screens.length]);
+    frameRect(artboardsBounds(boardCount), 1);
+  }, [frameRect, boardCount]);
 
   const frameScreen = useCallback(
     (screenId: string) => {
@@ -244,8 +250,8 @@ export function PrototypeLiveCanvas({
   // Before anyone moves the camera, keep every artboard in view.
   useEffect(() => {
     if (userMoved.current || followState.current.target) return;
-    if (screens.length > 0) fitAll();
-  }, [fitAll, screens.length]);
+    if (boardCount > 0) fitAll();
+  }, [fitAll, boardCount]);
 
   // Follow: aim at the screen the latest real event touched, with a dwell.
   const focusScreenId = live?.focusScreenId;
@@ -354,10 +360,11 @@ export function PrototypeLiveCanvas({
     drawing: screens.filter((s) => s.status === 'streaming').length,
   };
   // The follow ring marks a screen only while it is being written.
-  const followTarget =
-    following && followedScreenId && screens.find((s) => s.screenId === followedScreenId)?.status === 'streaming'
-      ? followedScreenId
-      : undefined;
+  const followedStatus =
+    followedScreenId === PROTOTYPE_STYLE_BOARD_ID
+      ? styleBoard?.status
+      : screens.find((s) => s.screenId === followedScreenId)?.status;
+  const followTarget = following && followedScreenId && followedStatus === 'streaming' ? followedScreenId : undefined;
 
   return (
     <div
@@ -440,6 +447,33 @@ export function PrototypeLiveCanvas({
               ...(view === 'web' ? { visibility: 'hidden' as const } : {}),
             }}
           >
+            {styleBoard && (
+              <div
+                className={cn(
+                  'absolute overflow-hidden rounded-md border bg-background shadow-sm',
+                  followTarget === PROTOTYPE_STYLE_BOARD_ID ? 'border-primary ring-4 ring-primary/30' : 'border-border',
+                )}
+                style={{ left: artboardRect(0).x, top: artboardRect(0).y, width: ARTBOARD_W, height: ARTBOARD_H }}
+                data-testid="prototype-style-artboard"
+                data-style-status={styleBoard.status}
+                data-style-locked={styleBoard.locked ? 'true' : 'false'}
+              >
+                <ArtboardFrame
+                  screenId={PROTOTYPE_STYLE_BOARD_ID}
+                  title={t('风格样张', 'Style sample')}
+                  bodyHtml={styleBoard.bodyHtml}
+                  css={styleBoard.css}
+                  linksKey=""
+                  headScriptsKey=""
+                  landed={styleBoard.status === 'ready'}
+                  interactive={false}
+                  paused={view === 'web'}
+                  onNavigate={navigateFromPrototype}
+                  onEscape={exitTry}
+                  testId="prototype-style-frame"
+                />
+              </div>
+            )}
             {mountedScreens.map((board) => {
               const idx = indexById.get(board.screenId) ?? 0;
               const rect = artboardRect(idx);
@@ -461,7 +495,7 @@ export function PrototypeLiveCanvas({
                 >
                   <ArtboardFrame
                     screenId={board.screenId}
-                    title={cleanName(board, idx)}
+                    title={cleanName(board, idx - slotOffset)}
                     bodyHtml={board.bodyHtml}
                     css={model.css}
                     {...(board.css ? { extraCss: board.css } : {})}
@@ -479,7 +513,25 @@ export function PrototypeLiveCanvas({
           </div>
 
           {/* Artboard names, in screen space so they stay readable at any zoom. */}
-          {view === 'artboards' && screens.map((board, idx) => {
+          {view === 'artboards' && styleBoard && (
+            <div
+              className="pointer-events-none absolute flex max-w-[60%] items-center gap-1.5 truncate text-[12px] text-foreground"
+              style={{ left: cam.x + artboardRect(0).x * cam.k, top: cam.y + artboardRect(0).y * cam.k - 22 }}
+              data-testid="prototype-style-artboard-label"
+            >
+              <ScreenStatusIcon status={styleBoard.status === 'streaming' ? 'writing' : 'done'} />
+              <span className="truncate font-medium">{t('风格样张', 'Style sample')}</span>
+              <span className="truncate text-muted-foreground">
+                {styleBoard.status === 'streaming'
+                  ? t('正在画 · 主助手', 'Drawing · Lead assistant')
+                  : styleBoard.locked
+                    ? t('用你确认的设计值', 'Your approved design values')
+                    : t('设计值由助手提出', 'Design values proposed by the assistant')}
+              </span>
+            </div>
+          )}
+          {view === 'artboards' && screens.map((board, i) => {
+            const idx = i + slotOffset;
             const rect = artboardRect(idx);
             const view = viewById.get(board.screenId)!;
             const owner = agentName(view.agent, locale);
@@ -492,7 +544,7 @@ export function PrototypeLiveCanvas({
                 data-build-status={view.status}
               >
                 <ScreenStatusIcon status={view.status} />
-                <span className="truncate font-medium">{cleanName(board, idx)}</span>
+                <span className="truncate font-medium">{cleanName(board, i)}</span>
                 {plan && (
                   <span className="truncate text-muted-foreground" data-testid={`prototype-artboard-owner-${board.screenId}`}>
                     {screenStatusLabel(view.status, t)}
@@ -525,7 +577,7 @@ export function PrototypeLiveCanvas({
             />
           )}
 
-          {view === 'artboards' && screens.length === 0 && (
+          {view === 'artboards' && screens.length === 0 && !styleBoard && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[13px] text-muted-foreground">
               {building ? (
                 <span className="inline-flex items-center gap-2">
