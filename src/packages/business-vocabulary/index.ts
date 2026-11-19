@@ -40,3 +40,10 @@ export {
   type ToolProgressSpec,
   type ToolProgressFormatOptions,
 } from './lib/tool-progress.js';
+
+export {
+  prototypeBuildAgentName,
+  describePrototypeBuildFailure,
+  describePrototypeBuildLogEntry,
+  describePrototypeBuildFixActivity,
+} from './lib/prototype-build-log.js';

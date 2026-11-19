@@ -92,7 +92,6 @@ export type {
   PrototypeTargetAnchor,
   AgentToolCallTrace,
   AgentSubagentPhase,
-  AgentSubagentCursorZone,
   AgentSubagentLaneTrace,
   AgentAskUserPrompt,
   StepHandoffStatus,
@@ -188,3 +187,10 @@ export {
   type VisualReferenceItem,
   type VisualReferenceVibeGroup,
 } from './lib/inspo-cache.js';
+
+export {
+  deriveStyleTileFromReferences,
+  styleTileTokensToValues,
+  approvedBriefStyleValues,
+  type StyleTileTokens,
+} from './lib/style-tile.js';

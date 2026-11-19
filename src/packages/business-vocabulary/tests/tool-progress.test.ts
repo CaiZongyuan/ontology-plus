@@ -4,6 +4,7 @@ import {
   ONTOLOGY_TOOL_NAMES,
   PROTOTYPE_ANCHOR_TOOL_NAMES,
   UNIFIED_AGENT_EXTRA_TOOLS,
+  getToolsForAgentKind,
 } from '../../agent-runtime/index.js';
 import {
   MODEL_BUSINESS_NAMES,
@@ -22,6 +23,7 @@ describe('tool-call to business-language progress mapping', () => {
       ...PROTOTYPE_ANCHOR_TOOL_NAMES,
       ...DOMAIN_RUN_TOOL_NAMES,
       ...UNIFIED_AGENT_EXTRA_TOOLS.map((t) => t.function.name),
+      ...getToolsForAgentKind('PROTOTYPE_CO_DESIGN', { codeMode: true, multiAgentConcurrency: 3 }).map((t) => t.name),
     ]);
 
     for (const toolName of allRuntimeToolNames) {
@@ -30,6 +32,49 @@ describe('tool-call to business-language progress mapping', () => {
         `Register agent tool "${toolName}" in TOOL_PROGRESS_CATALOG`,
       ).toBeDefined();
     }
+    expect(formatToolProgress('define_style', {})).toEqual({
+      zh: '正在绘制风格样张',
+      en: 'Drawing the Style Tile',
+    });
+    expect(formatToolProgress('report_review', {})).toEqual({
+      zh: '正在记录页面视觉检查结果',
+      en: 'Recording visual check result',
+    });
+    expect(formatToolStepLabel('write_demo_tours', {})).toEqual({
+      zh: '编写演示路线',
+      en: 'Write Demo Tours',
+    });
+    expect(formatToolProgress('write_demo_tours', {})).toEqual({
+      zh: '正在编写演示路线',
+      en: 'Writing Demo Tours',
+    });
+    expect(JSON.stringify(TOOL_PROGRESS_CATALOG.write_demo_tours)).not.toMatch(/scenario|场景/i);
+    expect(formatToolProgress('edit_screen', { note: '收窄订货单表格宽度' })).toEqual({
+      zh: '正在局部修正原型分屏「收窄订货单表格宽度」',
+      en: "Fixing prototype screen locally '收窄订货单表格宽度'",
+    });
+    // S-2: a raw technical ID in `targetLabel` must NOT short-circuit `??` and drop `note` / `screenName`
+    expect(
+      formatToolProgress(
+        'edit_screen',
+        { screenId: 'SCR-ORDERS', elementId: 'EL-ORDERS-TABLE', note: '收窄订货单表格宽度' },
+        { targetLabel: 'EL-ORDERS-TABLE' },
+      ),
+    ).toEqual({
+      zh: '正在局部修正原型分屏「收窄订货单表格宽度」',
+      en: "Fixing prototype screen locally '收窄订货单表格宽度'",
+    });
+    expect(
+      formatToolProgress(
+        'report_review',
+        { screenId: 'SCR-ORDERS', screenName: '订货单列表' },
+        { targetLabel: 'SCR-ORDERS' },
+      ),
+    ).toEqual({
+      zh: '正在记录「订货单列表」的视觉检查结果',
+      en: "Recording visual check result for '订货单列表'",
+    });
+    expect(checkBusinessViewMarkup(`<p>${formatToolProgress('define_style', {}).en}</p>`)).toEqual([]);
 
     // Verify 11 upsert_* tools derive directly from MODEL_BUSINESS_NAMES
     const expectedModelMap = {

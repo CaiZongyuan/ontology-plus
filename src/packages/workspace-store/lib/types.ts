@@ -21,9 +21,12 @@ import type {
   KnowledgeGraphData,
   ModelCode,
   OntologySuite,
+  PrototypeBuildFailureCode,
+  PrototypeBuildState,
   SemanticAlignmentReport,
   ValidationDiagnostic,
   ValidationReport,
+  PrototypeStyleValues,
 } from '../../ontology-core/index.js';
 import type { InspoCacheEntry, InspoCacheEntryInput } from './inspo-cache.js';
 import type { TechnologyProfile } from '../../architecture-assets/index.js';
@@ -484,8 +487,6 @@ export type AgentSubagentPhase =
   | 'DONE'
   | 'FAILED';
 
-export type AgentSubagentCursorZone = 'header' | 'kpi' | 'toolbar' | 'body' | 'drawer' | 'footer';
-
 export interface AgentSubagentLaneTrace {
   laneId: string;
   workerIndex: number;
@@ -495,12 +496,15 @@ export interface AgentSubagentLaneTrace {
   status: 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
   phase?: AgentSubagentPhase;
   liveAction?: { zh: string; en: string };
-  cursorZone?: AgentSubagentCursorZone;
   streamedHtmlChars?: number;
   progressChars?: number;
   thinking?: string;
   output?: string;
   error?: string;
+  /** Why a screen lane did not finish, for the business sentence on the Build Plan (#90). */
+  failureCode?: PrototypeBuildFailureCode;
+  /** True once the lane's own screen was written and passed the anchor check. */
+  wroteScreen?: boolean;
   startedAt: string;
   completedAt?: string;
 }
@@ -521,6 +525,8 @@ export interface AgentSessionMessage {
   visionFallbackNotice?: string;
   toolCalls?: AgentToolCallTrace[];
   subagentLanes?: AgentSubagentLaneTrace[];
+  /** The prototype Build Plan and per-screen build states as this run left them (#90). */
+  prototypeBuild?: PrototypeBuildState;
   codeModeScript?: string;
   askUser?: AgentAskUserPrompt;
   stepHandoff?: StepHandoffProposal;
@@ -782,6 +788,11 @@ export interface DesignBrief {
   borrowedReferences?: DesignBriefBorrowedReference[];
   userImageRefs?: AgentImageAttachmentRef[];
   motionSchematicIds?: string[];
+  /**
+   * The Style Tile's design values as the user approved them (#91). Once the brief is approved
+   * they are locked: a prototype build uses them whatever the lead assistant proposes.
+   */
+  styleValues?: PrototypeStyleValues;
   approvedAt?: string;
   updatedAt: string;
 }

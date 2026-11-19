@@ -1,3 +1,5 @@
+import { findHtmlTagClose, parseHtmlAttributes } from './html-scan.js';
+import { sanitizePrototypeNote } from './prototype-notes.js';
 import type {
   Attribute,
   KnowledgeGraphData,
@@ -954,10 +956,21 @@ export function exportToOwl(suite: OntologySuite): string {
   return lines.join('\n');
 }
 
-function getAttr(tagHtml: string, attrName: string): string | undefined {
-  const regex = new RegExp(`\\b${attrName}\\s*=\\s*["']([^"']+)["']`, 'i');
-  const match = tagHtml.match(regex);
-  return match ? match[1] : undefined;
+function parseOpenTagAttrs(tagHtml: string): Record<string, string> {
+  const openMatch = /^<[A-Za-z][A-Za-z0-9:-]*/.exec(tagHtml);
+  if (!openMatch) return {};
+  const selfClosing = /\/\s*>$/.test(tagHtml);
+  const closeIdx = selfClosing
+    ? tagHtml.lastIndexOf('/')
+    : tagHtml.endsWith('>')
+      ? tagHtml.length - 1
+      : tagHtml.length;
+  return parseHtmlAttributes(tagHtml.slice(openMatch[0].length, closeIdx));
+}
+
+function nonEmptyAttr(attrs: Record<string, string>, attrName: string): string | undefined {
+  const raw = attrs[attrName.toLowerCase()];
+  return raw && raw.length > 0 ? raw : undefined;
 }
 
 export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiModel {
@@ -965,20 +978,32 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
   const navigationEdges: NavigationEdge[] = [];
   let navSeq = 1;
 
+  const scanTarget = (html ?? '')
+    .replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, '')
+    .replace(/<style\b[\s\S]*?(?:<\/style\s*>|$)/gi, '')
+    .replace(
+      /<template\b(?:[^>"']|"[^"]*"|'[^']*')*\bdata-proto-style-tile\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/template\s*>|$)/gi,
+      '',
+    );
+
   const screenRegex =
-    /<([a-z0-9]+)\b[^>]*data-screen-id\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)(?=<[a-z0-9]+\b[^>]*data-screen-id|$)/gi;
+    /<([a-z0-9]+)\b(?:[^>"']|"[^"]*"|'[^']*')*data-screen-id\s*=\s*["']([^"']+)["'](?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)(?=<[a-z0-9]+\b(?:[^>"']|"[^"]*"|'[^']*')*data-screen-id|$)/gi;
 
   let screenMatch: RegExpExecArray | null;
-  while ((screenMatch = screenRegex.exec(html)) !== null) {
-    const openingTag = screenMatch[0].slice(0, screenMatch[0].indexOf('>') + 1);
+  while ((screenMatch = screenRegex.exec(scanTarget)) !== null) {
+    const openEnd = findHtmlTagClose(screenMatch[0], 1 + screenMatch[1]!.length);
+    const openingTag = openEnd > 0 ? screenMatch[0].slice(0, openEnd) : screenMatch[0];
+    const screenAttrs = parseOpenTagAttrs(openingTag);
     const screenBody = screenMatch[0];
     const screenId = screenMatch[2];
-    const screenRef = getAttr(openingTag, 'data-screen-ref') || screenId;
-    const screenName = getAttr(openingTag, 'data-screen-name') || screenId;
-    const rawType = (getAttr(openingTag, 'data-screen-type') || 'LIST').toUpperCase() as ScreenItem['screenType'];
+    const screenRef = nonEmptyAttr(screenAttrs, 'data-screen-ref') || screenId;
+    const screenName = nonEmptyAttr(screenAttrs, 'data-screen-name') || screenId;
+    const rawType = (
+      nonEmptyAttr(screenAttrs, 'data-screen-type') || 'LIST'
+    ).toUpperCase() as ScreenItem['screenType'];
     const screenType: ScreenItem['screenType'] = VALID_SCREEN_TYPES.has(rawType) ? rawType : 'LIST';
-    const route = getAttr(openingTag, 'data-route') || `/${screenId.toLowerCase()}`;
-    const rawRoleRefs = getAttr(openingTag, 'data-role-refs');
+    const route = nonEmptyAttr(screenAttrs, 'data-route') || `/${screenId.toLowerCase()}`;
+    const rawRoleRefs = nonEmptyAttr(screenAttrs, 'data-role-refs');
     const roleRefs = rawRoleRefs
       ? rawRoleRefs
           .split(',')
@@ -989,35 +1014,42 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
     const elements: UIElement[] = [];
     const events: UIEvent[] = [];
 
-    const elRegex = /<([a-z0-9]+)\b[^>]*data-element-id\s*=\s*["']([^"']+)["'][^>]*>/gi;
+    const elRegex =
+      /<([a-z0-9]+)\b(?:[^>"']|"[^"]*"|'[^']*')*data-element-id\s*=\s*["']([^"']+)["'](?:[^>"']|"[^"]*"|'[^']*')*>/gi;
     let elMatch: RegExpExecArray | null;
     while ((elMatch = elRegex.exec(screenBody)) !== null) {
       const elTag = elMatch[0];
+      const elAttrs = parseOpenTagAttrs(elTag);
       const elementId = elMatch[2];
-      const label = getAttr(elTag, 'data-element-label') || elementId;
-      const name = getAttr(elTag, 'data-element-name') || elementId.toLowerCase().replace(/-/g, '_');
-      const rawElType = (getAttr(elTag, 'data-element-type') || 'INPUT').toUpperCase() as UIElement['elementType'];
+      const label = nonEmptyAttr(elAttrs, 'data-element-label') || elementId;
+      const name =
+        nonEmptyAttr(elAttrs, 'data-element-name') || elementId.toLowerCase().replace(/-/g, '_');
+      const rawElType = (
+        nonEmptyAttr(elAttrs, 'data-element-type') || 'INPUT'
+      ).toUpperCase() as UIElement['elementType'];
       const elementType: UIElement['elementType'] = VALID_ELEMENT_TYPES.has(rawElType)
         ? rawElType
         : 'INPUT';
 
-      const rawActionType = getAttr(elTag, 'data-action-type')?.toUpperCase() as
+      const rawActionType = nonEmptyAttr(elAttrs, 'data-action-type')?.toUpperCase() as
         | NonNullable<UIElement['actionType']>
         | undefined;
       const actionType =
         rawActionType && VALID_ACTION_TYPES.has(rawActionType) ? rawActionType : undefined;
 
       const isRequired =
-        getAttr(elTag, 'data-required') === 'true' || /\srequired(?:\s|=|>|\/)/i.test(elTag);
-      const dataBinding = getAttr(elTag, 'data-binding');
-      const dictionaryRef = getAttr(elTag, 'data-dictionary-ref');
-      const dataSource = getAttr(elTag, 'data-source');
-      const permissionRef = getAttr(elTag, 'data-permission-ref');
+        nonEmptyAttr(elAttrs, 'data-required') === 'true' || 'required' in elAttrs;
+      const dataBinding = nonEmptyAttr(elAttrs, 'data-binding');
+      const dictionaryRef = nonEmptyAttr(elAttrs, 'data-dictionary-ref');
+      const dataSource = nonEmptyAttr(elAttrs, 'data-source');
+      const permissionRef = nonEmptyAttr(elAttrs, 'data-permission-ref');
+      const description = sanitizePrototypeNote(nonEmptyAttr(elAttrs, 'data-note')) || undefined;
 
       elements.push({
         elementId,
         name,
         label,
+        ...(description ? { description } : {}),
         elementType,
         io:
           elementType === 'BUTTON' || elementType === 'TOOLBAR' || elementType === 'MENU'
@@ -1037,19 +1069,19 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
         ...(permissionRef ? { permissionRef } : {}),
       });
 
-      const explicitEventId = getAttr(elTag, 'data-event-id');
-      const navigateTo = getAttr(elTag, 'data-navigate-to');
+      const explicitEventId = nonEmptyAttr(elAttrs, 'data-event-id');
+      const navigateTo = nonEmptyAttr(elAttrs, 'data-navigate-to');
       const eventId =
         explicitEventId || (navigateTo ? `UIE-NAV-${elementId}` : undefined);
 
       if (eventId) {
-        const eventName = getAttr(elTag, 'data-event-name') || `${label}事件`;
+        const eventName = nonEmptyAttr(elAttrs, 'data-event-name') || `${label}事件`;
         const validateRefsRaw =
-          getAttr(elTag, 'data-validate-ref') || getAttr(elTag, 'data-rule-ref');
-        const behaviorRef = getAttr(elTag, 'data-behavior-ref');
-        const emitEventRef = getAttr(elTag, 'data-emit-event-ref');
-        const scenarioRef = getAttr(elTag, 'data-scenario-ref');
-        const reportRef = getAttr(elTag, 'data-report-ref');
+          nonEmptyAttr(elAttrs, 'data-validate-ref') || nonEmptyAttr(elAttrs, 'data-rule-ref');
+        const behaviorRef = nonEmptyAttr(elAttrs, 'data-behavior-ref');
+        const emitEventRef = nonEmptyAttr(elAttrs, 'data-emit-event-ref');
+        const scenarioRef = nonEmptyAttr(elAttrs, 'data-scenario-ref');
+        const reportRef = nonEmptyAttr(elAttrs, 'data-report-ref');
 
         // Strictly ordered per §10.4.3:
         // VALIDATE (1) -> BEHAVIOR_CALL (2) -> EVENT_EMIT (3) -> SCENARIO_CALL (4) -> REPORT_CALL (5) -> NAVIGATE (6)
@@ -1079,7 +1111,7 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
         }
         if (navigateTo) {
           callChain.push({ stepOrder: order++, stepType: 'NAVIGATE', refId: navigateTo });
-          const rawNavMode = (getAttr(elTag, 'data-navigate-mode') || 'PUSH').toUpperCase();
+          const rawNavMode = (nonEmptyAttr(elAttrs, 'data-navigate-mode') || 'PUSH').toUpperCase();
           const mode: NavigationEdge['mode'] =
             rawNavMode === 'MODAL' || rawNavMode === 'REPLACE' || rawNavMode === 'BACK'
               ? rawNavMode

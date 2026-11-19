@@ -106,21 +106,6 @@ async function startDeterministicSubagentGateway(): Promise<{
       );
       res.write(usageChunk(3100, 140, 1200));
     } else if (last?.role === 'user') {
-      const code = `
-        await tools.init_prototype_shell({
-          appTitle: "合同协同工作台",
-          screens: [
-            { screenId: "SCR-LEDGER", screenName: "合同台账列表", screenType: "LIST" },
-            { screenId: "SCR-APPROVAL", screenName: "合同审批详情", screenType: "APPROVAL" }
-          ]
-        });
-        return await tools.spawn_subagents({
-          tasks: [
-            { title: "构建合同台账列表", roleLabel: "台账设计师", screenId: "SCR-LEDGER", screenName: "合同台账列表", instruction: "构建台账列表核心筛选与表格" },
-            { title: "构建合同审批详情", roleLabel: "审批设计师", screenId: "SCR-APPROVAL", screenName: "合同审批详情", instruction: "构建审批详情与通过动作" }
-          ]
-        });
-      `;
       res.write(
         sseChunk(
           {
@@ -128,11 +113,43 @@ async function startDeterministicSubagentGateway(): Promise<{
             tool_calls: [
               {
                 index: 0,
-                id: 'tc-codemode-84',
+                id: 'tc-shell-84',
                 type: 'function',
                 function: {
-                  name: 'codemode',
-                  arguments: JSON.stringify({ code }),
+                  name: 'init_prototype_shell',
+                  arguments: JSON.stringify({
+                    appTitle: '合同协同工作台',
+                    screens: [
+                      { screenId: 'SCR-LEDGER', screenName: '合同台账列表', screenType: 'LIST' },
+                      { screenId: 'SCR-APPROVAL', screenName: '合同审批详情', screenType: 'APPROVAL' },
+                    ],
+                  }),
+                },
+              },
+              {
+                index: 1,
+                id: 'tc-spawn-84',
+                type: 'function',
+                function: {
+                  name: 'spawn_subagents',
+                  arguments: JSON.stringify({
+                    tasks: [
+                      {
+                        title: '构建合同台账列表',
+                        roleLabel: '台账设计师',
+                        screenId: 'SCR-LEDGER',
+                        screenName: '合同台账列表',
+                        instruction: '构建台账列表核心筛选与表格',
+                      },
+                      {
+                        title: '构建合同审批详情',
+                        roleLabel: '审批设计师',
+                        screenId: 'SCR-APPROVAL',
+                        screenName: '合同审批详情',
+                        instruction: '构建审批详情与通过动作',
+                      },
+                    ],
+                  }),
                 },
               },
             ],

@@ -1,10 +1,21 @@
 import {
+  PROTOTYPE_NOTE_ATTR,
+  PROTOTYPE_SHELL_SKELETON_CSS,
   extractPrototypeArtboards,
+  prototypeNavigationRuntimeScript,
+  prototypeStyleHeadHtml,
+  resolvePrototypeStyleValues,
+  sanitizePrototypeNote,
+  sanitizeStyleCss,
+  stripInlineStyleValueOverrides,
+  stripStyleValueOverrides,
+  writePrototypeNote,
   type PrototypeArtboardSlice,
+  type PrototypeStyle,
+  type PrototypeStyleValues,
 } from '../../ontology-core/index.js';
 import type {
   AgentSession,
-  AgentSubagentCursorZone,
   PrototypeTargetAnchor,
   WorkspaceStore,
 } from '../../workspace-store/index.js';
@@ -79,7 +90,7 @@ const RAW_TEXT_TAGS = new Set(['script', 'style']);
 
 const INTERACTIVE_CONTROL_TAGS = new Set(['button', 'input', 'select', 'textarea']);
 
-const FORBIDDEN_DIALOG_RE = /\b(?:window\s*\.\s*)?(?:alert|confirm|prompt)\s*\(/i;
+export const FORBIDDEN_DIALOG_RE = /\b(?:window\s*\.\s*)?(?:alert|confirm|prompt)\s*\(/i;
 
 interface HtmlSpanNode {
   tagName: string;
@@ -483,6 +494,7 @@ export interface PrototypeElementAnchorInfo {
   tagName: string;
   elementType: string;
   label: string;
+  note?: string;
   binding?: string;
   eventId?: string;
   navigateTo?: string;
@@ -506,12 +518,14 @@ export function listPrototypeAnchors(html: string): PrototypeAnchorOverview {
     if (screenId) {
       screenCounts.set(screenId, (screenCounts.get(screenId) ?? 0) + 1);
     }
+    const note = sanitizePrototypeNote(node.attrs[PROTOTYPE_NOTE_ATTR]);
     elements.push({
       elementId,
       ...(screenId ? { screenId } : {}),
       tagName: node.tagName,
       elementType: (node.attrs['data-element-type'] || 'INPUT').toUpperCase(),
       label: node.attrs['data-element-label'] || elementId,
+      ...(note ? { note } : {}),
       ...(node.attrs['data-binding'] ? { binding: node.attrs['data-binding'] } : {}),
       ...(node.attrs['data-event-id'] ? { eventId: node.attrs['data-event-id'] } : {}),
       ...(node.attrs['data-navigate-to'] ? { navigateTo: node.attrs['data-navigate-to'] } : {}),
@@ -602,6 +616,302 @@ export function readPrototypeAnchor(
   };
 }
 
+export interface EditPrototypeScreenInput {
+  screenId: string;
+  elementId?: string;
+  note?: string;
+  find: string;
+  replace: string;
+  locale?: AgentLocale;
+}
+
+export const EDIT_SCREEN_TOOL_NAME = 'edit_screen';
+
+/**
+ * Targeted find/replace inside a single screen (#93): short fields (`screenId`, `elementId`,
+ * `note`) come before `find` and `replace` so the canvas aims at the element and shows narration
+ * while the replacement streams. `find` must match uniquely (count === 1) within that screen's
+ * body; other screens, the shell, navigation, and locked `--proto-*` values stay untouched.
+ */
+export const EDIT_SCREEN_OPENAI_TOOL: OpenAiFunctionTool = {
+  type: 'function',
+  function: {
+    name: EDIT_SCREEN_TOOL_NAME,
+    description:
+      'Apply a targeted find/replace inside ONE prototype screen (never rewrite the whole screen). Short fields come first so the canvas shows what is being fixed before the HTML arrives. `find` MUST match uniquely (exactly 1 occurrence) inside `screenId` only; other screens, the shell and locked `--proto-*` design values cannot be modified.',
+    parameters: {
+      type: 'object',
+      properties: {
+        screenId: {
+          type: 'string',
+          description: 'Target data-screen-id to fix (e.g. SCR-ORDERS). Only this screen is modified.',
+        },
+        elementId: {
+          type: 'string',
+          description: 'Anchored data-element-id being fixed (e.g. EL-ORDERS-TABLE), used to place the live cursor.',
+        },
+        note: {
+          type: 'string',
+          description: 'One concise business-language sentence explaining what is being fixed and how.',
+        },
+        find: {
+          type: 'string',
+          description: 'Exact HTML snippet inside this screen that must match uniquely (count === 1).',
+        },
+        replace: {
+          type: 'string',
+          description: 'Replacement HTML snippet (preserves existing anchors; no <style>/<link> or alert/confirm/prompt).',
+        },
+      },
+      required: ['screenId', 'note', 'find', 'replace'],
+    },
+  },
+};
+
+export function editPrototypeScreen(
+  beforeHtml: string,
+  input: EditPrototypeScreenInput,
+): PrototypeHtmlMutationResult {
+  const locale = input.locale ?? 'zh-CN';
+  const screenId = input.screenId?.trim() ?? '';
+  const elementId = input.elementId?.trim() || undefined;
+  const fallbackAnchor: PrototypeTargetAnchor = {
+    ...(screenId ? { screenId } : {}),
+    ...(elementId ? { elementId } : {}),
+  };
+
+  if (!screenId) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      summary: pickLocaleText(locale, '缺少 screenId', 'Missing screenId'),
+      diagnostic: pickLocaleText(
+        locale,
+        'edit_screen 必须指定目标分屏 screenId（如 SCR-ORDERS）。',
+        'edit_screen requires a non-empty screenId (e.g. SCR-ORDERS).',
+      ),
+    };
+  }
+
+  const find = input.find ?? '';
+  const replace = input.replace ?? '';
+  if (!find) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: fallbackAnchor,
+      summary: pickLocaleText(locale, '缺少待查找片段 find', 'Missing `find` snippet'),
+      diagnostic: pickLocaleText(
+        locale,
+        'edit_screen 的 find 不能为空；请传入该屏内部唯一匹配的 HTML 片段。',
+        'edit_screen requires a non-empty `find` snippet that matches uniquely inside this screen.',
+      ),
+    };
+  }
+  if (find === replace) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: fallbackAnchor,
+      summary: pickLocaleText(locale, '替换片段未发生变化', 'Replacement is identical to `find`'),
+      diagnostic: pickLocaleText(
+        locale,
+        'edit_screen 的 replace 与 find 完全相同，未产生任何修改。',
+        'edit_screen `replace` is identical to `find`; provide the updated snippet.',
+      ),
+    };
+  }
+  if (FORBIDDEN_DIALOG_RE.test(replace)) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: fallbackAnchor,
+      summary: pickLocaleText(locale, '禁止使用浏览器阻塞弹窗', 'Blocking browser dialogs are forbidden'),
+      diagnostic: pickLocaleText(
+        locale,
+        '检测到 window.alert / confirm / prompt 调用，请改用内联状态反馈后重试。',
+        'Detected window.alert / confirm / prompt, which is forbidden. Use inline feedback instead.',
+      ),
+    };
+  }
+
+  const beforeTree = parseHtmlSpanTree(beforeHtml);
+  const scrNode = beforeTree.allNodes.find((n) => n.attrs['data-screen-id'] === screenId);
+  if (!scrNode || scrNode.innerEnd === null) {
+    const overview = listPrototypeAnchors(beforeHtml);
+    const available = overview.screens.map((s) => s.screenId).join(', ') || '(none)';
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: fallbackAnchor,
+      summary: pickLocaleText(locale, `未找到分屏 ${screenId}`, `Screen ${screenId} not found`),
+      diagnostic: pickLocaleText(
+        locale,
+        `未找到目标分屏 ${screenId}。可用分屏：[${available}]。`,
+        `Target screen ${screenId} not found. Available screens: [${available}].`,
+      ),
+    };
+  }
+
+  const screenName = scrNode.attrs['data-screen-name'] || screenId;
+  const beforeSectionHtml = beforeHtml.slice(scrNode.openStart, scrNode.closeEnd);
+  let count = 0;
+  let firstIdx = -1;
+  let searchFrom = 0;
+  while (searchFrom <= beforeSectionHtml.length - find.length) {
+    const hit = beforeSectionHtml.indexOf(find, searchFrom);
+    if (hit === -1) break;
+    if (firstIdx === -1) firstIdx = hit;
+    count += 1;
+    searchFrom = hit + 1;
+  }
+
+  if (count !== 1) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(elementId ? { elementId } : {}), label: screenName },
+      summary:
+        count === 0
+          ? pickLocaleText(locale, '未匹配到待替换片段（0 处）', 'No match for `find` (0 matches)')
+          : pickLocaleText(locale, `待替换片段不唯一（匹配 ${count} 处）`, `Non-unique \`find\` (${count} matches)`),
+      diagnostic:
+        count === 0
+          ? pickLocaleText(
+              locale,
+              `在分屏「${screenName}」(${screenId}) 中匹配到 0 处 find 片段（不能跨屏修改其他分屏或外壳）；请核对这一屏当前的 HTML 后重试。`,
+              `Matched 0 occurrences of \`find\` in screen "${screenName}" (${screenId}) (other screens and the shell are out of scope); check this screen's HTML and retry.`,
+            )
+          : pickLocaleText(
+              locale,
+              `find 片段在分屏「${screenName}」(${screenId}) 中匹配了 ${count} 处，edit_screen 要求唯一匹配（恰好 1 处）；请附带外层标签或 data-element-id 使片段唯一。`,
+              `\`find\` matched ${count} occurrences in screen "${screenName}" (${screenId}), but edit_screen requires a unique match (count === 1); include surrounding markup or data-element-id to disambiguate.`,
+            ),
+    };
+  }
+
+  const sanitizedReplace = sanitizePrototypeScreenFragment(replace);
+  // Slice concatenation guarantees literal `$` characters (`$100`, `$&`, `$$`) are never treated as regex backreferences.
+  const nextSectionHtml = `${beforeSectionHtml.slice(0, firstIdx)}${sanitizedReplace}${beforeSectionHtml.slice(firstIdx + find.length)}`;
+
+  // Ensure replacement kept the single outer <section data-screen-id="..."> intact and did not smuggle another screen.
+  const reparsedSection = parseHtmlSpanTree(nextSectionHtml);
+  const rootSection = reparsedSection.roots[0];
+  const screenNodesInSection = reparsedSection.allNodes.filter((n) => Boolean(n.attrs['data-screen-id']));
+  const outerIdentityBroken =
+    !rootSection ||
+    rootSection.tagName.toLowerCase() !== 'section' ||
+    rootSection.attrs['data-screen-id'] !== screenId ||
+    (scrNode.attrs.id && rootSection.attrs.id !== scrNode.attrs.id) ||
+    (scrNode.attrs['data-screen-name'] && rootSection.attrs['data-screen-name'] !== scrNode.attrs['data-screen-name']) ||
+    (scrNode.attrs['data-screen-type'] && rootSection.attrs['data-screen-type'] !== scrNode.attrs['data-screen-type']);
+  if (reparsedSection.roots.length !== 1 || screenNodesInSection.length !== 1 || outerIdentityBroken) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(elementId ? { elementId } : {}), label: screenName },
+      summary: pickLocaleText(locale, 'edit_screen 只能修改当前分屏内容', 'edit_screen must stay within its own screen'),
+      diagnostic: pickLocaleText(
+        locale,
+        `替换结果破坏了分屏「${screenName}」(${screenId}) 的外层 <section> 标识或引入了额外的 data-screen-id；请保持外层分屏锚点不变，只局部替换该屏的问题片段。`,
+        `Replacement broke screen "${screenName}" (${screenId}) outer <section> identity or introduced another data-screen-id; keep outer screen anchors intact.`,
+      ),
+    };
+  }
+
+  const candidateHtml = `${beforeHtml.slice(0, scrNode.openStart)}${nextSectionHtml}${beforeHtml.slice(scrNode.closeEnd)}`;
+
+  // Exempt only untouched pre-existing open tags outside the replaced span in this screen.
+  const replaceStartInSection = firstIdx;
+  const replaceEndInBeforeSection = firstIdx + find.length;
+  const exemptOpenTags = new Set<string>();
+  for (const n of parseHtmlSpanTree(beforeSectionHtml).allNodes) {
+    if (n.openEnd <= replaceStartInSection || n.openStart >= replaceEndInBeforeSection) {
+      exemptOpenTags.add(beforeSectionHtml.slice(n.openStart, n.openEnd).trim());
+    }
+  }
+  const controlIssues = validateInteractiveControlNodes(
+    reparsedSection.allNodes,
+    nextSectionHtml,
+    exemptOpenTags,
+    locale,
+  );
+  if (controlIssues.length > 0) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(elementId ? { elementId } : {}), label: screenName },
+      summary: controlIssues[0]!,
+      diagnostic: controlIssues.join('；'),
+    };
+  }
+
+  const afterTree = parseHtmlSpanTree(candidateHtml);
+  const preservationIssues = validateAnchorPreservation({
+    beforeNodes: beforeTree.allNodes,
+    afterNodes: afterTree.allNodes,
+    locale,
+  });
+  if (preservationIssues.length > 0) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(elementId ? { elementId } : {}), label: screenName },
+      summary: preservationIssues[0]!,
+      diagnostic: pickLocaleText(
+        locale,
+        `语义锚点校验未通过：${preservationIssues.join('；')}。请保留所有既有 data-screen-id / data-element-id / data-binding / data-event-id 锚点。`,
+        `Semantic anchor validation failed: ${preservationIssues.join('; ')}. Preserve all existing semantic anchors.`,
+      ),
+    };
+  }
+
+  const editAbsStart = scrNode.openStart + firstIdx;
+  const editAbsEnd = editAbsStart + sanitizedReplace.length;
+  const resolvedNode =
+    (elementId
+      ? afterTree.allNodes.find(
+          (n) => n.attrs['data-element-id'] === elementId && findEnclosingScreenNode(n)?.attrs['data-screen-id'] === screenId,
+        )
+      : undefined) ??
+    afterTree.allNodes.find(
+      (n) =>
+        Boolean(n.attrs['data-element-id']) &&
+        findEnclosingScreenNode(n)?.attrs['data-screen-id'] === screenId &&
+        n.openStart <= editAbsEnd &&
+        n.closeEnd >= editAbsStart,
+    );
+  const targetAnchor = toTargetAnchor(resolvedNode, {
+    screenId,
+    ...(elementId ? { elementId } : {}),
+  });
+  const finalChecked = validatePrototypeScreenControls(candidateHtml, screenId, locale);
+  if (!finalChecked.ok) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor,
+      summary: finalChecked.diagnostic,
+      diagnostic: finalChecked.diagnostic,
+    };
+  }
+
+  const noteText = input.note?.trim();
+  return {
+    isError: false,
+    nextHtml: finalChecked.nextHtml,
+    targetAnchor: {
+      ...targetAnchor,
+      label: targetAnchor.label ?? screenName,
+    },
+    summary: pickLocaleText(
+      locale,
+      noteText ? `已局部修正「${screenName}」：${noteText}` : `已完成分屏「${screenName}」的局部修正`,
+      noteText ? `Fixed "${screenName}" locally: ${noteText}` : `Applied targeted fix on "${screenName}"`,
+    ),
+  };
+}
+
 export type PrototypeAnchorEditOperation =
   | 'replace_element'
   | 'insert_after_element'
@@ -609,13 +919,15 @@ export type PrototypeAnchorEditOperation =
   | 'update_attributes';
 
 export interface EditPrototypeAnchorInput {
-  elementId?: string;
   screenId?: string;
-  cssSelector?: string;
+  elementId?: string;
   operation: PrototypeAnchorEditOperation;
-  htmlFragment?: string;
+  /** Optional Prototype Note (`data-note`) in business language; ordered before `htmlFragment`. */
+  note?: string;
+  cssSelector?: string;
   attributes?: Record<string, string | null>;
   allowRemoveAnchors?: string[];
+  htmlFragment?: string;
   locale?: AgentLocale;
 }
 
@@ -809,6 +1121,11 @@ function escapeAttrValue(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
+/** True as soon as a streaming `upsert_prototype_screen` call has an early note or opening HTML tag. */
+export function shouldStreamPartialScreen(partialHtml: string, partialNote: string): boolean {
+  return partialHtml.length >= 12 || partialNote.trim().length >= 2;
+}
+
 function rewriteOpeningTagAttributes(
   openTagHtml: string,
   updates: Record<string, string | null>,
@@ -817,21 +1134,111 @@ function rewriteOpeningTagAttributes(
   for (const [rawKey, rawVal] of Object.entries(updates)) {
     const key = rawKey.trim();
     if (!key) continue;
-    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const existingRe = new RegExp(
-      `(\\s+)${escapedKey}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s"'=<>` + '`' + `]+))?`,
-      'i',
-    );
+    const targetLower = key.toLowerCase();
+    const openMatch = /^<([A-Za-z][A-Za-z0-9:-]*)/.exec(result);
+    if (!openMatch || !result.endsWith('>')) continue;
+    const selfClosing = /\/\s*>$/.test(result);
+    const closeSuffixStart = selfClosing ? result.lastIndexOf('/') : result.length - 1;
+    const afterTagName = openMatch[0].length;
+    const region = result.slice(afterTagName, closeSuffixStart);
+
+    // Quote-aware left-to-right attribute scan
+    let hitLeading = -1;
+    let hitName = -1;
+    let hitEnd = -1;
+    let i = 0;
+    while (i < region.length) {
+      const lead = i;
+      while (i < region.length && /\s/.test(region[i]!)) i += 1;
+      if (i >= region.length) break;
+      if (!/[A-Za-z_:@]/.test(region[i]!)) {
+        i += 1;
+        continue;
+      }
+      const nameStart = i;
+      i += 1;
+      while (i < region.length && /[A-Za-z0-9_.:@-]/.test(region[i]!)) i += 1;
+      const attrName = region.slice(nameStart, i).toLowerCase();
+      let after = i;
+      while (after < region.length && /\s/.test(region[after]!)) after += 1;
+      let spanEnd = i;
+      if (region[after] === '=') {
+        let vp = after + 1;
+        while (vp < region.length && /\s/.test(region[vp]!)) vp += 1;
+        if (vp < region.length && (region[vp] === '"' || region[vp] === "'")) {
+          const q = region[vp]!;
+          const cq = region.indexOf(q, vp + 1);
+          spanEnd = cq === -1 ? region.length : cq + 1;
+        } else {
+          let ev = vp;
+          while (ev < region.length && !/[\s"'=<>`]/.test(region[ev]!)) ev += 1;
+          spanEnd = ev;
+        }
+        i = spanEnd;
+      }
+      if (attrName === targetLower) {
+        hitLeading = lead;
+        hitName = nameStart;
+        hitEnd = spanEnd;
+        break;
+      }
+    }
+
     if (rawVal === null) {
-      result = result.replace(existingRe, '');
-    } else if (existingRe.test(result)) {
-      result = result.replace(existingRe, `$1${key}="${escapeAttrValue(rawVal)}"`);
+      if (hitLeading >= 0) {
+        const nextRegion = `${region.slice(0, hitLeading)}${region.slice(hitEnd)}`;
+        result = `${result.slice(0, afterTagName)}${nextRegion}${result.slice(closeSuffixStart)}`;
+      }
+    } else if (hitName >= 0) {
+      const nextRegion = `${region.slice(0, hitName)}${key}="${escapeAttrValue(rawVal)}"${region.slice(hitEnd)}`;
+      result = `${result.slice(0, afterTagName)}${nextRegion}${result.slice(closeSuffixStart)}`;
     } else {
-      const insertIdx = result.endsWith('/>') ? result.length - 2 : result.length - 1;
-      result = `${result.slice(0, insertIdx)} ${key}="${escapeAttrValue(rawVal)}"${result.slice(insertIdx)}`;
+      const sep = region.endsWith(' ') ? '' : ' ';
+      result = `${result.slice(0, closeSuffixStart)}${sep}${key}="${escapeAttrValue(rawVal)}"${result.slice(closeSuffixStart)}`;
     }
   }
   return result;
+}
+
+/**
+ * Removes unscoped `<style>` / `<link>` tags and `--proto-*` inline style overrides from a screen
+ * or anchor HTML fragment (shared across `upsert_prototype_screen`, `edit_prototype_anchor`, and
+ * live partial screen streaming).
+ */
+export function sanitizePrototypeScreenFragment(html: string): string {
+  return stripInlineStyleValueOverrides(
+    html
+      .replace(/<style\b[\s\S]*?(?:<\/style\s*>|$)/gi, '')
+      .replace(/<link\b(?:[^>"']|"[^"]*"|'[^']*')*>?/gi, ''),
+  );
+}
+
+/**
+ * Checks that every interactive control inside `screenId` carries valid semantic anchors, and
+ * marks a drawn `queued` screen stub as `ready` (used when a helper edits via `edit_prototype_anchor`).
+ */
+export function validatePrototypeScreenControls(
+  html: string,
+  screenId: string,
+  locale: AgentLocale,
+): { ok: true; nextHtml: string } | { ok: false; diagnostic: string } {
+  const tree = parseHtmlSpanTree(html);
+  const scrNode = tree.allNodes.find((n) => n.attrs['data-screen-id'] === screenId);
+  if (!scrNode) return { ok: true, nextHtml: html };
+  const sectionHtml = html.slice(scrNode.openStart, scrNode.closeEnd);
+  const sectionNodes = parseHtmlSpanTree(sectionHtml).allNodes;
+  const issues = validateInteractiveControlNodes(sectionNodes, sectionHtml, new Set(), locale);
+  if (issues.length > 0) {
+    return { ok: false, diagnostic: issues.join('；') };
+  }
+  const inner = scrNode.innerEnd !== null ? html.slice(scrNode.openEnd, scrNode.innerEnd).trim() : '';
+  if (inner && (scrNode.attrs['data-screen-status'] ?? '').toLowerCase() === 'queued') {
+    const updatedOpen = rewriteOpeningTagAttributes(html.slice(scrNode.openStart, scrNode.openEnd), {
+      'data-screen-status': 'ready',
+    });
+    return { ok: true, nextHtml: `${html.slice(0, scrNode.openStart)}${updatedOpen}${html.slice(scrNode.openEnd)}` };
+  }
+  return { ok: true, nextHtml: html };
 }
 
 export function editPrototypeAnchor(
@@ -858,9 +1265,9 @@ export function editPrototypeAnchor(
   }
 
   const targetAnchor = toTargetAnchor(targetNode, input);
-  const fragment = (input.htmlFragment ?? '').trim();
+  const rawAnchorFragment = (input.htmlFragment ?? '').trim();
 
-  if (fragment && FORBIDDEN_DIALOG_RE.test(fragment)) {
+  if (rawAnchorFragment && FORBIDDEN_DIALOG_RE.test(rawAnchorFragment)) {
     return {
       isError: true,
       nextHtml: html,
@@ -872,6 +1279,15 @@ export function editPrototypeAnchor(
         'Detected window.alert / confirm / prompt, which is forbidden. Use inline banners, status badges, or non-blocking modals/drawers and retry.',
       ),
     };
+  }
+  const cleanNoteInput = input.note !== undefined ? sanitizePrototypeNote(input.note) : undefined;
+  let fragment = rawAnchorFragment ? sanitizePrototypeScreenFragment(rawAnchorFragment).trim() : '';
+  if (fragment && cleanNoteInput !== undefined && input.operation !== 'update_attributes') {
+    const rootNode = parseHtmlSpanTree(fragment).roots[0];
+    const rootElId = rootNode?.attrs['data-element-id']?.trim();
+    if (rootElId && !rootNode?.attrs[PROTOTYPE_NOTE_ATTR]?.trim()) {
+      fragment = writePrototypeNote(fragment, { elementId: rootElId }, cleanNoteInput || null);
+    }
   }
 
   if (input.attributes) {
@@ -1012,12 +1428,17 @@ export function editPrototypeAnchor(
     }
     candidateHtml = `${html.slice(0, screenNode.innerEnd)}\n  ${fragment}\n${html.slice(screenNode.innerEnd)}`;
   } else if (input.operation === 'update_attributes') {
-    let updates: Record<string, string | null> | undefined = input.attributes;
+    let updates: Record<string, string | null> | undefined = input.attributes
+      ? { ...input.attributes }
+      : undefined;
     if ((!updates || Object.keys(updates).length === 0) && fragment) {
       const parsedFrag = parseHtmlSpanTree(fragment).roots[0];
       if (parsedFrag) {
-        updates = parsedFrag.attrs;
+        updates = { ...parsedFrag.attrs };
       }
+    }
+    if (cleanNoteInput !== undefined) {
+      updates = { ...(updates ?? {}), [PROTOTYPE_NOTE_ATTR]: cleanNoteInput || null };
     }
     if (!updates || Object.keys(updates).length === 0) {
       return {
@@ -1032,8 +1453,17 @@ export function editPrototypeAnchor(
         ),
       };
     }
+    const sanitizedUpdates: Record<string, string | null> = {};
+    for (const [k, v] of Object.entries(updates)) {
+      if (k.toLowerCase() === 'style' && typeof v === 'string') {
+        const cleaned = stripStyleValueOverrides(sanitizeStyleCss(v)).trim();
+        sanitizedUpdates[k] = cleaned || null;
+      } else {
+        sanitizedUpdates[k] = v;
+      }
+    }
     const origOpenTag = html.slice(targetNode.openStart, targetNode.openEnd);
-    const updatedOpenTag = rewriteOpeningTagAttributes(origOpenTag, updates);
+    const updatedOpenTag = rewriteOpeningTagAttributes(origOpenTag, sanitizedUpdates);
     const reparsedOpen = parseHtmlSpanTree(updatedOpenTag).allNodes;
     const controlIssues = validateInteractiveControlNodes(
       reparsedOpen,
@@ -1233,6 +1663,8 @@ export interface UpsertPrototypeScreenInput {
   screenId: string;
   screenName?: string;
   screenType?: string;
+  /** Optional business-language note ordered before `screenHtml` (spec #87 decision 6). */
+  note?: string;
   screenHtml: string;
   extraCss?: string;
   extraJs?: string;
@@ -1251,9 +1683,40 @@ function normalizeScreenType(raw: string | undefined): string {
   return VALID_PROTOTYPE_SCREEN_TYPES.has(upper) ? upper : 'LIST';
 }
 
+/**
+ * The style the shell's own `themeTokens` describe (the lead's proposal, no samples); approved
+ * values, when given, win over the tokens.
+ */
+export function styleFromShellTokens(
+  tokens: unknown,
+  locked?: Partial<PrototypeStyleValues> | null,
+): PrototypeStyle {
+  const tk = tokens && typeof tokens === 'object' ? (tokens as Record<string, unknown>) : {};
+  const resolved = resolvePrototypeStyleValues(
+    {
+      mode: tk.mode,
+      background: tk.canvasBg,
+      surface: tk.cardBg,
+      accent: tk.accentColor,
+      border: tk.borderColor,
+      ink: tk.textColor,
+      fontFamily: tk.fontFamily,
+      radiusPx: tk.borderRadius,
+    },
+    locked ?? null,
+  );
+  return { direction: '', values: resolved.values, componentCss: '', sampleHtml: '', locked: resolved.locked };
+}
+
+/**
+ * The document skeleton (spec #87 decision 3): head, an app bar with the title and one link
+ * per screen, and one empty section per screen. It has no look of its own: every colour, font
+ * and radius comes from the build's style (`define_style`, ADR 0019 / #91), or — when the lead
+ * set none — from the shell's `themeTokens`. No fixed page width: the pages follow the viewport.
+ */
 export function initPrototypeShell(
   input: InitPrototypeShellInput,
-  options?: { locale?: AgentLocale },
+  options?: { locale?: AgentLocale; style?: PrototypeStyle | null },
 ): PrototypeHtmlMutationResult {
   const locale = options?.locale ?? 'zh-CN';
   const screens = Array.isArray(input.screens) ? input.screens.filter((s) => s?.screenId?.trim()) : [];
@@ -1283,227 +1746,52 @@ export function initPrototypeShell(
     };
   }
 
-  const tk = input.themeTokens ?? {};
-  const isDark = tk.mode === 'dark';
-  const canvasBg = tk.canvasBg?.trim() || (isDark ? '#141413' : '#f6f4f0');
-  const cardBg = tk.cardBg?.trim() || (isDark ? '#1e1d1b' : '#fffdf9');
-  const accent = tk.accentColor?.trim() || '#f94c05';
-  const border = tk.borderColor?.trim() || (isDark ? '#33302b' : '#dfd6c7');
-  const text = tk.textColor?.trim() || (isDark ? '#f5f2eb' : '#1f1d1a');
-  const font =
-    tk.fontFamily?.trim() ||
-    "'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif";
-  const radius = tk.borderRadius?.trim() || '12px';
+  const style = options?.style ?? styleFromShellTokens(input.themeTokens);
 
   const navItemsHtml = screens
     .map((scr, idx) => {
       const sid = escapeHtmlAttr(scr.screenId.trim());
       const sname = escapeHtmlAttr(scr.screenName?.trim() || scr.screenId.trim());
       const navElId = `EL-SHELL-TAB-${sid.replace(/[^A-Za-z0-9_-]/g, '-')}`;
-      return `        <button type="button" class="proto-nav-tab${idx === 0 ? ' is-active' : ''}" data-element-id="${navElId}" data-element-type="TAB" data-element-label="${sname}" data-nav-screen="${sid}" onclick="window.__selectProtoScreen('${sid}')">${sname}</button>`;
+      return `        <button type="button" class="proto-app-nav-link${idx === 0 ? ' is-active' : ''}" data-element-id="${navElId}" data-element-type="TAB" data-element-label="${sname}" data-nav-screen="${sid}" onclick="window.__selectProtoScreen('${sid}')">${sname}</button>`;
     })
     .join('\n');
 
+  // Each planned screen gets an empty section: nothing is drawn until a helper really writes
+  // it (no skeleton or "building" badge standing in for work that has not happened, ADR 0019).
   const sectionsHtml = screens
     .map((scr, idx) => {
       const sid = escapeHtmlAttr(scr.screenId.trim());
       const sname = escapeHtmlAttr(scr.screenName?.trim() || scr.screenId.trim());
       const stype = normalizeScreenType(scr.screenType);
-      const summary = escapeHtmlAttr(
-        scr.summary?.trim() ||
-          pickLocaleText(locale, '智能体正在并行绘制此屏幕内容…', 'Subagent is building this screen live…'),
-      );
-      return [
-        `      <section id="screen-${sid}" class="proto-screen${idx === 0 ? ' is-active' : ''}" data-screen-id="${sid}" data-screen-name="${sname}" data-screen-type="${stype}" data-screen-status="queued">`,
-        `        <div class="proto-skeleton-card">`,
-        `          <div class="proto-skeleton-head">`,
-        `            <span class="proto-skeleton-title">${sname}</span>`,
-        `            <span class="proto-skeleton-badge">${pickLocaleText(locale, '并行施工中', 'Building live')}</span>`,
-        `          </div>`,
-        `          <p class="proto-skeleton-desc">${summary}</p>`,
-        `          <div class="proto-skeleton-grid">`,
-        `            <div class="proto-shimmer-box"></div>`,
-        `            <div class="proto-shimmer-box"></div>`,
-        `            <div class="proto-shimmer-box"></div>`,
-        `          </div>`,
-        `          <div class="proto-shimmer-table"></div>`,
-        `        </div>`,
-        `      </section>`,
-      ].join('\n');
+      return `      <section id="screen-${sid}" class="proto-screen${idx === 0 ? ' is-active' : ''}" data-screen-id="${sid}" data-screen-name="${sname}" data-screen-type="${stype}" data-screen-status="queued"></section>`;
     })
-    .join('\n\n');
+    .join('\n');
 
   const appTitle = escapeHtmlAttr(input.appTitle?.trim() || 'Interactive Prototype');
   const subtitle = input.subtitle?.trim() ? escapeHtmlAttr(input.subtitle.trim()) : '';
 
+  // Structure only, at zero specificity (:where), so the style's components restyle any of it.
   const html = `<!DOCTYPE html>
 <html lang="${locale === 'en-US' ? 'en' : 'zh-CN'}">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${appTitle}</title>
+  ${prototypeStyleHeadHtml(style)}
   <style id="proto-shell-styles">
-    :root {
-      --proto-bg: ${canvasBg};
-      --proto-card: ${cardBg};
-      --proto-accent: ${accent};
-      --proto-border: ${border};
-      --proto-text: ${text};
-      --proto-muted: ${isDark ? '#a69f93' : '#6e675d'};
-      --proto-radius: ${radius};
-      --proto-font: ${font};
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: var(--proto-font);
-      background: var(--proto-bg);
-      color: var(--proto-text);
-      line-height: 1.5;
-      font-variant-numeric: tabular-nums;
-    }
-    .proto-app-shell {
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-    .proto-topbar {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 14px 24px;
-      background: var(--proto-card);
-      border-bottom: 1px solid var(--proto-border);
-      position: sticky;
-      top: 0;
-      z-index: 20;
-    }
-    .proto-brand {
-      display: flex;
-      align-items: baseline;
-      gap: 10px;
-    }
-    .proto-brand h1 {
-      margin: 0;
-      font-size: 17px;
-      font-weight: 700;
-    }
-    .proto-brand span {
-      font-size: 12px;
-      color: var(--proto-muted);
-    }
-    .proto-nav {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    .proto-nav-tab {
-      appearance: none;
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--proto-muted);
-      padding: 6px 13px;
-      border-radius: calc(var(--proto-radius) - 4px);
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 160ms ease-out;
-    }
-    .proto-nav-tab:hover {
-      color: var(--proto-text);
-      border-color: var(--proto-border);
-    }
-    .proto-nav-tab.is-active {
-      background: var(--proto-accent);
-      color: #ffffff;
-      border-color: var(--proto-accent);
-    }
-    .proto-screens-stage {
-      flex: 1;
-      width: 100%;
-      max-width: 1380px;
-      margin: 0 auto;
-      padding: 22px 24px 40px;
-    }
-    .proto-screen {
-      display: none;
-      animation: protoFadeIn 200ms ease-out;
-    }
-    .proto-screen.is-active {
-      display: block;
-    }
-    @keyframes protoFadeIn {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .proto-card, .card {
-      background: var(--proto-card);
-      border: 1px solid var(--proto-border);
-      border-radius: var(--proto-radius);
-      padding: 18px;
-    }
-    .proto-skeleton-card {
-      background: var(--proto-card);
-      border: 1px dashed var(--proto-border);
-      border-radius: var(--proto-radius);
-      padding: 24px;
-    }
-    .proto-skeleton-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-    }
-    .proto-skeleton-title { font-size: 16px; font-weight: 600; }
-    .proto-skeleton-badge {
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 999px;
-      background: var(--proto-bg);
-      border: 1px solid var(--proto-border);
-      color: var(--proto-accent);
-    }
-    .proto-skeleton-desc {
-      margin: 0 0 16px;
-      font-size: 13px;
-      color: var(--proto-muted);
-    }
-    .proto-skeleton-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-    .proto-shimmer-box, .proto-shimmer-table {
-      border-radius: calc(var(--proto-radius) - 4px);
-      background: linear-gradient(90deg, var(--proto-bg) 25%, var(--proto-border) 50%, var(--proto-bg) 75%);
-      background-size: 200% 100%;
-      animation: protoShimmer 1.6s infinite linear;
-      opacity: 0.55;
-    }
-    .proto-shimmer-box { height: 74px; }
-    .proto-shimmer-table { height: 180px; }
-    @keyframes protoShimmer {
-      0% { background-position: 200% 0; }
-      100% { background-position: -200% 0; }
-    }
-    @media (max-width: 768px) {
-      .proto-topbar { padding: 12px 16px; }
-      .proto-screens-stage { padding: 16px; }
-    }
-    ${input.sharedCss?.trim() ?? ''}
+    ${PROTOTYPE_SHELL_SKELETON_CSS}
+    ${stripStyleValueOverrides(sanitizeStyleCss(input.sharedCss?.trim() ?? ''))}
   </style>
 </head>
 <body>
   <div class="proto-app-shell">
-    <header class="proto-topbar">
-      <div class="proto-brand">
-        <h1>${appTitle}</h1>
-        ${subtitle ? `<span>${subtitle}</span>` : ''}
+    <header class="proto-app-bar">
+      <div class="proto-app-brand">
+        <h1 class="proto-app-title">${appTitle}</h1>
+        ${subtitle ? `<span class="proto-app-subtitle">${subtitle}</span>` : ''}
       </div>
-      <nav class="proto-nav" aria-label="Primary Screens">
+      <nav class="proto-app-nav" aria-label="Screens">
 ${navItemsHtml}
       </nav>
     </header>
@@ -1511,23 +1799,7 @@ ${navItemsHtml}
 ${sectionsHtml}
     </main>
   </div>
-  <script id="proto-shell-script">
-    window.__selectProtoScreen = function(screenId) {
-      var screens = document.querySelectorAll('[data-screen-id]');
-      for (var i = 0; i < screens.length; i++) {
-        var el = screens[i];
-        var match = el.getAttribute('data-screen-id') === screenId;
-        if (match) el.classList.add('is-active');
-        else el.classList.remove('is-active');
-      }
-      var tabs = document.querySelectorAll('[data-nav-screen]');
-      for (var j = 0; j < tabs.length; j++) {
-        var tab = tabs[j];
-        if (tab.getAttribute('data-nav-screen') === screenId) tab.classList.add('is-active');
-        else tab.classList.remove('is-active');
-      }
-    };
-  </script>
+  ${prototypeNavigationRuntimeScript('proto-shell-script')}
 </body>
 </html>`;
 
@@ -1544,6 +1816,219 @@ ${sectionsHtml}
       `Initialized prototype shell with ${screens.length} artboard screens`,
     ),
   };
+}
+
+/** Drops this screen's own CSS block and page-level script blocks older writes left for it. */
+function removeScreenCssBlock(html: string, screenId: string): string {
+  const id = screenId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const withoutCss = html.replace(new RegExp(`<style\\b[^>]*data-screen-css="${id}"[^>]*>[\\s\\S]*?</style>\\n?`, 'gi'), '');
+  // A script inside a section is that section's (replaced with it); only page-level ones go here.
+  return withoutCss.replace(
+    new RegExp(`\\n?<script\\b[^>]*data-screen-js="${id}"[^>]*>[\\s\\S]*?</script>\\n?`, 'gi'),
+    (match: string, offset: number, whole: string) => {
+      const before = whole.slice(0, offset);
+      const open = (before.match(/<section\b/gi) ?? []).length - (before.match(/<\/section>/gi) ?? []).length;
+      return open > 0 ? match : '';
+    },
+  );
+}
+
+function skipCssString(css: string, fromQuote: number): number {
+  const quote = css[fromQuote]!;
+  let i = fromQuote + 1;
+  while (i < css.length) {
+    if (css[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (css[i] === quote) return i + 1;
+    i += 1;
+  }
+  return css.length;
+}
+
+/** Splits CSS into top-level chunks: `{ prelude, body }` for blocks, `{ statement }` otherwise. */
+function splitCssBlocks(css: string): ({ prelude: string; body: string } | { statement: string })[] {
+  const out: ({ prelude: string; body: string } | { statement: string })[] = [];
+  let i = 0;
+  let start = 0;
+  while (i < css.length) {
+    const ch = css[i]!;
+    if (ch === '"' || ch === "'") {
+      i = skipCssString(css, i);
+      continue;
+    }
+    if (ch === '/' && css[i + 1] === '*') {
+      const end = css.indexOf('*/', i + 2);
+      i = end === -1 ? css.length : end + 2;
+      continue;
+    }
+    if (ch === ';') {
+      const statement = css.slice(start, i + 1).replace(/\/\*[\s\S]*?\*\//g, '').trim();
+      if (statement && statement !== ';') out.push({ statement });
+      start = i + 1;
+    } else if (ch === '{') {
+      let depth = 1;
+      let j = i + 1;
+      while (j < css.length && depth > 0) {
+        const inner = css[j]!;
+        if (inner === '"' || inner === "'") {
+          j = skipCssString(css, j);
+          continue;
+        }
+        if (inner === '/' && css[j + 1] === '*') {
+          const end = css.indexOf('*/', j + 2);
+          j = end === -1 ? css.length : end + 2;
+          continue;
+        }
+        if (inner === '{') depth += 1;
+        else if (inner === '}') depth -= 1;
+        j += 1;
+      }
+      out.push({
+        prelude: css.slice(start, i).replace(/\/\*[\s\S]*?\*\//g, '').trim(),
+        body: css.slice(i + 1, depth === 0 ? j - 1 : j),
+      });
+      i = j;
+      start = j;
+      continue;
+    }
+    i += 1;
+  }
+  const tail = css.slice(start).replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  if (tail) out.push({ statement: tail });
+  return out;
+}
+
+function splitSelectorList(prelude: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (let i = 0; i < prelude.length; i += 1) {
+    const ch = prelude[i]!;
+    if (ch === '"' || ch === "'") {
+      const next = skipCssString(prelude, i);
+      cur += prelude.slice(i, next);
+      i = next - 1;
+      continue;
+    }
+    if (ch === '(' || ch === '[') depth += 1;
+    if (ch === ')' && depth > 0) depth -= 1;
+    if (ch === ']' && depth > 0) depth -= 1;
+    if (ch === ',' && depth === 0) {
+      if (cur.trim()) parts.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  return parts;
+}
+
+/**
+ * True when `afterOwn` (the remainder of a selector starting with `[data-screen-id="<own>"]` or
+ * `#screen-<own>`) applies `+` or `~` to the screen root itself (including after compound
+ * qualifiers such as `.proto-screen` or `:not(.x)`) before stepping inside a descendant or child.
+ */
+function escapesOwnRoot(afterOwn: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < afterOwn.length; i += 1) {
+    const ch = afterOwn[i]!;
+    if (ch === '"' || ch === "'") {
+      i = skipCssString(afterOwn, i) - 1;
+      continue;
+    }
+    if (ch === '(' || ch === '[') {
+      depth += 1;
+      continue;
+    }
+    if ((ch === ')' || ch === ']') && depth > 0) {
+      depth -= 1;
+      continue;
+    }
+    if (depth > 0) continue;
+    if (ch === '+' || ch === '~') return true;
+    if (ch === '>' || /\s/.test(ch)) {
+      let j = ch === '>' ? i + 1 : i;
+      while (j < afterOwn.length && /\s/.test(afterOwn[j]!)) j += 1;
+      const next = afterOwn[j];
+      if (!next) return ch === '>';
+      if (next === '+' || next === '~') return true;
+      if (next === '>') {
+        j += 1;
+        while (j < afterOwn.length && /\s/.test(afterOwn[j]!)) j += 1;
+        const afterChild = afterOwn[j];
+        return !afterChild || afterChild === '+' || afterChild === '~' || afterChild === '>';
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * A screen's extraCss confined to its own section: every selector is prefixed with the section,
+ * design values (--proto-*) cannot be redeclared, and selectors aimed at the page (:root, html,
+ * body), the shell, the style or another screen are rejected.
+ */
+export function scopeScreenCss(css: string, screenId: string): { css: string; rejected: string[] } {
+  const scope = `[data-screen-id="${screenId}"]`;
+  const idSel = `#screen-${screenId}`;
+  const rejected: string[] = [];
+  const reaches = (sel: string): boolean => {
+    if (/(^|[\s>+~,(])(?::root|:host|html|body)(?![\w-])/i.test(sel)) return true;
+    if (/proto-app|proto-topbar|proto-brand|proto-nav|proto-screens-stage|data-proto-style|data-nav-screen|data-screen-css/i.test(sel)) {
+      return true;
+    }
+    for (const m of sel.matchAll(/\[\s*data-screen-id(?:\s*([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+)))?\s*\]/gi)) {
+      const op = m[1];
+      const val = m[2] ?? m[3] ?? m[4];
+      if (op !== '=' || val !== screenId) return true;
+    }
+    for (const m of sel.matchAll(/#screen-([A-Za-z0-9_-]+)/g)) if (m[1] !== screenId) return true;
+    const afterOwn = sel.startsWith(scope)
+      ? sel.slice(scope.length)
+      : sel.startsWith(idSel)
+        ? sel.slice(idSel.length)
+        : null;
+    if (afterOwn !== null && escapesOwnRoot(afterOwn)) return true;
+    return false;
+  };
+  const cleanedSource = css.replace(/<\/?(?:style|template|script)[^>]*>?/gi, '');
+  const scopeBlocks = (source: string): string =>
+    splitCssBlocks(source)
+      .map((chunk) => {
+        if ('statement' in chunk) {
+          // @import, @charset and stray declarations do not belong to a screen.
+          rejected.push(chunk.statement.slice(0, 60));
+          return '';
+        }
+        const { prelude, body } = chunk;
+        if (prelude.startsWith('@')) {
+          if (/^@(media|supports|container|layer)\b/i.test(prelude)) {
+            const inner = scopeBlocks(body);
+            return inner ? `${prelude} {\n${inner}\n}` : '';
+          }
+          if (/^@(keyframes|-webkit-keyframes|font-face)\b/i.test(prelude)) {
+            return `${prelude} {${stripStyleValueOverrides(sanitizeStyleCss(body))}}`;
+          }
+          rejected.push(prelude.slice(0, 60));
+          return '';
+        }
+        const selectors = splitSelectorList(prelude);
+        const bad = selectors.filter(reaches);
+        if (bad.length > 0 || selectors.length === 0) {
+          rejected.push(...(bad.length > 0 ? bad : [prelude.slice(0, 60)]));
+          return '';
+        }
+        const scoped = selectors
+          .map((sel) => (sel.startsWith(scope) || sel.startsWith(idSel) ? sel : `${scope} ${sel}`))
+          .join(', ');
+        return `${scoped} {${stripStyleValueOverrides(sanitizeStyleCss(body))}}`;
+      })
+      .filter(Boolean)
+      .join('\n');
+  const out = scopeBlocks(cleanedSource).trim();
+  return { css: out, rejected };
 }
 
 export function upsertPrototypeScreen(
@@ -1566,12 +2051,12 @@ export function upsertPrototypeScreen(
     };
   }
 
-  const rawFragment = (input.screenHtml ?? '')
+  const rawFragmentBeforeStrip = (input.screenHtml ?? '')
     .replace(/^```(?:html)?\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim();
 
-  if (!rawFragment) {
+  if (!rawFragmentBeforeStrip) {
     return {
       isError: true,
       nextHtml: beforeHtml,
@@ -1585,7 +2070,7 @@ export function upsertPrototypeScreen(
     };
   }
 
-  const combinedCheck = `${rawFragment}\n${input.extraCss ?? ''}\n${input.extraJs ?? ''}`;
+  const combinedCheck = `${rawFragmentBeforeStrip}\n${input.extraCss ?? ''}\n${input.extraJs ?? ''}`;
   if (FORBIDDEN_DIALOG_RE.test(combinedCheck)) {
     return {
       isError: true,
@@ -1596,6 +2081,38 @@ export function upsertPrototypeScreen(
         locale,
         `分屏 ${screenId} 中检测到 window.alert / confirm / prompt；请改用内联提示条或抽屉反馈后重试。`,
         `Screen ${screenId} contains window.alert / confirm / prompt; replace with inline UI feedback and retry.`,
+      ),
+    };
+  }
+
+  // Screen HTML must not smuggle unscoped <style>/<link> or inline --proto-* overrides (use extraCss + var(--proto-*)).
+  const rawFragment = sanitizePrototypeScreenFragment(rawFragmentBeforeStrip).trim();
+  if (!rawFragment) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(input.screenName ? { label: input.screenName } : {}) },
+      summary: pickLocaleText(locale, 'screenHtml 为空', 'screenHtml is empty'),
+      diagnostic: pickLocaleText(
+        locale,
+        'upsert_prototype_screen 需要提供该分屏的 HTML 内容（样式请放在 extraCss 中）。',
+        'upsert_prototype_screen requires non-empty screenHtml (put screen CSS in extraCss).',
+      ),
+    };
+  }
+
+  // Screen CSS stays on this screen: scoped to its section, never the page, the shell or the style.
+  const scopedCss = scopeScreenCss(input.extraCss ?? '', screenId);
+  if (scopedCss.rejected.length > 0) {
+    return {
+      isError: true,
+      nextHtml: beforeHtml,
+      targetAnchor: { screenId, ...(input.screenName ? { label: input.screenName } : {}) },
+      summary: pickLocaleText(locale, 'extraCss 只能写这一屏的样式', 'extraCss may only style this screen'),
+      diagnostic: pickLocaleText(
+        locale,
+        `分屏 ${screenId} 的 extraCss 里有作用到整页、外壳、风格或别的屏的选择器：${scopedCss.rejected.join('，')}。extraCss 只写这一屏内部元素的样式（会自动限定在这一屏里），颜色和字体用 var(--proto-*)。`,
+        `Screen ${screenId}'s extraCss has selectors reaching the page, shell, style or other screens: ${scopedCss.rejected.join(', ')}. extraCss styles only elements inside this screen (it is scoped automatically); use var(--proto-*) for colours and type.`,
       ),
     };
   }
@@ -1642,6 +2159,7 @@ export function upsertPrototypeScreen(
       ? fragTree.roots[0]
       : undefined;
 
+  const cleanScreenNote = sanitizePrototypeNote(input.note);
   let normalizedSectionHtml: string;
   if (outerScreenRoot) {
     const origOpen = rawFragment.slice(outerScreenRoot.openStart, outerScreenRoot.openEnd);
@@ -1657,11 +2175,15 @@ export function upsertPrototypeScreen(
       'data-screen-type': resolvedType,
       'data-screen-status': 'ready',
       class: mergedClass,
+      ...(cleanScreenNote && !outerScreenRoot.attrs[PROTOTYPE_NOTE_ATTR]?.trim()
+        ? { [PROTOTYPE_NOTE_ATTR]: cleanScreenNote }
+        : {}),
     });
     normalizedSectionHtml = `${updatedOpen}${rawFragment.slice(outerScreenRoot.openEnd)}`;
   } else {
     const activeCls = preserveActiveClass ? ' is-active' : '';
-    normalizedSectionHtml = `<section id="screen-${escapeHtmlAttr(screenId)}" class="proto-screen${activeCls}" data-screen-id="${escapeHtmlAttr(screenId)}" data-screen-name="${escapeHtmlAttr(resolvedName)}" data-screen-type="${resolvedType}" data-screen-status="ready">\n${rawFragment}\n</section>`;
+    const noteAttr = cleanScreenNote ? ` data-note="${escapeHtmlAttr(cleanScreenNote)}"` : '';
+    normalizedSectionHtml = `<section id="screen-${escapeHtmlAttr(screenId)}" class="proto-screen${activeCls}" data-screen-id="${escapeHtmlAttr(screenId)}" data-screen-name="${escapeHtmlAttr(resolvedName)}" data-screen-type="${resolvedType}" data-screen-status="ready"${noteAttr}>\n${rawFragment}\n</section>`;
   }
 
   // Validate interactive controls inside this screen
@@ -1722,6 +2244,18 @@ export function upsertPrototypeScreen(
     };
   }
 
+  // The screen's own behaviour lives inside its section, handed the section as `screen`.
+  if (input.extraJs?.trim()) {
+    const sid = escapeHtmlAttr(screenId);
+    const safeJs = input.extraJs.trim().replace(/<\/script/gi, '<\\/script');
+    const script = `\n<script data-screen-js="${sid}">\n(function (screen) {\n${safeJs}\n})((document.currentScript && document.currentScript.closest('section')) || document.getElementById('screen-${sid}'));\n</script>\n`;
+    const closeAt = normalizedSectionHtml.toLowerCase().lastIndexOf('</section>');
+    normalizedSectionHtml =
+      closeAt >= 0
+        ? `${normalizedSectionHtml.slice(0, closeAt)}${script}${normalizedSectionHtml.slice(closeAt)}`
+        : `${normalizedSectionHtml}${script}`;
+  }
+
   let candidateHtml: string;
   if (existingScreenNode) {
     candidateHtml = `${baseHtml.slice(0, existingScreenNode.openStart)}${normalizedSectionHtml}${baseHtml.slice(existingScreenNode.closeEnd)}`;
@@ -1737,27 +2271,15 @@ export function upsertPrototypeScreen(
     }
   }
 
-  if (input.extraCss?.trim()) {
-    const styleCloseIdx = candidateHtml.lastIndexOf('</style>');
-    if (styleCloseIdx !== -1) {
-      candidateHtml = `${candidateHtml.slice(0, styleCloseIdx)}\n/* [${screenId}] */\n${input.extraCss.trim()}\n${candidateHtml.slice(styleCloseIdx)}`;
-    } else {
-      const headCloseIdx = candidateHtml.indexOf('</head>');
-      const styleBlock = `<style data-screen-css="${escapeHtmlAttr(screenId)}">\n${input.extraCss.trim()}\n</style>\n`;
-      candidateHtml =
-        headCloseIdx !== -1
-          ? `${candidateHtml.slice(0, headCloseIdx)}${styleBlock}${candidateHtml.slice(headCloseIdx)}`
-          : `${styleBlock}${candidateHtml}`;
-    }
-  }
-
-  if (input.extraJs?.trim()) {
-    const bodyCloseIdx = candidateHtml.lastIndexOf('</body>');
-    const scriptBlock = `\n<script data-screen-js="${escapeHtmlAttr(screenId)}">\n(function(){\n${input.extraJs.trim()}\n})();\n</script>\n`;
+  // The screen's own CSS: one block per screen at the end of <head>, replaced on every write.
+  candidateHtml = removeScreenCssBlock(candidateHtml, screenId);
+  if (scopedCss.css) {
+    const headCloseIdx = candidateHtml.search(/<\/head>/i);
+    const styleBlock = `<style data-screen-css="${escapeHtmlAttr(screenId)}">\n${scopedCss.css}\n</style>\n`;
     candidateHtml =
-      bodyCloseIdx !== -1
-        ? `${candidateHtml.slice(0, bodyCloseIdx)}${scriptBlock}${candidateHtml.slice(bodyCloseIdx)}`
-        : `${candidateHtml}${scriptBlock}`;
+      headCloseIdx !== -1
+        ? `${candidateHtml.slice(0, headCloseIdx)}${styleBlock}${candidateHtml.slice(headCloseIdx)}`
+        : `${styleBlock}${candidateHtml}`;
   }
 
   return {
@@ -1776,240 +2298,9 @@ export interface PartialPrototypeScreenInput {
   screenId: string;
   screenName?: string;
   screenType?: string;
+  note?: string;
   partialScreenHtml: string;
   extraCss?: string;
-}
-
-export interface HtmlWritingSignal {
-  activeLabel?: string;
-  cursorZone: AgentSubagentCursorZone;
-}
-
-export function extractLatestHtmlWritingSignal(partialHtml: string): HtmlWritingSignal {
-  const tail = partialHtml.slice(-1400);
-  const lowerTail = tail.toLowerCase();
-
-  let cursorZone: AgentSubagentCursorZone = 'body';
-  if (/(?:drawer|aside|modal|slideover|sheet|抽屉|侧栏)/i.test(tail.slice(-500))) {
-    cursorZone = 'drawer';
-  } else if (/(?:sticky-save|footer|action-bar|confirm-bar|底部|锁账|提交栏)/i.test(tail.slice(-500))) {
-    cursorZone = 'footer';
-  } else if (/(?:<table|<thead|<tbody|<tr|<td|<th|ledger|list-row)/i.test(lowerTail.slice(-500))) {
-    cursorZone = 'body';
-  } else if (/(?:filter|toolbar|search|筛选|搜索|<input|<select)/i.test(tail.slice(-500))) {
-    cursorZone = 'toolbar';
-  } else if (/(?:kpi|stat-card|metric|汇总|营业额|指标)/i.test(tail.slice(-500))) {
-    cursorZone = 'kpi';
-  } else if (partialHtml.length < 420 || /(?:<header|<h1|<h2|hero|banner)/i.test(lowerTail.slice(-400))) {
-    cursorZone = 'header';
-  }
-
-  // Prefer explicit data-element-label near the tail, otherwise visible text between tags
-  const labelMatches = Array.from(tail.matchAll(/data-element-label=["']([^"']{2,28})["']/gi));
-  if (labelMatches.length > 0) {
-    const picked = labelMatches[labelMatches.length - 1]![1]!.trim();
-    if (picked) return { activeLabel: picked, cursorZone };
-  }
-
-  const textMatches = Array.from(
-    tail.matchAll(/>([^<>{}\n]{2,26})<\/(?:h1|h2|h3|h4|button|th|label|strong|span|p|div|li)>/gi),
-  );
-  for (let i = textMatches.length - 1; i >= 0; i -= 1) {
-    const candidate = textMatches[i]![1]!
-      .replace(/&[a-z]+;/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (candidate.length >= 2 && !/^[\d\s.,¥$%+-]+$/.test(candidate)) {
-      return { activeLabel: candidate.slice(0, 22), cursorZone };
-    }
-  }
-
-  return { cursorZone };
-}
-
-function balanceAndMarkPartialHtml(rawFragment: string): string {
-  const cleaned = rawFragment
-    .replace(/^```(?:html)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .replace(/<[^>]*$/, '')
-    .replace(/&[A-Za-z0-9#]*$/, '')
-    .trim();
-
-  if (!cleaned) return '';
-
-  const openStack: string[] = [];
-  let lastVisualOpenPos: { start: number; afterTagName: number } | null = null;
-  const visualTags = new Set([
-    'h1',
-    'h2',
-    'h3',
-    'h4',
-    'button',
-    'input',
-    'select',
-    'tr',
-    'th',
-    'td',
-    'li',
-    'article',
-    'header',
-    'footer',
-    'aside',
-    'div',
-  ]);
-
-  let i = 0;
-  while (i < cleaned.length) {
-    const lt = cleaned.indexOf('<', i);
-    if (lt === -1) break;
-    if (cleaned.startsWith('<!--', lt)) {
-      const end = cleaned.indexOf('-->', lt + 4);
-      i = end === -1 ? cleaned.length : end + 3;
-      continue;
-    }
-    if (cleaned[lt + 1] === '!' || cleaned[lt + 1] === '?') {
-      const gt = cleaned.indexOf('>', lt + 2);
-      i = gt === -1 ? cleaned.length : gt + 1;
-      continue;
-    }
-    if (cleaned[lt + 1] === '/') {
-      const closeMatch = /^<\/\s*([A-Za-z][A-Za-z0-9:-]*)/.exec(cleaned.slice(lt));
-      if (!closeMatch) {
-        i = lt + 2;
-        continue;
-      }
-      const closeTag = closeMatch[1]!.toLowerCase();
-      const { end } = findTagEnd(cleaned, lt + closeMatch[0].length);
-      for (let s = openStack.length - 1; s >= 0; s -= 1) {
-        if (openStack[s] === closeTag) {
-          openStack.splice(s);
-          break;
-        }
-      }
-      i = end;
-      continue;
-    }
-
-    const openMatch = /^<([A-Za-z][A-Za-z0-9:-]*)(?=[\s/>]|$)/.exec(cleaned.slice(lt));
-    if (!openMatch) {
-      i = lt + 1;
-      continue;
-    }
-    const tagName = openMatch[1]!.toLowerCase();
-    const afterName = lt + openMatch[0].length;
-    const { end, selfClosing } = findTagEnd(cleaned, afterName);
-    const isVoid = selfClosing || VOID_HTML_TAGS.has(tagName);
-    if (visualTags.has(tagName) && tagName !== 'section') {
-      lastVisualOpenPos = { start: lt, afterTagName: afterName };
-    }
-    if (isVoid) {
-      i = end;
-      continue;
-    }
-    if (RAW_TEXT_TAGS.has(tagName)) {
-      const closeRe = new RegExp(`<\\/\\s*${tagName}\\s*>`, 'gi');
-      closeRe.lastIndex = end;
-      const hit = closeRe.exec(cleaned);
-      if (hit) {
-        i = hit.index + hit[0].length;
-      } else {
-        openStack.push(tagName);
-        i = cleaned.length;
-      }
-      continue;
-    }
-    openStack.push(tagName);
-    i = end;
-  }
-
-  let marked = cleaned;
-  if (lastVisualOpenPos) {
-    marked = `${cleaned.slice(0, lastVisualOpenPos.afterTagName)} data-live-writing="true"${cleaned.slice(lastVisualOpenPos.afterTagName)}`;
-  }
-
-  const closers = openStack
-    .slice()
-    .reverse()
-    .map((t) => `</${t}>`)
-    .join('');
-  return `${marked}${closers}`;
-}
-
-export function previewPartialPrototypeScreen(
-  beforeHtml: string,
-  input: PartialPrototypeScreenInput,
-  options?: { locale?: AgentLocale },
-): string {
-  const locale = options?.locale ?? 'zh-CN';
-  const screenId = input.screenId?.trim();
-  if (!screenId) return beforeHtml;
-
-  const balanced = balanceAndMarkPartialHtml(input.partialScreenHtml);
-  if (!balanced) return beforeHtml;
-
-  let baseHtml = beforeHtml;
-  if (!baseHtml.trim()) {
-    const shellRes = initPrototypeShell(
-      {
-        appTitle: input.screenName?.trim() || screenId,
-        screens: [
-          {
-            screenId,
-            screenName: input.screenName?.trim() || screenId,
-            screenType: normalizeScreenType(input.screenType),
-          },
-        ],
-      },
-      { locale },
-    );
-    baseHtml = shellRes.nextHtml;
-  }
-
-  const baseTree = parseHtmlSpanTree(baseHtml);
-  const existingScreenNode = baseTree.allNodes.find(
-    (n) => n.attrs['data-screen-id'] === screenId,
-  );
-  const resolvedName =
-    input.screenName?.trim() || existingScreenNode?.attrs['data-screen-name'] || screenId;
-  const resolvedType = normalizeScreenType(
-    input.screenType ?? existingScreenNode?.attrs['data-screen-type'],
-  );
-  const signal = extractLatestHtmlWritingSignal(input.partialScreenHtml);
-
-  // Strip outer <section data-screen-id="..."> wrapper if partial already opened one
-  const innerBody = balanced
-    .replace(/^<section\b[^>]*>/i, '')
-    .replace(/<\/section>\s*$/i, '');
-
-  const liveLabelAttr = signal.activeLabel
-    ? ` data-live-writing-label="${escapeHtmlAttr(signal.activeLabel)}"`
-    : '';
-  const streamingSection = `<section id="screen-${escapeHtmlAttr(screenId)}" class="proto-screen is-active" data-screen-id="${escapeHtmlAttr(screenId)}" data-screen-name="${escapeHtmlAttr(resolvedName)}" data-screen-type="${resolvedType}" data-screen-status="streaming"${liveLabelAttr}>\n${innerBody}\n</section>`;
-
-  let candidateHtml: string;
-  if (existingScreenNode) {
-    candidateHtml = `${baseHtml.slice(0, existingScreenNode.openStart)}${streamingSection}${baseHtml.slice(existingScreenNode.closeEnd)}`;
-  } else {
-    const mainNode =
-      baseTree.allNodes.find((n) => n.attrs['id'] === 'proto-screens-root') ??
-      baseTree.allNodes.find((n) => n.tagName === 'main') ??
-      baseTree.allNodes.find((n) => n.tagName === 'body');
-    if (mainNode && mainNode.innerEnd !== null) {
-      candidateHtml = `${baseHtml.slice(0, mainNode.innerEnd)}\n${streamingSection}\n${baseHtml.slice(mainNode.innerEnd)}`;
-    } else {
-      candidateHtml = `${baseHtml}\n${streamingSection}`;
-    }
-  }
-
-  if (input.extraCss?.trim()) {
-    const cleanCss = input.extraCss.replace(/<[^>]*$/, '').trim();
-    const styleCloseIdx = candidateHtml.lastIndexOf('</style>');
-    if (cleanCss && styleCloseIdx !== -1) {
-      candidateHtml = `${candidateHtml.slice(0, styleCloseIdx)}\n/* [live:${screenId}] */\n${cleanCss}\n${candidateHtml.slice(styleCloseIdx)}`;
-    }
-  }
-
-  return candidateHtml;
 }
 
 export function ensurePrototypeCoDesignSession(
@@ -2095,21 +2386,17 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'edit_prototype_anchor',
       description:
-        'Apply a surgical local edit to a single anchored element or screen while keeping all other screens and untouched elements byte-for-byte identical. Preserves existing data-screen-id / data-element-id / data-binding / data-event-id anchors and requires valid data-element-id + data-element-type on any newly added <button>, <input>, <select>, or <textarea>. Never use window.alert/confirm/prompt.',
+        'Apply a surgical local edit to a single anchored element or screen while keeping all other screens and untouched elements byte-for-byte identical. Pass short fields (screenId, elementId, operation, note) BEFORE htmlFragment, and write each element opening tag with data-element-id + data-note before its inner content so narration arrives before content. Preserves existing data-screen-id / data-element-id / data-binding / data-event-id anchors and requires valid data-element-id + data-element-type on any newly added <button>, <input>, <select>, or <textarea>. Never use window.alert/confirm/prompt.',
       parameters: {
         type: 'object',
         properties: {
-          elementId: {
-            type: 'string',
-            description: 'Target data-element-id (e.g. EL-BTN-APPROVE)',
-          },
           screenId: {
             type: 'string',
             description: 'Target data-screen-id (e.g. SCR-CONTRACT-APPROVAL)',
           },
-          cssSelector: {
+          elementId: {
             type: 'string',
-            description: 'Optional CSS selector for targeting a specific container',
+            description: 'Target data-element-id (e.g. EL-BTN-APPROVE)',
           },
           operation: {
             type: 'string',
@@ -2121,10 +2408,14 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
             ],
             description: 'Surgical edit operation to perform on the target anchor',
           },
-          htmlFragment: {
+          note: {
             type: 'string',
             description:
-              'HTML fragment for replace_element, insert_after_element, or append_to_screen',
+              'Business-language Prototype Note (data-note) for the edited element (e.g. "筛选区：按客户或单号搜索。"), ordered before htmlFragment so narration arrives first',
+          },
+          cssSelector: {
+            type: 'string',
+            description: 'Optional CSS selector for targeting a specific container',
           },
           attributes: {
             type: 'object',
@@ -2137,6 +2428,11 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
             items: { type: 'string' },
             description:
               'Only provide when the user explicitly asked to delete specific anchor IDs',
+          },
+          htmlFragment: {
+            type: 'string',
+            description:
+              'HTML fragment for replace_element, insert_after_element, or append_to_screen (write opening tag with data-element-id + data-note first, then inner content)',
           },
         },
         required: ['operation'],
@@ -2170,7 +2466,7 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'init_prototype_shell',
       description:
-        'Initialize a responsive multi-artboard HTML5 prototype shell with shared design tokens, navigation tabs, and placeholder screen frames (data-screen-status="queued") so the user sees all artboards immediately while parallel subagents fill each screen via upsert_prototype_screen.',
+        'Initialize the document skeleton: app title, one navigation link per screen and an empty section per planned screen. It has no look of its own — colours, type and components come from define_style (set the style first); themeTokens are only used when no style was set. Never draws a screen.',
       parameters: {
         type: 'object',
         properties: {
@@ -2227,7 +2523,7 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
     function: {
       name: 'upsert_prototype_screen',
       description:
-        'Create or replace a single screen artboard (data-screen-id) inside the prototype without rewriting other screens. Every <button>, <input>, <select>, and <textarea> inside screenHtml MUST carry a globally unique data-element-id and valid data-element-type, and NEVER call window.alert/confirm/prompt.',
+        'Create or replace a single screen artboard (data-screen-id) inside the prototype without rewriting other screens. Pass short fields (screenId, screenName, screenType, note) BEFORE screenHtml, and write each section and key control opening tag with data-element-id + a one-sentence business data-note BEFORE its inner content so narration arrives before content. Every <button>, <input>, <select>, and <textarea> inside screenHtml MUST carry a globally unique data-element-id and valid data-element-type, and NEVER call window.alert/confirm/prompt.',
       parameters: {
         type: 'object',
         properties: {
@@ -2243,10 +2539,15 @@ export const PROTOTYPE_ANCHOR_OPENAI_TOOLS: OpenAiFunctionTool[] = [
             type: 'string',
             description: 'LIST | FORM | DETAIL | APPROVAL | REPORT | DASHBOARD | MODAL',
           },
+          note: {
+            type: 'string',
+            description:
+              'Optional one-sentence business Prototype Note for this screen, ordered before screenHtml so narration arrives first',
+          },
           screenHtml: {
             type: 'string',
             description:
-              'HTML body for this single screen (only this screen, ~80-220 lines; may be inner content or <section data-screen-id="...">)',
+              'HTML body for this single screen (~80-220 lines; write each section/control opening tag with data-element-id and data-note="<name>：<business note>" BEFORE its inner content)',
           },
           extraCss: {
             type: 'string',

@@ -26,11 +26,10 @@ export {
   listPrototypeAnchors,
   readPrototypeAnchor,
   editPrototypeAnchor,
+  editPrototypeScreen,
   rewritePrototypePage,
   initPrototypeShell,
   upsertPrototypeScreen,
-  previewPartialPrototypeScreen,
-  extractLatestHtmlWritingSignal,
   extractPrototypeArtboards,
   ensurePrototypeCoDesignSession,
   type PrototypeAnchorToolName,
@@ -45,7 +44,6 @@ export {
   type InitPrototypeShellInput,
   type UpsertPrototypeScreenInput,
   type PartialPrototypeScreenInput,
-  type HtmlWritingSignal,
   type PrototypeArtboardSlice,
   type PrototypeHtmlMutationResult,
 } from './lib/prototype-anchor-tools.js';
@@ -149,13 +147,42 @@ export {
 export { runAppCodingAgentTurn, type AppCodingAgentResult } from './lib/application-agent.js';
 
 export {
-  CODEMODE_OPENAI_TOOL,
   SPAWN_SUBAGENTS_OPENAI_TOOL,
-  resolveSessionCodeModeEnabled,
   resolveSessionMultiAgentConcurrency,
-  renderCodemodePromptSection,
-  runCodemodeScript,
+  renderSubagentPromptSection,
   runParallelSubagents,
   type SubagentTaskSpec,
-  type CodemodeExecutionSummary,
+  type SubagentScreenResult,
 } from './lib/codemode-subagent.js';
+
+export {
+  DOCUMENT_LEVEL_TOOL_NAMES,
+  prototypeDesignGuide,
+  prototypeLeadStyleInstructions,
+  screenHelperSystemPrompt,
+  keepWithinOwnScreen,
+  buildScreenHelperContext,
+  commitDefineStyle,
+} from './lib/prototype-design-guide.js';
+
+export {
+  PLAN_SCREENS_OPENAI_TOOL,
+  createPrototypeBuildRun,
+  alignShellArgsWithPlan,
+  parseResumePrototypeScreenAction,
+  type PrototypeBuildRun,
+  type PrototypeBuildRunOutcome,
+} from './lib/prototype-build-run.js';
+
+export {
+  createPrototypeScreenshotter,
+  shutdownPrototypeScreenshotter,
+  type PrototypeScreenshotter,
+} from './lib/prototype-screenshot.js';
+
+export {
+  createCoalescingRunEventBuffer,
+  prototypeLiveCoalesceKey,
+  type CoalescingRunEventBuffer,
+  type RunEventLike,
+} from './lib/run-event-buffer.js';

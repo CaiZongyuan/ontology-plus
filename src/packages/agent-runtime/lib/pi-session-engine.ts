@@ -32,10 +32,26 @@ import {
 import {
   MODEL_CODES,
   checkSqlGrounding,
+  applyPrototypeStyleToDocument,
+  createPartialScreenThrottle,
+  createPrototypeLiveTracker,
   extractMuFromPrototypeHtml,
+  latestPrototypeBuild,
+  readPrototypeStyleValues,
+  prototypeStyleCss,
+  readPrototypeDocumentStyle,
+  readStreamingPrototypeStyle,
+  resolvePrototypeStyleValues,
+  splitPrototypeDocument,
   validateOntologySuite,
+  validatePrototypeDemoTours,
+  writePrototypeDemoTours,
   type ModelCode,
   type OntologySuite,
+  type PrototypeBuildPlanItem,
+  type PrototypeLiveEvent,
+  type PrototypeStyle,
+  type PrototypeStyleValues,
 } from '../../ontology-core/index.js';
 import {
   handleOntologyMcpRequest,
@@ -52,6 +68,7 @@ import {
   type AgentSessionMessage,
   type AgentSubagentLaneTrace,
   type AgentToolCallTrace,
+  approvedBriefStyleValues,
   type DesignBrief,
   type InteractivePrototype,
   type LlmProviderConfig,
@@ -80,29 +97,76 @@ import {
   type LlmSynthesizedDomainBlueprint,
 } from './domain-run-tools.js';
 import {
+  EDIT_SCREEN_OPENAI_TOOL,
+  EDIT_SCREEN_TOOL_NAME,
+  FORBIDDEN_DIALOG_RE,
   PROTOTYPE_ANCHOR_OPENAI_TOOLS,
   editPrototypeAnchor,
+  editPrototypeScreen,
   initPrototypeShell,
   listPrototypeAnchors,
-  previewPartialPrototypeScreen,
+  sanitizePrototypeScreenFragment,
+  scopeScreenCss,
+  shouldStreamPartialScreen,
+  styleFromShellTokens,
   readPrototypeAnchor,
   rewritePrototypePage,
   upsertPrototypeScreen,
+  validatePrototypeScreenControls,
   type InitPrototypeShellInput,
   type PartialPrototypeScreenInput,
   type PrototypeAnchorEditOperation,
   type PrototypeShellScreenStub,
 } from './prototype-anchor-tools.js';
 import {
-  CODEMODE_OPENAI_TOOL,
   SPAWN_SUBAGENTS_OPENAI_TOOL,
-  renderCodemodePromptSection,
-  resolveSessionCodeModeEnabled,
+  renderSubagentPromptSection,
   resolveSessionMultiAgentConcurrency,
-  runCodemodeScript,
   runParallelSubagents,
   type SubagentTaskSpec,
 } from './codemode-subagent.js';
+import {
+  MOCK_PROTOTYPE_BUILD_TOKENS_PER_SECOND,
+  createMockPrototypeBuildReplay,
+  createMockPrototypeModificationReplay,
+  isMockPrototypeSubagentPrompt,
+} from './mock-prototype-build.js';
+import {
+  PLAN_SCREENS_OPENAI_TOOL,
+  PLAN_SCREENS_TOOL_NAME,
+  REPORT_REVIEW_OPENAI_TOOL,
+  REPORT_REVIEW_TOOL_NAME,
+  WRITE_DEMO_TOURS_OPENAI_TOOL,
+  WRITE_DEMO_TOURS_TOOL_NAME,
+  alignShellArgsWithPlan,
+  createPrototypeBuildRun,
+  parseResumePrototypeScreenAction,
+  prototypeBuildSseEventName,
+  type PrototypeBuildRun,
+} from './prototype-build-run.js';
+import {
+  DEFINE_STYLE_OPENAI_TOOL,
+  DEFINE_STYLE_TOOL_NAME,
+  briefReferenceImages,
+  buildPrototypeScreenReviewPrompt,
+  buildScreenHelperContext,
+  commitDefineStyle,
+  keepWithinOwnScreen,
+  prototypeScreenReviewSystemPrompt,
+  screensChangedOutside,
+  prototypeLeadStyleInstructions,
+  screenHelperSystemPrompt,
+  screenHelperTools,
+} from './prototype-design-guide.js';
+import {
+  defaultPrototypeScreenshotter,
+  type PrototypeScreenshotter,
+} from './prototype-screenshot.js';
+import {
+  createCoalescingRunEventBuffer,
+  prototypeLiveCoalesceKey,
+  type CoalescingRunEventBuffer,
+} from './run-event-buffer.js';
 import {
   buildProjectDataGrounding,
   describeGroundingRefusal,
@@ -167,6 +231,15 @@ function resolveTargetPrototypeForSession(
   }
   const list = store.listPrototypes(session.projectId);
   return list.find((p) => p.coDesignSessionId === session.id);
+}
+
+/** Mock mode's first prototype generation replays the recorded multi-screen build. */
+function isMockInitialPrototypeBuild(store: WorkspaceStore, session: AgentSession): boolean {
+  return (
+    session.agentKind === 'PROTOTYPE_CO_DESIGN' &&
+    !resolveTargetPrototypeForSession(store, session) &&
+    resolveSessionMultiAgentConcurrency(session) > 1
+  );
 }
 
 function isBriefRestylePrompt(prompt: string): boolean {
@@ -470,10 +543,12 @@ function parseMockPrototypeTargetFromPrompt(
   }
 
   const overview = listPrototypeAnchors(proto?.htmlContent ?? '');
-  if (overview.elements[0]?.elementId) {
+  // Prefer a control inside a screen over the shell's navigation tabs.
+  const firstElement = overview.elements.find((el) => el.screenId) ?? overview.elements[0];
+  if (firstElement?.elementId) {
     return {
-      elementId: overview.elements[0].elementId,
-      ...(overview.elements[0].screenId ? { screenId: overview.elements[0].screenId } : {}),
+      elementId: firstElement.elementId,
+      ...(firstElement.screenId ? { screenId: firstElement.screenId } : {}),
     };
   }
   if (overview.screens[0]?.screenId) {
@@ -499,6 +574,19 @@ function extractTargetAnchorFromArgs(
     const screenName =
       typeof args.screenName === 'string' && args.screenName.trim() ? args.screenName.trim() : undefined;
     return screenId ? { screenId, ...(screenName ? { label: screenName } : {}) } : undefined;
+  }
+  if (toolName === REPORT_REVIEW_TOOL_NAME || toolName === EDIT_SCREEN_TOOL_NAME) {
+    const screenId = typeof args.screenId === 'string' && args.screenId.trim() ? args.screenId.trim() : undefined;
+    const elementId = typeof args.elementId === 'string' && args.elementId.trim() ? args.elementId.trim() : undefined;
+    const note = typeof args.note === 'string' && args.note.trim() ? args.note.trim() : undefined;
+    const screenName =
+      typeof args.screenName === 'string' && args.screenName.trim() ? args.screenName.trim() : undefined;
+    if (!screenId && !elementId) return undefined;
+    return {
+      ...(screenId ? { screenId } : {}),
+      ...(elementId ? { elementId } : {}),
+      ...(note ? { label: note } : screenName ? { label: screenName } : {}),
+    };
   }
   if (
     toolName !== 'read_prototype_anchor' &&
@@ -675,7 +763,14 @@ agentWorkbenchRegistry.install(
     name: 'ontology-plus-unified-workbench',
     tools: [
       ...Object.values(ONTOLOGY_DURABLE_TOOLS),
-      ...[...UNIFIED_AGENT_EXTRA_TOOLS, ...PROTOTYPE_ANCHOR_OPENAI_TOOLS].map((spec) =>
+      ...[
+        ...UNIFIED_AGENT_EXTRA_TOOLS,
+        ...PROTOTYPE_ANCHOR_OPENAI_TOOLS,
+        PLAN_SCREENS_OPENAI_TOOL,
+        DEFINE_STYLE_OPENAI_TOOL,
+        REPORT_REVIEW_OPENAI_TOOL,
+        EDIT_SCREEN_OPENAI_TOOL,
+      ].map((spec) =>
         defineTool({
           name: spec.function.name,
           label: spec.function.name,
@@ -716,7 +811,7 @@ interface ActiveBackgroundSessionRun {
   readonly runId: string;
   readonly sessionId: string;
   readonly controller: AbortController;
-  readonly bufferedEvents: UnifiedAgentSseEvent[];
+  readonly bufferedEvents: CoalescingRunEventBuffer<UnifiedAgentSseEvent>;
   readonly subscribers: Set<() => void>;
   done: boolean;
   completionPromise: Promise<void>;
@@ -779,7 +874,7 @@ export function getLiveAgentSessionStatus(
     active: Boolean(activeRun),
     queuedCount: slot ? slot.queue.filter((q) => !q.cancelled).length : 0,
     ...(activeRun ? { runId: activeRun.runId } : {}),
-    bufferedEventCount: activeRun ? activeRun.bufferedEvents.length : 0,
+    bufferedEventCount: activeRun ? activeRun.bufferedEvents.size() : 0,
   };
 }
 
@@ -876,7 +971,14 @@ export type UnifiedAgentSseEventType =
   | 'tool_call'
   | 'tool_result'
   | 'subagent_update'
-  | 'prototype_preview'
+  | 'prototype_frame'
+  | 'prototype_screen'
+  | 'prototype_style'
+  | 'prototype_build_start'
+  | 'prototype_plan'
+  | 'prototype_build_screen'
+  | 'prototype_phase'
+  | 'prototype_build_log'
   | 'artifact'
   | 'ask_user'
   | 'step_handoff'
@@ -1142,7 +1244,14 @@ function buildFauxMockModels(
         maxTokens: 4096,
       },
     ],
-    tokensPerSecond: process.env.VITEST === 'true' ? 50000 : 900,
+    tokensPerSecond:
+      Number(process.env.ONTOLOGY_MOCK_TOKENS_PER_SECOND) > 0
+        ? Number(process.env.ONTOLOGY_MOCK_TOKENS_PER_SECOND)
+        : process.env.VITEST === 'true'
+        ? 50000
+        : isMockInitialPrototypeBuild(store, session)
+          ? MOCK_PROTOTYPE_BUILD_TOKENS_PER_SECOND
+          : 900,
     tokenSize: { min: 6, max: 18 },
   });
 
@@ -1156,6 +1265,21 @@ function buildFauxMockModels(
       const parsedAction = resolveEffectiveStructuredAction(session.messages, userPrompt);
       const lower = userPrompt.toLowerCase();
       const loc = resolveEffectiveLocale(store, explicitLocale, parsedAction?.cleanPrompt || userPrompt);
+
+      // 「继续这一屏」 runs one screen helper without the lead: its first call lands here, and
+      // the recorded build answers it (this time without the recorded mistake).
+      if (session.agentKind === 'PROTOTYPE_CO_DESIGN' && isMockPrototypeSubagentPrompt(userPrompt)) {
+        const confirmedReqForResume = store.getProjectStepConfirmations(session.projectId).requirements;
+        const resumeReplay = createMockPrototypeBuildReplay(loc, {
+          businessObject:
+            project?.suite.M1?.aggregates?.[0]?.name ||
+            (confirmedReqForResume ? extractPrimaryObjectFromRequirements(confirmedReqForResume.content).name : '') ||
+            inferPrimaryObjectFromProject(project).name,
+          failScreenId: null,
+        });
+        faux.setResponses(Array.from({ length: resumeReplay.responseBudget }, () => resumeReplay.respond));
+        return resumeReplay.respond(context);
+      }
 
       // Explicit Scoped HITL ask_user trigger when ambiguous choice is requested
       const hasResolvedChoice =
@@ -1275,42 +1399,67 @@ function buildFauxMockModels(
               ),
             ]);
           }
+          const singleAgent = resolveSessionMultiAgentConcurrency(session) <= 1;
+          const requirementsObject = extractPrimaryObjectFromRequirements(confirmedReq.content);
+          const replay = createMockPrototypeBuildReplay(loc, {
+            businessObject:
+              project?.suite.M1?.aggregates?.[0]?.name ||
+              requirementsObject.name ||
+              inferPrimaryObjectFromProject(project).name,
+            singleAgent,
+          });
+          faux.setResponses(
+            Array.from({ length: replay.responseBudget }, () => replay.respond),
+          );
+          return replay.leadOpening(
+            confirmedReq.title,
+            requirementsObject.label ?? requirementsObject.name,
+          );
+        }
+        if (isBriefRestylePrompt(userPrompt)) {
+          const hexMatches = userPrompt.match(/#[0-9a-fA-F]{6}/g) ?? [];
+          const bg = hexMatches[0] ?? '#0b1120';
+          const accent = hexMatches[1] ?? '#38bdf8';
           return fauxAssistantMessage(
             [
               fauxThinking(
                 pickLocaleText(
                   loc,
-                  `正在根据已确认的需求文档「${confirmedReq.title}」与设计简报生成首版响应式原型（1440px / 768px / 390px），并挂载完整语义锚点。`,
-                  `Generating initial responsive prototype (1440px / 768px / 390px) from confirmed requirements "${confirmedReq.title}" and the Design Brief.`,
+                  `收到「按新简报重做风格」指令，先调用 \`define_style\` 更新风格样张令牌与共用样式，并 100% 保留既有语义锚点。`,
+                  `Received brief restyle instruction; calling \`define_style\` to update Style Tile tokens while preserving 100% of existing semantic anchors.`,
                 ),
               ),
-              fauxToolCall('rewrite_prototype_page', {
-                htmlContent: buildMockGeneratedPrototypeHtml(
-                  project,
-                  userPrompt,
-                  loc,
-                  confirmedReq.content,
-                ),
-                allowAnchorReset: true,
+              fauxToolCall('define_style', {
+                direction: pickLocaleText(loc, '按新简报重做风格', 'Restyled from updated Design Brief'),
+                values: {
+                  background: bg,
+                  accent,
+                  surface: bg === '#0b1120' ? '#111827' : '#ffffff',
+                  ink: bg === '#0b1120' ? '#f8fafc' : '#18181b',
+                },
+                componentCss: `:root { --proto-bg: ${bg}; --proto-accent: ${accent}; }`,
+                sampleHtml: `<div class="card"><button type="button" class="btn primary">Style Preview</button></div>`,
               }),
             ],
             { stopReason: 'toolUse' },
           );
         }
-        if (isBriefRestylePrompt(userPrompt)) {
-          return fauxAssistantMessage(
-            [
-              fauxThinking(
-                pickLocaleText(
-                  loc,
-                  `收到「按新简报重做风格」指令，先调用 \`list_prototype_anchors\` 盘点现有屏幕与控件锚点，确保整页重做风格时 100% 保留既有语义锚点。`,
-                  `Received brief restyle instruction; calling \`list_prototype_anchors\` first so whole-page restyling preserves 100% of existing semantic anchors.`,
-                ),
-              ),
-              fauxToolCall('list_prototype_anchors', {}),
-            ],
-            { stopReason: 'toolUse' },
+        const isSelectionOrTestTurn =
+          userPrompt.includes('[TEST_ANCHOR_SELF_REPAIR]') ||
+          /Targeted Visual Selections & Annotations|用户在界面原型上框选\/点选的目标区域与批注|\[(?:用户已确认选择|User Confirmed Choice|用户可视化圈选|Visual Element Annotations|Selection|选中元素)/i.test(
+            userPrompt,
           );
+        if (!isSelectionOrTestTurn) {
+          const modReplay = createMockPrototypeModificationReplay(
+            loc,
+            targetProto.htmlContent,
+            userPrompt,
+            { singleAgent: resolveSessionMultiAgentConcurrency(session) <= 1 },
+          );
+          faux.setResponses(
+            Array.from({ length: modReplay.responseBudget }, () => modReplay.respond),
+          );
+          return modReplay.leadOpening();
         }
         const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
         const anchorName = target.elementId || target.screenId || target.cssSelector || 'SCR-01';
@@ -2056,27 +2205,9 @@ function buildFauxMockModels(
 
       if (
         session.agentKind === 'PROTOTYPE_CO_DESIGN' &&
-        !(lastResult?.toolName === 'rewrite_prototype_page' && !lastResult.isError)
+        !(lastResult?.toolName === 'define_style' && !lastResult.isError && isBriefRestylePrompt(userPrompt))
       ) {
         const targetProto = resolveTargetPrototypeForSession(store, session);
-        if (targetProto && isBriefRestylePrompt(userPrompt)) {
-          return fauxAssistantMessage(
-            [
-              fauxThinking(
-                pickLocaleText(
-                  loc,
-                  `已盘点现有语义锚点，现调用 \`rewrite_prototype_page\` 按更新后的设计简报整页重做视觉令牌与布局风格，同时完整保留所有既有屏幕与控件锚点。`,
-                  `Semantic anchors verified; calling \`rewrite_prototype_page\` to apply the updated Design Brief style tokens while preserving all existing screen and element anchors.`,
-                ),
-              ),
-              fauxToolCall('rewrite_prototype_page', {
-                htmlContent: applyMockBriefRestyleToHtml(targetProto.htmlContent, userPrompt),
-                allowAnchorReset: false,
-              }),
-            ],
-            { stopReason: 'toolUse' },
-          );
-        }
         const target = parseMockPrototypeTargetFromPrompt(userPrompt, targetProto);
         const cleanInstruction = stripSelectionBlockFromPrompt(userPrompt);
         const safeLabel =
@@ -2584,7 +2715,9 @@ export function getToolsForAgentKind(
         ];
       case 'PROTOTYPE_CO_DESIGN':
         return [
-          ...PROTOTYPE_ANCHOR_OPENAI_TOOLS.map(toPiTool),
+          ...PROTOTYPE_ANCHOR_OPENAI_TOOLS.filter(
+            (t) => t.function.name !== 'rewrite_prototype_page',
+          ).map(toPiTool),
           extraByName.get('inspect_ontology_model')!,
           extraByName.get('ask_user')!,
           stepHandoffTool,
@@ -2595,11 +2728,18 @@ export function getToolsForAgentKind(
   if (!options) return baseTools;
 
   const extras: Tool[] = [];
+  // The Build Plan, the style, the screenshot review/fix tools, and Demo Tours are the lead's alone.
+  if (kind === 'PROTOTYPE_CO_DESIGN') {
+    extras.push(
+      toPiTool(PLAN_SCREENS_OPENAI_TOOL),
+      toPiTool(DEFINE_STYLE_OPENAI_TOOL),
+      toPiTool(REPORT_REVIEW_OPENAI_TOOL),
+      toPiTool(EDIT_SCREEN_OPENAI_TOOL),
+      toPiTool(WRITE_DEMO_TOURS_OPENAI_TOOL),
+    );
+  }
   if ((options.multiAgentConcurrency ?? 1) > 1) {
     extras.push(toPiTool(SPAWN_SUBAGENTS_OPENAI_TOOL));
-  }
-  if (options.codeMode) {
-    extras.push(toPiTool(CODEMODE_OPENAI_TOOL));
   }
   return extras.length > 0 ? [...baseTools, ...extras] : baseTools;
 }
@@ -2720,6 +2860,8 @@ function buildSystemPromptForSession(
     codeMode?: boolean;
     multiAgentConcurrency?: number;
     offeredTools?: readonly Tool[];
+    /** Approved Style Tile values the lead must keep (#91). */
+    lockedStyleValues?: PrototypeStyleValues | null;
     /** Collects the parts of the prompt that are not plain instructions (ADR 0017). */
     marks?: PromptMark[];
   },
@@ -2729,17 +2871,18 @@ function buildSystemPromptForSession(
     return text;
   };
   const biz = (text: string): string => mark('BUSINESS_CONTEXT', text);
-  const withExecFooter = (corePrompt: string): string => {
-    if (!execOptions?.codeMode || !execOptions.offeredTools) {
+  const withExecFooter = (rawPrompt: string): string => {
+    // The lead of a prototype build follows the design guide and keeps the approved values.
+    const corePrompt =
+      session.agentKind === 'PROTOTYPE_CO_DESIGN' && execOptions
+        ? `${rawPrompt}\n\n${prototypeLeadStyleInstructions(locale, execOptions.lockedStyleValues ?? null)}`
+        : rawPrompt;
+    if (!execOptions?.multiAgentConcurrency || execOptions.multiAgentConcurrency <= 1) {
       return corePrompt;
     }
     return `${corePrompt}\n\n${mark(
       'TOOL_GUIDE',
-      renderCodemodePromptSection(
-        execOptions.offeredTools,
-        locale,
-        execOptions.multiAgentConcurrency ?? 3,
-      ),
+      renderSubagentPromptSection(locale, execOptions.multiAgentConcurrency),
     )}`;
   };
   const project = resolveProjectDetail(store, session.projectId);
@@ -2832,8 +2975,8 @@ function buildSystemPromptForSession(
             biz(`Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`),
             `Initial Prototype Generation Rules:`,
             useParallel
-              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`init_prototype_shell\` with 3–4 screen artboards matching the requirements and Design Brief tokens so the user sees live artboards immediately; THEN call \`spawn_subagents\` (directly or inside \`codemode\`) so ${execOptions?.multiAgentConcurrency ?? 3} parallel subagents build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
-              : `1. Call \`rewrite_prototype_page\` with \`allowAnchorReset: true\` (or \`init_prototype_shell\` + \`upsert_prototype_screen\`) ONLY when a Confirmed Requirements Document is present above.`,
+              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`plan_screens\` with the Build Plan — 3–5 screens, each with screenId, a business name and a one-sentence business purpose — so the user sees one blank artboard per screen within seconds; THEN call \`define_style\` with the design values, the shared component CSS (buttons, cards, tables, form fields, tags, empty states) and the Style Tile — it is drawn live on the first artboard and lays out the document skeleton; THEN call \`spawn_subagents\` with one task per planned screen, in plan order, so ${execOptions?.multiAgentConcurrency ?? 3} parallel helpers build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Helpers automatically receive the Design Brief, the design values, the shared components, the Visual References and the requirements summary — keep each task's instruction to what that screen shows and does. FINALLY, once screens finish, call \`write_demo_tours\` to author 2–4 playable Demo Tours (演示路线, never call them Scenarios) grounded in user goals and roles from the Confirmed Requirements Document, referencing only drawn screens and their real \`data-element-id\` anchors.`
+              : `1. Call \`plan_screens\` first, then \`define_style\`, then \`upsert_prototype_screen\` per planned screen, and finally \`write_demo_tours\` (2–4 Demo Tours grounded in user goals and roles) ONLY when a Confirmed Requirements Document is present above.`,
             `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, interactive motion specifications, and the Confirmed Requirements Document scope (never unconfirmed drafts).`,
             `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
             `4. Ensure clean responsive layout across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
@@ -2851,12 +2994,13 @@ function buildSystemPromptForSession(
           baseHeaderEn,
           biz(`Target Interactive Prototype: ${proto.name} (ID: ${proto.id}, Version: ${proto.version}).`),
           biz(`Screens in prototype: ${screensDesc}.`),
-          `Prototype Co-Design Rules:`,
-          `1. Always call \`read_prototype_anchor\` (or \`list_prototype_anchors\`) first to inspect ONLY the targeted element or screen without reading unrelated screens.`,
-          `2. For localized refinements, ALWAYS call \`edit_prototype_anchor\` (\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`) or \`upsert_prototype_screen\` so untouched screens stay intact.`,
-          `3. For whole-page visual restyling across multiple screens, prefer \`spawn_subagents\` with \`upsert_prototype_screen\` per screen.`,
-          `4. Preserve existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors, add valid \`data-element-id\` + \`data-element-type\` on every new <button>/<input>/<select>/<textarea>, and NEVER use window.alert/confirm/prompt.`,
-          `5. If an edit tool returns isError=true, fix the semantic anchors and retry in the same turn.`,
+          `Prototype Co-Design Rules (Post-Generation Modification):`,
+          `1. FIRST call \`plan_screens\` listing ONLY the affected screen(s) that need changes (NEVER include unaffected screens so untouched artboards stay intact).`,
+          `2. Inspect only the affected screen/element via \`read_prototype_anchor\` (or \`list_prototype_anchors\`), then apply targeted updates visibly on the affected artboard(s) using \`edit_screen\`, \`edit_prototype_anchor\`, or \`upsert_prototype_screen\` (or \`spawn_subagents\` when updating multiple screens), updating \`data-note\` on modified elements. Run at most 1 screenshot review round (\`report_review\` + \`edit_screen\` if needed) on the modified screen(s).`,
+          `3. For whole-page visual restyling, first call \`define_style\` (it replaces the shared look and redraws the Style Tile in place), then restyle the screens with \`spawn_subagents\`, one task per screen.`,
+          `4. If any screen or \`data-element-id\` referenced by Demo Tours changed, call \`write_demo_tours\` to update affected Demo Tours; otherwise keep valid tours intact.`,
+          `5. Preserve existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors, add valid \`data-element-id\` + \`data-element-type\` on every new <button>/<input>/<select>/<textarea>, and NEVER use window.alert/confirm/prompt.`,
+          `6. If an edit tool returns isError=true, fix the semantic anchors and retry in the same turn.`,
         ].join('\n'),
       );
     }
@@ -2946,8 +3090,8 @@ function buildSystemPromptForSession(
           biz(`当前共创目标交互原型：未绑定（按设计简报与已确认需求文档从零生成首版交互原型 Revision #1）。`),
           `首版原型生成准则（快速上屏，禁止在 thinking 中默写整页长代码）：`,
           useParallel
-            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码，也严禁调用单次巨型 \`rewrite_prototype_page\`**！请立即在 \`codemode\` 中或分步执行：① 先调用 \`init_prototype_shell\` 声明共享视觉令牌与 3～4 个核心业务分屏骨架（使画布 0 秒点亮所有画板）；② 紧接着调用 \`spawn_subagents\` 派发分屏任务（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行子智能体，每个子智能体各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。`
-            : `1. 仅在已存在【已确认需求文档快照】时，调用 \`init_prototype_shell\` + \`upsert_prototype_screen\`（或 \`rewrite_prototype_page\` 携带 \`allowAnchorReset: true\`）输出可运行 HTML5 原型。`,
+            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码**！请立即按顺序执行：① 先调用 \`plan_screens\` 列出施工计划：3～5 屏，每屏给出 screenId、业务名称和一句业务用途（画布会随之放好空白画板）；② 再调用 \`define_style\` 画风格样张：设计值、共用组件样式（按钮、卡片、表格、表单、标签、空状态）和样张，它会实时画在第一块画板上，并搭好文档骨架；③ 然后调用 \`spawn_subagents\` 按计划顺序每屏一个任务派发（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行屏幕助手，每位助手各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。设计简报、设计值、共用组件、视觉参考和需求摘要会自动交给每位助手，任务说明里只写这一屏显示什么、能做什么；④ 所有分屏完成后，调用 \`write_demo_tours\` 按需求文档中的用户目标与角色编写 2～4 条演示路线（严禁称为“场景演示”），每步只引用已绘制屏幕及其真实的 \`data-element-id\` 锚点。`
+            : `1. 仅在已存在【已确认需求文档快照】时，先调用 \`plan_screens\` 列出施工计划，再调用 \`define_style\` 画风格样张，然后按计划逐屏 \`upsert_prototype_screen\` 输出可运行 HTML5 原型，最后调用 \`write_demo_tours\` 编写 2～4 条演示路线。`,
           `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、交互动效约束与【已确认需求文档快照】（严禁读取未确认草稿）。`,
           `3. 每个业务屏幕必须声明合法 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`，所有 <button>/<input>/<select>/<textarea> 必须携带全局唯一合法 \`data-element-id\` 与 \`data-element-type\`（并合理挂载 \`data-binding\` 与 \`data-event-id\`），严禁使用 window.alert/confirm/prompt。`,
           `4. 页面必须原生支持响应式布局，在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 视口下均排版整洁无溢出。`,
@@ -2965,11 +3109,13 @@ function buildSystemPromptForSession(
         baseHeader,
         biz(`当前共创目标交互原型：${proto.name}（ID: ${proto.id}，版本: ${proto.version}）。`),
         biz(`当前原型包含屏幕锚点：${screensDesc}。`),
-        `原型局部精修与分屏补全准则：`,
-        `1. 针对尚未绘制完成的分屏（或单独重绘某一分屏），直接调用 \`upsert_prototype_screen\`（多屏调整可调用 \`spawn_subagents\` 并行处理），严禁无故重写其他无关屏幕。`,
-        `2. 控件级局部改动一律先 \`read_prototype_anchor\` 再 \`edit_prototype_anchor\`（\`replace_element\` | \`insert_after_element\` | \`append_to_screen\` | \`update_attributes\`），确保未选中的屏幕与兄弟控件保持逐字节一致。`,
-        `3. 严格保留既有 \`data-screen-id\`、\`data-element-id\`、\`data-binding\`、\`data-event-id\` 语义锚点；任何新增 <button>/<input>/<select>/<textarea> 必须携带合法唯一的 \`data-element-id\` 与 \`data-element-type\`；严禁使用 window.alert/confirm/prompt。`,
-        `4. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
+        `原型生成后修改与精修准则：`,
+        `1. 收到局部修改请求（如“把订单列表的筛选改成按客户”）时，先调用 \`plan_screens\` 只列出受影响的屏幕（严禁把未受影响的屏幕放进计划，也严禁重画未受影响的屏）。`,
+        `2. 先调用 \`read_prototype_anchor\`（或 \`list_prototype_anchors\`）查看目标屏或控件，再在受影响画板上用 \`edit_screen\`、\`edit_prototype_anchor\` 或 \`upsert_prototype_screen\`（多屏时用 \`spawn_subagents\`）做局部修改，并同步更新改动元素的 \`data-note\` 原型说明；每屏最多做 1 轮截图检查（\`report_review\` + \`edit_screen\`）。`,
+        `3. 整体换风格时先调用 \`define_style\` 重画风格样张（原地替换共用外观），再用 \`spawn_subagents\` 按屏调整。`,
+        `4. 若改动影响到了演示路线引用的屏幕或控件锚点，调用 \`write_demo_tours\` 同步更新演示路线；未受影响的屏幕保持逐字节不变。`,
+        `5. 严格保留既有 \`data-screen-id\`、\`data-element-id\`、\`data-binding\`、\`data-event-id\` 语义锚点；任何新增 <button>/<input>/<select>/<textarea> 必须携带合法唯一的 \`data-element-id\` 与 \`data-element-type\`；严禁使用 window.alert/confirm/prompt。`,
+        `6. 若锚点校验器返回 isError=true，请根据诊断在本轮内补齐语义锚点并自动重试。`,
       ].join('\n'),
     );
   }
@@ -2999,6 +3145,110 @@ interface PrototypeTurnDraft {
   baselineHtml: string;
   workingHtml: string;
   modifiedAnchors: PrototypeTargetAnchor[];
+  /** The shared look this run set with `define_style` (#91). */
+  style?: PrototypeStyle;
+  /** The approved Style Tile values this run must keep (null: the lead proposes them). */
+  lockedStyleValues?: PrototypeStyleValues | null;
+  /** The brief was approved but its values could not be found or derived. */
+  styleLockUnavailable?: boolean;
+}
+
+/**
+ * The approved values of a Design Brief (locked once the brief is approved): the stored ones, or
+ * for a brief approved before they were stored, the same derivation from its references.
+ * `unavailable` when the brief was approved but its references are gone (nothing is locked).
+ */
+function lockedStyleValuesOf(brief: DesignBrief | undefined | null): {
+  values: PrototypeStyleValues | null;
+  unavailable: boolean;
+} {
+  const approved = approvedBriefStyleValues(brief);
+  if (!approved.values) return { values: null, unavailable: 'underivable' in approved && approved.underivable };
+  const read = readPrototypeStyleValues(approved.values);
+  return Object.keys(read).length > 0
+    ? { values: resolvePrototypeStyleValues(read, read).values, unavailable: false }
+    : { values: null, unavailable: true };
+}
+
+const SYNTHESIZED_TURN_PROMPT_RE =
+  /^\s*(?:【已确认设计简报|===\s*CONFIRMED DESIGN BRIEF|\[PROTOTYPE_BRIEF_RESTYLE\]|「需求」步骤有了新的确认|Requirements have been re-confirmed\b|请结合附带的\s*\d+\s*张参考图进行分析与设计调整。?\s*$|Please inspect the\s+\d+\s+attached reference image\(s\) and apply appropriate design updates\.?\s*$)/i;
+
+/**
+ * Only the user's own chat text in this turn (never compiled Design Brief / SRS-resync prompts,
+ * canvas selection metadata, or synthesized attachment/choice prompts) may authorize changing a
+ * locked Style Tile value (P6).
+ */
+function extractRawUserStylePrompt(
+  input: Pick<UnifiedAgentStreamInput, 'prompt' | 'designBrief' | 'askUserAnswer'>,
+  retryUserContent?: string,
+): string {
+  if (input.designBrief) return '';
+  const raw =
+    input.prompt?.trim() ||
+    input.askUserAnswer?.freeformText?.trim() ||
+    retryUserContent?.trim() ||
+    '';
+  if (!raw || SYNTHESIZED_TURN_PROMPT_RE.test(raw)) return '';
+  const stripped = raw
+    .replace(/^\s*\[(?:用户已确认选择|User Confirmed Choice|Confirmed choice)\][^\r\n]*(?:\r?\n|$)/i, '')
+    .replace(
+      /^---\s*(?:Targeted Visual Selections & Annotations|用户在界面原型上框选\/点选的目标区域与批注)\s*---[\s\S]*?(?:\n\n|$)/m,
+      '',
+    )
+    .replace(/^\[ACTION:[^\r\n]*\]\s*/i, '')
+    .trim();
+  return !stripped || SYNTHESIZED_TURN_PROMPT_RE.test(stripped) ? '' : stripped;
+}
+
+function valuesFromStyleCss(css: string | undefined): Partial<PrototypeStyleValues> {
+  if (!css) return {};
+  const get = (prop: string) => new RegExp(`${prop}\\s*:\\s*([^;{}]+)`, 'i').exec(css)?.[1]?.trim();
+  return readPrototypeStyleValues({
+    mode: get('color-scheme'),
+    background: get('--proto-bg'),
+    surface: get('--proto-card'),
+    inset: get('--proto-inset'),
+    accent: get('--proto-accent'),
+    accentInk: get('--proto-accent-ink'),
+    border: get('--proto-border'),
+    ink: get('--proto-text'),
+    mutedInk: get('--proto-muted'),
+    ok: get('--proto-ok'),
+    warn: get('--proto-warn'),
+    danger: get('--proto-danger'),
+    fontFamily: get('--proto-font'),
+    radiusPx: get('--proto-radius'),
+    density: get('--proto-gap') === '12px' ? 'compact' : get('--proto-gap') ? 'comfortable' : undefined,
+  });
+}
+
+function preserveDraftStyleOnRewrite(
+  beforeHtml: string,
+  rewrittenHtml: string,
+  draft: PrototypeTurnDraft,
+): string {
+  if (draft.style) return applyPrototypeStyleToDocument(rewrittenHtml, draft.style);
+  const existing = readPrototypeDocumentStyle(rewrittenHtml) ?? readPrototypeDocumentStyle(beforeHtml);
+  if (!draft.lockedStyleValues && !existing) return rewrittenHtml;
+  const extractComponents = (css: string | undefined) =>
+    (css ?? '').replace(/^\s*:root\s*\{[\s\S]*?\}\s*/i, '').trim();
+  const resolved = resolvePrototypeStyleValues(valuesFromStyleCss(existing?.css), draft.lockedStyleValues ?? null);
+  return applyPrototypeStyleToDocument(rewrittenHtml, {
+    direction: existing?.direction ?? '',
+    values: resolved.values,
+    componentCss: extractComponents(existing?.css),
+    sampleHtml: existing?.sampleHtml ?? '',
+    locked: resolved.locked || Boolean(existing?.locked),
+  });
+}
+
+/**
+ * The style `init_prototype_shell` builds on: the run's own (from `define_style`); without one,
+ * the shell's tokens with the approved values winning; without either, the shell's tokens.
+ */
+function shellStyleFor(draft: PrototypeTurnDraft | undefined, tokens: unknown): PrototypeStyle | undefined {
+  if (draft?.style) return draft.style;
+  return draft?.lockedStyleValues ? styleFromShellTokens(tokens, draft.lockedStyleValues) : undefined;
 }
 
 function recordModifiedAnchor(
@@ -3869,7 +4119,10 @@ async function executeUnifiedToolCall(
           ...(typeof args.sharedCss === 'string' ? { sharedCss: args.sharedCss } : {}),
           screens,
         };
-        const shellRes = initPrototypeShell(shellInput, { locale });
+        const shellRes = initPrototypeShell(shellInput, {
+          locale,
+          style: shellStyleFor(prototypeDraft, args.themeTokens) ?? null,
+        });
         if (shellRes.isError) {
           return {
             trace: {
@@ -3922,6 +4175,7 @@ async function executeUnifiedToolCall(
           screenId: String(args.screenId ?? ''),
           ...(typeof args.screenName === 'string' ? { screenName: args.screenName } : {}),
           ...(typeof args.screenType === 'string' ? { screenType: args.screenType } : {}),
+          ...(typeof args.note === 'string' ? { note: args.note } : {}),
           screenHtml: String(args.screenHtml ?? ''),
           ...(typeof args.extraCss === 'string' ? { extraCss: args.extraCss } : {}),
           ...(typeof args.extraJs === 'string' ? { extraJs: args.extraJs } : {}),
@@ -4045,6 +4299,7 @@ async function executeUnifiedToolCall(
       const screenId = typeof args.screenId === 'string' ? args.screenId : undefined;
       const cssSelector = typeof args.cssSelector === 'string' ? args.cssSelector : undefined;
       const operation = String(args.operation || 'replace_element') as PrototypeAnchorEditOperation;
+      const note = typeof args.note === 'string' ? args.note : undefined;
       const htmlFragment = typeof args.htmlFragment === 'string' ? args.htmlFragment : undefined;
       const attributes =
         args.attributes && typeof args.attributes === 'object'
@@ -4059,6 +4314,7 @@ async function executeUnifiedToolCall(
         ...(screenId ? { screenId } : {}),
         ...(cssSelector ? { cssSelector } : {}),
         operation,
+        ...(note !== undefined ? { note } : {}),
         ...(htmlFragment !== undefined ? { htmlFragment } : {}),
         ...(attributes ? { attributes } : {}),
         ...(allowRemoveAnchors ? { allowRemoveAnchors } : {}),
@@ -4161,7 +4417,11 @@ async function executeUnifiedToolCall(
     }
 
     if (prototypeDraft) {
-      prototypeDraft.workingHtml = rewriteRes.nextHtml;
+      prototypeDraft.workingHtml = preserveDraftStyleOnRewrite(
+        activeHtml,
+        rewriteRes.nextHtml,
+        prototypeDraft,
+      );
       recordModifiedAnchor(prototypeDraft, rewriteRes.targetAnchor);
     }
 
@@ -4539,6 +4799,8 @@ export interface UnifiedAgentStreamInput {
   idleTimeoutMs?: number;
   stepTimeoutMs?: number;
   hooks?: AgentRunLifecycleHooks;
+  /** Optional artboard screenshotter seam (#93; defaults to Node Playwright Chromium when available). */
+  screenshotter?: PrototypeScreenshotter;
 }
 
 function toPersistedImageRef(
@@ -4789,6 +5051,12 @@ async function executeUnifiedTurnCore(
     );
   }
 
+  const retryUserContent =
+    !synthesizedPrompt && workingMessages.at(-1)?.role === 'user'
+      ? workingMessages.at(-1)!.content
+      : undefined;
+  const rawUserStylePrompt = extractRawUserStylePrompt(input, retryUserContent);
+
   const turnIdentity = preallocatedIdentity ?? allocateTurnRunIdentity(existing, input);
   let currentTurnUserMsgId: string | undefined;
   if (synthesizedPrompt) {
@@ -4829,7 +5097,6 @@ async function executeUnifiedTurnCore(
       ? cleanTitleSource.replace(/\s+/g, ' ').slice(0, 26)
       : existing.title;
 
-  const effectiveCodeMode = resolveSessionCodeModeEnabled(existing, input.codeMode);
   const effectiveConcurrency = resolveSessionMultiAgentConcurrency(
     existing,
     input.multiAgentConcurrency,
@@ -4839,7 +5106,6 @@ async function executeUnifiedTurnCore(
     ...existing,
     title: nextTitle,
     ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
-    codeMode: effectiveCodeMode,
     multiAgentConcurrency: effectiveConcurrency,
     status: 'RUNNING',
     messages: workingMessages,
@@ -4862,7 +5128,6 @@ async function executeUnifiedTurnCore(
   let accumulatedToolWallMs = 0;
   let accumulatedText = '';
   let streamedToolArgChars = 0;
-  let lastCodeModeScript: string | undefined;
   const allToolTraces: AgentToolCallTrace[] = [];
   const allSubagentLanes: AgentSubagentLaneTrace[] = [];
   const allArtifacts: AgentDomainArtifact[] = [];
@@ -4939,6 +5204,15 @@ async function executeUnifiedTurnCore(
   let usedVisionFallback = false;
   let activeVisionFallbackNotice: string | undefined;
   let prototypeTurnDraft: PrototypeTurnDraft | undefined;
+  let prototypeBuildRun: PrototypeBuildRun | undefined;
+  /** The revision now current for the prototype this run works on (what the user sees). */
+  const currentPrototypeRevisionId = (): string | undefined => {
+    // A first build has no prototype id in its draft; the session is bound to it once saved.
+    const id = prototypeTurnDraft?.prototypeId ?? (prototypeTurnDraft ? sessionState.targetId : undefined);
+    return id ? store.getPrototype(id)?.currentRevisionId || undefined : undefined;
+  };
+  const resumeScreenAction =
+    existing.agentKind === 'PROTOTYPE_CO_DESIGN' ? parseResumePrototypeScreenAction(synthesizedPrompt) : null;
 
   try {
     didInvokeRunStart = true;
@@ -4986,6 +5260,14 @@ async function executeUnifiedTurnCore(
               modifiedAnchors: [],
             }
         : undefined;
+    // The Design Brief this build follows: approved Style Tile values in it are locked (#91).
+    let buildDesignBrief =
+      input.designBrief ?? initialTargetProto?.designBrief ?? sessionState.designBrief ?? undefined;
+    if (prototypeTurnDraft) {
+      const lock = lockedStyleValuesOf(buildDesignBrief);
+      prototypeTurnDraft.lockedStyleValues = lock.values;
+      prototypeTurnDraft.styleLockUnavailable = lock.unavailable;
+    }
 
     if (controller.signal.aborted) {
       throw toAbortedError();
@@ -5019,7 +5301,6 @@ async function executeUnifiedTurnCore(
         model: built.selectedModel.id,
         isMock: built.isMock,
         visionSupported: built.visionSupported,
-        codeMode: effectiveCodeMode,
         multiAgentConcurrency: effectiveConcurrency,
         ...(activeVisionFallbackNotice ? { visionFallbackNotice: activeVisionFallbackNotice } : {}),
       },
@@ -5029,6 +5310,12 @@ async function executeUnifiedTurnCore(
     const piMessages: Message[] = history.messages;
     /** The Model Call whose response is being acted on; subagents it spawns name it as parent. */
     let currentModelCallId: string | undefined;
+    // The Visual References of this turn, handed to every screen helper as well (#91).
+    let helperReferenceImages: ImageContent[] = [];
+    let helperReferenceLines: string[] = [];
+    let helperReferencesFromBrief = false;
+    /** Images this turn already carries (the brief's references are not sent twice). */
+    const helperReferenceIds = new Set(incomingImages.map((img) => img.id));
 
     if (incomingImages.length > 0) {
       const lastPiUserIdx = (() => {
@@ -5062,6 +5349,8 @@ async function executeUnifiedTurnCore(
             extraSections.push(resolvedVision.fallbackNotes.join('\n'));
           }
           const combinedText = [basePromptText, ...extraSections].filter(Boolean).join('\n\n');
+          helperReferenceImages = resolvedVision.imageBlocks;
+          helperReferenceLines = [...resolvedVision.manifestLines, ...resolvedVision.fallbackNotes];
           if (resolvedVision.imageBlocks.length > 0) {
             piMessages[lastPiUserIdx] = {
               ...targetUserMsg,
@@ -5085,6 +5374,7 @@ async function executeUnifiedTurnCore(
               );
             return `- [${idx + 1}] ${img.name}${roleTag}: ${detail}`;
           });
+          helperReferenceLines = fallbackLines;
           const fallbackBlock = pickLocaleText(
             effectiveLocale,
             `[文字设计说明（当前模型不支持看图）]\n${fallbackLines.join('\n')}`,
@@ -5100,51 +5390,781 @@ async function executeUnifiedTurnCore(
 
     const baseSpecialistTools = getToolsForAgentKind(sessionState.agentKind);
     const tools = getToolsForAgentKind(sessionState.agentKind, {
-      codeMode: effectiveCodeMode,
       multiAgentConcurrency: effectiveConcurrency,
     });
     const resolvedMaxTokens = Math.min(built.selectedModel.maxTokens || 32768, 32768);
-    let lastEmittedPreviewHtml = prototypeTurnDraft?.workingHtml ?? '';
-    const livePartialScreens = new Map<string, PartialPrototypeScreenInput>();
-    let lastThrottledPreviewMs = 0;
+    // Live prototype building (spec #87): per-screen deltas, never the whole document. The
+    // tracker starts from what the client already shows (the saved revision being edited).
+    const prototypeLiveTracker = createPrototypeLiveTracker();
+    prototypeLiveTracker.reset(prototypeTurnDraft?.workingHtml ?? '');
+    const streamingPrototypeScreens = new Set<string>();
+    // About one delta per screen every 150 ms; the latest held delta is flushed after the
+    // interval so the last update before the model pauses still reaches the canvas.
+    const partialScreenThrottle = createPartialScreenThrottle<PartialPrototypeScreenInput>({
+      intervalMs: 150,
+      onFlush: (screenId, partial) => {
+        if (!prototypeTurnDraft || controller.signal.aborted) return;
+        if (!streamingPrototypeScreens.has(screenId)) return;
+        const scopedPartialCss = partial.extraCss ? scopeScreenCss(partial.extraCss, screenId).css : '';
+        const liveEvent = prototypeLiveTracker.observePartialScreen({
+          screenId,
+          ...(partial.screenName ? { screenName: partial.screenName } : {}),
+          ...(partial.screenType ? { screenType: partial.screenType } : {}),
+          ...(partial.note ? { note: partial.note } : {}),
+          partialHtml: sanitizePrototypeScreenFragment(partial.partialScreenHtml),
+          ...(scopedPartialCss ? { css: scopedPartialCss } : {}),
+        });
+        if (liveEvent) emitPrototypeLiveEvents([liveEvent]);
+      },
+    });
 
-    const composeLivePreviewHtml = (): string => {
-      if (!prototypeTurnDraft) return '';
-      let composite = prototypeTurnDraft.workingHtml;
-      for (const partial of livePartialScreens.values()) {
-        composite = previewPartialPrototypeScreen(composite, partial, {
-          locale: effectiveLocale,
+    const emitPrototypeLiveEvents = (events: readonly PrototypeLiveEvent[]) => {
+      if (!prototypeTurnDraft) return;
+      for (const liveEvent of events) {
+        emit({
+          id: nextEventId(),
+          event:
+            liveEvent.kind === 'frame'
+              ? 'prototype_frame'
+              : liveEvent.kind === 'style'
+                ? 'prototype_style'
+                : 'prototype_screen',
+          data: {
+            runId: turnRunId,
+            ...(prototypeTurnDraft.prototypeId ? { prototypeId: prototypeTurnDraft.prototypeId } : {}),
+            ...liveEvent,
+          },
         });
       }
-      return composite;
     };
 
-    const emitPrototypePreviewIfChanged = (
-      focusAnchor?: PrototypeTargetAnchor,
-      options?: { throttled?: boolean },
-    ) => {
+    // The Build Plan (#90): the plan, each screen's state and the build log, from real events.
+    prototypeBuildRun = prototypeTurnDraft
+      ? createPrototypeBuildRun({
+          locale: effectiveLocale,
+          // Only the plan of the revision now on screen; after an undo or edit there is none, and
+          // the plan is derived from the current document instead.
+          base: resumeScreenAction
+            ? latestPrototypeBuild(existing.messages, currentPrototypeRevisionId() ?? null)
+            : null,
+          emit: (buildEvent) =>
+            emit({
+              id: nextEventId(),
+              event: prototypeBuildSseEventName(buildEvent),
+              data: {
+                runId: turnRunId,
+                ...(prototypeTurnDraft?.prototypeId ? { prototypeId: prototypeTurnDraft.prototypeId } : {}),
+                ...buildEvent,
+              },
+            }),
+        })
+      : undefined;
+
+    /** After a tool changed the working document: send what changed, screen by screen. */
+    const syncPrototypeLiveDocument = () => {
       if (!prototypeTurnDraft) return;
-      if (options?.throttled) {
-        const now = Date.now();
-        if (now - lastThrottledPreviewMs < 280) return;
-        lastThrottledPreviewMs = now;
+      emitPrototypeLiveEvents(
+        prototypeLiveTracker.observeDocument(prototypeTurnDraft.workingHtml, {
+          streamingScreenIds: streamingPrototypeScreens,
+        }),
+      );
+    };
+
+    /** While a screen's HTML streams in as tool-call arguments: heal and send that one screen. */
+    const streamPartialPrototypeScreen = (partial: PartialPrototypeScreenInput) => {
+      if (!prototypeTurnDraft) return;
+      const screenId = partial.screenId.trim();
+      if (!screenId) return;
+      streamingPrototypeScreens.add(screenId);
+      partialScreenThrottle.push(screenId, partial);
+    };
+
+    /** A screen's write ended (landed or rejected): the document version is the truth again. */
+    const endPartialPrototypeScreen = (screenId: string | undefined) => {
+      const sid = screenId?.trim();
+      if (!sid) return;
+      streamingPrototypeScreens.delete(sid);
+      partialScreenThrottle.end(sid);
+      // A rejected write of a screen the document does not have is taken back off the canvas.
+      const withdrawn = prototypeLiveTracker.withdrawScreen(sid, prototypeTurnDraft?.workingHtml ?? '');
+      if (withdrawn) emitPrototypeLiveEvents([withdrawn]);
+    };
+
+    /**
+     * The shared shell never declares its own screen list once a plan is committed: its
+     * sections follow the plan (S4), so the document and the plan cannot disagree.
+     */
+    const alignShellWithPlan = (call: ToolCall): ToolCall =>
+      call.name === 'init_prototype_shell'
+        ? {
+            ...call,
+            arguments: alignShellArgsWithPlan(
+              (call.arguments ?? {}) as Record<string, unknown>,
+              prototypeBuildRun?.plannedScreens() ?? null,
+            ) as JsonObject,
+          }
+        : call;
+
+    // The 「风格样张」 (#91): define_style's arguments are drawn on the first artboard as they
+    // stream, about one update every 150 ms, with the approved values applied from the start.
+    let styleStreaming = false;
+    const styleThrottle = createPartialScreenThrottle<unknown>({
+      intervalMs: 150,
+      onFlush: (_key, partialArgs) => {
+        if (!prototypeTurnDraft || controller.signal.aborted || !styleStreaming) return;
+        const stream = readStreamingPrototypeStyle(partialArgs, prototypeTurnDraft.lockedStyleValues ?? null);
+        const liveEvent = stream ? prototypeLiveTracker.observeStyle(stream, 'streaming') : null;
+        if (liveEvent) emitPrototypeLiveEvents([liveEvent]);
+      },
+    });
+    const STYLE_STREAM_KEY = 'define_style';
+    const streamPrototypeStyle = (partialArgs: unknown) => {
+      if (!prototypeTurnDraft) return;
+      styleStreaming = true;
+      prototypeBuildRun?.observeStyleStream(prototypeTurnDraft.workingHtml);
+      styleThrottle.push(STYLE_STREAM_KEY, partialArgs);
+    };
+
+    const runDefineStyleTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
+      const started = Date.now();
+      styleStreaming = false;
+      styleThrottle.end(STYLE_STREAM_KEY);
+      const rejected = (diagnostic: string, content?: string): ExecutedToolStep => {
+        prototypeBuildRun?.commitStyle({ ok: false }, prototypeTurnDraft?.workingHtml);
+        // What streamed onto the style artboard is taken back to the style the document has.
+        const kept = prototypeTurnDraft?.style;
+        const inDocument = readPrototypeDocumentStyle(prototypeTurnDraft?.workingHtml ?? '');
+        const back = prototypeLiveTracker.observeStyle(
+          kept
+            ? { css: prototypeStyleCss(kept), sampleHtml: kept.sampleHtml, direction: kept.direction, locked: kept.locked }
+            : (inDocument ?? { css: '', sampleHtml: '', direction: '', locked: false }),
+          'ready',
+        );
+        if (back) emitPrototypeLiveEvents([back]);
+        return {
+          trace: {
+            id: callId,
+            toolName: DEFINE_STYLE_TOOL_NAME,
+            arguments: rawArgs,
+            output: diagnostic,
+            isError: true,
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: content ?? JSON.stringify({ status: 'ERROR', diagnostic }),
+          isError: true,
+        };
+      };
+      if (!prototypeTurnDraft) {
+        return rejected(
+          pickLocaleText(
+            effectiveLocale,
+            'define_style 只在生成原型时可用。',
+            'define_style is only available while building a prototype.',
+          ),
+        );
       }
-      const curHtml = composeLivePreviewHtml();
-      if (!curHtml.trim() || curHtml === lastEmittedPreviewHtml) return;
-      lastEmittedPreviewHtml = curHtml;
-      const anchorSummary = listPrototypeAnchors(curHtml);
-      emit({
-        id: nextEventId(),
-        event: 'prototype_preview',
-        data: {
-          runId: turnRunId,
-          ...(prototypeTurnDraft.prototypeId ? { prototypeId: prototypeTurnDraft.prototypeId } : {}),
-          prototypeName: prototypeTurnDraft.prototypeName,
-          workingHtml: curHtml,
-          screenCount: anchorSummary.screens.length,
-          ...(focusAnchor ? { targetAnchor: focusAnchor } : {}),
-        },
+      if (
+        !resolveTargetPrototypeForSession(store, sessionState) &&
+        !store.getProjectStepConfirmations(sessionState.projectId).requirements
+      ) {
+        return rejected(
+          pickLocaleText(
+            effectiveLocale,
+            '需要先完成并确认需求文档，才能生成首版界面原型。',
+            'Confirm the requirements document first before generating an initial prototype.',
+          ),
+        );
+      }
+      const committed = commitDefineStyle(rawArgs, prototypeTurnDraft.lockedStyleValues ?? null, effectiveLocale, {
+        userPrompt: rawUserStylePrompt,
       });
+      if (committed.isError || !committed.style) return rejected(committed.summary, committed.content);
+      const style = committed.style;
+      // The user asked to change approved values: the new ones become the approved ones (P6).
+      if (committed.userChanged && committed.userChanged.length > 0 && prototypeTurnDraft.lockedStyleValues) {
+        const approvedNow: PrototypeStyleValues = { ...prototypeTurnDraft.lockedStyleValues };
+        for (const key of committed.userChanged) (approvedNow as unknown as Record<string, unknown>)[key] = style.values[key];
+        prototypeTurnDraft.lockedStyleValues = approvedNow;
+        const now = new Date().toISOString();
+        buildDesignBrief = {
+          ...(buildDesignBrief ?? { items: [], approvedAt: now }),
+          styleValues: approvedNow,
+          updatedAt: now,
+        };
+        prototypeTurnDraft.designBrief = buildDesignBrief;
+      }
+      prototypeTurnDraft.style = style;
+      // The style is the document's look: an empty document gets its skeleton from the plan.
+      const planned = prototypeBuildRun?.plannedScreens() ?? null;
+      if (prototypeTurnDraft.workingHtml.trim()) {
+        prototypeTurnDraft.workingHtml = applyPrototypeStyleToDocument(prototypeTurnDraft.workingHtml, style);
+      } else if (planned && planned.length > 0) {
+        const shell = initPrototypeShell(
+          {
+            appTitle: prototypeTurnDraft.prototypeName,
+            screens: planned.map((p) => ({
+              screenId: p.screenId,
+              screenName: p.screenName,
+              screenType: p.screenType ?? 'LIST',
+              summary: p.purpose,
+            })),
+          },
+          { locale: effectiveLocale, style },
+        );
+        if (!shell.isError) prototypeTurnDraft.workingHtml = shell.nextHtml;
+      }
+      syncPrototypeLiveDocument();
+      const ready = prototypeLiveTracker.observeStyle(
+        { css: prototypeStyleCss(style), sampleHtml: style.sampleHtml, direction: style.direction, locked: style.locked },
+        'ready',
+      );
+      if (ready) emitPrototypeLiveEvents([ready]);
+      const lockUnavailable = Boolean(prototypeTurnDraft.styleLockUnavailable);
+      prototypeTurnDraft.styleLockUnavailable = false;
+      prototypeBuildRun?.commitStyle(
+        {
+          ok: true,
+          locked: style.locked,
+          ...(committed.userChanged ? { userChanged: committed.userChanged } : {}),
+          ...(lockUnavailable ? { lockUnavailable: true } : {}),
+        },
+        prototypeTurnDraft.workingHtml,
+      );
+      return {
+        trace: {
+          id: callId,
+          toolName: DEFINE_STYLE_TOOL_NAME,
+          arguments: rawArgs,
+          output: committed.summary,
+          isError: false,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: committed.content,
+        isError: false,
+      };
+    };
+
+    /** What a screen helper builds from: this run's style, else the one the document carries. */
+    const helperStyle = () => {
+      const own = prototypeTurnDraft?.style;
+      if (own) {
+        return { css: prototypeStyleCss(own), sampleHtml: own.sampleHtml, direction: own.direction, locked: own.locked };
+      }
+      return readPrototypeDocumentStyle(prototypeTurnDraft?.workingHtml ?? '');
+    };
+    const helperPlan = (): PrototypeBuildPlanItem[] =>
+      prototypeBuildRun?.plannedScreens() ??
+      splitPrototypeDocument(prototypeTurnDraft?.workingHtml ?? '').screens.map((sc) => ({
+        screenId: sc.screenId,
+        screenName: sc.screenName,
+        purpose: '',
+        screenType: sc.screenType,
+      }));
+
+    const screenshotter: PrototypeScreenshotter = input.screenshotter ?? defaultPrototypeScreenshotter;
+    let activeReviewChain = Promise.resolve();
+    const singleAgentWrittenScreens: string[] = [];
+
+    const humanScreenLabel = (sid: string): string | undefined => {
+      if (!sid) return undefined;
+      return (
+        prototypeBuildRun?.plannedScreens()?.find((p) => p.screenId === sid)?.screenName ||
+        (prototypeTurnDraft
+          ? splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find((s) => s.screenId === sid)?.screenName
+          : undefined) ||
+        undefined
+      );
+    };
+
+    const recordSingleAgentScreenWrite = (sid: string): void => {
+      if (!sid || !prototypeTurnDraft) return;
+      const landedHtml =
+        splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find((s) => s.screenId === sid)?.html ?? '';
+      if (landedHtml) prototypeBuildRun?.observeLeadScreenWritten(sid, landedHtml);
+      if (prototypeBuildRun?.active() && !singleAgentWrittenScreens.includes(sid)) {
+        singleAgentWrittenScreens.push(sid);
+      }
+    };
+
+    const runReportReviewTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
+      const started = Date.now();
+      const sid = typeof rawArgs.screenId === 'string' ? rawArgs.screenId.trim() : '';
+      const result = prototypeBuildRun
+        ? prototypeBuildRun.commitReportReview(rawArgs)
+        : (() => {
+            const msg = pickLocaleText(
+              effectiveLocale,
+              'report_review 只在生成或检查原型时可用。',
+              'report_review is only available while building or reviewing a prototype.',
+            );
+            return {
+              isError: true,
+              findings: [],
+              content: JSON.stringify({ status: 'ERROR', diagnostic: msg }),
+              summary: msg,
+            };
+          })();
+      const screenLabel = humanScreenLabel(sid);
+      return {
+        trace: {
+          id: callId,
+          toolName: REPORT_REVIEW_TOOL_NAME,
+          arguments: rawArgs,
+          output: result.summary,
+          isError: result.isError,
+          ...(sid ? { targetAnchor: { screenId: sid, ...(screenLabel ? { label: screenLabel } : {}) } } : {}),
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: result.content,
+        isError: result.isError,
+      };
+    };
+
+    const runEditScreenTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
+      const started = Date.now();
+      const activeHtml =
+        prototypeTurnDraft?.workingHtml ?? resolveTargetPrototypeForSession(store, sessionState)?.htmlContent;
+      if (activeHtml === undefined) {
+        const noProtoMsg = pickLocaleText(
+          effectiveLocale,
+          '当前会话未找到可精修的交互原型。',
+          'No target interactive prototype found for this session.',
+        );
+        return {
+          trace: {
+            id: callId,
+            toolName: EDIT_SCREEN_TOOL_NAME,
+            arguments: rawArgs,
+            output: noProtoMsg,
+            isError: true,
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({ status: 'ERROR', diagnostic: noProtoMsg }),
+          isError: true,
+        };
+      }
+      const screenId = typeof rawArgs.screenId === 'string' ? rawArgs.screenId.trim() : '';
+      const elementId = typeof rawArgs.elementId === 'string' ? rawArgs.elementId.trim() : undefined;
+      const note = typeof rawArgs.note === 'string' ? rawArgs.note.trim() : undefined;
+      const fallbackLabel = note ?? humanScreenLabel(screenId);
+      const capErr = screenId ? prototypeBuildRun?.checkEditScreenAllowed(screenId) : null;
+      if (capErr) {
+        return {
+          trace: {
+            id: callId,
+            toolName: EDIT_SCREEN_TOOL_NAME,
+            arguments: rawArgs,
+            output: capErr,
+            isError: true,
+            ...(screenId
+              ? {
+                  targetAnchor: {
+                    screenId,
+                    ...(elementId ? { elementId } : {}),
+                    ...(fallbackLabel ? { label: fallbackLabel } : {}),
+                  },
+                }
+              : {}),
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({ status: 'REVIEW_CAP_REACHED', diagnostic: capErr }),
+          isError: true,
+        };
+      }
+      const anchorsBefore = prototypeTurnDraft ? [...prototypeTurnDraft.modifiedAnchors] : [];
+      const editRes = editPrototypeScreen(activeHtml, {
+        screenId,
+        ...(elementId ? { elementId } : {}),
+        ...(note ? { note } : {}),
+        find: String(rawArgs.find ?? ''),
+        replace: String(rawArgs.replace ?? ''),
+        locale: effectiveLocale,
+      });
+      if (editRes.isError) {
+        return {
+          trace: {
+            id: callId,
+            toolName: EDIT_SCREEN_TOOL_NAME,
+            arguments: rawArgs,
+            output: editRes.diagnostic || editRes.summary,
+            isError: true,
+            ...(editRes.targetAnchor ? { targetAnchor: editRes.targetAnchor } : {}),
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({
+            status: 'REJECTED_BY_EDIT_SCREEN',
+            diagnostic: editRes.diagnostic || editRes.summary,
+          }),
+          isError: true,
+        };
+      }
+      const kept = keepWithinOwnScreen(activeHtml, editRes.nextHtml, screenId, effectiveLocale);
+      if (kept.diagnostic) {
+        if (prototypeTurnDraft) {
+          prototypeTurnDraft.modifiedAnchors = anchorsBefore;
+        }
+        return {
+          trace: {
+            id: callId,
+            toolName: EDIT_SCREEN_TOOL_NAME,
+            arguments: rawArgs,
+            output: kept.diagnostic,
+            isError: true,
+            durationMs: Date.now() - started,
+          },
+          toolResultContent: JSON.stringify({ status: 'REJECTED_OUT_OF_SCOPE', diagnostic: kept.diagnostic }),
+          isError: true,
+        };
+      }
+      if (prototypeTurnDraft) {
+        prototypeTurnDraft.workingHtml = kept.html;
+        if (editRes.targetAnchor) {
+          recordModifiedAnchor(prototypeTurnDraft, editRes.targetAnchor);
+        }
+      }
+      const landedSlice = splitPrototypeDocument(kept.html).screens.find((s) => s.screenId === screenId)?.html ?? '';
+      prototypeBuildRun?.commitEditScreen(screenId, {
+        ...(elementId ? { elementId } : {}),
+        ...(note ? { note } : {}),
+        html: landedSlice,
+      });
+      syncPrototypeLiveDocument();
+      return {
+        trace: {
+          id: callId,
+          toolName: EDIT_SCREEN_TOOL_NAME,
+          arguments: rawArgs,
+          output: editRes.summary,
+          isError: false,
+          ...(editRes.targetAnchor ? { targetAnchor: editRes.targetAnchor } : {}),
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({
+          status: 'APPLIED',
+          summary: editRes.summary,
+          ...(editRes.targetAnchor ? { targetAnchor: editRes.targetAnchor } : {}),
+        }),
+        isError: false,
+      };
+    };
+
+    const runScreenVisualReview = async (
+      screenId: string,
+      stepNum: number,
+      parentCallId?: string,
+    ): Promise<void> => {
+      const sid = screenId.trim();
+      if (!sid || !prototypeTurnDraft || !prototypeBuildRun || controller.signal.aborted) return;
+      if (!prototypeBuildRun.canReviewScreen(sid)) return;
+      // Verify real Playwright + headless Chromium launch readiness BEFORE emitting `review_started` (#93).
+      const hasWarmup = typeof screenshotter.warmup === 'function';
+      const canUseBrowser =
+        Boolean(built?.visionSupported) &&
+        (hasWarmup
+          ? await screenshotter.warmup!().catch(() => false)
+          : await Promise.resolve(screenshotter.available()).catch(() => false));
+      if (!canUseBrowser) {
+        prototypeBuildRun.skipVisualReview();
+        return;
+      }
+
+      let preCaptured: Awaited<ReturnType<PrototypeScreenshotter['captureScreen']>> = null;
+      if (!hasWarmup) {
+        resetIdleTimer();
+        preCaptured = await screenshotter
+          .captureScreen({
+            documentHtml: prototypeTurnDraft.workingHtml,
+            screenId: sid,
+            signal: controller.signal,
+          })
+          .catch(() => null);
+        if (!preCaptured) {
+          if (!controller.signal.aborted) prototypeBuildRun.skipVisualReview();
+          return;
+        }
+      }
+
+      if (!prototypeBuildRun.beginScreenReview(sid)) return;
+
+      try {
+        resetIdleTimer();
+        const capture =
+          preCaptured ??
+          (await screenshotter
+            .captureScreen({
+              documentHtml: prototypeTurnDraft.workingHtml,
+              screenId: sid,
+              signal: controller.signal,
+            })
+            .catch(() => null));
+        if (!capture || controller.signal.aborted) return;
+
+        const slice = splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find((s) => s.screenId === sid);
+        if (!slice) return;
+        const planEntry = prototypeBuildRun.plannedScreens()?.find((p) => p.screenId === sid);
+        const screenLabel = planEntry?.screenName ?? slice.screenName;
+        const reviewPrompt = buildPrototypeScreenReviewPrompt({
+          locale: effectiveLocale,
+          screenId: sid,
+          screenName: screenLabel,
+          ...(planEntry?.purpose ? { purpose: planEntry.purpose } : {}),
+          screenHtml: slice.html,
+        });
+        // Screenshot image travels ONLY on this transient review turn — never stored in 界面原型.html or SQLite.
+        const reviewMessages: Message[] = [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: reviewPrompt },
+              { type: 'image', mimeType: capture.mimeType, data: capture.dataBase64 },
+            ],
+            timestamp: Date.now(),
+          },
+        ];
+        const reviewTools = baseSpecialistTools.filter(
+          (t) =>
+            t.name === REPORT_REVIEW_TOOL_NAME ||
+            t.name === EDIT_SCREEN_TOOL_NAME ||
+            t.name === 'read_prototype_anchor',
+        );
+        let expectedEdits = 1;
+        let editsAppliedInSubturn = 0;
+        let maxReviewSteps = 4;
+        const reviewSystemPrompt = prototypeScreenReviewSystemPrompt(effectiveLocale);
+        const reviewMaxTokens = Math.min(resolvedMaxTokens, 4096);
+        const reviewParentCallId = parentCallId ?? currentModelCallId;
+        for (let rStep = 0; rStep < maxReviewSteps; rStep += 1) {
+          if (controller.signal.aborted) break;
+          resetIdleTimer();
+          const revStream = recordModelCallStream(
+            built!.models.streamSimple(
+              built!.selectedModel,
+              {
+                systemPrompt: reviewSystemPrompt,
+                messages: reviewMessages,
+                tools: reviewTools,
+              },
+              {
+                signal: controller.signal,
+                timeoutMs: stepTimeoutMs,
+                temperature: 0.1,
+                maxTokens: reviewMaxTokens,
+              },
+            ),
+            {
+              store,
+              projectId: sessionState.projectId,
+              sessionId: sessionState.id,
+              runId: turnRunId,
+              purpose: 'SUBAGENT',
+              ...(reviewParentCallId ? { parentCallId: reviewParentCallId } : {}),
+              laneLabel: {
+                zh: screenLabel ? `视觉检查 · ${screenLabel}` : '视觉检查',
+                en: screenLabel ? `Visual review · ${screenLabel}` : 'Visual review',
+              },
+              simulated: built!.isMock,
+              providerLabel: built!.providerLabel,
+              model: built!.selectedModel,
+              maxOutputTokens: reviewMaxTokens,
+              systemPrompt: reviewSystemPrompt,
+              tools: reviewTools,
+              messages: reviewMessages,
+            },
+          );
+          let revMsg: AssistantMessage | undefined;
+          const announcedIds = new Set<string>();
+          for await (const ev of revStream) {
+            if (ev.type !== 'error') resetIdleTimer();
+            if (ev.type === 'toolcall_delta') {
+              const partial = ev.partial.content[ev.contentIndex];
+              if (partial?.type === 'toolCall' && partial.name === EDIT_SCREEN_TOOL_NAME) {
+                const pArgs = (partial.arguments ?? {}) as Record<string, unknown>;
+                const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
+                if (!pSid || pSid === sid) {
+                  prototypeBuildRun.observeEditScreenStream({ ...pArgs, screenId: sid });
+                }
+              }
+            }
+            if (ev.type === 'toolcall_start' || ev.type === 'toolcall_delta' || ev.type === 'toolcall_end') {
+              const cand = ev.type === 'toolcall_end' ? ev.toolCall : ev.partial.content[ev.contentIndex];
+              if (cand && cand.type === 'toolCall' && cand.id && cand.name && !announcedIds.has(cand.id)) {
+                announcedIds.add(cand.id);
+                const cArgs = (cand.arguments ?? {}) as Record<string, unknown>;
+                const cAnchor = extractTargetAnchorFromArgs(cand.name, cArgs) ?? {
+                  screenId: sid,
+                  ...(screenLabel ? { label: screenLabel } : {}),
+                };
+                emit({
+                  id: nextEventId(),
+                  event: 'tool_call',
+                  data: {
+                    id: cand.id,
+                    toolName: cand.name,
+                    arguments: cArgs,
+                    targetAnchor: cAnchor,
+                    step: stepNum,
+                  },
+                });
+              }
+            } else if (ev.type === 'done') {
+              revMsg = ev.message;
+            } else if (ev.type === 'error') {
+              break;
+            }
+          }
+          if (!revMsg || revMsg.stopReason === 'error' || revMsg.errorMessage) break;
+          reviewMessages.push(revMsg);
+
+          const revCalls = revMsg.content.filter((b): b is ToolCall => b.type === 'toolCall');
+          if (revCalls.length === 0) break;
+
+          let finishedReviewRound = false;
+          for (const rtc of revCalls) {
+            if (controller.signal.aborted) break;
+            resetIdleTimer();
+            const rawCallArgs = (rtc.arguments ?? {}) as Record<string, unknown>;
+            const requestedSid = typeof rawCallArgs.screenId === 'string' ? rawCallArgs.screenId.trim() : '';
+            if (requestedSid && requestedSid !== sid) {
+              // Block cross-screen mutation/inspection during `sid`'s review round (#93).
+              const scopeDiagnostic = pickLocaleText(
+                effectiveLocale,
+                `当前正在检查分屏「${screenLabel || sid}」(${sid})，严禁在检查回合中访问或修改其他分屏 (${requestedSid})。`,
+                `Currently reviewing screen "${screenLabel || sid}" (${sid}); accessing or modifying another screen (${requestedSid}) is forbidden.`,
+              );
+              if (!announcedIds.has(rtc.id)) {
+                announcedIds.add(rtc.id);
+                emit({
+                  id: nextEventId(),
+                  event: 'tool_call',
+                  data: {
+                    id: rtc.id,
+                    toolName: rtc.name,
+                    arguments: rawCallArgs,
+                    targetAnchor: { screenId: sid, ...(screenLabel ? { label: screenLabel } : {}) },
+                    step: stepNum,
+                  },
+                });
+              }
+              const rejectedTrace: AgentToolCallTrace = {
+                id: rtc.id,
+                toolName: rtc.name,
+                arguments: rawCallArgs,
+                output: scopeDiagnostic,
+                isError: true,
+                targetAnchor: { screenId: sid, ...(screenLabel ? { label: screenLabel } : {}) },
+                durationMs: 0,
+              };
+              const rejectedContent = JSON.stringify({
+                status: 'REJECTED_OUT_OF_SCOPE',
+                diagnostic: scopeDiagnostic,
+              });
+              allToolTraces.push(rejectedTrace);
+              emit({
+                id: nextEventId(),
+                event: 'tool_result',
+                data: { trace: rejectedTrace, step: stepNum },
+              });
+              reviewMessages.push({
+                role: 'toolResult',
+                toolCallId: rtc.id,
+                toolName: rtc.name,
+                content: [{ type: 'text', text: rejectedContent }],
+                isError: true,
+                timestamp: Date.now(),
+              });
+              continue;
+            }
+
+            // Force `screenId: sid` AFTER spreading so `sid` is authoritative.
+            const rArgs: Record<string, unknown> = {
+              ...rawCallArgs,
+              screenId: sid,
+            };
+            if (!announcedIds.has(rtc.id)) {
+              announcedIds.add(rtc.id);
+              const rAnchor = extractTargetAnchorFromArgs(rtc.name, rArgs) ?? {
+                screenId: sid,
+                ...(screenLabel ? { label: screenLabel } : {}),
+              };
+              emit({
+                id: nextEventId(),
+                event: 'tool_call',
+                data: {
+                  id: rtc.id,
+                  toolName: rtc.name,
+                  arguments: rArgs,
+                  targetAnchor: rAnchor,
+                  step: stepNum,
+                },
+              });
+            }
+            const revExec: ExecutedToolStep =
+              rtc.name === REPORT_REVIEW_TOOL_NAME
+                ? runReportReviewTool(rtc.id, rArgs)
+                : rtc.name === EDIT_SCREEN_TOOL_NAME
+                  ? runEditScreenTool(rtc.id, rArgs)
+                  : await executeUnifiedToolCall(
+                      store,
+                      sessionState,
+                      { ...rtc, arguments: rArgs as JsonObject },
+                      false,
+                      effectiveLocale,
+                      prototypeTurnDraft,
+                      { isMock: built!.isMock, runId: turnRunId },
+                    );
+            allToolTraces.push(revExec.trace);
+            emit({
+              id: nextEventId(),
+              event: 'tool_result',
+              data: { trace: revExec.trace, step: stepNum },
+            });
+            reviewMessages.push({
+              role: 'toolResult',
+              toolCallId: rtc.id,
+              toolName: rtc.name,
+              content: [{ type: 'text', text: revExec.toolResultContent }],
+              isError: revExec.isError,
+              timestamp: Date.now(),
+            });
+            if (rtc.name === REPORT_REVIEW_TOOL_NAME && !revExec.isError) {
+              try {
+                const parsed = JSON.parse(revExec.toolResultContent) as {
+                  status?: string;
+                  findings?: unknown[];
+                };
+                if (parsed.status === 'PASS') {
+                  finishedReviewRound = true;
+                } else if (Array.isArray(parsed.findings) && parsed.findings.length > 0) {
+                  expectedEdits = parsed.findings.length;
+                  maxReviewSteps = Math.min(8, Math.max(4, expectedEdits + 3));
+                }
+              } catch {
+                // ignore
+              }
+            }
+            if (rtc.name === EDIT_SCREEN_TOOL_NAME && !revExec.isError) {
+              editsAppliedInSubturn += 1;
+              if (editsAppliedInSubturn >= expectedEdits) {
+                finishedReviewRound = true;
+              }
+            }
+          }
+          if (finishedReviewRound) break;
+        }
+      } finally {
+        prototypeBuildRun.completeScreenReview(sid);
+      }
+    };
+
+    const enqueueScreenForVisualReview = (
+      screenId: string,
+      stepNum: number,
+      parentCallId?: string,
+    ): void => {
+      activeReviewChain = activeReviewChain.then(
+        () => runScreenVisualReview(screenId, stepNum, parentCallId),
+        () => runScreenVisualReview(screenId, stepNum, parentCallId),
+      );
     };
 
     const runSpawnSubagentsTool = async (
@@ -5165,8 +6185,9 @@ async function executeUnifiedTurnCore(
           ...(typeof item.screenType === 'string' ? { screenType: item.screenType } : {}),
         }))
         .filter((t) => Boolean(t.title && t.instruction));
+      const orderedTasks = prototypeBuildRun ? prototypeBuildRun.prepareDispatch(parsedTasks) : parsedTasks;
 
-      if (parsedTasks.length === 0) {
+      if (orderedTasks.length === 0) {
         const msg = pickLocaleText(
           effectiveLocale,
           'spawn_subagents 需要提供非空的 tasks 子任务数组。',
@@ -5186,26 +6207,71 @@ async function executeUnifiedTurnCore(
         };
       }
 
+      // A prototype's screen helpers get their own instructions, not the lead's (#91).
+      const isPrototypeBuild = sessionState.agentKind === 'PROTOTYPE_CO_DESIGN' && Boolean(prototypeTurnDraft);
       const subPromptMarks: PromptMark[] = [];
-      const subBaseSystemPrompt = buildSystemPromptForSession(
-        store,
-        sessionState,
-        input.activeModelCode,
-        effectiveLocale,
-        { marks: subPromptMarks },
-      );
+      const subBaseSystemPrompt = isPrototypeBuild
+        ? screenHelperSystemPrompt(effectiveLocale)
+        : buildSystemPromptForSession(
+            store,
+            sessionState,
+            input.activeModelCode,
+            effectiveLocale,
+            { marks: subPromptMarks },
+          );
       const spawningCallId = currentModelCallId;
+      const confirmedRequirements = isPrototypeBuild
+        ? store.getProjectStepConfirmations(sessionState.projectId).requirements
+        : undefined;
+      const styleForHelpers = isPrototypeBuild ? helperStyle() : null;
+      // Helpers always see the brief's Visual References, whichever run this is (P5).
+      if (isPrototypeBuild && !helperReferencesFromBrief) {
+        helperReferencesFromBrief = true;
+        const fromBrief = briefReferenceImages(buildDesignBrief, effectiveLocale).filter(
+          (img) => !helperReferenceIds.has(img.id),
+        );
+        if (fromBrief.length > 0) {
+          if (built!.visionSupported) {
+            const resolved = await resolveTransientImagesForVisionTurn(fromBrief, effectiveLocale, built!.isMock);
+            helperReferenceImages = [...helperReferenceImages, ...resolved.imageBlocks];
+            helperReferenceLines = [...helperReferenceLines, ...resolved.manifestLines, ...resolved.fallbackNotes];
+          } else {
+            helperReferenceLines = [
+              ...helperReferenceLines,
+              ...fromBrief.map((img, idx) => `- [${idx + 1}] ${img.name}: ${img.textFallbackNote}`),
+            ];
+          }
+        }
+      }
+      const planForHelpers = isPrototypeBuild ? helperPlan() : [];
 
       const batchStartIdx = allSubagentLanes.length;
       const parallelRes = await runParallelSubagents({
-        tasks: parsedTasks,
+        tasks: orderedTasks,
         concurrency: effectiveConcurrency,
         locale: effectiveLocale,
-        isMock: built!.isMock,
         models: built!.models,
         selectedModel: built!.selectedModel,
         baseSystemPrompt: subBaseSystemPrompt,
-        subagentTools: baseSpecialistTools,
+        subagentTools: isPrototypeBuild ? screenHelperTools(baseSpecialistTools) : baseSpecialistTools,
+        requireScreen: isPrototypeBuild,
+        ...(isPrototypeBuild
+          ? {
+              screenContext: (spec: SubagentTaskSpec) =>
+                buildScreenHelperContext({
+                  locale: effectiveLocale,
+                  screenId: spec.screenId?.trim() ?? '',
+                  plan: planForHelpers,
+                  style: styleForHelpers,
+                  designBrief: buildDesignBrief ?? null,
+                  requirements: confirmedRequirements
+                    ? { title: confirmedRequirements.title, content: confirmedRequirements.content }
+                    : null,
+                  referenceLines: helperReferenceLines,
+                }),
+              contextImages: helperReferenceImages,
+            }
+          : {}),
         signal: controller.signal,
         stepTimeoutMs,
         maxTokens: resolvedMaxTokens,
@@ -5230,6 +6296,7 @@ async function executeUnifiedTurnCore(
           }),
         onLaneUpdate: (lane, batchLanes) => {
           allSubagentLanes.splice(batchStartIdx, batchLanes.length, ...batchLanes);
+          prototypeBuildRun?.observeLane(lane);
           emit({
             id: nextEventId(),
             event: 'subagent_update',
@@ -5239,13 +6306,19 @@ async function executeUnifiedTurnCore(
               lanes: [...allSubagentLanes],
             },
           });
+          if (
+            isPrototypeBuild &&
+            lane.status === 'DONE' &&
+            lane.wroteScreen &&
+            lane.targetAnchor?.screenId &&
+            prototypeBuildRun?.canReviewScreen(lane.targetAnchor.screenId)
+          ) {
+            enqueueScreenForVisualReview(lane.targetAnchor.screenId, stepNum, spawningCallId);
+          }
         },
-        onPartialScreenStream: (partial, lane) => {
-          livePartialScreens.set(partial.screenId, partial);
-          emitPrototypePreviewIfChanged(
-            lane.targetAnchor ?? { screenId: partial.screenId, label: partial.screenName },
-            { throttled: true },
-          );
+        onPartialScreenStream: (partial) => {
+          streamPartialPrototypeScreen(partial);
+          prototypeBuildRun?.observeScreenStream(partial.screenId, partial.partialScreenHtml);
         },
         executeSubagentToolCall: async (subTc, lane, subHadErr) => {
           resetIdleTimer();
@@ -5262,10 +6335,13 @@ async function executeUnifiedTurnCore(
               step: stepNum,
             },
           });
-          const subExec = await executeUnifiedToolCall(
+          const ownScreenId = lane.targetAnchor?.screenId?.trim();
+          const htmlBefore = prototypeTurnDraft?.workingHtml ?? '';
+          const anchorsBefore = prototypeTurnDraft ? [...prototypeTurnDraft.modifiedAnchors] : [];
+          let subExec = await executeUnifiedToolCall(
             store,
             sessionState,
-            subTc,
+            alignShellWithPlan(subTc),
             subHadErr,
             effectiveLocale,
             prototypeTurnDraft,
@@ -5275,12 +6351,55 @@ async function executeUnifiedTurnCore(
               ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
             },
           );
-          if (!subExec.isError && subTc.name === 'upsert_prototype_screen') {
-            const finishedSid =
-              (typeof subArgs.screenId === 'string' && subArgs.screenId.trim()) ||
-              lane.targetAnchor?.screenId;
-            if (finishedSid) {
-              livePartialScreens.delete(finishedSid);
+          // A screen helper's write may only change its own screen: anything else is undone.
+          if (isPrototypeBuild && ownScreenId && prototypeTurnDraft && !subExec.isError) {
+            const kept = keepWithinOwnScreen(htmlBefore, prototypeTurnDraft.workingHtml, ownScreenId, effectiveLocale);
+            prototypeTurnDraft.workingHtml = kept.html;
+            const diagnostic = kept.diagnostic;
+            if (diagnostic) {
+              prototypeTurnDraft.modifiedAnchors = anchorsBefore;
+              subExec = {
+                ...subExec,
+                trace: { ...subExec.trace, output: diagnostic, isError: true },
+                toolResultContent: JSON.stringify({ status: 'REJECTED_OUT_OF_SCOPE', diagnostic }),
+                isError: true,
+              };
+            } else if (subTc.name === 'edit_prototype_anchor') {
+              const checked = validatePrototypeScreenControls(
+                prototypeTurnDraft.workingHtml,
+                ownScreenId,
+                effectiveLocale,
+              );
+              if (!checked.ok) {
+                prototypeTurnDraft.workingHtml = htmlBefore;
+                prototypeTurnDraft.modifiedAnchors = anchorsBefore;
+                subExec = {
+                  ...subExec,
+                  trace: { ...subExec.trace, output: checked.diagnostic, isError: true },
+                  toolResultContent: JSON.stringify({
+                    status: 'REJECTED_BY_ANCHOR_VALIDATOR',
+                    diagnostic: checked.diagnostic,
+                  }),
+                  isError: true,
+                };
+              } else {
+                prototypeTurnDraft.workingHtml = checked.nextHtml;
+              }
+            }
+          }
+          if (subTc.name === 'upsert_prototype_screen' || subTc.name === 'edit_prototype_anchor') {
+            const writtenSid =
+              (typeof subArgs.screenId === 'string' && subArgs.screenId.trim()) || ownScreenId;
+            if (subTc.name === 'upsert_prototype_screen') {
+              endPartialPrototypeScreen(writtenSid);
+            }
+            if (!subExec.isError && writtenSid) {
+              const landedHtml =
+                (prototypeTurnDraft
+                  ? splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find((s) => s.screenId === writtenSid)
+                      ?.html
+                  : undefined) ?? (typeof subArgs.screenHtml === 'string' ? subArgs.screenHtml : '');
+              if (landedHtml) prototypeBuildRun?.observeScreenWritten(writtenSid, landedHtml);
             }
           }
           allToolTraces.push(subExec.trace);
@@ -5292,7 +6411,7 @@ async function executeUnifiedTurnCore(
               step: stepNum,
             },
           });
-          emitPrototypePreviewIfChanged(subExec.trace.targetAnchor ?? subAnchor);
+          syncPrototypeLiveDocument();
           if (subExec.artifact) {
             allArtifacts.push(subExec.artifact);
             emit({
@@ -5309,6 +6428,12 @@ async function executeUnifiedTurnCore(
       });
 
 
+      if (isPrototypeBuild) {
+        prototypeBuildRun?.finishScreensPhase();
+        await activeReviewChain;
+        prototypeBuildRun?.finishReviewPhase();
+      }
+
       return {
         trace: {
           id: parentCallId,
@@ -5321,6 +6446,17 @@ async function executeUnifiedTurnCore(
         toolResultContent: JSON.stringify({
           status: parallelRes.allSucceeded ? 'OK' : 'PARTIAL_FAILURE',
           summary: parallelRes.summaryText,
+          // Each screen's own check result (#91): written and passed, or why not.
+          ...(parallelRes.screenResults.length > 0
+            ? {
+                screens: parallelRes.screenResults.map((r) => ({
+                  ...r,
+                  ...(r.check === 'passed' && prototypeBuildRun
+                    ? { elementsWritten: prototypeBuildRun.writtenElements(r.screenId) }
+                    : {}),
+                })),
+              }
+            : {}),
           lanes: parallelRes.lanes.map((l) => ({
             title: l.taskTitle.zh,
             status: l.status,
@@ -5332,496 +6468,596 @@ async function executeUnifiedTurnCore(
       };
     };
 
-    const MAX_TOOL_ROUNDS = 24;
-    for (let step = 0; step < MAX_TOOL_ROUNDS; step += 1) {
-      if (controller.signal.aborted) {
-        throw toAbortedError();
-      }
-      resetIdleTimer();
-
-      const promptMarks: PromptMark[] = [];
-      const systemPrompt = buildSystemPromptForSession(
-        store,
-        sessionState,
-        input.activeModelCode,
-        effectiveLocale,
-        {
-          codeMode: effectiveCodeMode,
-          multiAgentConcurrency: effectiveConcurrency,
-          offeredTools: tools,
-          marks: promptMarks,
-        },
-      );
-      const context: Context = {
-        systemPrompt,
-        messages: piMessages,
-        tools,
-      };
-
-      const modelCallId = newModelCallId();
-      currentModelCallId = modelCallId;
-      const eventStream = recordModelCallStream(
-        built.models.streamSimple(built.selectedModel, context, {
-          signal: controller.signal,
-          timeoutMs: stepTimeoutMs,
-          temperature: 0.2,
-          maxTokens: resolvedMaxTokens,
-        }),
-        {
-          store,
-          projectId: sessionState.projectId,
-          sessionId: sessionState.id,
-          runId: turnRunId,
-          purpose: 'TURN',
-          simulated: built.isMock,
-          providerLabel: built.providerLabel,
-          model: built.selectedModel,
-          maxOutputTokens: resolvedMaxTokens,
-          systemPrompt,
-          promptMarks,
-          tools,
-          messages: piMessages,
-          sessionMessageIds: history.sessionMessageIds,
-          excluded: history.excluded,
-          callId: modelCallId,
-        },
-      );
-
-      let finalMessage: AssistantMessage | undefined;
-      const announcedToolCallIds = new Set<string>();
-      let lastToolDeltaEmitMs = 0;
-      const stepStreamStartMs = Date.now();
-      let stepSawThinking = false;
-      let stepThinkingEndedMs: number | undefined;
-
-      try {
-        for await (const ev of eventStream) {
-          if (ev.type !== 'error') {
-            resetIdleTimer();
-          }
-
-          if (ev.type === 'thinking_delta') {
-            stepSawThinking = true;
-            accumulatedThinking += ev.delta;
-            emit({
-              id: nextEventId(),
-              event: 'thinking_delta',
-              data: { step: step + 1, delta: ev.delta },
-            });
-          } else {
-            if (stepSawThinking && stepThinkingEndedMs === undefined) {
-              stepThinkingEndedMs = Date.now();
-            }
-            if (ev.type === 'text_delta') {
-              accumulatedText += ev.delta;
-              emit({
-                id: nextEventId(),
-                event: 'delta',
-                data: { step: step + 1, text: ev.delta },
-              });
-            } else if (
-              ev.type === 'toolcall_start' ||
-              ev.type === 'toolcall_delta' ||
-              ev.type === 'toolcall_end'
-            ) {
-              if (ev.type === 'toolcall_delta') {
-                streamedToolArgChars += ev.delta.length;
-                const nowMs = Date.now();
-                const partialCall = ev.partial.content[ev.contentIndex];
-                if (
-                  partialCall?.type === 'toolCall' &&
-                  partialCall.name === 'upsert_prototype_screen' &&
-                  prototypeTurnDraft
-                ) {
-                  const pArgs = (partialCall.arguments ?? {}) as Record<string, unknown>;
-                  const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
-                  const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
-                  if (pSid && pHtml.length >= 24) {
-                    livePartialScreens.set(pSid, {
-                      screenId: pSid,
-                      ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
-                      ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
-                      partialScreenHtml: pHtml,
-                      ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
-                    });
-                    emitPrototypePreviewIfChanged(
-                      {
-                        screenId: pSid,
-                        ...(typeof pArgs.screenName === 'string' ? { label: pArgs.screenName } : {}),
-                      },
-                      { throttled: true },
-                    );
-                  }
-                }
-                if (nowMs - lastToolDeltaEmitMs >= 250) {
-                  lastToolDeltaEmitMs = nowMs;
-                  emit({
-                    id: nextEventId(),
-                    event: 'tool_delta',
-                    data: {
-                      step: step + 1,
-                      toolName: partialCall?.type === 'toolCall' ? partialCall.name : undefined,
-                      streamedChars: streamedToolArgChars,
-                    },
-                  });
-                }
-              }
-              const candidate =
-                ev.type === 'toolcall_end'
-                  ? ev.toolCall
-                  : ev.partial.content[ev.contentIndex];
-              if (
-                candidate &&
-                candidate.type === 'toolCall' &&
-                candidate.id &&
-                candidate.name &&
-                !announcedToolCallIds.has(candidate.id)
-              ) {
-                announcedToolCallIds.add(candidate.id);
-                const candidateArgs = (candidate.arguments ?? {}) as Record<string, unknown>;
-                const candidateAnchor = extractTargetAnchorFromArgs(candidate.name, candidateArgs);
-                emit({
-                  id: nextEventId(),
-                  event: 'tool_call',
-                  data: {
-                    id: candidate.id,
-                    toolName: candidate.name,
-                    arguments: candidateArgs,
-                    ...(candidateAnchor ? { targetAnchor: candidateAnchor } : {}),
-                    step: step + 1,
-                  },
-                });
-              }
-            } else if (ev.type === 'done') {
-              finalMessage = ev.message;
-            } else if (ev.type === 'error') {
-              if (controller.signal.aborted) {
-                throw toAbortedError();
-              }
-              const errText =
-                ev.error.errorMessage ||
-                pickLocaleText(
-                  effectiveLocale,
-                  `网关流式请求失败 (reason=${ev.reason})`,
-                  `Gateway streaming request failed (reason=${ev.reason})`,
-                );
-              const isStepTimeout =
-                !/connect\s*timeout|connection\s*error/i.test(errText) &&
-                (ev.reason === 'aborted' ||
-                  (/timed?\s*out|timeout/i.test(errText) &&
-                    Date.now() - turnStartMs >= Math.min(idleTimeoutMs, stepTimeoutMs) * 0.5));
-              if (isStepTimeout) {
-                throw new SessionStreamAbortedError(
-                  'IDLE_TIMEOUT',
-                  pickLocaleText(
-                    effectiveLocale,
-                    `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
-                    `LLM single-step inference timed out (exceeded ${Math.round(stepTimeoutMs / 1000)}s)`,
-                  ),
-                );
-              }
-              throw new LlmGatewayError({
-                message: errText,
-                providerName: built.providerConfig?.name ?? built.providerLabel,
-                baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
-                model: built.selectedModel.id,
-                locale: effectiveLocale,
-              });
-            }
-          }
-        }
-      } finally {
-        if (stepSawThinking) {
-          const endMs = stepThinkingEndedMs ?? Date.now();
-          accumulatedThinkingDurationMs += Math.max(1, endMs - stepStreamStartMs);
-        }
-      }
-
-      if (!finalMessage) {
-        break;
-      }
-
-      if (finalMessage.stopReason === 'error' || finalMessage.errorMessage) {
-        if (controller.signal.aborted) {
-          throw toAbortedError();
-        }
-        throw new LlmGatewayError({
-          message:
-            finalMessage.errorMessage ||
-            pickLocaleText(
+    const runPlanScreensTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
+      const started = Date.now();
+      const result = prototypeBuildRun
+        ? prototypeBuildRun.commitPlan(rawArgs)
+        : (() => {
+            const msg = pickLocaleText(
               effectiveLocale,
-              '上游模型网关返回错误响应',
-              'Upstream LLM gateway returned an error response',
-            ),
-          providerName: built.providerConfig?.name ?? built.providerLabel,
-          baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
-          model: built.selectedModel.id,
-          locale: effectiveLocale,
-        });
+              'plan_screens 只在生成原型时可用。',
+              'plan_screens is only available while building a prototype.',
+            );
+            return { isError: true, content: JSON.stringify({ status: 'ERROR', diagnostic: msg }), summary: msg };
+          })();
+      return {
+        trace: {
+          id: callId,
+          toolName: PLAN_SCREENS_TOOL_NAME,
+          arguments: rawArgs,
+          output: result.summary,
+          isError: result.isError,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: result.content,
+        isError: result.isError,
+      };
+    };
+
+    const runWriteDemoToursTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
+      const started = Date.now();
+      const finishToursCall = (
+        output: string,
+        payload: Record<string, unknown>,
+        isError: boolean,
+      ): ExecutedToolStep => ({
+        trace: {
+          id: callId,
+          toolName: WRITE_DEMO_TOURS_TOOL_NAME,
+          arguments: rawArgs,
+          output,
+          isError,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify(payload),
+        isError,
+      });
+
+      const activeHtml =
+        prototypeTurnDraft?.workingHtml ?? resolveTargetPrototypeForSession(store, sessionState)?.htmlContent;
+      if (!activeHtml?.trim()) {
+        const msg = pickLocaleText(
+          effectiveLocale,
+          '请先写出原型分屏后，再调用 write_demo_tours 编写演示路线。',
+          'Draw the prototype screens before calling write_demo_tours.',
+        );
+        prototypeBuildRun?.commitTours({ ok: false });
+        return finishToursCall(msg, { status: 'ERROR', diagnostic: msg }, true);
       }
 
-      piMessages.push(finalMessage);
+      const rawSerialized = JSON.stringify(rawArgs.tours ?? '');
+      if (FORBIDDEN_DIALOG_RE.test(rawSerialized)) {
+        const dialogMsg = pickLocaleText(
+          effectiveLocale,
+          '演示路线中禁止包含 window.alert / confirm / prompt。',
+          'Demo tours must not contain window.alert / confirm / prompt.',
+        );
+        prototypeBuildRun?.commitTours({ ok: false }, activeHtml);
+        return finishToursCall(dialogMsg, { status: 'ERROR', diagnostic: dialogMsg }, true);
+      }
 
-      const toolCalls = finalMessage.content.filter(
-        (block): block is ToolCall => block.type === 'toolCall',
+      const validation = validatePrototypeDemoTours(activeHtml, rawArgs.tours, {
+        minTours: 2,
+        maxTours: 4,
+        locale: effectiveLocale,
+      });
+      if (!validation.ok) {
+        const diagnostic = validation.issues.map((i) => i.message).join(' ');
+        prototypeBuildRun?.commitTours({ ok: false }, activeHtml);
+        return finishToursCall(
+          diagnostic,
+          {
+            status: 'REJECTED_BY_TOUR_VALIDATOR',
+            diagnostic,
+            issues: validation.issues,
+            availableScreenIds: validation.availableScreenIds,
+            availableElementsByScreen: validation.availableElementsByScreen,
+          },
+          true,
+        );
+      }
+
+      const nextHtml = writePrototypeDemoTours(activeHtml, validation.tours);
+      if (prototypeTurnDraft) {
+        prototypeTurnDraft.workingHtml = nextHtml;
+      }
+      syncPrototypeLiveDocument();
+      prototypeBuildRun?.commitTours({ ok: true, count: validation.tours.length }, nextHtml);
+
+      const summary = pickLocaleText(
+        effectiveLocale,
+        `演示路线已就绪：共 ${validation.tours.length} 条（${validation.tours.map((t) => `「${t.goal}」`).join('、')}）。`,
+        `Demo tours ready: ${validation.tours.length} tours (${validation.tours.map((t) => `"${t.goal}"`).join(', ')}).`,
       );
+      return finishToursCall(
+        summary,
+        {
+          status: 'OK',
+          summary,
+          toursCount: validation.tours.length,
+          tours: validation.tours.map((t) => ({ id: t.id, goal: t.goal, stepCount: t.steps.length })),
+        },
+        false,
+      );
+    };
 
-      if (toolCalls.length === 0) {
-        break;
-      }
+    const runLeadPrototypeTool = (
+      callId: string,
+      toolName: string,
+      toolArgs: Record<string, unknown>,
+      currentStep: number,
+    ): Promise<ExecutedToolStep> | ExecutedToolStep | null => {
+      if (toolName === 'spawn_subagents') return runSpawnSubagentsTool(callId, toolArgs, currentStep);
+      if (toolName === PLAN_SCREENS_TOOL_NAME) return runPlanScreensTool(callId, toolArgs);
+      if (toolName === DEFINE_STYLE_TOOL_NAME) return runDefineStyleTool(callId, toolArgs);
+      if (toolName === REPORT_REVIEW_TOOL_NAME) return runReportReviewTool(callId, toolArgs);
+      if (toolName === EDIT_SCREEN_TOOL_NAME) return runEditScreenTool(callId, toolArgs);
+      if (toolName === WRITE_DEMO_TOURS_TOOL_NAME) return runWriteDemoToursTool(callId, toolArgs);
+      return null;
+    };
 
-      const toolRoundStartMs = Date.now();
-      try {
-        for (const tc of toolCalls) {
+    try {
+      const MAX_TOOL_ROUNDS = 24;
+      for (let step = 0; step < MAX_TOOL_ROUNDS; step += 1) {
         if (controller.signal.aborted) {
           throw toAbortedError();
         }
         resetIdleTimer();
-        const tcArgs = (tc.arguments ?? {}) as Record<string, unknown>;
-        const tcAnchor = extractTargetAnchorFromArgs(tc.name, tcArgs);
-        emit({
-          id: nextEventId(),
-          event: 'tool_call',
-          data: {
-            id: tc.id,
-            toolName: tc.name,
-            arguments: tcArgs,
-            ...(tcAnchor ? { targetAnchor: tcAnchor } : {}),
-            step: step + 1,
+
+        // 「继续这一屏」: redo exactly one planned screen with one helper; the lead does not run,
+        // not even when the screen cannot be found (then nothing is changed and the user is told).
+        if (step === 0 && resumeScreenAction && prototypeBuildRun) {
+          const beforeHtml = prototypeTurnDraft?.workingHtml ?? '';
+          const planned = prototypeBuildRun.resumeScreen(resumeScreenAction.screenId, beforeHtml);
+          if (!planned) {
+            accumulatedText = pickLocaleText(
+              effectiveLocale,
+              '找不到要继续的这一屏（它可能已经被删掉或改了名），这次没有做任何改动。',
+              'The screen to continue could not be found (it may have been removed or renamed); nothing was changed.',
+            );
+            emit({ id: nextEventId(), event: 'delta', data: { step: 1, text: accumulatedText } });
+            break;
+          }
+          const resumeCallId = `tc-resume-${Date.now().toString(36)}`;
+          const resumeArgs = {
+            tasks: [
+              {
+                title: planned.screenName,
+                screenId: planned.screenId,
+                screenName: planned.screenName,
+                ...(planned.screenType ? { screenType: planned.screenType } : {}),
+                instruction: planned.purpose || planned.screenName,
+              },
+            ],
+          };
+          emit({
+            id: nextEventId(),
+            event: 'tool_call',
+            data: { id: resumeCallId, toolName: 'spawn_subagents', arguments: resumeArgs, step: 1 },
+          });
+          const resumed = await runSpawnSubagentsTool(resumeCallId, resumeArgs, 1);
+          allToolTraces.push(resumed.trace);
+          emit({ id: nextEventId(), event: 'tool_result', data: { trace: resumed.trace, step: 1 } });
+          syncPrototypeLiveDocument();
+          // Say what really changed besides this screen, by comparing the document before and after.
+          const otherChanged = screensChangedOutside(beforeHtml, prototypeTurnDraft?.workingHtml ?? '', planned.screenId);
+          const othersText =
+            otherChanged.length === 0
+              ? pickLocaleText(effectiveLocale, '其他屏没有改动。', 'The other screens are unchanged.')
+              : pickLocaleText(
+                  effectiveLocale,
+                  `另外改动了：${otherChanged.map((n) => `「${n}」`).join('、')}。`,
+                  `Also changed: ${otherChanged.map((n) => `"${n}"`).join(', ')}.`,
+                );
+          accumulatedText = resumed.isError
+            ? pickLocaleText(
+                effectiveLocale,
+                `「${planned.screenName}」这次还是没画完，可以在画布上再继续一次。${othersText}`,
+                `"${planned.screenName}" is still not finished; you can continue it again on the canvas. ${othersText}`,
+              )
+            : pickLocaleText(
+                effectiveLocale,
+                `「${planned.screenName}」画好了。${othersText}`,
+                `"${planned.screenName}" is drawn. ${othersText}`,
+              );
+          emit({ id: nextEventId(), event: 'delta', data: { step: 1, text: accumulatedText } });
+          break;
+        }
+
+        const promptMarks: PromptMark[] = [];
+        const systemPrompt = buildSystemPromptForSession(
+          store,
+          sessionState,
+          input.activeModelCode,
+          effectiveLocale,
+          {
+            multiAgentConcurrency: effectiveConcurrency,
+            offeredTools: tools,
+            lockedStyleValues: prototypeTurnDraft?.lockedStyleValues ?? null,
+            marks: promptMarks,
           },
-        });
+        );
+        const context: Context = {
+          systemPrompt,
+          messages: piMessages,
+          tools,
+        };
 
-        const executed: ExecutedToolStep =
-          tc.name === 'spawn_subagents'
-            ? await runSpawnSubagentsTool(tc.id, tcArgs, step + 1)
-            : tc.name === 'codemode'
-              ? await (async (): Promise<ExecutedToolStep> => {
-                  const startedCm = Date.now();
-                  const scriptCode = String(tcArgs.code ?? '');
-                  if (scriptCode.trim()) {
-                    lastCodeModeScript = scriptCode;
+        const modelCallId = newModelCallId();
+        currentModelCallId = modelCallId;
+        const eventStream = recordModelCallStream(
+          built.models.streamSimple(built.selectedModel, context, {
+            signal: controller.signal,
+            timeoutMs: stepTimeoutMs,
+            temperature: 0.2,
+            maxTokens: resolvedMaxTokens,
+          }),
+          {
+            store,
+            projectId: sessionState.projectId,
+            sessionId: sessionState.id,
+            runId: turnRunId,
+            purpose: 'TURN',
+            simulated: built.isMock,
+            providerLabel: built.providerLabel,
+            model: built.selectedModel,
+            maxOutputTokens: resolvedMaxTokens,
+            systemPrompt,
+            promptMarks,
+            tools,
+            messages: piMessages,
+            sessionMessageIds: history.sessionMessageIds,
+            excluded: history.excluded,
+            callId: modelCallId,
+          },
+        );
+
+        let finalMessage: AssistantMessage | undefined;
+        const announcedToolCallIds = new Set<string>();
+        let lastToolDeltaEmitMs = 0;
+        const stepStreamStartMs = Date.now();
+        let stepSawThinking = false;
+        let stepThinkingEndedMs: number | undefined;
+
+        try {
+          for await (const ev of eventStream) {
+            if (ev.type !== 'error') {
+              resetIdleTimer();
+            }
+
+            if (ev.type === 'thinking_delta') {
+              stepSawThinking = true;
+              accumulatedThinking += ev.delta;
+              emit({
+                id: nextEventId(),
+                event: 'thinking_delta',
+                data: { step: step + 1, delta: ev.delta },
+              });
+            } else {
+              if (stepSawThinking && stepThinkingEndedMs === undefined) {
+                stepThinkingEndedMs = Date.now();
+              }
+              if (ev.type === 'text_delta') {
+                accumulatedText += ev.delta;
+                emit({
+                  id: nextEventId(),
+                  event: 'delta',
+                  data: { step: step + 1, text: ev.delta },
+                });
+              } else if (
+                ev.type === 'toolcall_start' ||
+                ev.type === 'toolcall_delta' ||
+                ev.type === 'toolcall_end'
+              ) {
+                if (ev.type === 'toolcall_delta') {
+                  streamedToolArgChars += ev.delta.length;
+                  const nowMs = Date.now();
+                  const partialCall = ev.partial.content[ev.contentIndex];
+                  if (partialCall?.type === 'toolCall' && partialCall.name === PLAN_SCREENS_TOOL_NAME) {
+                    prototypeBuildRun?.observePlanStream(partialCall.arguments);
                   }
-                  const cmRes = await runCodemodeScript({
-                    code: scriptCode,
-                    callableTools: tools.filter((t) => t.name !== 'codemode'),
-                    signal: controller.signal,
-                    timeoutMs: stepTimeoutMs,
-                    executeNestedTool: async (nestedToolName, nestedArgs, nestedIdx) => {
-                      resetIdleTimer();
-                      const nestedCallId = `${tc.id}/c${nestedIdx}`;
-                      const nestedAnchor = extractTargetAnchorFromArgs(nestedToolName, nestedArgs);
-                      emit({
-                        id: nextEventId(),
-                        event: 'tool_call',
-                        data: {
-                          id: nestedCallId,
-                          toolName: nestedToolName,
-                          arguments: nestedArgs,
-                          ...(nestedAnchor ? { targetAnchor: nestedAnchor } : {}),
-                          step: step + 1,
-                        },
+                  if (partialCall?.type === 'toolCall' && partialCall.name === DEFINE_STYLE_TOOL_NAME) {
+                    streamPrototypeStyle(partialCall.arguments);
+                  }
+                  if (partialCall?.type === 'toolCall' && partialCall.name === EDIT_SCREEN_TOOL_NAME) {
+                    prototypeBuildRun?.observeEditScreenStream(partialCall.arguments);
+                  }
+                  if (partialCall?.type === 'toolCall' && partialCall.name === WRITE_DEMO_TOURS_TOOL_NAME) {
+                    prototypeBuildRun?.observeToursStream(prototypeTurnDraft?.workingHtml);
+                  }
+                  if (
+                    partialCall?.type === 'toolCall' &&
+                    partialCall.name === 'upsert_prototype_screen' &&
+                    prototypeTurnDraft
+                  ) {
+                    const pArgs = (partialCall.arguments ?? {}) as Record<string, unknown>;
+                    const pSid = typeof pArgs.screenId === 'string' ? pArgs.screenId.trim() : '';
+                    const pNote = typeof pArgs.note === 'string' ? pArgs.note.trim() : '';
+                    const pHtml = typeof pArgs.screenHtml === 'string' ? pArgs.screenHtml : '';
+                    if (pSid && shouldStreamPartialScreen(pHtml, pNote)) {
+                      streamPartialPrototypeScreen({
+                        screenId: pSid,
+                        ...(typeof pArgs.screenName === 'string' ? { screenName: pArgs.screenName } : {}),
+                        ...(typeof pArgs.screenType === 'string' ? { screenType: pArgs.screenType } : {}),
+                        ...(pNote ? { note: pNote } : {}),
+                        partialScreenHtml: pHtml,
+                        ...(typeof pArgs.extraCss === 'string' ? { extraCss: pArgs.extraCss } : {}),
                       });
-
-                      const nestedOut =
-                        nestedToolName === 'spawn_subagents'
-                          ? await runSpawnSubagentsTool(nestedCallId, nestedArgs, step + 1)
-                          : await executeUnifiedToolCall(
-                              store,
-                              sessionState,
-                              {
-                                type: 'toolCall',
-                                id: nestedCallId,
-                                name: nestedToolName,
-                                arguments: nestedArgs as JsonObject,
-                              },
-                              hadValidatorError,
-                              effectiveLocale,
-                              prototypeTurnDraft,
-                              {
-                                isMock: built!.isMock,
-                                runId: turnRunId,
-                                ...(structuredTurnAction
-                                  ? { actionParams: structuredTurnAction.params }
-                                  : {}),
-                              },
-                            );
-
-                      if (nestedOut.isError) {
-                        hadValidatorError = true;
-                      }
-                      allToolTraces.push(nestedOut.trace);
-                      emit({
-                        id: nextEventId(),
-                        event: 'tool_result',
-                        data: {
-                          trace: nestedOut.trace,
-                          step: step + 1,
-                        },
-                      });
-                      emitPrototypePreviewIfChanged(nestedOut.trace.targetAnchor ?? nestedAnchor);
-
-                      if (nestedOut.artifact) {
-                        allArtifacts.push(nestedOut.artifact);
-                        emit({
-                          id: nextEventId(),
-                          event: 'artifact',
-                          data: { artifact: nestedOut.artifact },
-                        });
-                      }
-                      if (nestedOut.askUserPrompt) {
-                        pendingAskUser = nestedOut.askUserPrompt;
-                        emit({
-                          id: nextEventId(),
-                          event: 'ask_user',
-                          data: { askUser: nestedOut.askUserPrompt },
-                        });
-                      }
-                      if (nestedOut.stepHandoffProposal) {
-                        pendingStepHandoff = nestedOut.stepHandoffProposal;
-                        emit({
-                          id: nextEventId(),
-                          event: 'step_handoff',
-                          data: { stepHandoff: nestedOut.stepHandoffProposal },
-                        });
-                      }
-
-                      let parsedJson: unknown = nestedOut.toolResultContent;
-                      try {
-                        parsedJson = JSON.parse(nestedOut.toolResultContent);
-                      } catch {
-                        parsedJson = nestedOut.toolResultContent;
-                      }
-                      return {
-                        outputJson: parsedJson,
-                        isError: nestedOut.isError,
-                        ...(nestedOut.isError ? { errorText: nestedOut.trace.output } : {}),
-                      };
+                    }
+                  }
+                  if (nowMs - lastToolDeltaEmitMs >= 250) {
+                    lastToolDeltaEmitMs = nowMs;
+                    emit({
+                      id: nextEventId(),
+                      event: 'tool_delta',
+                      data: {
+                        step: step + 1,
+                        toolName: partialCall?.type === 'toolCall' ? partialCall.name : undefined,
+                        streamedChars: streamedToolArgChars,
+                      },
+                    });
+                  }
+                }
+                const candidate =
+                  ev.type === 'toolcall_end'
+                    ? ev.toolCall
+                    : ev.partial.content[ev.contentIndex];
+                if (
+                  candidate &&
+                  candidate.type === 'toolCall' &&
+                  candidate.id &&
+                  candidate.name &&
+                  !announcedToolCallIds.has(candidate.id)
+                ) {
+                  announcedToolCallIds.add(candidate.id);
+                  const candidateArgs = (candidate.arguments ?? {}) as Record<string, unknown>;
+                  const candidateAnchor = extractTargetAnchorFromArgs(candidate.name, candidateArgs);
+                  emit({
+                    id: nextEventId(),
+                    event: 'tool_call',
+                    data: {
+                      id: candidate.id,
+                      toolName: candidate.name,
+                      arguments: candidateArgs,
+                      ...(candidateAnchor ? { targetAnchor: candidateAnchor } : {}),
+                      step: step + 1,
                     },
                   });
-
-                  return {
-                    trace: {
-                      id: tc.id,
-                      toolName: 'codemode',
-                      arguments: tcArgs,
-                      output: cmRes.outputText,
-                      isError: cmRes.isError,
-                      durationMs: Date.now() - startedCm,
-                    },
-                    toolResultContent: cmRes.outputText,
-                    isError: cmRes.isError,
-                  };
-                })()
-              : await executeUnifiedToolCall(
-                  store,
-                  sessionState,
-                  tc,
-                  hadValidatorError,
-                  effectiveLocale,
-                  prototypeTurnDraft,
-                  {
-                    isMock: built.isMock,
-                    runId: turnRunId,
-                    ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
-                  },
-                );
-        if (executed.isError) {
-          hadValidatorError = true;
-        } else if (tc.name === 'upsert_prototype_screen') {
-          const doneSid =
-            typeof (tc.arguments as Record<string, unknown> | undefined)?.screenId === 'string'
-              ? String((tc.arguments as Record<string, unknown>).screenId).trim()
-              : '';
-          if (doneSid) {
-            livePartialScreens.delete(doneSid);
+                }
+              } else if (ev.type === 'done') {
+                finalMessage = ev.message;
+              } else if (ev.type === 'error') {
+                if (controller.signal.aborted) {
+                  throw toAbortedError();
+                }
+                const errText =
+                  ev.error.errorMessage ||
+                  pickLocaleText(
+                    effectiveLocale,
+                    `网关流式请求失败 (reason=${ev.reason})`,
+                    `Gateway streaming request failed (reason=${ev.reason})`,
+                  );
+                const isStepTimeout =
+                  !/connect\s*timeout|connection\s*error/i.test(errText) &&
+                  (ev.reason === 'aborted' ||
+                    (/timed?\s*out|timeout/i.test(errText) &&
+                      Date.now() - turnStartMs >= Math.min(idleTimeoutMs, stepTimeoutMs) * 0.5));
+                if (isStepTimeout) {
+                  throw new SessionStreamAbortedError(
+                    'IDLE_TIMEOUT',
+                    pickLocaleText(
+                      effectiveLocale,
+                      `大模型单步推理超时（超过 ${Math.round(stepTimeoutMs / 1000)} 秒）`,
+                      `LLM single-step inference timed out (exceeded ${Math.round(stepTimeoutMs / 1000)}s)`,
+                    ),
+                  );
+                }
+                throw new LlmGatewayError({
+                  message: errText,
+                  providerName: built.providerConfig?.name ?? built.providerLabel,
+                  baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+                  model: built.selectedModel.id,
+                  locale: effectiveLocale,
+                });
+              }
+            }
+          }
+        } finally {
+          if (stepSawThinking) {
+            const endMs = stepThinkingEndedMs ?? Date.now();
+            accumulatedThinkingDurationMs += Math.max(1, endMs - stepStreamStartMs);
           }
         }
-        allToolTraces.push(executed.trace);
 
-        emit({
-          id: nextEventId(),
-          event: 'tool_result',
-          data: {
-            trace: executed.trace,
-            step: step + 1,
-          },
+        if (!finalMessage) {
+          break;
+        }
+
+        if (finalMessage.stopReason === 'error' || finalMessage.errorMessage) {
+          if (controller.signal.aborted) {
+            throw toAbortedError();
+          }
+          throw new LlmGatewayError({
+            message:
+              finalMessage.errorMessage ||
+              pickLocaleText(
+                effectiveLocale,
+                '上游模型网关返回错误响应',
+                'Upstream LLM gateway returned an error response',
+              ),
+            providerName: built.providerConfig?.name ?? built.providerLabel,
+            baseUrl: built.providerConfig?.baseUrl ?? built.selectedModel.baseUrl,
+            model: built.selectedModel.id,
+            locale: effectiveLocale,
+          });
+        }
+
+        piMessages.push(finalMessage);
+
+        const toolCalls = finalMessage.content.filter(
+          (block): block is ToolCall => block.type === 'toolCall',
+        );
+
+        if (toolCalls.length === 0) {
+          break;
+        }
+
+        const toolRoundStartMs = Date.now();
+        try {
+          for (const tc of toolCalls) {
+            if (controller.signal.aborted) {
+              throw toAbortedError();
+            }
+            resetIdleTimer();
+            const tcArgs = (tc.arguments ?? {}) as Record<string, unknown>;
+            const tcAnchor = extractTargetAnchorFromArgs(tc.name, tcArgs);
+            emit({
+              id: nextEventId(),
+              event: 'tool_call',
+              data: {
+                id: tc.id,
+                toolName: tc.name,
+                arguments: tcArgs,
+                ...(tcAnchor ? { targetAnchor: tcAnchor } : {}),
+                step: step + 1,
+              },
+            });
+
+            const leadDirectOut = runLeadPrototypeTool(tc.id, tc.name, tcArgs, step + 1);
+            const executed: ExecutedToolStep =
+              leadDirectOut !== null
+                ? leadDirectOut instanceof Promise
+                  ? await leadDirectOut
+                  : leadDirectOut
+                : await executeUnifiedToolCall(
+                      store,
+                      sessionState,
+                      alignShellWithPlan(tc),
+                      hadValidatorError,
+                      effectiveLocale,
+                      prototypeTurnDraft,
+                      {
+                        isMock: built.isMock,
+                        runId: turnRunId,
+                        ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
+                      },
+                    );
+            if (executed.isError) {
+              hadValidatorError = true;
+            }
+            if (tc.name === 'upsert_prototype_screen') {
+              const doneSid =
+                typeof (tc.arguments as Record<string, unknown> | undefined)?.screenId === 'string'
+                  ? ((tc.arguments as Record<string, unknown>).screenId as string).trim()
+                  : '';
+              endPartialPrototypeScreen(doneSid || undefined);
+              if (!executed.isError && doneSid) {
+                recordSingleAgentScreenWrite(doneSid);
+              }
+            }
+            allToolTraces.push(executed.trace);
+
+            emit({
+              id: nextEventId(),
+              event: 'tool_result',
+              data: {
+                trace: executed.trace,
+                step: step + 1,
+              },
+            });
+            syncPrototypeLiveDocument();
+
+            if (executed.artifact) {
+              allArtifacts.push(executed.artifact);
+              emit({
+                id: nextEventId(),
+                event: 'artifact',
+                data: {
+                  artifact: executed.artifact,
+                },
+              });
+            }
+
+            if (executed.askUserPrompt) {
+              pendingAskUser = executed.askUserPrompt;
+              emit({
+                id: nextEventId(),
+                event: 'ask_user',
+                data: {
+                  askUser: executed.askUserPrompt,
+                },
+              });
+            }
+
+            if (executed.stepHandoffProposal) {
+              pendingStepHandoff = executed.stepHandoffProposal;
+              emit({
+                id: nextEventId(),
+                event: 'step_handoff',
+                data: {
+                  stepHandoff: executed.stepHandoffProposal,
+                },
+              });
+            }
+
+            const toolResultMsg: ToolResultMessage<JsonObject> = {
+              role: 'toolResult',
+              toolCallId: tc.id,
+              toolName: tc.name,
+              content: [{ type: 'text', text: executed.toolResultContent }],
+              isError: executed.isError,
+              timestamp: Date.now(),
+            };
+            piMessages.push(toolResultMsg);
+          }
+        } finally {
+          accumulatedToolWallMs += Math.max(0, Date.now() - toolRoundStartMs);
+        }
+
+        saveSessionCheckpointSafe(store, sessionState, {
+          phase: 'STEP_PROGRESS',
+          step: step + 1,
+          toolCallsCount: allToolTraces.length,
+          accumulatedChars: accumulatedText.length,
         });
-        emitPrototypePreviewIfChanged(executed.trace.targetAnchor ?? tcAnchor);
 
-        if (executed.artifact) {
-          allArtifacts.push(executed.artifact);
-          emit({
-            id: nextEventId(),
-            event: 'artifact',
-            data: {
-              artifact: executed.artifact,
-            },
-          });
+        if (pendingAskUser) {
+          if (!accumulatedText.trim()) {
+            const defaultHeader = pickLocaleText(
+              effectiveLocale,
+              '业务决策选项',
+              'Business Decision Options',
+            );
+            accumulatedText = pickLocaleText(
+              effectiveLocale,
+              `请先在下方确认 **${pendingAskUser.header ?? defaultHeader}**，确认后我将立即继续执行。`,
+              `Please confirm **${pendingAskUser.header ?? defaultHeader}** below so I can proceed immediately.`,
+            );
+            emit({
+              id: nextEventId(),
+              event: 'delta',
+              data: { step: step + 1, text: accumulatedText },
+            });
+          }
+          break;
         }
-
-        if (executed.askUserPrompt) {
-          pendingAskUser = executed.askUserPrompt;
-          emit({
-            id: nextEventId(),
-            event: 'ask_user',
-            data: {
-              askUser: executed.askUserPrompt,
-            },
-          });
-        }
-
-        if (executed.stepHandoffProposal) {
-          pendingStepHandoff = executed.stepHandoffProposal;
-          emit({
-            id: nextEventId(),
-            event: 'step_handoff',
-            data: {
-              stepHandoff: executed.stepHandoffProposal,
-            },
-          });
-        }
-
-        const toolResultMsg: ToolResultMessage<JsonObject> = {
-          role: 'toolResult',
-          toolCallId: tc.id,
-          toolName: tc.name,
-          content: [{ type: 'text', text: executed.toolResultContent }],
-          isError: executed.isError,
-          timestamp: Date.now(),
-        };
-        piMessages.push(toolResultMsg);
-      }
-      } finally {
-        accumulatedToolWallMs += Math.max(0, Date.now() - toolRoundStartMs);
       }
 
-      saveSessionCheckpointSafe(store, sessionState, {
-        phase: 'STEP_PROGRESS',
-        step: step + 1,
-        toolCallsCount: allToolTraces.length,
-        accumulatedChars: accumulatedText.length,
-      });
-
-      if (pendingAskUser) {
-        if (!accumulatedText.trim()) {
-          const defaultHeader = pickLocaleText(
-            effectiveLocale,
-            '业务决策选项',
-            'Business Decision Options',
-          );
-          accumulatedText = pickLocaleText(
-            effectiveLocale,
-            `请先在下方确认 **${pendingAskUser.header ?? defaultHeader}**，确认后我将立即继续执行。`,
-            `Please confirm **${pendingAskUser.header ?? defaultHeader}** below so I can proceed immediately.`,
-          );
-          emit({
-            id: nextEventId(),
-            event: 'delta',
-            data: { step: step + 1, text: accumulatedText },
-          });
+      if (singleAgentWrittenScreens.length > 0 && !pendingAskUser && !controller.signal.aborted) {
+        prototypeBuildRun?.finishScreensPhase();
+        for (const sid of singleAgentWrittenScreens) {
+          if (prototypeBuildRun?.canReviewScreen(sid)) {
+            enqueueScreenForVisualReview(sid, 1, currentModelCallId);
+          }
         }
-        break;
+        await activeReviewChain;
+        prototypeBuildRun?.finishReviewPhase();
       }
+    } finally {
+      // Nothing streams after the model loop, whether it finished or failed: a held delta
+      // must not arrive after the run's end.
+      partialScreenThrottle.dispose();
+      styleThrottle.dispose();
     }
 
     if (
@@ -6006,7 +7242,9 @@ async function executeUnifiedTurnCore(
     }
 
     if (prototypeTurnDraft && !controller.signal.aborted) {
-      const cleanRevisionNote = stripSelectionBlockFromPrompt(synthesizedPrompt);
+      const cleanRevisionNote = stripSelectionBlockFromPrompt(
+        resumeScreenAction?.cleanPrompt || synthesizedPrompt,
+      );
       if (
         !prototypeTurnDraft.prototypeId &&
         prototypeTurnDraft.workingHtml.trim().length > 0
@@ -6102,17 +7340,19 @@ async function executeUnifiedTurnCore(
       });
     }
 
+    prototypeBuildRun?.finish('succeeded');
+    const prototypeBuildSnapshot = prototypeBuildRun?.snapshot({ revisionId: currentPrototypeRevisionId() });
     const assistantRecord: AgentSessionMessage = {
       id: assistantMsgId,
       runId: turnRunId,
       role: 'assistant',
       content: accumulatedText,
+      ...(prototypeBuildSnapshot ? { prototypeBuild: prototypeBuildSnapshot } : {}),
       ...(accumulatedThinking
         ? { thinking: accumulatedThinking, thinkingDurationMs: resolveTurnThinkingDurationMs() }
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(allSubagentLanes.length > 0 ? { subagentLanes: allSubagentLanes } : {}),
-      ...(lastCodeModeScript ? { codeModeScript: lastCodeModeScript } : {}),
       ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
       ...(pendingStepHandoff ? { stepHandoff: pendingStepHandoff } : {}),
       ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
@@ -6148,6 +7388,9 @@ async function executeUnifiedTurnCore(
     const finalStatus: AgentSession['status'] = pendingAskUser ? 'WAITING_INPUT' : 'IDLE';
     const completedSession: AgentSession = {
       ...sessionState,
+      ...(prototypeTurnDraft?.designBrief && sessionState.designBrief
+        ? { designBrief: prototypeTurnDraft.designBrief }
+        : {}),
       status: finalStatus,
       messages: nextMessages,
       updatedAt: new Date().toISOString(),
@@ -6205,12 +7448,15 @@ async function executeUnifiedTurnCore(
     }
 
     if (err instanceof SessionStreamAbortedError && err.kind === 'USER_ABORT') {
+      prototypeBuildRun?.finish('cancelled');
+      const cancelledBuild = prototypeBuildRun?.snapshot({ revisionId: currentPrototypeRevisionId() });
       const cancelledAssistantMsg: AgentSessionMessage = {
         id: assistantMsgId,
         runId: turnRunId,
         role: 'assistant',
         content: accumulatedText,
         cancelled: true,
+        ...(cancelledBuild ? { prototypeBuild: cancelledBuild } : {}),
         ...(accumulatedThinking
           ? {
               thinking: accumulatedThinking,
@@ -6338,7 +7584,9 @@ async function executeUnifiedTurnCore(
       prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml &&
       /data-screen-id=/i.test(prototypeTurnDraft.workingHtml)
     ) {
-      const cleanRevisionNote = stripSelectionBlockFromPrompt(synthesizedPrompt);
+      const cleanRevisionNote = stripSelectionBlockFromPrompt(
+        resumeScreenAction?.cleanPrompt || synthesizedPrompt,
+      );
       if (!prototypeTurnDraft.prototypeId) {
         const savedPartial = store.createPrototype(sessionState.projectId, {
           name: prototypeTurnDraft.prototypeName,
@@ -6363,6 +7611,12 @@ async function executeUnifiedTurnCore(
           modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
         });
       } else {
+        if (prototypeTurnDraft.designBrief) {
+          store.updatePrototypeDesignBrief(
+            prototypeTurnDraft.prototypeId,
+            prototypeTurnDraft.designBrief,
+          );
+        }
         const appendedPartial = store.appendPrototypeRevision(prototypeTurnDraft.prototypeId, {
           title: cleanRevisionNote.slice(0, 48),
           instruction: cleanRevisionNote,
@@ -6380,17 +7634,19 @@ async function executeUnifiedTurnCore(
       }
     }
 
+    prototypeBuildRun?.finish('failed');
+    const failedBuild = prototypeBuildRun?.snapshot({ revisionId: currentPrototypeRevisionId() });
     const errorAssistantMsg: AgentSessionMessage = {
       id: nextAgentMessageId('err'),
       runId: turnRunId,
       role: 'assistant',
       content: accumulatedText,
+      ...(failedBuild ? { prototypeBuild: failedBuild } : {}),
       ...(accumulatedThinking
         ? { thinking: accumulatedThinking, thinkingDurationMs: resolveTurnThinkingDurationMs() }
         : {}),
       ...(allToolTraces.length > 0 ? { toolCalls: allToolTraces } : {}),
       ...(allSubagentLanes.length > 0 ? { subagentLanes: allSubagentLanes } : {}),
-      ...(lastCodeModeScript ? { codeModeScript: lastCodeModeScript } : {}),
       ...(pendingAskUser ? { askUser: pendingAskUser } : {}),
       ...(allArtifacts.length > 0 ? { artifacts: allArtifacts } : {}),
       ...(built
@@ -6480,7 +7736,7 @@ function launchActiveRunInSlot(
     runId: turnIdentity.runId,
     sessionId,
     controller,
-    bufferedEvents: [],
+    bufferedEvents: createCoalescingRunEventBuffer<UnifiedAgentSseEvent>(prototypeLiveCoalesceKey),
     subscribers: new Set(),
     done: false,
     completionPromise: Promise.resolve(),
@@ -6551,25 +7807,22 @@ async function* subscribeToBackgroundRun(
   signal?: AbortSignal,
   afterEventId?: string,
 ): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
-  let cursor = 0;
-  if (afterEventId) {
-    const idx = run.bufferedEvents.findIndex((e) => e.id === afterEventId);
-    if (idx >= 0) {
-      cursor = idx + 1;
-    }
-  }
+  // Superseded prototype screen deltas are skipped, so a reconnecting client catches up with
+  // each screen's current state instead of replaying every delta.
+  let cursor = run.bufferedEvents.startAfter(afterEventId);
 
   while (true) {
     if (signal?.aborted) {
       return;
     }
-    while (cursor < run.bufferedEvents.length) {
+    for (let next = run.bufferedEvents.read(cursor); next; next = run.bufferedEvents.read(cursor)) {
       if (signal?.aborted) {
         return;
       }
-      const ev = run.bufferedEvents[cursor++]!;
-      yield ev;
+      cursor = next.nextCursor;
+      yield next.event;
     }
+    cursor = Math.max(cursor, run.bufferedEvents.size());
     if (run.done) {
       return;
     }
@@ -6588,7 +7841,7 @@ async function* subscribeToBackgroundRun(
       };
       run.subscribers.add(onUpdate);
       signal?.addEventListener('abort', onAbort, { once: true });
-      if (cursor < run.bufferedEvents.length || run.done || signal?.aborted) {
+      if (cursor < run.bufferedEvents.size() || run.done || signal?.aborted) {
         cleanup();
         resolve();
       }

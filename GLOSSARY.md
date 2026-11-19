@@ -196,6 +196,19 @@ _Avoid_: Animation demo, 交互动效图
 A live sample sheet of colors, type, and representative components that shows the chosen visual language without pretending to be the user's application.
 _Avoid_: Composite preview, reference draft, 合成预览
 
+**Build Plan (施工计划)**:
+The plain-language list of the screens an Interactive Prototype will have and what each one is for, shown to the user before any screen is drawn and tracking each screen's progress.
+_Avoid_: Shell, skeleton, outline, task list
+
+**Prototype Note (原型说明)**:
+A business-language explanation attached to one element of an Interactive Prototype, saying what the element is, what it shows, and what happens when it is used; shown when 设计说明 / Design Notes is turned on as an unnumbered handwritten callout with a curved arrow.
+_Avoid_: Annotation, tooltip, comment, spec label
+_Shown to business users as_: 说明 (Note)
+
+**Demo Tour (演示路线)**:
+An ordered, playable walk through an Interactive Prototype toward one user goal, each step naming the screen, the element acted on, and the narration shown while it plays.
+_Avoid_: Scenario (reserved for the `M4` Scenario Model), 场景演示, demo script, walkthrough, user flow
+
 **Four-Layer Application Assembly (四层应用装配)**:
 The binding of four concerns—UI/UE design, Ontology Suite, technical foundation, and technical architecture—into an application implementation blueprint, using the project's confirmed UI source and explicitly selected engineering standards.
 _Avoid_: Project template, app config

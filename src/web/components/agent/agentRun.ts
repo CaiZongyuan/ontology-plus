@@ -276,6 +276,11 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
           ? { zh: `AI 场景归因：${name}`, en: `AI Scenario Attribution: ${name}` }
           : { zh: 'AI 场景归因分析', en: 'AI Scenario Attribution' };
       }
+      case 'RESUME_PROTOTYPE_SCREEN': {
+        // 「继续这一屏」: the text after the header names the screen in business words.
+        const rest = trimmed.slice(actionMatch[0].length).trim();
+        return rest ? { zh: rest, en: rest } : { zh: '继续这一屏', en: 'Continue this screen' };
+      }
       case 'RUN_ONTOLOGY_EXTRACTION': {
         const jobTitle =
           typeof params.title === 'string' && params.title.trim() ? params.title.trim() : '';

@@ -23,6 +23,11 @@ import type {
   VisualReferenceItem,
 } from '../../../packages/workspace-store/index.js';
 import { sanitizeBusinessText } from '../../../packages/business-vocabulary/index.js';
+import {
+  deriveStyleTileFromReferences,
+  styleTileTokensToValues,
+  type StyleTileTokens,
+} from '../../../packages/workspace-store/index.js';
 import type { TransientTurnImageInput } from '../../../packages/agent-runtime/index.js';
 import { usePreferences } from '../../i18n.js';
 import type { StepViewMode } from '../../navigation/index.js';
@@ -56,135 +61,31 @@ import {
   type VisualReferenceSelection,
 } from './VisualReferencePicker.js';
 
-export interface StyleTileTokens {
-  mode: 'light' | 'dark';
-  surfaceHex: string;
-  cardHex: string;
-  insetHex: string;
-  accentHex: string;
-  accentInkHex: string;
-  secondaryAccentHex: string;
-  borderHex: string;
-  inkHex: string;
-  mutedInkHex: string;
-  semanticOkHex: string;
-  semanticWarnHex: string;
-  semanticDangerHex: string;
-  fontFamily: string;
-  fontDisplayLabel: string;
-  radiusPx: number;
-  isCompact: boolean;
-}
-
-function isLightHexColor(hex: string): boolean {
-  const clean = hex.replace('#', '').trim();
-  if (clean.length !== 6) return true;
-  const r = parseInt(clean.slice(0, 2), 16) || 0;
-  const g = parseInt(clean.slice(2, 4), 16) || 0;
-  const b = parseInt(clean.slice(4, 6), 16) || 0;
-  return (r * 299 + g * 587 + b * 114) / 1000 >= 140;
-}
+export type { StyleTileTokens };
 
 // The style tile previews the app being designed: its surfaces, ink, accent, and status
-// colours are the prototype's, not workbench appearance, and stay literal whatever
+// colours belong to the designed app, not workbench appearance, and stay literal whatever
 // Workbench Theme is active.
-function pickReadableInkForAccent(hex: string): string {
-  const clean = hex.replace('#', '').trim();
-  if (clean.length !== 6) return '#ffffff';
-  const r = parseInt(clean.slice(0, 2), 16) || 0;
-  const g = parseInt(clean.slice(2, 4), 16) || 0;
-  const b = parseInt(clean.slice(4, 6), 16) || 0;
-  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-  return yiq >= 165 ? '#111827' : '#ffffff';
-}
 
+/** The Style Tile tokens of the wizard's current choices (the derivation lives in workspace-store). */
 export function deriveStyleTileTokens(
   selection: VisualReferenceSelection,
   alignment: RequirementAlignmentState = DEFAULT_ALIGNMENT_STATE,
   userFeelNote = '',
 ): StyleTileTokens {
-  const bgDonor =
-    selection.borrowed.find((b) => b.aspect === 'bgColor')?.item ?? selection.primary;
-  const accentDonor =
-    selection.borrowed.find((b) => b.aspect === 'accentColor')?.item ?? selection.primary;
-  const borderDonor =
-    selection.borrowed.find((b) => b.aspect === 'cardBorder')?.item ?? selection.primary;
-  const typoDonor =
-    selection.borrowed.find((b) => b.aspect === 'typography')?.item ?? selection.primary;
-  const spacingBorrowed = selection.borrowed.some((b) => b.aspect === 'spacing');
-  const clarityBorrowed = selection.borrowed.some((b) => b.aspect === 'dataClarity');
-
-  const feelLower = userFeelNote.toLowerCase();
-  const explicitDarkCue =
-    /深色|暗黑|暗色|黑底|夜间|dark\s*mode|dark\s*theme|dark\s*cockpit/.test(feelLower) &&
-    !/浅色|白底|纸感|light\s*mode/.test(feelLower);
-  const explicitLightCue =
-    /浅色|白底|暖白|纸感|light\s*mode|warm\s*paper/.test(feelLower) && !explicitDarkCue;
-
-  let surfaceHex = bgDonor.surfaceHex || '#f8fafc';
-  if (explicitDarkCue && isLightHexColor(surfaceHex)) {
-    surfaceHex = '#0f172a';
-  } else if (explicitLightCue && !isLightHexColor(surfaceHex)) {
-    surfaceHex = '#f8f5ef';
-  }
-
-  const isDark =
-    explicitDarkCue || (!explicitLightCue && (!isLightHexColor(surfaceHex) || bgDonor.mode === 'dark'));
-  const isWarmPaper = !isDark && bgDonor.vibeGroup === 'warm-paper';
-
-  const cardHex = isDark ? '#162033' : isWarmPaper ? '#fffdf9' : '#ffffff';
-  const insetHex = isDark ? '#1e293b' : isWarmPaper ? '#f2ece1' : '#f1f5f9';
-  const borderHex = isDark ? '#334155' : isWarmPaper ? '#dfd6c7' : '#e2e8f0';
-  const inkHex = isDark ? '#f1f5f9' : isWarmPaper ? '#1f1d1a' : '#0f172a';
-  const mutedInkHex = isDark ? '#94a3b8' : isWarmPaper ? '#6b6459' : '#64748b';
-
-  const accentHex = accentDonor.palette[0] || '#2563eb';
-  const secondaryAccentHex =
-    accentDonor.palette[1] || selection.primary.palette[1] || accentHex;
-  const accentInkHex = pickReadableInkForAccent(accentHex);
-
-  const semanticOkHex = isDark ? '#34d399' : '#15803d';
-  const semanticWarnHex = isDark ? '#fbbf24' : '#b45309';
-  const semanticDangerHex = isDark ? '#f87171' : '#dc2626';
-
-  const fontDisplayLabel = typoDonor.fonts[0] || 'Inter';
-  const fontFamily =
-    typoDonor.vibeGroup === 'warm-paper'
-      ? `'Georgia', 'Noto Serif SC', -apple-system, sans-serif`
-      : `'${fontDisplayLabel}', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif`;
-
-  const resolvedMotion = resolveMotionSelection(alignment);
-  const compactCue =
-    /紧凑|高密度|台账|交易|compact|dense|ledger|trading/.test(feelLower) &&
-    !/宽松|呼吸|大留白|airy|spacious/.test(feelLower);
-  const airyCue = /宽松|呼吸|大留白|airy|spacious/.test(feelLower);
-
-  const isCompact = airyCue
-    ? false
-    : compactCue ||
-      clarityBorrowed ||
-      (!spacingBorrowed && resolvedMotion.informationDensity === 'COMPACT_LEDGER');
-
-  return {
-    mode: isDark ? 'dark' : 'light',
-    surfaceHex,
-    cardHex,
-    insetHex,
-    accentHex,
-    accentInkHex,
-    secondaryAccentHex,
-    borderHex,
-    inkHex,
-    mutedInkHex,
-    semanticOkHex,
-    semanticWarnHex,
-    semanticDangerHex,
-    fontFamily,
-    fontDisplayLabel,
-    radiusPx: borderDonor.radiusPx,
-    isCompact,
-  };
+  return deriveStyleTileFromReferences({
+    primary: selection.primary,
+    borrowed: selection.borrowed.map((b) => ({ aspect: b.aspect, item: b.item })),
+    informationDensity: resolveMotionSelection(alignment).informationDensity,
+    userFeelNote,
+  });
 }
+
+/**
+ * The Style Tile as design values for the prototype build (#91). Stored on the brief when the
+ * user approves it, these values are locked: the lead assistant draws the 风格样张 with them.
+ */
+export const styleValuesFromTileTokens = styleTileTokensToValues;
 
 export interface SynthesizeDesignBriefParams {
   project: ProjectDetail;
@@ -941,7 +842,7 @@ export function compileDesignBriefGenerationPrompt({
       ...(srsSnippet ? ['', `=== LINKED SRS SPECIFICATION ===`, srsSnippet] : []),
       '',
       `=== SEMANTIC ANCHOR & RESPONSIVE LAYOUT CONTRACT (MANDATORY) ===`,
-      `1. Call \`rewrite_prototype_page\` with \`allowAnchorReset: true\` to deliver a single-file runnable HTML5 prototype.`,
+      `1. Follow the live prototype pipeline: call \`plan_screens\` with the Build Plan (3–5 screens), then call \`define_style\` with the locked Style Tile tokens and shared component CSS, then call \`spawn_subagents\` so parallel screen helpers build each screen via \`upsert_prototype_screen\` (with \`data-note\` on key elements), and finally call \`write_demo_tours\` to author 2–4 Demo Tours.`,
       `2. Every business screen MUST declare \`data-screen-id\`, \`data-screen-name\`, and \`data-screen-type\`; every interactive <button>/<input>/<select>/<textarea> MUST declare unique \`data-element-id\` and \`data-element-type\`, plus domain \`data-binding\` and \`data-event-id\` anchors.`,
       `3. Responsive Viewport Requirement: MUST render cleanly without horizontal overflow across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
       `4. Zero blocking browser dialogs: NEVER use window.alert, window.confirm, or window.prompt.`,
@@ -969,7 +870,7 @@ export function compileDesignBriefGenerationPrompt({
     ...(srsSnippet ? ['', `【四、关联需求规格说明书 (SRS) 核心内容】`, srsSnippet] : []),
     '',
     `【五、MU 语义锚点与三端响应式硬性契约】`,
-    `1. 请调用 \`rewrite_prototype_page\`（传 \`allowAnchorReset: true\`）输出完整单文件可运行 HTML5 交互原型。`,
+    `1. 按实时原型流水线施工：先调用 \`plan_screens\` 列出 3～5 个屏幕的施工计划，再调用 \`define_style\` 锁定风格样张令牌与共用组件样式，随后调用 \`spawn_subagents\` 按计划并行构建各分屏（\`upsert_prototype_screen\`，为关键元素编写 \`data-note\` 原型说明），全部完成后调用 \`write_demo_tours\` 编写 2～4 条演示路线。`,
     `2. 必须严格挂载语义锚点：所有屏幕节点声明 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`；所有交互控件声明唯一 \`data-element-id\`、\`data-element-type\`，并合理绑定 \`data-binding\` 与 \`data-event-id\`。`,
     `3. 三端响应式硬性要求：页面布局必须在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 三种视口宽度下自适应排布整洁、零横向裁切溢出。`,
     `4. 严禁任何阻塞式浏览器原生弹窗（禁止 window.alert / window.confirm / window.prompt）。`,
@@ -990,14 +891,14 @@ export function compileDesignBriefRestylePrompt(
   if (params.locale === 'en-US') {
     return [
       `[PROTOTYPE_BRIEF_RESTYLE] Restyle from updated brief (canvas ${tokens.surfaceHex}, accent ${tokens.accentHex}, mode ${tokens.mode})`,
-      `IMPORTANT: Inspect existing prototype anchors first and call \`rewrite_prototype_page\` (\`allowAnchorReset: false\`) to restyle the entire prototype according to the updated Design Brief while preserving 100% of existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors!`,
+      `IMPORTANT: Preserve 100% of existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors! Follow the live pipeline: call \`plan_screens\` with the existing screens, call \`define_style\` to update the Style Tile tokens and shared component CSS, then call \`spawn_subagents\` to restyle each screen via \`upsert_prototype_screen\` while keeping every existing anchor ID intact, and update \`write_demo_tours\` if needed.`,
       '',
       base,
     ].join('\n');
   }
   return [
     `[PROTOTYPE_BRIEF_RESTYLE] 按新简报重做风格（画布 ${tokens.surfaceHex}，强调色 ${tokens.accentHex}，模式 ${tokens.mode}）`,
-    `重要约束：请先盘点当前原型的既有锚点，再调用 \`rewrite_prototype_page\`（\`allowAnchorReset: false\`）按更新后的设计简报整页重做视觉风格与动效细节，同时 100% 保留现有的 \`data-screen-id\`、\`data-element-id\`、\`data-binding\` 与 \`data-event-id\` 语义锚点！`,
+    `重要约束：必须 100% 保留现有的 \`data-screen-id\`、\`data-element-id\`、\`data-binding\` 与 \`data-event-id\` 语义锚点！按实时流水线施工：先调用 \`plan_screens\` 列出需要重做风格的既有屏幕，再调用 \`define_style\` 更新风格样张令牌与共用组件样式，随后调用 \`spawn_subagents\` 按原锚点逐屏更新样式（\`upsert_prototype_screen\`），最后检查并更新 \`write_demo_tours\`。`,
     '',
     base,
   ].join('\n');

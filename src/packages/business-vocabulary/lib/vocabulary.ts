@@ -32,6 +32,7 @@ export type WorkspaceConceptKey =
   | 'CHANGE_SUMMARY'
   | 'BUSINESS_VIEW'
   | 'TECHNICAL_DETAILS'
+  | 'PROTOTYPE_NOTE'
   | 'CONTEXT_INSPECTOR';
 
 export type BusinessConceptKey = ModelCode | WorkspaceConceptKey;
@@ -310,6 +311,16 @@ export const BUSINESS_VOCABULARY: Readonly<Record<BusinessConceptKey, BusinessVo
     en: 'Technical Details',
     singularZh: '技术细节',
     singularEn: 'Technical Details',
+  },
+  PROTOTYPE_NOTE: {
+    key: 'PROTOTYPE_NOTE',
+    glossaryTermEn: 'Prototype Note',
+    glossaryTermZh: '原型说明',
+    shownAsInGlossary: true,
+    zh: '说明',
+    en: 'Note',
+    singularZh: '说明',
+    singularEn: 'Note',
   },
   CONTEXT_INSPECTOR: {
     key: 'CONTEXT_INSPECTOR',

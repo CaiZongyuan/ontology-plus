@@ -10,7 +10,8 @@ import {
   Upload,
 } from 'lucide-react';
 import { BUSINESS_VOCABULARY } from '../../../packages/business-vocabulary/index.js';
-import { extractMuFromPrototypeHtml } from '../../../packages/ontology-core/index.js';
+import { extractMuFromPrototypeHtml, latestPrototypeBuild } from '../../../packages/ontology-core/index.js';
+import type { InteractivePrototype } from '../../../packages/workspace-store/index.js';
 import {
   apiConfirmPrototypeRevision,
   apiListPrototypes,
@@ -20,7 +21,6 @@ import { useAgentPanelStore } from '../../components/agent/agentPanelStore.js';
 import { resolveActiveVisionCapability } from '../../components/agent/VisionAttachmentControls.js';
 import { Button } from '../../components/beautifui/index.js';
 import { ArtifactHistoryDrawer } from '../../components/history/index.js';
-import { PrototypeArtboardGrid } from '../../components/prototype/PrototypeArtboardGrid.js';
 import {
   PrototypeCanvasStage,
   runImportPrototypeHtml,
@@ -53,6 +53,9 @@ import {
 
 // ─── Prototype Step (原型步骤: Briefing Stage <-> Canvas Stage) ──────────────
 export type PrototypeStudioStage = 'BRIEFING' | 'CANVAS';
+
+/** Placeholder id of the prototype a first build is creating, before its revision is saved. */
+export const PENDING_LIVE_PROTOTYPE_ID = 'pending-live-prototype';
 
 export function resolvePrototypeStudioStage(
   prototypeCount: number,
@@ -202,6 +205,9 @@ export function PrototypeStudioView({
       ? liveSessionDrafts[unboundLiveSession.id]
       : undefined;
   const activeRunningAnchor = resolveLiveRunningPrototypeAnchor(coDesignSession, liveDraft);
+  // The Build Plan as the latest build left it (#90): failed screens keep 「继续这一屏」 after the
+  // run, but only while the revision that build left is still the current one.
+  const persistedBuild = proto ? latestPrototypeBuild(coDesignSession?.messages, proto.currentRevisionId) : undefined;
   const postRunReview =
     activeRunningAnchor === null
       ? resolvePostRunPrototypeReview(proto, coDesignSession, dismissedRevisionByPrototype)
@@ -436,6 +442,7 @@ export function PrototypeStudioView({
       active: true,
       baselineSignature: revisionSignature,
     };
+    setStageOverride('CANVAS');
     useAgentPanelStore.getState().revealPanel();
     await startPrototypeBriefGenerationRun({
       projectId: project.id,
@@ -648,12 +655,38 @@ export function PrototypeStudioView({
       stageViewMode === 'business' &&
       (isOutdated || (currentStage === 'CANVAS' && stepState === 'CONFIRMED' && Boolean(onNavigate)));
 
-    if (currentStage === 'CANVAS' && proto) {
+    // The first build runs before anything is saved: the canvas stage shows it with a
+    // placeholder prototype, so the same canvas instance carries on once the revision lands.
+    const pendingLivePrototype: InteractivePrototype | null =
+      prototypes.length === 0 && unboundLiveSession && liveDraft && stageOverride !== 'BRIEFING'
+        ? {
+            id: PENDING_LIVE_PROTOTYPE_ID,
+            projectId: project.id,
+            name: t(`${project.name}交互原型`, `${project.name} Prototype`),
+            revisions: [],
+            currentRevisionId: '',
+            createdAt: new Date(liveDraft.startedAt).toISOString(),
+            updatedAt: new Date(liveDraft.startedAt).toISOString(),
+            version: 'v0',
+            htmlContent: '',
+            extractedScreenCount: 0,
+            isConfirmed: false,
+            aheadOfConfirmedCount: 0,
+          }
+        : null;
+    const canvasProto = currentStage === 'CANVAS' && proto ? proto : pendingLivePrototype;
+    // Nothing that reaches the server may carry the placeholder: those actions wait for the save.
+    const savedProtoId = canvasProto && canvasProto !== pendingLivePrototype ? canvasProto.id : null;
+
+    if (canvasProto) {
       return (
         <PrototypeCanvasStage
           project={project}
-          prototypes={prototypes}
-          selectedPrototypeId={proto.id}
+          prototypes={canvasProto === pendingLivePrototype ? [canvasProto] : prototypes}
+          selectedPrototypeId={canvasProto.id}
+          pendingLive={canvasProto === pendingLivePrototype}
+          liveState={liveDraft?.prototypeLive ?? null}
+          persistedBuild={persistedBuild ?? null}
           confirmedRevision={confirmedRevision}
           onSelectPrototype={(id) => setSelectedProtoId(id)}
           onPrototypesUpdated={(payload) => {
@@ -689,10 +722,12 @@ export function PrototypeStudioView({
           showInlineInspectorPopover={false}
           onSelectTarget={(target, crop) => {
             useAgentPanelStore.getState().revealPanel();
-            void ingestSelectionTargetAsAttachment(proto.id, target, { crop: crop ?? null });
+            if (!savedProtoId) return;
+            void ingestSelectionTargetAsAttachment(savedProtoId, target, { crop: crop ?? null });
           }}
           onSelectionCropUpgrade={(cssSelector, crop) => {
-            void upgradeSelectionAttachmentCrop(proto.id, cssSelector, crop);
+            if (!savedProtoId) return;
+            void upgradeSelectionAttachmentCrop(savedProtoId, cssSelector, crop);
           }}
           annotations={combinedCanvasAnnotations}
           onAddAnnotation={handleAddVisualAnnotation}
@@ -700,7 +735,7 @@ export function PrototypeStudioView({
           activeRunningAnchor={activeRunningAnchor}
           flashedAnchors={
             highlightedPrototypeTarget &&
-            highlightedPrototypeTarget.prototypeId === proto.id &&
+            highlightedPrototypeTarget.prototypeId === canvasProto.id &&
             (highlightedPrototypeTarget.screenId || highlightedPrototypeTarget.elementId)
               ? [
                   {
@@ -717,16 +752,14 @@ export function PrototypeStudioView({
                 : []
           }
           flashKey={
-            highlightedPrototypeTarget && highlightedPrototypeTarget.prototypeId === proto.id
+            highlightedPrototypeTarget && highlightedPrototypeTarget.prototypeId === canvasProto.id
               ? `jump-${highlightedPrototypeTarget.seq}`
               : (postRunReview?.revision.id ?? null)
           }
           htmlOverride={
-            liveDraft?.livePreviewHtml
-              ? liveDraft.livePreviewHtml
-              : postRunReview && beforeAfterMode === 'BEFORE'
-                ? postRunReview.previousRevision.htmlContent
-                : null
+            postRunReview && beforeAfterMode === 'BEFORE'
+              ? postRunReview.previousRevision.htmlContent
+              : null
           }
           busy={isBusyProto || Boolean(activeRunningAnchor)}
           {...(liveDraft?.subagentLanes ? { subagentLanes: liveDraft.subagentLanes } : {})}
@@ -735,18 +768,17 @@ export function PrototypeStudioView({
             : {})}
           {...(liveDraft?.reconnecting !== undefined ? { reconnecting: liveDraft.reconnecting } : {})}
           onRetryScreen={(screenId, screenName) => {
+            if (!savedProtoId) return;
             void (async () => {
-              const targetSession = await ensurePrototypeCoDesignSession(project.id, proto.id);
+              const targetSession = await ensurePrototypeCoDesignSession(project.id, savedProtoId);
               setActiveSessionId(targetSession.id);
               useAgentPanelStore.getState().revealPanel();
+              // 「继续这一屏」 redoes exactly this planned screen with one helper (#90).
+              const said = locale === 'en-US' ? `Continue screen "${screenName}"` : `继续画「${screenName}」`;
               await startSessionAgentRun({
                 sessionId: targetSession.id,
-                prompt:
-                  locale === 'en-US'
-                    ? `Please complete screen "${screenName}" (${screenId}) using upsert_prototype_screen while keeping all other screens unchanged.`
-                    : `请单独补全并完善分屏「${screenName}」（${screenId}），保持其他已完成分屏不变。`,
-                displayTitle:
-                  locale === 'en-US' ? `Complete screen "${screenName}"` : `继续生成分屏「${screenName}」`,
+                prompt: `[ACTION:RESUME_PROTOTYPE_SCREEN ${JSON.stringify({ screenId })}] ${said}`,
+                displayTitle: said,
               });
             })();
           }}
@@ -759,49 +791,6 @@ export function PrototypeStudioView({
           {...(renderRevisionHistory ? { renderRevisionHistory } : {})}
           {...(renderConfirmModal ? { renderConfirmModal } : {})}
         />
-      );
-    }
-
-    if (prototypes.length === 0 && unboundLiveSession && liveDraft && stageOverride !== 'BRIEFING') {
-      return (
-        <section
-          className="card flex flex-col overflow-hidden"
-          data-testid="prototype-initial-live-artboard-stage"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
-            <div className="flex items-center gap-2 text-[13px] font-medium text-foreground">
-              <Loader2 size={14} className="animate-spin text-primary" aria-hidden="true" />
-              <span>
-                {t(
-                  `${project.name} · 正在并行构建首版界面原型`,
-                  `${project.name} · Building initial prototype live`,
-                )}
-              </span>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              data-testid="prototype-live-back-to-brief-btn"
-              onClick={() => setStageOverride('BRIEFING')}
-            >
-              <ArrowLeft size={13} aria-hidden="true" />
-              <span>{t('查看设计简报', 'View Design Brief')}</span>
-            </Button>
-          </div>
-          <PrototypeArtboardGrid
-            htmlContent={liveDraft.livePreviewHtml ?? ''}
-            projectName={project.name}
-            busy
-            {...(liveDraft.reconnecting !== undefined ? { reconnecting: liveDraft.reconnecting } : {})}
-            {...(liveDraft.liveStreamedChars !== undefined
-              ? { liveStreamedChars: liveDraft.liveStreamedChars }
-              : {})}
-            {...(liveDraft.subagentLanes ? { subagentLanes: liveDraft.subagentLanes } : {})}
-            activeRunningAnchor={liveDraft.activeAnchor ?? null}
-            viewMode={stageViewMode}
-          />
-        </section>
       );
     }
 
@@ -841,6 +830,7 @@ export function PrototypeStudioView({
             active: true,
             baselineSignature: revisionSignature,
           };
+          setStageOverride('CANVAS');
           await startPrototypeBriefGenerationRun({
             projectId: project.id,
             prototypeName,
@@ -854,6 +844,7 @@ export function PrototypeStudioView({
             active: true,
             baselineSignature: revisionSignature,
           };
+          setStageOverride('CANVAS');
           await startPrototypeBriefRestyleRun({
             projectId: project.id,
             prototypeId,

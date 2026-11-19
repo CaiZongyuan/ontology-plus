@@ -399,7 +399,11 @@ export function deriveContextEventItems(opts: {
     }
     const runCalls = callsByRunId.get(run.id) ?? [];
     const coordCall =
-      runCalls.find((c) => c.responseToolNames?.includes('codemode')) ??
+      runCalls.find(
+        (c) =>
+          c.responseToolNames?.includes('spawn_subagents') ||
+          c.responseToolNames?.includes('codemode'),
+      ) ??
       runCalls.find((c) => c.purpose === 'TURN') ??
       runCalls[0] ??
       null;

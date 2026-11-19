@@ -14,6 +14,7 @@
     "lint:theme": "tsx scripts/lint-theme.ts",
     "themes:generate": "tsx scripts/generate-workbench-themes.ts",
     "check": "pnpm typecheck && pnpm lint:boundaries && pnpm lint:theme",
+    "smoke:prototype": "tsx scripts/smoke-prototype.ts",
     "test": "vitest run src",
     "test:e2e": "playwright test",
     "smoke:context": "NODE_USE_ENV_PROXY=1 tsx scripts/smoke-context-snapshots.ts"
@@ -21,7 +22,6 @@
   "dependencies": {
     "@base-ui/react": "^1.0.0",
     "@earendil-works/pi-ai": "^1.5.0",
-    "@earendil-works/pi-codemode": "^1.5.0",
     "@earendil-works/pi-durable": "^1.5.0",
     "@earendil-works/pi-schema": "^1.5.0",
     "@hono/node-server": "^1.14.0",
@@ -48,6 +48,7 @@
     "js-yaml": "^4.1.0",
     "lowlight": "^3.3.0",
     "lucide-react": "^0.475.0",
+    "lxgw-wenkai-lite-webfont": "^1.7.0",
     "mdast-util-from-markdown": "2.1.0",
     "mermaid": "^12.3.0",
     "react": "^19.0.0",
@@ -68,6 +69,7 @@
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
     "dependency-cruiser": "^16.10.0",
+    "jsdom": "26.1.0",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3",
     "vite": "^6.2.0",

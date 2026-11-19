@@ -4,7 +4,6 @@ export interface PrototypeArtboardSlice {
   screenType: string;
   status: 'queued' | 'streaming' | 'ready';
   elementCount: number;
-  activeWritingLabel?: string;
   isolatedHtml: string;
 }
 
@@ -194,7 +193,6 @@ export function extractPrototypeArtboards(html: string): PrototypeArtboardSlice[
         : rawStatus === 'streaming'
           ? 'streaming'
           : 'ready';
-    const activeWritingLabel = scrNode.attrs['data-live-writing-label'] || undefined;
 
     let elementCount = 0;
     for (const node of allNodes) {
@@ -217,12 +215,6 @@ export function extractPrototypeArtboards(html: string): PrototypeArtboardSlice[
       `    transform: none !important;`,
       `  }`,
       `  .proto-topbar [data-nav-screen]:not([data-nav-screen="${cssEscapedId}"]) { opacity: 0.55; }`,
-      `  [data-live-writing="true"] {`,
-      `    outline: 2px solid var(--proto-accent, #c2410c) !important;`,
-      `    outline-offset: 3px !important;`,
-      `    box-shadow: 0 0 0 4px rgba(194, 65, 12, 0.14) !important;`,
-      `    transition: outline-color 0.25s ease, box-shadow 0.25s ease !important;`,
-      `  }`,
       `</style>`,
       `<script data-artboard-activate="${escapeHtmlAttr(screenId)}">`,
       `  window.addEventListener('DOMContentLoaded', function() {`,
@@ -245,7 +237,6 @@ export function extractPrototypeArtboards(html: string): PrototypeArtboardSlice[
       screenType,
       status,
       elementCount,
-      ...(activeWritingLabel ? { activeWritingLabel } : {}),
       isolatedHtml,
     };
   });

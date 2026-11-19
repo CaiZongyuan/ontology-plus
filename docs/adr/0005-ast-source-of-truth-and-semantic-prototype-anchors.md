@@ -2,3 +2,7 @@
 
 In the ontology workbench, the parsed 11-model typed AST in `ontology-core` serves as the single in-memory source of truth across the structured form editor, relationship graph, YAML editor, and AI Ontology Assistant, enabling atomic cross-model cascade renames and impact analysis (`analyzeImpact`) before serializing back to YAML. To bridge interactive UI prototyping with formal modeling, generated `界面原型.html` artifacts embed semantic `data-onto-*` attributes (`data-screen-id`, `data-element-id`, `data-binding`, `data-event-id`), allowing `ontology-core` to deterministically extract the `MU` UI Model skeleton rather than relying on an LLM to re-infer screen and element IDs from raw HTML.
 
+
+## Amendments
+
+- **2026-11-18: Prototype Notes and Demo Tours travel inside `界面原型.html` (ADR 0019).** An element may carry a business-language `Prototype Note` alongside its anchors, and the file may hold its `Demo Tours` as an embedded data block that references screens and elements by their anchor ids. MU extraction reads a note as the element's business description; Demo Tours are presentation only and are never extracted into the Ontology Suite. The saved artifact stays one file; only its live transport during generation is per screen.

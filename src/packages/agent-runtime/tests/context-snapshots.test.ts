@@ -67,20 +67,40 @@ async function startGateway(): Promise<{ baseUrl: string; close: () => void }> {
       );
       res.write(usageChunk(400, 50, 0));
     } else if (last?.role === 'user') {
-      const code = `
-        await tools.init_prototype_shell({ appTitle: "合同台账", screens: [
-          { screenId: "SCR-A", screenName: "合同列表", screenType: "LIST" },
-          { screenId: "SCR-B", screenName: "合同录入", screenType: "FORM" } ] });
-        return await tools.spawn_subagents({ tasks: [
-          { title: "合同列表", roleLabel: "列表设计师", screenId: "SCR-A", screenName: "合同列表", instruction: "列表" },
-          { title: "合同录入", roleLabel: "表单设计师", screenId: "SCR-B", screenName: "合同录入", instruction: "表单" } ] });
-      `;
       res.write(
         sseChunk(
           {
             role: 'assistant',
             tool_calls: [
-              { index: 0, id: 'call-codemode', type: 'function', function: { name: 'codemode', arguments: JSON.stringify({ code }) } },
+              {
+                index: 0,
+                id: 'call-shell',
+                type: 'function',
+                function: {
+                  name: 'init_prototype_shell',
+                  arguments: JSON.stringify({
+                    appTitle: '合同台账',
+                    screens: [
+                      { screenId: 'SCR-A', screenName: '合同列表', screenType: 'LIST' },
+                      { screenId: 'SCR-B', screenName: '合同录入', screenType: 'FORM' },
+                    ],
+                  }),
+                },
+              },
+              {
+                index: 1,
+                id: 'call-spawn',
+                type: 'function',
+                function: {
+                  name: 'spawn_subagents',
+                  arguments: JSON.stringify({
+                    tasks: [
+                      { title: '合同列表', roleLabel: '列表设计师', screenId: 'SCR-A', screenName: '合同列表', instruction: '列表' },
+                      { title: '合同录入', roleLabel: '表单设计师', screenId: 'SCR-B', screenName: '合同录入', instruction: '表单' },
+                    ],
+                  }),
+                },
+              },
             ],
           },
           'tool_calls',
@@ -163,15 +183,18 @@ describe('agent-runtime: every Model Call records a Context Snapshot (ADR 0017)'
       expect(kinds).toContain('BUSINESS_CONTEXT');
       expect(kinds).toContain('TOOL_GUIDE');
       expect(kinds).toContain('TOOL_DEFINITION');
-      expect(detail.included.find((i) => i.kind === 'TOOL_DEFINITION' && i.label === 'codemode')?.source).toBe('CODEMODE');
+      expect(detail.included.find((i) => i.kind === 'TOOL_DEFINITION' && i.label === 'spawn_subagents')?.source).toBe('CODEMODE');
       const userItem = detail.included.find((i) => i.kind === 'USER_MESSAGE');
       expect(userItem?.content).toContain('生成合同台账首版原型');
       expect(turn.session.messages.some((m) => m.id === userItem?.sessionMessageId)).toBe(true);
-      expect(detail.response.map((r) => [r.kind, r.label])).toEqual([['TOOL_CALL', 'codemode']]);
+      expect(detail.response.map((r) => [r.kind, r.label])).toEqual([
+        ['TOOL_CALL', 'init_prototype_shell'],
+        ['TOOL_CALL', 'spawn_subagents'],
+      ]);
 
-      // The second coordinator call sees the first call's tool call and its result.
+      // The second coordinator call sees the first call's tool calls and their results.
       const second = store.getModelCall('proj-contract', turnCalls[1]!.id)!;
-      expect(second.included.some((i) => i.kind === 'TOOL_RESULT' && i.label === 'codemode')).toBe(true);
+      expect(second.included.some((i) => i.kind === 'TOOL_RESULT' && i.label === 'spawn_subagents')).toBe(true);
 
       // Session usage is the sum of the run's calls, never a fixed input/output split.
       expect(turn.session.tokenUsage).toEqual({
