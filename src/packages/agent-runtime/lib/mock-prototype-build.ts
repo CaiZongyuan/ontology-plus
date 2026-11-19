@@ -19,7 +19,7 @@ import {
   type Context,
 } from '@earendil-works/pi-ai';
 import { describePrototypeBuildFailure } from '../../business-vocabulary/index.js';
-import type { PrototypeBuildFailureCode } from '../../ontology-core/index.js';
+import type { PrototypeBuildFailureCode, PrototypeDemoTour } from '../../ontology-core/index.js';
 import { pickLocaleText, type AgentLocale } from './locale.js';
 
 export interface MockPrototypeBuildScreen {
@@ -308,16 +308,249 @@ function firstUserText(context: Context): string {
 /** The per-screen check results in a `spawn_subagents` tool result. */
 function screenResultsOf(
   message: Extract<Context['messages'][number], { role: 'toolResult' }>,
-): { screenName: string; check: string; failure?: PrototypeBuildFailureCode }[] {
+): { screenId?: string; screenName: string; check: string; failure?: PrototypeBuildFailureCode }[] {
   const text = message.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
   try {
     const parsed = JSON.parse(text) as {
-      screens?: { screenName: string; check: string; failure?: PrototypeBuildFailureCode }[];
+      screens?: { screenId?: string; screenName: string; check: string; failure?: PrototypeBuildFailureCode }[];
     };
     return Array.isArray(parsed.screens) ? parsed.screens : [];
   } catch {
     return [];
   }
+}
+
+function buildMockDemoTours(locale: AgentLocale, drawnScreenIds: ReadonlySet<string>): PrototypeDemoTour[] {
+  const allTours: PrototypeDemoTour[] = [
+    {
+      id: 'first-order',
+      goal: pickLocaleText(locale, '门店第一次订货', "Place the store's first order"),
+      audience: pickLocaleText(locale, '店长', 'Store manager'),
+      steps: [
+        {
+          screenId: 'SCR-HOME',
+          elementId: 'EL-HOME-GREET',
+          action: 'look',
+          caption: pickLocaleText(
+            locale,
+            '王店长早上打开工作台，先看今天要处理什么。',
+            'Manager Wang opens the workspace in the morning to see what needs attention today.',
+          ),
+        },
+        {
+          screenId: 'SCR-HOME',
+          elementId: 'EL-HOME-NEW-ORDER',
+          action: 'click',
+          caption: pickLocaleText(
+            locale,
+            '发现可颂快卖完了，点「新建订单」开始订货。',
+            'Seeing croissants are running low, click "New Order" to start restocking.',
+          ),
+        },
+        {
+          screenId: 'SCR-NEW-ORDER',
+          elementId: 'EL-NEW-SEARCH',
+          action: 'type',
+          text: pickLocaleText(locale, '可颂', 'Croissant'),
+          caption: pickLocaleText(
+            locale,
+            '在商品搜索里输入要订的商品。',
+            'Type the product name into the search field.',
+          ),
+        },
+        {
+          screenId: 'SCR-NEW-ORDER',
+          elementId: 'EL-NEW-ORDER-BUTTON-2',
+          action: 'click',
+          times: 3,
+          caption: pickLocaleText(
+            locale,
+            '把黄油可颂加到 3 箱。',
+            'Add 3 boxes of butter croissants.',
+          ),
+        },
+        {
+          screenId: 'SCR-NEW-ORDER',
+          elementId: 'EL-NEW-CART',
+          action: 'look',
+          caption: pickLocaleText(
+            locale,
+            '右侧的订货清单实时算好了金额和送达时间。',
+            'The order summary on the right updates the total and expected delivery time.',
+          ),
+        },
+        {
+          screenId: 'SCR-NEW-ORDER',
+          elementId: 'EL-NEW-SUBMIT',
+          action: 'click',
+          caption: pickLocaleText(
+            locale,
+            '确认无误，提交订货单。',
+            'Everything looks right — submit the order.',
+          ),
+        },
+        {
+          screenId: 'SCR-ORDER-DETAIL',
+          elementId: 'EL-DETAIL-TIMELINE',
+          action: 'look',
+          caption: pickLocaleText(
+            locale,
+            '提交后，随时能看到这批货走到哪一步了。',
+            'Once submitted, you can check every delivery milestone at any time.',
+          ),
+        },
+      ],
+    },
+    {
+      id: 'track-delivery',
+      goal: pickLocaleText(locale, '核对今日待收货订单', "Check today's incoming delivery"),
+      audience: pickLocaleText(locale, '店长', 'Store manager'),
+      steps: [
+        {
+          screenId: 'SCR-HOME',
+          elementId: 'EL-KPI-RECEIVE',
+          action: 'click',
+          caption: pickLocaleText(
+            locale,
+            '从首页「今日待收货」卡片直接进入订货单列表。',
+            'Open the orders list directly from the "Incoming Today" card.',
+          ),
+        },
+        {
+          screenId: 'SCR-ORDERS',
+          elementId: 'EL-ORDERS-INPUT-1',
+          action: 'type',
+          text: 'DH-1025',
+          caption: pickLocaleText(
+            locale,
+            '按单号快速筛选即将到店的那一单。',
+            'Filter by order number to find the shipment arriving next.',
+          ),
+        },
+        {
+          screenId: 'SCR-ORDERS',
+          elementId: 'EL-ORDER-ROW-1025',
+          action: 'click',
+          caption: pickLocaleText(
+            locale,
+            '点开这笔配送中的订货单查看商品明细。',
+            'Open the in-transit order to inspect its items.',
+          ),
+        },
+        {
+          screenId: 'SCR-ORDER-DETAIL',
+          elementId: 'EL-ORDER-DETAIL-BUTTON-1',
+          action: 'click',
+          caption: pickLocaleText(
+            locale,
+            '货到清点无误后，点「确认收货」完成入库。',
+            'After counting the boxes on arrival, click "Confirm Receipt".',
+          ),
+        },
+      ],
+    },
+    {
+      id: 'find-order',
+      goal: pickLocaleText(locale, '查一张已完成的订货单', 'Look up a completed order'),
+      audience: pickLocaleText(locale, '店长', 'Store manager'),
+      steps: [
+        {
+          screenId: 'SCR-ORDERS',
+          elementId: 'EL-TAB-DONE',
+          action: 'click',
+          caption: pickLocaleText(
+            locale,
+            '在订货单里切到「已完成」。',
+            'Switch the orders list filter to "Completed".',
+          ),
+        },
+        {
+          screenId: 'SCR-ORDERS',
+          elementId: 'EL-ORDER-ROW-1019',
+          action: 'click',
+          caption: pickLocaleText(
+            locale,
+            '点开要查的那一单。',
+            'Open the completed order you want to check.',
+          ),
+        },
+        {
+          screenId: 'SCR-ORDER-DETAIL',
+          elementId: 'EL-DETAIL-HEAD',
+          action: 'look',
+          caption: pickLocaleText(
+            locale,
+            '这单的商品、状态一目了然。',
+            'Items and status for this order are shown at a glance.',
+          ),
+        },
+        {
+          screenId: 'SCR-ORDER-DETAIL',
+          elementId: 'EL-DETAIL-LINES',
+          action: 'look',
+          caption: pickLocaleText(
+            locale,
+            '逐行核对已收货的商品数量和小计金额。',
+            'Review the delivered quantities and line subtotals.',
+          ),
+        },
+      ],
+    },
+    {
+      id: 'approve-refund',
+      goal: pickLocaleText(locale, '审批一笔退款', 'Approve a refund request'),
+      audience: pickLocaleText(locale, '店长', 'Store manager'),
+      steps: [
+        {
+          screenId: 'SCR-HOME',
+          elementId: 'EL-KPI-REFUND',
+          action: 'click',
+          caption: pickLocaleText(
+            locale,
+            '首页提醒有 2 笔退款在等审批，点进去。',
+            'The home screen flags 2 pending refunds — click to open them.',
+          ),
+        },
+        {
+          screenId: 'SCR-REFUND',
+          elementId: 'EL-REFUND-LIST',
+          action: 'look',
+          caption: pickLocaleText(
+            locale,
+            '等得最久的那一笔排在最上面。',
+            'The longest-waiting request appears at the top of the list.',
+          ),
+        },
+        {
+          screenId: 'SCR-REFUND',
+          elementId: 'EL-REFUND-COMMENT',
+          action: 'type',
+          text: pickLocaleText(
+            locale,
+            '冷链温度异常，同意退款，已联系供应商。',
+            'Cold-chain temperature excursion confirmed; approving refund and notifying supplier.',
+          ),
+          caption: pickLocaleText(
+            locale,
+            '写一句审批意见，店员和供应商都能看到。',
+            'Add an approval note visible to both the clerk and the supplier.',
+          ),
+        },
+        {
+          screenId: 'SCR-REFUND',
+          elementId: 'EL-REFUND-APPROVE',
+          action: 'click',
+          caption: pickLocaleText(
+            locale,
+            '同意退款，货款 3 个工作日内退回门店。',
+            'Approve the refund so the amount returns to the store within 3 business days.',
+          ),
+        },
+      ],
+    },
+  ];
+
+  return allTours.filter((tour) => tour.steps.every((step) => drawnScreenIds.has(step.screenId)));
 }
 
 export interface MockPrototypeBuildReplay {
@@ -364,6 +597,8 @@ export function createMockPrototypeBuildReplay(
   const byId = new Map(build.screens.map((s) => [s.screenId, s]));
   const names = build.screens.map((s) => `「${s.screenName}」`).join('、');
   let subtitle = '';
+  let lastSpawnResults: { screenId?: string; screenName: string; check: string; failure?: PrototypeBuildFailureCode }[] =
+    [];
 
   return {
     responseBudget: build.screens.length * 6 + 12,
@@ -572,8 +807,49 @@ export function createMockPrototypeBuildReplay(
           { stopReason: 'toolUse' },
         );
       }
+      if (last?.role === 'toolResult' && last.toolName === 'spawn_subagents') {
+        lastSpawnResults = screenResultsOf(last);
+        const drawnIds = new Set(
+          lastSpawnResults
+            .filter((r) => r.check === 'passed' && r.screenId)
+            .map((r) => r.screenId!),
+        );
+        const tours = buildMockDemoTours(locale, drawnIds);
+        if (tours.length >= 2) {
+          return fauxAssistantMessage(
+            [
+              fauxThinking(
+                pickLocaleText(
+                  locale,
+                  `各屏绘制与截图检查已完成，现在按需求文档中的店长日常目标编写 ${tours.length} 条演示路线。`,
+                  `Screens and visual checks are complete; writing ${tours.length} Demo Tours around the store manager's daily goals.`,
+                ),
+              ),
+              fauxToolCall('write_demo_tours', {
+                tours: tours.map((t) => ({
+                  id: t.id,
+                  goal: t.goal,
+                  ...(t.audience ? { audience: t.audience } : {}),
+                  steps: t.steps.map((s) => ({
+                    screenId: s.screenId,
+                    ...(s.elementId ? { elementId: s.elementId } : {}),
+                    action: s.action,
+                    caption: s.caption,
+                    ...(s.text !== undefined ? { text: s.text } : {}),
+                    ...(s.times !== undefined ? { times: s.times } : {}),
+                  })),
+                })),
+              }),
+            ],
+            { stopReason: 'toolUse' },
+          );
+        }
+      }
       // The recorded lead closes from what it really got back: each screen's own check result.
-      const results = last?.role === 'toolResult' && last.toolName === 'spawn_subagents' ? screenResultsOf(last) : [];
+      const results =
+        last?.role === 'toolResult' && last.toolName === 'spawn_subagents'
+          ? screenResultsOf(last)
+          : lastSpawnResults;
       const failed = results.filter((r) => r.check !== 'passed');
       const drawn = results.length - failed.length;
       return fauxAssistantMessage([

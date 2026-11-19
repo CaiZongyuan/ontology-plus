@@ -149,6 +149,7 @@ export const DOCUMENT_LEVEL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'plan_screens',
   'report_review',
   'edit_screen',
+  'write_demo_tours',
   'spawn_subagents',
   'codemode',
 ]);

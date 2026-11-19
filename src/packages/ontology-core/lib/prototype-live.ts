@@ -344,7 +344,12 @@ export function prototypeFrameAssets(frame: PrototypeDocumentFrame | undefined):
       css.push(headHtml.slice(el.openEnd, Math.max(el.openEnd, closeAt)));
     } else if (el.tag === 'link' && /stylesheet/i.test(el.attrs.rel ?? '') && el.attrs.href) {
       links.push(el.attrs.href);
-    } else if (el.tag === 'script' && el.end !== -1) {
+    } else if (
+      el.tag === 'script' &&
+      el.end !== -1 &&
+      !('data-proto-tours' in el.attrs) &&
+      !/application\/json/i.test(el.attrs.type ?? '')
+    ) {
       scripts.push(headHtml.slice(el.start, el.end));
     }
   }

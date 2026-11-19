@@ -77,6 +77,8 @@ export type PrototypeBuildLogKind =
   | 'review_finding'
   | 'screen_fixing'
   | 'screen_fixed'
+  | 'tours_started'
+  | 'tours_ready'
   | 'plan_rejected'
   | 'plan_from_dispatch'
   | 'screens_added'

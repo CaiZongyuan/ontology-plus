@@ -1,0 +1,66 @@
+/* Scoped Demo Tour Player styles (#95, ADR 0006, ADR 0015). Contract tokens only. */
+
+.onto-demo-spotlight {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 14;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--primary);
+  box-shadow: 0 0 0 9999px color-mix(in srgb, var(--overlay) 42%, transparent);
+}
+
+.onto-demo-spotlight-web {
+  transition:
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease-out;
+}
+
+.onto-demo-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 16;
+  filter: drop-shadow(0 2px 4px color-mix(in srgb, var(--shadow-color) 38%, transparent));
+}
+
+.onto-demo-cursor-svg path {
+  fill: var(--primary);
+  stroke: var(--card);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+@keyframes onto-demo-ripple {
+  from {
+    transform: scale(0.35);
+    opacity: 0.95;
+  }
+  to {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
+.onto-demo-ripple {
+  position: absolute;
+  left: -13px;
+  top: -13px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--primary);
+  opacity: 0;
+  animation: onto-demo-ripple 280ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onto-demo-spotlight-web {
+    transition: none;
+  }
+  .onto-demo-ripple {
+    animation: none;
+  }
+}

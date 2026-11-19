@@ -100,7 +100,8 @@ test.describe('Build Plan (#90): plan first, real per-screen states, continue on
     await expect(page.getByTestId('prototype-phase-screens')).toHaveAttribute('data-phase-status', 'failed');
     await expect(page.getByTestId('prototype-phase-review')).toHaveAttribute('data-phase-status', 'done');
     await expect(page.getByTestId('prototype-phase-review')).toContainText('修正 1 屏');
-    await expect(page.getByTestId('prototype-phase-tours')).toHaveAttribute('data-phase-status', 'skipped');
+    await expect(page.getByTestId('prototype-phase-tours')).toHaveAttribute('data-phase-status', 'done');
+    await expect(page.getByTestId('prototype-phase-tours')).toContainText('演示路线已就绪');
 
     // The build log: time, assistant, screen, business sentence; the failure line can continue.
     const log = page.getByTestId('prototype-build-log');

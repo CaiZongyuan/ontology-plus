@@ -43,6 +43,8 @@ import {
   resolvePrototypeStyleValues,
   splitPrototypeDocument,
   validateOntologySuite,
+  validatePrototypeDemoTours,
+  writePrototypeDemoTours,
   type ModelCode,
   type OntologySuite,
   type PrototypeBuildPlanItem,
@@ -96,6 +98,7 @@ import {
 import {
   EDIT_SCREEN_OPENAI_TOOL,
   EDIT_SCREEN_TOOL_NAME,
+  FORBIDDEN_DIALOG_RE,
   PROTOTYPE_ANCHOR_OPENAI_TOOLS,
   editPrototypeAnchor,
   editPrototypeScreen,
@@ -134,6 +137,8 @@ import {
   PLAN_SCREENS_TOOL_NAME,
   REPORT_REVIEW_OPENAI_TOOL,
   REPORT_REVIEW_TOOL_NAME,
+  WRITE_DEMO_TOURS_OPENAI_TOOL,
+  WRITE_DEMO_TOURS_TOOL_NAME,
   alignShellArgsWithPlan,
   createPrototypeBuildRun,
   parseResumePrototypeScreenAction,
@@ -2729,13 +2734,14 @@ export function getToolsForAgentKind(
   if (!options) return baseTools;
 
   const extras: Tool[] = [];
-  // The Build Plan, the style, and the screenshot review/fix tools are the lead's alone.
+  // The Build Plan, the style, the screenshot review/fix tools, and Demo Tours are the lead's alone.
   if (kind === 'PROTOTYPE_CO_DESIGN') {
     extras.push(
       toPiTool(PLAN_SCREENS_OPENAI_TOOL),
       toPiTool(DEFINE_STYLE_OPENAI_TOOL),
       toPiTool(REPORT_REVIEW_OPENAI_TOOL),
       toPiTool(EDIT_SCREEN_OPENAI_TOOL),
+      toPiTool(WRITE_DEMO_TOURS_OPENAI_TOOL),
     );
   }
   if ((options.multiAgentConcurrency ?? 1) > 1) {
@@ -2873,8 +2879,8 @@ function buildSystemPromptForSession(
             `Target Interactive Prototype: Unbound initial generation (Revision #1 from Design Brief).`,
             `Initial Prototype Generation Rules:`,
             useParallel
-              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`plan_screens\` with the Build Plan — 3–5 screens, each with screenId, a business name and a one-sentence business purpose — so the user sees one blank artboard per screen within seconds; THEN call \`define_style\` with the design values, the shared component CSS (buttons, cards, tables, form fields, tags, empty states) and the Style Tile — it is drawn live on the first artboard and lays out the document skeleton; THEN call \`spawn_subagents\` with one task per planned screen, in plan order, so ${execOptions?.multiAgentConcurrency ?? 3} parallel helpers build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Helpers automatically receive the Design Brief, the design values, the shared components, the Visual References and the requirements summary — keep each task's instruction to what that screen shows and does. Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
-              : `1. Call \`plan_screens\` first, then \`define_style\`, then \`upsert_prototype_screen\` per planned screen ONLY when a Confirmed Requirements Document is present above.`,
+              ? `1. ONLY when a Confirmed Requirements Document is present above: FIRST call \`plan_screens\` with the Build Plan — 3–5 screens, each with screenId, a business name and a one-sentence business purpose — so the user sees one blank artboard per screen within seconds; THEN call \`define_style\` with the design values, the shared component CSS (buttons, cards, tables, form fields, tags, empty states) and the Style Tile — it is drawn live on the first artboard and lays out the document skeleton; THEN call \`spawn_subagents\` with one task per planned screen, in plan order, so ${execOptions?.multiAgentConcurrency ?? 3} parallel helpers build each screen simultaneously via \`upsert_prototype_screen\` (~80–180 lines per screen). Helpers automatically receive the Design Brief, the design values, the shared components, the Visual References and the requirements summary — keep each task's instruction to what that screen shows and does. FINALLY, once screens finish, call \`write_demo_tours\` to author 2–4 playable Demo Tours (演示路线, never call them Scenarios) grounded in user goals and roles from the Confirmed Requirements Document, referencing only drawn screens and their real \`data-element-id\` anchors. Do NOT dump all screens into one giant \`rewrite_prototype_page\` call.`
+              : `1. Call \`plan_screens\` first, then \`define_style\`, then \`upsert_prototype_screen\` per planned screen, and finally \`write_demo_tours\` (2–4 Demo Tours grounded in user goals and roles) ONLY when a Confirmed Requirements Document is present above.`,
             `2. Strictly follow the confirmed Design Brief, reference DESIGN.md tokens, interactive motion specifications, and the Confirmed Requirements Document scope (never unconfirmed drafts).`,
             `3. Include semantic anchors (\`data-screen-id\`, \`data-screen-name\`, \`data-screen-type\`, \`data-element-id\`, \`data-element-type\`, \`data-binding\`, \`data-event-id\`) on every screen and interactive control, and NEVER use window.alert/confirm/prompt.`,
             `4. Ensure clean responsive layout across Desktop (1440px), Tablet (768px), and Mobile (390px) viewports.`,
@@ -2975,8 +2981,8 @@ function buildSystemPromptForSession(
           `当前共创目标交互原型：未绑定（按设计简报与已确认需求文档从零生成首版交互原型 Revision #1）。`,
           `首版原型生成准则（快速上屏，禁止在 thinking 中默写整页长代码）：`,
           useParallel
-            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码，也严禁调用单次巨型 \`rewrite_prototype_page\`**！请立即在 \`codemode\` 中或分步执行：① 先调用 \`plan_screens\` 列出施工计划：3～5 屏，每屏给出 screenId、业务名称和一句业务用途（画布会随之放好空白画板）；② 再调用 \`define_style\` 画风格样张：设计值、共用组件样式（按钮、卡片、表格、表单、标签、空状态）和样张，它会实时画在第一块画板上，并搭好文档骨架；③ 然后调用 \`spawn_subagents\` 按计划顺序每屏一个任务派发（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行屏幕助手，每位助手各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。设计简报、设计值、共用组件、视觉参考和需求摘要会自动交给每位助手，任务说明里只写这一屏显示什么、能做什么。`
-            : `1. 仅在已存在【已确认需求文档快照】时，先调用 \`plan_screens\` 列出施工计划，再调用 \`define_style\` 画风格样张，然后按计划逐屏 \`upsert_prototype_screen\` 输出可运行 HTML5 原型。`,
+            ? `1. 仅在已存在【已确认需求文档快照】时：**严禁在 thinking 中默写整页代码，也严禁调用单次巨型 \`rewrite_prototype_page\`**！请立即在 \`codemode\` 中或分步执行：① 先调用 \`plan_screens\` 列出施工计划：3～5 屏，每屏给出 screenId、业务名称和一句业务用途（画布会随之放好空白画板）；② 再调用 \`define_style\` 画风格样张：设计值、共用组件样式（按钮、卡片、表格、表单、标签、空状态）和样张，它会实时画在第一块画板上，并搭好文档骨架；③ 然后调用 \`spawn_subagents\` 按计划顺序每屏一个任务派发（系统将按并发度 ${execOptions?.multiAgentConcurrency ?? 3} 并行运行屏幕助手，每位助手各自调用 \`upsert_prototype_screen\` 输出单屏紧凑 HTML，每屏控制在 80～180 行）。设计简报、设计值、共用组件、视觉参考和需求摘要会自动交给每位助手，任务说明里只写这一屏显示什么、能做什么；④ 所有分屏完成后，调用 \`write_demo_tours\` 按需求文档中的用户目标与角色编写 2～4 条演示路线（严禁称为“场景演示”），每步只引用已绘制屏幕及其真实的 \`data-element-id\` 锚点。`
+            : `1. 仅在已存在【已确认需求文档快照】时，先调用 \`plan_screens\` 列出施工计划，再调用 \`define_style\` 画风格样张，然后按计划逐屏 \`upsert_prototype_screen\` 输出可运行 HTML5 原型，最后调用 \`write_demo_tours\` 编写 2～4 条演示路线。`,
           `2. 严格落实设计简报条目、Inspo DESIGN.md 设计令牌、交互动效约束与【已确认需求文档快照】（严禁读取未确认草稿）。`,
           `3. 每个业务屏幕必须声明合法 \`data-screen-id\`、\`data-screen-name\`、\`data-screen-type\`，所有 <button>/<input>/<select>/<textarea> 必须携带全局唯一合法 \`data-element-id\` 与 \`data-element-type\`（并合理挂载 \`data-binding\` 与 \`data-event-id\`），严禁使用 window.alert/confirm/prompt。`,
           `4. 页面必须原生支持响应式布局，在桌面端 (1440px)、平板端 (768px) 与手机端 (390px) 视口下均排版整洁无溢出。`,
@@ -6195,6 +6201,108 @@ async function executeUnifiedTurnCore(
       };
     };
 
+    const runWriteDemoToursTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
+      const started = Date.now();
+      const finishToursCall = (
+        output: string,
+        payload: Record<string, unknown>,
+        isError: boolean,
+      ): ExecutedToolStep => ({
+        trace: {
+          id: callId,
+          toolName: WRITE_DEMO_TOURS_TOOL_NAME,
+          arguments: rawArgs,
+          output,
+          isError,
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify(payload),
+        isError,
+      });
+
+      const activeHtml =
+        prototypeTurnDraft?.workingHtml ?? resolveTargetPrototypeForSession(store, sessionState)?.htmlContent;
+      if (!activeHtml?.trim()) {
+        const msg = pickLocaleText(
+          effectiveLocale,
+          '请先写出原型分屏后，再调用 write_demo_tours 编写演示路线。',
+          'Draw the prototype screens before calling write_demo_tours.',
+        );
+        prototypeBuildRun?.commitTours({ ok: false });
+        return finishToursCall(msg, { status: 'ERROR', diagnostic: msg }, true);
+      }
+
+      const rawSerialized = JSON.stringify(rawArgs.tours ?? '');
+      if (FORBIDDEN_DIALOG_RE.test(rawSerialized)) {
+        const dialogMsg = pickLocaleText(
+          effectiveLocale,
+          '演示路线中禁止包含 window.alert / confirm / prompt。',
+          'Demo tours must not contain window.alert / confirm / prompt.',
+        );
+        prototypeBuildRun?.commitTours({ ok: false }, activeHtml);
+        return finishToursCall(dialogMsg, { status: 'ERROR', diagnostic: dialogMsg }, true);
+      }
+
+      const validation = validatePrototypeDemoTours(activeHtml, rawArgs.tours, {
+        minTours: 2,
+        maxTours: 4,
+        locale: effectiveLocale,
+      });
+      if (!validation.ok) {
+        const diagnostic = validation.issues.map((i) => i.message).join(' ');
+        prototypeBuildRun?.commitTours({ ok: false }, activeHtml);
+        return finishToursCall(
+          diagnostic,
+          {
+            status: 'REJECTED_BY_TOUR_VALIDATOR',
+            diagnostic,
+            issues: validation.issues,
+            availableScreenIds: validation.availableScreenIds,
+            availableElementsByScreen: validation.availableElementsByScreen,
+          },
+          true,
+        );
+      }
+
+      const nextHtml = writePrototypeDemoTours(activeHtml, validation.tours);
+      if (prototypeTurnDraft) {
+        prototypeTurnDraft.workingHtml = nextHtml;
+      }
+      syncPrototypeLiveDocument();
+      prototypeBuildRun?.commitTours({ ok: true, count: validation.tours.length }, nextHtml);
+
+      const summary = pickLocaleText(
+        effectiveLocale,
+        `演示路线已就绪：共 ${validation.tours.length} 条（${validation.tours.map((t) => `「${t.goal}」`).join('、')}）。`,
+        `Demo tours ready: ${validation.tours.length} tours (${validation.tours.map((t) => `"${t.goal}"`).join(', ')}).`,
+      );
+      return finishToursCall(
+        summary,
+        {
+          status: 'OK',
+          summary,
+          toursCount: validation.tours.length,
+          tours: validation.tours.map((t) => ({ id: t.id, goal: t.goal, stepCount: t.steps.length })),
+        },
+        false,
+      );
+    };
+
+    const runLeadPrototypeTool = (
+      callId: string,
+      toolName: string,
+      toolArgs: Record<string, unknown>,
+      currentStep: number,
+    ): Promise<ExecutedToolStep> | ExecutedToolStep | null => {
+      if (toolName === 'spawn_subagents') return runSpawnSubagentsTool(callId, toolArgs, currentStep);
+      if (toolName === PLAN_SCREENS_TOOL_NAME) return runPlanScreensTool(callId, toolArgs);
+      if (toolName === DEFINE_STYLE_TOOL_NAME) return runDefineStyleTool(callId, toolArgs);
+      if (toolName === REPORT_REVIEW_TOOL_NAME) return runReportReviewTool(callId, toolArgs);
+      if (toolName === EDIT_SCREEN_TOOL_NAME) return runEditScreenTool(callId, toolArgs);
+      if (toolName === WRITE_DEMO_TOURS_TOOL_NAME) return runWriteDemoToursTool(callId, toolArgs);
+      return null;
+    };
+
     try {
       const MAX_TOOL_ROUNDS = 24;
       for (let step = 0; step < MAX_TOOL_ROUNDS; step += 1) {
@@ -6328,6 +6436,9 @@ async function executeUnifiedTurnCore(
               }
               if (partialCall?.type === 'toolCall' && partialCall.name === EDIT_SCREEN_TOOL_NAME) {
                 prototypeBuildRun?.observeEditScreenStream(partialCall.arguments);
+              }
+              if (partialCall?.type === 'toolCall' && partialCall.name === WRITE_DEMO_TOURS_TOOL_NAME) {
+                prototypeBuildRun?.observeToursStream(prototypeTurnDraft?.workingHtml);
               }
               if (
                 partialCall?.type === 'toolCall' &&
@@ -6480,17 +6591,12 @@ async function executeUnifiedTurnCore(
             },
           });
 
+          const leadDirectOut = runLeadPrototypeTool(tc.id, tc.name, tcArgs, step + 1);
           const executed: ExecutedToolStep =
-            tc.name === 'spawn_subagents'
-              ? await runSpawnSubagentsTool(tc.id, tcArgs, step + 1)
-              : tc.name === PLAN_SCREENS_TOOL_NAME
-                ? runPlanScreensTool(tc.id, tcArgs)
-              : tc.name === DEFINE_STYLE_TOOL_NAME
-                ? runDefineStyleTool(tc.id, tcArgs)
-              : tc.name === REPORT_REVIEW_TOOL_NAME
-                ? runReportReviewTool(tc.id, tcArgs)
-              : tc.name === EDIT_SCREEN_TOOL_NAME
-                ? runEditScreenTool(tc.id, tcArgs)
+            leadDirectOut !== null
+              ? leadDirectOut instanceof Promise
+                ? await leadDirectOut
+                : leadDirectOut
               : tc.name === 'codemode'
                 ? await (async (): Promise<ExecutedToolStep> => {
                     const startedCm = Date.now();
@@ -6519,17 +6625,12 @@ async function executeUnifiedTurnCore(
                           },
                         });
 
+                        const leadNestedOut = runLeadPrototypeTool(nestedCallId, nestedToolName, nestedArgs, step + 1);
                         const nestedOut =
-                          nestedToolName === 'spawn_subagents'
-                            ? await runSpawnSubagentsTool(nestedCallId, nestedArgs, step + 1)
-                            : nestedToolName === PLAN_SCREENS_TOOL_NAME
-                              ? runPlanScreensTool(nestedCallId, nestedArgs)
-                            : nestedToolName === DEFINE_STYLE_TOOL_NAME
-                              ? runDefineStyleTool(nestedCallId, nestedArgs)
-                            : nestedToolName === REPORT_REVIEW_TOOL_NAME
-                              ? runReportReviewTool(nestedCallId, nestedArgs)
-                            : nestedToolName === EDIT_SCREEN_TOOL_NAME
-                              ? runEditScreenTool(nestedCallId, nestedArgs)
+                          leadNestedOut !== null
+                            ? leadNestedOut instanceof Promise
+                              ? await leadNestedOut
+                              : leadNestedOut
                             : await executeUnifiedToolCall(
                                 store,
                                 sessionState,

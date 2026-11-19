@@ -295,6 +295,18 @@ const CATALOG_ENTRIES: readonly ToolProgressSpec[] = [
     },
   },
   {
+    toolName: 'write_demo_tours',
+    iconKind: 'screen',
+    label: {
+      zh: '编写演示路线',
+      en: 'Write Demo Tours',
+    },
+    activeLabel: {
+      zh: '正在编写演示路线',
+      en: 'Writing Demo Tours',
+    },
+  },
+  {
     toolName: 'codemode',
     iconKind: 'automation',
     label: {

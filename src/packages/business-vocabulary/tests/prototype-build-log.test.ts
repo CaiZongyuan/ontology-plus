@@ -32,6 +32,8 @@ const ENTRIES: PrototypeBuildLogEntry[] = [
   { id: 18, at: '', agent: 0, kind: 'review_finding', screenId: 'SCR-REFUND', detail: '表格 EL-ORDERS-TABLE 右侧「状态」列被裁切' },
   { id: 19, at: '', agent: 0, kind: 'screen_fixing', screenId: 'SCR-REFUND', detail: '收窄表格宽度让「状态」列完整显示' },
   { id: 20, at: '', agent: 0, kind: 'screen_fixed', screenId: 'SCR-REFUND', detail: '收窄表格宽度让「状态」列完整显示' },
+  { id: 21, at: '', agent: 0, kind: 'tours_started' },
+  { id: 22, at: '', agent: 0, kind: 'tours_ready', count: 3 },
 ];
 
 describe('prototype build log sentences', () => {

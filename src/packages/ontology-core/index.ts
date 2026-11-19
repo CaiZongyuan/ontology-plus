@@ -279,6 +279,19 @@ export {
 } from './lib/prototype-notes.js';
 
 export {
+  PROTOTYPE_TOURS_ATTR,
+  readPrototypeDemoTours,
+  writePrototypeDemoTours,
+  validatePrototypeDemoTours,
+  type PrototypeDemoTourAction,
+  type PrototypeDemoTourStep,
+  type PrototypeDemoTour,
+  type PrototypeDemoTourIssueCode,
+  type PrototypeDemoTourIssue,
+  type PrototypeDemoTourValidationResult,
+} from './lib/prototype-tours.js';
+
+export {
   PROTOTYPE_BUILD_PHASES,
   PROTOTYPE_BUILD_LOG_LIMIT,
   emptyPrototypeBuildState,
