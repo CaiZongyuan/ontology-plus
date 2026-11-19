@@ -7,9 +7,11 @@ import {
   derivePrototypeLiveWriting,
   emptyPrototypeLiveState,
   extractMuFromPrototypeHtml,
+  parseModelYaml,
   parsePrototypeNote,
   readPrototypeNotes,
   sanitizePrototypeNote,
+  serializeModelYaml,
   writePrototypeNote,
 } from '../index.js';
 
@@ -254,6 +256,25 @@ describe('Prototype Notes in ontology-core (#92)', () => {
       label: '大额审批',
       description: '金额 > 5000 时审批',
     });
+
+    // Sibling attribute text like title="a data-note='fake'" or data-notes="other" must never shadow real data-note,
+    // and extracted descriptions round-trip losslessly through MU YAML (#94).
+    const baseHtml = `<section data-screen-id="SCR-CONFIRM" data-screen-name="订货确认" data-screen-type="FORM">
+      <button data-element-id="EL-SUBMIT" data-element-type="BUTTON" data-element-label="确认提交" data-notes="ignore" title="hint data-note='fake'">确认提交</button>
+    </section>`;
+    const annotatedHtml = writePrototypeNote(
+      baseHtml,
+      { elementId: 'EL-SUBMIT', screenId: 'SCR-CONFIRM' },
+      '确认提交：核对 "可颂" 数量 & 到店时间无误后发给供应商。',
+    );
+    const extracted = extractMuFromPrototypeHtml(annotatedHtml, '门店订货');
+    expect(extracted.screens[0]!.elements[0]?.description).toBe(
+      '确认提交：核对 "可颂" 数量 & 到店时间无误后发给供应商。',
+    );
+    const roundTripped = parseModelYaml('MU', serializeModelYaml('MU', extracted));
+    expect(roundTripped.screens[0]!.elements[0]?.description).toBe(
+      '确认提交：核对 "可颂" 数量 & 到店时间无误后发给供应商。',
+    );
   });
 
   it('tracks the active open element at the streaming frontier, picks nearest preceding headings, and checks screenRoot headings', () => {
