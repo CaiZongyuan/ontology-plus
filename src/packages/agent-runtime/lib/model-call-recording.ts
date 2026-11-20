@@ -65,7 +65,7 @@ export function segmentSystemPrompt(prompt: string, marks: readonly PromptMark[]
 }
 
 export function toolDefinitionSource(name: string): ToolDefinitionSource {
-  if (name === 'codemode' || name === 'spawn_subagents') return 'CODEMODE';
+  if (name === 'codemode') return 'CODEMODE';
   if (name === 'invoke_mcp_tool') return 'MCP';
   return 'BUILTIN';
 }

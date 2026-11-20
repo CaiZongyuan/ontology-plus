@@ -183,7 +183,7 @@ describe('agent-runtime: every Model Call records a Context Snapshot (ADR 0017)'
       expect(kinds).toContain('BUSINESS_CONTEXT');
       expect(kinds).toContain('TOOL_GUIDE');
       expect(kinds).toContain('TOOL_DEFINITION');
-      expect(detail.included.find((i) => i.kind === 'TOOL_DEFINITION' && i.label === 'spawn_subagents')?.source).toBe('CODEMODE');
+      expect(detail.included.find((i) => i.kind === 'TOOL_DEFINITION' && i.label === 'spawn_subagents')?.source).toBe('BUILTIN');
       const userItem = detail.included.find((i) => i.kind === 'USER_MESSAGE');
       expect(userItem?.content).toContain('生成合同台账首版原型');
       expect(turn.session.messages.some((m) => m.id === userItem?.sessionMessageId)).toBe(true);

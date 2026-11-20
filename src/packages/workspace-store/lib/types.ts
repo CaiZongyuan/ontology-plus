@@ -816,6 +816,7 @@ export interface PrototypeRevision {
   instruction?: string;
   starred?: boolean;
   htmlContent: string;
+  designBrief?: DesignBrief | null;
   extractedScreenCount: number;
   source: PrototypeRevisionSource;
   restoredFromRevisionId?: string;
@@ -937,6 +938,7 @@ export interface AppendPrototypeRevisionInput {
   instruction?: string;
   starred?: boolean;
   htmlContent: string;
+  designBrief?: DesignBrief;
   source?: PrototypeRevisionSource;
   restoredFromRevisionId?: string;
   restoredBeforeRevisionId?: string;

@@ -1,3 +1,4 @@
+import { readLockedPrototypeStyleValues } from '../../ontology-core/index.js';
 import type {
   AppendPrototypeRevisionInput,
   ConfirmedPrototypeRevision,
@@ -224,6 +225,7 @@ export function buildStoredPrototypeOnCreate(params: {
     ...(params.input.instruction?.trim() ? { instruction: params.input.instruction.trim() } : {}),
     ...(params.input.starred !== undefined ? { starred: params.input.starred } : {}),
     htmlContent: params.input.htmlContent,
+    designBrief: structuredClone(params.input.designBrief ?? null),
     extractedScreenCount: countPrototypeScreens(params.input.htmlContent),
     source,
     ...(params.input.agentRunId ? { agentRunId: params.input.agentRunId } : {}),
@@ -279,6 +281,18 @@ export function buildStoredPrototypeOnAppend(params: {
     nextRevisionNumber,
     params.input.version,
   );
+  const previousBrief = params.stored.designBrief ?? null;
+  const target = source === 'RESTORED'
+    ? ordered.find((revision) => revision.id === params.input.restoredFromRevisionId)
+    : undefined;
+  const legacyValues = target && target.designBrief === undefined
+    ? readLockedPrototypeStyleValues(target.htmlContent)
+    : null;
+  const designBrief = structuredClone(target?.designBrief !== undefined
+    ? target.designBrief
+    : legacyValues && previousBrief
+      ? { ...previousBrief, styleValues: legacyValues }
+      : params.input.designBrief ?? previousBrief);
 
   const revision: PrototypeRevision = {
     id: params.revisionId,
@@ -295,6 +309,7 @@ export function buildStoredPrototypeOnAppend(params: {
     ...(params.input.instruction?.trim() ? { instruction: params.input.instruction.trim() } : {}),
     ...(params.input.starred !== undefined ? { starred: params.input.starred } : {}),
     htmlContent: params.input.htmlContent,
+    designBrief,
     extractedScreenCount: countPrototypeScreens(params.input.htmlContent),
     source,
     ...(params.input.restoredFromRevisionId
@@ -319,6 +334,8 @@ export function buildStoredPrototypeOnAppend(params: {
     currentRevisionId: revision.id,
     updatedAt: params.now,
   };
+  if (designBrief) nextStored.designBrief = designBrief;
+  else delete nextStored.designBrief;
 
   return { stored: nextStored, revision };
 }

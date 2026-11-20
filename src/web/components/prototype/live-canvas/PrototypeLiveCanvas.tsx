@@ -16,7 +16,7 @@ import {
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
-import { AgentCursorDockControl, CanvasAgentCursors, useObservedElementSize } from './AgentCursor.js';
+import { AgentCursorDockControl, CanvasAgentCursors, useObservedElementSize } from './AgentCursorOverlay.js';
 import { ArtboardFrame, type ArtboardHandle } from './Artboard.js';
 import { BuildLog, BuildLogLiveRows } from './BuildLog.js';
 import { BuildPhaseBar } from './BuildPhaseBar.js';
@@ -776,6 +776,8 @@ export function PrototypeLiveCanvas({
                     screenId={board.screenId}
                     title={cleanName(board, idx - slotOffset)}
                     bodyHtml={board.bodyHtml}
+                    htmlAttrs={model.htmlAttrs}
+                    bodyAttrs={model.bodyAttrs}
                     css={model.css}
                     {...(board.css ? { extraCss: board.css } : {})}
                     linksKey={linksKey}
@@ -880,6 +882,8 @@ export function PrototypeLiveCanvas({
               ref={webRef}
               screens={screens}
               pageBodyHtml={model.pageBodyHtml}
+              htmlAttrs={model.htmlAttrs}
+              bodyAttrs={model.bodyAttrs}
               pageCss={model.pageCss}
               css={model.css}
               linksKey={linksKey}

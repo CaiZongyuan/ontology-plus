@@ -142,6 +142,8 @@ async function discoverChromiumExecutable(): Promise<string | null> {
           path.join(cacheDir, dir, 'chrome-headless-shell-linux64', 'chrome-headless-shell'),
           path.join(cacheDir, dir, 'chrome-mac-arm64', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
           path.join(cacheDir, dir, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+          path.join(cacheDir, dir, 'chrome-win64', 'chrome.exe'),
+          path.join(cacheDir, dir, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe'),
           path.join(cacheDir, dir, 'chrome-win', 'chrome.exe'),
         ];
         for (const sub of subCandidates) {
@@ -159,6 +161,12 @@ async function discoverChromiumExecutable(): Promise<string | null> {
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
       '/Applications/Chromium.app/Contents/MacOS/Chromium',
       '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+      ...[process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA]
+        .filter((root): root is string => Boolean(root))
+        .flatMap((root) => [
+          path.join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+          path.join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        ]),
     ];
     for (const sys of systemCandidates) {
       if (existsExec(sys)) return sys;

@@ -2728,12 +2728,11 @@ export function getToolsForAgentKind(
   if (!options) return baseTools;
 
   const extras: Tool[] = [];
-  // The Build Plan, the style, the screenshot review/fix tools, and Demo Tours are the lead's alone.
+  // The Build Plan, the style, direct screen edits, and Demo Tours are the lead's alone.
   if (kind === 'PROTOTYPE_CO_DESIGN') {
     extras.push(
       toPiTool(PLAN_SCREENS_OPENAI_TOOL),
       toPiTool(DEFINE_STYLE_OPENAI_TOOL),
-      toPiTool(REPORT_REVIEW_OPENAI_TOOL),
       toPiTool(EDIT_SCREEN_OPENAI_TOOL),
       toPiTool(WRITE_DEMO_TOURS_OPENAI_TOOL),
     );
@@ -2882,7 +2881,7 @@ function buildSystemPromptForSession(
     }
     return `${corePrompt}\n\n${mark(
       'TOOL_GUIDE',
-      renderSubagentPromptSection(locale, execOptions.multiAgentConcurrency),
+      renderSubagentPromptSection(locale, execOptions.multiAgentConcurrency, session.agentKind === 'PROTOTYPE_CO_DESIGN'),
     )}`;
   };
   const project = resolveProjectDetail(store, session.projectId);
@@ -2996,7 +2995,7 @@ function buildSystemPromptForSession(
           biz(`Screens in prototype: ${screensDesc}.`),
           `Prototype Co-Design Rules (Post-Generation Modification):`,
           `1. FIRST call \`plan_screens\` listing ONLY the affected screen(s) that need changes (NEVER include unaffected screens so untouched artboards stay intact).`,
-          `2. Inspect only the affected screen/element via \`read_prototype_anchor\` (or \`list_prototype_anchors\`), then apply targeted updates visibly on the affected artboard(s) using \`edit_screen\`, \`edit_prototype_anchor\`, or \`upsert_prototype_screen\` (or \`spawn_subagents\` when updating multiple screens), updating \`data-note\` on modified elements. Run at most 1 screenshot review round (\`report_review\` + \`edit_screen\` if needed) on the modified screen(s).`,
+          `2. Inspect only the affected screen/element via \`read_prototype_anchor\` (or \`list_prototype_anchors\`), then apply targeted updates visibly on the affected artboard(s) using \`edit_screen\`, \`edit_prototype_anchor\`, or \`upsert_prototype_screen\` (or \`spawn_subagents\` when updating multiple screens), updating \`data-note\` on modified elements. The workbench runs the screenshot review separately when available.`,
           `3. For whole-page visual restyling, first call \`define_style\` (it replaces the shared look and redraws the Style Tile in place), then restyle the screens with \`spawn_subagents\`, one task per screen.`,
           `4. If any screen or \`data-element-id\` referenced by Demo Tours changed, call \`write_demo_tours\` to update affected Demo Tours; otherwise keep valid tours intact.`,
           `5. Preserve existing \`data-screen-id\`, \`data-element-id\`, \`data-binding\`, and \`data-event-id\` anchors, add valid \`data-element-id\` + \`data-element-type\` on every new <button>/<input>/<select>/<textarea>, and NEVER use window.alert/confirm/prompt.`,
@@ -3111,7 +3110,7 @@ function buildSystemPromptForSession(
         biz(`当前原型包含屏幕锚点：${screensDesc}。`),
         `原型生成后修改与精修准则：`,
         `1. 收到局部修改请求（如“把订单列表的筛选改成按客户”）时，先调用 \`plan_screens\` 只列出受影响的屏幕（严禁把未受影响的屏幕放进计划，也严禁重画未受影响的屏）。`,
-        `2. 先调用 \`read_prototype_anchor\`（或 \`list_prototype_anchors\`）查看目标屏或控件，再在受影响画板上用 \`edit_screen\`、\`edit_prototype_anchor\` 或 \`upsert_prototype_screen\`（多屏时用 \`spawn_subagents\`）做局部修改，并同步更新改动元素的 \`data-note\` 原型说明；每屏最多做 1 轮截图检查（\`report_review\` + \`edit_screen\`）。`,
+        `2. 先调用 \`read_prototype_anchor\`（或 \`list_prototype_anchors\`）查看目标屏或控件，再在受影响画板上用 \`edit_screen\`、\`edit_prototype_anchor\` 或 \`upsert_prototype_screen\`（多屏时用 \`spawn_subagents\`）做局部修改，并同步更新改动元素的 \`data-note\` 原型说明。条件允许时，工作台会另外执行截图检查。`,
         `3. 整体换风格时先调用 \`define_style\` 重画风格样张（原地替换共用外观），再用 \`spawn_subagents\` 按屏调整。`,
         `4. 若改动影响到了演示路线引用的屏幕或控件锚点，调用 \`write_demo_tours\` 同步更新演示路线；未受影响的屏幕保持逐字节不变。`,
         `5. 严格保留既有 \`data-screen-id\`、\`data-element-id\`、\`data-binding\`、\`data-event-id\` 语义锚点；任何新增 <button>/<input>/<select>/<textarea> 必须携带合法唯一的 \`data-element-id\` 与 \`data-element-type\`；严禁使用 window.alert/confirm/prompt。`,
@@ -3282,7 +3281,7 @@ async function executeUnifiedToolCall(
   hadPreviousValidatorError: boolean,
   locale: AgentLocale = 'zh-CN',
   prototypeDraft?: PrototypeTurnDraft,
-  options?: { isMock?: boolean; actionParams?: Record<string, unknown>; runId?: string },
+  options?: { isMock?: boolean; actionParams?: Record<string, unknown>; runId?: string; ownScreenId?: string },
 ): Promise<ExecutedToolStep> {
   const started = Date.now();
   const args = (tc.arguments ?? {}) as Record<string, unknown>;
@@ -4071,6 +4070,39 @@ async function executeUnifiedToolCall(
       };
     }
 
+    const commitScreenWrite = (
+      nextHtml: string,
+      anchor: PrototypeTargetAnchor | undefined,
+    ): ExecutedToolStep | undefined => {
+      if (!prototypeDraft) return;
+      const ownScreenId = options?.ownScreenId;
+      const reject = (status: string, diagnostic: string): ExecutedToolStep => ({
+        trace: {
+          id: tc.id,
+          toolName: tc.name,
+          arguments: args,
+          output: diagnostic,
+          isError: true,
+          ...(anchor ? { targetAnchor: anchor } : {}),
+          durationMs: Date.now() - started,
+        },
+        toolResultContent: JSON.stringify({ status, diagnostic }),
+        isError: true,
+      });
+      if (ownScreenId) {
+        const kept = keepWithinOwnScreen(activeHtml, nextHtml, ownScreenId, locale);
+        if (kept.diagnostic) return reject('REJECTED_OUT_OF_SCOPE', kept.diagnostic);
+        nextHtml = kept.html;
+        if (tc.name === 'edit_prototype_anchor') {
+          const checked = validatePrototypeScreenControls(nextHtml, ownScreenId, locale);
+          if (!checked.ok) return reject('REJECTED_BY_ANCHOR_VALIDATOR', checked.diagnostic);
+          nextHtml = checked.nextHtml;
+        }
+      }
+      prototypeDraft.workingHtml = nextHtml;
+      recordModifiedAnchor(prototypeDraft, anchor);
+    };
+
     if (tc.name === 'init_prototype_shell' || tc.name === 'upsert_prototype_screen') {
       if (
         !resolveTargetPrototypeForSession(store, session) &&
@@ -4201,10 +4233,8 @@ async function executeUnifiedToolCall(
           isError: true,
         };
       }
-      if (prototypeDraft) {
-        prototypeDraft.workingHtml = screenRes.nextHtml;
-        recordModifiedAnchor(prototypeDraft, screenRes.targetAnchor);
-      }
+      const rejected = commitScreenWrite(screenRes.nextHtml, screenRes.targetAnchor);
+      if (rejected) return rejected;
       return {
         trace: {
           id: tc.id,
@@ -4341,10 +4371,8 @@ async function executeUnifiedToolCall(
         };
       }
 
-      if (prototypeDraft) {
-        prototypeDraft.workingHtml = editRes.nextHtml;
-        recordModifiedAnchor(prototypeDraft, editRes.targetAnchor);
-      }
+      const rejected = commitScreenWrite(editRes.nextHtml, editRes.targetAnchor);
+      if (rejected) return rejected;
 
       return {
         trace: {
@@ -5262,7 +5290,7 @@ async function executeUnifiedTurnCore(
         : undefined;
     // The Design Brief this build follows: approved Style Tile values in it are locked (#91).
     let buildDesignBrief =
-      input.designBrief ?? initialTargetProto?.designBrief ?? sessionState.designBrief ?? undefined;
+      input.designBrief ?? (initialTargetProto ? initialTargetProto.designBrief : sessionState.designBrief);
     if (prototypeTurnDraft) {
       const lock = lockedStyleValuesOf(buildDesignBrief);
       prototypeTurnDraft.lockedStyleValues = lock.values;
@@ -5720,7 +5748,11 @@ async function executeUnifiedTurnCore(
       };
     };
 
-    const runEditScreenTool = (callId: string, rawArgs: Record<string, unknown>): ExecutedToolStep => {
+    const runEditScreenTool = (
+      callId: string,
+      rawArgs: Record<string, unknown>,
+      kind: 'change' | 'review',
+    ): ExecutedToolStep => {
       const started = Date.now();
       const activeHtml =
         prototypeTurnDraft?.workingHtml ?? resolveTargetPrototypeForSession(store, sessionState)?.htmlContent;
@@ -5747,7 +5779,7 @@ async function executeUnifiedTurnCore(
       const elementId = typeof rawArgs.elementId === 'string' ? rawArgs.elementId.trim() : undefined;
       const note = typeof rawArgs.note === 'string' ? rawArgs.note.trim() : undefined;
       const fallbackLabel = note ?? humanScreenLabel(screenId);
-      const capErr = screenId ? prototypeBuildRun?.checkEditScreenAllowed(screenId) : null;
+      const capErr = screenId ? prototypeBuildRun?.checkEditScreenAllowed(screenId, kind) : null;
       if (capErr) {
         return {
           trace: {
@@ -5822,12 +5854,16 @@ async function executeUnifiedTurnCore(
           recordModifiedAnchor(prototypeTurnDraft, editRes.targetAnchor);
         }
       }
-      const landedSlice = splitPrototypeDocument(kept.html).screens.find((s) => s.screenId === screenId)?.html ?? '';
-      prototypeBuildRun?.commitEditScreen(screenId, {
-        ...(elementId ? { elementId } : {}),
-        ...(note ? { note } : {}),
-        html: landedSlice,
-      });
+      if (kind === 'review') {
+        const landedSlice = splitPrototypeDocument(kept.html).screens.find((s) => s.screenId === screenId)?.html ?? '';
+        prototypeBuildRun?.commitEditScreen(screenId, {
+          ...(elementId ? { elementId } : {}),
+          ...(note ? { note } : {}),
+          html: landedSlice,
+        });
+      } else {
+        recordSingleAgentScreenWrite(screenId);
+      }
       syncPrototypeLiveDocument();
       return {
         trace: {
@@ -5856,50 +5892,26 @@ async function executeUnifiedTurnCore(
       const sid = screenId.trim();
       if (!sid || !prototypeTurnDraft || !prototypeBuildRun || controller.signal.aborted) return;
       if (!prototypeBuildRun.canReviewScreen(sid)) return;
-      // Verify real Playwright + headless Chromium launch readiness BEFORE emitting `review_started` (#93).
-      const hasWarmup = typeof screenshotter.warmup === 'function';
-      const canUseBrowser =
-        Boolean(built?.visionSupported) &&
-        (hasWarmup
-          ? await screenshotter.warmup!().catch(() => false)
-          : await Promise.resolve(screenshotter.available()).catch(() => false));
-      if (!canUseBrowser) {
+      if (!built?.visionSupported) {
         prototypeBuildRun.skipVisualReview();
         return;
       }
-
-      let preCaptured: Awaited<ReturnType<PrototypeScreenshotter['captureScreen']>> = null;
-      if (!hasWarmup) {
-        resetIdleTimer();
-        preCaptured = await screenshotter
-          .captureScreen({
-            documentHtml: prototypeTurnDraft.workingHtml,
-            screenId: sid,
-            signal: controller.signal,
-          })
-          .catch(() => null);
-        if (!preCaptured) {
-          if (!controller.signal.aborted) prototypeBuildRun.skipVisualReview();
-          return;
-        }
+      resetIdleTimer();
+      const capturedHtml = prototypeTurnDraft.workingHtml;
+      const capture = await screenshotter.captureScreen({
+        documentHtml: capturedHtml,
+        screenId: sid,
+        signal: controller.signal,
+      }).catch(() => null);
+      if (!capture || controller.signal.aborted) {
+        if (!controller.signal.aborted) prototypeBuildRun.skipVisualReview();
+        return;
       }
 
       if (!prototypeBuildRun.beginScreenReview(sid)) return;
 
       try {
-        resetIdleTimer();
-        const capture =
-          preCaptured ??
-          (await screenshotter
-            .captureScreen({
-              documentHtml: prototypeTurnDraft.workingHtml,
-              screenId: sid,
-              signal: controller.signal,
-            })
-            .catch(() => null));
-        if (!capture || controller.signal.aborted) return;
-
-        const slice = splitPrototypeDocument(prototypeTurnDraft.workingHtml).screens.find((s) => s.screenId === sid);
+        const slice = splitPrototypeDocument(capturedHtml).screens.find((s) => s.screenId === sid);
         if (!slice) return;
         const planEntry = prototypeBuildRun.plannedScreens()?.find((p) => p.screenId === sid);
         const screenLabel = planEntry?.screenName ?? slice.screenName;
@@ -5921,12 +5933,11 @@ async function executeUnifiedTurnCore(
             timestamp: Date.now(),
           },
         ];
-        const reviewTools = baseSpecialistTools.filter(
-          (t) =>
-            t.name === REPORT_REVIEW_TOOL_NAME ||
-            t.name === EDIT_SCREEN_TOOL_NAME ||
-            t.name === 'read_prototype_anchor',
-        );
+        const reviewTools: Tool[] = [
+          REPORT_REVIEW_OPENAI_TOOL.function,
+          EDIT_SCREEN_OPENAI_TOOL.function,
+          ...baseSpecialistTools.filter((tool) => tool.name === 'read_prototype_anchor'),
+        ];
         let expectedEdits = 1;
         let editsAppliedInSubturn = 0;
         let maxReviewSteps = 4;
@@ -6102,7 +6113,7 @@ async function executeUnifiedTurnCore(
               rtc.name === REPORT_REVIEW_TOOL_NAME
                 ? runReportReviewTool(rtc.id, rArgs)
                 : rtc.name === EDIT_SCREEN_TOOL_NAME
-                  ? runEditScreenTool(rtc.id, rArgs)
+                  ? runEditScreenTool(rtc.id, rArgs, 'review')
                   : await executeUnifiedToolCall(
                       store,
                       sessionState,
@@ -6336,9 +6347,7 @@ async function executeUnifiedTurnCore(
             },
           });
           const ownScreenId = lane.targetAnchor?.screenId?.trim();
-          const htmlBefore = prototypeTurnDraft?.workingHtml ?? '';
-          const anchorsBefore = prototypeTurnDraft ? [...prototypeTurnDraft.modifiedAnchors] : [];
-          let subExec = await executeUnifiedToolCall(
+          const subExec = await executeUnifiedToolCall(
             store,
             sessionState,
             alignShellWithPlan(subTc),
@@ -6348,45 +6357,10 @@ async function executeUnifiedTurnCore(
             {
               isMock: built!.isMock,
               runId: turnRunId,
+              ...(isPrototypeBuild && ownScreenId ? { ownScreenId } : {}),
               ...(structuredTurnAction ? { actionParams: structuredTurnAction.params } : {}),
             },
           );
-          // A screen helper's write may only change its own screen: anything else is undone.
-          if (isPrototypeBuild && ownScreenId && prototypeTurnDraft && !subExec.isError) {
-            const kept = keepWithinOwnScreen(htmlBefore, prototypeTurnDraft.workingHtml, ownScreenId, effectiveLocale);
-            prototypeTurnDraft.workingHtml = kept.html;
-            const diagnostic = kept.diagnostic;
-            if (diagnostic) {
-              prototypeTurnDraft.modifiedAnchors = anchorsBefore;
-              subExec = {
-                ...subExec,
-                trace: { ...subExec.trace, output: diagnostic, isError: true },
-                toolResultContent: JSON.stringify({ status: 'REJECTED_OUT_OF_SCOPE', diagnostic }),
-                isError: true,
-              };
-            } else if (subTc.name === 'edit_prototype_anchor') {
-              const checked = validatePrototypeScreenControls(
-                prototypeTurnDraft.workingHtml,
-                ownScreenId,
-                effectiveLocale,
-              );
-              if (!checked.ok) {
-                prototypeTurnDraft.workingHtml = htmlBefore;
-                prototypeTurnDraft.modifiedAnchors = anchorsBefore;
-                subExec = {
-                  ...subExec,
-                  trace: { ...subExec.trace, output: checked.diagnostic, isError: true },
-                  toolResultContent: JSON.stringify({
-                    status: 'REJECTED_BY_ANCHOR_VALIDATOR',
-                    diagnostic: checked.diagnostic,
-                  }),
-                  isError: true,
-                };
-              } else {
-                prototypeTurnDraft.workingHtml = checked.nextHtml;
-              }
-            }
-          }
           if (subTc.name === 'upsert_prototype_screen' || subTc.name === 'edit_prototype_anchor') {
             const writtenSid =
               (typeof subArgs.screenId === 'string' && subArgs.screenId.trim()) || ownScreenId;
@@ -6590,8 +6564,7 @@ async function executeUnifiedTurnCore(
       if (toolName === 'spawn_subagents') return runSpawnSubagentsTool(callId, toolArgs, currentStep);
       if (toolName === PLAN_SCREENS_TOOL_NAME) return runPlanScreensTool(callId, toolArgs);
       if (toolName === DEFINE_STYLE_TOOL_NAME) return runDefineStyleTool(callId, toolArgs);
-      if (toolName === REPORT_REVIEW_TOOL_NAME) return runReportReviewTool(callId, toolArgs);
-      if (toolName === EDIT_SCREEN_TOOL_NAME) return runEditScreenTool(callId, toolArgs);
+      if (toolName === EDIT_SCREEN_TOOL_NAME) return runEditScreenTool(callId, toolArgs, 'change');
       if (toolName === WRITE_DEMO_TOURS_TOOL_NAME) return runWriteDemoToursTool(callId, toolArgs);
       return null;
     };
@@ -6758,9 +6731,6 @@ async function executeUnifiedTurnCore(
                   }
                   if (partialCall?.type === 'toolCall' && partialCall.name === DEFINE_STYLE_TOOL_NAME) {
                     streamPrototypeStyle(partialCall.arguments);
-                  }
-                  if (partialCall?.type === 'toolCall' && partialCall.name === EDIT_SCREEN_TOOL_NAME) {
-                    prototypeBuildRun?.observeEditScreenStream(partialCall.arguments);
                   }
                   if (partialCall?.type === 'toolCall' && partialCall.name === WRITE_DEMO_TOURS_TOOL_NAME) {
                     prototypeBuildRun?.observeToursStream(prototypeTurnDraft?.workingHtml);
@@ -6945,12 +6915,10 @@ async function executeUnifiedTurnCore(
             if (executed.isError) {
               hadValidatorError = true;
             }
-            if (tc.name === 'upsert_prototype_screen') {
+            if (tc.name === 'upsert_prototype_screen' || tc.name === 'edit_prototype_anchor') {
               const doneSid =
-                typeof (tc.arguments as Record<string, unknown> | undefined)?.screenId === 'string'
-                  ? ((tc.arguments as Record<string, unknown>).screenId as string).trim()
-                  : '';
-              endPartialPrototypeScreen(doneSid || undefined);
+                executed.trace.targetAnchor?.screenId ?? (typeof tcArgs.screenId === 'string' ? tcArgs.screenId.trim() : '');
+              if (tc.name === 'upsert_prototype_screen') endPartialPrototypeScreen(doneSid || undefined);
               if (!executed.isError && doneSid) {
                 recordSingleAgentScreenWrite(doneSid);
               }
@@ -7281,17 +7249,12 @@ async function executeUnifiedTurnCore(
           },
         });
       } else if (prototypeTurnDraft.prototypeId) {
-        if (prototypeTurnDraft.designBrief) {
-          store.updatePrototypeDesignBrief(
-            prototypeTurnDraft.prototypeId,
-            prototypeTurnDraft.designBrief,
-          );
-        }
         if (prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml) {
           const appendedRevision = store.appendPrototypeRevision(prototypeTurnDraft.prototypeId, {
             title: cleanRevisionNote.slice(0, 48),
             instruction: cleanRevisionNote,
             htmlContent: prototypeTurnDraft.workingHtml,
+            ...(prototypeTurnDraft.designBrief ? { designBrief: prototypeTurnDraft.designBrief } : {}),
             source: 'AGENT_RUN',
             agentRunId: turnRunId,
           });
@@ -7310,6 +7273,8 @@ async function executeUnifiedTurnCore(
               artifact: revisionArtifact,
             },
           });
+        } else if (prototypeTurnDraft.designBrief) {
+          store.updatePrototypeDesignBrief(prototypeTurnDraft.prototypeId, prototypeTurnDraft.designBrief);
         }
       }
     }
@@ -7611,16 +7576,11 @@ async function executeUnifiedTurnCore(
           modifiedAnchors: prototypeTurnDraft.modifiedAnchors,
         });
       } else {
-        if (prototypeTurnDraft.designBrief) {
-          store.updatePrototypeDesignBrief(
-            prototypeTurnDraft.prototypeId,
-            prototypeTurnDraft.designBrief,
-          );
-        }
         const appendedPartial = store.appendPrototypeRevision(prototypeTurnDraft.prototypeId, {
           title: cleanRevisionNote.slice(0, 48),
           instruction: cleanRevisionNote,
           htmlContent: prototypeTurnDraft.workingHtml,
+          ...(prototypeTurnDraft.designBrief ? { designBrief: prototypeTurnDraft.designBrief } : {}),
           source: 'AGENT_RUN',
           agentRunId: turnRunId,
         });

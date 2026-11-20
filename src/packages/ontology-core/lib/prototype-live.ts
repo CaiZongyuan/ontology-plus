@@ -11,6 +11,8 @@ import {
   VOID_HTML_TAGS as VOID_TAGS,
   findHtmlTagClose as findTagClose,
   parseHtmlAttributes as parseAttributes,
+  scanHtml,
+  type ScannedElement,
 } from './html-scan.js';
 import {
   applyPrototypeBuildEvent,
@@ -102,110 +104,6 @@ function dropHalfEntity(text: string): string {
   const name = m[1]!;
   const half = name === '' || name.startsWith('#') || COMMON_ENTITY_NAMES.some((e) => e.startsWith(name));
   return half ? text.slice(0, m.index) : text;
-}
-
-interface ScannedElement {
-  tag: string;
-  attrs: Record<string, string>;
-  start: number;
-  openEnd: number;
-  /** Index just past the closing tag; -1 while unclosed. */
-  end: number;
-  depth: number;
-}
-
-interface ScanResult {
-  elements: ScannedElement[];
-  /** Elements still open at the end, outermost first. */
-  open: ScannedElement[];
-  /** Where a half-written trailing construct starts (tag, comment, unfinished script); else length. */
-  safeEnd: number;
-  /** Set when the input ends inside an unclosed raw-text element such as `<style>`. */
-  openRawTag?: string;
-}
-
-/** A forgiving single-pass scan of an HTML string with source offsets. */
-function scanHtml(html: string): ScanResult {
-  const elements: ScannedElement[] = [];
-  const stack: ScannedElement[] = [];
-  let i = 0;
-  while (i < html.length) {
-    const lt = html.indexOf('<', i);
-    if (lt === -1) break;
-    const next = html[lt + 1];
-    if (next === undefined) return { elements, open: stack, safeEnd: lt };
-    if (html.startsWith('<!--', lt)) {
-      const close = html.indexOf('-->', lt + 4);
-      if (close === -1) return { elements, open: stack, safeEnd: lt };
-      i = close + 3;
-      continue;
-    }
-    if (html.startsWith('<!-', lt) && lt + 3 >= html.length) return { elements, open: stack, safeEnd: lt };
-    if (next === '!' || next === '?') {
-      const close = findTagClose(html, lt + 2);
-      if (close === -1) return { elements, open: stack, safeEnd: lt };
-      i = close;
-      continue;
-    }
-    if (next === '/') {
-      const m = /^<\/\s*([A-Za-z][A-Za-z0-9:-]*)?/.exec(html.slice(lt, lt + 64));
-      const close = findTagClose(html, lt + 2);
-      if (close === -1) return { elements, open: stack, safeEnd: lt };
-      const tag = m?.[1]?.toLowerCase();
-      if (tag) {
-        for (let s = stack.length - 1; s >= 0; s -= 1) {
-          if (stack[s]!.tag === tag) {
-            for (let k = stack.length - 1; k >= s; k -= 1) stack[k]!.end = close;
-            stack.length = s;
-            break;
-          }
-        }
-      }
-      i = close;
-      continue;
-    }
-    const open = /^<([A-Za-z][A-Za-z0-9:-]*)/.exec(html.slice(lt, lt + 64));
-    if (!open) {
-      i = lt + 1;
-      continue;
-    }
-    const tag = open[1]!.toLowerCase();
-    const afterName = lt + open[0].length;
-    const close = findTagClose(html, afterName);
-    if (close === -1) return { elements, open: stack, safeEnd: lt };
-    const selfClosing = /\/\s*>$/.test(html.slice(Math.max(afterName, close - 3), close));
-    const attrRegion = html.slice(afterName, selfClosing ? close - 2 : close - 1);
-    const el: ScannedElement = {
-      tag,
-      attrs: parseAttributes(attrRegion),
-      start: lt,
-      openEnd: close,
-      end: -1,
-      depth: stack.length,
-    };
-    elements.push(el);
-    if (VOID_TAGS.has(tag) || selfClosing) {
-      el.end = close;
-      i = close;
-      continue;
-    }
-    if (RAW_TEXT_TAGS.has(tag)) {
-      const closeRe = new RegExp(`</${tag}\\s*>`, 'ig');
-      closeRe.lastIndex = close;
-      const hit = closeRe.exec(html);
-      if (!hit) {
-        if (tag === 'script') return { elements: elements.slice(0, -1), open: stack, safeEnd: lt };
-        stack.push(el);
-        return { elements, open: stack, safeEnd: html.length, openRawTag: tag };
-      }
-      el.end = hit.index + hit[0].length;
-      i = el.end;
-      continue;
-    }
-    stack.push(el);
-    i = close;
-  }
-  return { elements, open: stack, safeEnd: html.length };
 }
 
 /**
@@ -713,6 +611,8 @@ export interface PrototypeCanvasStyleBoard {
 export interface PrototypeCanvasModel {
   /** The 「风格样张」, first on the canvas, when the run or the document has one. */
   style?: PrototypeCanvasStyleBoard;
+  htmlAttrs: string;
+  bodyAttrs: string;
   css: string;
   links: string[];
   /** Head scripts, run in each artboard once its screen has landed. */
@@ -807,6 +707,8 @@ export function buildPrototypeCanvasModel(
   const style = styleBoardOf(live, frame);
   return {
     ...(style ? { style } : {}),
+    htmlAttrs: frame.htmlAttrs,
+    bodyAttrs: frame.bodyAttrs,
     css: assets.css,
     links: assets.links,
     headScripts: assets.scripts,

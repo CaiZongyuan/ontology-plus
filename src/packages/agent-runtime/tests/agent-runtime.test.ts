@@ -1612,6 +1612,8 @@ describe('agent-runtime deep module', () => {
       expect(firstSysMsg).toContain('饮品配方');
       expect(firstSysMsg).toContain('SCR-MEMBER-LEDGER');
       expect(firstSysMsg).toContain('member.name');
+      expect(firstSysMsg).not.toContain('plan_screens');
+      expect(firstSysMsg).not.toContain('define_style');
 
       // 2. All progressive tool calls succeeded without bootstrap deadlock or duplicate "会员储值"
       const lastMsg = synthTurn.session.messages.at(-1)!;

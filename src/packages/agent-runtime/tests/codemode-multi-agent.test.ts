@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { checkBusinessViewMarkup } from '../../business-vocabulary/index.js';
 import { createWorkspaceStore } from '../../workspace-store/index.js';
 import {
@@ -11,6 +11,73 @@ import {
 } from '../index.js';
 
 describe('3-Way Parallel Multi-Agent Prototype Co-Design', () => {
+  it('persists both screens when two helpers finish writing at the same time', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const screens = [
+      { screenId: 'SCR-LIST', screenName: 'Orders', screenType: 'LIST' },
+      { screenId: 'SCR-DETAIL', screenName: 'Order details', screenType: 'DETAIL' },
+    ];
+    let releaseWrites!: () => void;
+    const sameTime = new Promise<void>((resolve) => { releaseWrites = resolve; });
+    const startingWrites = new Set<string>();
+    const callsPerScreen = new Map<string, number>();
+    const reply = (delta: Record<string, unknown>, reason: string) => new Response(
+      `data: ${JSON.stringify({
+        id: 'cmpl-shared', object: 'chat.completion.chunk', created: 1, model: 'overlap-model',
+        choices: [{ index: 0, delta, finish_reason: reason }],
+      })}\n\ndata: [DONE]\n\n`,
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    );
+    const tool = (name: string, args: Record<string, unknown>, index: number) => ({
+      index, id: `call-${name}-${index}`, type: 'function', function: { name, arguments: JSON.stringify(args) },
+    });
+    vi.stubGlobal('fetch', async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { messages: { role: string; content: unknown }[] };
+      const user = body.messages.find((message) => message.role === 'user');
+      const screenId = /(?:Target screenId|目标分屏 ID): `(SCR-LIST|SCR-DETAIL)`/.exec(JSON.stringify(user?.content ?? ''))?.[1];
+      if (screenId) {
+        callsPerScreen.set(screenId, (callsPerScreen.get(screenId) ?? 0) + 1);
+        startingWrites.add(screenId);
+        if (startingWrites.size === screens.length) releaseWrites();
+        await sameTime;
+        return reply({ role: 'assistant', tool_calls: [tool('upsert_prototype_screen', {
+          screenId,
+          screenHtml: `<button data-element-id="EL-${screenId}" data-element-type="BUTTON">Open</button>`,
+        }, 0)] }, 'tool_calls');
+      }
+      if (body.messages.at(-1)?.role === 'user') {
+        return reply({ role: 'assistant', tool_calls: [
+          tool('init_prototype_shell', { appTitle: 'Orders', screens }, 0),
+          tool('spawn_subagents', { tasks: screens.map((screen) => ({ ...screen, title: screen.screenName, instruction: 'Draw this screen.' })) }, 1),
+        ] }, 'tool_calls');
+      }
+      return reply({ role: 'assistant', content: 'Both screens are ready.' }, 'stop');
+    });
+    try {
+      store.updateSystemSettings({ mockLlmMode: false });
+      store.saveLlmProvider({
+        id: 'llm-parallel-overlap', name: 'Parallel overlap test', providerType: 'OPENAI_COMPATIBLE',
+        baseUrl: 'http://127.0.0.1:4310/v1', apiKey: 'test', defaultModel: 'overlap-model',
+        availableModels: ['overlap-model'], enabled: true,
+      });
+      const session = store.createAgentSession({
+        projectId: 'proj-contract', agentKind: 'PROTOTYPE_CO_DESIGN', title: 'Order screens', providerId: 'llm-parallel-overlap',
+      });
+
+      const turn = await collectUnifiedAgentTurn(store, { sessionId: session.id, prompt: 'Build two screens for orders.', locale: 'en-US', mockMode: false });
+
+      const prototype = store.getPrototype(turn.session.targetId!);
+      expect(extractPrototypeArtboards(prototype?.htmlContent ?? '').map((board) => [board.screenId, board.status, board.elementCount])).toEqual([
+        ['SCR-LIST', 'ready', 1], ['SCR-DETAIL', 'ready', 1],
+      ]);
+      expect([...callsPerScreen.values()]).toEqual([1, 1]);
+      expect(turn.session.messages.at(-1)?.subagentLanes?.map((lane) => lane.status)).toEqual(['DONE', 'DONE']);
+    } finally {
+      vi.unstubAllGlobals();
+      store.close();
+    }
+  });
+
   it('enables multiAgentConcurrency=3 by default on new AgentSessions and exposes spawn_subagents without codemode', () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     const session = store.createAgentSession({

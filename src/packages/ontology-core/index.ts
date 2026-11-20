@@ -256,6 +256,7 @@ export {
   prototypeStyleHeadHtml,
   applyPrototypeStyleToDocument,
   readPrototypeDocumentStyle,
+  readLockedPrototypeStyleValues,
   sanitizeStyleCss,
   sanitizeStyleSampleHtml,
   stripInlineStyleValueOverrides,

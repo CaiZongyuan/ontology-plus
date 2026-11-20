@@ -20,6 +20,7 @@ import {
   editPrototypeScreen,
   getToolsForAgentKind,
   initPrototypeShell,
+  REPORT_REVIEW_OPENAI_TOOL,
   shutdownPrototypeScreenshotter,
   upsertPrototypeScreen,
   type UnifiedAgentSseEvent,
@@ -64,17 +65,17 @@ function sampleMultiScreenDocument(): string {
 }
 
 describe('report_review & edit_screen tools (#93): schema ordering, unique match, and own-screen scope', () => {
-  it('exposes report_review and edit_screen to the prototype lead with short fields ordered before long ones', () => {
+  it('keeps report_review off the lead toolset and puts short fields before long ones', () => {
     const leadTools = getToolsForAgentKind('PROTOTYPE_CO_DESIGN', {
       codeMode: false,
       multiAgentConcurrency: 3,
     });
     const reportTool = leadTools.find((t) => t.name === 'report_review');
     const editTool = leadTools.find((t) => t.name === 'edit_screen');
-    expect(reportTool).toBeDefined();
+    expect(reportTool).toBeUndefined();
     expect(editTool).toBeDefined();
 
-    const reportKeys = Object.keys((reportTool!.parameters as { properties: object }).properties);
+    const reportKeys = Object.keys((REPORT_REVIEW_OPENAI_TOOL.function.parameters as { properties: object }).properties);
     expect(reportKeys).toEqual(['screenId', 'findings']);
 
     const editKeys = Object.keys((editTool!.parameters as { properties: object }).properties);
@@ -215,6 +216,18 @@ describe('report_review & edit_screen tools (#93): schema ordering, unique match
 });
 
 describe('createPrototypeBuildRun review lifecycle & <= 1 round hard cap (#93)', () => {
+  it('allows a planned change before review but cannot mark an unwritten screen visually passed', () => {
+    const run = createPrototypeBuildRun({ locale: 'en-US', emit: () => undefined });
+    run.commitPlan({ screens: [{ screenId: 'SCR-ORDERS', screenName: 'Orders', purpose: 'Change the filter' }] });
+
+    expect(run.checkEditScreenAllowed('SCR-ORDERS', 'change')).toBeNull();
+    expect(run.checkEditScreenAllowed('SCR-ORDERS', 'review')).not.toBeNull();
+    expect(run.beginScreenReview('SCR-ORDERS')).toBe(false);
+    expect(run.commitReportReview({ screenId: 'SCR-ORDERS', findings: [] }).isError).toBe(true);
+    expect(prototypeBuildScreen(run.snapshot()!, 'SCR-ORDERS')).toMatchObject({ status: 'queued' });
+    expect(run.snapshot()?.log.some((line) => line.kind === 'review_passed')).toBe(false);
+  });
+
   it('allows fixing >=2 findings reported in 1 review round, blocks pre-review main-loop bypasses, and blocks a 2nd review round', () => {
     const events: PrototypeBuildEvent[] = [];
     const run = createPrototypeBuildRun({ locale: 'zh-CN', emit: (e) => events.push(e) });

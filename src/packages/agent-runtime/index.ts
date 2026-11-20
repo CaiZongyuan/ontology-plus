@@ -167,6 +167,7 @@ export {
 
 export {
   PLAN_SCREENS_OPENAI_TOOL,
+  REPORT_REVIEW_OPENAI_TOOL,
   createPrototypeBuildRun,
   alignShellArgsWithPlan,
   parseResumePrototypeScreenAction,

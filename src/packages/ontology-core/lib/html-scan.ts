@@ -43,6 +43,109 @@ export function findHtmlTagClose(html: string, from: number): number {
   return -1;
 }
 
+export interface ScannedElement {
+  tag: string;
+  attrs: Record<string, string>;
+  start: number;
+  openEnd: number;
+  /** Index just past the closing tag; -1 while unclosed. */
+  end: number;
+  depth: number;
+}
+
+interface ScanResult {
+  elements: ScannedElement[];
+  /** Elements still open at the end, outermost first. */
+  open: ScannedElement[];
+  /** Where a half-written trailing construct starts (tag, comment, unfinished script); else length. */
+  safeEnd: number;
+  /** Set when the input ends inside an unclosed raw-text element such as `<style>`. */
+  openRawTag?: string;
+}
+
+/** A forgiving single-pass scan of an HTML string with source offsets. */
+export function scanHtml(html: string): ScanResult {
+  const elements: ScannedElement[] = [];
+  const stack: ScannedElement[] = [];
+  let cursor = 0;
+  while (cursor < html.length) {
+    const start = html.indexOf('<', cursor);
+    if (start === -1) break;
+    const next = html[start + 1];
+    if (next === undefined) return { elements, open: stack, safeEnd: start };
+    if (html.startsWith('<!--', start)) {
+      const close = html.indexOf('-->', start + 4);
+      if (close === -1) return { elements, open: stack, safeEnd: start };
+      cursor = close + 3;
+      continue;
+    }
+    if (html.startsWith('<!-', start) && start + 3 >= html.length) return { elements, open: stack, safeEnd: start };
+    if (next === '!' || next === '?') {
+      const close = findHtmlTagClose(html, start + 2);
+      if (close === -1) return { elements, open: stack, safeEnd: start };
+      cursor = close;
+      continue;
+    }
+    if (next === '/') {
+      const match = /^<\/\s*([A-Za-z][A-Za-z0-9:-]*)?/.exec(html.slice(start, start + 64));
+      const close = findHtmlTagClose(html, start + 2);
+      if (close === -1) return { elements, open: stack, safeEnd: start };
+      const tag = match?.[1]?.toLowerCase();
+      if (tag) {
+        for (let index = stack.length - 1; index >= 0; index -= 1) {
+          if (stack[index]!.tag === tag) {
+            for (let openIndex = stack.length - 1; openIndex >= index; openIndex -= 1) stack[openIndex]!.end = close;
+            stack.length = index;
+            break;
+          }
+        }
+      }
+      cursor = close;
+      continue;
+    }
+    const opening = /^<([A-Za-z][A-Za-z0-9:-]*)/.exec(html.slice(start, start + 64));
+    if (!opening) {
+      cursor = start + 1;
+      continue;
+    }
+    const tag = opening[1]!.toLowerCase();
+    const afterName = start + opening[0].length;
+    const close = findHtmlTagClose(html, afterName);
+    if (close === -1) return { elements, open: stack, safeEnd: start };
+    const selfClosing = /\/\s*>$/.test(html.slice(Math.max(afterName, close - 3), close));
+    const element: ScannedElement = {
+      tag,
+      attrs: parseHtmlAttributes(html.slice(afterName, selfClosing ? close - 2 : close - 1)),
+      start,
+      openEnd: close,
+      end: -1,
+      depth: stack.length,
+    };
+    elements.push(element);
+    if (VOID_HTML_TAGS.has(tag) || selfClosing) {
+      element.end = close;
+      cursor = close;
+      continue;
+    }
+    if (RAW_TEXT_HTML_TAGS.has(tag)) {
+      const closePattern = new RegExp(`</${tag}\\s*>`, 'ig');
+      closePattern.lastIndex = close;
+      const match = closePattern.exec(html);
+      if (!match) {
+        if (tag === 'script') return { elements: elements.slice(0, -1), open: stack, safeEnd: start };
+        stack.push(element);
+        return { elements, open: stack, safeEnd: html.length, openRawTag: tag };
+      }
+      element.end = match.index + match[0].length;
+      cursor = element.end;
+      continue;
+    }
+    stack.push(element);
+    cursor = close;
+  }
+  return { elements, open: stack, safeEnd: html.length };
+}
+
 export interface HtmlAttributeSpan {
   /** Start index in `region` including preceding whitespace. */
   leadingStart: number;

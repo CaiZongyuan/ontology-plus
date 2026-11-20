@@ -11,6 +11,35 @@ import {
 } from '../index.js';
 
 describe('prototype-revisions: two-tier prototype & linear immutable revisions', () => {
+  it('confirms real screen anchors even when an imported prototype displays markup as text', () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    try {
+      const html = `<section data-screen-id="SCR-TEMPLATES">
+        <textarea data-element-id="EL-EDITOR">Example: <script>hello() <input data-element-id="ignored"></textarea>
+        <button data-element-id="EL-SAVE" data-element-type="BUTTON" data-event-id="UIE-SAVE" title="Use <style> here">Save</button>
+        <script type="application/json">{"example":"<button data-element-id='script-only'>"}</script>
+        <template data-proto-style-tile><template><span data-element-id="sample-nested"></span></template><input data-element-id="sample-only"></template>
+      </section>
+      <section data-screen-id="SCR-PREVIEW"><p data-element-id="EL-CONTENT" data-binding="Template.preview">Preview</p></section>`;
+      const { revision } = store.createPrototype('proj-contract', { name: 'Templates', htmlContent: html, source: 'UPLOADED' });
+
+      const { confirmed, project } = store.confirmPrototypeRevision('proj-contract', revision.id);
+
+      expect(confirmed.htmlContent).toBe(html);
+      expect(project.suite.MU?.screens.map((screen) => ({
+        id: screen.screenId,
+        elements: screen.elements?.map((element) => element.elementId),
+        events: screen.events?.map((event) => event.eventId),
+      }))).toEqual([
+        { id: 'SCR-TEMPLATES', elements: ['EL-EDITOR', 'EL-SAVE'], events: ['UIE-SAVE'] },
+        { id: 'SCR-PREVIEW', elements: ['EL-CONTENT'], events: [] },
+      ]);
+      expect(project.suite.MU?.screens[1]?.elements?.[0]?.dataBinding).toBe('Template.preview');
+    } finally {
+      store.close();
+    }
+  });
+
   it('creates an InteractivePrototype with 1-based linear revisions, never mutates suite.MU on save/append, and supports metadata rename/star and cloning', () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     const proj = store.createProject({

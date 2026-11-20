@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { usePreferences } from '../../../i18n.js';
 import { cn } from '../../../lib/utils.js';

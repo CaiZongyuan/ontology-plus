@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, ExternalLink, Loader2, PenLine, RefreshCw, ScanS
 import type { PrototypeCanvasArtboard } from '../../../../packages/ontology-core/index.js';
 import { usePreferences } from '../../../i18n.js';
 import { Button } from '../../beautifui/index.js';
-import { WebAgentCursor, useObservedElementSize } from './AgentCursor.js';
+import { WebAgentCursor, useObservedElementSize } from './AgentCursorOverlay.js';
 import { ArtboardFrame, type ArtboardHandle, type ArtboardRect } from './Artboard.js';
 import { WebDesignNotesOverlay } from './DesignNotesOverlay.js';
 import { readAgentCursorPrefs, type AgentCursorPrefs, type AgentLiveActivity } from './agentCursor.js';
@@ -39,6 +39,8 @@ export interface PrototypeWebViewProps {
   screens: readonly PrototypeCanvasArtboard[];
   /** The whole page body (the shell with every screen) and the styles of screens being written. */
   pageBodyHtml: string;
+  htmlAttrs?: string;
+  bodyAttrs?: string;
   pageCss: string;
   css: string;
   linksKey: string;
@@ -87,6 +89,8 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
   {
     screens,
     pageBodyHtml,
+    htmlAttrs = '',
+    bodyAttrs = '',
     pageCss,
     css,
     linksKey,
@@ -308,6 +312,8 @@ export const PrototypeWebView = forwardRef<PrototypeWebViewHandle, PrototypeWebV
             <ArtboardFrame
               screenId={board.screenId}
               title={nameOf(board, index)}
+              htmlAttrs={htmlAttrs}
+              bodyAttrs={bodyAttrs}
               bodyHtml={pageBodyHtml}
               css={css}
               {...(pageCss ? { extraCss: pageCss } : {})}

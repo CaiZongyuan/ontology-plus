@@ -222,6 +222,7 @@ function planFromDocument(documentHtml: string): PrototypeBuildState | null {
 }
 
 export type PrototypeBuildRunOutcome = 'succeeded' | 'failed' | 'cancelled';
+type ScreenEditKind = 'change' | 'review';
 
 export interface PrototypeBuildRun {
   /** True once this run has a Build Plan (declared, dispatched or resumed). */
@@ -263,9 +264,9 @@ export interface PrototypeBuildRun {
     summary: string;
   };
   /** Updates live fix narration as `edit_screen`'s short fields (`screenId`, `elementId`, `note`) stream (#93). */
-  observeEditScreenStream(partialArgs: unknown): void;
+  observeEditScreenStream(partialArgs: unknown, kind?: ScreenEditKind): void;
   /** Checks whether `edit_screen` is permitted under the ≤ 1 review+fix round cap; null when allowed. */
-  checkEditScreenAllowed(screenId: string): string | null;
+  checkEditScreenAllowed(screenId: string, kind?: ScreenEditKind): string | null;
   /** Records a completed targeted `edit_screen` fix on `screenId` (#93). */
   commitEditScreen(screenId: string, input: { elementId?: string; note?: string; html: string }): void;
   /** Seals `screenId`'s single review round completed and restores its status to `done` if still in `reviewing`/`fixing`. */
@@ -350,6 +351,32 @@ export function createPrototypeBuildRun(options: {
   };
 
   const planned = (screenId: string) => tracker.state().plan.some((p) => p.screenId === screenId);
+
+  const canReview = (screenId: string): boolean =>
+    tracker.started() &&
+    planned(screenId) &&
+    prototypeBuildScreen(tracker.state(), screenId).status === 'done' &&
+    !reviewSkippedLogged &&
+    !reviewRecords.has(screenId);
+
+  const editDiagnostic = (screenId: string, kind: ScreenEditKind): string | null => {
+    const review = reviewRecords.get(screenId);
+    if (review?.phase === 'completed' || (review?.reported && review.editsApplied >= review.maxEditsAllowed)) {
+      return pickLocaleText(
+        locale,
+        `每屏最多做一轮检查和局部修正，${screenId} 本轮检查修正已经完成，不能重复修改。`,
+        `At most one review and targeted-fix round per screen; ${screenId} has already finished its review round.`,
+      );
+    }
+    if (kind === 'review' && !review?.reported) {
+      return pickLocaleText(
+        locale,
+        `请先报告「${screenId}」的截图检查结果，再修正检查发现的问题。`,
+        `Report the screenshot findings for ${screenId} before applying a review fix.`,
+      );
+    }
+    return null;
+  };
 
   const ensureStyleRun = (documentHtml?: string) => {
     if (!hasPrototypeBuildPlan(tracker.state())) {
@@ -553,15 +580,12 @@ export function createPrototypeBuildRun(options: {
     },
 
     canReviewScreen(screenId) {
-      const sid = screenId.trim();
-      if (!sid || !tracker.started() || !planned(sid) || reviewSkippedLogged) return false;
-      return !reviewRecords.has(sid);
+      return canReview(screenId.trim());
     },
 
     beginScreenReview(screenId) {
       const sid = screenId.trim();
-      if (!sid || !tracker.started() || !planned(sid) || reviewSkippedLogged) return false;
-      if (reviewRecords.has(sid)) return false;
+      if (!canReview(sid)) return false;
       reviewRecords.set(sid, {
         phase: 'in_review',
         reported: false,
@@ -604,6 +628,19 @@ export function createPrototypeBuildRun(options: {
           isError: true,
           findings: [],
           content: JSON.stringify({ status: 'REVIEW_CAP_REACHED', diagnostic }),
+          summary: diagnostic,
+        };
+      }
+      if (!existingRec) {
+        const diagnostic = pickLocaleText(
+          locale,
+          '尚未取得这屏的截图，不能报告视觉检查结果。',
+          'No screenshot is available for this screen. A visual check cannot be reported.',
+        );
+        return {
+          isError: true,
+          findings: [],
+          content: JSON.stringify({ status: 'REVIEW_NOT_STARTED', diagnostic }),
           summary: diagnostic,
         };
       }
@@ -701,13 +738,12 @@ export function createPrototypeBuildRun(options: {
       };
     },
 
-    observeEditScreenStream(partialArgs) {
+    observeEditScreenStream(partialArgs, kind = 'review') {
       if (!partialArgs || typeof partialArgs !== 'object' || !tracker.started()) return;
       const rec = partialArgs as Record<string, unknown>;
       const sid = typeof rec.screenId === 'string' ? rec.screenId.trim() : '';
-      if (!sid || !planned(sid)) return;
+      if (!sid || !planned(sid) || editDiagnostic(sid, kind)) return;
       const reviewRec = reviewRecords.get(sid);
-      if (reviewRec?.phase === 'completed') return;
       const elementId = typeof rec.elementId === 'string' && rec.elementId.trim() ? rec.elementId.trim() : undefined;
       const note = typeof rec.note === 'string' ? rec.note.trim() : '';
       if (!note) return;
@@ -727,51 +763,25 @@ export function createPrototypeBuildRun(options: {
       );
     },
 
-    checkEditScreenAllowed(screenId) {
-      const sid = screenId.trim();
-      const rec = reviewRecords.get(sid);
-      if (rec?.phase === 'completed' || (rec && rec.reported && rec.editsApplied >= rec.maxEditsAllowed)) {
-        return pickLocaleText(
-          locale,
-          `每屏最多做一轮检查和局部修正，${sid} 本轮检查修正已经完成，不能重复修改。`,
-          `At most one review and targeted-fix round per screen; ${sid} has already finished its review round.`,
-        );
-      }
-      if (tracker.started() && hasPrototypeBuildPlan(tracker.state()) && (!rec || !rec.reported)) {
-        return pickLocaleText(
-          locale,
-          `在施工计划流程中，edit_screen 只能在 report_review 报告该屏问题后用于本轮局部修正（${sid} 尚未报告检查问题）。`,
-          `During a Build Plan run, edit_screen may only be used after report_review reports findings on ${sid}.`,
-        );
-      }
-      return null;
+    checkEditScreenAllowed(screenId, kind = 'review') {
+      return editDiagnostic(screenId.trim(), kind);
     },
 
     commitEditScreen(screenId, input) {
       const sid = screenId.trim();
       const existing = reviewRecords.get(sid);
-      if (existing) {
-        existing.editsApplied += 1;
-        if (existing.editsApplied >= existing.maxEditsAllowed) {
-          existing.phase = 'completed';
-        }
-      } else {
-        reviewRecords.set(sid, {
-          phase: 'completed',
-          reported: false,
-          findings: [],
-          editsApplied: 1,
-          maxEditsAllowed: 1,
-        });
+      if (!existing?.reported || editDiagnostic(sid, 'review')) return;
+      existing.editsApplied += 1;
+      if (existing.editsApplied >= existing.maxEditsAllowed) {
+        existing.phase = 'completed';
       }
       if (!tracker.started() || !planned(sid)) return;
       const note = input.note?.trim();
       if (note) {
         send(tracker.log({ agent: 0, kind: 'screen_fixing', screenId: sid, detail: note }));
       }
-      const updated = reviewRecords.get(sid)!;
-      const hasMoreFixesInRound = updated.phase === 'in_review' && updated.editsApplied < updated.maxEditsAllowed;
-      const nextFinding = hasMoreFixesInRound ? updated.findings[updated.editsApplied] : undefined;
+      const hasMoreFixesInRound = existing.phase === 'in_review';
+      const nextFinding = hasMoreFixesInRound ? existing.findings[existing.editsApplied] : undefined;
       send(
         tracker.screen(sid, {
           status: hasMoreFixesInRound ? 'fixing' : 'done',

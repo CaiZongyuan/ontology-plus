@@ -181,22 +181,29 @@ export function resolvePrototypeStyleValues(
   };
 }
 
+const STYLE_VALUE_PROPERTIES = {
+  background: '--proto-bg',
+  surface: '--proto-card',
+  inset: '--proto-inset',
+  accent: '--proto-accent',
+  accentInk: '--proto-accent-ink',
+  border: '--proto-border',
+  ink: '--proto-text',
+  mutedInk: '--proto-muted',
+  ok: '--proto-ok',
+  warn: '--proto-warn',
+  danger: '--proto-danger',
+  fontFamily: '--proto-font',
+} as const;
+
 /** The values as CSS custom properties on `:root` (the names every screen uses). */
 export function prototypeStyleValuesCss(values: PrototypeStyleValues): string {
   const compact = values.density === 'compact';
   const decl: [string, string][] = [
-    ['--proto-bg', values.background],
-    ['--proto-card', values.surface],
-    ['--proto-inset', values.inset],
-    ['--proto-accent', values.accent],
-    ['--proto-accent-ink', values.accentInk],
-    ['--proto-border', values.border],
-    ['--proto-text', values.ink],
-    ['--proto-muted', values.mutedInk],
-    ['--proto-ok', values.ok],
-    ['--proto-warn', values.warn],
-    ['--proto-danger', values.danger],
-    ['--proto-font', values.fontFamily],
+    ...Object.entries(STYLE_VALUE_PROPERTIES).map(([key, property]): [string, string] => [
+      property,
+      values[key as keyof typeof STYLE_VALUE_PROPERTIES],
+    ]),
     ['--proto-radius', `${values.radiusPx}px`],
     ['--proto-radius-sm', `${Math.max(2, Math.round(values.radiusPx * 0.6))}px`],
     ['--proto-gap', compact ? '12px' : '18px'],
@@ -516,6 +523,26 @@ export function readPrototypeDocumentStyle(html: string): PrototypeDocumentStyle
     direction: direction ? unescapeAttr(direction) : '',
     locked: /\sdata-proto-style-locked\b/i.test(openTag),
   };
+}
+
+export function readLockedPrototypeStyleValues(html: string): PrototypeStyleValues | null {
+  const style = readPrototypeDocumentStyle(html);
+  if (!style?.locked) return null;
+  const root = /^:root\s*\{([^}]+)\}/.exec(style.css)?.[1];
+  if (!root) return null;
+  const properties = new Map(
+    Array.from(root.matchAll(/^\s*([\w-]+)\s*:\s*([^;]+);/gm), ([, name, value]) => [name, value!.trim()]),
+  );
+  const gap = properties.get('--proto-gap');
+  const values = readPrototypeStyleValues({
+    ...Object.fromEntries(Object.entries(STYLE_VALUE_PROPERTIES).map(([key, property]) => [key, properties.get(property)])),
+    mode: properties.get('color-scheme'),
+    radiusPx: properties.get('--proto-radius'),
+    density: gap === '12px' ? 'compact' : gap === '18px' ? 'comfortable' : undefined,
+  });
+  return PROTOTYPE_STYLE_VALUE_KEYS.every((key) => values[key] !== undefined)
+    ? completePrototypeStyleValues(values)
+    : null;
 }
 
 /**

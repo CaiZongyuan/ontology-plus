@@ -93,12 +93,15 @@ export const SPAWN_SUBAGENTS_OPENAI_TOOL: OpenAiFunctionTool = {
 export function renderSubagentPromptSection(
   locale: AgentLocale,
   concurrency: number,
+  buildingPrototype = true,
 ): string {
   if (locale === 'en-US') {
     return [
       `[Parallel Multi-Agent Execution]`,
       concurrency > 1
-        ? `- \`spawn_subagents\` is ENABLED (concurrency = ${concurrency} parallel subagents): for multi-screen prototype generation or multi-module modeling, declare the Build Plan first (\`plan_screens\`), define the Style Tile (\`define_style\`), then call \`spawn_subagents\` so ${concurrency} subagents build screens simultaneously without hitting single-call output limits.`
+        ? buildingPrototype
+          ? `- \`spawn_subagents\` can run ${concurrency} screen helpers in parallel. For a first build, call \`plan_screens\`, then \`define_style\`, before dispatching one helper per screen. For changes, dispatch helpers only to affected screens.`
+          : `- Use \`spawn_subagents\` for independent subtasks within this specialist's scope (up to ${concurrency} at once). Keep dependent steps in order.`
         : `- Running in single-agent mode (concurrency = 1).`,
     ].join('\n');
   }
@@ -106,7 +109,9 @@ export function renderSubagentPromptSection(
   return [
     `【多智能体并行执行（已开启）】`,
     concurrency > 1
-      ? `- \`spawn_subagents\` 多智能体并行已启用（默认同时运行 **${concurrency}** 个子智能体）：生成首版多屏原型或批量改屏时，请先调用 \`plan_screens\` 列出施工计划（画布随之放好空白画板），再调用 \`define_style\` 设定风格样张与共用组件，然后调用 \`spawn_subagents\` 将各分屏并行交给子智能体分别调用 \`upsert_prototype_screen\` 完成！`
+      ? buildingPrototype
+        ? `- \`spawn_subagents\` 最多并行调度 ${concurrency} 位屏幕助手。首版生成先用 \`plan_screens\` 列施工计划，再用 \`define_style\` 设定风格样张，之后按屏分派；局部修改只分派受影响的屏幕。`
+        : `- 可用 \`spawn_subagents\` 并行处理本会话职责范围内的独立子任务（同时最多 ${concurrency} 个）。有依赖的步骤按顺序处理。`
       : `- 当前并发度设为 1（单智能体串行模式）。`,
   ].join('\n');
 }

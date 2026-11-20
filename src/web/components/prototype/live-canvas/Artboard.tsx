@@ -47,6 +47,16 @@ function syncLinks(doc: Document, hrefs: readonly string[]): void {
   }
 }
 
+function syncRootAttributes(target: Element, source: Element, previous: readonly string[]): string[] {
+  for (const name of previous) {
+    if (!source.hasAttribute(name)) target.removeAttribute(name);
+  }
+  for (const { name, value } of Array.from(source.attributes)) {
+    if (target.getAttribute(name) !== value) target.setAttribute(name, value);
+  }
+  return source.getAttributeNames();
+}
+
 /** A box in the frame's own viewport (CSS pixels, before any canvas zoom). */
 export interface ArtboardRect {
   x: number;
@@ -78,6 +88,8 @@ interface ArtboardFrameProps {
   screenId: string;
   title: string;
   bodyHtml: string;
+  htmlAttrs?: string;
+  bodyAttrs?: string;
   css: string;
   extraCss?: string;
   /** Stylesheet hrefs joined with newlines (a string keeps memoisation simple). */
@@ -115,6 +127,8 @@ export const ArtboardFrame = memo(function ArtboardFrame({
   screenId,
   title,
   bodyHtml,
+  htmlAttrs = '',
+  bodyAttrs = '',
   css,
   extraCss,
   linksKey,
@@ -158,6 +172,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
   const ranHeadScripts = useRef(new Set<string>());
   /** The load (document) for which DOMContentLoaded/load were replayed to the screen's scripts. */
   const lifecycleReplayedFor = useRef(0);
+  const appliedRootAttrs = useRef({ version: 0, html: [] as string[], body: [] as string[] });
 
   const doc = (): Document | null => {
     const d = frameRef.current?.contentDocument ?? null;
@@ -277,6 +292,21 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     // `doc` reads the frame ref at call time, so the handle is installed once per ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handleRef]);
+
+  useLayoutEffect(() => {
+    const document = doc();
+    if (!document || loadVersion === 0 || paused) return;
+    const original = new DOMParser().parseFromString(
+      `<!doctype html><html${htmlAttrs}><head></head><body${bodyAttrs}></body></html>`,
+      'text/html',
+    );
+    const previous = appliedRootAttrs.current.version === loadVersion ? appliedRootAttrs.current : null;
+    appliedRootAttrs.current = {
+      version: loadVersion,
+      html: syncRootAttributes(document.documentElement, original.documentElement, previous?.html ?? []),
+      body: syncRootAttributes(document.body, original.body, previous?.body ?? []),
+    };
+  }, [loadVersion, htmlAttrs, bodyAttrs, paused]);
 
   // Shared styles, this screen's in-progress styles, and the runtime rules.
   useLayoutEffect(() => {
@@ -404,7 +434,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     // The blank page loaded long before these scripts ran, so init code waiting for
     // DOMContentLoaded or load would never start: replay both once for this document.
     const view = d.defaultView;
-    if (ran > 0 && view && lifecycleReplayedFor.current !== loadVersion) {
+    if ((ran > 0 || d.body.hasAttribute('onload')) && view && lifecycleReplayedFor.current !== loadVersion) {
       lifecycleReplayedFor.current = loadVersion;
       d.dispatchEvent(new view.Event('DOMContentLoaded', { bubbles: true }));
       view.dispatchEvent(new view.Event('load'));
@@ -412,7 +442,7 @@ export const ArtboardFrame = memo(function ArtboardFrame({
     // The prototype's own navigation helper must not replace the canvas's try-out navigation.
     const win = d.defaultView as ProtoWindow | null;
     if (win && selectRef.current) win.__selectProtoScreen = selectRef.current;
-  }, [loadVersion, bodyHtml, landed, headScriptsKey, paused]);
+  }, [loadVersion, bodyHtml, bodyAttrs, landed, headScriptsKey, paused]);
 
   // Try-out wiring: navigation anchors and Esc inside the prototype.
   useEffect(() => {

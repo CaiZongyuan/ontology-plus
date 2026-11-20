@@ -1,4 +1,4 @@
-import { findHtmlTagClose, parseHtmlAttributes } from './html-scan.js';
+import { scanHtml, type ScannedElement } from './html-scan.js';
 import { sanitizePrototypeNote } from './prototype-notes.js';
 import type {
   Attribute,
@@ -956,18 +956,6 @@ export function exportToOwl(suite: OntologySuite): string {
   return lines.join('\n');
 }
 
-function parseOpenTagAttrs(tagHtml: string): Record<string, string> {
-  const openMatch = /^<[A-Za-z][A-Za-z0-9:-]*/.exec(tagHtml);
-  if (!openMatch) return {};
-  const selfClosing = /\/\s*>$/.test(tagHtml);
-  const closeIdx = selfClosing
-    ? tagHtml.lastIndexOf('/')
-    : tagHtml.endsWith('>')
-      ? tagHtml.length - 1
-      : tagHtml.length;
-  return parseHtmlAttributes(tagHtml.slice(openMatch[0].length, closeIdx));
-}
-
 function nonEmptyAttr(attrs: Record<string, string>, attrName: string): string | undefined {
   const raw = attrs[attrName.toLowerCase()];
   return raw && raw.length > 0 ? raw : undefined;
@@ -978,24 +966,32 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
   const navigationEdges: NavigationEdge[] = [];
   let navSeq = 1;
 
-  const scanTarget = (html ?? '')
-    .replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, '')
-    .replace(/<style\b[\s\S]*?(?:<\/style\s*>|$)/gi, '')
-    .replace(
-      /<template\b(?:[^>"']|"[^"]*"|'[^']*')*\bdata-proto-style-tile\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/template\s*>|$)/gi,
-      '',
-    );
+  type ScreenScope = { id: string; root: ScannedElement; controls: ScannedElement[] };
+  const scopes: ScreenScope[] = [];
+  const openScreens: ScreenScope[] = [];
+  let styleTileEnd = 0;
+  for (const tag of scanHtml(html ?? '').elements) {
+    if (tag.start < styleTileEnd || tag.tag === 'script' || tag.tag === 'style') continue;
+    if (tag.tag === 'template' && 'data-proto-style-tile' in tag.attrs) {
+      styleTileEnd = tag.end === -1 ? Infinity : tag.end;
+      continue;
+    }
+    while (openScreens.length > 0) {
+      const end = openScreens.at(-1)!.root.end;
+      if (end === -1 || tag.start < end) break;
+      openScreens.pop();
+    }
+    const screenId = nonEmptyAttr(tag.attrs, 'data-screen-id');
+    if (screenId) {
+      const scope = { id: screenId, root: tag, controls: [] };
+      scopes.push(scope);
+      openScreens.push(scope);
+    }
+    if (nonEmptyAttr(tag.attrs, 'data-element-id')) openScreens.at(-1)?.controls.push(tag);
+  }
 
-  const screenRegex =
-    /<([a-z0-9]+)\b(?:[^>"']|"[^"]*"|'[^']*')*data-screen-id\s*=\s*["']([^"']+)["'](?:[^>"']|"[^"]*"|'[^']*')*>([\s\S]*?)(?=<[a-z0-9]+\b(?:[^>"']|"[^"]*"|'[^']*')*data-screen-id|$)/gi;
-
-  let screenMatch: RegExpExecArray | null;
-  while ((screenMatch = screenRegex.exec(scanTarget)) !== null) {
-    const openEnd = findHtmlTagClose(screenMatch[0], 1 + screenMatch[1]!.length);
-    const openingTag = openEnd > 0 ? screenMatch[0].slice(0, openEnd) : screenMatch[0];
-    const screenAttrs = parseOpenTagAttrs(openingTag);
-    const screenBody = screenMatch[0];
-    const screenId = screenMatch[2];
+  for (const { id: screenId, root, controls } of scopes) {
+    const screenAttrs = root.attrs;
     const screenRef = nonEmptyAttr(screenAttrs, 'data-screen-ref') || screenId;
     const screenName = nonEmptyAttr(screenAttrs, 'data-screen-name') || screenId;
     const rawType = (
@@ -1014,13 +1010,8 @@ export function extractMuFromPrototypeHtml(html: string, domain: string): MUUiMo
     const elements: UIElement[] = [];
     const events: UIEvent[] = [];
 
-    const elRegex =
-      /<([a-z0-9]+)\b(?:[^>"']|"[^"]*"|'[^']*')*data-element-id\s*=\s*["']([^"']+)["'](?:[^>"']|"[^"]*"|'[^']*')*>/gi;
-    let elMatch: RegExpExecArray | null;
-    while ((elMatch = elRegex.exec(screenBody)) !== null) {
-      const elTag = elMatch[0];
-      const elAttrs = parseOpenTagAttrs(elTag);
-      const elementId = elMatch[2];
+    for (const { attrs: elAttrs } of controls) {
+      const elementId = elAttrs['data-element-id']!;
       const label = nonEmptyAttr(elAttrs, 'data-element-label') || elementId;
       const name =
         nonEmptyAttr(elAttrs, 'data-element-name') || elementId.toLowerCase().replace(/-/g, '_');

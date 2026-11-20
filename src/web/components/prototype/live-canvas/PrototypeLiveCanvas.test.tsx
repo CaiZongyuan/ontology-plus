@@ -138,6 +138,31 @@ describe('PrototypeLiveCanvas: artboards load once and are updated in place', ()
     expect(checkBusinessViewMarkup(host.innerHTML)).toHaveLength(0);
   });
 
+  it('preserves the saved document attributes in artboards and web mode without reloading an artboard', async () => {
+    const onload = "document.body.dataset.initialized = 'yes'";
+    const legacy = SAVED.replace('<html>', '<html lang="ar" dir="rtl">')
+      .replace('<body>', `<body class="dense" onload="${onload}">`);
+    await render({ documentHtml: legacy });
+
+    const artboard = frame('SCR-A');
+    const assertDocument = (doc: Document) => {
+      expect(doc.documentElement.lang).toBe('ar');
+      expect(doc.documentElement.dir).toBe('rtl');
+      expect(doc.body.className).toBe('dense');
+      expect(doc.body.getAttribute('onload')).toBe(onload);
+      expect(doc.body.dataset.initialized).toBe('yes');
+    };
+    assertDocument(artboard.contentDocument!);
+
+    const webButton = host.querySelector<HTMLButtonElement>('[data-testid="prototype-dock-view-web"]')!;
+    await act(async () => webButton.click());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    const webFrame = host.querySelector<HTMLIFrameElement>('[data-testid="prototype-web-frame"]')!;
+    assertDocument(webFrame.contentDocument!);
+    expect(artboard.getAttribute('data-load-count')).toBe('1');
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="prototype-dock-view-artboards"]')!.click());
+  });
+
   it('double-click enters try-out on one artboard, its navigation moves to the target screen, Esc exits', async () => {
     await render({ documentHtml: SAVED, live: null });
     const viewport = host.querySelector<HTMLElement>('[data-testid="prototype-canvas-viewport"]')!;

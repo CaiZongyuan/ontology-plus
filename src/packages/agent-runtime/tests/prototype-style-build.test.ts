@@ -868,6 +868,11 @@ describe('Repair audit (#91): S1–S5 & PM decisions P3–P6', () => {
       expect(buildP6.log.find((l) => l.kind === 'style_values_changed')).toMatchObject({
         valueKeys: ['accent'],
       });
+      const undone = store.undoLatestArtifactChange('proj-contract', 'PROTOTYPE', { prototypeId: protoId });
+      expect(approvedBriefStyleValues(undone.prototype?.designBrief).values?.accent).toBe(lockedAccent);
+      expect(readPrototypeDocumentStyle(undone.prototype!.htmlContent)?.css).toContain(`--proto-accent: ${lockedAccent}`);
+      const redone = store.undoLatestArtifactChange('proj-contract', 'PROTOTYPE', { prototypeId: protoId });
+      expect(redone.prototype?.designBrief?.styleValues?.accent).toBe('#1e3a8a');
 
       // Turn 4: user does NOT ask to change main colour -> newly approved #1e3a8a stays locked!
       scriptedReplies.push(
