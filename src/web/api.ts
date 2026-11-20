@@ -8,6 +8,7 @@ import {
 import {
   applyPrototypeLiveEvent,
   emptyPrototypeLiveState,
+  splitPrototypeDocument,
   type ImpactAnalysisReport,
   type ModelCode,
   type OntologySuite,
@@ -176,6 +177,30 @@ export function getCurrentClientLocale(): 'zh-CN' | 'en-US' {
   } catch {
     return 'zh-CN';
   }
+}
+
+function sessionConnectionLostCopy(): string {
+  return getCurrentClientLocale() === 'en-US'
+    ? 'Could not reconnect to the assistant. The run may still be working in the background. Reload to check its progress.'
+    : '暂时无法重新连接 AI 助手，任务可能仍在后台运行。刷新页面可查看最新进度。';
+}
+
+async function resolveSavedTurnImages(
+  data: BootstrapPayload | null,
+  session: AgentSession | undefined,
+  images: AgentImageAttachmentRef[] | undefined,
+): Promise<TransientTurnImageInput[] | undefined> {
+  if (!images?.length) return undefined;
+  const providers = data?.llmProviders ?? [];
+  const provider = session?.providerId
+    ? providers.find((item) => item.id === session.providerId && item.enabled) ??
+      providers.find((item) => item.id === session.providerId)
+    : providers.find((item) => item.enabled) ?? providers[0];
+  return resolveTurnImagesWithFallback(images, {
+    visionSupported: provider ? doesProviderSupportVision(provider, session?.modelOverride) : true,
+    defaultRole: 'user_upload',
+    fallbackNoteToName: true,
+  });
 }
 
 function buildJsonHeaders(): Record<string, string> {
@@ -611,9 +636,7 @@ interface WorkbenchStoreState {
   }) => Promise<{ sessionId: string }>;
   cancelSessionAgentRun: (sessionId: string) => Promise<void>;
   retrySessionAgentRun: (
-    sessionId: string,
-    runId?: string,
-    fallbackPrompt?: string,
+    input: Parameters<WorkbenchStoreState['replaceLatestSessionTurnAndRun']>[0],
   ) => Promise<void>;
   replaceLatestSessionTurnAndRun: (input: {
     sessionId: string;
@@ -1350,11 +1373,12 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
             ...(lastEventId ? { afterEventId: lastEventId } : {}),
             signal: controller.signal,
           });
-          // Clean EOF from /live means the server intentionally ended the stream
-          break;
         } catch {
           // Retry on transient stream disconnect unless aborted
         }
+      }
+      if (!terminalSeen && !controller.signal.aborted) {
+        get().showToast(sessionConnectionLostCopy());
       }
     } finally {
       if (activeSessionStreamAborters.get(sessionId) === controller) {
@@ -1462,7 +1486,6 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     };
 
     try {
-      let streamDisconnected = false;
       try {
         await streamAgentSessionTurn(
           sessionId,
@@ -1483,14 +1506,9 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
           trackedCallbacks,
           controller.signal,
         );
-      } catch {
-        if (!controller.signal.aborted && !terminalSeen) {
-          streamDisconnected = true;
-        }
-      }
+      } catch {}
 
-      // If the initial POST stream broke mid-flight due to a transient disconnect, seamlessly attach to /live!
-      if (streamDisconnected) {
+      if (!terminalSeen && !controller.signal.aborted) {
         for (
           let attempt = 1;
           attempt <= 3 && !terminalSeen && !controller.signal.aborted;
@@ -1519,11 +1537,13 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
               ...(lastEventId ? { afterEventId: lastEventId } : {}),
               signal: controller.signal,
             });
-            break;
           } catch {
             // Keep retrying up to 3 attempts on transient /live disconnect
           }
         }
+      }
+      if (!terminalSeen && !controller.signal.aborted) {
+        get().showToast(sessionConnectionLostCopy());
       }
     } catch {
       // Detaching client SSE reader does not abort server run
@@ -1951,30 +1971,45 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     }
   },
 
-  retrySessionAgentRun: async (sessionId, runId, fallbackPrompt) => {
-    const sess = get().data?.agentSessions.find((s) => s.id === sessionId);
-    if (!sess && !fallbackPrompt?.trim()) return;
-    let targetPrompt = '';
-    if (sess && runId) {
-      const msg = sess.messages.find((m) => m.id === runId && m.role === 'user');
-      if (msg) targetPrompt = msg.content;
+  retrySessionAgentRun: async (input) => {
+    const { sessionId, truncateFromUserMessageId, prompt, ...options } = input;
+    if (activeSessionStreamAborters.has(sessionId) || get().liveSessionDrafts[sessionId]) return;
+    const data = get().data;
+    const session = data?.agentSessions.find((item) => item.id === sessionId);
+    if (!session || session.status === 'RUNNING') return;
+    const userMessage = session.messages.findLast((message) => message.role === 'user');
+    if (!userMessage || (truncateFromUserMessageId && truncateFromUserMessageId !== userMessage.id)) return;
+    const reply = session.messages.at(-1);
+    const build = reply?.prototypeBuild;
+    const isPrototype = session.agentKind === 'PROTOTYPE_CO_DESIGN';
+    const prototype = isPrototype
+      ? data?.prototypes.find((item) => item.id === session.targetId || item.coDesignSessionId === sessionId)
+      : undefined;
+    const originalPrompt = (prompt ?? userMessage.content).trim();
+    const interrupted = Boolean(reply?.errorDiagnostic || reply?.cancelled);
+    const revisionId = prototype?.currentRevisionId;
+    const resumeBuild = revisionId && !originalPrompt.startsWith('[ACTION:RESUME_PROTOTYPE_SCREEN ') && (
+      build?.revisionId === revisionId
+        ? build.plan.some(({ screenId }) => build.screens[screenId]?.status !== 'done')
+        : interrupted && splitPrototypeDocument(prototype.htmlContent).screens.some(({ status }) => status === 'queued')
+    );
+    if (!resumeBuild && !interrupted) {
+      return get().replaceLatestSessionTurnAndRun(input);
     }
-    if (!targetPrompt && fallbackPrompt?.trim()) {
-      targetPrompt = fallbackPrompt;
-    }
-    if (!targetPrompt && sess) {
-      for (let i = sess.messages.length - 1; i >= 0; i -= 1) {
-        const m = sess.messages[i]!;
-        if (m.role === 'user' && m.content.trim()) {
-          targetPrompt = m.content;
-          break;
-        }
-      }
-    }
-    if (!targetPrompt.trim()) return;
+    const locale = getCurrentClientLocale();
+    const title = locale === 'en-US' ? 'Continue unfinished screens' : '继续未完成的页面';
+    const nextPrompt = resumeBuild
+      ? `[ACTION:RESUME_PROTOTYPE_BUILD ${JSON.stringify({ revisionId })}] ${title}`
+      : originalPrompt;
+    const images = resumeBuild ? undefined : await resolveSavedTurnImages(data, session, userMessage.images);
+    if (activeSessionStreamAborters.has(sessionId) || get().liveSessionDrafts[sessionId]) return;
     await get().startSessionAgentRun({
+      ...options,
       sessionId,
-      prompt: targetPrompt,
+      prompt: nextPrompt,
+      ...(resumeBuild ? { displayTitle: title } : {}),
+      ...(isPrototype && !prototype && session.designBrief ? { prototypeName: session.title } : {}),
+      ...(images?.length ? { images } : {}),
     });
   },
 
@@ -2000,22 +2035,7 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     const preservedRefs = lastUserMsg?.images;
     if (!nextPrompt && (!preservedRefs || preservedRefs.length === 0)) return;
 
-    let preservedTurnImages: TransientTurnImageInput[] | undefined;
-    if (preservedRefs && preservedRefs.length > 0) {
-      const providers = cur?.llmProviders ?? [];
-      const activeProvider = sess?.providerId
-        ? providers.find((p) => p.id === sess.providerId && p.enabled) ??
-          providers.find((p) => p.id === sess.providerId)
-        : providers.find((p) => p.enabled) ?? providers[0];
-      const visionSupported = activeProvider
-        ? doesProviderSupportVision(activeProvider, sess?.modelOverride)
-        : true;
-      preservedTurnImages = await resolveTurnImagesWithFallback(preservedRefs, {
-        visionSupported,
-        defaultRole: 'user_upload',
-        fallbackNoteToName: true,
-      });
-    }
+    const preservedTurnImages = await resolveSavedTurnImages(cur, sess, preservedRefs);
 
     const hasUserTurns = Boolean(sess?.messages.some((m) => m.role === 'user'));
     const targetMessageId = input.truncateFromUserMessageId ?? lastUserMsg?.id;

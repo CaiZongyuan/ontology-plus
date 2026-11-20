@@ -2,11 +2,12 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { initPrototypeShell, upsertPrototypeScreen } from '../../../packages/agent-runtime/index.js';
+import { collectUnifiedAgentTurn, initPrototypeShell, upsertPrototypeScreen } from '../../../packages/agent-runtime/index.js';
 import {
   applyPrototypeLiveEvent,
   createPrototypeLiveTracker,
   emptyPrototypeLiveState,
+  splitPrototypeDocument,
 } from '../../../packages/ontology-core/index.js';
 import {
   createWorkspaceStore,
@@ -14,7 +15,9 @@ import {
 } from '../../../packages/workspace-store/index.js';
 import { createApiApp } from '../../../server/app.js';
 import { useWorkbenchStore, type BootstrapPayload, type SessionLiveDraft } from '../../api.js';
+import { ShellAgentPanel } from '../../components/agent/ShellAgentPanel.js';
 import { PreferencesProvider } from '../../i18n.js';
+import { agentPanelSurfaceFor } from '../../navigation/index.js';
 import { PENDING_LIVE_PROTOTYPE_ID, PrototypeStudioView } from './PrototypeStudioView.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,6 +44,122 @@ async function settle() {
 }
 
 describe('PrototypeStudioView: one canvas from the running build to the saved prototype (#89)', () => {
+  it.each([true, false])('keeps completed screens on Retry (original build plan retained: %s)', async (keepPlan) => {
+    vi.stubEnv('ONTOLOGY_DISABLE_PROTOTYPE_SCREENSHOT', '1');
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const session = store.createAgentSession({
+      projectId: 'proj-contract', agentKind: 'PROTOTYPE_CO_DESIGN', title: 'Interrupted build',
+    });
+    const { session: built } = await collectUnifiedAgentTurn(store, {
+      sessionId: session.id, prompt: '设计订货工作台', mockMode: true,
+    });
+    const finished = built.messages.at(-1)!;
+    const { prototypeBuild, ...interruptedReply } = finished;
+    if (keepPlan) {
+      const alreadyWritten = prototypeBuild?.screens['SCR-HOME'];
+      expect(alreadyWritten?.status).toBe('done');
+      if (alreadyWritten) alreadyWritten.status = 'failed';
+    }
+    const originalCallIds = store.listModelCalls(session.projectId, session.id).map(({ id }) => id);
+    expect(originalCallIds.length).toBeGreaterThan(0);
+    store.saveAgentSession({
+      ...built,
+      status: 'ERROR',
+      messages: [...built.messages.slice(0, -1), {
+        ...interruptedReply,
+        ...(keepPlan && prototypeBuild ? { prototypeBuild } : {}),
+        errorDiagnostic: { code: 'LLM_TIMEOUT', message: 'Timed out', remediation: 'Retry' },
+      }],
+    });
+    const original = store.getPrototype(built.targetId!)!;
+    const before = splitPrototypeDocument(original.htmlContent);
+    const app = createApiApp(store);
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => app.request(url, { ...init, signal: null }));
+    try {
+      await useWorkbenchStore.getState().bootstrap('proj-contract');
+      useWorkbenchStore.getState().setActivePrototypeId('proj-contract', original.id);
+      useWorkbenchStore.getState().setActiveSessionId(session.id);
+      await act(async () => {
+        root.render(
+          <PreferencesProvider>
+            <ShellAgentPanel surface={agentPanelSurfaceFor('app-prototype')} overlay={false} onClose={() => {}} onNavigate={() => {}} />
+          </PreferencesProvider>,
+        );
+      });
+      vi.useFakeTimers();
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>('[data-testid="agent-run-retry-btn"]')!.click();
+        await vi.runAllTimersAsync();
+      });
+      expect(store.getAgentSession(session.id)!.messages[1]).toMatchObject({ id: finished.id });
+      expect(store.getAgentSession(session.id)!.messages).toHaveLength(4);
+      expect(store.getAgentSession(session.id)!.messages.at(-1)?.subagentLanes?.map((lane) => lane.targetAnchor?.screenId))
+        .toEqual(['SCR-REFUND']);
+      expect(store.listModelCalls(session.projectId, session.id).map(({ id }) => id)).toEqual(
+        expect.arrayContaining(originalCallIds),
+      );
+      expect(useWorkbenchStore.getState().liveSessionDrafts[session.id]).toBeUndefined();
+      const after = splitPrototypeDocument(store.getPrototype(original.id)!.htmlContent);
+      expect(after.screens.map(({ screenId, status }) => [screenId, status])).toEqual(
+        before.screens.map(({ screenId }) => [screenId, 'ready']),
+      );
+      for (const screen of before.screens.filter(({ status }) => status === 'ready')) {
+        expect(after.screens.find(({ screenId }) => screenId === screen.screenId)?.html).toBe(screen.html);
+      }
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+      store.close();
+    }
+  });
+
+  it('reattaches to an accepted run when the initial and first reattached streams close without a terminal event', async () => {
+    vi.stubEnv('ONTOLOGY_DISABLE_PROTOTYPE_SCREENSHOT', '1');
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    store.updateSystemSettings({ mockLlmMode: true });
+    const session = store.createAgentSession({
+      projectId: 'proj-contract', agentKind: 'PROTOTYPE_CO_DESIGN', title: 'Reconnect build',
+    });
+    const app = createApiApp(store);
+    let posts = 0;
+    let reconnects = 0;
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const response = await app.request(url, { ...init, signal: null });
+      if (url.endsWith('/stream')) {
+        posts++;
+        const [firstEvent] = (await response.text()).split('\n\n');
+        return new Response(`${firstEvent}\n\n`);
+      }
+      if (url.includes('/live') && ++reconnects === 1) {
+        await response.text();
+        return new Response('');
+      }
+      return response;
+    });
+    try {
+      await useWorkbenchStore.getState().bootstrap('proj-contract');
+      vi.useFakeTimers();
+      const completed = useWorkbenchStore.getState().startSessionAgentRun({
+        sessionId: session.id, prompt: '生成订货工作台', mockMode: true,
+      });
+      await vi.runAllTimersAsync();
+      await completed;
+      expect(posts).toBe(1);
+      expect(reconnects).toBe(2);
+      const state = useWorkbenchStore.getState().data!;
+      const persisted = state.agentSessions.find(({ id }) => id === session.id)!;
+      expect(persisted.messages.at(-1)?.prototypeBuild?.plan.length).toBeGreaterThan(0);
+      expect(state.prototypes.some(({ id }) => id === persisted.targetId)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+      store.close();
+    }
+  });
+
   it('keeps the same canvas and the same artboard iframes when the first build is saved', async () => {
     const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
     const session = store.createAgentSession({

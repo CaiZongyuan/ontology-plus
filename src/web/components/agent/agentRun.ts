@@ -281,6 +281,9 @@ export function summarizeUserPromptTitle(rawPrompt: string, explicitTitle?: stri
         const rest = trimmed.slice(actionMatch[0].length).trim();
         return rest ? { zh: rest, en: rest } : { zh: '继续这一屏', en: 'Continue this screen' };
       }
+      case 'RESUME_PROTOTYPE_BUILD': {
+        return { zh: '继续未完成的页面', en: 'Continue unfinished screens' };
+      }
       case 'RUN_ONTOLOGY_EXTRACTION': {
         const jobTitle =
           typeof params.title === 'string' && params.title.trim() ? params.title.trim() : '';

@@ -406,6 +406,7 @@ export function ShellAgentPanel({
     updateAgentSessionExecutionConfig,
     startSessionAgentRun,
     cancelSessionAgentRun,
+    retrySessionAgentRun,
     replaceLatestSessionTurnAndRun,
     acceptStepHandoff,
     declineStepHandoff,
@@ -1022,7 +1023,7 @@ export function ShellAgentPanel({
     const target = runs.find((r) => r.id === runId);
     const sessionId = target?.sourceSessionId ?? activeSession?.id;
     if (!sessionId) return;
-    await replaceLatestSessionTurnAndRun({
+    await retrySessionAgentRun({
       sessionId,
       ...(target?.retryPrompt !== undefined ? { prompt: target.retryPrompt } : {}),
       ...(target?.sourceUserMessageId

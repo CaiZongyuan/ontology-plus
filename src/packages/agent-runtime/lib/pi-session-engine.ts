@@ -141,6 +141,7 @@ import {
   alignShellArgsWithPlan,
   createPrototypeBuildRun,
   parseResumePrototypeScreenAction,
+  parseResumePrototypeBuildAction,
   prototypeBuildSseEventName,
   type PrototypeBuildRun,
 } from './prototype-build-run.js';
@@ -5133,6 +5134,9 @@ async function executeUnifiedTurnCore(
   let sessionState: AgentSession = store.saveAgentSession({
     ...existing,
     title: nextTitle,
+    ...(input.designBrief && existing.agentKind === 'PROTOTYPE_CO_DESIGN' && !existing.targetId
+      ? { designBrief: input.designBrief }
+      : {}),
     ...(input.reasoningMode ? { reasoningMode: input.reasoningMode } : {}),
     multiAgentConcurrency: effectiveConcurrency,
     status: 'RUNNING',
@@ -5241,6 +5245,9 @@ async function executeUnifiedTurnCore(
   };
   const resumeScreenAction =
     existing.agentKind === 'PROTOTYPE_CO_DESIGN' ? parseResumePrototypeScreenAction(synthesizedPrompt) : null;
+  const resumeBuildAction =
+    existing.agentKind === 'PROTOTYPE_CO_DESIGN' ? parseResumePrototypeBuildAction(synthesizedPrompt) : null;
+  const resumeAction = resumeScreenAction ?? resumeBuildAction;
 
   try {
     didInvokeRunStart = true;
@@ -5288,6 +5295,9 @@ async function executeUnifiedTurnCore(
               modifiedAnchors: [],
             }
         : undefined;
+    const resumeBuildBase = resumeAction
+      ? latestPrototypeBuild(existing.messages, currentPrototypeRevisionId() ?? null)
+      : undefined;
     // The Design Brief this build follows: approved Style Tile values in it are locked (#91).
     let buildDesignBrief =
       input.designBrief ?? (initialTargetProto ? initialTargetProto.designBrief : sessionState.designBrief);
@@ -5472,9 +5482,7 @@ async function executeUnifiedTurnCore(
           locale: effectiveLocale,
           // Only the plan of the revision now on screen; after an undo or edit there is none, and
           // the plan is derived from the current document instead.
-          base: resumeScreenAction
-            ? latestPrototypeBuild(existing.messages, currentPrototypeRevisionId() ?? null)
-            : null,
+          base: resumeBuildBase ?? null,
           emit: (buildEvent) =>
             emit({
               id: nextEventId(),
@@ -6577,31 +6585,48 @@ async function executeUnifiedTurnCore(
         }
         resetIdleTimer();
 
-        // 「继续这一屏」: redo exactly one planned screen with one helper; the lead does not run,
-        // not even when the screen cannot be found (then nothing is changed and the user is told).
-        if (step === 0 && resumeScreenAction && prototypeBuildRun) {
+        if (step === 0 && resumeAction && prototypeBuildRun) {
+          const buildRun = prototypeBuildRun;
           const beforeHtml = prototypeTurnDraft?.workingHtml ?? '';
-          const planned = prototypeBuildRun.resumeScreen(resumeScreenAction.screenId, beforeHtml);
-          if (!planned) {
-            accumulatedText = pickLocaleText(
+          let screenIds: string[] = [];
+          if (resumeScreenAction) {
+            screenIds = [resumeScreenAction.screenId];
+          } else if (currentPrototypeRevisionId() === resumeBuildAction?.revisionId) {
+            const savedScreens = splitPrototypeDocument(beforeHtml).screens;
+            const written = new Set(savedScreens.filter(({ status }) => status === 'ready').map(({ screenId }) => screenId));
+            const unfinished = resumeBuildBase
+              ? resumeBuildBase.plan.filter(({ screenId }) =>
+                  !written.has(screenId) && resumeBuildBase.screens[screenId]?.status !== 'done',
+                )
+              : savedScreens.filter(({ status }) => status === 'queued');
+            screenIds = unfinished.map(({ screenId }) => screenId);
+          }
+          const planned = screenIds.flatMap((screenId) => {
+            const item = buildRun.resumeScreen(screenId, beforeHtml);
+            return item ? [item] : [];
+          });
+          if (planned.length === 0) {
+            accumulatedText = resumeScreenAction ? pickLocaleText(
               effectiveLocale,
               '找不到要继续的这一屏（它可能已经被删掉或改了名），这次没有做任何改动。',
               'The screen to continue could not be found (it may have been removed or renamed); nothing was changed.',
+            ) : pickLocaleText(
+              effectiveLocale,
+              '当前原型没有可以继续的页面，这次没有做任何改动。',
+              'There are no screens to continue in the current prototype; nothing was changed.',
             );
             emit({ id: nextEventId(), event: 'delta', data: { step: 1, text: accumulatedText } });
             break;
           }
           const resumeCallId = `tc-resume-${Date.now().toString(36)}`;
           const resumeArgs = {
-            tasks: [
-              {
-                title: planned.screenName,
-                screenId: planned.screenId,
-                screenName: planned.screenName,
-                ...(planned.screenType ? { screenType: planned.screenType } : {}),
-                instruction: planned.purpose || planned.screenName,
-              },
-            ],
+            tasks: planned.map((item) => ({
+              title: item.screenName,
+              screenId: item.screenId,
+              screenName: item.screenName,
+              ...(item.screenType ? { screenType: item.screenType } : {}),
+              instruction: item.purpose || item.screenName,
+            })),
           };
           emit({
             id: nextEventId(),
@@ -6609,11 +6634,19 @@ async function executeUnifiedTurnCore(
             data: { id: resumeCallId, toolName: 'spawn_subagents', arguments: resumeArgs, step: 1 },
           });
           const resumed = await runSpawnSubagentsTool(resumeCallId, resumeArgs, 1);
+          if (controller.signal.aborted) throw toAbortedError();
           allToolTraces.push(resumed.trace);
           emit({ id: nextEventId(), event: 'tool_result', data: { trace: resumed.trace, step: 1 } });
           syncPrototypeLiveDocument();
-          // Say what really changed besides this screen, by comparing the document before and after.
-          const otherChanged = screensChangedOutside(beforeHtml, prototypeTurnDraft?.workingHtml ?? '', planned.screenId);
+          if (resumeBuildAction) {
+            accumulatedText = resumed.isError
+              ? pickLocaleText(effectiveLocale, '还有页面没画完，可以在画布上继续。', 'Some screens are still unfinished. You can continue them on the canvas.')
+              : pickLocaleText(effectiveLocale, '未完成的页面已经补齐。', 'The unfinished screens have been filled in.');
+            emit({ id: nextEventId(), event: 'delta', data: { step: 1, text: accumulatedText } });
+            break;
+          }
+          const item = planned[0]!;
+          const otherChanged = screensChangedOutside(beforeHtml, prototypeTurnDraft?.workingHtml ?? '', item.screenId);
           const othersText =
             otherChanged.length === 0
               ? pickLocaleText(effectiveLocale, '其他屏没有改动。', 'The other screens are unchanged.')
@@ -6625,13 +6658,13 @@ async function executeUnifiedTurnCore(
           accumulatedText = resumed.isError
             ? pickLocaleText(
                 effectiveLocale,
-                `「${planned.screenName}」这次还是没画完，可以在画布上再继续一次。${othersText}`,
-                `"${planned.screenName}" is still not finished; you can continue it again on the canvas. ${othersText}`,
+                `「${item.screenName}」这次还是没画完，可以在画布上再继续一次。${othersText}`,
+                `"${item.screenName}" is still not finished; you can continue it again on the canvas. ${othersText}`,
               )
             : pickLocaleText(
                 effectiveLocale,
-                `「${planned.screenName}」画好了。${othersText}`,
-                `"${planned.screenName}" is drawn. ${othersText}`,
+                `「${item.screenName}」画好了。${othersText}`,
+                `"${item.screenName}" is drawn. ${othersText}`,
               );
           emit({ id: nextEventId(), event: 'delta', data: { step: 1, text: accumulatedText } });
           break;
@@ -7211,7 +7244,7 @@ async function executeUnifiedTurnCore(
 
     if (prototypeTurnDraft && !controller.signal.aborted) {
       const cleanRevisionNote = stripSelectionBlockFromPrompt(
-        resumeScreenAction?.cleanPrompt || synthesizedPrompt,
+        resumeAction?.cleanPrompt || synthesizedPrompt,
       );
       if (
         !prototypeTurnDraft.prototypeId &&
@@ -7550,7 +7583,7 @@ async function executeUnifiedTurnCore(
       /data-screen-id=/i.test(prototypeTurnDraft.workingHtml)
     ) {
       const cleanRevisionNote = stripSelectionBlockFromPrompt(
-        resumeScreenAction?.cleanPrompt || synthesizedPrompt,
+        resumeAction?.cleanPrompt || synthesizedPrompt,
       );
       if (!prototypeTurnDraft.prototypeId) {
         const savedPartial = store.createPrototype(sessionState.projectId, {

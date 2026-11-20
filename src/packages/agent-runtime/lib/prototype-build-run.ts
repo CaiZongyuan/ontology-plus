@@ -1016,3 +1016,16 @@ export function parseResumePrototypeScreenAction(
     return null;
   }
 }
+
+export function parseResumePrototypeBuildAction(prompt: string): { revisionId: string; cleanPrompt: string } | null {
+  const trimmed = prompt.trim();
+  const match = /^\[ACTION:RESUME_PROTOTYPE_BUILD\s+(\{[^\r\n]*\})\]\s*/.exec(trimmed);
+  if (!match) return null;
+  try {
+    const params = JSON.parse(match[1]!) as { revisionId?: unknown } | null;
+    const revisionId = typeof params?.revisionId === 'string' ? params.revisionId.trim() : '';
+    return revisionId ? { revisionId, cleanPrompt: trimmed.slice(match[0].length).trim() } : null;
+  } catch {
+    return null;
+  }
+}

@@ -1169,7 +1169,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
         async start(controller) {
           controller.enqueue(
             encoder.encode(
-              `data: ${JSON.stringify({ type: 'text_delta', delta: `Ack: ${promptContent}` })}\n\n`,
+              `event: delta\ndata: ${JSON.stringify({ text: `Ack: ${promptContent}` })}\n\n`,
             ),
           );
           await gatePromise;
@@ -1200,7 +1200,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
           totalActiveStreams = Math.max(0, totalActiveStreams - 1);
           controller.enqueue(
             encoder.encode(
-              `data: ${JSON.stringify({ type: 'done', session: updatedSession })}\n\n`,
+              `event: message_end\ndata: ${JSON.stringify({ session: updatedSession })}\n\n`,
             ),
           );
           controller.close();
