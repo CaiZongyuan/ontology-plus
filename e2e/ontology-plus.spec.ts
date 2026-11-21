@@ -23,7 +23,7 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await expect(canvas).toBeVisible();
     const agentBox = await agentPanel.boundingBox();
     const canvasBox = await canvas.boundingBox();
-    expect(agentBox!.x).toBeLessThan(canvasBox!.x);
+    expect(agentBox!.x).toBeGreaterThan(canvasBox!.x);
     await expect(agentPanel).toHaveAttribute('data-wide-mode', 'false');
 
     // Toggle Wide Mode on and off in AgentPanel
@@ -427,18 +427,19 @@ test.describe('Ontology Plus Full-Stack Platform E2E', () => {
     await page.goto('/?projectId=proj-contract&mode=app-assembly-dev');
     await expect(page.getByTestId('delivery-business-view')).toBeVisible();
 
-    // 3. Tablet viewport (1024x768 < 1280px): Conversation <-> Canvas segmented toggle
+    // Tablet: the right overlay opens without unmounting the canvas.
     await page.setViewportSize({ width: 1024, height: 768 });
-    const paneToggle = page.getByTestId('workspace-pane-toggle');
-    await expect(paneToggle).toBeVisible();
+    const panelToggle = page.getByTestId('agent-panel-toggle');
+    await expect(panelToggle).toBeVisible();
     await expect(page.getByTestId('workbench-canvas')).toBeVisible();
     await expect(page.getByTestId('agent-panel')).toBeHidden();
 
-    await page.getByTestId('workspace-pane-conversation').click();
+    await panelToggle.click();
     await expect(page.getByTestId('agent-panel')).toBeVisible();
-    await expect(page.getByTestId('workbench-canvas')).toBeHidden();
+    await expect(page.getByTestId('agent-panel-scrim')).toBeVisible();
+    await expect(page.getByTestId('workbench-canvas')).toBeVisible();
 
-    await page.getByTestId('workspace-pane-canvas').click();
+    await page.getByTestId('agent-panel-close-btn').click();
     await expect(page.getByTestId('workbench-canvas')).toBeVisible();
     await expect(page.getByTestId('agent-panel')).toBeHidden();
   });

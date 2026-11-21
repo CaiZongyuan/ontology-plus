@@ -65,11 +65,7 @@ test.describe('Prototype Demo Tours (#95): generation, portal menu, steps sideba
     const toursPhase = page.getByTestId('prototype-phase-tours');
     await expect(toursPhase).toHaveAttribute('data-phase-status', 'done');
     await expect(toursPhase).toContainText('演示路线已就绪');
-    const buildLog = page.getByTestId('prototype-build-log');
-    await expect(buildLog).toBeVisible();
-    await expect(buildLog.locator('[data-testid="prototype-build-log-entry"][data-kind="tours_ready"]')).toContainText(
-      '演示路线已就绪',
-    );
+    await expect(page.getByTestId('prototype-build-log')).toHaveCount(0);
     await expect(page.getByTestId('demo-tour-player-bar')).toHaveCount(0);
     await expect(page.getByTestId('demo-tour-script-panel')).toHaveCount(0);
 
@@ -168,7 +164,7 @@ test.describe('Prototype Demo Tours (#95): generation, portal menu, steps sideba
     await page.getByTestId('demo-tour-exit').click();
     await expect(page.getByTestId('demo-tour-player-bar')).toHaveCount(0);
     await expect(page.getByTestId('demo-tour-script-panel')).toHaveCount(0);
-    await expect(page.getByTestId('prototype-build-log')).toBeVisible();
+    await expect(page.getByTestId('prototype-build-log')).toHaveCount(0);
     await expect(page.getByTestId('prototype-canvas-dock')).toBeVisible();
 
     // 4. Web mode (#97): genuinely navigates pages across screens and scrolls off-screen targets into view!
@@ -201,7 +197,7 @@ test.describe('Prototype Demo Tours (#95): generation, portal menu, steps sideba
     expect(webScrollTop).toBeGreaterThan(300);
 
     await page.getByTestId('demo-tour-exit').click();
-    await expect(page.getByTestId('prototype-build-log')).toBeVisible();
+    await expect(page.getByTestId('demo-tour-script-panel')).toHaveCount(0);
 
     // 5. Bilingual check (`en-US`): English Demo Tour chrome, zero "Scenario"
     await page.evaluate(() => localStorage.setItem('onto_locale', 'en-US'));

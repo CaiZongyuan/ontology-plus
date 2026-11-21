@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { reconcileSessionStream, waitForRecovery, withStreamWatchdog } from './lib/sessionRecovery.js';
 import {
   formatToolProgress as formatVocabularyToolProgress,
   formatToolStepLabel as formatVocabularyToolStepLabel,
@@ -179,10 +180,20 @@ export function getCurrentClientLocale(): 'zh-CN' | 'en-US' {
   }
 }
 
-function sessionConnectionLostCopy(): string {
-  return getCurrentClientLocale() === 'en-US'
-    ? 'Could not reconnect to the assistant. The run may still be working in the background. Reload to check its progress.'
-    : '暂时无法重新连接 AI 助手，任务可能仍在后台运行。刷新页面可查看最新进度。';
+type TurnInput = Parameters<WorkbenchStoreState['startSessionAgentRun']>[0];
+type PendingTurn = { submissionId: string; input: Omit<TurnInput, 'images'>; imageRefs?: AgentImageAttachmentRef[] };
+const pendingTurnKey = (sessionId: string) => `onto_pending_turn:${sessionId}`;
+function readPendingTurn(sessionId: string): PendingTurn | undefined {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(pendingTurnKey(sessionId)) ?? 'null') as PendingTurn | null;
+    return saved?.input.sessionId === sessionId && typeof saved.submissionId === 'string' ? saved : undefined;
+  } catch { return undefined; }
+}
+function writePendingTurn(sessionId: string, value?: PendingTurn) {
+  try {
+    if (value) sessionStorage.setItem(pendingTurnKey(sessionId), JSON.stringify(value));
+    else sessionStorage.removeItem(pendingTurnKey(sessionId));
+  } catch {}
 }
 
 async function resolveSavedTurnImages(
@@ -249,6 +260,9 @@ export interface SessionLiveStep {
 
 export interface SessionLiveDraft {
   runId: string;
+  submissionId?: string;
+  cancellationPending?: boolean;
+  serverRunId?: string;
   sessionId: string;
   userPrompt: string;
   displayTitle?: string;
@@ -403,6 +417,26 @@ export function formatPrototypeSelectionsForPrompt(
 
 const activeSessionStreamAborters = new Map<string, AbortController>();
 const cancelledSessionIds = new Set<string>();
+type CancelTarget = { submissionId: string } | { runId: string };
+const cancellationJobs = new Map<string, Promise<void>>();
+const cancellationCache = new Map<string, CancelTarget>();
+const cancellationKey = (sessionId: string) => `onto_pending_cancel:${sessionId}`;
+
+function pendingCancellation(sessionId: string): CancelTarget | undefined {
+  const cached = cancellationCache.get(sessionId);
+  if (cached) return cached;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(cancellationKey(sessionId)) ?? 'null');
+    if (typeof saved?.submissionId === 'string' || typeof saved?.runId === 'string') return saved;
+  } catch {}
+  return undefined;
+}
+
+export function restorePendingCancellation(sessionId: string): boolean {
+  if (!pendingCancellation(sessionId)) return false;
+  void useWorkbenchStore.getState().cancelSessionAgentRun(sessionId);
+  return true;
+}
 
 export interface OntologyUndoRedoState {
   canUndo: boolean;
@@ -539,11 +573,12 @@ interface WorkbenchStoreState {
   ) => Promise<AgentSession>;
   updateAgentSessionExecutionConfig: (
     sessionId: string,
-    patch: { codeMode?: boolean; multiAgentConcurrency?: number },
+    patch: Pick<AgentSession, 'codeMode' | 'multiAgentConcurrency' | 'providerId' | 'modelOverride'>,
   ) => Promise<AgentSession | null>;
   attachLiveSessionStream: (sessionId: string) => Promise<void>;
   startSessionAgentRun: (input: {
     sessionId: string;
+    recoveringSubmissionId?: string;
     prompt: string;
     displayTitle?: string;
     askUserAnswer?: {
@@ -974,7 +1009,8 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
 
     // Reconnect live SSE streams for any durable background Agent Sessions still running on the server
     for (const sess of payload.agentSessions ?? []) {
-      if (sess.status === 'RUNNING') {
+      if (restorePendingCancellation(sess.id)) continue;
+      if (readPendingTurn(sess.id) || sess.status === 'RUNNING') {
         void get().attachLiveSessionStream(sess.id);
       }
     }
@@ -1261,25 +1297,6 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   },
 
   updateAgentSessionExecutionConfig: async (sessionId, patch) => {
-    const cur = get().data;
-    if (cur) {
-      set({
-        data: {
-          ...cur,
-          agentSessions: (cur.agentSessions ?? []).map((s) =>
-            s.id === sessionId
-              ? {
-                  ...s,
-                  ...(patch.codeMode !== undefined ? { codeMode: patch.codeMode } : {}),
-                  ...(patch.multiAgentConcurrency !== undefined
-                    ? { multiAgentConcurrency: patch.multiAgentConcurrency }
-                    : {}),
-                }
-              : s,
-          ),
-        },
-      });
-    }
     try {
       const res = await fetch(`/api/agent-sessions/${encodeURIComponent(sessionId)}`, {
         method: 'PATCH',
@@ -1292,8 +1309,13 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
         agentSessions?: AgentSession[];
       };
       const latest = get().data;
-      if (latest && body.agentSessions) {
-        set({ data: { ...latest, agentSessions: body.agentSessions } });
+      if (latest) {
+        const { providerId, modelOverride, multiAgentConcurrency, codeMode } = body.session;
+        set({ data: { ...latest, agentSessions: latest.agentSessions.map((session) =>
+          session.id === sessionId
+            ? { ...session, providerId, modelOverride, multiAgentConcurrency, codeMode }
+            : session),
+        } });
       }
       return body.session;
     } catch {
@@ -1302,7 +1324,13 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   },
 
   attachLiveSessionStream: async (sessionId) => {
+    if (restorePendingCancellation(sessionId)) return;
     if (activeSessionStreamAborters.has(sessionId)) return;
+    const pending = readPendingTurn(sessionId);
+    if (pending) {
+      await get().startSessionAgentRun({ ...pending.input, recoveringSubmissionId: pending.submissionId });
+      return;
+    }
     const controller = new AbortController();
     activeSessionStreamAborters.set(sessionId, controller);
 
@@ -1346,9 +1374,10 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     };
 
     try {
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        if (controller.signal.aborted || terminalSeen) break;
-        if (attempt > 0) {
+      await reconcileSessionStream({
+        signal: controller.signal,
+        ended: () => terminalSeen,
+        onWaiting: () => {
           const curDraft = get().liveSessionDrafts[sessionId];
           if (curDraft) {
             set({
@@ -1365,21 +1394,12 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
               },
             });
           }
-          await new Promise((r) => setTimeout(r, attempt * 1000));
-        }
-        if (controller.signal.aborted || terminalSeen) break;
-        try {
-          await attachAgentSessionLiveStream(sessionId, trackedCallbacks, {
+        },
+        attach: () => attachAgentSessionLiveStream(sessionId, trackedCallbacks, {
             ...(lastEventId ? { afterEventId: lastEventId } : {}),
             signal: controller.signal,
-          });
-        } catch {
-          // Retry on transient stream disconnect unless aborted
-        }
-      }
-      if (!terminalSeen && !controller.signal.aborted) {
-        get().showToast(sessionConnectionLostCopy());
-      }
+        }),
+      });
     } finally {
       if (activeSessionStreamAborters.get(sessionId) === controller) {
         activeSessionStreamAborters.delete(sessionId);
@@ -1392,17 +1412,20 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
 
   startSessionAgentRun: async (input) => {
     const { sessionId, prompt } = input;
+    if (restorePendingCancellation(sessionId)) return;
+    const pending = input.recoveringSubmissionId ? readPendingTurn(sessionId) : undefined;
     const answerSummary = input.askUserAnswer
       ? [input.askUserAnswer.selectedAnswers.join(', '), input.askUserAnswer.freeformText]
           .filter(Boolean)
           .join(' · ')
       : '';
-    const hasTurnImages = Boolean(input.images && input.images.length > 0);
+    const imageCount = input.images?.length ?? pending?.imageRefs?.length ?? 0;
+    const hasTurnImages = imageCount > 0;
     const fallbackImagePrompt =
       hasTurnImages && !prompt.trim() && !answerSummary
         ? getCurrentClientLocale() === 'en-US'
-          ? `Please inspect the ${input.images!.length} attached reference image(s).`
-          : `请结合附带的 ${input.images!.length} 张参考图进行分析。`
+          ? `Please inspect the ${imageCount} attached reference image(s).`
+          : `请结合附带的 ${imageCount} 张参考图进行分析。`
         : '';
     const effectivePrompt = prompt.trim() || answerSummary || fallbackImagePrompt;
     if (!effectivePrompt && !input.askUserAnswer && !hasTurnImages) return;
@@ -1435,7 +1458,9 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
     const controller = new AbortController();
     activeSessionStreamAborters.set(sessionId, controller);
 
-    const draftRunId = `lrun-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const draftRunId = pending?.submissionId ?? (typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : Array.from(crypto.getRandomValues(new Uint32Array(4)), value => value.toString(16).padStart(8, '0')).join(''));
     const draftImages: AgentImageAttachmentRef[] | undefined =
       input.images && input.images.length > 0
         ? input.images.map((img) => ({
@@ -1448,12 +1473,15 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
             ...(img.height !== undefined ? { height: img.height } : {}),
             ...(img.role ? { role: img.role } : {}),
           }))
-        : undefined;
+        : pending?.imageRefs;
+    const { images, recoveringSubmissionId, ...persistable } = input;
+    if (!pending) writePendingTurn(sessionId, { submissionId: draftRunId, input: persistable, imageRefs: draftImages });
     set({
       liveSessionDrafts: {
         ...get().liveSessionDrafts,
         [sessionId]: {
           runId: draftRunId,
+          submissionId: draftRunId,
           sessionId,
           userPrompt: effectivePrompt,
           ...(input.displayTitle ? { displayTitle: input.displayTitle } : {}),
@@ -1485,14 +1513,15 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       },
     };
 
-    try {
-      try {
+    const send = async () => {
+        const restoredImages = images ?? await resolveSavedTurnImages(get().data, get().data?.agentSessions.find(session => session.id === sessionId), pending?.imageRefs);
         await streamAgentSessionTurn(
           sessionId,
           {
+            submissionId: draftRunId,
             ...(prompt.trim() ? { prompt } : {}),
             ...(input.askUserAnswer ? { askUserAnswer: input.askUserAnswer } : {}),
-            ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+            ...(restoredImages?.length ? { images: restoredImages } : {}),
             ...(input.designBrief ? { designBrief: input.designBrief } : {}),
             ...(input.prototypeName ? { prototypeName: input.prototypeName } : {}),
             ...(input.activeModelCode ? { activeModelCode: input.activeModelCode } : {}),
@@ -1506,14 +1535,21 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
           trackedCallbacks,
           controller.signal,
         );
-      } catch {}
-
-      if (!terminalSeen && !controller.signal.aborted) {
-        for (
-          let attempt = 1;
-          attempt <= 3 && !terminalSeen && !controller.signal.aborted;
-          attempt += 1
-        ) {
+    };
+    try {
+      if (!recoveringSubmissionId) {
+        try { await send(); } catch {}
+      }
+      await reconcileSessionStream({
+        signal: controller.signal,
+        ended: () => terminalSeen,
+        resend: send,
+        onAbsentAfterResend: () => trackedCallbacks.onRunError?.({ diagnostic: {
+          code: 'TURN_NOT_DELIVERED',
+          message: getCurrentClientLocale() === 'en-US' ? 'The instruction was not delivered. No work started.' : '指令未送达，没有启动任务。',
+          remediation: getCurrentClientLocale() === 'en-US' ? 'Retry this message.' : '可重试这条消息。',
+        } }),
+        onWaiting: () => {
           const curDraft = get().liveSessionDrafts[sessionId];
           if (curDraft) {
             set({
@@ -1523,32 +1559,21 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
                   ...curDraft,
                   reconnecting: true,
                   liveStatus: {
-                    zh: '连接闪断，正在自动接回后台进展…',
-                    en: 'Connection interrupted — reconnecting to live run…',
+                    zh: '正在确认指令送达状态并同步进展…',
+                    en: 'Checking delivery and syncing progress…',
                   },
                 },
               },
             });
           }
-          await new Promise((r) => setTimeout(r, attempt * 1000));
-          if (controller.signal.aborted || terminalSeen) break;
-          try {
-            await attachAgentSessionLiveStream(sessionId, trackedCallbacks, {
-              ...(lastEventId ? { afterEventId: lastEventId } : {}),
-              signal: controller.signal,
-            });
-          } catch {
-            // Keep retrying up to 3 attempts on transient /live disconnect
-          }
-        }
-      }
-      if (!terminalSeen && !controller.signal.aborted) {
-        get().showToast(sessionConnectionLostCopy());
-      }
-    } catch {
-      // Detaching client SSE reader does not abort server run
+        },
+        attach: () => attachAgentSessionLiveStream(sessionId, trackedCallbacks, {
+          submissionId: draftRunId, afterEventId: lastEventId, signal: controller.signal,
+        }),
+      });
     } finally {
       if (activeSessionStreamAborters.get(sessionId) === controller) {
+        if (terminalSeen) writePendingTurn(sessionId);
         activeSessionStreamAborters.delete(sessionId);
         const nextDrafts = { ...get().liveSessionDrafts };
         delete nextDrafts[sessionId];
@@ -1937,6 +1962,17 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
   },
 
   cancelSessionAgentRun: async (sessionId) => {
+    const existingJob = cancellationJobs.get(sessionId);
+    if (existingJob) return existingJob;
+    const draft = get().liveSessionDrafts[sessionId];
+    const session = get().data?.agentSessions.find(item => item.id === sessionId);
+    const latest = session?.messages.at(-1);
+    const submissionId = readPendingTurn(sessionId)?.submissionId ?? draft?.submissionId;
+    const runId = draft?.serverRunId ?? (latest?.role === 'user' ? latest.runId ?? latest.id : undefined);
+    const target = pendingCancellation(sessionId) ?? (submissionId ? { submissionId } : runId ? { runId } : undefined);
+    if (!target) return;
+    cancellationCache.set(sessionId, target);
+    try { sessionStorage.setItem(cancellationKey(sessionId), JSON.stringify(target)); } catch {}
     cancelledSessionIds.add(sessionId);
     const aborter = activeSessionStreamAborters.get(sessionId);
     if (aborter) {
@@ -1946,29 +1982,36 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
 
     const nextQueues = { ...get().sessionQueues };
     delete nextQueues[sessionId];
-    const nextDrafts = { ...get().liveSessionDrafts };
-    delete nextDrafts[sessionId];
-    set({ sessionQueues: nextQueues, liveSessionDrafts: nextDrafts });
-
-    try {
-      const res = await apiAbortAgentSession(sessionId);
-      const cur = get().data;
-      if (cur && res.agentSessions) {
-        const targetProjectId =
-          res.session?.projectId ??
-          cur.agentSessions.find((s) => s.id === sessionId)?.projectId ??
-          cur.activeProject.id;
-        const others = (cur.agentSessions ?? []).filter((s) => s.projectId !== targetProjectId);
-        set({
-          data: {
-            ...cur,
-            agentSessions: [...res.agentSessions, ...others],
-          },
-        });
+    const stoppedDraft: SessionLiveDraft = {
+      ...(draft ?? {runId: runId ?? ('submissionId' in target ? target.submissionId : target.runId), sessionId,
+      userPrompt: readPendingTurn(sessionId)?.input.prompt ?? latest?.content ?? '', startedAt: Date.now(),
+      text: '', thinking: '', steps: []}),
+      cancellationPending: true, liveStatus: { zh: '正在确认停止请求…', en: 'Waiting for the stop request to be confirmed…' },
+    };
+    set({ sessionQueues: nextQueues, liveSessionDrafts: { ...get().liveSessionDrafts, [sessionId]: stoppedDraft } });
+    const job = (async () => {
+      const signal = new AbortController().signal;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = await apiAbortAgentSession(sessionId, target);
+          const data = get().data;
+          const drafts = { ...get().liveSessionDrafts };
+          delete drafts[sessionId];
+          writePendingTurn(sessionId);
+          try { sessionStorage.removeItem(cancellationKey(sessionId)); } catch {}
+          cancellationCache.delete(sessionId);
+          set({ liveSessionDrafts: drafts, ...(data && res.session ? { data: { ...data,
+            agentSessions: data.agentSessions.map(item => item.id === sessionId ? res.session! : item),
+          } } : {}) });
+          if (res.session?.status === 'RUNNING') void get().attachLiveSessionStream(sessionId);
+          return;
+        } catch {
+          await waitForRecovery(signal, attempt);
+        }
       }
-    } catch {
-      // Ignore network errors during cancel cleanup
-    }
+    })().finally(() => cancellationJobs.delete(sessionId));
+    cancellationJobs.set(sessionId, job);
+    return job;
   },
 
   retrySessionAgentRun: async (input) => {
@@ -2373,11 +2416,17 @@ export async function apiForkAgentSession(
 
 export async function apiAbortAgentSession(
   sessionId: string,
-): Promise<{ aborted: boolean; session?: AgentSession; agentSessions: AgentSession[] }> {
-  const res = await fetch(`/api/agent-sessions/${sessionId}/abort`, {
-    method: 'POST',
+  target: CancelTarget,
+): Promise<{ acknowledged: true; aborted: boolean; session?: AgentSession }> {
+  return withStreamWatchdog(undefined, async signal => {
+    const res = await fetch(`/api/agent-sessions/${sessionId}/abort`, {
+      method: 'POST', headers: buildJsonHeaders(), body: JSON.stringify(target), signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const ack = await res.json();
+    if (ack.acknowledged !== true) throw new Error('Stop request was not confirmed');
+    return ack;
   });
-  return res.json();
 }
 
 export async function apiCompactAgentSession(
@@ -2424,6 +2473,7 @@ export async function apiDeclineStepHandoff(
 export interface StreamAgentSessionCallbacks {
   onEventId?: (id: string) => void;
   onSessionMeta?: (meta: {
+    runId?: string;
     sessionId: string;
     title: string;
     provider: string;
@@ -2435,6 +2485,7 @@ export interface StreamAgentSessionCallbacks {
     multiAgentConcurrency?: number;
   }) => void;
   onHeartbeat?: (hb: {
+    runId?: string;
     elapsedMs: number;
     thinkingChars: number;
     textChars: number;
@@ -2507,6 +2558,7 @@ export interface StreamAgentSessionCallbacks {
 function consumeAgentSessionSseBody(
   body: ReadableStream<Uint8Array>,
   callbacks: StreamAgentSessionCallbacks,
+  activity: () => void,
 ): Promise<void> {
   return (async () => {
     const reader = body.getReader();
@@ -2526,9 +2578,6 @@ function consumeAgentSessionSseBody(
         } else if (line.startsWith('data:')) {
           dataLines.push(line.slice(5).trim());
         }
-      }
-      if (eventId) {
-        callbacks.onEventId?.(eventId);
       }
       if (!eventName || dataLines.length === 0) return;
       let parsed: Record<string, unknown>;
@@ -2595,11 +2644,13 @@ function consumeAgentSessionSseBody(
           callbacks.onMessageEnd?.(parsed as never);
           break;
       }
+      if (eventId) callbacks.onEventId?.(eventId);
     };
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      activity();
       buffer += decoder.decode(value, { stream: true });
       let sepIdx = buffer.indexOf('\n\n');
       while (sepIdx !== -1) {
@@ -2618,6 +2669,7 @@ function consumeAgentSessionSseBody(
 export async function streamAgentSessionTurn(
   sessionId: string,
   body: {
+    submissionId?: string;
     prompt?: string;
     mode?: 'PROMPT' | 'STEER' | 'FOLLOW_UP' | 'CONTINUE';
     askUserAnswer?: {
@@ -2639,31 +2691,18 @@ export async function streamAgentSessionTurn(
   signal?: AbortSignal,
 ): Promise<void> {
   const locale = body.locale || getCurrentClientLocale();
-  let res: Response;
-  try {
-    res = await fetch(`/api/agent-sessions/${sessionId}/stream`, {
+  return withStreamWatchdog(signal, async (signal, activity) => {
+  const res = await fetch(`/api/agent-sessions/${sessionId}/stream`, {
       method: 'POST',
       headers: buildJsonHeaders(),
       body: JSON.stringify({ ...body, locale }),
       ...(signal ? { signal } : {}),
     });
-  } catch (err) {
-    if (signal?.aborted) throw err;
-    callbacks.onRunError?.({
-      diagnostic: {
-        code: 'LLM_UNREACHABLE',
-        message: err instanceof Error ? err.message : String(err),
-        remediation:
-          locale === 'en-US'
-            ? 'Check backend server status or configure your gateway in LLM Center.'
-            : '请检查后端服务状态或 LLM 中心网关配置。',
-      },
-    });
-    return;
-  }
+  if (res.status >= 500 || res.status === 408 || res.status === 429) throw new Error(`HTTP ${res.status}`);
 
   if (!res.ok || !res.body) {
     const errJson = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    if (res.status === 409 && errJson.state === 'queued' && body.submissionId) return;
     callbacks.onRunError?.({
       diagnostic: errJson.diagnostic ?? {
         code: 'HTTP_ERROR',
@@ -2680,24 +2719,38 @@ export async function streamAgentSessionTurn(
     return;
   }
 
-  await consumeAgentSessionSseBody(res.body, callbacks);
+  await consumeAgentSessionSseBody(res.body, callbacks, activity);
+  });
 }
 
 export async function attachAgentSessionLiveStream(
   sessionId: string,
   callbacks: StreamAgentSessionCallbacks,
-  options?: { afterEventId?: string; signal?: AbortSignal },
-): Promise<void> {
-  const qs = options?.afterEventId
-    ? `?afterEventId=${encodeURIComponent(options.afterEventId)}`
-    : '';
-  const res = await fetch(`/api/agent-sessions/${encodeURIComponent(sessionId)}/live${qs}`, {
+  options?: { afterEventId?: string; submissionId?: string; signal?: AbortSignal },
+): Promise<'absent' | void> {
+  return withStreamWatchdog(options?.signal, async (signal, activity) => {
+  const qs = new URLSearchParams();
+  if (options?.afterEventId) qs.set('afterEventId', options.afterEventId);
+  if (options?.submissionId) qs.set('submissionId', options.submissionId);
+  const res = await fetch(`/api/agent-sessions/${encodeURIComponent(sessionId)}/live${qs.size ? `?${qs}` : ''}`, {
     method: 'GET',
     headers: buildLocaleHeaders(),
-    ...(options?.signal ? { signal: options.signal } : {}),
+    signal,
   });
-  if (!res.ok || !res.body) return;
-  await consumeAgentSessionSseBody(res.body, callbacks);
+  if (res.status === 404 && options?.submissionId) {
+    const payload = await res.json();
+    if (payload.state === 'absent') return 'absent';
+  }
+  if (res.status === 404 || res.status === 403 || res.status === 401) {
+    callbacks.onRunError?.({ diagnostic: { code: 'SESSION_UNAVAILABLE', statusCode: res.status,
+      message: getCurrentClientLocale() === 'en-US' ? 'This conversation is unavailable.' : '此会话已不可用。',
+      remediation: getCurrentClientLocale() === 'en-US' ? 'Check access to this project.' : '请检查项目的访问权限。',
+    } });
+    return;
+  }
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  await consumeAgentSessionSseBody(res.body, callbacks, activity);
+  });
 }
 
 /**
@@ -2758,6 +2811,7 @@ function buildStoreSessionStreamCallbacks(
     const cur = get().data;
     if (!cur || !payload.session) return;
     const updatedSession = payload.session;
+    if (cur.activeProject.id !== updatedSession.projectId) return;
     const exists = (cur.agentSessions ?? []).some((s) => s.id === updatedSession.id);
     const nextSessions = exists
       ? (cur.agentSessions ?? []).map((s) => (s.id === updatedSession.id ? updatedSession : s))
@@ -2836,6 +2890,7 @@ function buildStoreSessionStreamCallbacks(
     onSessionMeta: (meta) => {
       patchDraft((cur) => ({
         ...cur,
+        ...(meta.runId ? { serverRunId: meta.runId } : {}),
         reconnecting: false,
         lastHeartbeatAt: Date.now(),
         model: meta.model,
@@ -2853,6 +2908,7 @@ function buildStoreSessionStreamCallbacks(
     onHeartbeat: (hb) => {
       patchDraft((cur) => ({
         ...cur,
+        ...(hb.runId ? { serverRunId: hb.runId } : {}),
         reconnecting: false,
         lastHeartbeatAt: Date.now(),
         liveStreamedChars: hb.thinkingChars + hb.textChars + hb.toolArgChars,

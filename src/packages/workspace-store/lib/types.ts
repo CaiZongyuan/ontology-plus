@@ -492,6 +492,7 @@ export interface AgentSubagentLaneTrace {
   workerIndex: number;
   workerLabel: { zh: string; en: string };
   taskTitle: { zh: string; en: string };
+  assignment?: string;
   targetAnchor?: PrototypeTargetAnchor;
   status: 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED';
   phase?: AgentSubagentPhase;
@@ -552,6 +553,8 @@ export interface AgentSession {
   status: 'IDLE' | 'RUNNING' | 'WAITING_INPUT' | 'ERROR';
   parentSessionId?: string;
   forkedFromMessageId?: string;
+  acceptedSubmissionIds?: string[];
+  cancelledSubmissionIds?: string[];
   providerId?: string;
   modelOverride?: string;
   reasoningMode?: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';

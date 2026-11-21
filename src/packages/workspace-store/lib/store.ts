@@ -2588,8 +2588,12 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     },
 
     saveAgentSession(session) {
+      const previous = getItem<AgentSession>('agent_sessions', session.id);
       const updated = sanitizeAgentSessionForPersistence({
         ...session,
+        ...(previous?.cancelledSubmissionIds?.length ? {
+          cancelledSubmissionIds: [...new Set([...previous.cancelledSubmissionIds, ...(session.cancelledSubmissionIds ?? [])])],
+        } : {}),
         updatedAt: new Date().toISOString(),
       });
       return putItem('agent_sessions', updated.id, updated, updated.projectId);
@@ -2613,6 +2617,8 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
         pinned: false,
         status: 'IDLE',
         parentSessionId: existing.id,
+        acceptedSubmissionIds: undefined,
+        cancelledSubmissionIds: undefined,
         forkedFromMessageId: upToMessageId ?? slicedMessages[slicedMessages.length - 1]?.id,
         messages: JSON.parse(JSON.stringify(slicedMessages)),
         createdAt: now,

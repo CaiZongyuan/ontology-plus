@@ -63,24 +63,17 @@ test.describe('Prototype Notes, real agent cursors, and live narration (#92)', (
             const cursors = Array.from(
               document.querySelectorAll<HTMLElement>('[data-testid^="prototype-agent-cursor-SCR-"]'),
             );
-            const liveRows = Array.from(
-              document.querySelectorAll<HTMLElement>('[data-testid="prototype-build-log-live"]'),
-            );
             for (const c of cursors) {
               const sid = c.getAttribute('data-screen-id') ?? '';
               const bubble = c.querySelector<HTMLElement>(`[data-testid="prototype-cursor-bubble-${sid}"]`);
               const nameTag = c.querySelector<HTMLElement>('[data-testid="prototype-cursor-name"]');
               const bubbleText = bubble?.textContent?.trim() ?? '';
-              const matchingLog = liveRows.find(
-                (r) => r.getAttribute('data-screen-id') === sid && (r.textContent ?? '').includes(bubbleText),
-              );
-              if (bubbleText && nameTag?.textContent?.trim() && matchingLog) {
+              if (bubbleText && nameTag?.textContent?.trim()) {
                 return {
                   screenId: sid,
                   style: c.getAttribute('data-cursor-style'),
                   name: nameTag.textContent.trim(),
                   sentence: bubbleText,
-                  logHasNow: (matchingLog.textContent ?? '').includes('现在'),
                 };
               }
             }
@@ -91,7 +84,6 @@ test.describe('Prototype Notes, real agent cursors, and live narration (#92)', (
       .toEqual(
         expect.objectContaining({
           style: 'arrow',
-          logHasNow: true,
         }),
       );
 
@@ -138,15 +130,11 @@ test.describe('Prototype Notes, real agent cursors, and live narration (#92)', (
           page.evaluate(() => {
             const c = document.querySelector<HTMLElement>('[data-testid="prototype-web-agent-cursor"]');
             const bubble = document.querySelector<HTMLElement>('[data-testid="prototype-web-cursor-bubble"]');
-            const liveRow = document.querySelector<HTMLElement>(
-              '[data-testid="prototype-build-log-live"][data-screen-id="SCR-REFUND"]',
-            );
             const text = bubble?.textContent?.trim() ?? '';
-            if (!c || !text || !liveRow) return null;
+            if (!c || !text) return null;
             return {
               style: c.getAttribute('data-cursor-style'),
               sentence: text,
-              inLog: (liveRow.textContent ?? '').includes(text),
             };
           }),
         { timeout: 25_000, intervals: [50] },
@@ -154,7 +142,6 @@ test.describe('Prototype Notes, real agent cursors, and live narration (#92)', (
       .toEqual(
         expect.objectContaining({
           style: 'nib',
-          inLog: true,
         }),
       );
 

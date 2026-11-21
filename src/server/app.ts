@@ -33,13 +33,14 @@ import {
   LlmGatewayError,
   SSE_RESPONSE_HEADERS,
   abortActiveAgentSession,
-  abortActiveAgentSessionAsync,
+  cancelAgentTurn,
   assistProjectDesignBrief,
   attachUnifiedAgentSessionLiveStream,
   compactAgentSessionWithLlm,
   createUnifiedSseStream,
   ensurePrototypeCoDesignSession,
   getLiveAgentSessionStatus,
+  submissionState,
   normalizeAgentLocale,
   registerAgentRunLifecycleHooks,
   runDataOntologyReasoning,
@@ -276,16 +277,6 @@ export function createApiApp(
   app.patch('/api/agent-sessions/:id', async (c) => {
     const id = c.req.param('id');
     const isEn = c.req.header('X-Onto-Locale') === 'en-US';
-    const existing = store.getAgentSession(id);
-    if (!existing) {
-      return c.json(
-        {
-          error: isEn ? 'Conversation not found.' : '未找到对应的对话。',
-          code: 'SESSION_NOT_FOUND',
-        },
-        404,
-      );
-    }
     const body = await c.req.json<{
       title?: string;
       pinned?: boolean;
@@ -298,6 +289,33 @@ export function createApiApp(
       dropLatestTurn?: boolean;
       truncateFromUserMessageId?: string;
     }>();
+    const existing = store.getAgentSession(id);
+    if (!existing) {
+      return c.json(
+        {
+          error: isEn ? 'Conversation not found.' : '未找到对应的对话。',
+          code: 'SESSION_NOT_FOUND',
+        },
+        404,
+      );
+    }
+    let modelConfig: { providerId?: string; modelOverride?: string } = {};
+    if (body.providerId !== undefined || body.modelOverride !== undefined) {
+      const providerId = body.providerId ?? existing.providerId;
+      const model = body.modelOverride ?? (body.providerId === undefined ? existing.modelOverride : '');
+      const providers = store.listLlmProviders().filter((provider) => provider.enabled);
+      const provider = providerId ? providers.find((item) => item.id === providerId) : providers[0];
+      if ((body.providerId !== undefined && typeof body.providerId !== 'string') ||
+          (body.modelOverride !== undefined && typeof body.modelOverride !== 'string') ||
+          (providerId && !provider) || (model && (!provider ||
+            ![provider.defaultModel, ...provider.availableModels].includes(model)))) {
+        return c.json({
+          error: isEn ? 'Choose a model from an enabled provider.' : '请选择已启用服务提供的模型。',
+          code: 'INVALID_SESSION_MODEL',
+        }, 400);
+      }
+      modelConfig = { providerId: providerId || undefined, modelOverride: model || undefined };
+    }
 
     let truncatedMessages: typeof existing.messages | undefined;
     const droppedRunIds: string[] = [];
@@ -369,8 +387,7 @@ export function createApiApp(
       ...existing,
       ...(body.title !== undefined ? { title: body.title.trim() || existing.title } : {}),
       ...(body.pinned !== undefined ? { pinned: body.pinned } : {}),
-      ...(body.providerId !== undefined ? { providerId: body.providerId } : {}),
-      ...(body.modelOverride !== undefined ? { modelOverride: body.modelOverride } : {}),
+      ...modelConfig,
       ...(body.reasoningMode !== undefined ? { reasoningMode: body.reasoningMode } : {}),
       ...(body.codeMode !== undefined ? { codeMode: Boolean(body.codeMode) } : {}),
       ...(clampedConcurrency !== undefined ? { multiAgentConcurrency: clampedConcurrency } : {}),
@@ -417,13 +434,11 @@ export function createApiApp(
 
   app.post('/api/agent-sessions/:id/abort', async (c) => {
     const id = c.req.param('id');
-    const { aborted, runId, session } = await abortActiveAgentSessionAsync(store, id);
-    return c.json({
-      aborted,
-      ...(runId ? { runId } : {}),
-      session,
-      agentSessions: store.listAgentSessions(),
-    });
+    const body = await c.req.json().catch(() => null);
+    const validId = (value: unknown): value is string => typeof value === 'string' && /^[\w-]{1,100}$/.test(value);
+    if (validId(body?.submissionId) && body.runId === undefined) return c.json(await cancelAgentTurn(store, id, { submissionId: body.submissionId }));
+    if (validId(body?.runId) && body.submissionId === undefined) return c.json(await cancelAgentTurn(store, id, { runId: body.runId }));
+    return c.json({ error: 'Specify the submission or run to stop' }, 400);
   });
 
   app.get('/api/agent-sessions/:id/live', (c) => {
@@ -432,7 +447,13 @@ export function createApiApp(
     if (!existing) return c.json({ error: 'Agent session not found' }, 404);
     const afterEventId =
       c.req.query('afterEventId') || c.req.header('Last-Event-ID') || undefined;
+    const submissionId = c.req.query('submissionId');
+    if (submissionId) {
+      const state = submissionState(store, id, submissionId);
+      if (state === 'absent' || state === 'queued') return c.json({ state }, state === 'absent' ? 404 : 409);
+    }
     const generator = attachUnifiedAgentSessionLiveStream(store, id, {
+      ...(submissionId ? { submissionId } : {}),
       ...(afterEventId ? { afterEventId } : {}),
       signal: c.req.raw.signal,
     });
@@ -467,6 +488,7 @@ export function createApiApp(
     if (!existing) return c.json({ error: 'Agent session not found' }, 404);
     const body = await c.req
       .json<{
+        submissionId?: string;
         prompt?: string;
         mode?: 'PROMPT' | 'STEER' | 'FOLLOW_UP' | 'CONTINUE';
         askUserAnswer?: {
@@ -484,7 +506,13 @@ export function createApiApp(
         mockMode?: boolean;
         locale?: string;
       }>()
-      .catch(() => ({} as { locale?: string }));
+      .catch(() => ({} as { locale?: string; submissionId?: string }));
+    if (body.submissionId !== undefined && (typeof body.submissionId !== 'string' || !/^[\w-]{1,100}$/.test(body.submissionId))) {
+      return c.json({ error: 'Invalid submission identifier' }, 400);
+    }
+    if (body.submissionId && submissionState(store, id, body.submissionId) === 'queued') {
+      return c.json({ state: 'queued' }, 409);
+    }
     const locale = getReqLocale(c, body);
 
     const generator = runUnifiedAgentSessionStream(store, {

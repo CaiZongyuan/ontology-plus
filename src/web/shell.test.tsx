@@ -5,6 +5,7 @@ import { checkBusinessViewMarkup } from '../packages/business-vocabulary/index.j
 import { CONTRACT_LIFECYCLE_SUITE } from '../packages/ontology-core/index.js';
 import type { AssembledApplication, GeneratedSkill } from '../packages/workspace-store/index.js';
 import { WorkbenchShell, buildCommandPaletteEntries } from './App.js';
+import { useAgentPanelStore } from './components/agent/agentPanelStore.js';
 import { useWorkbenchStore, type BootstrapPayload } from './api.js';
 import { PreferencesProvider } from './i18n.js';
 import { readStepViewMode, writeStepViewMode } from './navigation/index.js';
@@ -330,7 +331,7 @@ describe('WorkbenchShell (#60)', () => {
     expect(legacyHtml).toContain('6 处尚未完成的部分');
   });
 
-  it('places Conversation on the left and Canvas on the right in project workspace, and switches panes in compact tablet mode', () => {
+  it('docks the assistant on the right and keeps the canvas mounted beneath the narrow overlay', () => {
     seedStore({
       loading: false,
       activeNav: 'app-ontology',
@@ -345,9 +346,10 @@ describe('WorkbenchShell (#60)', () => {
 
     const agentIdx = desktopHtml.indexOf('data-testid="agent-panel"');
     const canvasIdx = desktopHtml.indexOf('data-testid="workbench-canvas"');
-    expect(agentIdx).toBeGreaterThan(-1);
-    expect(canvasIdx).toBeGreaterThan(agentIdx);
-    expect(desktopHtml).toContain('data-side="left"');
+    expect(canvasIdx).toBeGreaterThan(-1);
+    expect(agentIdx).toBeGreaterThan(canvasIdx);
+    expect(desktopHtml).toContain('data-side="right"');
+    expect(desktopHtml).toContain('data-testid="agent-panel-close-btn"');
     // BUSINESS_MODEL is now a single-view step (#68): no legacy 3-button subview bar
     expect(desktopHtml).not.toContain('data-testid="step-subview-bar"');
     expect(desktopHtml).not.toContain('data-testid="nav-app-ontology"');
@@ -387,24 +389,30 @@ describe('WorkbenchShell (#60)', () => {
     );
     expect(protoHtml).not.toContain('data-testid="step-subview-bar"');
 
-    // Compact / tablet mode (<1280px): renders segmented toggle and shows only the active pane
     const compactCanvasHtml = renderToStaticMarkup(
       <PreferencesProvider>
-        <WorkbenchShell compactWorkspaceOverride initialWorkspacePane="canvas" />
+        <WorkbenchShell compactWorkspaceOverride />
       </PreferencesProvider>,
     );
-    expect(compactCanvasHtml).toContain('data-testid="workspace-pane-toggle"');
+    expect(compactCanvasHtml).toContain('data-testid="agent-panel-toggle"');
     expect(compactCanvasHtml).toContain('data-testid="workbench-canvas"');
     expect(compactCanvasHtml).not.toContain('data-testid="agent-panel"');
 
+    const initialPanel = useAgentPanelStore.getInitialState();
+    const previousOverlay = initialPanel.overlayOpen;
+    initialPanel.overlayOpen = true;
+    try {
     const compactChatHtml = renderToStaticMarkup(
       <PreferencesProvider>
-        <WorkbenchShell compactWorkspaceOverride initialWorkspacePane="conversation" />
+        <WorkbenchShell compactWorkspaceOverride />
       </PreferencesProvider>,
     );
-    expect(compactChatHtml).toContain('data-testid="workspace-pane-toggle"');
+    expect(compactChatHtml).toContain('data-testid="agent-panel-scrim"');
     expect(compactChatHtml).toContain('data-testid="agent-panel"');
-    expect(compactChatHtml).not.toContain('data-testid="workbench-canvas"');
+    expect(compactChatHtml).toContain('data-testid="workbench-canvas"');
+    } finally {
+      initialPanel.overlayOpen = previousOverlay;
+    }
   });
 
   it('renders intra-area navigation for Secondary Areas and omits the project step bar outside project workspace', () => {

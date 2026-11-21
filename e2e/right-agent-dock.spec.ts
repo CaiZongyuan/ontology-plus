@@ -1,0 +1,34 @@
+import { expect, test } from '@playwright/test';
+
+test('the right dock remembers collapse across project and secondary areas without replacing the narrow canvas', async ({ page }) => {
+  await page.goto('/?projectId=proj-contract&step=business-model');
+  const canvas = page.getByTestId('workbench-canvas');
+  const assistant = page.getByTestId('agent-panel');
+  const toggle = page.getByTestId('agent-panel-toggle');
+  const close = page.getByTestId('agent-panel-close-btn');
+  await expect(assistant).toHaveAttribute('data-side', 'right');
+  const before = await canvas.boundingBox();
+  const dock = await assistant.boundingBox();
+  expect(dock!.x).toBeGreaterThanOrEqual(before!.x + before!.width - 1);
+  await close.click();
+  await expect(toggle).toBeVisible();
+  expect((await canvas.boundingBox())!.width).toBeGreaterThan(before!.width);
+  await page.reload();
+  await expect(toggle).toBeVisible();
+  await page.goto('/?projectId=proj-contract&mode=cap-extraction');
+  await expect(toggle).toBeVisible();
+  await toggle.click();
+  await expect(assistant).toHaveAttribute('data-side', 'right');
+  await page.goto('/?projectId=proj-contract&step=prototype');
+  await expect(assistant).toBeVisible();
+  await page.setViewportSize({ width: 960, height: 820 });
+  await expect(toggle).toBeVisible();
+  const narrowWidth = (await canvas.boundingBox())!.width;
+  await toggle.click();
+  await expect(page.getByTestId('agent-panel-scrim')).toBeVisible();
+  await expect(canvas).toBeVisible();
+  expect((await canvas.boundingBox())!.width).toBe(narrowWidth);
+  await close.click();
+  await expect(assistant).toBeHidden();
+  await expect(page.getByTestId('prototype-build-log')).toHaveCount(0);
+});

@@ -1,0 +1,14 @@
+.delegated-task-switcher {
+  display: flex;
+  flex: none;
+  overflow-x: auto;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.delegated-task-switcher > button { flex: none; }
+.delegated-task-view { overflow-wrap: anywhere; }
+.delegated-task-view dl { margin-block: var(--space-3); }
+.delegated-task-view dt { color: var(--muted-foreground); font-size: var(--text-xs); }
+.delegated-task-view dd { margin: var(--space-1) 0 var(--space-4); white-space: pre-wrap; }
+.delegated-task-readonly { padding: var(--space-2) var(--space-3); color: var(--muted-foreground); font-size: var(--text-xs); }

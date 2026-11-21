@@ -44,7 +44,7 @@ describe('Live prototype build canvas & Pi Agent Code Mode / 3-Way Multi-Agent U
       );
       expect(emptyMarkup).toContain('data-testid="prototype-phase-bar"');
       expect(emptyMarkup).toContain('data-testid="prototype-canvas-dock"');
-      expect(emptyMarkup).toContain('data-testid="prototype-build-log"');
+      expect(emptyMarkup).not.toContain('data-testid="prototype-build-log"');
       expect(emptyMarkup).toContain('data-testid="prototype-screen-strip"');
       expect(emptyMarkup).not.toContain('data-testid="prototype-artboard-');
       expect(checkBusinessViewMarkup(emptyMarkup)).toHaveLength(0);
@@ -134,9 +134,10 @@ describe('Live prototype build canvas & Pi Agent Code Mode / 3-Way Multi-Agent U
       );
 
       expect(panelHtml).toContain('data-testid="conversation-thread"');
-      expect(panelHtml).toContain('data-testid="agent-execution-mode-bar"');
+      expect(panelHtml).toContain('data-testid="session-execution-settings"');
+      expect(panelHtml).not.toContain('data-testid="agent-execution-mode-bar"');
       expect(panelHtml).not.toContain('data-testid="agent-codemode-toggle"');
-      expect(panelHtml).toMatch(/data-testid="agent-concurrency-btn-3"[^>]*aria-pressed="true"/);
+      expect(panelHtml).toMatch(/data-testid="session-execution-settings"[^>]+title="[^"]*×3"/);
       expect(checkBusinessViewMarkup(panelHtml)).toHaveLength(0);
 
       const sampleParallelRun = {

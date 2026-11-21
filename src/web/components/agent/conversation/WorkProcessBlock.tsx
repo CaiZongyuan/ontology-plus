@@ -297,7 +297,7 @@ export function WorkProcessBlock({
 
   const { visibleSteps } = selectVisibleProgressSteps(run.steps, run.status);
   const activeVisibleStep = visibleSteps.find((s) => s.status === 'RUNNING');
-  const liveLabel = activeVisibleStep
+  const liveLabel = activeVisibleStep && !run.cancellationPending
     ? t(activeVisibleStep.label.zh, activeVisibleStep.label.en)
     : t(run.liveStatus.zh, run.liveStatus.en);
 

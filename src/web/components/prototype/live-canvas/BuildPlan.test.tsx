@@ -94,7 +94,7 @@ describe('Build Plan on the live canvas (#90)', () => {
     expect(host.textContent).not.toContain('SCR-');
   });
 
-  it('phase bar, log and strip report the real state, in business language, in both languages', async () => {
+  it('phase bar and strip report real progress and screen errors without a build log', async () => {
     const build = midBuild();
     await render({ documentHtml: DOC, build, busy: false, onRetryScreen: () => undefined });
 
@@ -105,16 +105,7 @@ describe('Build Plan on the live canvas (#90)', () => {
     expect(q('prototype-phase-tours')?.getAttribute('data-phase-status')).toBe('not_started');
     expect(q('prototype-phase-screens')?.textContent).toContain('1/3');
 
-    const entries = Array.from(host.querySelectorAll('[data-testid="prototype-build-log-entry"]'));
-    expect(entries.map((e) => e.getAttribute('data-kind'))).toEqual([
-      'plan_ready',
-      'screen_done',
-      'screen_started',
-      'screen_failed',
-    ]);
-    expect(entries[1]!.textContent).toContain('09:30:05');
-    expect(entries[1]!.textContent).toContain('助手 1');
-    expect(entries[3]!.textContent).toContain('「退款审批」没画完：这一屏有按钮或输入框没有标注好');
+    expect(q('prototype-build-log')).toBeNull();
 
     expect(q('prototype-strip-status-SCR-ORDERS')?.textContent).toBe('施工中 · 助手 2');
     expect(q('prototype-strip-card-SCR-ORDERS')?.textContent).toContain('已写 3 处');
@@ -122,7 +113,6 @@ describe('Build Plan on the live canvas (#90)', () => {
     expect(q('prototype-artboard-owner-SCR-REFUND')?.textContent).toBe('没画完 · 助手 3');
     expect(q('artboard-retry-btn-SCR-REFUND')).not.toBeNull();
     expect(q('artboard-retry-btn-SCR-ORDERS')).toBeNull();
-    expect(q('prototype-build-log-resume-SCR-REFUND')).not.toBeNull();
     expect(checkBusinessViewMarkup(host.innerHTML, { ignoreTestIds: ['prototype-canvas-world'] })).toEqual([]);
   });
 
@@ -144,30 +134,26 @@ describe('Build Plan on the live canvas (#90)', () => {
     expect(q('prototype-strip-card-SCR-ORDERS')?.getAttribute('title')).not.toContain('SCR-');
   });
 
-  it('「继续这一屏」 from the strip and from the log asks for exactly that screen; none while a run is going', async () => {
+  it('「继续这一屏」 from the strip asks for exactly that screen; none while a run is going', async () => {
     const onRetryScreen = vi.fn();
     await render({ documentHtml: DOC, build: midBuild(), busy: false, onRetryScreen });
     await act(async () => q('artboard-retry-btn-SCR-REFUND')!.click());
-    await act(async () => q('prototype-build-log-resume-SCR-REFUND')!.click());
     expect(onRetryScreen.mock.calls).toEqual([
-      ['SCR-REFUND', '退款审批'],
       ['SCR-REFUND', '退款审批'],
     ]);
 
     await render({ documentHtml: DOC, build: midBuild(), busy: true, onRetryScreen });
     expect(q('artboard-retry-btn-SCR-REFUND')).toBeNull();
-    expect(q('prototype-build-log-resume-SCR-REFUND')).toBeNull();
   });
 
-  it('clicking a log line or a card focuses that screen; double-clicking a card tries it', async () => {
+  it('clicking a card focuses that screen; double-clicking a card tries it', async () => {
     await render({ documentHtml: DOC, build: midBuild(), busy: false });
     const viewport = q('prototype-canvas-viewport')!;
     Object.defineProperty(viewport, 'clientWidth', { value: 1200, configurable: true });
     Object.defineProperty(viewport, 'clientHeight', { value: 700, configurable: true });
     window.dispatchEvent(new Event('resize'));
 
-    const failLine = host.querySelector<HTMLElement>('[data-testid="prototype-build-log-entry"][data-kind="screen_failed"] button')!;
-    await act(async () => failLine.click());
+    await act(async () => q('prototype-strip-card-SCR-REFUND')!.click());
     expect(viewport.getAttribute('data-following')).toBe('false');
 
     await act(async () => {
@@ -183,7 +169,7 @@ describe('Build Plan on the live canvas (#90)', () => {
       expect(q('prototype-phase-review')?.textContent).toContain('Screenshot check');
       expect(q('prototype-strip-status-SCR-ORDERS')?.textContent).toBe('Building · Helper 2');
       expect(q('artboard-retry-btn-SCR-REFUND')?.textContent).toContain('Continue this screen');
-      expect(host.textContent).toContain('is not finished: Some buttons or fields');
+      expect(q('prototype-strip-failure-SCR-REFUND')?.textContent).toContain('Some buttons or fields');
     } finally {
       localStorage.removeItem('onto_locale');
     }
@@ -205,7 +191,7 @@ describe('Build Plan on the live canvas (#90)', () => {
     expect(viewport.getAttribute('data-trying')).toBe('SCR-HOME');
   });
 
-  it('in web mode a build log line opens that page, like a strip card', async () => {
+  it('in web mode selecting a screen card opens that page', async () => {
     try {
       await render({ documentHtml: DOC, build: midBuild(), busy: false });
       await act(async () => q('prototype-dock-view-web')!.click());
@@ -213,15 +199,9 @@ describe('Build Plan on the live canvas (#90)', () => {
         await new Promise((r) => setTimeout(r, 20));
       });
       expect(q('prototype-canvas-viewport')?.getAttribute('data-view')).toBe('web');
-      const homeLine = host.querySelector<HTMLElement>(
-        '[data-testid="prototype-build-log-entry"][data-screen-id="SCR-HOME"] button',
-      )!;
-      await act(async () => homeLine.click());
+      await act(async () => q('prototype-strip-card-SCR-HOME')!.click());
       expect(q('prototype-web-view')?.getAttribute('data-web-screen')).toBe('SCR-HOME');
-      const ordersLine = host.querySelector<HTMLElement>(
-        '[data-testid="prototype-build-log-entry"][data-screen-id="SCR-ORDERS"] button',
-      )!;
-      await act(async () => ordersLine.click());
+      await act(async () => q('prototype-strip-card-SCR-ORDERS')!.click());
       expect(q('prototype-web-view')?.getAttribute('data-web-screen')).toBe('SCR-ORDERS');
     } finally {
       localStorage.clear();
@@ -281,19 +261,12 @@ describe('Build Plan on the live canvas (#90)', () => {
     // #92 + #93: Lead assistant cursor, narration bubble, and BuildLog "现在" row show sanitized fix narration!
     const fixCursor = q('prototype-agent-cursor-SCR-ORDERS');
     const fixBubble = q('prototype-cursor-bubble-SCR-ORDERS');
-    const liveLogRow = host.querySelector<HTMLElement>(
-      '[data-testid="prototype-build-log-live"][data-screen-id="SCR-ORDERS"]',
-    );
     expect(fixCursor?.getAttribute('data-activity-state')).toBe('fixing');
     expect(fixCursor?.getAttribute('data-agent')).toBe('0');
     expect(fixBubble).not.toBeNull();
     expect(fixBubble!.textContent).toContain('发现问题：');
     expect(fixBubble!.textContent).toContain('正在修改：收窄列宽以完整显示状态列');
     expect(fixBubble!.textContent).not.toContain('EL-ORDERS-TABLE');
-    expect(liveLogRow?.getAttribute('data-activity-state')).toBe('fixing');
-    expect(liveLogRow?.textContent).toContain('现在');
-    expect(liveLogRow?.textContent).toContain('主助手');
-    expect(liveLogRow?.textContent).toContain('正在修改：收窄列宽以完整显示状态列');
     expect(checkBusinessViewMarkup(host.innerHTML, { ignoreTestIds: ['prototype-canvas-world'] })).toEqual([]);
 
     // Web mode (#97) also shows reviewing badge/scan and #92's WebAgentCursor fixing narration!
@@ -346,7 +319,6 @@ describe('Build Plan on the live canvas (#90)', () => {
     await render({ documentHtml: DOC, build: skipped.state(), busy: false });
     expect(q('prototype-phase-review')?.getAttribute('data-phase-status')).toBe('skipped');
     expect(q('prototype-phase-review')?.textContent).toContain('未做视觉检查');
-    expect(host.textContent).toContain('这次没有做截图检查（未做视觉检查）');
 
     await act(async () => root.unmount());
     root = createRoot(host);

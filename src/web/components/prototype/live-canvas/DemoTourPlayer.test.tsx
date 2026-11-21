@@ -160,6 +160,15 @@ async function wait(ms = 30) {
   });
 }
 
+async function waitForTourCompletion() {
+  const deadline = Date.now() + 2500;
+  const completed = () => host.querySelector('[data-testid="demo-tour-player-bar"]')?.getAttribute('data-tour-completed') === 'true';
+  while (!completed() && Date.now() < deadline) {
+    await wait(20);
+  }
+  expect(completed()).toBe(true);
+}
+
 function installFrameBoxes(rootDoc: ParentNode) {
   const elements = rootDoc.querySelectorAll<HTMLElement>('[data-element-id]');
   elements.forEach((el, idx) => {
@@ -226,7 +235,7 @@ describe('Demo Tour Player (#95, #88 verdict A + B combined)', () => {
 
     // 1. Shows 演示路线已就绪 in both phase bar and build log; never autoplays
     expect(host.querySelector('[data-testid="prototype-phase-tours"]')?.textContent).toContain('演示路线已就绪');
-    expect(host.querySelector('[data-testid="prototype-build-log"]')?.textContent).toContain('演示路线已就绪');
+    expect(host.querySelector('[data-testid="prototype-build-log"]')).toBeNull();
     expect(host.querySelector('[data-testid="demo-tour-player-bar"]')).toBeNull();
     expect(host.querySelector('[data-testid="demo-tour-script-panel"]')).toBeNull();
 
@@ -262,7 +271,7 @@ describe('Demo Tour Player (#95, #88 verdict A + B combined)', () => {
     expect(host.querySelector('[data-testid="demo-tour-player-bar"]')).not.toBeNull();
 
     // Let the fast tour play to completion
-    await wait(280);
+    await waitForTourCompletion();
     const playerBar = host.querySelector<HTMLElement>('[data-testid="demo-tour-player-bar"]')!;
     expect(playerBar.getAttribute('data-tour-completed')).toBe('true');
     expect(host.querySelector('[data-testid="demo-tour-progress"]')?.textContent).toContain('5 / 5');
@@ -280,7 +289,7 @@ describe('Demo Tour Player (#95, #88 verdict A + B combined)', () => {
     await act(async () => {
       replayBtn.click();
     });
-    await wait(320);
+    await waitForTourCompletion();
     expect(playerBar.getAttribute('data-tour-completed')).toBe('true');
     expect(searchInput.value).toBe('可颂');
     expect(qtySpan.textContent).toBe('3');
@@ -337,7 +346,7 @@ describe('Demo Tour Player (#95, #88 verdict A + B combined)', () => {
     });
     expect(host.querySelector('[data-testid="demo-tour-player-bar"]')).toBeNull();
     expect(host.querySelector('[data-testid="demo-tour-script-panel"]')).toBeNull();
-    expect(host.querySelector('[data-testid="prototype-build-log"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="prototype-build-log"]')).toBeNull();
   });
 
   it('plays in web mode (#97): genuinely switches pages on navigation clicks and scrolls off-screen elements into view', async () => {
@@ -369,7 +378,7 @@ describe('Demo Tour Player (#95, #88 verdict A + B combined)', () => {
       option.click();
     });
 
-    await wait(320);
+    await waitForTourCompletion();
 
     // Clicking EL-NEW-SUBMIT (data-navigate-to="SCR-ORDER-DETAIL") genuinely navigated Web mode to SCR-ORDER-DETAIL!
     const webView = host.querySelector<HTMLElement>('[data-testid="prototype-web-view"]')!;
@@ -427,7 +436,7 @@ describe('Demo Tour Player (#95, #88 verdict A + B combined)', () => {
 
     // English labels, never "Scenario"
     expect(host.querySelector('[data-testid="prototype-phase-tours"]')?.textContent).toContain('Demo tours ready');
-    expect(host.querySelector('[data-testid="prototype-build-log"]')?.textContent).toContain('Demo tours ready');
+    expect(host.querySelector('[data-testid="prototype-phase-bar"]')?.textContent).toContain('Demo tours ready');
     const playBtn = host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-play-trigger"]')!;
     expect(playBtn.textContent).toContain('Play Demo');
     expect(host.textContent).not.toContain('Scenario');
@@ -456,7 +465,7 @@ describe('Demo Tour Player (#95, #88 verdict A + B combined)', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     });
     expect(host.querySelector('[data-testid="demo-tour-player-bar"]')).toBeNull();
-    expect(host.querySelector('[data-testid="prototype-build-log"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="prototype-build-log"]')).toBeNull();
   });
 
   it('tracks live scroll/resize while paused, prevents [data-navigate-to] spotlight bleed, clamps canvas bounds, and meets contrast/single-accent/glossary rules', async () => {
@@ -515,7 +524,7 @@ describe('Demo Tour Player (#95, #88 verdict A + B combined)', () => {
     const scriptAside = host.querySelector<HTMLElement>('[data-testid="demo-tour-script-panel"]')!;
     expect(scriptAside.getAttribute('aria-label')).toBe('演示路线步骤');
     // S-1: Selected step row on bg-primary-soft never uses text-muted-foreground
-    const activeStepRow = scriptAside.querySelector<HTMLElement>('[data-testid="demo-tour-step-0"]')!;
+    const activeStepRow = scriptAside.querySelector<HTMLElement>('[aria-current="step"]')!;
     expect(activeStepRow.querySelector('.text-muted-foreground')).toBeNull();
     // S-2: Pause button is not `accent`
     expect(host.querySelector<HTMLButtonElement>('[data-testid="demo-tour-pause-toggle"]')!.className).not.toContain(

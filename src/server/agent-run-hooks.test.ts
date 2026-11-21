@@ -609,6 +609,8 @@ describe('HTTP Agent Run lifecycle hooks & persistent runId', () => {
 
       const abortRes = await api.request(`/api/agent-sessions/${abortSess.id}/abort`, {
         method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runId: liveRunId }),
       });
       expect(abortRes.status).toBe(200);
       const abortJson = (await abortRes.json()) as { aborted: boolean; runId?: string };

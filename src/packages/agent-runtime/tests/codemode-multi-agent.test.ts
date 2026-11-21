@@ -349,9 +349,11 @@ describe('3-Way Parallel Multi-Agent Prototype Co-Design', () => {
       expect(turn.events.some((e) => e.event === 'prototype_frame')).toBe(true);
       const subagentEvents = turn.events.filter((e) => e.event === 'subagent_update');
       expect(subagentEvents.length).toBeGreaterThanOrEqual(4);
+      expect(subagentEvents[0]?.data.lane).toMatchObject({ assignment: '构建储值列表' });
 
       const lastAssistant = turn.session.messages.filter((m) => m.role === 'assistant').at(-1)!;
       expect(lastAssistant.subagentLanes).toHaveLength(4);
+      expect(lastAssistant.subagentLanes?.[0]?.assignment).toBe('构建储值列表');
       expect(lastAssistant.subagentLanes!.every((l) => l.status === 'DONE')).toBe(true);
 
       // Persisted single clean Revision #1 with all 4 screens ready!

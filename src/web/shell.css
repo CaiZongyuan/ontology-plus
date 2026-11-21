@@ -367,44 +367,6 @@
   overflow: hidden;
 }
 
-.wb-compact-bar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 40px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--canvas);
-}
-
-.wb-pane-toggle {
-  display: inline-flex;
-  padding: 2px;
-  gap: 2px;
-  border-radius: var(--radius-md);
-  background: var(--muted);
-  border: 1px solid var(--border-subtle);
-}
-
-.wb-pane-toggle button {
-  height: 26px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.wb-pane-toggle button[aria-pressed='true'] {
-  background: var(--card);
-  color: var(--foreground);
-  box-shadow: var(--shadow-xs);
-}
-
 .wb-workspace {
   flex: 1;
   min-height: 0;
@@ -2631,12 +2593,6 @@ dialog.inspo-lightbox-dialog::backdrop {
 .agent-panel.is-left {
   border-left: 0;
   border-right: 1px solid var(--border);
-}
-
-.wb-workspace-frame[data-compact='true'] .agent-panel {
-  width: 100%;
-  flex: 1 1 auto;
-  border-right: 0;
 }
 
 .wb-shell.has-right-agent .toast-banner {

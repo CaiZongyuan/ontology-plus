@@ -146,9 +146,7 @@ test.describe('Prototype web mode (#97)', () => {
     await page.getByTestId('artboard-retry-btn-SCR-REFUND').click();
     await expect(page.getByTestId('prototype-history-btn')).toContainText('R2', { timeout: 60_000 });
     await expect(hint).toBeVisible({ timeout: 15_000 });
-    // It is the build log's closing entry.
-    await expect(page.getByTestId('prototype-build-log-end')).toContainText('网页');
-    await expect(page.getByTestId('prototype-build-log')).toContainText('网页');
+    await expect(hint).toContainText('网页');
     await page.getByTestId('prototype-web-mode-hint-try').click();
     await expect(page.getByTestId('prototype-canvas-viewport')).toHaveAttribute('data-view', 'web');
   });

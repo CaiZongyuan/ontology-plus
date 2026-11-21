@@ -179,12 +179,7 @@ describe('Real agent cursor, narration bubble, build log "现在" rows, and curs
     const homeBubble = host.querySelector<HTMLElement>('[data-testid="prototype-cursor-bubble-SCR-HOME"]')!;
     expect(homeBubble.textContent).toBe('正在画「问候语」：告诉店长今天最要紧的一件事。');
 
-    // Exact same sentence appears in BuildLog "现在" row!
-    const liveLogRows = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="prototype-build-log-live"]'));
-    expect(liveLogRows).toHaveLength(1);
-    expect(liveLogRows[0]!.textContent).toContain('现在');
-    expect(liveLogRows[0]!.textContent).toContain('助手 1');
-    expect(liveLogRows[0]!.textContent).toContain('正在画「问候语」：告诉店长今天最要紧的一件事。');
+    expect(host.querySelector('[data-testid="prototype-build-log"]')).toBeNull();
 
     // SCR-ORDERS cursor: lands on EL-PLAIN-ACT, has NO narration bubble and NO "现在" row!
     const ordersCursor = host.querySelector<HTMLElement>('[data-testid="prototype-agent-cursor-SCR-ORDERS"]')!;
@@ -334,9 +329,6 @@ describe('Real agent cursor, narration bubble, build log "现在" rows, and curs
     expect(host.querySelector('[data-testid="prototype-cursor-bubble-SCR-HOME"]')?.textContent).toBe(
       '发现问题：表格右侧被截断，正在收窄列宽。',
     );
-    expect(host.querySelector('[data-testid="prototype-build-log-live"]')?.textContent).toContain(
-      '发现问题：表格右侧被截断，正在收窄列宽。',
-    );
 
     // Open 「光标 ▾」 menu -> portaled to document.body, NOT inside prototype-canvas-viewport!
     const menuBtn = host.querySelector<HTMLElement>('[data-testid="prototype-dock-cursor"]')!;
@@ -428,20 +420,7 @@ describe('Real agent cursor, narration bubble, build log "现在" rows, and curs
     expect(ordersTop).toBeLessThanOrEqual(maxArtboardBottom + 0.5);
     expect(ordersTop).toBeGreaterThanOrEqual(minArtboardTop - 0.5);
 
-    // S-1, S-2, S-3 checks on BuildLogLiveRows and AgentCursor:
-    // - Assistant name in BuildLogLiveRows uses a mark dot, NEVER inline `color` on text
-    // - No `text-[11px]` in cursor or live log rows; no `font-mono` on "现在"
-    const liveRow = host.querySelector<HTMLElement>('[data-testid="prototype-build-log-live"]')!;
-    expect(liveRow.innerHTML).not.toContain('text-[11px]');
     expect(earlyHomeCursor.innerHTML).not.toContain('text-[11px]');
-    const coloredSpansInLog = Array.from(liveRow.querySelectorAll<HTMLElement>('span')).filter(
-      (s) => Boolean(s.style.color),
-    );
-    expect(coloredSpansInLog).toHaveLength(0);
-    const nowLabel = Array.from(liveRow.querySelectorAll<HTMLElement>('span')).find(
-      (s) => s.textContent?.trim() === '现在',
-    )!;
-    expect(nowLabel.className).not.toContain('font-mono');
 
     // Narrow viewport (360px) in web mode:
     // - Early screen-level note on SCR-HOME also renders in web mode!

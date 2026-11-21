@@ -685,6 +685,7 @@ describe('agentRunsFromSession & targetAnchor rendering (#24)', () => {
         ...prev.liveSessionDrafts,
         [sessionId]: {
           runId: 'sim-active',
+          submissionId: 'sim-active',
           sessionId,
           userPrompt: '正在执行的精修任务',
           startedAt: Date.now(),

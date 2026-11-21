@@ -42,6 +42,7 @@ import {
   usePrototypeSelectionStore,
 } from '../prototype/prototypeSelectionStore.js';
 import { AgentPanel } from './AgentPanel.js';
+import { SessionExecutionPicker, type SessionExecutionSettings } from './SessionExecutionPicker.js';
 import {
   AGENT_PANEL_OVERLAY_QUERY,
   agentSessionScopeKey,
@@ -403,6 +404,7 @@ export function ShellAgentPanel({
     openArtifactHistoryDrawer,
     undoArtifactChange,
     ensureProjectAgentSession,
+    ensurePrototypeCoDesignSession,
     updateAgentSessionExecutionConfig,
     startSessionAgentRun,
     cancelSessionAgentRun,
@@ -424,7 +426,7 @@ export function ShellAgentPanel({
   const [reasoningMode, setReasoningMode] = useState<'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY'>(
     'ASK_POLICY',
   );
-  const [localConcurrency, setLocalConcurrency] = useState<number>(3);
+  const [savingSettings, setSavingSettings] = useState(false);
   const [undoingEntryId, setUndoingEntryId] = useState<string | null>(null);
   const [handoffBusyById, setHandoffBusyById] = useState<Record<string, 'accept' | 'decline'>>({});
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(defaultInspectorOpen);
@@ -474,25 +476,10 @@ export function ShellAgentPanel({
     if (activeSession?.reasoningMode) {
       setReasoningMode(activeSession.reasoningMode);
     }
-    if (activeSession?.multiAgentConcurrency !== undefined) {
-      setLocalConcurrency(activeSession.multiAgentConcurrency);
-    }
   }, [
     activeSession?.id,
     activeSession?.reasoningMode,
-    activeSession?.multiAgentConcurrency,
   ]);
-
-  const effectiveConcurrency = activeSession?.multiAgentConcurrency ?? localConcurrency;
-
-  const handleSelectConcurrency = (next: number) => {
-    setLocalConcurrency(next);
-    if (activeSession) {
-      void updateAgentSessionExecutionConfig(activeSession.id, {
-        multiAgentConcurrency: next,
-      });
-    }
-  };
 
   const liveDraft = activeSession ? liveSessionDrafts[activeSession.id] : undefined;
   const queuedItems = activeSession ? (sessionQueues[activeSession.id] ?? []) : [];
@@ -604,51 +591,6 @@ export function ShellAgentPanel({
       <SelectionAttachmentStrip prototypeId={activePrototypeId} />
     ) : undefined);
 
-  const executionModeBar = (
-    <div
-      className="flex flex-wrap items-center justify-end gap-1.5 text-[11.5px]"
-      data-testid="agent-execution-mode-bar"
-    >
-      <div
-        className="inline-flex items-center gap-0.5 rounded border border-border bg-muted/35 p-0.5"
-        role="group"
-        aria-label={t('并行协作路数', 'Parallel assistants count')}
-        data-testid="agent-concurrency-group"
-      >
-        <span className="px-1.5 text-[11px] text-muted-foreground">
-          {t('并行', 'Multi')}
-        </span>
-        {([1, 2, 3, 4] as const).map((n) => {
-          const active = effectiveConcurrency === n;
-          return (
-            <button
-              key={n}
-              type="button"
-              data-testid={`agent-concurrency-btn-${n}`}
-              aria-pressed={active}
-              onClick={() => handleSelectConcurrency(n)}
-              className={`cursor-pointer rounded px-1.5 py-0.2 font-mono text-[11px] transition ${
-                active
-                  ? 'bg-primary font-semibold text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              }`}
-            >
-              ×{n}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-
-  const effectiveComposerHeaderSlot = selectionSlot ? (
-    <div className="flex flex-col gap-1.5">
-      {selectionSlot}
-      {executionModeBar}
-    </div>
-  ) : (
-    executionModeBar
-  );
 
   const isProjectStepSurface =
     surface.sessionKind === 'REQUIREMENT' ||
@@ -935,6 +877,36 @@ export function ShellAgentPanel({
     });
   };
 
+  const ensureComposerSession = async () => {
+    if (activeSession) return activeSession;
+    if (!activeProjectId || !data) throw new Error('Missing active project');
+    if (activePrototypeId && surface.sessionKind === 'PROTOTYPE_CO_DESIGN') {
+      return ensurePrototypeCoDesignSession(activeProjectId, activePrototypeId);
+    }
+    const capability = surface.sessionKind === 'CAPABILITY' ?
+      data.capabilityAgents.find((item) => item.id === activeCapabilityAgentId) ?? data.capabilityAgents[0] : undefined;
+    const apps = data.assembledApplications.filter((app) => app.projectId === activeProjectId);
+    const targetId = capability?.id ?? (surface.sessionKind === 'CODING' ?
+      (apps.find((app) => app.id === activeItemId) ?? (apps.length === 1 ? apps[0] : undefined))?.id : undefined);
+    return ensureProjectAgentSession(capability?.projectId ?? activeProjectId, surface.sessionKind, {
+      ...(targetId ? { targetId } : {}),
+      ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
+    });
+  };
+
+  const updateSettings = async (settings: SessionExecutionSettings) => {
+    setSavingSettings(true);
+    try {
+      const session = await ensureComposerSession();
+      const saved = await updateAgentSessionExecutionConfig(session.id, settings);
+      if (!saved) throw new Error('Settings not saved');
+    } catch {
+      showToast(t('未能保存对话设置，请重试。', 'Conversation settings could not be saved. Please try again.'));
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
   const handleSubmitPrompt = async (
     prompt: string,
     imageRefs?: AgentImageAttachmentRef[],
@@ -951,27 +923,18 @@ export function ShellAgentPanel({
           ...(turnImages && turnImages.length > 0 ? { extraImages: turnImages } : {}),
         });
       } else {
-        const targetSession =
-          activeSession ??
-          (await ensureProjectAgentSession(activeProjectId, 'PROTOTYPE_CO_DESIGN'));
+        const targetSession = await ensureComposerSession();
         setActiveSessionId(targetSession.id);
         autoTitleSession(targetSession, prompt);
         await startSessionAgentRun({
           sessionId: targetSession.id,
           prompt,
           ...(turnImages && turnImages.length > 0 ? { images: turnImages } : {}),
-          multiAgentConcurrency: effectiveConcurrency,
         });
       }
       return;
     }
 
-    const capAgent =
-      surface.sessionKind === 'CAPABILITY'
-        ? data.capabilityAgents.find((a) => a.id === activeCapabilityAgentId) ??
-          data.capabilityAgents[0]
-        : undefined;
-    const targetProjectId = capAgent?.projectId ?? activeProjectId;
     const projectCodingApps =
       surface.sessionKind === 'CODING'
         ? data.assembledApplications.filter((app) => app.projectId === activeProjectId)
@@ -981,13 +944,7 @@ export function ShellAgentPanel({
         ? projectCodingApps.find((app) => app.id === activeItemId) ??
           (projectCodingApps.length === 1 ? projectCodingApps[0] : undefined)
         : undefined;
-    const targetSession =
-      activeSession ??
-      (await ensureProjectAgentSession(targetProjectId, surface.sessionKind, {
-        ...(capAgent ? { targetId: capAgent.id } : {}),
-        ...(codingTargetApp ? { targetId: codingTargetApp.id } : {}),
-        ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
-      }));
+    const targetSession = await ensureComposerSession();
     setActiveSessionId(targetSession.id);
     autoTitleSession(targetSession, prompt);
     await startSessionAgentRun({
@@ -997,7 +954,6 @@ export function ShellAgentPanel({
           ? `[Target application ID: ${codingTargetApp.id}]\n${prompt}`
           : prompt,
       ...(turnImages && turnImages.length > 0 ? { images: turnImages } : {}),
-      multiAgentConcurrency: effectiveConcurrency,
       ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
       ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
     });
@@ -1029,7 +985,6 @@ export function ShellAgentPanel({
       ...(target?.sourceUserMessageId
         ? { truncateFromUserMessageId: target.sourceUserMessageId }
         : {}),
-      multiAgentConcurrency: effectiveConcurrency,
       ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
       ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
     });
@@ -1049,7 +1004,6 @@ export function ShellAgentPanel({
       ...(target?.sourceUserMessageId
         ? { truncateFromUserMessageId: target.sourceUserMessageId }
         : {}),
-      multiAgentConcurrency: effectiveConcurrency,
       ...(surface.sessionKind === 'COPILOT' ? { activeModelCode: selectedModel } : {}),
       ...(surface.sessionKind === 'REASONING' ? { reasoningMode } : {}),
     });
@@ -1231,10 +1185,12 @@ export function ShellAgentPanel({
         {...(headerContextSlot ? { headerContextSlot } : {})}
         onSubmitPrompt={handleSubmitPrompt}
         {...(surface.placeholder ? { composerPlaceholder: surface.placeholder } : {})}
-        {...(effectiveComposerHeaderSlot
-          ? { composerHeaderSlot: effectiveComposerHeaderSlot }
-          : {})}
+        composerDisabled={savingSettings || liveDraft?.cancellationPending === true}
+        composerHeaderSlot={selectionSlot}
         composerRightAccessorySlot={
+          <>
+          <SessionExecutionPicker key={activeSession?.id ?? sessionScopeKey} providers={data?.llmProviders ?? []}
+            session={activeSession} onChange={updateSettings} saving={savingSettings} />
           <ContextOccupancyRing
             latestCall={latestTurnCall}
             open={inspectorOpen}
@@ -1243,6 +1199,7 @@ export function ShellAgentPanel({
               setInspectorOpen((prev) => !prev);
             }}
           />
+          </>
         }
         conversationTopNoticeSlot={
           <RemovedMessagesNotice

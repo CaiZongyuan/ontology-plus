@@ -18,7 +18,6 @@ import { cn } from '../../../lib/utils.js';
 import { Button } from '../../beautifui/index.js';
 import { AgentCursorDockControl, CanvasAgentCursors, useObservedElementSize } from './AgentCursorOverlay.js';
 import { ArtboardFrame, type ArtboardHandle } from './Artboard.js';
-import { BuildLog, BuildLogLiveRows } from './BuildLog.js';
 import { BuildPhaseBar } from './BuildPhaseBar.js';
 import { CanvasDesignNotesOverlay, DesignNotesDockControl } from './DesignNotesOverlay.js';
 import {
@@ -595,7 +594,6 @@ export function PrototypeLiveCanvas({
     else enterTry(screenId);
   };
 
-  // #97's end-of-build suggestion, shown as the last entry of the build log.
   const webModeHint =
     webHint && view === 'artboards' ? (
       <WebModeHint onTry={() => setView('web')} onDismiss={() => setWebHint(false)} />
@@ -669,7 +667,7 @@ export function PrototypeLiveCanvas({
         )}
       </div>
 
-      <div className="grid min-h-0 grid-cols-1 md:grid-cols-[minmax(0,1fr)_240px]">
+      <div className={`grid min-h-0 grid-cols-1 ${touring ? 'md:grid-cols-[minmax(0,1fr)_240px]' : ''}`}>
         {/* Canvas */}
         <div
           ref={hostRef}
@@ -1029,8 +1027,7 @@ export function PrototypeLiveCanvas({
           )}
         </div>
 
-        {/* Right sidebar: Demo Tour steps (#95) while playing, otherwise Build log (#90/#92). */}
-        {touring ? (
+        {touring && (
           <aside
             className="flex min-h-0 flex-col border-l border-border bg-card"
             data-testid="demo-tour-script-panel"
@@ -1042,41 +1039,12 @@ export function PrototypeLiveCanvas({
               viewMode={viewMode}
             />
           </aside>
-        ) : (
-          <aside
-            className="hidden min-h-0 flex-col border-l border-border bg-card md:flex"
-            data-testid="prototype-build-log"
-            aria-label={t('施工日志', 'Build log')}
-          >
-            <div className="border-b border-border px-3 py-2 text-[12px] font-medium text-foreground">
-              {t('施工日志', 'Build log')}
-            </div>
-            {plan ? (
-              <BuildLog
-                build={plan}
-                screens={views}
-                busy={busy}
-                onFocusScreen={showScreen}
-                onResumeScreen={onRetryScreen}
-                liveActivities={activities}
-                endEntry={webModeHint}
-              />
-            ) : (
-              <div className="min-h-0 flex-1 overflow-auto px-3 py-2 text-[12px] text-muted-foreground" data-slot="build-log-entries">
-                {activities.some((a) => Boolean(a.sentence)) ? (
-                  <ol className="m-0 list-none p-0">
-                    <BuildLogLiveRows activities={activities} onFocusScreen={showScreen} />
-                  </ol>
-                ) : (
-                  webModeHint ?? t('生成原型时，这里会逐条记下每一屏的进展。', 'While a prototype is built, each screen’s progress is logged here.')
-                )}
-              </div>
-            )}
-          </aside>
         )}
       </div>
 
       {/* Screen strip */}
+      <div>
+      {webModeHint}
       <ScreenStrip
         screens={views}
         highlightedScreenId={view === 'web' ? webScreenId : (tourController.state.screenId ?? tryScreenId ?? followTarget)}
@@ -1086,6 +1054,7 @@ export function PrototypeLiveCanvas({
         onResumeScreen={onRetryScreen}
         onOpenSingleScreen={onOpenSingleScreen}
       />
+      </div>
     </div>
   );
 }

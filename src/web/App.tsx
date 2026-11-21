@@ -91,35 +91,9 @@ import {
 import { WorkbenchViewHost } from './navigation/viewDispatch.js';
 import { navigateToBusinessModelObject } from './views/BusinessModelStepView.js';
 
-export type WorkspacePane = 'conversation' | 'canvas';
-
-export const WORKBENCH_COMPACT_QUERY = '(max-width: 1279px)';
-
 const IS_MAC =
   typeof navigator !== 'undefined' &&
   /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
-
-function useCompactWorkspaceMode(override?: boolean): boolean {
-  const [matches, setMatches] = useState(
-    () =>
-      typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia(WORKBENCH_COMPACT_QUERY).matches,
-  );
-
-  useEffect(() => {
-    if (override !== undefined || typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-      return;
-    }
-    const mql = window.matchMedia(WORKBENCH_COMPACT_QUERY);
-    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches);
-    setMatches(mql.matches);
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
-  }, [override]);
-
-  return override ?? matches;
-}
 
 /* ─── Command Palette (Ctrl/⌘ + K) ─── */
 export interface CommandEntry {
@@ -464,13 +438,10 @@ function ProjectSwitcherSelect({
 export interface WorkbenchShellProps {
   /** Override `< 1280px` compact workspace detection (used by deterministic SSR/unit tests). */
   readonly compactWorkspaceOverride?: boolean;
-  /** Initial active pane when in `< 1280px` compact mode. */
-  readonly initialWorkspacePane?: WorkspacePane;
 }
 
 export function WorkbenchShell({
   compactWorkspaceOverride,
-  initialWorkspacePane = 'canvas',
 }: WorkbenchShellProps = {}) {
   const { locale, toggleLocale, theme, toggleTheme, workbenchTheme, setWorkbenchTheme, t } =
     usePreferences();
@@ -509,8 +480,6 @@ export function WorkbenchShell({
   );
 
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [workspacePane, setWorkspacePane] = useState<WorkspacePane>(initialWorkspacePane);
-  const isCompactWorkspace = useCompactWorkspaceMode(compactWorkspaceOverride);
   const lastProjectViewRef = useRef<NavViewId>('app-ontology');
 
   useEffect(() => {
@@ -519,38 +488,29 @@ export function WorkbenchShell({
     }
   }, [activeView]);
 
-  // Agent Panel integration:
-  // - In Project Workspace (`>= 1280px`), ShellAgentPanel is permanently docked on the LEFT.
-  // - In Secondary Areas (`cap-*`, `data-*`, `llm-center`, `system-settings`), it stays docked/overlay on the RIGHT.
   const [deliveryViewMode] = useStepViewMode('DELIVERY');
   const [deliveryTechTab] = useDeliveryTechTab();
   const agentSurface = resolveWorkspaceAgentSurface(activeView, {
     deliveryViewMode,
     deliveryTechTab,
   });
-  const secondaryAgentOverlay = useAgentPanelOverlayMode();
+  const narrowViewport = useAgentPanelOverlayMode();
+  const panelOverlay = compactWorkspaceOverride ?? narrowViewport;
   const agentPanelOpen = useAgentPanelStore((s) => s.open);
   const agentPanelOverlayOpen = useAgentPanelStore((s) => s.overlayOpen);
   const agentPanelWidth = useAgentPanelStore((s) => s.width);
   const agentPanelWideMode = useAgentPanelStore((s) => s.wideMode);
   const sessionByScope = useAgentPanelStore((s) => s.sessionByScope);
 
-  const secondaryAgentVisible =
-    routeContext.kind === 'secondary' &&
-    Boolean(agentSurface) &&
-    (secondaryAgentOverlay ? agentPanelOverlayOpen : agentPanelOpen);
+  const panelVisible = Boolean(agentSurface) && (panelOverlay ? agentPanelOverlayOpen : agentPanelOpen);
 
-  const setSecondaryAgentVisible = (visible: boolean) => {
+  const setPanelVisible = useCallback((visible: boolean) => {
     const panel = useAgentPanelStore.getState();
-    if (secondaryAgentOverlay) panel.setOverlayOpen(visible);
+    if (panelOverlay) panel.setOverlayOpen(visible);
     else panel.setOpen(visible);
-  };
+  }, [panelOverlay]);
 
-  const unmountedPanelQuoteEnabled = Boolean(
-    agentSurface &&
-      ((routeContext.kind === 'project' && isCompactWorkspace && workspacePane === 'canvas') ||
-        (routeContext.kind === 'secondary' && !secondaryAgentVisible)),
-  );
+  const unmountedPanelQuoteEnabled = Boolean(agentSurface && !panelVisible);
 
   const handleQuoteWhenPanelUnmounted = useCallback(
     (selectedText: string) => {
@@ -575,13 +535,7 @@ export function WorkbenchShell({
         ...prevDraft,
         quotes: appendUniqueQuote(prevDraft.quotes, selectedText),
       });
-      if (routeContext.kind === 'project' && isCompactWorkspace) {
-        setWorkspacePane('conversation');
-      } else if (routeContext.kind === 'secondary') {
-        const panel = useAgentPanelStore.getState();
-        if (secondaryAgentOverlay) panel.setOverlayOpen(true);
-        else panel.setOpen(true);
-      }
+      setPanelVisible(true);
       if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
         window.requestAnimationFrame(() => {
           const input = document.querySelector<HTMLTextAreaElement>(
@@ -598,19 +552,9 @@ export function WorkbenchShell({
       activeItemId,
       activeSessionId,
       sessionByScope,
-      routeContext.kind,
-      isCompactWorkspace,
-      secondaryAgentOverlay,
+      setPanelVisible,
     ],
   );
-
-  // When a canvas button triggers `revealPanel()` while in compact (<1280px) project workspace, switch to Conversation.
-  useEffect(() => {
-    if (routeContext.kind === 'project' && isCompactWorkspace && agentPanelOverlayOpen) {
-      setWorkspacePane('conversation');
-      useAgentPanelStore.getState().setOverlayOpen(false);
-    }
-  }, [routeContext.kind, isCompactWorkspace, agentPanelOverlayOpen]);
 
   const prevViewRef = useRef<NavViewId | null>(null);
   useEffect(() => {
@@ -670,11 +614,7 @@ export function WorkbenchShell({
       itemId: targetRun.targetId ?? null,
       sessionId: targetRun.sessionId,
     });
-    if (isCompactWorkspace && getProjectStepForView(targetRun.targetNav)) {
-      setWorkspacePane('conversation');
-    } else {
-      useAgentPanelStore.getState().revealPanel();
-    }
+    setPanelVisible(true);
   };
 
   useEffect(() => {
@@ -711,25 +651,12 @@ export function WorkbenchShell({
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
         e.preventDefault();
-        if (routeContext.kind === 'project') {
-          if (isCompactWorkspace) {
-            setWorkspacePane((prev) => (prev === 'conversation' ? 'canvas' : 'conversation'));
-          }
-        } else if (routeContext.kind === 'secondary') {
-          setSecondaryAgentVisible(!secondaryAgentVisible);
-        }
+        setPanelVisible(!panelVisible);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    agentSurface,
-    routeContext.kind,
-    isCompactWorkspace,
-    secondaryAgentVisible,
-    secondaryAgentOverlay,
-  ]);
+  }, [agentSurface, panelVisible, setPanelVisible]);
 
   const activeNavSpec = getNavItemSpec(activeView);
   const activeLabel =
@@ -786,15 +713,20 @@ export function WorkbenchShell({
     ? AGENT_PANEL_WIDE_CSS_WIDTH
     : `${agentPanelWidth}px`;
 
+  const assistantPanel = agentSurface && panelVisible && (
+    <ShellAgentPanel
+      surface={agentSurface}
+      overlay={panelOverlay}
+      side="right"
+      closable
+      onClose={() => setPanelVisible(false)}
+      onNavigate={setActiveView}
+    />
+  );
+
   return (
     <div
-      className={`wb-shell ${
-        routeContext.kind === 'project' && !isCompactWorkspace ? 'has-left-chat' : ''
-      } ${
-        routeContext.kind === 'secondary' && secondaryAgentVisible && !secondaryAgentOverlay
-          ? 'has-right-agent'
-          : ''
-      }`}
+      className={`wb-shell ${panelVisible && !panelOverlay ? 'has-right-agent' : ''}`}
       style={{ '--agent-panel-w': agentPanelWidthVar } as React.CSSProperties}
     >
       {/* ─── Top Bar ─── */}
@@ -941,7 +873,7 @@ export function WorkbenchShell({
             </button>
           )}
 
-          {routeContext.kind === 'secondary' && agentSurface && !secondaryAgentVisible && (
+          {agentSurface && !panelVisible && (
             <button
               type="button"
               className="wb-top-btn"
@@ -949,7 +881,7 @@ export function WorkbenchShell({
               aria-controls="agent-panel"
               aria-expanded={false}
               title={t('展开 AI 助手', 'Open AI Assistant')}
-              onClick={() => setSecondaryAgentVisible(true)}
+              onClick={() => setPanelVisible(true)}
             >
               <PanelRightOpen size={14} aria-hidden="true" />
               <span>{t('AI 助手', 'AI Assistant')}</span>
@@ -1038,59 +970,11 @@ export function WorkbenchShell({
           <div
             className="wb-workspace-frame"
             data-testid="project-workspace"
-            data-compact={isCompactWorkspace ? 'true' : 'false'}
-            data-active-pane={isCompactWorkspace ? workspacePane : 'split'}
           >
-            {isCompactWorkspace && (
-              <div className="wb-compact-bar">
-                <div
-                  className="wb-pane-toggle"
-                  data-testid="workspace-pane-toggle"
-                  role="group"
-                  aria-label={t('切换对话与画布', 'Switch conversation and canvas')}
-                >
-                  <button
-                    type="button"
-                    data-testid="workspace-pane-conversation"
-                    aria-pressed={workspacePane === 'conversation'}
-                    onClick={() => setWorkspacePane('conversation')}
-                  >
-                    {t('对话', 'Conversation')}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="workspace-pane-canvas"
-                    aria-pressed={workspacePane === 'canvas'}
-                    onClick={() => setWorkspacePane('canvas')}
-                  >
-                    {t('画布', 'Canvas')}
-                  </button>
-                </div>
-              </div>
-            )}
-
             <div className="wb-workspace">
-              {(!isCompactWorkspace || workspacePane === 'conversation') && agentSurface && (
-                <ShellAgentPanel
-                  surface={agentSurface}
-                  overlay={false}
-                  side="left"
-                  closable={false}
-                  resizable={!isCompactWorkspace}
-                  onClose={() => undefined}
-                  onNavigate={setActiveView}
-                />
-              )}
-
-              {(!isCompactWorkspace || workspacePane === 'canvas') && (
                 <main
                   className="wb-canvas"
                   data-testid="workbench-canvas"
-                  style={
-                    {
-                      '--subbar-h': `${isCompactWorkspace ? 40 : 0}px`,
-                    } as React.CSSProperties
-                  }
                 >
                   {showBlockedBanner && activeStepStatus && (
                     <StepCannotStartBanner
@@ -1112,7 +996,7 @@ export function WorkbenchShell({
                     )}
                   </div>
                 </main>
-              )}
+                {assistantPanel}
             </div>
           </div>
         )}
@@ -1172,16 +1056,7 @@ export function WorkbenchShell({
               </div>
             </div>
 
-            {agentSurface && secondaryAgentVisible && (
-              <ShellAgentPanel
-                surface={agentSurface}
-                overlay={secondaryAgentOverlay}
-                side="right"
-                closable
-                onClose={() => setSecondaryAgentVisible(false)}
-                onNavigate={setActiveView}
-              />
-            )}
+            {assistantPanel}
           </div>
         )}
       </div>

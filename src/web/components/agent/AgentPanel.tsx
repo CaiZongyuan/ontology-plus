@@ -28,6 +28,7 @@ import {
 import type { AgentRunView, LocalizedText, PrototypeTargetAnchor } from './agentRun.js';
 import { ConversationComposer } from './conversation/ConversationComposer.js';
 import { ConversationThread } from './conversation/ConversationThread.js';
+import { DelegatedTaskSwitcher, DelegatedTaskView } from './conversation/DelegatedTaskView.js';
 import {
   EMPTY_CONVERSATION_DRAFT,
   clearSessionDraft,
@@ -299,6 +300,12 @@ export function AgentPanel({
   );
   const [historyOpen, setHistoryOpen] = useState<boolean>(defaultHistoryOpen);
   const [composerScrollSignal, setComposerScrollSignal] = useState(0);
+  const latestRun = runs.at(-1);
+  const sessionKey = activeSessionId ?? activeSessionOption?.id;
+  const taskRun = latestRun?.sourceSessionId === sessionKey ? latestRun : undefined;
+  const [taskSelection, setTaskSelection] = useState<{ sessionId: string | undefined; laneId: string } | null>(null);
+  const selectedTask = taskSelection && taskSelection.sessionId === sessionKey && taskRun
+    ? taskRun.subagentLanes?.find((lane) => lane.laneId === taskSelection.laneId) : undefined;
 
   const handleCancelActive =
     onCancelActiveRun ??
@@ -545,7 +552,7 @@ export function AgentPanel({
           />
         )}
 
-        <ConversationThread
+        {selectedTask ? <DelegatedTaskView lane={selectedTask} /> : <ConversationThread
           runs={runs}
           {...(now !== undefined ? { now } : {})}
           {...(activeSessionOption?.id
@@ -601,8 +608,14 @@ export function AgentPanel({
           {...(renderRunFooter ? { renderRunFooter } : {})}
           {...(conversationTopNoticeSlot ? { topNoticeSlot: conversationTopNoticeSlot } : {})}
           scrollToBottomSignal={composerScrollSignal}
-        />
-        <ConversationComposer
+        />}
+        {taskRun?.subagentLanes?.length ? <DelegatedTaskSwitcher
+          lanes={taskRun.subagentLanes} selected={selectedTask?.laneId ?? null}
+          onSelect={(laneId) => setTaskSelection(laneId ? { sessionId: sessionKey, laneId } : null)}
+        /> : null}
+        {selectedTask ? <div className="delegated-task-readonly">
+          {t('这里只能查看任务。切回主助手即可发送消息。', 'This task is read-only. Select Main assistant to send a message.')}
+        </div> : <ConversationComposer
           draft={draft}
           onDraftChange={setDraft}
           quotes={quotes}
@@ -631,7 +644,7 @@ export function AgentPanel({
           {...(visionModelLabel ? { visionModelLabel } : {})}
           {...(onOpenPlatformSettings ? { onOpenPlatformSettings } : {})}
           {...(onOpenLlmCenter ? { onOpenLlmCenter } : {})}
-        />
+        />}
       </aside>
     </>
   );

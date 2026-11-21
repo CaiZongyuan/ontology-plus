@@ -810,6 +810,7 @@ class SessionStreamAbortedError extends Error {
 
 interface ActiveBackgroundSessionRun {
   readonly runId: string;
+  readonly submissionId?: string;
   readonly sessionId: string;
   readonly controller: AbortController;
   readonly bufferedEvents: CoalescingRunEventBuffer<UnifiedAgentSseEvent>;
@@ -863,6 +864,13 @@ export interface LiveAgentSessionStatus {
   queuedCount: number;
   runId?: string;
   bufferedEventCount: number;
+}
+
+export function submissionState(store: WorkspaceStore, sessionId: string, submissionId: string) {
+  const slot = getSessionSlot(store, sessionId);
+  if (slot?.activeRun?.submissionId === submissionId && !slot.activeRun.done) return 'active';
+  if (slot?.queue.some(entry => !entry.cancelled && entry.input.submissionId === submissionId)) return 'queued';
+  return store.getAgentSession(sessionId)?.acceptedSubmissionIds?.includes(submissionId) ? 'accepted' : 'absent';
 }
 
 export function getLiveAgentSessionStatus(
@@ -959,6 +967,33 @@ export async function abortActiveAgentSessionAsync(
     ...(activeRun ? { runId: activeRun.runId } : {}),
     session,
   };
+}
+
+export async function cancelAgentTurn(store: WorkspaceStore, sessionId: string, target: { submissionId: string } | { runId: string }) {
+  const session = store.getAgentSession(sessionId);
+  if (!session) return { acknowledged: true, aborted: false };
+  const slot = getSessionSlot(store, sessionId);
+  const active = slot?.activeRun;
+  let aborted = false;
+  if ('submissionId' in target) {
+    if (!session.cancelledSubmissionIds?.includes(target.submissionId)) {
+      store.saveAgentSession({ ...session, cancelledSubmissionIds: [...(session.cancelledSubmissionIds ?? []), target.submissionId] });
+    }
+    const index = slot?.queue.findIndex(entry => entry.input.submissionId === target.submissionId) ?? -1;
+    if (slot && index >= 0) {
+      const [entry] = slot.queue.splice(index, 1);
+      entry!.cancelled = true;
+      entry!.resolveRun(null);
+      aborted = true;
+    }
+  }
+  const matchesActive = active && ('submissionId' in target ? active.submissionId === target.submissionId : active.runId === target.runId);
+  if (matchesActive && !active.done) {
+    active.controller.abort({ kind: 'USER_ABORT', message: '已由用户手动停止生成' } satisfies SessionAbortReason);
+    await active.completionPromise;
+    aborted = true;
+  }
+  return { acknowledged: true, aborted, ...(matchesActive ? { runId: active.runId } : {}), session: store.getAgentSession(sessionId) };
 }
 
 // ─── SSE Event Protocol ──────────────────────────────────────────────────────
@@ -2531,13 +2566,23 @@ export function buildPiModelsForStore(
   }
 
   const allProviders = store.listLlmProviders();
+  const enabledProviders = allProviders.filter((provider) => provider.enabled);
   const explicitSelectedProvider = session.providerId
-    ? allProviders.find((p) => p.id === session.providerId && p.enabled) ??
-      allProviders.find((p) => p.id === session.providerId)
+    ? enabledProviders.find((provider) => provider.id === session.providerId)
     : undefined;
-  const enabledProviders = allProviders.filter(
-    (p) => p.enabled || (explicitSelectedProvider && p.id === explicitSelectedProvider.id),
-  );
+  const modelCatalog = explicitSelectedProvider ? [explicitSelectedProvider] : enabledProviders;
+  if ((session.providerId && !explicitSelectedProvider) || (session.modelOverride && !modelCatalog.some(
+    (provider) => [provider.defaultModel, ...provider.availableModels].includes(session.modelOverride!),
+  ))) {
+    throw new LlmGatewayError({
+      message: pickLocaleText(loc, '对话所选的模型已不可用。请在对话设置中选择其他模型。',
+        'The selected model is no longer available. Choose another in conversation settings.'),
+      providerName: explicitSelectedProvider?.name ?? session.providerId ?? '(none)',
+      baseUrl: explicitSelectedProvider?.baseUrl ?? '(none)',
+      model: session.modelOverride ?? '(none)',
+      locale: loc,
+    });
+  }
   if (enabledProviders.length === 0) {
     throw new LlmGatewayError({
       message: pickLocaleText(
@@ -2564,7 +2609,6 @@ export function buildPiModelsForStore(
         [
           cfg.defaultModel,
           ...cfg.availableModels,
-          ...(session.modelOverride ? [session.modelOverride] : []),
         ].filter(Boolean),
       ),
     );
@@ -2608,7 +2652,7 @@ export function buildPiModelsForStore(
     if (
       !explicitSelectedProvider &&
       session.modelOverride &&
-      cfg.availableModels.includes(session.modelOverride)
+      (cfg.defaultModel === session.modelOverride || cfg.availableModels.includes(session.modelOverride))
     ) {
       preferredProvider = cfg;
       preferredModelId = session.modelOverride;
@@ -3140,6 +3184,7 @@ function buildSystemPromptForSession(
 
 interface PrototypeTurnDraft {
   prototypeId?: string;
+  baseRevisionId?: string;
   prototypeName: string;
   designBrief?: DesignBrief;
   baselineHtml: string;
@@ -4628,6 +4673,17 @@ function buildDeterministicCompactionBullets(
   });
 }
 
+function saveSessionKeepingExecutionSettings(store: WorkspaceStore, session: AgentSession) {
+  const latest = store.getAgentSession(session.id);
+  return store.saveAgentSession(latest ? {
+    ...session,
+    providerId: latest.providerId,
+    cancelledSubmissionIds: latest.cancelledSubmissionIds,
+    modelOverride: latest.modelOverride,
+    multiAgentConcurrency: latest.multiAgentConcurrency,
+  } : session);
+}
+
 export function compactAgentSession(
   store: WorkspaceStore,
   sessionId: string,
@@ -4783,7 +4839,7 @@ export async function compactAgentSessionWithLlm(
       messages: kept,
       updatedAt: new Date().toISOString(),
     };
-    const saved = store.saveAgentSession(updated);
+    const saved = saveSessionKeepingExecutionSettings(store, updated);
     recordCompactionEvent(store, session, older, updated.compactedSummary ?? '', true);
     return saved;
   } catch {
@@ -4807,6 +4863,7 @@ export interface TransientTurnImageInput {
 
 export interface UnifiedAgentStreamInput {
   sessionId: string;
+  submissionId?: string;
   prompt?: string;
   mode?: 'PROMPT' | 'STEER' | 'FOLLOW_UP' | 'CONTINUE';
   askUserAnswer?: {
@@ -4960,7 +5017,7 @@ function saveSessionCheckpointSafe(
 async function executeUnifiedTurnCore(
   store: WorkspaceStore,
   input: Omit<UnifiedAgentStreamInput, 'signal'>,
-  emit: (ev: UnifiedAgentSseEvent) => void,
+  publish: (ev: UnifiedAgentSseEvent) => void,
   controller: AbortController,
   preallocatedIdentity?: AllocatedTurnRunIdentity,
 ): Promise<void> {
@@ -5133,6 +5190,7 @@ async function executeUnifiedTurnCore(
 
   let sessionState: AgentSession = store.saveAgentSession({
     ...existing,
+    ...(input.submissionId ? { acceptedSubmissionIds: [...(existing.acceptedSubmissionIds ?? []), input.submissionId] } : {}),
     title: nextTitle,
     ...(input.designBrief && existing.agentKind === 'PROTOTYPE_CO_DESIGN' && !existing.targetId
       ? { designBrief: input.designBrief }
@@ -5147,6 +5205,21 @@ async function executeUnifiedTurnCore(
   const turnStartMs = Date.now();
   const assistantMsgId = nextAgentMessageId('a');
   const turnRunId = turnIdentity.runId;
+  let toolsStarted = false;
+  const markToolBoundary = () => {
+    if (toolsStarted) return;
+    store.saveAgentCheckpoint(sessionState.id, `PI_UNIFIED_${sessionState.agentKind}`, JSON.stringify({
+      sessionId: sessionState.id, phase: 'TOOLS_STARTED', runId: turnRunId,
+    }));
+    toolsStarted = true;
+  };
+  const emit = (event: UnifiedAgentSseEvent) => {
+    if (event.event === 'tool_call') {
+      if (controller.signal.aborted) throw toAbortedError();
+      markToolBoundary();
+    }
+    publish(event);
+  };
 
   saveSessionCheckpointSafe(store, sessionState, {
     phase: 'TURN_STARTED',
@@ -5277,6 +5350,7 @@ async function executeUnifiedTurnCore(
         ? initialTargetProto
           ? {
               prototypeId: initialTargetProto.id,
+              baseRevisionId: initialTargetProto.currentRevisionId,
               prototypeName: initialTargetProto.name,
               ...(input.designBrief ? { designBrief: input.designBrief } : {}),
               baselineHtml: initialTargetProto.htmlContent,
@@ -7082,6 +7156,7 @@ async function executeUnifiedTurnCore(
 
     // Live LLM recovery & honest failure check for structured domain actions (ADR 0007 / ADR 0009)
     if (!built.isMock && structuredTurnAction && !pendingAskUser && !controller.signal.aborted) {
+      markToolBoundary();
       if (
         structuredTurnAction.kind === 'SYNTHESIZE_SRS' &&
         !allArtifacts.some((a) => a.kind === 'REQUIREMENT_DOC') &&
@@ -7283,6 +7358,9 @@ async function executeUnifiedTurnCore(
         });
       } else if (prototypeTurnDraft.prototypeId) {
         if (prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml) {
+          if (currentPrototypeRevisionId() !== prototypeTurnDraft.baseRevisionId) {
+            throw new Error(pickLocaleText(effectiveLocale, '原型在本轮运行中已被修改。已保留较新的版本，请基于它继续。', 'The prototype changed during this run. The newer version was preserved; continue from it.'));
+          }
           const appendedRevision = store.appendPrototypeRevision(prototypeTurnDraft.prototypeId, {
             title: cleanRevisionNote.slice(0, 48),
             instruction: cleanRevisionNote,
@@ -7400,7 +7478,7 @@ async function executeUnifiedTurnCore(
       delete completedSession.tokenUsage;
     }
 
-    sessionState = store.saveAgentSession(completedSession);
+    sessionState = saveSessionKeepingExecutionSettings(store, completedSession);
 
     saveSessionCheckpointSafe(store, sessionState, {
       phase: pendingAskUser ? 'AWAITING_USER' : 'COMPLETED',
@@ -7473,7 +7551,7 @@ async function executeUnifiedTurnCore(
         timestamp: new Date().toISOString(),
       };
 
-      sessionState = store.saveAgentSession({
+      sessionState = saveSessionKeepingExecutionSettings(store, {
         ...sessionState,
         status: 'IDLE',
         messages: [...sessionState.messages, cancelledAssistantMsg],
@@ -7580,6 +7658,7 @@ async function executeUnifiedTurnCore(
       prototypeTurnDraft &&
       prototypeTurnDraft.workingHtml.trim().length > 0 &&
       prototypeTurnDraft.workingHtml !== prototypeTurnDraft.baselineHtml &&
+      (!prototypeTurnDraft.prototypeId || currentPrototypeRevisionId() === prototypeTurnDraft.baseRevisionId) &&
       /data-screen-id=/i.test(prototypeTurnDraft.workingHtml)
     ) {
       const cleanRevisionNote = stripSelectionBlockFromPrompt(
@@ -7649,7 +7728,7 @@ async function executeUnifiedTurnCore(
       timestamp: new Date().toISOString(),
     };
 
-    sessionState = store.saveAgentSession({
+    sessionState = saveSessionKeepingExecutionSettings(store, {
       ...sessionState,
       status: 'ERROR',
       messages: [...sessionState.messages, errorAssistantMsg],
@@ -7727,6 +7806,7 @@ function launchActiveRunInSlot(
   const turnIdentity = allocateTurnRunIdentity(existingSession, turnInput);
   const run: ActiveBackgroundSessionRun = {
     runId: turnIdentity.runId,
+    submissionId: turnInput.submissionId,
     sessionId,
     controller,
     bufferedEvents: createCoalescingRunEventBuffer<UnifiedAgentSseEvent>(prototypeLiveCoalesceKey),
@@ -7853,6 +7933,15 @@ export async function* runUnifiedAgentSessionStream(
 
   const { signal: clientSignal, ...turnInput } = input;
   const slot = getOrCreateSessionSlot(store, input.sessionId);
+
+  if (input.submissionId && existing.cancelledSubmissionIds?.includes(input.submissionId)) {
+    yield { id: `${input.submissionId}-cancelled`, event: 'message_end', data: buildSessionMessageEndPayload(store, existing) };
+    return;
+  }
+  if (input.submissionId && submissionState(store, input.sessionId, input.submissionId) !== 'absent') {
+    yield* attachUnifiedAgentSessionLiveStream(store, input.sessionId, { submissionId: input.submissionId, signal: clientSignal });
+    return;
+  }
 
   if (input.mode === 'STEER' && slot.activeRun && !slot.activeRun.done) {
     const priorCompletion = slot.activeRun.completionPromise;
@@ -7985,8 +8074,8 @@ function markOrphanedRunningSessionInterrupted(
     ),
     remediation: pickLocaleText(
       locale,
-      '请点击「重试 / 继续」从最近的持久化检查点恢复执行。',
-      'Click Retry / Continue to resume execution from the latest durable checkpoint.',
+      '已保存的结果仍在。请先查看结果，再决定是否继续剩余工作。',
+      'Saved results are preserved. Review them before continuing the unfinished work.',
     ),
   };
 
@@ -8057,14 +8146,7 @@ export async function autoResumeInterruptedAgentSessions(
       }
     }
 
-    const resumableCheckpoint =
-      Boolean(cp) &&
-      Boolean(phase) &&
-      phase !== 'COMPLETED' &&
-      phase !== 'AWAITING_USER' &&
-      phase !== 'CANCELLED' &&
-      phase !== 'FAILED' &&
-      phase !== 'INTERRUPTED';
+    const resumableCheckpoint = phase === 'TURN_STARTED' && session.messages.at(-1)?.role === 'user';
 
     const hasLastUserMsg = session.messages.some(
       (msg) => msg.role === 'user' && Boolean(msg.content.trim()),
@@ -8101,12 +8183,13 @@ export async function* attachUnifiedAgentSessionLiveStream(
   store: WorkspaceStore,
   sessionId: string,
   options?: {
+    submissionId?: string;
     afterEventId?: string;
     signal?: AbortSignal;
   },
 ): AsyncGenerator<UnifiedAgentSseEvent, void, unknown> {
   const slot = getSessionSlot(store, sessionId);
-  if (slot?.activeRun && !slot.activeRun.done) {
+  if (slot?.activeRun && !slot.activeRun.done && (!options?.submissionId || slot.activeRun.submissionId === options.submissionId)) {
     yield* subscribeToBackgroundRun(slot.activeRun, options?.signal, options?.afterEventId);
     return;
   }
@@ -8116,7 +8199,8 @@ export async function* attachUnifiedAgentSessionLiveStream(
     throw new Error(`Agent session not found: ${sessionId}`);
   }
 
-  if (existing.status === 'RUNNING') {
+  if (options?.submissionId && !existing.acceptedSubmissionIds?.includes(options.submissionId)) return;
+  if (existing.status === 'RUNNING' && !slot?.activeRun) {
     const { session: interruptedSession, diagnostic } =
       markOrphanedRunningSessionInterrupted(store, existing);
     if (options?.signal?.aborted) {

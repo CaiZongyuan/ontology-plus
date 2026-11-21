@@ -209,12 +209,7 @@ test.describe('Business Model Step (#68): Business Object Projection, Technical 
 
       // 4. Compact (<1280px) viewport: "让 AI 助手处理" switches pane to Conversation immediately
       await page.setViewportSize({ width: 1120, height: 820 });
-      await expect(page.getByTestId('project-workspace')).toHaveAttribute('data-compact', 'true');
-      await page.getByTestId('workspace-pane-canvas').click();
-      await expect(page.getByTestId('project-workspace')).toHaveAttribute(
-        'data-active-pane',
-        'canvas',
-      );
+      await expect(page.getByTestId('agent-panel')).toBeHidden();
 
       await page.getByTestId('inline-edit-trigger-object-name-AGG-02').click();
       await page.getByTestId('business-inline-input').fill('商务合同');
@@ -222,10 +217,7 @@ test.describe('Business Model Step (#68): Business Object Projection, Technical 
       await expect(page.getByTestId('business-edit-rejected-banner')).toBeVisible();
 
       await page.getByTestId('business-edit-ask-assistant-btn').click();
-      await expect(page.getByTestId('project-workspace')).toHaveAttribute(
-        'data-active-pane',
-        'conversation',
-      );
+      await expect(page.getByTestId('agent-panel-scrim')).toBeVisible();
       await expect(page.getByTestId('agent-panel')).toBeVisible();
       await expect(
         page

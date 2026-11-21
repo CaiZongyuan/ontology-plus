@@ -88,7 +88,7 @@ test.describe('Prototype screenshot review & targeted fix (#93)', () => {
         }
         for (const el of Array.from(
           document.querySelectorAll(
-            '[data-testid^="prototype-agent-cursor-"][data-activity-state="fixing"] [data-testid^="prototype-cursor-bubble-"], [data-testid="prototype-build-log-live"][data-activity-state="fixing"]',
+            '[data-testid^="prototype-agent-cursor-"][data-activity-state="fixing"] [data-testid^="prototype-cursor-bubble-"]',
           ),
         )) {
           const txt = el.textContent?.trim() ?? '';
@@ -157,18 +157,7 @@ test.describe('Prototype screenshot review & targeted fix (#93)', () => {
     await expect(page.getByTestId('prototype-strip-card-SCR-ORDERS')).toHaveAttribute('data-review-outcome', 'fixed');
     await expect(page.getByTestId('prototype-strip-card-SCR-HOME')).toHaveAttribute('data-review-outcome', 'pass');
 
-    // Build log records the visual finding and the localized fix in pure business language (zero IDs!)
-    const log = page.getByTestId('prototype-build-log');
-    const findingEntry = log.locator(
-      '[data-testid="prototype-build-log-entry"][data-kind="review_finding"][data-screen-id="SCR-ORDERS"]',
-    );
-    const fixedEntry = log.locator(
-      '[data-testid="prototype-build-log-entry"][data-kind="screen_fixed"][data-screen-id="SCR-ORDERS"]',
-    );
-    await expect(findingEntry).toContainText('检查「订货单列表」发现问题：');
-    await expect(fixedEntry).toContainText('已局部修正「订货单列表」');
-    await expect(log).not.toContainText('SCR-');
-    await expect(log).not.toContainText('EL-');
+    await expect(page.getByTestId('prototype-build-log')).toHaveCount(0);
 
     // Verify `SCR-ORDERS` table was fixed in place on the artboard WITHOUT reloading its iframe
     const ordersCheck = await page.evaluate(() => {
@@ -202,7 +191,5 @@ test.describe('Prototype screenshot review & targeted fix (#93)', () => {
     await page.reload();
     await expect(page.getByTestId('prototype-phase-review')).toContainText('Screenshot check', { timeout: 15_000 });
     await expect(page.getByTestId('prototype-phase-review')).toContainText('4 checked · 1 fixed');
-    await expect(page.getByTestId('prototype-build-log')).toContainText('Issue found on');
-    await expect(page.getByTestId('prototype-build-log')).toContainText('Fixed "');
   });
 });

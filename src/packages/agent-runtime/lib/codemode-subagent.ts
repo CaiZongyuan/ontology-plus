@@ -275,6 +275,7 @@ export async function runParallelSubagents(
         zh: task.title.trim(),
         en: task.title.trim(),
       },
+      assignment: task.instruction.trim(),
       ...(targetAnchor ? { targetAnchor } : {}),
       status: 'QUEUED',
       phase: 'QUEUED',
@@ -525,10 +526,10 @@ export async function runParallelSubagents(
         }
 
         lane.phase = 'VALIDATING';
-        lane.liveAction = {
+        lane.liveAction = ownScreenId ? {
           zh: '正在校验交互控件并保存分屏…',
           en: 'Validating controls & saving screen…',
-        };
+        } : { zh: '正在处理任务…', en: 'Working on the task…' };
         const { thinking: _tv, ...slimValidating } = lane;
         options.onLaneUpdate(slimValidating, stripHeavyFieldsForLiveSse(lanes));
 
@@ -556,10 +557,10 @@ export async function runParallelSubagents(
             hadValidatorError = true;
             roundAllOk = false;
             lane.phase = 'THINKING';
-            lane.liveAction = {
+            lane.liveAction = ownScreenId ? {
               zh: '正在自动修正控件属性…',
               en: 'Auto-repairing control attributes…',
-            };
+            } : { zh: '正在检查任务中的问题…', en: 'Checking a problem with the task…' };
           }
           const tr: ToolResultMessage<JsonObject> = {
             role: 'toolResult',
@@ -598,10 +599,10 @@ export async function runParallelSubagents(
       lane.progressChars = Math.max(lane.progressChars ?? 0, subThinking.length + subText.length);
       lane.status = 'DONE';
       lane.phase = 'DONE';
-      lane.liveAction = {
+      lane.liveAction = lane.wroteScreen ? {
         zh: '已完成绘制并落盘 ✓',
         en: 'Screen rendered & saved ✓',
-      };
+      } : { zh: '已完成任务', en: 'Task completed' };
       lane.completedAt = new Date().toISOString();
       const { thinking: _td, ...slimDone } = lane;
       options.onLaneUpdate(slimDone, stripHeavyFieldsForLiveSse(lanes));

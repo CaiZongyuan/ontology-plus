@@ -188,17 +188,10 @@ test.describe('Prototype Step: Redesigned Shell, Business Screen Diff & Outdated
 
     // Resize to compact (<1280px) viewport on Canvas pane, click "让 AI 助手更新" -> automatically switches to Conversation pane & streams run!
     await page.setViewportSize({ width: 1120, height: 820 });
-    await page.getByTestId('workspace-pane-canvas').click();
-    await expect(page.getByTestId('project-workspace')).toHaveAttribute(
-      'data-active-pane',
-      'canvas',
-    );
+    await expect(page.getByTestId('agent-panel')).toBeHidden();
 
     await page.getByTestId('prototype-ask-assistant-update-btn').click();
-    await expect(page.getByTestId('project-workspace')).toHaveAttribute(
-      'data-active-pane',
-      'conversation',
-    );
+    await expect(page.getByTestId('agent-panel-scrim')).toBeVisible();
     await expect(
       page
         .getByTestId('agent-panel')

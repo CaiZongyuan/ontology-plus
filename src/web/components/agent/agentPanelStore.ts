@@ -7,7 +7,7 @@ export const AGENT_PANEL_DEFAULT_WIDTH = 384;
 /** Wide Mode leaves the module canvas at least half of the remaining shell, so it never collapses. */
 export const AGENT_PANEL_WIDE_CSS_WIDTH = 'clamp(400px, 38vw, 600px)';
 /** Below this viewport width the panel is an overlay instead of a shell column. */
-export const AGENT_PANEL_OVERLAY_QUERY = '(max-width: 1100px)';
+export const AGENT_PANEL_OVERLAY_QUERY = '(max-width: 1279px)';
 
 const STORAGE_KEY = 'onto_agent_panel';
 const SESSION_SCOPE_STORAGE_KEY = 'onto_agent_panel_sessions';
@@ -138,14 +138,12 @@ export const useAgentPanelStore = create<AgentPanelState>((set, get) => ({
     const isNarrow =
       typeof window !== 'undefined' &&
       typeof window.matchMedia === 'function' &&
-      (window.matchMedia(AGENT_PANEL_OVERLAY_QUERY).matches ||
-        window.matchMedia('(max-width: 1279px)').matches);
+      window.matchMedia(AGENT_PANEL_OVERLAY_QUERY).matches;
     if (isNarrow) {
-      set({ overlayOpen: true, open: true });
+      set({ overlayOpen: true });
     } else {
-      set({ open: true });
+      get().setOpen(true);
     }
-    writePrefs({ open: true, width: get().width, wideMode: get().wideMode });
   },
   setHoveredAnchor: (hoveredAnchor) => set({ hoveredAnchor }),
   setWidth: (width, opts) => {

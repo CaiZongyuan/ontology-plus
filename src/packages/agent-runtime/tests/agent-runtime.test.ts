@@ -1252,6 +1252,12 @@ describe('agent-runtime deep module', () => {
       messages: [],
     });
 
+    const afterTools = store.createAgentSession({ projectId: 'proj-contract', agentKind: 'COPILOT' });
+    store.saveAgentSession({ ...afterTools, status: 'RUNNING', messages: [{
+      id: 'tool-turn', role: 'user', content: 'Add a new payment rule', timestamp: new Date().toISOString(),
+    }] });
+    store.saveAgentCheckpoint(afterTools.id, 'PI_UNIFIED_COPILOT', JSON.stringify({ phase: 'TOOLS_STARTED' }));
+
     // Case C: Orphaned RUNNING session WITH resumable TURN_STARTED checkpoint + user prompt -> autoResumeInterruptedAgentSessions resumes and completes!
     const resumableSess = store.createAgentSession({
       projectId: 'proj-contract',
@@ -1282,7 +1288,8 @@ describe('agent-runtime deep module', () => {
     );
 
     const processed = await autoResumeInterruptedAgentSessions(store);
-    expect(processed).toBe(2);
+    expect(processed).toBe(3);
+    expect(store.getAgentSession(afterTools.id)?.messages.at(-1)?.errorDiagnostic?.code).toBe('AGENT_RUN_INTERRUPTED');
 
     const afterNonResumable = store.getAgentSession(nonResumableSess.id)!;
     expect(afterNonResumable.status).toBe('ERROR');

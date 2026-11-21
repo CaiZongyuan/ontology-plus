@@ -215,11 +215,8 @@ describe('All-Screens Business View Vocabulary Guard (#74)', () => {
       renderInBothLocales('WorkbenchShell error health pill + running indicator', () => (
         <WorkbenchShell />
       ));
-      renderInBothLocales('WorkbenchShell compact canvas pane', () => (
-        <WorkbenchShell compactWorkspaceOverride initialWorkspacePane="canvas" />
-      ));
-      renderInBothLocales('WorkbenchShell compact conversation pane', () => (
-        <WorkbenchShell compactWorkspaceOverride initialWorkspacePane="conversation" />
+      renderInBothLocales('WorkbenchShell compact canvas', () => (
+        <WorkbenchShell compactWorkspaceOverride />
       ));
       renderInBothLocales('SecondaryMoreMenu trigger', () => (
         <SecondaryMoreMenu

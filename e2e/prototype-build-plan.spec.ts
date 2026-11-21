@@ -103,19 +103,12 @@ test.describe('Build Plan (#90): plan first, real per-screen states, continue on
     await expect(page.getByTestId('prototype-phase-tours')).toHaveAttribute('data-phase-status', 'done');
     await expect(page.getByTestId('prototype-phase-tours')).toContainText('演示路线已就绪');
 
-    // The build log: time, assistant, screen, business sentence; the failure line can continue.
-    const log = page.getByTestId('prototype-build-log');
-    const failLine = log.locator(`[data-testid="prototype-build-log-entry"][data-kind="screen_failed"][data-screen-id="${FAILING}"]`);
-    await expect(failLine).toContainText('「退款审批」没画完');
-    await expect(failLine).toContainText(/\d{2}:\d{2}:\d{2}/);
-    await expect(failLine).toContainText(/助手 \d/);
-    await expect(page.getByTestId(`prototype-build-log-resume-${FAILING}`)).toBeVisible();
-    await expect(log).not.toContainText('SCR-');
+    await expect(page.getByTestId('prototype-build-log')).toHaveCount(0);
     await page.screenshot({ path: `${EVIDENCE}/e2e-screen-failed.png` });
 
-    // Clicking a log line focuses that screen (manual camera: follow stops).
+    // Selecting a screen focuses it (manual camera: follow stops).
     const viewport = page.getByTestId('prototype-canvas-viewport');
-    await log.locator(`[data-testid="prototype-build-log-entry"][data-kind="screen_done"][data-screen-id="SCR-ORDERS"] button`).click();
+    await card(page, 'SCR-ORDERS').click();
     await expect(viewport).toHaveAttribute('data-following', 'false');
     // Double-clicking a strip card tries that screen; Esc exits.
     await card(page, 'SCR-HOME').dblclick();
@@ -162,9 +155,6 @@ test.describe('Build Plan (#90): plan first, real per-screen states, continue on
     }
     await expect(page.getByTestId(`prototype-strip-failure-${FAILING}`)).toHaveCount(0);
     await expect(page.getByTestId('prototype-phase-screens')).toHaveAttribute('data-phase-status', 'done');
-    await expect(log.locator('[data-testid="prototype-build-log-entry"][data-kind="screen_resumed"]')).toContainText(
-      '继续画「退款审批」',
-    );
     await expect(page.getByTestId(`prototype-artboard-${FAILING}`)).toHaveAttribute('data-screen-status', 'ready');
     const refund = page.frameLocator(`[data-testid="prototype-artboard-frame-${FAILING}"]`);
     await expect(refund.locator('[data-element-id="EL-REFUND-BUTTON-1"]')).toBeVisible();
@@ -195,7 +185,6 @@ test.describe('Build Plan (#90): plan first, real per-screen states, continue on
     await resumeSummary.getByTestId('change-summary-undo-btn').click();
     await expect(page.getByTestId('prototype-history-btn')).toContainText('R3', { timeout: 15_000 });
     await expect(page.getByTestId('prototype-build-phases')).toHaveCount(0);
-    await expect(log.locator('[data-testid="prototype-build-log-entry"]')).toHaveCount(0);
     await expect(card(page, FAILING)).not.toHaveAttribute('data-build-status', 'done');
 
     test.info().annotations.push({ type: 'plan-seconds', description: planSeconds.toFixed(1) });

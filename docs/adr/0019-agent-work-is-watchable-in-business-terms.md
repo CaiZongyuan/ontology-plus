@@ -21,3 +21,4 @@ The Prototype step is the first place this applies: an `Interactive Prototype` i
 ## Amendments
 
 - **2026-11-18: prototype review (#88) settled the Prototype step's presentation.** The Build Plan reads as a phase bar, a build log, and a strip of screens; each agent shows a cursor (an arrow by default, chosen per device) at the element it is really writing, with its narration beside it and in the log; Prototype Notes are handwritten with arrows in blank space and leave the prototype usable; the prototype can be viewed as artboards on a canvas or as a real web page, and opened on its own as a standalone page.
+- **2026-11-21: retire the separate build log, not live progress.** The phase bar and screens still show what is being built. A failed screen offers continuation at that screen; users do not need a second activity feed to find it. The right-hand conversation follows ADR 0014. Demo Tour steps remain part of playback and are not a build log.

@@ -237,7 +237,7 @@ describe('web mode pages', () => {
     expect(html).toContain('data-nav-screen="SCR-B"');
   });
 
-  it('suggests web mode in the build log when a build finishes', async () => {
+  it('suggests web mode on the canvas when a build finishes', async () => {
     const tracker = createPrototypeLiveTracker();
     let state: PrototypeLiveState = emptyPrototypeLiveState();
     for (const ev of tracker.observeDocument(doc('<p>排队中</p>', 'queued'))) state = applyPrototypeLiveEvent(state, ev);
@@ -245,8 +245,7 @@ describe('web mode pages', () => {
     await render({ documentHtml: '', live: state, busy: true, building: true });
     expect(q('prototype-web-mode-hint')).toBeNull();
     await render({ documentHtml: SAVED, live: null, busy: false });
-    const log = q('prototype-build-log')!;
-    expect(log.querySelector('[data-testid="prototype-web-mode-hint"]')).not.toBeNull();
+    expect(q('prototype-web-mode-hint')).not.toBeNull();
     await click(q('prototype-web-mode-hint-try'));
     expect(q('prototype-canvas-viewport')!.getAttribute('data-view')).toBe('web');
     expect(q('prototype-web-mode-hint')).toBeNull();

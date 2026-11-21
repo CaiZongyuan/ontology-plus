@@ -448,11 +448,7 @@ test.describe('Full Conversation & Context Inspector Cutover Across All 7 Surfac
 
       // 3. Compact (<1280px) viewport on Canvas pane: selecting canvas text & clicking "引用到对话" switches to Conversation pane with quote chip populated!
       await page.setViewportSize({ width: 1120, height: 820 });
-      await page.getByTestId('workspace-pane-canvas').click();
-      await expect(page.getByTestId('project-workspace')).toHaveAttribute(
-        'data-active-pane',
-        'canvas',
-      );
+      await expect(page.getByTestId('agent-panel')).toBeHidden();
       await page.evaluate(() => {
         const titleEl = document.querySelector('[data-testid="business-object-title"]');
         if (!titleEl) throw new Error('business-object-title not found');
@@ -466,10 +462,7 @@ test.describe('Full Conversation & Context Inspector Cutover Across All 7 Surfac
       const quoteBtn = page.getByTestId('selection-quote-btn');
       await expect(quoteBtn).toBeVisible();
       await quoteBtn.click();
-      await expect(page.getByTestId('project-workspace')).toHaveAttribute(
-        'data-active-pane',
-        'conversation',
-      );
+      await expect(page.getByTestId('agent-panel-scrim')).toBeVisible();
       await expect(panel.getByTestId('composer-quote-chip')).toHaveCount(1);
 
       // 4. Paste an unsent draft image attachment into composer -> reload page -> verify unsent image + quote chip survive reload!

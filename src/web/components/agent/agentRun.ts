@@ -112,6 +112,7 @@ export const PLATFORM_UNAVAILABLE_COPY: LocalizedText = {
 
 export interface AgentRunView {
   id: string;
+  cancellationPending?: boolean;
   title: LocalizedText;
   status: AgentRunStatus;
   /** One line describing what the agent is doing right now. */
@@ -1443,10 +1444,11 @@ function buildRunFromLiveDraft(
   });
   const activeStep = steps.find((s) => s.status === 'RUNNING');
   const liveStatus =
-    activeStep && activeStep.toolName ? activeStep.label : draft.liveStatus;
+    !draft.cancellationPending && activeStep?.toolName ? activeStep.label : draft.liveStatus;
 
   return {
     id: uMsg?.id ?? draft.runId,
+    ...(draft.cancellationPending ? { cancellationPending: true } : {}),
     title: summarizeUserPromptTitle(uMsg?.content ?? draft.userPrompt, draft.displayTitle),
     status: 'RUNNING',
     liveStatus,

@@ -95,6 +95,10 @@ _Avoid_: Background task, pipeline task, one-shot call
 The single place in the workbench where the user talks to agents and watches every Agent Run, showing the Agent Session that belongs to the module in view.
 _Avoid_: Chat drawer, task drawer, assistant sidebar
 
+**Subagent (子智能体)**:
+A helper to which the AI Assistant delegates a specific task within one Agent Run. Its work belongs to that run, not to a separate user conversation.
+_Avoid_: Specialist session, second AI Assistant
+
 **Model Call (模型调用)**:
 One request from an Agent Run to the language model and its response; a single Agent Run may contain many Model Calls, including those of its subagents.
 _Avoid_: Step (reserved for Project Step), turn, request, trace
