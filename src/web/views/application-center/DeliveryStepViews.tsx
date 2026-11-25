@@ -1602,13 +1602,43 @@ export const DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE: RunnableSystemSlotState = {
 
 export interface RunnableSystemSlotProps {
   readonly state?: RunnableSystemSlotState;
+  /** Business name of the application connected to this project, if any (TeaCo spec v0.3.1 §11.1). */
+  readonly connectedAppName?: string | null;
+  /** Opens the Operations Console, or its connect panel when nothing is connected yet. */
+  readonly onOpenConsole?: () => void;
 }
 
 export function RunnableSystemSlot({
   state = DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE,
+  connectedAppName = null,
+  onOpenConsole,
 }: RunnableSystemSlotProps) {
   const { t } = usePreferences();
   const hasOpenUrl = state.status === 'READY' && Boolean(state.openUrl?.trim());
+  if (connectedAppName) {
+    return (
+      <article className="card flex flex-col gap-2.5" data-testid="runnable-system-slot" data-slot-status="CONNECTED">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Rocket size={16} className="shrink-0 text-primary" aria-hidden="true" />
+            <h4 className="card-title m-0">{t('可运行系统', 'Runnable system')}</h4>
+          </div>
+          <span className="badge-ok" data-testid="runnable-system-slot-badge">{t('已接入', 'Connected')}</span>
+        </div>
+        <p className="m-0 text-[13px] leading-relaxed text-muted-foreground">
+          {t(
+            `「${connectedAppName}」已经接入，可以在经营驾驶舱里看实时的经营情况。`,
+            `“${connectedAppName}” is connected; watch the business live in the Operations Console.`,
+          )}
+        </p>
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          <Button variant="accent" size="sm" onClick={onOpenConsole} data-testid="runnable-system-open-console">
+            {t('打开经营驾驶舱', 'Open the Operations Console')}
+          </Button>
+        </div>
+      </article>
+    );
+  }
 
   const badgeText =
     state.status === 'READY'
@@ -1669,6 +1699,13 @@ export function RunnableSystemSlot({
           </a>
         </div>
       )}
+      {onOpenConsole && !hasOpenUrl && (
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          <Button size="sm" onClick={onOpenConsole} data-testid="runnable-system-connect">
+            {t('接入开发好的应用', 'Connect the built application')}
+          </Button>
+        </div>
+      )}
     </article>
   );
 }
@@ -1720,6 +1757,13 @@ export function DeliveryStepView({
   const [livePackageOutdated, setLivePackageOutdated] = useState(false);
 
   const projectId = data?.activeProject.id ?? '';
+  const connectedApp = data?.connectedApps?.find((app) => app.projectId === projectId) ?? null;
+  const connectedAppNameText = connectedApp
+    ? (connectedApp.manifest as { application?: { name?: { zh?: string; en?: string } } }).application?.name
+    : undefined;
+  const connectedAppName = connectedApp
+    ? t(connectedAppNameText?.zh ?? connectedApp.baseUrl, connectedAppNameText?.en ?? connectedApp.baseUrl)
+    : null;
   const projectApps = useMemo(
     () => (data?.assembledApplications ?? []).filter((item) => item.projectId === projectId),
     [data?.assembledApplications, projectId],
@@ -2328,7 +2372,11 @@ export function DeliveryStepView({
           </h3>
 
           {/* 1. Endpoint Slot: Runnable System */}
-          <RunnableSystemSlot state={runnableSystemSlot} />
+          <RunnableSystemSlot
+            state={runnableSystemSlot}
+            connectedAppName={connectedAppName}
+            {...(onNavigate ? { onOpenConsole: () => onNavigate('operations-console') } : {})}
+          />
 
           {/* 2. Development Package */}
           <article className="card flex flex-col gap-2.5" data-testid="deliverable-dev-package">

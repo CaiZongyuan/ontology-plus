@@ -22,6 +22,7 @@ import {
   SystemSettingsView,
 } from '../views/CapabilityAndDataViews.js';
 import { KnowledgeGraphWorkbenchView } from '../views/KnowledgeGraphWorkbenchView.js';
+import { OperationsConsoleView } from '../views/operations-console/OperationsConsoleView.js';
 import {
   resolveNavViewId,
   type CanonicalNavViewId,
@@ -38,6 +39,7 @@ export type NavViewRenderer = (props: NavViewRenderProps) => React.ReactElement 
 
 export const NAV_VIEW_REGISTRY: Record<CanonicalNavViewId, NavViewRenderer> = {
   overview: ({ onNavigate }) => <OverviewSessionsView onNavigate={onNavigate} />,
+  'operations-console': ({ onNavigate }) => <OperationsConsoleView onNavigate={onNavigate} />,
   'app-requirements': ({ onNavigate }) => <RequirementsStepView onNavigate={onNavigate} />,
   'app-prototype': ({ onNavigate }) => <PrototypeStudioView onNavigate={onNavigate} />,
   'app-ontology': ({ onNavigate }) => <BusinessModelStepView onNavigate={onNavigate} />,

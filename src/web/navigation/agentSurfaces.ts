@@ -87,6 +87,16 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
       en: 'Ask about project progress or start the next action…',
     },
   },
+  // The console's own assistant (asking for figures, approved actions) arrives in milestone M3;
+  // until then the console is not given an Agent Panel (App.tsx renders none for it).
+  'operations-console': {
+    title: AI_ASSISTANT_TITLE,
+    sessionKind: 'COPILOT',
+    placeholder: {
+      zh: '询问经营情况…',
+      en: 'Ask how the business is doing…',
+    },
+  },
   'app-requirements': REQUIREMENTS_AGENT_SURFACE,
   'app-prototype': {
     title: AI_ASSISTANT_TITLE,

@@ -39,6 +39,7 @@ import {
 
 const ALL_ACTIVE_NAV_ITEMS: NavViewId[] = [
   'overview',
+  'operations-console',
   'app-requirements',
   'app-prototype',
   'app-ontology',
@@ -76,7 +77,7 @@ describe('navigation catalog and URL state', () => {
       'ANALYTICS',
       'PLATFORM',
     ]);
-    expect(NAV_ITEMS).toHaveLength(23);
+    expect(NAV_ITEMS).toHaveLength(24);
     expect(NAV_ITEMS.map((item) => item.id)).toEqual(ALL_ACTIVE_NAV_ITEMS);
     expect(NAV_ITEMS.some((item) => String(item.id) === 'app-req-explore')).toBe(false);
     expect(NAV_ITEMS.some((item) => String(item.id) === 'app-req-docs')).toBe(false);

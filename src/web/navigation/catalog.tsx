@@ -11,6 +11,7 @@ import {
   FileCode2,
   FileText,
   FolderKanban,
+  Gauge,
   GitBranch,
   Layers,
   LayoutTemplate,
@@ -26,6 +27,8 @@ import type { BilingualText, ProjectStepId } from '../../packages/business-vocab
 
 export type CanonicalNavViewId =
   | 'overview'
+  // Operations Console (经营驾驶舱): the connected Runnable System's own workspace
+  | 'operations-console'
   // Application Center (应用中心)
   | 'app-requirements'
   | 'app-prototype'
@@ -103,6 +106,13 @@ export const NAV_ITEMS: NavItemSpec[] = [
     labelZh: '首页',
     labelEn: 'Home',
   },
+  {
+    id: 'operations-console',
+    group: 'OVERVIEW',
+    labelZh: '经营驾驶舱',
+    labelEn: 'Operations Console',
+  },
+
   // Application Center
   {
     id: 'app-requirements',
@@ -245,6 +255,7 @@ export const NAV_ITEMS: NavItemSpec[] = [
 
 export const NAV_ICONS: Record<CanonicalNavViewId, React.ReactNode> = {
   overview: <FolderKanban size={16} />,
+  'operations-console': <Gauge size={16} />,
   'app-requirements': <FileText size={16} />,
   'app-prototype': <LayoutTemplate size={16} />,
   'app-ontology': <Boxes size={16} />,
@@ -392,6 +403,7 @@ for (const area of SECONDARY_AREAS) {
 
 export type ShellRouteContext =
   | { readonly kind: 'home'; readonly view: 'overview' }
+  | { readonly kind: 'console'; readonly view: 'operations-console' }
   | {
       readonly kind: 'project';
       readonly step: ProjectStepId;
@@ -424,6 +436,9 @@ export function resolveShellRouteContext(view: string | null | undefined): Shell
   const canonical = resolveNavViewId(view);
   if (canonical === 'overview') {
     return { kind: 'home', view: 'overview' };
+  }
+  if (canonical === 'operations-console') {
+    return { kind: 'console', view: 'operations-console' };
   }
   const step = getProjectStepForView(canonical);
   if (step) {

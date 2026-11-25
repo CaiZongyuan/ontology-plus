@@ -490,10 +490,14 @@ export function WorkbenchShell({
 
   const [deliveryViewMode] = useStepViewMode('DELIVERY');
   const [deliveryTechTab] = useDeliveryTechTab();
-  const agentSurface = resolveWorkspaceAgentSurface(activeView, {
-    deliveryViewMode,
-    deliveryTechTab,
-  });
+  // The Operations Console gets its own assistant in milestone M3 (TeaCo spec §19.4); none until then.
+  const agentSurface =
+    routeContext.kind === 'console'
+      ? null
+      : resolveWorkspaceAgentSurface(activeView, {
+          deliveryViewMode,
+          deliveryTechTab,
+        });
   const narrowViewport = useAgentPanelOverlayMode();
   const panelOverlay = compactWorkspaceOverride ?? narrowViewport;
   const agentPanelOpen = useAgentPanelStore((s) => s.open);
@@ -772,6 +776,33 @@ export function WorkbenchShell({
             </nav>
           )}
 
+          {routeContext.kind === 'console' && data && (
+            <nav className="wb-crumbs" aria-label={t('当前位置', 'Breadcrumb')}>
+              <span className="wb-crumb-sep" aria-hidden="true">
+                /
+              </span>
+              <button
+                type="button"
+                className="wb-crumb-link"
+                onClick={() => setActiveView('overview')}
+              >
+                {t('项目', 'Projects')}
+              </button>
+              <span className="wb-crumb-sep" aria-hidden="true">
+                /
+              </span>
+              <ProjectSwitcherSelect
+                projects={data.projects}
+                activeProjectId={data.activeProject.id}
+                onSelectProject={switchProject}
+              />
+              <span className="wb-crumb-sep" aria-hidden="true">
+                /
+              </span>
+              <span className="wb-crumb-current">{t('经营驾驶舱', 'Operations Console')}</span>
+            </nav>
+          )}
+
           {routeContext.kind === 'project' && data && (
             <nav className="wb-crumbs" aria-label={t('当前位置', 'Breadcrumb')}>
               <span className="wb-crumb-sep" aria-hidden="true">
@@ -963,6 +994,16 @@ export function WorkbenchShell({
                 </div>
               )}
             </div>
+          </main>
+        )}
+
+        {routeContext.kind === 'console' && (
+          <main className="wb-console-main" data-testid="console-workspace">
+            {loading || !data ? (
+              <LoadingState />
+            ) : (
+              <WorkbenchViewHost activeView={activeView} onNavigate={setActiveView} />
+            )}
           </main>
         )}
 

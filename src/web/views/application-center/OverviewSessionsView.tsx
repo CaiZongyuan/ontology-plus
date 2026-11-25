@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { ArrowRight, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { ArrowRight, Gauge, Loader2, MoreHorizontal, Plug, Trash2 } from 'lucide-react';
 import {
   BUSINESS_VOCABULARY,
   PROJECT_STEP_IDS,
@@ -286,6 +286,15 @@ export function OverviewSessionsView({
     onNavigate(getDefaultViewForStep(targetStep));
   };
 
+  /** Opens the project's Operations Console, or its connect panel when nothing is connected yet. */
+  const handleOpenConsole = async (project: ProjectSummary) => {
+    if (project.id !== data.activeProject.id) {
+      await switchProject(project.id);
+    }
+    onNavigate('operations-console');
+  };
+  const connectedProjectIds = new Set((data.connectedApps ?? []).map((app) => app.projectId));
+
   const handleConfirmDelete = async () => {
     if (!deletingProj) return;
     try {
@@ -495,6 +504,18 @@ export function OverviewSessionsView({
                     </span>
                   </button>
 
+                  {connectedProjectIds.has(project.id) && (
+                    <button
+                      type="button"
+                      data-testid={`home-open-console-${project.id}`}
+                      onClick={() => void handleOpenConsole(project)}
+                      className="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-sm border border-border bg-card px-2.5 text-[12.5px] font-medium text-foreground hover:border-border-strong hover:bg-muted"
+                    >
+                      <Gauge size={13} aria-hidden="true" className="text-primary" />
+                      <span>{t('经营驾驶舱', 'Operations Console')}</span>
+                    </button>
+                  )}
+
                   <DropdownMenu>
                     <DropdownMenuTrigger
                       data-testid={`home-project-more-btn-${project.id}`}
@@ -506,7 +527,16 @@ export function OverviewSessionsView({
                     >
                       <MoreHorizontal size={15} aria-hidden="true" />
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuContent align="end" className="w-44">
+                      {!connectedProjectIds.has(project.id) && (
+                        <DropdownMenuItem
+                          data-testid={`home-project-connect-btn-${project.id}`}
+                          onClick={() => void handleOpenConsole(project)}
+                        >
+                          <Plug size={14} aria-hidden="true" />
+                          <span>{t('接入开发好的应用', 'Connect the built application')}</span>
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem
                         variant="destructive"
                         data-testid={`home-project-delete-btn-${project.id}`}

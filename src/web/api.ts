@@ -88,6 +88,7 @@ import {
   TechnologyProfile,
   ToolDefinitionSource,
   WritebackInterface,
+  type ConnectedAppRecord,
 } from '../packages/workspace-store/index.js';
 import type {
   LlmPingResult,
@@ -146,6 +147,8 @@ export interface BootstrapPayload {
   fourLayerAssets: FourLayerAsset[];
   assembledApplications: AssembledApplication[];
   packageSnapshots?: DevelopmentPackageSnapshot[];
+  /** Runnable Systems connected to projects (TeaCo spec v0.3.1 §11.3). */
+  connectedApps?: ConnectedAppRecord[];
   generatedSkills: GeneratedSkill[];
   legacySystems: LegacySystemConfig[];
   extractionJobs: ExtractionJob[];
