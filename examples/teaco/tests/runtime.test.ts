@@ -71,6 +71,8 @@ describe('TeaCo serves connection contract v1', () => {
     expect(attention.rows[0]).toMatchObject({ key: 'HRB-PEPMNT-2OZ', values: { stock: 0 } });
     const issues = await client.dataIssues('owner');
     expect(issues.issues.filter((i) => i.needsDecision).map((i) => i.id)).toEqual(['negative-stock-HRB-PEPMNT-2OZ']);
+    // Only the owner is asked to decide; managers and finance see the issue without the request.
+    for (const actor of ['jonah', 'finance']) expect((await client.dataIssues(actor)).issues.some((i) => i.needsDecision)).toBe(false);
     expect((await client.activity('owner')).events[0]!.text.zh).toContain('142 位客户');
   });
 

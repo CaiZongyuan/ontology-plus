@@ -337,7 +337,11 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
     });
   });
 
-  app.get('/runtime/data-issues', (c) => c.json({ asOf: now().toISOString(), issues: c.var.data.issues }));
+  app.get('/runtime/data-issues', (c) => {
+    // Everyone may see the data check; only the owner decides repairs (stock and imports are admin work, §3.1).
+    const decides = c.var.actor.access.kind === 'all' && !c.var.actor.access.readOnly;
+    return c.json({ asOf: now().toISOString(), issues: c.var.data.issues.map((i) => ({ ...i, needsDecision: i.needsDecision && decides })) });
+  });
 
   app.get('/runtime/activity', async (c) => c.json({ asOf: now().toISOString(), events: await repository.listActivity(20) }));
 
