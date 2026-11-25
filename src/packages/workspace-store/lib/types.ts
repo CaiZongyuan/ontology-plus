@@ -1030,6 +1030,33 @@ export interface LegacySystemConfig {
   description: string;
 }
 
+/**
+ * The application connected to a project's Runnable System (TeaCo spec v0.3.1 §11.3). The manifest
+ * is stored as the application served it; `application-runtime` owns its schema.
+ */
+export type ConnectedAppStatus = 'CONNECTED' | 'DRIFTED';
+export type ConnectedAppDriftReason = 'MANIFEST_CHANGED' | 'MODEL_CHANGED';
+
+export interface ConnectedAppHint {
+  readonly code: string;
+  readonly objectId?: string;
+  readonly message: { readonly zh: string; readonly en: string };
+}
+
+export interface ConnectedAppRecord {
+  readonly projectId: string;
+  readonly baseUrl: string;
+  readonly status: ConnectedAppStatus;
+  readonly driftReason: ConnectedAppDriftReason | null;
+  readonly manifest: Record<string, unknown>;
+  readonly manifestFingerprint: string;
+  /** Hash of the Ontology Suite the connection was checked against; null when none was confirmed. */
+  readonly modelHash: string | null;
+  readonly hints: readonly ConnectedAppHint[];
+  readonly connectedAt: string;
+  readonly checkedAt: string;
+}
+
 export interface ExtractionJob {
   id: string;
   systemId: string;
@@ -1609,6 +1636,11 @@ export interface WorkspaceStore {
   listLegacySystems(): LegacySystemConfig[];
   saveLegacySystem(sys: LegacySystemConfig): LegacySystemConfig;
   deleteLegacySystem(systemId: string): void;
+  // Connected Runnable System (TeaCo spec v0.3.1 §11.3): at most one per project
+  getConnectedApp(projectId: string): ConnectedAppRecord | undefined;
+  listConnectedApps(): ConnectedAppRecord[];
+  saveConnectedApp(record: ConnectedAppRecord): ConnectedAppRecord;
+  deleteConnectedApp(projectId: string): boolean;
   listExtractionJobs(projectId?: string): ExtractionJob[];
   /**
    * Create an Ontology Extraction job. Without `extraction` the store runs the

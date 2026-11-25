@@ -119,6 +119,7 @@ import {
   DatabaseResource,
   DesignBrief,
   DevelopmentPackageSnapshot,
+  ConnectedAppRecord,
   ExtractionJob,
   FourLayerAsset,
   GeneratedSkill,
@@ -3981,6 +3982,25 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     deleteLegacySystem(systemId) {
       deleteItem('legacy_systems', systemId);
+    },
+
+    getConnectedApp(projectId) {
+      return getItem<ConnectedAppRecord>('connected_apps', projectId);
+    },
+
+    listConnectedApps() {
+      return listItems<ConnectedAppRecord>('connected_apps');
+    },
+
+    saveConnectedApp(record) {
+      if (!getProjectSuite(record.projectId)) throw new Error(`Project ${record.projectId} not found`);
+      return putItem('connected_apps', record.projectId, record, record.projectId);
+    },
+
+    deleteConnectedApp(projectId) {
+      const existed = getItem<ConnectedAppRecord>('connected_apps', projectId) !== undefined;
+      if (existed) deleteItem('connected_apps', projectId);
+      return existed;
     },
 
     listExtractionJobs(projectId) {

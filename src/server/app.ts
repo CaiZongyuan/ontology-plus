@@ -64,6 +64,8 @@ import {
 } from '../packages/package-compiler/index.js';
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
+import { registerConnectedAppRoutes } from './connected-apps.js';
+import type { FetchLike } from '../packages/application-runtime/index.js';
 import { registerArtifactHistoryRoutes } from './artifact-history.js';
 import { registerContextSnapshotRoutes } from './context-snapshots.js';
 import { registerBusinessModelEditRoutes } from './business-model-edits.js';
@@ -76,6 +78,8 @@ import { registerStepHandoffRoutes } from './step-handoff.js';
 
 export interface ApiAppOptions {
   agentRunHooks?: AgentRunLifecycleHooks | readonly AgentRunLifecycleHooks[];
+  /** How connected applications are reached (TeaCo spec §11.3); tests pass an in-process app. */
+  connectedAppFetch?: FetchLike;
 }
 
 export function createApiApp(
@@ -215,6 +219,7 @@ export function createApiApp(
       packageSnapshots: activeProject.id
         ? listProjectPackageSnapshots(store, activeProject.id)
         : [],
+      connectedApps: store.listConnectedApps(),
       generatedSkills: store.listGeneratedSkills(),
       legacySystems: store.listLegacySystems(),
       extractionJobs: store.listExtractionJobs(),
@@ -1288,6 +1293,7 @@ export function createApiApp(
   });
 
   registerApplicationDeliveryRoutes(app, store);
+  registerConnectedAppRoutes(app, store, options?.connectedAppFetch ? { fetch: options.connectedAppFetch } : {});
   registerArtifactHistoryRoutes(app, store);
   registerContextSnapshotRoutes(app, store);
   registerBusinessModelEditRoutes(app, store);
