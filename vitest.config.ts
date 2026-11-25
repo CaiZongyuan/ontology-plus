@@ -3,6 +3,6 @@ import viteConfig from './vite.config.js';
 
 export default mergeConfig(viteConfig, defineConfig({
   test: {
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: ['src/**/*.test.{ts,tsx}', 'examples/**/*.test.ts'],
   },
 }));

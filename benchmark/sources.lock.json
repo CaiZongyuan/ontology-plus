@@ -1,0 +1,76 @@
+{
+  "sources": [
+    {
+      "upstream": "https://github.com/erphq/business-bench",
+      "commit": "b6e3b15c80b6f6cf11b7a35f10455e694145efe0",
+      "path": "tasks/build/order-management",
+      "license": "MIT",
+      "retrievedAt": "2026-11-25",
+      "files": [
+        {
+          "path": "task.yaml",
+          "gitBlob": "9b10bc6d522b196e51d0a5c91154630541a15452",
+          "sha256": "4ae95295f18625749eee2483e650fc71bd45a974c4d4da22cfb66e340ada9ffe",
+          "use": "requirements, checklist and changes (read from upstream; not vendored)"
+        },
+        {
+          "path": "checklist.md",
+          "gitBlob": "2b8b912ba6036446a6b5fddc521ebb65c35bc515",
+          "sha256": "a88615d22bd9d59cb9400a2bdbf5d9a952957f8117200723d9921f74f6dcb75f",
+          "use": "requirements, checklist and changes (read from upstream; not vendored)"
+        },
+        {
+          "path": "seed/customers.csv",
+          "gitBlob": "71caf6548466f763e85c420bcd0b929b3000f47c",
+          "sha256": "abe0b221084ba2cc5dd3e51fc6f34e44470cfe7fc19d1fd3b0c19afc078bdd90",
+          "vendoredAs": "benchmark/datasets/bb-seed0/customers.csv",
+          "use": "public fixture (bb-seed0)"
+        },
+        {
+          "path": "seed/products.csv",
+          "gitBlob": "93e7be5685d444cce8e5f4bbdc5ce8757601cae2",
+          "sha256": "2a4658e4de4c3a8b15b92cb40322961cad34dc599a514c63c202c19d4ec7d191",
+          "vendoredAs": "benchmark/datasets/bb-seed0/products.csv",
+          "use": "public fixture (bb-seed0)"
+        },
+        {
+          "path": "seed/order_lines.csv",
+          "gitBlob": "6d9fac1c3a5ff775164262d196dbe9367e07d7e9",
+          "sha256": "2d6eef577fe2b67e4bc7a7108945f0a980ddd3b07aa8739658663834efd454ed",
+          "vendoredAs": "benchmark/datasets/bb-seed0/order_lines.csv",
+          "use": "public fixture (bb-seed0)"
+        },
+        {
+          "path": "reference/counts.json",
+          "gitBlob": "59be3d3e8b936143b1051d15c585bf9d626e86c9",
+          "sha256": "59062b1baa6811c6a41687bc2da17181332ea2bcee72b13ddf9a19e73ffa2453",
+          "use": "grader reference; not vendored, never mounted for agents"
+        },
+        {
+          "path": "changes/1.md",
+          "gitBlob": "6bd46b7775dc804aaa4902c71f92b85ffdaa13b4",
+          "sha256": "4a9b2bae97f04bdc22efd1c0cb5d02eead0e09dccd4ec97d93d7d4cad9b512f7",
+          "use": "requirements, checklist and changes (read from upstream; not vendored)"
+        },
+        {
+          "path": "changes/2.md",
+          "gitBlob": "1569517d4631a4bcaaecaee617695352ea7abbd4",
+          "sha256": "8af0e67b9af2f9e6311c33a59a38c7235d5ac9fd0399aafee408ae6ab5633a33",
+          "use": "requirements, checklist and changes (read from upstream; not vendored)"
+        },
+        {
+          "path": "changes/3.md",
+          "gitBlob": "bb399ba481ff97484bd8956aad0ac90549b853f8",
+          "sha256": "5bf5ae3f116cae52d759026c1c25fcda86d703d3bc137353f8199e326a2beed6",
+          "use": "requirements, checklist and changes (read from upstream; not vendored)"
+        },
+        {
+          "path": "gen.py",
+          "gitBlob": "ae3aafa68e91d54a3861da9bfb41fa35d3c94c22",
+          "sha256": "99f8a6644f384c9982032a25eb2f6b12c4f7f4b6a707359c31f924d6aa207b93",
+          "use": "requirements, checklist and changes (read from upstream; not vendored)"
+        }
+      ]
+    }
+  ]
+}
