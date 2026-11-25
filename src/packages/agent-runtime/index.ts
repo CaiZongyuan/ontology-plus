@@ -82,12 +82,27 @@ export {
   findMissingCanonicalSrsHeadings,
   executeDomainRunToolCall,
   executeDomainRunTool,
+  buildMockMetricInsightToolArgs,
+  buildMockScenarioAttributionToolArgs,
+  type MockAnalyticsPlan,
   type DomainRunToolName,
   type StructuredDomainActionKind,
   type ParsedStructuredDomainAction,
   type DomainToolExecutionResult,
   type DomainToolExecutionOptions,
 } from './lib/domain-run-tools.js';
+
+export {
+  gatherEvidence,
+  runGroundedQuery,
+  shareBreakdown,
+  describeEvidence,
+  type Evidence,
+  type EvidenceGap,
+  type EvidenceGapResult,
+  type EvidenceResult,
+  type ShareRow,
+} from './lib/analytics-evidence.js';
 
 export {
   VALID_INSPO_STYLES,

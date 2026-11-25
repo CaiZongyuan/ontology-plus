@@ -60,6 +60,27 @@ export interface McpHandlerOptions {
   };
 }
 
+/**
+ * Where an object lives according to MM: its master table, primary key, and column → attribute
+ * names. Identifiers are only used when they are plain SQL names.
+ */
+function masterSourceOf(project: ProjectDetail, objectName: string) {
+  const wanted = objectName.toLowerCase();
+  const mapping = (project.suite.MM?.mappings ?? []).find(
+    (m) => m.objectName.toLowerCase() === wanted || m.objectRef.toLowerCase() === wanted,
+  );
+  const table = mapping?.tableMappings.find((t) => t.tableRole === 'MASTER') ?? mapping?.tableMappings[0];
+  const plain = /^[A-Za-z_][A-Za-z0-9_]*$/;
+  if (!table || !plain.test(table.tableName) || !plain.test(table.primaryKey)) return null;
+  const attributeOf = new Map<string, string>();
+  for (const cm of table.columnMappings) {
+    if (!plain.test(cm.column)) continue;
+    const attribute = cm.attributeRef.includes('.') ? cm.attributeRef.split('.').slice(1).join('.') : cm.attributeRef;
+    if (plain.test(attribute)) attributeOf.set(cm.column, attribute);
+  }
+  return { table: table.tableName, primaryKey: table.primaryKey, attributeOf };
+}
+
 function mapOntologyTypeToJsonSchema(rawType: string): string {
   switch (rawType) {
     case 'Money':
@@ -597,41 +618,23 @@ export function handleOntologyMcpRequest(
         }
       }
 
-      // Enrich args from live SQLite tables when sqlExecutor is available (e.g. lookup creditRating by counterpartyId)
+      // Enrich args from the project's own tables (#19): an argument `<object>Id` is looked up in that
+      // object's MM master table by its primary key, and the row's mapped attributes fill in what the
+      // caller did not pass. Nothing is assumed about table or column names.
       const enrichedArgs: Record<string, unknown> = { ...args };
       if (options?.sqlExecutor) {
-        if (
-          typeof enrichedArgs.counterpartyId === 'string' &&
-          enrichedArgs.creditRating === undefined
-        ) {
+        for (const [key, value] of Object.entries(args)) {
+          if (!key.endsWith('Id') || typeof value !== 'string' || !value.trim()) continue;
+          const source = masterSourceOf(project, key.slice(0, -2));
+          if (!source) continue;
           try {
-            const cpRes = options.sqlExecutor(
-              `SELECT credit_rating, company_name FROM t_counterparty WHERE id = :cpId OR credit_code = :cpId LIMIT 1`,
-              { cpId: enrichedArgs.counterpartyId },
-            );
-            if (cpRes.rows[0]?.credit_rating) {
-              enrichedArgs.creditRating = cpRes.rows[0].credit_rating;
-              enrichedArgs.counterpartyName = cpRes.rows[0].company_name;
+            const row = options.sqlExecutor(`SELECT * FROM ${source.table} WHERE ${source.primaryKey} = :id LIMIT 1`, { id: value }).rows[0];
+            if (!row) continue;
+            for (const [column, attribute] of source.attributeOf) {
+              if (enrichedArgs[attribute] === undefined && row[column] !== undefined && row[column] !== null) enrichedArgs[attribute] = row[column];
             }
           } catch {
-            // Non-fatal if table does not exist in custom project
-          }
-        }
-        if (
-          typeof enrichedArgs.contractId === 'string' &&
-          enrichedArgs.totalAmount === undefined
-        ) {
-          try {
-            const ctRes = options.sqlExecutor(
-              `SELECT total_amount, risk_level, status FROM t_contract WHERE id = :ctId OR contract_no = :ctId LIMIT 1`,
-              { ctId: enrichedArgs.contractId },
-            );
-            if (ctRes.rows[0]?.total_amount !== undefined) {
-              enrichedArgs.totalAmount = ctRes.rows[0].total_amount;
-              enrichedArgs.currentStatus = ctRes.rows[0].status;
-            }
-          } catch {
-            // Non-fatal
+            // The lookup is an enrichment only; rules still see the caller's own arguments.
           }
         }
       }
@@ -678,76 +681,43 @@ export function handleOntologyMcpRequest(
               );
 
         const targetAgg = rpt?.primarySource.aggregateRef ?? matchedBehavior?.ownerEntity;
-        const mmMapping = (project.suite.MM?.mappings ?? []).find(
-          (m) => m.objectName === targetAgg || m.objectRef === targetAgg,
-        );
-        const masterTable = mmMapping?.tableMappings.find((t) => t.tableRole === 'MASTER')?.tableName;
-
-        let executedLiveSql = false;
-        let liveRows: Record<string, unknown>[] = [];
-        let executedSqlText = '';
-
-        if (options?.sqlExecutor && masterTable && /^[a-zA-Z0-9_]+$/.test(masterTable)) {
-          try {
-            const whereClauses: string[] = [];
-            const sqlParams: Record<string, unknown> = {};
-            if (typeof args.riskLevel === 'string' && args.riskLevel.trim()) {
-              whereClauses.push(`risk_level = :riskLevel`);
-              sqlParams.riskLevel = args.riskLevel.trim();
-            }
-            if (typeof args.status === 'string' && args.status.trim()) {
-              whereClauses.push(`status = :status`);
-              sqlParams.status = args.status.trim();
-            }
-            if (typeof args.region === 'string' && args.region.trim()) {
-              whereClauses.push(`region = :region`);
-              sqlParams.region = args.region.trim();
-            }
-            if (typeof args.keyword === 'string' && args.keyword.trim()) {
-              whereClauses.push(`(id = :keyword OR contract_no = :keyword)`);
-              sqlParams.keyword = args.keyword.trim();
-            }
-            const whereSql = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
-            executedSqlText = `SELECT * FROM ${masterTable}${whereSql} LIMIT 20`;
-            const sqlRes = options.sqlExecutor(executedSqlText, sqlParams);
-            liveRows = sqlRes.rows;
-            executedLiveSql = true;
-          } catch {
-            try {
-              executedSqlText = `SELECT * FROM ${masterTable} LIMIT 20`;
-              const sqlRes = options.sqlExecutor(executedSqlText);
-              liveRows = sqlRes.rows;
-              executedLiveSql = true;
-            } catch {
-              // Fall back to ontology-synthesized sample rows if table is not populated
-            }
-          }
-        }
-
-        if (executedLiveSql) {
+        const source = targetAgg ? masterSourceOf(project, targetAgg) : null;
+        const queryId = rpt?.id ?? targetTool.sourceElementId;
+        // Fail closed (#19): without a mapped table and a live executor there is no result to report,
+        // and an empty table is reported as a real zero — never as synthesized sample rows.
+        if (!options?.sqlExecutor || !source) {
           domainResult = {
-            queryId: rpt?.id ?? targetTool.sourceElementId,
-            physicalTable: masterTable,
-            executedSql: executedSqlText,
-            rows: liveRows,
-            totalCount: liveRows.length,
+            queryId,
+            status: 'SOURCE_UNAVAILABLE',
+            reason: !source ? 'NO_MM_MAPPING' : 'NO_SQL_EXECUTOR',
+            message: !source
+              ? `No MM mapping says which table holds ${targetAgg ?? 'this query\'s object'}; nothing was queried.`
+              : 'No live data source is attached to this MCP endpoint; nothing was queried.',
           };
         } else {
-          const aggSpec = (project.suite.M1?.aggregates ?? []).find((a) => a.name === targetAgg);
-          const sampleRow: Record<string, unknown> = {};
-          for (const attr of (aggSpec?.attributes ?? []).slice(0, 5)) {
-            sampleRow[attr.name] =
-              attr.type === 'Money' || attr.type === 'Decimal'
-                ? 1280000
-                : attr.type === 'Integer'
-                  ? 10
-                  : `${aggSpec?.name ?? 'ITEM'}-0001`;
+          const where: string[] = [];
+          const params: Record<string, unknown> = {};
+          for (const [column, attribute] of source.attributeOf) {
+            const value = args[attribute];
+            if (typeof value !== 'string' && typeof value !== 'number') continue;
+            if (typeof value === 'string' && !value.trim()) continue;
+            where.push(`${column} = :${attribute}`);
+            params[attribute] = typeof value === 'string' ? value.trim() : value;
           }
-          domainResult = {
-            queryId: rpt?.id ?? targetTool.sourceElementId,
-            rows: [sampleRow],
-            totalCount: 1,
-          };
+          const executedSql = `SELECT * FROM ${source.table}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} LIMIT 20`;
+          try {
+            const res = options.sqlExecutor(executedSql, params);
+            domainResult = { queryId, status: 'OK', physicalTable: source.table, executedSql, rows: res.rows, totalCount: res.rows.length };
+          } catch (err) {
+            domainResult = {
+              queryId,
+              status: 'SOURCE_UNAVAILABLE',
+              reason: 'QUERY_FAILED',
+              physicalTable: source.table,
+              executedSql,
+              message: err instanceof Error ? err.message : String(err),
+            };
+          }
         }
       } else {
         const ownerEntity =
@@ -783,7 +753,8 @@ export function handleOntologyMcpRequest(
 
         domainResult = {
           documentNo:
-            (typeof enrichedArgs.contractId === 'string' && enrichedArgs.contractId) ||
+            (typeof enrichedArgs[`${ownerEntity.charAt(0).toLowerCase()}${ownerEntity.slice(1)}Id`] === 'string' &&
+              (enrichedArgs[`${ownerEntity.charAt(0).toLowerCase()}${ownerEntity.slice(1)}Id`] as string)) ||
             `${prefix}-${new Date().getFullYear()}-${seq}`,
           ownerEntity,
           physicalTable: masterTable,
@@ -794,8 +765,9 @@ export function handleOntologyMcpRequest(
         };
       }
 
+      const unavailable = domainResult.status === 'SOURCE_UNAVAILABLE';
       const executionPayload = {
-        status: 'SUCCESS',
+        status: unavailable ? 'SOURCE_UNAVAILABLE' : 'SUCCESS',
         project: project.name,
         toolName: targetTool.name,
         sourceModel: targetTool.sourceModel,
@@ -809,7 +781,7 @@ export function handleOntologyMcpRequest(
         jsonrpc: '2.0',
         id,
         result: {
-          isError: false,
+          isError: unavailable,
           content: [
             {
               type: 'text',

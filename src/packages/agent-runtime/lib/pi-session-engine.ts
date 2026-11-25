@@ -83,6 +83,7 @@ import {
   pickLocaleText,
   resolveEffectiveLocale,
 } from './locale.js';
+import { gatherEvidence } from './analytics-evidence.js';
 import {
   DOMAIN_RUN_OPENAI_TOOLS,
   buildDeterministicSrsMarkdown,
@@ -1521,75 +1522,86 @@ function buildFauxMockModels(
       }
 
       if (session.agentKind === 'REASONING') {
-        const mappedTables = (project?.suite.MM?.mappings ?? []).flatMap((m) =>
-          m.tableMappings.map((tm) => tm.tableName),
-        );
-        const dbTables = store
-          .listDatabaseResources()
-          .flatMap((d) => d.tables.map((t) => t.tableName));
-        const primaryTable = mappedTables[0] ?? dbTables[0] ?? 't_contract';
-        const hasContractTables =
-          primaryTable === 't_contract' || dbTables.includes('t_contract');
-        const sql = hasContractTables
-          ? userPrompt.includes('供应商') ||
-            userPrompt.includes('相对方') ||
-            lower.includes('counterparty') ||
-            lower.includes('vendor')
-            ? 'SELECT cp.company_name, cp.credit_rating, COUNT(c.id) AS contract_cnt, SUM(c.total_amount) AS total_amount FROM t_contract c JOIN t_counterparty cp ON c.counterparty_id = cp.id GROUP BY cp.id, cp.company_name, cp.credit_rating ORDER BY total_amount DESC'
-            : 'SELECT risk_level, status, COUNT(id) AS contract_count, SUM(total_amount) AS total_amount FROM t_contract GROUP BY risk_level, status ORDER BY total_amount DESC'
-          : `SELECT * FROM ${primaryTable} LIMIT 20`;
+        // #19: the simulated analyst queries only what the project's grounding allows, and says
+        // what is missing instead of producing figures when there is no live evidence.
+        const missingEvidence = (thinking: string, message: string, sql: string | null) =>
+          fauxAssistantMessage([fauxThinking(thinking), ...(sql ? [fauxToolCall('run_readonly_sql', { sql })] : []), fauxText(message)], {
+            stopReason: sql ? 'toolUse' : 'stop',
+          });
 
         if (parsedAction?.kind === 'METRIC_INSIGHT') {
-          const metricArgs = buildMockMetricInsightToolArgs(
+          const plan = buildMockMetricInsightToolArgs(
             store,
-            typeof parsedAction.params.metricId === 'string'
-              ? parsedAction.params.metricId
-              : undefined,
+            project,
+            typeof parsedAction.params.metricId === 'string' ? parsedAction.params.metricId : undefined,
             loc,
           );
+          if (!plan.ok) {
+            return missingEvidence(
+              pickLocaleText(loc, '按本体映射取数，没有得到可用的实查数据。', 'Queried through the ontology mapping; no usable live data came back.'),
+              plan.message,
+              plan.sql,
+            );
+          }
           return fauxAssistantMessage(
             [
               fauxThinking(
                 pickLocaleText(
                   loc,
-                  `正在实查 SQLite 业务表并结合数据本体指标口径生成异动洞察与策略建议。`,
-                  `Querying live SQLite tables and evaluating metric formula & M3 thresholds to synthesize anomaly insight.`,
+                  `按本体映射实查业务表，用实查行计算分布后保存解读。`,
+                  `Querying the mapped tables and computing the distribution from live rows before saving the insight.`,
                 ),
               ),
-              fauxToolCall('run_readonly_sql', { sql }),
-              fauxToolCall('save_metric_insight', metricArgs as never),
+              fauxToolCall('run_readonly_sql', { sql: plan.sql }),
+              fauxToolCall('save_metric_insight', plan.args as never),
             ],
             { stopReason: 'toolUse' },
           );
         }
 
         if (parsedAction?.kind === 'SCENARIO_ATTRIBUTION') {
-          const attrArgs = buildMockScenarioAttributionToolArgs(
+          const plan = buildMockScenarioAttributionToolArgs(
             store,
-            typeof parsedAction.params.scenarioId === 'string'
-              ? parsedAction.params.scenarioId
-              : undefined,
+            project,
+            typeof parsedAction.params.scenarioId === 'string' ? parsedAction.params.scenarioId : undefined,
             typeof parsedAction.params.question === 'string'
               ? parsedAction.params.question
               : parsedAction.cleanPrompt || undefined,
             parsedAction.params.saveAsReport !== false,
             loc,
           );
+          if (!plan.ok) {
+            return missingEvidence(
+              pickLocaleText(loc, '按本体映射取数后，证据不足以拆解权重。', 'Queried through the ontology mapping; the evidence cannot support weights.'),
+              plan.message,
+              plan.sql,
+            );
+          }
           return fauxAssistantMessage(
             [
               fauxThinking(
                 pickLocaleText(
                   loc,
-                  `正在沿 M1 -> MM -> SQLite 实查多因子交叉统计，拆解归因权重并持久化专题分析报告。`,
-                  `Executing multi-factor SQLite cross-tabulation along M1 -> MM to compute causal weights and archive attribution report.`,
+                  `按本体映射实查，用实查行的占比拆分统计贡献（不等同因果），再保存报告。`,
+                  `Querying through the ontology mapping and splitting statistical contribution (not causation) from live rows before saving the report.`,
                 ),
               ),
-              fauxToolCall('run_readonly_sql', { sql }),
-              fauxToolCall('save_scenario_attribution_report', attrArgs as never),
+              fauxToolCall('run_readonly_sql', { sql: plan.sql }),
+              fauxToolCall('save_scenario_attribution_report', plan.args as never),
             ],
             { stopReason: 'toolUse' },
           );
         }
+
+        const evidence = gatherEvidence(store, project, { question: userPrompt }, loc);
+        if (!evidence.ok && !evidence.sql) {
+          return missingEvidence(
+            pickLocaleText(loc, '先找本体映射里能查的表。', 'Looking for tables the ontology mapping allows.'),
+            evidence.message,
+            null,
+          );
+        }
+        const sql = evidence.sql!;
 
         const blocks = [
           fauxThinking(
@@ -2985,7 +2997,7 @@ function buildSystemPromptForSession(
         `Current reasoning mode: ${session.reasoningMode ?? 'ASK_DATA'} (ASK_DATA=data query, ASK_WHY=root-cause attribution, ASK_POLICY=policy writeback).`,
         biz(renderedGrounding),
         writebacks ? biz(`Registered writeback interfaces: ${writebacks}.`) : '',
-        `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; every figure you state must come from a query result. When requested via [ACTION:METRIC_INSIGHT ...], MUST call save_metric_insight with live SQLite evidence. When requested via [ACTION:SCENARIO_ATTRIBUTION ...], MUST call save_scenario_attribution_report with causalBreakdown weights grounded in SQLite results. In ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
+        `Call run_readonly_sql first to inspect live SQLite data before drawing conclusions; every figure you state must come from a query result. When requested via [ACTION:METRIC_INSIGHT ...], call save_metric_insight with the SQL you ran as evidenceSql. When requested via [ACTION:SCENARIO_ATTRIBUTION ...], call save_scenario_attribution_report with the SQL you ran as evidenceSql; weights are shares of that result and are statistical contribution, not causation. If MM or M7 is missing, a query fails, or it returns no rows, do not call either save tool and give no percentages: say exactly what is missing. In ASK_POLICY mode, call propose_policy_writeback to propose governed actions.`,
       ]
         .filter(Boolean)
         .join('\n');
@@ -3092,7 +3104,7 @@ function buildSystemPromptForSession(
       `当前分析推理模式：${session.reasoningMode ?? 'ASK_DATA'}（ASK_DATA=智能问数，ASK_WHY=智能问因，ASK_POLICY=智能问策）。`,
       biz(renderedGrounding),
       writebacks ? biz(`当前已注册闭环回写接口：${writebacks}。`) : '',
-      `优先调用 run_readonly_sql 获取真实表数据后再输出结论，结论中的每个数字都必须来自查询结果；收到 [ACTION:METRIC_INSIGHT ...] 时必须结合实查结果调用 save_metric_insight 输出指标异动洞察；收到 [ACTION:SCENARIO_ATTRIBUTION ...] 时必须结合实查结果调用 save_scenario_attribution_report 归档场景归因报告；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
+      `优先调用 run_readonly_sql 获取真实表数据后再输出结论，结论中的每个数字都必须来自查询结果；收到 [ACTION:METRIC_INSIGHT ...] 时调用 save_metric_insight，并把实查用的 SQL 作为 evidenceSql 一并传入；收到 [ACTION:SCENARIO_ATTRIBUTION ...] 时调用 save_scenario_attribution_report，同样传入 evidenceSql，权重是该结果的占比，只代表统计贡献、不等于因果；缺少 MM/M7、查询失败或结果为空时，不调用这两个保存工具、不给任何百分比，直接说明缺什么；在 ASK_POLICY 模式下可调用 propose_policy_writeback 生成策略建议。`,
     ]
       .filter(Boolean)
       .join('\n');
@@ -3919,11 +3931,16 @@ async function executeUnifiedToolCall(
   // 7. Run Read-Only SQLite Analytics Query
   if (tc.name === 'run_readonly_sql') {
     const project = resolveProjectDetail(store, session.projectId);
-    const firstMappedTable =
-      project?.suite.MM?.mappings[0]?.tableMappings[0]?.tableName ??
-      store.listDatabaseResources()[0]?.tables[0]?.tableName ??
-      't_contract';
-    const sql = String(args.sql || `SELECT * FROM ${firstMappedTable} LIMIT 10`);
+    const requested = typeof args.sql === 'string' ? args.sql.trim() : '';
+    if (!requested) {
+      const msg = pickLocaleText(locale, 'run_readonly_sql 需要一条 SQL；可查询的表见取数依据。', 'run_readonly_sql needs a SQL statement; see the data grounding for queryable tables.');
+      return {
+        trace: { id: tc.id, toolName: tc.name, arguments: args, output: msg, isError: true, durationMs: Date.now() - started },
+        toolResultContent: JSON.stringify({ error: msg }),
+        isError: true,
+      };
+    }
+    const sql = requested;
 
     // Grounding check before anything runs: a table outside the grounding is
     // refused with the list to choose from; a join the ontology does not back

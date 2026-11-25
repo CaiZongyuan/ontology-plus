@@ -23,6 +23,8 @@ import {
   applyLlmBlueprintToSuite,
   type LlmSynthesizedDomainBlueprint,
 } from './blueprint.js';
+import { type EvidenceResult, describeEvidence, gatherEvidence, runGroundedQuery, shareBreakdown } from './analytics-evidence.js';
+import { buildProjectDataGrounding } from './reasoning-grounding.js';
 import { type AgentLocale, pickLocaleText } from './locale.js';
 import { runSmartOntologyExtractionJob } from './runtime.js';
 import { type OpenAiFunctionTool } from './tools.js';
@@ -1790,89 +1792,6 @@ function repairMockSuiteConsistencyErrors(
   return suite;
 }
 
-export interface LiveAnalyticsComputedStats {
-  totalContracts: number;
-  totalAmount: number;
-  settlementCompletionRatePct: string;
-  highRiskOverdueRatePct: string;
-  outsourcingHighRiskSharePct: string;
-  midThresholdSharePct: string;
-  residualSharePct: string;
-}
-
-export function computeLiveAnalyticsStats(store: WorkspaceStore): LiveAnalyticsComputedStats {
-  let totalContracts = 0;
-  let totalAmount = 0;
-  let highRiskCount = 0;
-  let highRiskAmount = 0;
-  let outsourcingHighRiskAmount = 0;
-  let midRangeAmount = 0;
-  let settledAmount = 0;
-  let totalSettlementAmount = 0;
-
-  if (typeof store.executeReadOnlyAnalyticsSql === 'function') {
-    try {
-      const cRes = store.executeReadOnlyAnalyticsSql(
-        'SELECT contract_type, risk_level, total_amount, status FROM t_contract',
-      );
-      for (const r of cRes.rows) {
-        totalContracts += 1;
-        const amt = Number(r.total_amount ?? 0);
-        totalAmount += amt;
-        const risk = String(r.risk_level ?? '');
-        const ctype = String(r.contract_type ?? '');
-        if (risk === 'HIGH' || risk === 'MEDIUM') {
-          if (risk === 'HIGH') highRiskCount += 1;
-          highRiskAmount += amt;
-          if (ctype === 'OUTSOURCING') {
-            outsourcingHighRiskAmount += amt;
-          }
-        }
-        if (amt >= 800000 && amt <= 1500000) {
-          midRangeAmount += amt;
-        }
-      }
-
-      const sRes = store.executeReadOnlyAnalyticsSql(
-        'SELECT settlement_amount, settlement_status FROM t_settlement_order',
-      );
-      for (const r of sRes.rows) {
-        const amt = Number(r.settlement_amount ?? 0);
-        totalSettlementAmount += amt;
-        if (String(r.settlement_status ?? '') === 'SETTLED') {
-          settledAmount += amt;
-        }
-      }
-    } catch {
-      // Fallback if tables not yet initialized
-    }
-  }
-
-  const settlementPctNum =
-    totalSettlementAmount > 0 ? (settledAmount / totalSettlementAmount) * 100 : 85.0;
-  const highRiskPctNum = totalContracts > 0 ? (highRiskCount / totalContracts) * 100 : 25.0;
-
-  const w1Num =
-    highRiskAmount > 0
-      ? Math.min(78, Math.max(45, (outsourcingHighRiskAmount / highRiskAmount) * 100))
-      : 62.0;
-  const w2Num =
-    totalAmount > 0
-      ? Math.min(92 - w1Num, Math.max(15, (midRangeAmount / totalAmount) * 100))
-      : 26.5;
-  const w3Num = Math.max(5, 100 - w1Num - w2Num);
-
-  return {
-    totalContracts,
-    totalAmount,
-    settlementCompletionRatePct: `${settlementPctNum.toFixed(1)}%`,
-    highRiskOverdueRatePct: `${highRiskPctNum.toFixed(1)}%`,
-    outsourcingHighRiskSharePct: `${w1Num.toFixed(1)}%`,
-    midThresholdSharePct: `${w2Num.toFixed(1)}%`,
-    residualSharePct: `${w3Num.toFixed(1)}%`,
-  };
-}
-
 // ─── Domain Run OpenAI Function Tool Specs ───────────────────────────────────
 
 export const DOMAIN_RUN_TOOL_NAMES = [
@@ -2188,8 +2107,12 @@ export const DOMAIN_RUN_OPENAI_TOOLS: OpenAiFunctionTool[] = [
             type: 'string',
             description: 'Bound WritebackInterface ID (e.g. WB-01)',
           },
+          evidenceSql: {
+            type: 'string',
+            description: 'The read-only SQL (already run with run_readonly_sql) whose rows every figure comes from. It is re-run under the data grounding; no rows means nothing is saved.',
+          },
         },
-        required: ['metricId', 'insightMarkdown', 'anomalyDrivers', 'suggestedAction'],
+        required: ['metricId', 'insightMarkdown', 'anomalyDrivers', 'suggestedAction', 'evidenceSql'],
       },
     },
   },
@@ -2223,8 +2146,12 @@ export const DOMAIN_RUN_OPENAI_TOOLS: OpenAiFunctionTool[] = [
           },
           recommendedWritebackId: { type: 'string' },
           saveAsReport: { type: 'boolean' },
+          evidenceSql: {
+            type: 'string',
+            description: 'The read-only SQL (already run with run_readonly_sql) whose rows the weights come from. Weights are statistical shares, not proof of cause. No rows means nothing is saved.',
+          },
         },
-        required: ['scenarioId', 'attributionMarkdown', 'causalBreakdown'],
+        required: ['scenarioId', 'attributionMarkdown', 'causalBreakdown', 'evidenceSql'],
       },
     },
   },
@@ -2314,194 +2241,146 @@ export function buildMockTechArchMarkdown(
       ].join('\n');
 }
 
+/** A simulated insight or attribution: its tool arguments with the evidence SQL, or why there is none. */
+export type MockAnalyticsPlan =
+  | { readonly ok: true; readonly sql: string; readonly args: Record<string, unknown> }
+  | { readonly ok: false; readonly sql: string | null; readonly message: string };
+
+/**
+ * Simulated Metric Insight (#19): drivers are shares computed from a grounded query over the
+ * metric's linked object; without such rows there is no insight, only the reason.
+ */
 export function buildMockMetricInsightToolArgs(
   store: WorkspaceStore,
+  project: ProjectDetail | undefined,
   metricIdParam: string | undefined,
   locale: AgentLocale,
-): Record<string, unknown> {
+): MockAnalyticsPlan {
   const metrics = store.listMetrics();
   const metric =
-    (metricIdParam
-      ? metrics.find((m) => m.id === metricIdParam || m.code === metricIdParam)
-      : undefined) ?? metrics[0];
+    (metricIdParam ? metrics.find((m) => m.id === metricIdParam || m.code === metricIdParam) : undefined) ?? metrics[0];
   if (!metric) {
-    return {
-      metricId: metricIdParam || 'MET-01',
-      insightMarkdown: '',
-      anomalyDrivers: [],
-      suggestedAction: '',
-    };
+    return { ok: false, sql: null, message: pickLocaleText(locale, '没有找到这个指标，无法解读。', 'That metric does not exist, so there is nothing to interpret.') };
   }
-  const defaultWbId = store.listWritebackInterfaces()[0]?.id ?? 'WB-01';
-  const liveStats = computeLiveAnalyticsStats(store);
-  const anomalyDrivers =
-    locale === 'en-US'
-      ? [
-          `Linked aggregate "${metric.linkedAggregate}" live query spans ${liveStats.totalContracts} records (high-risk share ${liveStats.highRiskOverdueRatePct})`,
-          `Dimension drill-down [${metric.dimensions.join(' / ')}] shows primary risk segment accounts for ${liveStats.outsourcingHighRiskSharePct}`,
-        ]
-      : [
-          `关联聚合根「${metric.linkedAggregate}」实查共 ${liveStats.totalContracts} 份单据（总额 ¥${(liveStats.totalAmount / 10000).toFixed(1)}万），高风险占比 ${liveStats.highRiskOverdueRatePct}`,
-          `维度下钻 [${metric.dimensions.join(' / ')}] 显示核心风险分群在敞口中占比达 ${liveStats.outsourcingHighRiskSharePct}`,
-        ];
-  const suggestedAction =
-    metric.status === 'NORMAL'
-      ? pickLocaleText(
+  const evidence = gatherEvidence(store, project, { objectName: metric.linkedAggregate, question: `${metric.name} ${metric.dimensions.join(' ')}`, dimensions: metric.dimensions }, locale);
+  if (!evidence.ok) return { ok: false, sql: evidence.sql, message: evidence.message };
+  const breakdown = shareBreakdown(evidence);
+  const basis = describeEvidence(evidence, locale);
+  const anomalyDrivers = breakdown
+    ? breakdown.rows.map((r) =>
+        pickLocaleText(
           locale,
-          `保持当前 M3 规则阈值监控，按周基于 SQLite 实查数据刷新 ${metric.code} 趋势基线`,
-          `Maintain current M3 rule thresholds and refresh ${metric.code} trend baselines weekly from live SQLite`,
-        )
-      : pickLocaleText(
+          `${breakdown.labelColumn}「${r.label}」占 ${r.share}（${r.value} / ${breakdown.total}）`,
+          `${breakdown.labelColumn} "${r.label}" accounts for ${r.share} (${r.value} / ${breakdown.total})`,
+        ),
+      )
+    : [
+        pickLocaleText(
           locale,
-          `立即联动回写接口 ${defaultWbId} 冻结高风险逾期批次并收紧准入预警线`,
-          `Immediately trigger writeback interface ${defaultWbId} to hold high-risk batches and tighten alert thresholds`,
-        );
-  const insightMarkdown =
-    locale === 'en-US'
-      ? [
-          `### Metric Insight: ${metric.name} (\`${metric.code}\`)`,
-          `- **Current Value**: **${metric.currentValue}** (YoY/MoM \`${metric.yoYChange}\`, Health: \`${metric.status}\`)`,
-          `- **Formula**: \`${metric.formula}\``,
-          `- **Live Anomaly Drivers**: ${anomalyDrivers.join('; ')}.`,
-          `- **Recommended Action**: ${suggestedAction}.`,
-        ].join('\n')
-      : [
-          `### 指标智能解读：${metric.name} (\`${metric.code}\`)`,
-          `- **当前数值**：**${metric.currentValue}**（同比/环比 \`${metric.yoYChange}\`，健康度：\`${metric.status}\`）`,
-          `- **计算口径**：\`${metric.formula}\``,
-          `- **实查异动归因**：${anomalyDrivers.join('；')}。`,
-          `- **行动建议**：${suggestedAction}。`,
-        ].join('\n');
-
+          `实查 ${evidence.rows.length} 行：${Object.entries(evidence.rows[0]!).map(([k, v]) => `${k}=${String(v)}`).join('，')}；只有一个分组，不计算占比`,
+          `${evidence.rows.length} live row(s): ${Object.entries(evidence.rows[0]!).map(([k, v]) => `${k}=${String(v)}`).join(', ')}; a single group, so no shares are computed`,
+        ),
+      ];
+  const suggestedAction = breakdown
+    ? pickLocaleText(
+        locale,
+        `先复核占比最高的「${breakdown.rows[0]!.label}」分组；占比是统计贡献，不代表因果`,
+        `Review the largest group "${breakdown.rows[0]!.label}" first; shares are statistical contributions, not causes`,
+      )
+    : pickLocaleText(locale, '数据不足以分组比较；补充更多维度的数据后再解读', 'Not enough data to compare groups; add data along more dimensions first');
+  const insightMarkdown = [
+    pickLocaleText(locale, `### 指标解读：${metric.name} (\`${metric.code}\`)`, `### Metric Insight: ${metric.name} (\`${metric.code}\`)`),
+    pickLocaleText(locale, `- **计算口径**：\`${metric.formula}\``, `- **Formula**: \`${metric.formula}\``),
+    pickLocaleText(locale, `- **实查分布**：${anomalyDrivers.join('；')}`, `- **Live distribution**: ${anomalyDrivers.join('; ')}`),
+    pickLocaleText(locale, `- **建议**：${suggestedAction}`, `- **Suggestion**: ${suggestedAction}`),
+    `- ${basis}`,
+  ].join('\n');
   return {
-    metricId: metric.id,
-    insightMarkdown,
-    anomalyDrivers,
-    suggestedAction,
-    writebackInterfaceId: defaultWbId,
+    ok: true,
+    sql: evidence.sql,
+    args: {
+      metricId: metric.id,
+      insightMarkdown,
+      anomalyDrivers,
+      suggestedAction,
+      evidenceSql: evidence.sql,
+      ...(store.listWritebackInterfaces()[0] ? { writebackInterfaceId: store.listWritebackInterfaces()[0]!.id } : {}),
+    },
   };
 }
 
+/**
+ * Simulated Scenario Attribution (#19): weights are shares of a grounded query across at least two
+ * groups, labelled as statistical contribution; fewer groups mean the attribution is uncertain and
+ * no weights are produced.
+ */
 export function buildMockScenarioAttributionToolArgs(
   store: WorkspaceStore,
+  project: ProjectDetail | undefined,
   scenarioIdParam: string | undefined,
   questionParam: string | undefined,
   saveAsReport: boolean,
   locale: AgentLocale,
-): Record<string, unknown> {
+): MockAnalyticsPlan {
   const scenarios = store.listAnalyticsScenarios();
-  const scenario =
-    (scenarioIdParam ? scenarios.find((s) => s.id === scenarioIdParam) : undefined) ?? scenarios[0];
+  const scenario = (scenarioIdParam ? scenarios.find((s) => s.id === scenarioIdParam) : undefined) ?? scenarios[0];
   if (!scenario) {
-    return {
-      scenarioId: scenarioIdParam || 'ASCN-01',
-      attributionMarkdown: '',
-      causalBreakdown: [],
-      saveAsReport,
-    };
+    return { ok: false, sql: null, message: pickLocaleText(locale, '没有找到这个分析场景，无法归因。', 'That analysis scenario does not exist, so there is nothing to attribute.') };
   }
-  const liveStats = computeLiveAnalyticsStats(store);
-  const defaultWbId = store.listWritebackInterfaces()[0]?.id ?? 'WB-01';
-  const writebackId = scenario.writebackInterfaceId || defaultWbId;
+  const metric = store.listMetrics().find((m) => scenario.relatedMetrics.includes(m.id) || scenario.relatedMetrics.includes(m.code));
   const focusQuestion =
     questionParam?.trim() ||
-    pickLocaleText(
-      locale,
-      `分析「${scenario.name}」的触发根因与闭环处置方案`,
-      `Analyze root causes and closed-loop remediation for "${scenario.name}"`,
-    );
-  const causalBreakdown = [
-    {
-      factor:
-        scenario.causalFactors[0] ||
-        pickLocaleText(
-          locale,
-          '高风险履约节点验收延期',
-          'Milestone acceptance delays on high-risk records',
-        ),
-      weight: liveStats.outsourcingHighRiskSharePct,
-      evidence: pickLocaleText(
+    pickLocaleText(locale, `分析「${scenario.name}」的触发根因`, `Analyze what drives "${scenario.name}"`);
+  const evidence = gatherEvidence(store, project, { ...(metric ? { objectName: metric.linkedAggregate, dimensions: metric.dimensions } : {}), question: `${scenario.name} ${focusQuestion}` }, locale);
+  if (!evidence.ok) return { ok: false, sql: evidence.sql, message: evidence.message };
+  const breakdown = shareBreakdown(evidence);
+  if (!breakdown) {
+    return {
+      ok: false,
+      sql: evidence.sql,
+      message: pickLocaleText(
         locale,
-        `SQLite 实查交叉统计（共 ${liveStats.totalContracts} 份合同分群）`,
-        `Live SQLite cross-tabulation (${liveStats.totalContracts} contract records)`,
+        `实查只有一个分组或没有可比较的数值（${evidence.rows.length} 行），无法拆解权重；归因不确定，不生成报告。`,
+        `The live query has a single group or no comparable measure (${evidence.rows.length} rows), so no weights can be split; the attribution is uncertain and no report is produced.`,
       ),
-    },
-    {
-      factor:
-        scenario.causalFactors[1] ||
-        pickLocaleText(locale, '阈值敏感区间风险敞口集中', 'Exposure concentration near M3 threshold'),
-      weight: liveStats.midThresholdSharePct,
-      evidence: pickLocaleText(
-        locale,
-        'M3 规则模型阈值边界与实查金额比对',
-        'M3 rule threshold evaluation against live records',
-      ),
-    },
-    {
-      factor:
-        scenario.causalFactors[2] ||
-        pickLocaleText(
-          locale,
-          '跨系统状态回执同步时延',
-          'Cross-system callback synchronization latency',
-        ),
-      weight: liveStats.residualSharePct,
-      evidence: pickLocaleText(
-        locale,
-        'M4 跨聚合协同场景状态分布实查',
-        'M4 cross-aggregate scenario status distribution',
-      ),
-    },
-  ];
-  const attributionMarkdown =
-    locale === 'en-US'
-      ? [
-          `# Scenario Attribution Report: ${scenario.name}`,
-          '',
-          `> **Trigger**: \`${scenario.triggerCondition}\` | **Metrics**: ${scenario.relatedMetrics.map((m) => `\`${m}\``).join(', ')} | **Focus**: ${focusQuestion}`,
-          '',
-          `## 1. Multi-Factor Root-Cause Breakdown (Live SQLite × Data Ontology)`,
-          ...causalBreakdown.map(
-            (item, idx) =>
-              `${idx + 1}. **${item.factor}** (Weight **${item.weight}**) — *Evidence: ${item.evidence}*`,
-          ),
-          '',
-          `## 2. Closed-Loop Policy Recommendations & Writeback`,
-          ...scenario.recommendedActions.map((act) => `- ${act}`),
-          `- **Bound Writeback Interface**: \`${writebackId}\``,
-        ].join('\n')
-      : [
-          `# 专题归因分析报告：${scenario.name}`,
-          '',
-          `> **触发条件**：\`${scenario.triggerCondition}\` | **关联指标**：${scenario.relatedMetrics.map((m) => `\`${m}\``).join(', ')} | **分析焦点**：${focusQuestion}`,
-          '',
-          `## 一、多因子根因拆解（基于 SQLite 实查与数据本体知识图谱）`,
-          ...causalBreakdown.map(
-            (item, idx) =>
-              `${idx + 1}. **${item.factor}**（实查贡献权重 **${item.weight}**）— *证据来源：${item.evidence}*`,
-          ),
-          '',
-          `## 二、闭环策略建议与业务回写`,
-          ...scenario.recommendedActions.map((act) => `- ${act}`),
-          `- **绑定回写接口**：\`${writebackId}\``,
-        ].join('\n');
-
+    };
+  }
+  const basis = describeEvidence(evidence, locale);
+  const writebackId = scenario.writebackInterfaceId || store.listWritebackInterfaces()[0]?.id || '';
+  const causalBreakdown = breakdown.rows.map((r) => ({
+    factor: pickLocaleText(locale, `${breakdown.labelColumn}「${r.label}」`, `${breakdown.labelColumn} "${r.label}"`),
+    weight: r.share,
+    evidence: pickLocaleText(locale, `实查统计占比（${r.value} / ${breakdown.total}），关联不等于因果`, `Share of the live query (${r.value} / ${breakdown.total}); association, not causation`),
+  }));
+  const attributionMarkdown = [
+    pickLocaleText(locale, `# 归因分析：${scenario.name}`, `# Attribution: ${scenario.name}`),
+    '',
+    pickLocaleText(locale, `> 触发条件：\`${scenario.triggerCondition}\` · 分析焦点：${focusQuestion}`, `> Trigger: \`${scenario.triggerCondition}\` · Focus: ${focusQuestion}`),
+    '',
+    pickLocaleText(locale, '## 一、按实查数据拆分的统计贡献', '## 1. Statistical contribution from live data'),
+    ...causalBreakdown.map((item, idx) => `${idx + 1}. **${item.factor}** — ${item.weight} · *${item.evidence}*`),
+    '',
+    pickLocaleText(locale, '## 二、说明', '## 2. Notes'),
+    pickLocaleText(locale, '- 占比只说明数据如何分布，不能证明因果；需要业务核实后再采取行动。', '- Shares show how the data is distributed; they do not prove causes. Confirm with the business before acting.'),
+    `- ${basis}`,
+  ].join('\n');
   return {
-    scenarioId: scenario.id,
-    title: pickLocaleText(
-      locale,
-      `${scenario.name} — 智能归因报告`,
-      `${scenario.name} — Attribution Report`,
-    ),
-    summary: pickLocaleText(
-      locale,
-      `针对触发条件 ${scenario.triggerCondition} 完成实查穿透，主因贡献度 ${liveStats.outsourcingHighRiskSharePct}，建议通过 ${writebackId} 执行业务回写。`,
-      `Completed live root-cause drill-down for ${scenario.triggerCondition}; top driver accounts for ${liveStats.outsourcingHighRiskSharePct}; recommend writeback via ${writebackId}.`,
-    ),
-    attributionMarkdown,
-    causalBreakdown,
-    recommendedWritebackId: writebackId,
-    saveAsReport,
+    ok: true,
+    sql: evidence.sql,
+    args: {
+      scenarioId: scenario.id,
+      title: pickLocaleText(locale, `${scenario.name} — 归因分析`, `${scenario.name} — Attribution`),
+      summary: pickLocaleText(
+        locale,
+        `实查 ${evidence.rows.length} 行，占比最高的是 ${causalBreakdown[0]!.factor}（${causalBreakdown[0]!.weight}）；这是统计贡献，不等于因果。`,
+        `${evidence.rows.length} live rows; the largest share is ${causalBreakdown[0]!.factor} (${causalBreakdown[0]!.weight}); a statistical contribution, not a cause.`,
+      ),
+      attributionMarkdown,
+      causalBreakdown,
+      evidenceSql: evidence.sql,
+      ...(writebackId ? { recommendedWritebackId: writebackId } : {}),
+      saveAsReport,
+    },
   };
 }
 
@@ -2531,6 +2410,33 @@ export function resolveAgentTurnRunId(
     if (msg?.role === 'user') return msg.runId || msg.id;
   }
   return fallbackId;
+}
+
+/** Re-runs the evidence SQL a save tool cites (#19); figures without returned rows are not saved. */
+function checkSavedEvidence(store: WorkspaceStore, session: AgentSession, args: Record<string, unknown>, locale: AgentLocale): EvidenceResult {
+  const sql = typeof args.evidenceSql === 'string' ? args.evidenceSql.trim() : '';
+  if (!sql) {
+    return {
+      ok: false,
+      gap: 'QUERY_FAILED',
+      sql: null,
+      message: pickLocaleText(
+        locale,
+        '没有给出取数依据（evidenceSql）：先用 run_readonly_sql 实查，再把那条 SQL 一并保存；没有实查结果时请直接说明缺什么，不要给出数字。',
+        'No evidence was given (evidenceSql): query with run_readonly_sql first and save that SQL with the result; without live rows, say what is missing and give no figures.',
+      ),
+    };
+  }
+  const project = store.getProject(session.projectId);
+  return runGroundedQuery(store, project, sql, locale, buildProjectDataGrounding(store, project), undefined, true);
+}
+
+function evidenceRefusal(toolCallId: string, toolName: string, args: Record<string, unknown>, message: string, started: number): DomainToolExecutionResult {
+  return {
+    trace: { id: toolCallId, toolName, arguments: args, output: message, isError: true, durationMs: Date.now() - started },
+    toolResultContent: JSON.stringify({ error: message }),
+    isError: true,
+  };
 }
 
 export async function executeDomainRunToolCall(
@@ -3136,10 +3042,13 @@ export async function executeDomainRunToolCall(
       };
     }
 
-    const defaultWbId = store.listWritebackInterfaces()[0]?.id ?? 'WB-01';
+    const evidence = checkSavedEvidence(store, session, args, locale);
+    if (!evidence.ok) return evidenceRefusal(toolCallId, toolName, args, evidence.message, started);
+
     const writebackInterfaceId =
       (typeof args.writebackInterfaceId === 'string' && args.writebackInterfaceId.trim()) ||
-      defaultWbId;
+      store.listWritebackInterfaces()[0]?.id ||
+      '';
 
     store.saveReasoningSession({
       id: `reas-metric-${metric.id.toLowerCase()}-${Date.now().toString(36)}`,
@@ -3149,12 +3058,17 @@ export async function executeDomainRunToolCall(
         `Metric Insight: ${metric.name} (${metric.code})`,
       ),
       mode: 'ASK_WHY',
-      sqlGenerated: '',
+      sqlGenerated: evidence.sql,
       dataSummary: [
         {
           label: metric.name,
           value: metric.currentValue,
           delta: metric.yoYChange,
+        },
+        {
+          label: pickLocaleText(locale, '实查行数', 'Live rows'),
+          value: String(evidence.rows.length),
+          delta: '',
         },
       ],
       causalAnalysis: anomalyDrivers,
@@ -3170,7 +3084,7 @@ export async function executeDomainRunToolCall(
           writebackInterfaceId,
         },
       ],
-      answerMarkdown: insightMarkdown,
+      answerMarkdown: insightMarkdown.includes(evidence.sql) ? insightMarkdown : `${insightMarkdown}\n\n- ${describeEvidence(evidence, locale)}`,
     });
 
     return {
@@ -3185,8 +3099,8 @@ export async function executeDomainRunToolCall(
         },
         output: pickLocaleText(
           locale,
-          `已生成指标「${metric.name} (${metric.code})」的 ${anomalyDrivers.length} 项实查异动归因与回写建议 (${writebackInterfaceId})`,
-          `Saved ${anomalyDrivers.length} anomaly drivers and writeback recommendation (${writebackInterfaceId}) for metric ${metric.code}`,
+          `已按 ${evidence.rows.length} 行实查数据保存指标「${metric.name} (${metric.code})」的 ${anomalyDrivers.length} 项解读`,
+          `Saved ${anomalyDrivers.length} insight point(s) for metric ${metric.code} from ${evidence.rows.length} live rows`,
         ),
         isError: false,
         durationMs: Date.now() - started,
@@ -3259,11 +3173,14 @@ export async function executeDomainRunToolCall(
       };
     }
 
-    const defaultWbId = store.listWritebackInterfaces()[0]?.id ?? 'WB-01';
+    const evidence = checkSavedEvidence(store, session, args, locale);
+    if (!evidence.ok) return evidenceRefusal(toolCallId, toolName, args, evidence.message, started);
+
     const writebackId =
       (typeof args.recommendedWritebackId === 'string' && args.recommendedWritebackId.trim()) ||
       scenario.writebackInterfaceId ||
-      defaultWbId;
+      store.listWritebackInterfaces()[0]?.id ||
+      '';
     const reportTitle =
       (typeof args.title === 'string' && args.title.trim()) ||
       pickLocaleText(
@@ -3275,8 +3192,8 @@ export async function executeDomainRunToolCall(
       (typeof args.summary === 'string' && args.summary.trim()) ||
       pickLocaleText(
         locale,
-        `针对触发条件 ${scenario.triggerCondition} 完成实查穿透，主因「${causalBreakdown[0]!.factor}」贡献权重 ${causalBreakdown[0]!.weight}，建议通过 ${writebackId} 执行业务回写。`,
-        `Completed live root-cause drill-down for ${scenario.triggerCondition}; top driver "${causalBreakdown[0]!.factor}" accounts for ${causalBreakdown[0]!.weight}; recommend writeback via ${writebackId}.`,
+        `按 ${evidence.rows.length} 行实查数据，占比最高的是「${causalBreakdown[0]!.factor}」（${causalBreakdown[0]!.weight}）；这是统计贡献，不等于因果。`,
+        `From ${evidence.rows.length} live rows, the largest share is "${causalBreakdown[0]!.factor}" (${causalBreakdown[0]!.weight}); a statistical contribution, not a cause.`,
       );
 
     const shouldSaveReport = args.saveAsReport !== false;
@@ -3292,7 +3209,7 @@ export async function executeDomainRunToolCall(
           'Scenario Attribution Agent',
         ),
         summary: reportSummary,
-        markdownContent: attributionMarkdown,
+        markdownContent: attributionMarkdown.includes(evidence.sql) ? attributionMarkdown : `${attributionMarkdown}\n\n> ${describeEvidence(evidence, locale)}`,
       });
     }
 
