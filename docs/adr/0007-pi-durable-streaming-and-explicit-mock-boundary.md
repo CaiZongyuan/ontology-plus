@@ -9,3 +9,4 @@ Ontology Extraction's structural scan is not such a fallback. It is the determin
 ## Amendments
 
 - **2026-11-17: the undo safeguard becomes run-level and visible (ADR 0016).** Autonomous execution is unchanged. In the `Business View` a provider problem is worded for a person who cannot configure a gateway, and the navigation to the LLM Center is kept as a link.
+- **2026-11-25: operational mutations on connected external business applications require explicit human approval (ADR 0020).** Design-time modeling tools inside the four `Project Steps` remain autonomous ("YOLO") with `Artifact History` undo. Runtime mutations against live connected applications (such as shipping orders, adjusting stock, or applying data repairs) follow `prepare → version- and argument-bound approval → invoke → authoritative readback` instead of YOLO execution.

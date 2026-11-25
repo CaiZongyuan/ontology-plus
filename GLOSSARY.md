@@ -268,3 +268,21 @@ _Avoid_: Confidence score, 置信度, provenance chain
 **Confirmation (确认)**:
 A person's decision to accept or reject one Extraction Candidate; only accepted candidates are merged into the Ontology Suite.
 _Avoid_: Certification, 认证 (collides with `M5` authentication), approval
+
+## Runtime Operations & Knowledge
+
+**Provenance Record (溯源记录)**:
+A content-hashed pointer to an authoritative source excerpt, record, business event, or query run that substantiates a runtime knowledge claim, data quality issue, or operational decision.
+_Avoid_: Evidence (reserved for Extraction Candidates), provenance chain, debug log
+
+**Drifted (已漂移)**:
+The state of a connected application or capability binding whose live manifest, schema, or model revision no longer matches the confirmed Ontology Suite it was verified against.
+_Avoid_: Stale, out of sync, Outdated (reserved for Project Steps)
+
+**Knowledge Claim (知识主张)**:
+A versioned, bi-temporal business assertion backed by one or more Provenance Records that tracks real-world validity, discovery time, conflict state, and review status without directly altering executable Business Rules.
+_Avoid_: Fact, memory entry, unverified note, KnowledgeEntry (reserved for human-authored Markdown guides)
+
+**Change Proposal (变更提案)**:
+A reviewable, versioned evolution package backed by Provenance Records and impact analysis that must pass human approval and regression checks before creating a new confirmed Ontology Suite revision or capability release.
+_Avoid_: Auto-patch, silent drift fix, hotfix
