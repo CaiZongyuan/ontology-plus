@@ -7,7 +7,7 @@ import type {
   ObjectListResponse,
   ReportResponse,
 } from '../../../packages/application-runtime/index.js';
-import type { ConnectedAppRecord } from '../../../packages/workspace-store/index.js';
+import type { ActionInvocationRecord, ConnectedAppRecord } from '../../../packages/workspace-store/index.js';
 
 /** Why a console read could not be shown; the console explains each in business terms. */
 export type ConsoleErrorCode =
@@ -20,6 +20,8 @@ export type ConsoleErrorCode =
   | 'INVALID_MANIFEST'
   | 'INVALID_ADDRESS'
   | 'UNKNOWN_ACTOR'
+  | 'EXPIRED'
+  | 'APP_CHANGED'
   | 'UNKNOWN';
 
 export class ConsoleRequestError extends Error {
@@ -29,6 +31,9 @@ export class ConsoleRequestError extends Error {
     readonly status: number,
     readonly connectedApp: ConnectedAppRecord | null = null,
     readonly problems: readonly { path: string; message: string }[] = [],
+    /** The application's own reason, when it refused in business words. */
+    readonly businessMessage: { readonly zh: string; readonly en: string } | null = null,
+    readonly invocation: ActionInvocationRecord | null = null,
   ) {
     super(message);
     this.name = 'ConsoleRequestError';
@@ -54,17 +59,22 @@ async function send<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ConsoleRequestError('UNKNOWN', err instanceof Error ? err.message : String(err), 0);
   }
   const body = (await res.json().catch(() => ({}))) as {
-    error?: { code?: string; message?: string; problems?: { path: string; message: string }[] } | string;
+    error?: { code?: string; message?: unknown; problems?: { path: string; message: string }[] } | string;
     connectedApp?: ConnectedAppRecord;
+    invocation?: ActionInvocationRecord;
   };
   if (!res.ok) {
     const error = typeof body.error === 'object' && body.error ? body.error : { message: typeof body.error === 'string' ? body.error : res.statusText };
+    const message = error.message;
+    const business = message && typeof message === 'object' && 'zh' in message && 'en' in message ? (message as { zh: string; en: string }) : null;
     throw new ConsoleRequestError(
       ((error as { code?: string }).code as ConsoleErrorCode | undefined) ?? 'UNKNOWN',
-      error.message ?? res.statusText,
+      business ? business.en : String(message ?? res.statusText),
       res.status,
       body.connectedApp ?? null,
       (error as { problems?: { path: string; message: string }[] }).problems ?? [],
+      business,
+      body.invocation ?? null,
     );
   }
   return body as T;
@@ -94,6 +104,16 @@ export const consoleApi = {
     send<ConsoleEnvelope<ObjectListResponse>>(`/api/projects/${enc(projectId)}/console/objects/${enc(objectId)}${query({ actor, filter, limit: 200 })}`),
   object: (projectId: string, objectId: string, key: string, actor: string) =>
     send<ConsoleEnvelope<ObjectDetailResponse>>(`/api/projects/${enc(projectId)}/console/objects/${enc(objectId)}/${enc(key)}${query({ actor })}`),
+  invocations: (projectId: string) =>
+    send<{ invocations: ActionInvocationRecord[] }>(`/api/projects/${enc(projectId)}/console/invocations`).then((r) => r.invocations),
+  prepare: (projectId: string, actionId: string, actor: string, target: string | undefined, params: Record<string, unknown>) =>
+    send<{ invocation: ActionInvocationRecord }>(`/api/projects/${enc(projectId)}/console/actions/${enc(actionId)}/prepare`, json('POST', { actor, target, params })).then((r) => r.invocation),
+  approve: (projectId: string, invocationId: string) =>
+    send<{ invocation: ActionInvocationRecord }>(`/api/projects/${enc(projectId)}/console/invocations/${enc(invocationId)}/approve`, json('POST')).then((r) => r.invocation),
+  decline: (projectId: string, invocationId: string) =>
+    send<{ invocation: ActionInvocationRecord }>(`/api/projects/${enc(projectId)}/console/invocations/${enc(invocationId)}/decline`, json('POST')).then((r) => r.invocation),
+  reconcile: (projectId: string, invocationId: string) =>
+    send<{ invocation: ActionInvocationRecord }>(`/api/projects/${enc(projectId)}/console/invocations/${enc(invocationId)}/reconcile`, json('POST')).then((r) => r.invocation),
   report: (projectId: string, reportId: string, actor: string) =>
     send<ConsoleEnvelope<ReportResponse>>(`/api/projects/${enc(projectId)}/console/reports/${enc(reportId)}${query({ actor })}`),
 };

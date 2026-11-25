@@ -353,15 +353,20 @@ All responses are JSON in UTF-8. Money is integer cents. Every display name is b
 
 | Route | Answer |
 | --- | --- |
-| \`GET /.well-known/ontology-plus.json\` | The Connection Manifest: \`protocol\`, \`application\` (\`name\`, \`version\`, optional \`description\`, ISO 4217 \`currency\` defaulting to USD), optional \`model\` (\`fingerprint\`, \`revision\`), \`actors\` (\`id\`, \`name\`, \`role\`, \`scope\`; at least one), \`metrics\` (\`id\`, \`name\`, \`unit\`: count, money or number, optional \`hint\` and \`headline\` containing \`{value}\`), \`objects\` (\`id\`, \`name\`, \`modelObject\`, \`titleField\`, optional \`statusField\`, \`fields\` with \`key\`, \`label\`, \`type\`: text, number, money, date, status or tag; optional \`filters\`), \`reports\` (\`id\`, \`name\`, optional \`description\`), \`dataIssues\` and \`activity\` (booleans). |
+| \`GET /.well-known/ontology-plus.json\` | The Connection Manifest: \`protocol\`, \`application\` (\`name\`, \`version\`, optional \`description\`, ISO 4217 \`currency\` defaulting to USD), optional \`model\` (\`fingerprint\`, \`revision\`), \`actors\` (\`id\`, \`name\`, \`role\`, \`scope\`; at least one), \`metrics\` (\`id\`, \`name\`, \`unit\`: count, money or number, optional \`hint\` and \`headline\` containing \`{value}\`), \`objects\` (\`id\`, \`name\`, \`modelObject\`, \`titleField\`, optional \`statusField\`, \`fields\` with \`key\`, \`label\`, \`type\`: text, number, money, date, status or tag; optional \`filters\`), \`reports\` (\`id\`, \`name\`, optional \`description\`), \`actions\` (\`id\`, \`name\`, optional \`objectId\` and \`description\`, \`target\`: record or none, \`params\` with \`key\`, \`label\`, \`type\`: number, text, object-ref or lines, \`required\`), \`dataIssues\` and \`activity\` (booleans). |
 | \`GET /runtime/metrics\` | \`{ asOf, values: [{ id, value, hint? }] }\` for the declared metrics; \`value\` is null when it cannot be computed. |
 | \`GET /runtime/objects/:objectId?filter=&limit=&offset=\` | \`{ asOf, total, counts: [{ filter, count }], rows: [{ key, values, flags: [{ tone, label }] }] }\`. |
-| \`GET /runtime/objects/:objectId/:key\` | \`{ asOf, key, values, flags, sections: [{ title, columns, rows }], notes }\`; 404 when the identity may not see it. |
+| \`GET /runtime/objects/:objectId/:key\` | \`{ asOf, key, values, flags, sections: [{ title, columns, rows }], notes, actions }\`, where \`actions\` lists the action ids this identity may start on this record now; 404 when the identity may not see it. |
 | \`GET /runtime/reports/:reportId\` | \`{ asOf, title, columns, rows, basis }\`, where \`basis\` states the counting rule in one sentence. |
-| \`GET /runtime/data-issues\` | \`{ asOf, issues: [{ id, title, detail, status, needsDecision }] }\` with status OPEN, INVESTIGATING, PROPOSED, APPROVED, APPLIED, VERIFIED or DISMISSED. |
+| \`GET /runtime/data-issues\` | \`{ asOf, issues: [{ id, title, detail, status, needsDecision, action? }] }\` with status OPEN, INVESTIGATING, PROPOSED, APPROVED, APPLIED, VERIFIED or DISMISSED; \`action: { actionId, target }\` names the action that resolves it, for the identity allowed to decide. |
+| \`POST /runtime/actions/:actionId/prepare\` | Body \`{ target?, params }\`. Changes nothing; answers \`{ asOf, preview: { summary, effects, target: { key, version } } }\` in business words, or a refusal. |
+| \`POST /runtime/actions/:actionId/invoke\` | Body \`{ target?, params, idempotencyKey, expectedVersion }\`. Re-checks every rule, refuses with 409 \`VERSION_CONFLICT\` when the record is no longer at \`expectedVersion\`, then commits the change, its audit record and its outbox event in one transaction and answers \`{ receipt, replayed }\`. The same identity and key with the same request replays the receipt; with a different request it is 409 \`IDEMPOTENCY_KEY_REUSED\`. |
+| \`GET /runtime/invocations/:idempotencyKey\` | \`{ receipt }\` when that identity committed that key, otherwise 404. Ontology Plus reads every result back here and reconciles unanswered requests with it. |
 | \`GET /runtime/activity\` | \`{ asOf, events: [{ at, text, kind }] }\`, newest first. |
 
 Field values are strings, numbers, or bilingual objects. Use business names that people recognise; keep codes and identifiers out of labels.
+
+A receipt is \`{ commandId, action, actor, idempotencyKey, target, status: "COMMITTED", summary, effects, after: { key, version, state }, committedAt }\`. A refusal is \`{ error: { code, message } }\` with a bilingual \`message\` a business user can act on: 403 for an identity that may not do it, 404 for a record it may not see or an action not offered, 409 for a conflict, 422 for a broken business rule.
 
 ## Starting point from the Ontology Suite
 
@@ -374,13 +379,14 @@ ${list(queries.map((query) => `\`${query.id}\` ${query.alias} (${query.queryType
 Acting identities (\`actors\`, one per role or per person whose scope differs):
 ${list(roles.map((role) => `\`${role.code}\` ${role.name}`), 'No roles are declared yet; declare at least one actor.')}
 
-Actions for approved runtime changes (a later protocol revision adds \`/runtime/actions\`; keep each command's business rules in the application):
+Actions for approved runtime changes (\`actions\`; every change runs only after a person approves its preview in Ontology Plus, and the business rules stay in the application):
 ${list(commands.map((behavior) => `\`${behavior.id}\` ${behavior.alias}`), 'No commands are declared yet.')}
 
 ## Completion
 
 - [ ] \`GET /.well-known/ontology-plus.json\` returns a manifest that follows this guide, with every \`titleField\` and \`statusField\` listed in its object's \`fields\`.
 - [ ] Each declared metric, object list, object detail, report, data issue list, and activity list answers for every declared actor, and an identity never sees records outside its scope.
+- [ ] Each declared action prepares without changing anything, commits atomically once invoked, replays a repeated key, refuses a stale \`expectedVersion\`, and is found again by \`/runtime/invocations/:idempotencyKey\`.
 - [ ] The runtime routes listen on loopback by default.
 `;
 }

@@ -28,12 +28,13 @@ import {
   type ReportResponse,
 } from '../../../packages/application-runtime/index.js';
 import type { OntologySuite } from '../../../packages/ontology-core/index.js';
-import type { ConnectedAppRecord } from '../../../packages/workspace-store/index.js';
+import type { ActionInvocationRecord, ConnectedAppRecord } from '../../../packages/workspace-store/index.js';
 import { useWorkbenchStore } from '../../api.js';
 import { Button, ConfirmDialog } from '../../components/beautifui/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import type { NavViewId } from '../../navigation/index.js';
+import { ActionForm, ApprovalCard, SettledInvocationLine, formFriendly, hhmm } from './ConsoleApprovals.js';
 import { ConsoleRequestError, consoleApi, type ConsoleOverview } from './consoleApi.js';
 import './operations-console.css';
 
@@ -99,6 +100,116 @@ function SectionCard({ title, sub, children, aside }: { title: React.ReactNode; 
 const openDecisions = (issues: DataIssuesResponse | null) =>
   (issues?.issues ?? []).filter((i) => i.needsDecision && i.status !== 'VERIFIED' && i.status !== 'DISMISSED');
 
+/** Month-day and wall-clock time in the viewer's own time zone. */
+function localStamp(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${two(d.getMonth() + 1)}-${two(d.getDate())} ${hhmm(iso)}`;
+}
+
+// ─── Approvals ────────────────────────────────────────────────────────────────
+
+/** What the workspace hands its pages so they can start, approve and settle runtime changes. */
+export interface ConsoleApprovals {
+  readonly invocations: readonly ActionInvocationRecord[];
+  readonly busyId: string | null;
+  /** Per card: why its last step did not go through. */
+  readonly notices?: Readonly<Record<string, Bilingual>>;
+  /** Prepares an action; resolves to the application's refusal, or null when a card was created. */
+  readonly prepare: (actionId: string, target: string | undefined, params: Record<string, unknown>) => Promise<Bilingual | null>;
+  readonly approve: (inv: ActionInvocationRecord) => void;
+  readonly decline: (inv: ActionInvocationRecord) => void;
+  readonly reconcile: (inv: ActionInvocationRecord) => void;
+  readonly prepareAgain: (inv: ActionInvocationRecord) => void;
+}
+
+const OPEN_STATES = new Set(['PENDING_APPROVAL', 'EXECUTING', 'UNKNOWN']);
+
+/** Cards that still need the person: open ones, plus the latest failure or expiry per action and record. */
+export function cardsToShow(invocations: readonly ActionInvocationRecord[], target?: string) {
+  const seen = new Set<string>();
+  const cards: ActionInvocationRecord[] = [];
+  const settled: ActionInvocationRecord[] = [];
+  for (const inv of invocations) {
+    if (target !== undefined && inv.target !== target) continue;
+    const key = `${inv.actionId}|${inv.target ?? ''}`;
+    const latest = !seen.has(key);
+    seen.add(key);
+    if (OPEN_STATES.has(inv.status) || (latest && (inv.status === 'FAILED' || inv.status === 'EXPIRED'))) cards.push(inv);
+    else settled.push(inv);
+  }
+  return { cards, settled };
+}
+
+function approvalCard(inv: ActionInvocationRecord, manifest: ConnectionManifest, approvals: ConsoleApprovals) {
+  return (
+    <ApprovalCard
+      key={inv.id}
+      invocation={inv}
+      manifest={manifest}
+      busy={approvals.busyId === inv.id}
+      notice={approvals.notices?.[inv.id] ?? null}
+      onApprove={approvals.approve}
+      onDecline={approvals.decline}
+      onReconcile={approvals.reconcile}
+      onPrepareAgain={approvals.prepareAgain}
+    />
+  );
+}
+
+/** A data problem whose fix is an action: says what is wrong and lets the owner start the fix. */
+function IssueDecision({ issue, manifest, approvals, onOpenDataIssues }: {
+  issue: DataIssuesResponse['issues'][number];
+  manifest: ConnectionManifest;
+  approvals: ConsoleApprovals | undefined;
+  onOpenDataIssues: (() => void) | undefined;
+}) {
+  const { t } = usePreferences();
+  const action = issue.action ? manifest.actions.find((a) => a.id === issue.action!.actionId) : undefined;
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Bilingual | null>(null);
+  const start = async (params: Record<string, unknown>) => {
+    if (!approvals || !action) return;
+    setBusy(true);
+    const refusal = await approvals.prepare(action.id, issue.action!.target, params);
+    setBusy(false);
+    setError(refusal);
+    if (!refusal) setOpen(false);
+  };
+  return (
+    <article className="oc-decision" data-testid={`console-decision-${issue.id}`}>
+      <div className="oc-decision-head">
+        <AlertTriangle size={13} aria-hidden="true" />
+        {t('数据问题 · 需要你确认', 'Data problem · needs you')}
+      </div>
+      <div className="oc-decision-body">
+        <div className="oc-decision-title">{tb(t, issue.title)}</div>
+        <p className="oc-decision-what">{tb(t, issue.detail)}</p>
+        {open && action ? (
+          <ActionForm action={action} busy={busy} error={error} onSubmit={(p) => void start(p)} onCancel={() => setOpen(false)} />
+        ) : null}
+      </div>
+      {!open ? (
+        <div className="oc-decision-foot">
+          <Button size="xs" onClick={onOpenDataIssues}>{t('在数据体检里查看', 'Open in data check')}</Button>
+          {action && approvals ? (
+            <Button
+              size="xs"
+              variant="accent"
+              data-testid={`console-decision-start-${issue.id}`}
+              onClick={() => (action.params.length ? setOpen(true) : void start({}))}
+            >
+              {tb(t, action.name)}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 // ─── Overview ─────────────────────────────────────────────────────────────────
 
 export interface ConsoleOverviewPageProps {
@@ -107,21 +218,27 @@ export interface ConsoleOverviewPageProps {
   readonly overview: ConsoleOverview;
   readonly onOpenDataIssues?: () => void;
   readonly onOpenReport?: (reportId: string) => void;
+  readonly approvals?: ConsoleApprovals;
 }
 
-export function ConsoleOverviewPage({ manifest, actorId, overview, onOpenDataIssues, onOpenReport }: ConsoleOverviewPageProps) {
+export function ConsoleOverviewPage({ manifest, actorId, overview, onOpenDataIssues, onOpenReport, approvals }: ConsoleOverviewPageProps) {
   const { t } = usePreferences();
   const currency = manifest.application.currency;
   const actor = manifest.actors.find((a) => a.id === actorId) ?? manifest.actors[0]!;
   const values = new Map(overview.metrics.values.map((v) => [v.id, v]));
   const headlineMetric = manifest.metrics.find((m) => m.headline);
-  const decisions = openDecisions(overview.dataIssues);
+  const { cards, settled } = cardsToShow(approvals?.invocations ?? []);
+  // A data problem whose fix is already waiting as a card is not asked twice.
+  const decisions = openDecisions(overview.dataIssues).filter(
+    (i) => !cards.some((c) => i.action && c.actionId === i.action.actionId && c.target === i.action.target && c.status !== 'FAILED' && c.status !== 'EXPIRED'),
+  );
+  const waiting = cards.length + decisions.length;
   const headlineValue = headlineMetric ? formatConsoleValue(values.get(headlineMetric.id)?.value, headlineMetric.unit, t, currency) : null;
   const headline = headlineMetric?.headline && headlineValue
     ? t(headlineMetric.headline.zh.replace('{value}', headlineValue), headlineMetric.headline.en.replace('{value}', headlineValue))
     : t('数据已经接上', 'The data is connected');
-  const tail = decisions.length
-    ? t(`有 ${decisions.length} 件事等你确认。`, `${decisions.length} ${decisions.length === 1 ? 'thing needs' : 'things need'} you.`)
+  const tail = waiting
+    ? t(`有 ${waiting} 件事等你确认。`, `${waiting} ${waiting === 1 ? 'thing needs' : 'things need'} you.`)
     : t('没有需要你确认的事。', 'Nothing needs you right now.');
 
   return (
@@ -152,29 +269,20 @@ export function ConsoleOverviewPage({ manifest, actorId, overview, onOpenDataIss
         <div className="oc-stack">
           <h2 className="oc-section-title">
             {t('等你确认', 'Needs you')}
-            <span className="oc-count">{decisions.length}</span>
+            <span className="oc-count">{waiting}</span>
           </h2>
-          {decisions.length === 0 ? (
+          {waiting === 0 ? (
             <p className="oc-callout">{t('都处理完了。有新的事会出现在这里。', 'All clear. New items will appear here.')}</p>
-          ) : (
-            decisions.map((issue) => (
-              <article key={issue.id} className="oc-decision" data-testid={`console-decision-${issue.id}`}>
-                <div className="oc-decision-head">
-                  <AlertTriangle size={13} aria-hidden="true" />
-                  {t('数据问题 · 需要你确认', 'Data problem · needs you')}
-                </div>
-                <div className="oc-decision-body">
-                  <div className="oc-decision-title">{tb(t, issue.title)}</div>
-                  <p className="oc-decision-what">{tb(t, issue.detail)}</p>
-                </div>
-                <div className="oc-decision-foot">
-                  <Button size="xs" onClick={onOpenDataIssues}>
-                    {t('在数据体检里查看', 'Open in data check')}
-                  </Button>
-                </div>
-              </article>
-            ))
-          )}
+          ) : null}
+          {approvals ? cards.map((inv) => approvalCard(inv, manifest, approvals)) : null}
+          {decisions.map((issue) => (
+            <IssueDecision key={issue.id} issue={issue} manifest={manifest} approvals={approvals} onOpenDataIssues={onOpenDataIssues} />
+          ))}
+          {settled.length > 0 ? (
+            <ul className="oc-settled-list" aria-label={t('最近处理过的', 'Recently settled')}>
+              {settled.slice(0, 5).map((inv) => <SettledInvocationLine key={inv.id} invocation={inv} />)}
+            </ul>
+          ) : null}
         </div>
 
         <div className="oc-stack">
@@ -205,7 +313,7 @@ function ConsoleActivityList({ activity }: { activity: ActivityResponse }) {
     <ul className="oc-feed">
       {activity.events.slice(0, 8).map((e, i) => (
         <li key={`${e.at}-${i}`}>
-          <span className="oc-feed-t">{e.at.slice(5, 16).replace('T', ' ')}</span>
+          <span className="oc-feed-t">{localStamp(e.at)}</span>
           {e.kind === 'warning' ? <AlertTriangle size={14} className="text-warning" aria-hidden="true" /> : <CheckCircle2 size={14} className="text-success" aria-hidden="true" />}
           <span>{tb(t, e.text)}</span>
         </li>
@@ -226,6 +334,7 @@ export interface ConsoleObjectPageProps {
   readonly detailState: 'idle' | 'loading' | 'ready' | 'missing';
   readonly onFilter?: (filter: string) => void;
   readonly onSelect?: (key: string) => void;
+  readonly approvals?: ConsoleApprovals;
 }
 
 function Cell({ field, value, currency }: { field: ConnectionField; value: unknown; currency: string }) {
@@ -235,7 +344,7 @@ function Cell({ field, value, currency }: { field: ConnectionField; value: unkno
   return <>{text}</>;
 }
 
-export function ConsoleObjectPage({ manifest, object, filter, list, selectedKey, detail, detailState, onFilter, onSelect }: ConsoleObjectPageProps) {
+export function ConsoleObjectPage({ manifest, object, filter, list, selectedKey, detail, detailState, onFilter, onSelect, approvals }: ConsoleObjectPageProps) {
   const { t } = usePreferences();
   const currency = manifest.application.currency;
   const counts = new Map((list?.counts ?? []).map((c) => [c.filter, c.count]));
@@ -307,24 +416,66 @@ export function ConsoleObjectPage({ manifest, object, filter, list, selectedKey,
             </table>
           </div>
         </section>
-        <ConsoleObjectDetail object={object} currency={currency} detail={detail} state={detailState} />
+        <ConsoleObjectDetail object={object} manifest={manifest} detail={detail} state={detailState} approvals={approvals} />
       </div>
     </div>
   );
 }
 
-function ConsoleObjectDetail({ object, currency, detail, state }: { object: ConnectionObject; currency: string; detail: ObjectDetailResponse | null; state: ConsoleObjectPageProps['detailState'] }) {
+function ConsoleObjectDetail({ object, manifest, detail, state, approvals }: {
+  object: ConnectionObject;
+  manifest: ConnectionManifest;
+  detail: ObjectDetailResponse | null;
+  state: ConsoleObjectPageProps['detailState'];
+  approvals: ConsoleApprovals | undefined;
+}) {
   const { t } = usePreferences();
+  const currency = manifest.application.currency;
+  const [formFor, setFormFor] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<Bilingual | null>(null);
+  const key = detail?.key;
+  useEffect(() => {
+    setFormFor(null);
+    setRefusal(null);
+  }, [key]);
   if (state === 'idle') return <p className="oc-callout">{t('点左边任意一条，看它的明细。', 'Pick a row to see its details.')}</p>;
   if (state === 'loading') return <p className="oc-callout">{t('正在读取…', 'Loading…')}</p>;
   if (state === 'missing' || !detail) return <p className="oc-callout">{t('这一条不存在，或不在当前身份能看的范围内。', 'This record does not exist or is outside the current identity’s scope.')}</p>;
   const title = formatConsoleValue(detail.values[object.titleField], 'text', t, currency);
+  // A change already waiting (or unsettled) on this record is not offered a second time.
+  const recordCards = approvals ? cardsToShow(approvals.invocations, detail.key).cards : [];
   return (
     <SectionCard
       title={title}
       sub={object.statusField ? formatConsoleValue(detail.values[object.statusField], 'status', t, currency) : undefined}
     >
       <div className="oc-card-pad" data-testid="console-object-detail">
+        {recordCards.map((inv) => approvalCard(inv, manifest, approvals!))}
+        {approvals ? (
+          <RecordActions
+            manifest={manifest}
+            offered={detail.actions.filter((id) => !recordCards.some((c) => c.actionId === id && (c.status === 'PENDING_APPROVAL' || c.status === 'EXECUTING' || c.status === 'UNKNOWN')))}
+            formFor={formFor}
+            busy={busy}
+            refusal={refusal}
+            onPick={async (action) => {
+              setRefusal(null);
+              if (action.params.length) return setFormFor(action.id);
+              setBusy(action.id);
+              setRefusal(await approvals.prepare(action.id, detail.key, {}));
+              setBusy(null);
+            }}
+            onSubmit={async (action, params) => {
+              setBusy(action.id);
+              const r = await approvals.prepare(action.id, detail.key, params);
+              setBusy(null);
+              setRefusal(r);
+              if (!r) setFormFor(null);
+            }}
+            onCancel={() => setFormFor(null)}
+          />
+        ) : null}
         {detail.flags.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
             {detail.flags.map((flag, i) => <Pill key={i} tone={FLAG_TONE[flag.tone]}>{tb(t, flag.label)}</Pill>)}
@@ -344,6 +495,43 @@ function ConsoleObjectDetail({ object, currency, detail, state }: { object: Conn
         {detail.notes.map((note, i) => <p key={i} className="oc-note">{tb(t, note)}</p>)}
       </div>
     </SectionCard>
+  );
+}
+
+/** The actions this record offers to the acting identity; each one is prepared, then approved. */
+function RecordActions({ manifest, offered, formFor, busy, refusal, onPick, onSubmit, onCancel }: {
+  manifest: ConnectionManifest;
+  offered: readonly string[];
+  formFor: string | null;
+  busy: string | null;
+  refusal: Bilingual | null;
+  onPick: (action: ConnectionManifest['actions'][number]) => void;
+  onSubmit: (action: ConnectionManifest['actions'][number], params: Record<string, unknown>) => void;
+  onCancel: () => void;
+}) {
+  const { t } = usePreferences();
+  const actions = manifest.actions.filter((a) => offered.includes(a.id) && formFriendly(a));
+  if (actions.length === 0) return null;
+  const open = actions.find((a) => a.id === formFor);
+  return (
+    <div className="oc-record-actions" data-testid="console-record-actions">
+      <div className="oc-eyebrow">{t('可以做的操作（执行前会请你批准）', 'Possible actions (you approve before anything runs)')}</div>
+      {open ? (
+        <ActionForm action={open} busy={busy === open.id} error={refusal} onSubmit={(p) => onSubmit(open, p)} onCancel={onCancel} />
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1.5">
+            {actions.map((a) => (
+              <Button key={a.id} size="xs" onClick={() => onPick(a)} disabled={busy !== null} data-testid={`console-action-${a.id}`}>
+                {busy === a.id ? <Loader2 size={11} className="pipeline-spin" aria-hidden="true" /> : null}
+                {tb(t, a.name)}
+              </Button>
+            ))}
+          </div>
+          {refusal ? <p className="oc-approval-outcome warn" role="alert" data-testid="console-action-refusal">{tb(t, refusal)}</p> : null}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -770,6 +958,63 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
   const selectedKey = object ? selected[object.id] ?? null : null;
   const detail = useConsoleRead(!blocked && object && selectedKey ? () => consoleApi.object(projectId, object.id, selectedKey, actor).then((r) => r.data) : null, [blocked, projectId, object?.id, selectedKey, actor, reload], onError);
   const report = useConsoleRead(!blocked && page.kind === 'report' ? () => consoleApi.report(projectId, page.id, actor).then((r) => r.data) : null, [blocked, projectId, pageKey(page), actor, reload], onError);
+  const [invocations, setInvocations] = useState<readonly ActionInvocationRecord[]>([]);
+  const [busyInvocation, setBusyInvocation] = useState<string | null>(null);
+  const [notices, setNotices] = useState<Record<string, Bilingual>>({});
+  useEffect(() => {
+    let live = true;
+    consoleApi.invocations(projectId).then((list) => live && setInvocations(list), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [projectId, reload]);
+  const upsertInvocation = (inv: ActionInvocationRecord) =>
+    setInvocations((list) => [inv, ...list.filter((x) => x.id !== inv.id)].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  /** Runs one approval step; a settled change re-reads the application so pages show its result. */
+  const settle = async (inv: ActionInvocationRecord, step: (projectId: string, id: string) => Promise<ActionInvocationRecord>) => {
+    setBusyInvocation(inv.id);
+    setNotices(({ [inv.id]: _, ...rest }) => rest);
+    try {
+      const next = await step(projectId, inv.id);
+      upsertInvocation(next);
+      if (next.status !== 'PENDING_APPROVAL') setReload((x) => x + 1);
+    } catch (err) {
+      if (err instanceof ConsoleRequestError) {
+        if (err.invocation) upsertInvocation(err.invocation);
+        else {
+          const notice = err.businessMessage
+            ?? (err.code === 'UNREACHABLE'
+              ? { zh: '现在连不上应用，什么都没有执行；应用恢复后再批准即可。', en: 'The application cannot be reached; nothing ran. Approve again once it is back.' }
+              : { zh: `没有执行：${err.message}`, en: `Nothing ran: ${err.message}` });
+          setNotices((n) => ({ ...n, [inv.id]: notice }));
+        }
+        onError(err);
+      }
+    } finally {
+      setBusyInvocation(null);
+    }
+  };
+  const prepareAs = async (who: string, actionId: string, target: string | undefined, params: Record<string, unknown>): Promise<Bilingual | null> => {
+    try {
+      upsertInvocation(await consoleApi.prepare(projectId, actionId, who, target, params));
+      return null;
+    } catch (err) {
+      if (!(err instanceof ConsoleRequestError)) throw err;
+      onError(err);
+      return err.businessMessage ?? { zh: `没能准备：${err.message}`, en: `Could not prepare it: ${err.message}` };
+    }
+  };
+  const approvals: ConsoleApprovals = {
+    invocations,
+    busyId: busyInvocation,
+    notices,
+    prepare: (actionId, target, params) => prepareAs(actor, actionId, target, params),
+    approve: (inv) => void settle(inv, consoleApi.approve),
+    decline: (inv) => void settle(inv, consoleApi.decline),
+    reconcile: (inv) => void settle(inv, consoleApi.reconcile),
+    prepareAgain: (inv) => void prepareAs(inv.actor, inv.actionId, inv.target ?? undefined, { ...inv.params }),
+  };
+  const openCount = cardsToShow(invocations).cards.filter((i) => i.status === 'PENDING_APPROVAL' || i.status === 'UNKNOWN').length;
 
   if (!manifest) {
     return <p className="oc-callout warn">{t('保存的接入清单读不懂了，请断开后重新接入。', 'The saved Connection Manifest can no longer be read; disconnect and connect again.')}</p>;
@@ -801,7 +1046,12 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
   const currentError =
     page.kind === 'overview' || page.kind === 'data' ? overview.error : page.kind === 'object' ? list.error : page.kind === 'report' ? report.error : null;
   const navItems: { page: ConsolePage; icon: React.ReactNode; label: string; badge?: React.ReactNode }[] = [
-    { page: { kind: 'overview' }, icon: <Gauge size={15} />, label: t('今日概览', 'Today') },
+    {
+      page: { kind: 'overview' },
+      icon: <Gauge size={15} />,
+      label: t('今日概览', 'Today'),
+      ...(openCount ? { badge: <Pill tone="bg-primary-soft text-primary" testId="console-open-approvals">{t(`${openCount} 待批准`, `${openCount} to approve`)}</Pill> } : {}),
+    },
     ...manifest.objects.map((o) => ({ page: { kind: 'object', id: o.id } as ConsolePage, icon: <Table2 size={15} />, label: tb(t, o.name) })),
     ...manifest.reports.map((r) => ({ page: { kind: 'report', id: r.id } as ConsolePage, icon: <BarChart3 size={15} />, label: tb(t, r.name) })),
     ...(manifest.dataIssues ? [{ page: { kind: 'data' } as ConsolePage, icon: <ShieldCheck size={15} />, label: t('数据体检', 'Data check') }] : []),
@@ -830,6 +1080,7 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
         overview={overview.data}
         onOpenDataIssues={() => setPage({ kind: 'data' })}
         onOpenReport={(id) => setPage({ kind: 'report', id })}
+        approvals={blocked ? undefined : approvals}
       />
     ) : loading;
   } else if (page.kind === 'data') {
@@ -848,6 +1099,7 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
         detailState={!selectedKey ? 'idle' : detail.status === 'loading' ? 'loading' : detail.status === 'error' ? 'missing' : 'ready'}
         onFilter={(f) => setFilters((x) => ({ ...x, [object.id]: f }))}
         onSelect={(k) => setSelected((x) => ({ ...x, [object.id]: k }))}
+        approvals={approvals}
       />
     );
   }

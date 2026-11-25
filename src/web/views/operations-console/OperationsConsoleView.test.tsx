@@ -14,6 +14,8 @@ import { useWorkbenchStore, type BootstrapPayload } from '../../api.js';
 import { PreferencesProvider } from '../../i18n.js';
 import { OverviewSessionsView } from '../application-center/OverviewSessionsView.js';
 import { ConsoleRequestError } from './consoleApi.js';
+import { hhmm } from './ConsoleApprovals.js';
+import { prepareInvocation, approveInvocation, declineInvocation } from '../../../server/runtime-gateway.js';
 import {
   ConnectAppPanel,
   ConsoleConnectionPage,
@@ -23,7 +25,9 @@ import {
   ConsoleReportPage,
   ConsoleRulesPage,
   OperationsConsoleView,
+  cardsToShow,
   formatConsoleValue,
+  type ConsoleApprovals,
 } from './OperationsConsoleView.js';
 
 const seedDir = fileURLToPath(new URL('../../../../benchmark/datasets/bb-seed0/', import.meta.url));
@@ -184,5 +188,65 @@ describe('Operations Console (TeaCo spec v0.3.1 §11.1)', () => {
     useWorkbenchStore.setState({ data: { ...data, connectedApps: [] } });
     Object.assign(useWorkbenchStore.getInitialState(), useWorkbenchStore.getState());
     expect(render(<OperationsConsoleView onNavigate={() => undefined} />)).toContain('data-testid="console-connect-panel"');
+  });
+
+  it('asks for approval in business words, offers record actions, and keeps settled ones out of the way (spec §10.1)', async () => {
+    const { fetch, client } = await teaco();
+    const manifest = await client.readManifest();
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const api = createApiApp(store, { connectedAppFetch: fetch });
+    const projectId = store.listProjects()[0]!.id;
+    await api.request(`/api/projects/${projectId}/connected-app`, { method: 'POST', body: JSON.stringify({ baseUrl: 'teaco.local' }), headers: { 'content-type': 'application/json' } });
+    const deps = { store, fetch, now: () => new Date('2026-09-10T09:00:00Z') };
+    const prep = async (actionId: string, target: string, params = {}) => {
+      const r = await prepareInvocation(deps, projectId, { actionId, target, params, actor: 'owner', requestedBy: 'user' });
+      if (!r.ok) throw new Error(r.code);
+      return r.value;
+    };
+    const repair = await prep('repair_stock', 'HRB-PEPMNT-2OZ', { quantity: 20 });
+    const declined = await prep('cancel_order', '1105');
+    declineInvocation(deps, projectId, declined.id);
+    const shipped = await prep('ship_order', '1106');
+    await approveInvocation(deps, projectId, shipped.id);
+    const invocations = store.listActionInvocations(projectId);
+    const { cards, settled } = cardsToShow(invocations);
+    expect(cards.map((i) => i.id)).toEqual([repair.id]);
+    expect(settled.map((i) => i.status).sort()).toEqual(['REJECTED', 'VERIFIED']);
+    const approvals: ConsoleApprovals = {
+      invocations, busyId: null, prepare: async () => null, approve: () => undefined, decline: () => undefined, reconcile: () => undefined, prepareAgain: () => undefined,
+    };
+    const overview = { metrics: await client.metrics('owner'), dataIssues: await client.dataIssues('owner'), activity: await client.activity('owner') };
+    stubLocale('zh-CN');
+    const zh = render(<ConsoleOverviewPage manifest={manifest} actorId="owner" overview={overview} approvals={approvals} />);
+    // The pending repair replaces the data problem it fixes, so the owner is asked once.
+    expect(zh).toContain('有 1 件事等你确认。');
+    expect(zh).toContain(`data-testid="console-invocation-${repair.id}"`);
+    expect(zh).not.toContain('data-testid="console-decision-negative-stock-HRB-PEPMNT-2OZ"');
+    expect(zh).toContain('批准并执行');
+    expect(zh).toContain('按盘点把Peppermint Leaf（2 oz tin）的库存改为 20 并解锁');
+    expect(zh).toContain('库存 0 → 20，可以正常发货');
+    expect(zh).toContain('为什么可以放心批准');
+    expect(zh).toContain(`${hhmm('2026-09-10T09:10:00.000Z')} 前有效`);
+    expect(zh).toContain(`data-testid="console-settled-${shipped.id}"`);
+    expectBusinessView(zh);
+    stubLocale('en-US');
+    const en = render(<ConsoleOverviewPage manifest={manifest} actorId="owner" overview={overview} approvals={approvals} />);
+    expect(en).toContain('Approve and run');
+    expect(en).toContain('Why approving is safe');
+    expectBusinessView(en);
+
+    stubLocale('zh-CN');
+    const orders = manifest.objects.find((o) => o.id === 'orders')!;
+    const detail = await client.getObject('orders', '1104', 'owner');
+    const page = render(
+      <ConsoleObjectPage manifest={manifest} object={orders} filter="open" list={await client.listObjects('orders', 'owner', { filter: 'open' })} selectedKey="1104" detail={detail} detailState="ready" approvals={approvals} />,
+    );
+    expect(page).toContain('可以做的操作（执行前会请你批准）');
+    for (const id of ['pack_order', 'ship_order', 'cancel_order']) expect(page).toContain(`data-testid="console-action-${id}"`);
+    expectBusinessView(page);
+    const finance = render(
+      <ConsoleObjectPage manifest={manifest} object={orders} filter="open" list={await client.listObjects('orders', 'finance', { filter: 'open' })} selectedKey="1104" detail={await client.getObject('orders', '1104', 'finance')} detailState="ready" approvals={approvals} />,
+    );
+    expect(finance).not.toContain('data-testid="console-record-actions"');
   });
 });
