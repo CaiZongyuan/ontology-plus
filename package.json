@@ -19,7 +19,8 @@
     "test": "vitest run src examples",
     "test:e2e": "playwright test",
     "smoke:context": "NODE_USE_ENV_PROXY=1 tsx scripts/smoke-context-snapshots.ts",
-    "teaco:changes": "tsx examples/teaco/scripts/propose-changes.ts"
+    "teaco:changes": "tsx examples/teaco/scripts/propose-changes.ts",
+    "benchmark:smoke": "tsx benchmark/runner/cli.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",

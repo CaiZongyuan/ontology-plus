@@ -121,6 +121,8 @@ import {
   DesignBrief,
   DevelopmentPackageSnapshot,
   ActionInvocationRecord,
+  BenchmarkReportRecord,
+  BuildRunRecord,
   ChangeProposalRecord,
   DataSourceRecord,
   RuntimeEventReceipt,
@@ -4021,6 +4023,22 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
 
     saveRuntimeTask(record) {
       return putItem('runtime_tasks', record.id, record, record.projectId);
+    },
+
+    getLatestBuildRun(projectId) {
+      return listItems<BuildRunRecord>('build_runs', projectId).sort((x, y) => y.createdAt.localeCompare(x.createdAt))[0];
+    },
+
+    saveBuildRun(record) {
+      return putItem('build_runs', record.id, record, record.projectId);
+    },
+
+    listBenchmarkReports() {
+      return listItems<BenchmarkReportRecord>('benchmark_reports', '__platform__').sort((x, y) => y.createdAt.localeCompare(x.createdAt));
+    },
+
+    saveBenchmarkReport(record) {
+      return putItem('benchmark_reports', record.id, record, '__platform__');
     },
 
     listDataSources(projectId) {

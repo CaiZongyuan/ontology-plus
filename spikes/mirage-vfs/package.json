@@ -1,0 +1,19 @@
+{
+  "name": "ontology-plus-mirage-vfs-spike",
+  "private": true,
+  "type": "module",
+  "description": "Reproducible check of Mirage VFS with pi-durable 1.5.2 (TeaCo spec \u00a79.1, ADR 0021). Exact versions, own lockfile.",
+  "scripts": {
+    "spike": "tsx spike.ts"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.5.2",
+    "@earendil-works/pi-durable": "1.5.2",
+    "@struktoai/mirage-node": "0.1.0",
+    "@struktoai/mirage-pi-durable": "0.1.0",
+    "@earendil-works/pi-ai": "1.5.2"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15"
+  }
+}

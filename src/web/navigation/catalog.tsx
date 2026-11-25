@@ -22,6 +22,7 @@ import {
   Settings,
   Sparkles,
   Workflow,
+  FlaskConical,
 } from 'lucide-react';
 import type { BilingualText, ProjectStepId } from '../../packages/business-vocabulary/index.js';
 
@@ -54,6 +55,7 @@ export type CanonicalNavViewId =
   | 'data-writeback'
   // Platform Governance
   | 'llm-center'
+  | 'gov-benchmark'
   | 'system-settings';
 
 export type NavViewId = CanonicalNavViewId;
@@ -246,6 +248,12 @@ export const NAV_ITEMS: NavItemSpec[] = [
     labelEn: 'LLM Center',
   },
   {
+    id: 'gov-benchmark',
+    group: 'PLATFORM',
+    labelZh: '评测基准',
+    labelEn: 'Benchmarks',
+  },
+  {
     id: 'system-settings',
     group: 'PLATFORM',
     labelZh: '系统设置',
@@ -277,6 +285,7 @@ export const NAV_ICONS: Record<CanonicalNavViewId, React.ReactNode> = {
   'data-reasoning': <Sparkles size={16} />,
   'data-writeback': <Send size={16} />,
   'llm-center': <Cpu size={16} />,
+  'gov-benchmark': <FlaskConical size={16} />,
   'system-settings': <Settings size={16} />,
 };
 
@@ -378,7 +387,7 @@ export const SECONDARY_AREAS: readonly SecondaryAreaSpec[] = [
     label: { zh: '平台治理', en: 'Platform Governance' },
     hint: { zh: 'AI 服务与工作台设置', en: 'AI services and workbench settings' },
     defaultView: 'llm-center',
-    views: ['llm-center', 'system-settings'],
+    views: ['llm-center', 'gov-benchmark', 'system-settings'],
   },
 ];
 

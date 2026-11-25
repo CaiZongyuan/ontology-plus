@@ -1232,6 +1232,56 @@ export interface DataSourceRecord {
   readonly summary: { readonly claims: number; readonly duplicates: number; readonly disputed: number; readonly superseded: number };
 }
 
+/**
+ * An archived evaluation report (TeaCo spec §12.4, U-16): which cases passed, failed or did not
+ * run, with every check's evidence. Shown read-only; only real runs are archived.
+ */
+export interface BenchmarkReportRecord {
+  readonly id: string;
+  readonly campaignId: string;
+  readonly suite: { readonly zh: string; readonly en: string };
+  readonly createdAt: string;
+  readonly environment: Readonly<Record<string, unknown>>;
+  readonly results: readonly {
+    readonly taskId: string;
+    readonly track: string;
+    readonly title: { readonly zh: string; readonly en: string };
+    readonly campaignType: string;
+    readonly status: 'PASS' | 'FAIL' | 'NOT_RUN' | 'INFRA_ERROR' | 'TIMEOUT' | 'POLICY_VIOLATION';
+    readonly checks: readonly { readonly id: string; readonly passed: boolean; readonly evidence: string }[];
+    readonly reason?: { readonly zh: string; readonly en: string };
+    readonly wallClockMs: number;
+  }[];
+  readonly summary: { readonly pass: number; readonly fail: number; readonly notRun: number; readonly infraError: number };
+}
+
+/**
+ * Preparing a project's runnable system on this machine (TeaCo spec U-02, ADR 0019): every step is
+ * a real action with its own timestamps, shown in business words while it runs.
+ */
+export type BuildStepStatus = 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED';
+
+export interface BuildRunRecord {
+  readonly id: string;
+  readonly projectId: string;
+  /** Which implementation is built: a reference implementation, not code written by an AI. */
+  readonly template: 'teaco';
+  readonly status: 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+  readonly steps: readonly {
+    readonly id: 'build' | 'start' | 'acceptance' | 'connect';
+    readonly label: { readonly zh: string; readonly en: string };
+    readonly status: BuildStepStatus;
+    readonly detail: { readonly zh: string; readonly en: string } | null;
+    readonly startedAt: string | null;
+    readonly finishedAt: string | null;
+  }[];
+  readonly workspaceDir: string;
+  readonly baseUrl: string | null;
+  readonly pid: number | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface ExtractionJob {
   id: string;
   systemId: string;
@@ -1821,6 +1871,10 @@ export interface WorkspaceStore {
   listRuntimeTasks(projectId: string): RuntimeTaskRecord[];
   getRuntimeTask(id: string): RuntimeTaskRecord | undefined;
   saveRuntimeTask(record: RuntimeTaskRecord): RuntimeTaskRecord;
+  getLatestBuildRun(projectId: string): BuildRunRecord | undefined;
+  saveBuildRun(record: BuildRunRecord): BuildRunRecord;
+  listBenchmarkReports(): BenchmarkReportRecord[];
+  saveBenchmarkReport(record: BenchmarkReportRecord): BenchmarkReportRecord;
   listDataSources(projectId: string): DataSourceRecord[];
   saveDataSource(record: DataSourceRecord): DataSourceRecord;
   listProvenanceRecords(projectId: string): ProvenanceRecord[];

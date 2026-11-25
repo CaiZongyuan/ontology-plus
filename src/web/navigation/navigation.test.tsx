@@ -61,6 +61,7 @@ const ALL_ACTIVE_NAV_ITEMS: NavViewId[] = [
   'data-reasoning',
   'data-writeback',
   'llm-center',
+  'gov-benchmark',
   'system-settings',
 ];
 
@@ -77,7 +78,7 @@ describe('navigation catalog and URL state', () => {
       'ANALYTICS',
       'PLATFORM',
     ]);
-    expect(NAV_ITEMS).toHaveLength(24);
+    expect(NAV_ITEMS).toHaveLength(25);
     expect(NAV_ITEMS.map((item) => item.id)).toEqual(ALL_ACTIVE_NAV_ITEMS);
     expect(NAV_ITEMS.some((item) => String(item.id) === 'app-req-explore')).toBe(false);
     expect(NAV_ITEMS.some((item) => String(item.id) === 'app-req-docs')).toBe(false);
@@ -100,7 +101,7 @@ describe('navigation catalog and URL state', () => {
     expect(getNavItemsByGroup('APPLICATION')).toHaveLength(9);
     expect(getNavItemsByGroup('CAPABILITY')).toHaveLength(6);
     expect(getNavItemsByGroup('ANALYTICS')).toHaveLength(5);
-    expect(getNavItemsByGroup('PLATFORM')).toHaveLength(2);
+    expect(getNavItemsByGroup('PLATFORM')).toHaveLength(3);
     expect(isNavViewId('unknown-view')).toBe(false);
     expect(resolveNavViewId('unknown-view')).toBe(DEFAULT_NAV_VIEW);
     expect(isFlushNavView('app-ontology')).toBe(true);
@@ -296,7 +297,7 @@ describe('navigation catalog and URL state', () => {
     );
 
     const secondaryAssignedViews = SECONDARY_AREAS.flatMap((area) => area.views);
-    expect(new Set(secondaryAssignedViews).size).toBe(13);
+    expect(new Set(secondaryAssignedViews).size).toBe(14);
 
     for (const area of SECONDARY_AREAS) {
       expect(checkBusinessViewMarkup(area.label.zh, { plainText: true })).toEqual([]);

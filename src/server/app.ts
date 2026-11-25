@@ -66,6 +66,8 @@ import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-pro
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
 import { registerConnectedAppRoutes } from './connected-apps.js';
 import { registerDataSourceRoutes } from './data-sources.js';
+import { registerBenchmarkRoutes } from './benchmark.js';
+import { registerBuildRunnerRoutes } from './build-runner.js';
 import type { FetchLike } from '../packages/application-runtime/index.js';
 import { registerArtifactHistoryRoutes } from './artifact-history.js';
 import { registerContextSnapshotRoutes } from './context-snapshots.js';
@@ -81,6 +83,8 @@ export interface ApiAppOptions {
   agentRunHooks?: AgentRunLifecycleHooks | readonly AgentRunLifecycleHooks[];
   /** How connected applications are reached (TeaCo spec §11.3); tests pass an in-process app. */
   connectedAppFetch?: FetchLike;
+  /** Where the build runner creates isolated workspaces (inside the repository); `.onto-cs/workspaces` by default. */
+  buildWorkspacesRoot?: string;
 }
 
 export function createApiApp(
@@ -1296,6 +1300,8 @@ export function createApiApp(
   registerApplicationDeliveryRoutes(app, store);
   registerConnectedAppRoutes(app, store, options?.connectedAppFetch ? { fetch: options.connectedAppFetch } : {});
   registerDataSourceRoutes(app, store, options?.connectedAppFetch ? { fetch: options.connectedAppFetch } : {});
+  registerBenchmarkRoutes(app, store);
+  registerBuildRunnerRoutes(app, store, options?.buildWorkspacesRoot ? { workspacesRoot: options.buildWorkspacesRoot } : {});
   registerArtifactHistoryRoutes(app, store);
   registerContextSnapshotRoutes(app, store);
   registerBusinessModelEditRoutes(app, store);

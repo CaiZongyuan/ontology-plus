@@ -1,3 +1,4 @@
+import { BenchmarkView } from '../views/BenchmarkView.js';
 import React from 'react';
 import {
   DeliveryStepView,
@@ -74,6 +75,7 @@ export const NAV_VIEW_REGISTRY: Record<CanonicalNavViewId, NavViewRenderer> = {
   'data-writeback': () => <DataWritebackView />,
 
   'llm-center': () => <LlmCenterView />,
+  'gov-benchmark': () => <BenchmarkView />,
   'system-settings': () => <SystemSettingsView />,
 };
 

@@ -4,6 +4,7 @@ import {
   BarChart3,
   BookOpen,
   CheckCircle2,
+  FlaskConical,
   Gauge,
   History,
   Loader2,
@@ -45,6 +46,7 @@ import {
   useInvocationsChanged,
 } from '../../components/runtime/RuntimeApprovals.js';
 import { ConsoleRequestError, consoleApi, type ConsoleOverview, type KnowledgePending } from '../../components/runtime/consoleApi.js';
+import { ConsoleAiCheckPage } from '../BenchmarkView.js';
 import { ConsoleChangesPage } from './ConsoleChanges.js';
 import { ConsoleKnowledgeSection, ConsoleSourcesSection, ConsoleWorkCards, workCount } from './ConsoleKnowledge.js';
 import './operations-console.css';
@@ -876,6 +878,7 @@ export function ConnectAppPanel({ projectName, busy, error, initialAddress, onCo
 type ConsolePage =
   | { readonly kind: 'overview' }
   | { readonly kind: 'changes' }
+  | { readonly kind: 'ai-check' }
   | { readonly kind: 'object'; readonly id: string }
   | { readonly kind: 'report'; readonly id: string }
   | { readonly kind: 'data' }
@@ -982,7 +985,7 @@ function ConsoleStateNotice({ error, record, busy, onCheck, onRetry }: { error: 
   );
 }
 
-function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRecord; projectId: string; suite: OntologySuite | null }) {
+function ConsoleWorkspace({ record, projectId, suite, onNavigate }: { record: ConnectedAppRecord; projectId: string; suite: OntologySuite | null; onNavigate?: (view: NavViewId) => void }) {
   const { t } = usePreferences();
   const parsed = useMemo(() => parseConnectionManifest(record.manifest), [record.manifest]);
   const manifest = parsed.ok ? parsed.manifest : null;
@@ -1135,6 +1138,7 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
     ...(manifest.dataIssues ? [{ page: { kind: 'data' } as ConsolePage, icon: <ShieldCheck size={15} />, label: t('数据体检', 'Data check') }] : []),
     { page: { kind: 'rules' }, icon: <BookOpen size={15} />, label: t('业务规则', 'Business rules') },
     ...(manifest.releases ? [{ page: { kind: 'changes' } as ConsolePage, icon: <History size={15} />, label: t('需求变化', 'Requirement changes') }] : []),
+    { page: { kind: 'ai-check' }, icon: <FlaskConical size={15} />, label: t('AI 能力体检', 'AI check-up') },
     {
       page: { kind: 'connection' },
       icon: <Plug size={15} />,
@@ -1160,6 +1164,8 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
     body = <ConsoleRulesPage suite={suite} extra={<ConsoleKnowledgeSection projectId={projectId} reload={reload} />} />;
   } else if (blocked || currentError) {
     body = null;
+  } else if (page.kind === 'ai-check') {
+    body = <ConsoleAiCheckPage {...(onNavigate ? { onOpenDetails: () => onNavigate('gov-benchmark') } : {})} />;
   } else if (page.kind === 'changes') {
     body = <ConsoleChangesPage projectId={projectId} onConnectionChanged={(r) => setConnectedApp(projectId, r)} />;
   } else if (page.kind === 'overview') {
@@ -1313,5 +1319,5 @@ export function OperationsConsoleView({ onNavigate }: { onNavigate: (view: NavVi
       />
     );
   }
-  return <ConsoleWorkspace key={project.id} record={record} projectId={project.id} suite={suite} />;
+  return <ConsoleWorkspace key={project.id} record={record} projectId={project.id} suite={suite} onNavigate={onNavigate} />;
 }

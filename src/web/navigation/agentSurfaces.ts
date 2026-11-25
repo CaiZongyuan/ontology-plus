@@ -280,6 +280,14 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
       en: 'Ask about model gateway configuration, vision support, or connection checks…',
     },
   },
+  'gov-benchmark': {
+    title: AI_ASSISTANT_TITLE,
+    sessionKind: 'COPILOT',
+    placeholder: {
+      zh: '询问评测结果、没通过的原因或尚未运行的项…',
+      en: 'Ask about results, failures, or cases not run…',
+    },
+  },
   'system-settings': {
     title: AI_ASSISTANT_TITLE,
     sessionKind: 'COPILOT',

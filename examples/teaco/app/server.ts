@@ -11,6 +11,7 @@ import { seedIfEmpty } from './seed.js';
  * Local TeaCo process (spec §5.1, P0–P4 local-first). Listens on loopback only, because the
  * connection to Ontology Plus carries no authentication (spec v0.3.1, ADR 0020 amendment).
  *   TEACO_PORT (4320) · TEACO_REVISION (v1–v4, default v1) · TEACO_DB (examples/teaco/.data/teaco.sqlite)
+ *   TEACO_SEED_DIR (benchmark/datasets/bb-seed0) — where the three seed tables are read from
  */
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '../../..');
@@ -22,7 +23,7 @@ mkdirSync(dirname(dbPath), { recursive: true });
 
 const repository = openTeacoRepository(dbPath);
 const at = new Date().toISOString();
-const seeded = await seedIfEmpty(repository, resolve(repoRoot, 'benchmark/datasets/bb-seed0'), at);
+const seeded = await seedIfEmpty(repository, process.env.TEACO_SEED_DIR ?? resolve(repoRoot, 'benchmark/datasets/bb-seed0'), at);
 await repository.recordActivity({
   at, kind: 'info',
   text: { zh: `订单系统按需求 ${revision} 启动`, en: `Order system started on requirement ${revision}` },

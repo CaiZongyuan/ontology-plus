@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Blocks,
   CheckCircle2,
+  Circle,
   CircleDot,
   Code2,
   Copy,
@@ -19,6 +20,7 @@ import {
   Sparkles,
   Trash2,
   TriangleAlert,
+  XCircle,
 } from 'lucide-react';
 import {
   BUSINESS_VOCABULARY,
@@ -31,6 +33,8 @@ import { validateOntologySuite } from '../../../packages/ontology-core/index.js'
 import type { CompiledDevelopmentPackage } from '../../../packages/package-compiler/index.js';
 import type {
   AssembledApplication,
+  BuildRunRecord,
+  ConnectedAppRecord,
   FourLayerAsset,
   GeneratedSkill,
   PrototypeRevision,
@@ -1606,14 +1610,42 @@ export interface RunnableSystemSlotProps {
   readonly connectedAppName?: string | null;
   /** Opens the Operations Console, or its connect panel when nothing is connected yet. */
   readonly onOpenConsole?: () => void;
+  /** The latest preparation of the runnable system on this machine (U-02), shown step by step. */
+  readonly buildRun?: BuildRunRecord | null;
+  /** Prepares the runnable system from the reference implementation and connects it. */
+  readonly onBuild?: () => void;
+}
+
+/** The steps of preparing the runnable system, as they really ran (ADR 0019). */
+function BuildRunSteps({ run }: { run: BuildRunRecord }) {
+  const { t } = usePreferences();
+  return (
+    <ol className="m-0 flex list-none flex-col gap-1.5 p-0" data-testid="runnable-system-build-steps">
+      {run.steps.map((s) => (
+        <li key={s.id} className="flex items-start gap-2 text-[13px]" data-testid={`runnable-system-build-step-${s.id}`} data-status={s.status}>
+          <span className="mt-[2px] shrink-0" aria-hidden="true">
+            {s.status === 'DONE' ? <CheckCircle2 size={14} className="text-success" /> : s.status === 'RUNNING' ? <Loader2 size={14} className="pipeline-spin text-primary" /> : s.status === 'FAILED' ? <XCircle size={14} className="text-destructive" /> : <Circle size={14} className="text-faint-foreground" />}
+          </span>
+          <span className="min-w-0">
+            <span className={cn('block', s.status === 'PENDING' ? 'text-muted-foreground' : 'text-foreground')}>{t(s.label.zh, s.label.en)}</span>
+            {s.detail ? <span className={cn('block text-[12px]', s.status === 'FAILED' ? 'text-destructive' : 'text-muted-foreground')}>{t(s.detail.zh, s.detail.en)}</span> : null}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 export function RunnableSystemSlot({
-  state = DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE,
+  state: givenState = DEFAULT_RUNNABLE_SYSTEM_SLOT_STATE,
   connectedAppName = null,
   onOpenConsole,
+  buildRun = null,
+  onBuild,
 }: RunnableSystemSlotProps) {
   const { t } = usePreferences();
+  // A preparation running on this machine is the real progress of this slot.
+  const state: RunnableSystemSlotState = buildRun?.status === 'RUNNING' ? { status: 'PREPARING', openUrl: null } : givenState;
   const hasOpenUrl = state.status === 'READY' && Boolean(state.openUrl?.trim());
   if (connectedAppName) {
     return (
@@ -1699,11 +1731,22 @@ export function RunnableSystemSlot({
           </a>
         </div>
       )}
-      {onOpenConsole && !hasOpenUrl && (
+      {buildRun && (buildRun.status === 'RUNNING' || buildRun.status === 'FAILED') ? <BuildRunSteps run={buildRun} /> : null}
+      {buildRun?.status === 'RUNNING' ? (
+        <p className="m-0 text-[12px] text-muted-foreground">{t('用参考实现搭建，不是 AI 编写的代码；每一步完成时都会更新。', 'Built from the reference implementation, not code written by an AI; each step updates as it finishes.')}</p>
+      ) : null}
+      {(onOpenConsole || onBuild) && !hasOpenUrl && buildRun?.status !== 'RUNNING' && (
         <div className="flex flex-wrap items-center gap-2 pt-0.5">
-          <Button size="sm" onClick={onOpenConsole} data-testid="runnable-system-connect">
-            {t('接入开发好的应用', 'Connect the built application')}
-          </Button>
+          {onBuild ? (
+            <Button size="sm" onClick={onBuild} data-testid="runnable-system-build">
+              {buildRun?.status === 'FAILED' ? t('再试一次', 'Try again') : t('在本机搭建参考应用并接入', 'Build the reference application here and connect it')}
+            </Button>
+          ) : null}
+          {onOpenConsole ? (
+            <Button size="sm" onClick={onOpenConsole} data-testid="runnable-system-connect">
+              {t('接入开发好的应用', 'Connect the built application')}
+            </Button>
+          ) : null}
         </div>
       )}
     </article>
@@ -1764,6 +1807,35 @@ export function DeliveryStepView({
   const connectedAppName = connectedApp
     ? t(connectedAppNameText?.zh ?? connectedApp.baseUrl, connectedAppNameText?.en ?? connectedApp.baseUrl)
     : null;
+  // The latest preparation of the runnable system, followed while it runs (U-02).
+  const [buildRun, setBuildRun] = useState<BuildRunRecord | null>(null);
+  useEffect(() => {
+    if (!projectId || connectedApp) return undefined;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/build-runs/latest`).catch(() => null);
+      const run = res?.ok ? ((await res.json()) as { run: BuildRunRecord | null }).run : null;
+      if (!live) return;
+      setBuildRun(run);
+      if (run?.status === 'RUNNING') timer = setTimeout(() => void poll(), 800);
+      else if (run?.status === 'SUCCEEDED') {
+        const conn = await fetch(`/api/projects/${encodeURIComponent(projectId)}/connected-app`).then((r) => r.json() as Promise<{ connectedApp: ConnectedAppRecord | null }>).catch(() => null);
+        if (live && conn?.connectedApp) {
+          useWorkbenchStore.setState((st) => (st.data ? { data: { ...st.data, connectedApps: [...(st.data.connectedApps ?? []).filter((a) => a.projectId !== projectId), conn.connectedApp!] } } : {}));
+        }
+      }
+    };
+    void poll();
+    return () => {
+      live = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [projectId, connectedApp, buildRun?.id, buildRun?.status === 'RUNNING']);
+  const startBuild = async () => {
+    const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/build-runs`, { method: 'POST' }).catch(() => null);
+    if (res && (res.ok || res.status === 409)) setBuildRun(((await res.json()) as { run: BuildRunRecord }).run);
+  };
   const projectApps = useMemo(
     () => (data?.assembledApplications ?? []).filter((item) => item.projectId === projectId),
     [data?.assembledApplications, projectId],
@@ -2375,6 +2447,8 @@ export function DeliveryStepView({
           <RunnableSystemSlot
             state={runnableSystemSlot}
             connectedAppName={connectedAppName}
+            buildRun={buildRun}
+            {...(projectId ? { onBuild: () => void startBuild() } : {})}
             {...(onNavigate ? { onOpenConsole: () => onNavigate('operations-console') } : {})}
           />
 
