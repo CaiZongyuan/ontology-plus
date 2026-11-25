@@ -30,5 +30,6 @@ Avoid giant barrel files that blindly re-export internal helpers; keep entry poi
 | `package-compiler` | Compiles confirmed `Ontology Suites` and `Four-Layer Application Assemblies` into immutable `Development Packages`, `Ontology MCP Servers`, and progressive-disclosure `Ontology Skills` (`SKILL.md`) |
 | `workbench-theme` | Versioned `Workbench Theme` token contract, built-in `Default` and `Warm Paper` themes (light & dark), CSS/doc compiler, and completeness/contrast/source guards |
 | `business-vocabulary` | Canonical 1-to-1 mapping between `GLOSSARY.md` terms/model codes and bilingual `Business View` names, tool-progress phrasing, and automated Business View vocabulary guard (`checkBusinessViewMarkup`) |
+| `application-runtime` | Connection contract v1 (TeaCo spec §11.3): `Connection Manifest` schema and fingerprint, a typed client for a connected application's runtime reads (sent as the user's `Acting Identity`), and the check of a manifest against the confirmed Business Model |
 
 
