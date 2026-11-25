@@ -145,6 +145,8 @@ export type {
   DevelopmentPackageSnapshot,
   GeneratedSkill,
   LegacySystemConfig,
+  ActionInvocationRecord,
+  ActionInvocationStatus,
   ConnectedAppDriftReason,
   ConnectedAppHint,
   ConnectedAppRecord,

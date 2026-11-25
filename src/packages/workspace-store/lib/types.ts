@@ -1057,6 +1057,38 @@ export interface ConnectedAppRecord {
   readonly checkedAt: string;
 }
 
+/**
+ * One approved runtime change requested of a connected application (spec §10.1, ADR 0020):
+ * prepare → explicit approval bound to arguments, target version, identity and manifest → invoke
+ * with one request key → read back. A result that cannot be confirmed is UNKNOWN and is reconciled
+ * by the same key, never re-sent under a new one.
+ */
+export type ActionInvocationStatus = 'PENDING_APPROVAL' | 'EXECUTING' | 'VERIFIED' | 'FAILED' | 'UNKNOWN' | 'REJECTED' | 'EXPIRED';
+
+export interface ActionInvocationRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly actionId: string;
+  readonly actionName: { readonly zh: string; readonly en: string };
+  readonly actor: string;
+  readonly target: string | null;
+  readonly params: Readonly<Record<string, unknown>>;
+  readonly argsHash: string;
+  readonly targetVersion: number | null;
+  readonly manifestFingerprint: string;
+  readonly idempotencyKey: string;
+  readonly requestedBy: 'user' | 'assistant';
+  readonly status: ActionInvocationStatus;
+  readonly preview: { readonly summary: { readonly zh: string; readonly en: string }; readonly effects: readonly { readonly zh: string; readonly en: string }[] };
+  readonly expiresAt: string;
+  readonly approvedAt: string | null;
+  readonly receipt: Readonly<Record<string, unknown>> | null;
+  readonly failure: { readonly code: string; readonly message: { readonly zh: string; readonly en: string } } | null;
+  readonly log: readonly { readonly at: string; readonly text: { readonly zh: string; readonly en: string } }[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface ExtractionJob {
   id: string;
   systemId: string;
@@ -1641,6 +1673,9 @@ export interface WorkspaceStore {
   listConnectedApps(): ConnectedAppRecord[];
   saveConnectedApp(record: ConnectedAppRecord): ConnectedAppRecord;
   deleteConnectedApp(projectId: string): boolean;
+  listActionInvocations(projectId: string): ActionInvocationRecord[];
+  getActionInvocation(id: string): ActionInvocationRecord | undefined;
+  saveActionInvocation(record: ActionInvocationRecord): ActionInvocationRecord;
   listExtractionJobs(projectId?: string): ExtractionJob[];
   /**
    * Create an Ontology Extraction job. Without `extraction` the store runs the

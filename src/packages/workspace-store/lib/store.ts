@@ -119,6 +119,7 @@ import {
   DatabaseResource,
   DesignBrief,
   DevelopmentPackageSnapshot,
+  ActionInvocationRecord,
   ConnectedAppRecord,
   ExtractionJob,
   FourLayerAsset,
@@ -3995,6 +3996,18 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     saveConnectedApp(record) {
       if (!getProjectSuite(record.projectId)) throw new Error(`Project ${record.projectId} not found`);
       return putItem('connected_apps', record.projectId, record, record.projectId);
+    },
+
+    listActionInvocations(projectId) {
+      return listItems<ActionInvocationRecord>('action_invocations', projectId).sort((x, y) => y.createdAt.localeCompare(x.createdAt));
+    },
+
+    getActionInvocation(id) {
+      return getItem<ActionInvocationRecord>('action_invocations', id);
+    },
+
+    saveActionInvocation(record) {
+      return putItem('action_invocations', record.id, record, record.projectId);
     },
 
     deleteConnectedApp(projectId) {
