@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TeaCo 经营驾驶舱</title>
+<!-- UI REFERENCE — TeaCo 经营驾驶舱 (docs/ontology-plus-teaco-spec-v0.3.md §11.1).
+     The management console Ontology Plus shows for one connected Runnable System (here the TeaCo
+     order system) once it is built, deployed and verified. Chosen on 2026-11-25 from four variants
+     (decision inbox, lifecycle stages and conversation-first were the others; they stay on branch
+     proto/teaco-ops-state). This page fixes layout, information hierarchy, wording and the behaviour of
+     decisions, approvals, the AI 助手 panel and requirement versions; it is not production code.
+     Business actions run in memory and reset on reload. Supplier knowledge is example data; the AI
+     check-up shows "not yet run" on purpose.
+     Data: derived from Business Bench tasks/build/order-management seed 0 (erphq/business-bench @ b6e3b15,
+     MIT licence), normalised at build time to 142 customers, 60 teas, 110 orders.
+     Appearance reads only Workbench Theme contract tokens (ADR 0015) from the generated stylesheet.
+     Open by double-click, or with `pnpm dev:web` at
+     http://127.0.0.1:5173/docs/ui-reference/teaco-operations-console.html (loads fonts and the 暖纸 texture). -->
+<link rel="stylesheet" href="../../src/web/workbench-themes.generated.css">
+<style>
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/fonts/inter-latin-opsz-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 100 800; font-display: swap; src: url("/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 400 500; font-display: swap; src: url("/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
+
+/* Type and shell sizes mirror src/web/tokens.css; everything that paints reads a theme token. */
+:root {
+  --text-xs: 12px; --text-sm: 13px; --text-base: 14px; --text-lg: 16px; --text-xl: 20px; --text-2xl: 24px;
+  --radius-pill: 999px; --topbar-h: 56px;
+  color-scheme: light dark; accent-color: var(--primary);
+  scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+[data-theme="light"] { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; padding: 0; }
+body {
+  min-height: 100vh; background-color: var(--background); background-image: var(--backdrop-image); background-size: var(--backdrop-size, auto);
+  color: var(--foreground); font-family: var(--font-sans); font-size: var(--text-base); line-height: 1.5; -webkit-font-smoothing: antialiased;
+}
+button, input, select { margin: 0; font: inherit; color: inherit; letter-spacing: inherit; }
+h1, h2, h3, p { margin: 0; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.num { font-variant-numeric: tabular-nums; }
+.ico { flex-shrink: 0; vertical-align: middle; }
+.muted { color: var(--muted-foreground); }
+.faint { color: var(--faint-foreground); }
+.ok { color: var(--success); } .warn { color: var(--warning); } .bad { color: var(--destructive); } .pri { color: var(--primary); }
+.stack { display: grid; gap: 12px; align-content: start; min-width: 0; grid-auto-rows: max-content; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.spread { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.grow { flex: 1; min-width: 0; }
+
+/* ─── Buttons, segmented controls, fields (beautifui) ─── */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--foreground); font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer; user-select: none; transition: background-color 150ms, border-color 150ms, color 150ms, box-shadow 150ms; }
+.btn:enabled:hover { background: var(--muted); border-color: var(--border-strong); }
+.btn:enabled:active { transform: translateY(0.5px); }
+.btn:focus-visible { outline: none; border-color: var(--primary); box-shadow: var(--focus-ring); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.xs { height: 24px; padding: 0 8px; font-size: 11.5px; gap: 4px; }
+.btn.md { height: 32px; padding: 0 12px; font-size: 13px; }
+.btn.accent { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+.btn.accent:enabled:hover { background: var(--primary); border-color: var(--primary); filter: brightness(0.93); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--foreground-soft); }
+.btn.ghost:enabled:hover { background: var(--accent); color: var(--foreground); }
+.btn.quiet { background: var(--muted); border-color: transparent; color: var(--foreground-soft); }
+.btn.quiet:enabled:hover { background: var(--accent-strong); color: var(--foreground); }
+.btn.link { height: auto; padding: 0; border: 0; background: transparent; color: var(--primary); }
+.btn.link:enabled:hover { background: transparent; text-decoration: underline; }
+.seg { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; border-radius: var(--radius-md); background: var(--muted); }
+.seg .btn { height: 24px; padding: 0 8px; font-size: var(--text-xs); background: transparent; border-color: transparent; color: var(--foreground-soft); }
+.seg .btn:enabled:hover { background: var(--accent); color: var(--foreground); }
+.seg .btn[aria-pressed="true"] { background: var(--card); border-color: var(--border); color: var(--foreground); box-shadow: var(--shadow-xs); }
+.field { height: 28px; padding: 0 8px; border: 1px solid var(--input); border-radius: var(--radius-md); background: var(--card); color: var(--foreground); font-size: 12.5px; }
+.field:focus { outline: none; border-color: var(--primary); box-shadow: var(--focus-ring); }
+input.field[type="number"] { width: 80px; font-family: var(--font-mono); }
+
+/* ─── Pills, chips ─── */
+.pill { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: var(--radius-pill); font-size: 11.5px; font-weight: 500; white-space: nowrap; border: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); }
+.pill.accent { background: var(--primary-soft); color: var(--primary); border-color: color-mix(in srgb, var(--primary) 28%, transparent); }
+.pill.done { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 28%, transparent); }
+.pill.progress { background: var(--warning-soft); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 28%, transparent); }
+.pill.error { background: var(--destructive-soft); color: var(--destructive); border-color: color-mix(in srgb, var(--destructive) 28%, transparent); }
+.pill.new { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); flex-shrink: 0; }
+.dot.warn { background: var(--warning); box-shadow: 0 0 0 3px var(--warning-soft); }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--card); font-size: 12.5px; color: var(--foreground-soft); cursor: pointer; }
+.chip:hover { border-color: var(--border-strong); background: var(--muted); }
+.chip:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ─── Cards ─── */
+.card { background: var(--card); color: var(--card-foreground); border-radius: var(--radius-card); box-shadow: var(--shadow-card); overflow: hidden; min-width: 0; font-size: var(--text-sm); }
+.card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.card-title { display: flex; align-items: center; gap: 8px; font-size: var(--text-base); font-weight: 600; color: var(--foreground); }
+.card-sub { margin-top: 2px; font-size: 12.5px; color: var(--faint-foreground); }
+.card-pad { padding: 14px 16px; display: grid; gap: 10px; }
+.card-foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--muted) 40%, transparent); }
+.count { border-radius: var(--radius-pill); background: var(--muted); padding: 1px 8px; font-family: var(--font-mono); font-size: 11.5px; font-weight: 400; color: var(--faint-foreground); }
+.note { font-size: 12.5px; color: var(--muted-foreground); line-height: 1.6; }
+.callout { font-size: 12.5px; line-height: 1.6; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--muted) 45%, transparent); color: var(--foreground-soft); }
+.callout.warn { background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 28%, transparent); color: var(--foreground); }
+.headline { font-family: var(--font-title); font-size: var(--text-xl); font-weight: 600; line-height: 1.35; color: var(--foreground); text-wrap: balance; }
+.headline em { font-style: normal; color: var(--primary); }
+.eyebrow { font-size: var(--text-xs); font-weight: 600; color: var(--muted-foreground); }
+.section-title { display: flex; align-items: center; gap: 8px; font-size: var(--text-base); font-weight: 600; color: var(--foreground); }
+
+/* ─── Product top bar (shared header) ─── */
+.topbar { position: sticky; top: 0; z-index: 20; min-height: var(--topbar-h); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 8px 20px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: saturate(1.2) blur(6px); }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-md); background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.brand-name { font-family: var(--font-title); font-size: var(--text-base); font-weight: 600; }
+.brand-sub { font-size: var(--text-xs); color: var(--faint-foreground); }
+.who { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--foreground-soft); }
+.avatar { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--muted); color: var(--foreground-soft); font-size: 11.5px; font-weight: 600; box-shadow: var(--shadow-hairline); }
+
+/* ─── KPI tiles ─── */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.kpi { background: var(--card); border-radius: var(--radius-card); box-shadow: var(--shadow-card); padding: 12px 14px; display: grid; gap: 2px; min-width: 0; }
+.kpi .k { font-size: var(--text-xs); color: var(--muted-foreground); }
+.kpi .v { font-family: var(--font-title); font-size: var(--text-xl); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--foreground); }
+.kpi .h { font-size: 11.5px; color: var(--faint-foreground); }
+.kpi.compact { box-shadow: none; background: transparent; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); border-radius: 0; }
+
+/* ─── Status flow ─── */
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.flow-step { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--card); font-size: 12.5px; color: var(--foreground-soft); cursor: pointer; }
+.flow-step strong { font-family: var(--font-mono); font-weight: 500; color: var(--foreground); }
+.flow-step[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+.flow-step.is-new { border-style: dashed; border-color: var(--primary); }
+span.flow-step { cursor: default; }
+.flow-arrow { color: var(--faint-foreground); }
+
+/* ─── Tables ─── */
+.table-region { width: 100%; overflow-x: auto; }
+.table-region > table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.table-region thead tr { background: color-mix(in srgb, var(--muted) 50%, transparent); border-bottom: 1px solid var(--border); }
+.table-region th { padding: 9px 12px; font-size: 11.5px; font-weight: 600; color: var(--faint-foreground); text-align: left; white-space: nowrap; }
+.table-region td { padding: 9px 12px; vertical-align: middle; border-top: 1px solid var(--border); }
+.table-region tbody tr:first-child td { border-top: 0; }
+.table-region tbody tr.clickable { cursor: pointer; }
+.table-region tbody tr.clickable:hover { background: var(--accent); }
+.table-region tbody tr.is-active { background: var(--primary-soft); }
+.table-region .r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cell-sub { margin-top: 2px; font-size: var(--text-xs); color: var(--muted-foreground); }
+
+/* ─── Decision card (ApprovalCard) ─── */
+.dc { background: var(--card); border-radius: var(--radius-card); box-shadow: var(--shadow-card); overflow: hidden; font-size: var(--text-sm); }
+.dc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--primary-soft) 45%, transparent); }
+.dc.k-data .dc-head, .dc.k-system .dc-head { background: color-mix(in srgb, var(--warning-soft) 60%, transparent); }
+.dc.k-change .dc-head, .dc.k-knowledge .dc-head { background: color-mix(in srgb, var(--muted) 60%, transparent); }
+.dc-kicker { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); font-weight: 600; color: var(--primary); }
+.dc.k-data .dc-kicker, .dc.k-system .dc-kicker { color: var(--warning); }
+.dc.k-change .dc-kicker, .dc.k-knowledge .dc-kicker { color: var(--foreground-soft); }
+.dc-body { padding: 12px 14px; display: grid; gap: 8px; }
+.dc-title { font-size: var(--text-base); font-weight: 600; line-height: 1.4; color: var(--foreground); }
+.dc-what { font-size: 12.5px; line-height: 1.6; color: var(--foreground-soft); }
+.dc-effects { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.dc-effects li { display: flex; gap: 8px; align-items: flex-start; padding: 6px 10px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--background) 55%, transparent); border: 1px solid var(--border-subtle); font-size: 12.5px; }
+.dc-effects .ico { margin-top: 3px; color: var(--primary); }
+details.more > summary { cursor: pointer; font-size: var(--text-xs); font-weight: 500; color: var(--muted-foreground); padding: 2px 0; }
+details.more ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; font-size: var(--text-xs); color: var(--foreground-soft); line-height: 1.55; }
+.dc-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--muted) 40%, transparent); }
+.dc-foot .hint { margin-right: auto; font-size: var(--text-xs); color: var(--faint-foreground); }
+.dc.compact .dc-body { padding: 10px 12px; gap: 4px; }
+.dc.compact .dc-title { font-size: var(--text-sm); }
+
+/* ─── Activity, lists ─── */
+.feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.feed li { display: grid; grid-template-columns: 44px 16px minmax(0, 1fr); gap: 8px; align-items: start; padding: 6px 0; font-size: 12.5px; color: var(--foreground-soft); }
+.feed .t { font-family: var(--font-mono); font-size: 11.5px; color: var(--faint-foreground); padding-top: 1px; }
+.feed .ico { margin-top: 3px; }
+.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.checklist li { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--border-subtle); }
+.checklist li:first-child { border-top: 0; }
+.checklist .ico { margin-top: 2px; }
+.checklist .t1 { font-size: var(--text-sm); font-weight: 500; color: var(--foreground); }
+.checklist .t2 { font-size: var(--text-xs); color: var(--muted-foreground); line-height: 1.55; margin-top: 2px; }
+.bar { height: 6px; border-radius: var(--radius-pill); background: var(--muted); overflow: hidden; }
+.bar > span { display: block; height: 100%; border-radius: var(--radius-pill); background: var(--primary); }
+.bar.low > span { background: var(--warning); }
+.bar.zero > span { background: var(--destructive); }
+
+/* ─── Chart ─── */
+.chart { width: 100%; height: auto; display: block; }
+.chart .grid { stroke: var(--border-subtle); stroke-width: 1; }
+.chart .axis { fill: var(--faint-foreground); font-size: 11px; font-family: var(--font-sans); }
+.chart .val { fill: var(--foreground-soft); font-size: 11px; font-family: var(--font-mono); }
+.chart .s-r { fill: var(--primary); }
+.chart .s-w { fill: var(--model-m6); }
+.legend { display: flex; gap: 14px; font-size: var(--text-xs); color: var(--muted-foreground); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: var(--radius-xs); margin-right: 4px; vertical-align: -1px; }
+.legend .s-r { background: var(--primary); } .legend .s-w { background: var(--model-m6); }
+
+/* ─── Console layout: module nav, page, AI 助手 panel ─── */
+.va { display: grid; grid-template-columns: minmax(0, 1fr); }
+.va-nav { background: var(--canvas); border-bottom: 1px solid var(--border); padding: 12px; display: flex; flex-wrap: wrap; gap: 4px; }
+.nav-item { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--foreground-soft); font-size: 13px; font-weight: 500; cursor: pointer; text-align: left; }
+.nav-item:hover { background: var(--accent); color: var(--foreground); }
+.nav-item[aria-current="page"] { background: var(--card); color: var(--foreground); box-shadow: var(--shadow-btn); }
+.nav-item:disabled { cursor: not-allowed; opacity: 0.55; }
+.nav-item .n-badge { margin-left: auto; }
+.nav-item .lock { margin-left: auto; font-size: 11px; color: var(--faint-foreground); }
+.va-main { padding: 20px; min-width: 0; }
+.va-side { background: var(--canvas); border-top: 1px solid var(--border); padding: 14px; }
+@media (min-width: 1280px) {
+  .va { grid-template-columns: 216px minmax(0, 1fr) 360px; height: calc(100vh - var(--topbar-h)); }
+  .va-nav { flex-direction: column; flex-wrap: nowrap; border-bottom: 0; border-right: 1px solid var(--border); overflow: auto; }
+  .va-main { overflow: auto; padding: 24px 28px 96px; }
+  .va-side { border-top: 0; border-left: 1px solid var(--border); overflow: auto; padding-bottom: 96px; }
+}
+.two { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1100px) { .two { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); } }
+
+/* ─── Reference controls (not part of the design) ─── */
+.msg-ai { display: grid; gap: 8px; }
+.msg-ai .who-ai { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); font-weight: 600; color: var(--primary); }
+.msg-ai .say { font-size: var(--text-sm); line-height: 1.65; color: var(--foreground); }
+.basis { font-size: 11.5px; color: var(--faint-foreground); line-height: 1.5; }
+.protobar { position: fixed; left: 0; right: 0; bottom: 12px; margin: 0 auto; width: max-content; z-index: 50; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 10px; max-width: calc(100vw - 24px); padding: 6px 10px; border-radius: var(--radius-window); background: var(--foreground); color: var(--background); box-shadow: var(--shadow-lg); font-size: var(--text-xs); }
+.protobar .pb-btn { display: grid; place-items: center; height: 26px; min-width: 26px; padding: 0 6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--background); cursor: pointer; font-size: 12px; }
+.protobar .pb-btn:hover { background: color-mix(in srgb, var(--background) 16%, transparent); }
+.protobar .pb-btn[aria-pressed="true"] { background: var(--background); color: var(--foreground); }
+.protobar .pb-label { min-width: 150px; text-align: center; font-weight: 600; }
+.protobar .pb-sep { width: 1px; height: 18px; background: color-mix(in srgb, var(--background) 30%, transparent); }
+.protobar select { height: 26px; border-radius: var(--radius-sm); border: 0; background: color-mix(in srgb, var(--background) 14%, transparent); color: var(--background); padding: 0 6px; font-size: 12px; }
+.protobar select option { color: var(--foreground); background: var(--card); }
+.protobar .pb-group { display: inline-flex; align-items: center; gap: 2px; }
+.protobar .pb-cap { opacity: 0.7; margin-right: 4px; }
+.toast { position: fixed; right: 16px; bottom: 72px; z-index: 60; width: min(440px, calc(100vw - 32px)); padding: 12px 14px; border-radius: var(--radius-card); background: var(--popover); color: var(--popover-foreground); box-shadow: var(--shadow-overlay); display: grid; gap: 6px; font-size: 12.5px; }
+.toast .tt { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: var(--text-sm); }
+.toast ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="protobar" id="protobar" role="region" aria-label="参考控制"></div>
+<div class="toast" id="toast" hidden aria-live="polite"></div>
+<script id="teaco-data" type="application/json">{"customers":[{"id":"c1","name":"Ryan Johnson","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c2","name":"Rahul Roberts","company":"Evergreen Health Foods","type":"W","mgr":"priya","cert":true,"certRaw":"On file","city":"Tacoma","state":"WA"},{"id":"c3","name":"Fatima Evans","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c4","name":"Donna Adams","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c5","name":"Amara Hughes","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c6","name":"Eric Scott","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c7","name":"Tomasz Murphy","company":"Stonebridge Cafe","type":"W","mgr":"jonah","cert":false,"certRaw":"N","city":"Bend","state":"OR"},{"id":"c8","name":"Dorothy Edwards","company":"Harvest Moon Grocers","type":"W","mgr":"jonah","cert":true,"certRaw":"Yes","city":"Tacoma","state":"WA"},{"id":"c9","name":"David Stewart","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c10","name":"Mark Ruiz","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c11","name":"Edward Bailey","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c12","name":"Margaret Hernandez","company":"Morning Glory Bakehouse","type":"W","mgr":"carlos","cert":true,"certRaw":"Y","city":"Portland","state":"OR"},{"id":"c13","name":"Ingrid Edwards","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c14","name":"Rahul Campbell","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c15","name":"Kenneth Ruiz","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c16","name":"Dmitri Cook","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c17","name":"Charles Murphy","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c18","name":"Anna Cox","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c19","name":"Deborah Johnson","company":"Northside Co-op","type":"W","mgr":"jonah","cert":true,"certRaw":"yes","city":"Boise","state":"ID"},{"id":"c20","name":"Matthew Howard","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c21","name":"Chloe Tanaka","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c22","name":"Stephanie Green","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c23","name":"Wei King","company":"The Herbalist's Corner","type":"W","mgr":"priya","cert":true,"certRaw":"On file","city":"Seattle","state":"WA"},{"id":"c24","name":"Jacob Gray","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c25","name":"Stephanie Mensah","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c26","name":"Jonathan Gomez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c27","name":"Donna Kelly","company":"Kettle & Crumb Bakery","type":"W","mgr":"priya","cert":true,"certRaw":"On file","city":"Boise","state":"ID"},{"id":"c28","name":"Ingrid Hall","company":"Old Mill Pantry","type":"W","mgr":"jonah","cert":true,"certRaw":"On file","city":"Eugene","state":"OR"},{"id":"c29","name":"Jacob Kelly","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c30","name":"Kenneth Davis","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c31","name":"Paul Bennett","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c32","name":"Leila Cruz","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c33","name":"Margaret Watson","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c34","name":"Carol Perez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c35","name":"Cynthia Ortiz","company":"Greenline Juice Bar","type":"W","mgr":"carlos","cert":true,"certRaw":"yes","city":"Boise","state":"ID"},{"id":"c36","name":"Melissa Ramirez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c37","name":"Daniel Baker","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c38","name":"Tomasz Lopez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c39","name":"Anthony Williams","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c40","name":"Ryan Lewis","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c41","name":"Edward Davis","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c42","name":"Jeffrey Baker","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c43","name":"Daniel Foster","company":"Honeycomb Creamery","type":"W","mgr":"priya","cert":false,"certRaw":"No","city":"Bend","state":"OR"},{"id":"c44","name":"Nadia Ward","company":"Willow Creek Grocery","type":"W","mgr":"jonah","cert":true,"certRaw":"Yes","city":"Portland","state":"OR"},{"id":"c45","name":"Ronald Taylor","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c46","name":"Paul Green","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c47","name":"Dorothy Rogers","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c48","name":"Donna Reed","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c49","name":"Eric Lindqvist","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c50","name":"Fatima Brooks","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c51","name":"Barbara Nguyen","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c52","name":"Mateo Howard","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c53","name":"Steven Kelly","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c54","name":"Lisa Martin","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c55","name":"Charles Morgan","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c56","name":"Donald Clark","company":"Hillcrest Market Hall","type":"W","mgr":"jonah","cert":true,"certRaw":"Yes","city":"Spokane","state":"WA"},{"id":"c57","name":"Matthew Baker","company":"Meadowlark Market","type":"W","mgr":"carlos","cert":true,"certRaw":"Yes","city":"Tacoma","state":"WA"},{"id":"c58","name":"Amanda Davis","company":"The Daily Grind","type":"W","mgr":"carlos","cert":false,"certRaw":"No","city":"Portland","state":"OR"},{"id":"c59","name":"Joshua Castillo","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c60","name":"Jessica Stewart","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c61","name":"Edward Cook","company":"Saltbox Provisions","type":"W","mgr":"priya","cert":true,"certRaw":"Y","city":"Bend","state":"OR"},{"id":"c62","name":"Joseph Lopez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c63","name":"Laura Long","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c64","name":"Amanda Bennett","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c65","name":"Karen Haddad","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c66","name":"Joshua Ruiz","company":"Zest Organic Market","type":"W","mgr":"priya","cert":true,"certRaw":"Yes","city":"Eugene","state":"OR"},{"id":"c67","name":"Eric Collins","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c68","name":"Leila Thompson","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c69","name":"Rebecca Rivera","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c70","name":"Dana Murphy","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c71","name":"Sofia Adams","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c72","name":"Stephanie Allen","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c73","name":"Jason Garcia","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c74","name":"Linda Nguyen","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c75","name":"William Moore","company":"Tidewater Hotel","type":"W","mgr":"jonah","cert":true,"certRaw":"Y","city":"Portland","state":"OR"},{"id":"c76","name":"Ashley Gonzalez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c77","name":"Omar Campbell","company":"Sparrow Street Books & Cafe","type":"W","mgr":"priya","cert":false,"certRaw":"No","city":"Eugene","state":"OR"},{"id":"c78","name":"Patricia Murphy","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c79","name":"Anna Clark","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c80","name":"Amanda Okafor","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c81","name":"Luis White","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c82","name":"Nadia Foster","company":"Pinecone Deli","type":"W","mgr":"priya","cert":true,"certRaw":"On file","city":"Bend","state":"OR"},{"id":"c83","name":"Wei Long","company":"Two Rivers Roasters","type":"W","mgr":"jonah","cert":true,"certRaw":"On file","city":"Portland","state":"OR"},{"id":"c84","name":"Joshua Parker","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c85","name":"Donald Lee","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c86","name":"Kathleen Kim","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c87","name":"Steven Cooper","company":"Lantern Tea Room","type":"W","mgr":"carlos","cert":false,"certRaw":"No","city":"Spokane","state":"WA"},{"id":"c88","name":"Chloe Okafor","company":"Foxtail Coffee Bar","type":"W","mgr":"priya","cert":true,"certRaw":"Yes","city":"Bend","state":"OR"},{"id":"c89","name":"Anna Martin","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c90","name":"Margaret Alvarez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c91","name":"Ashley Bailey","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c92","name":"Charles Howard","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c93","name":"George Williams","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c94","name":"Maria Lopez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c95","name":"Paul Lewis","company":"Oak & Anchor Pub","type":"W","mgr":"carlos","cert":true,"certRaw":"On file","city":"Seattle","state":"WA"},{"id":"c96","name":"George Lewis","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c97","name":"Kimberly Morris","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c98","name":"Gary Nguyen","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c99","name":"Joseph Gutierrez","company":"Thimble & Thread Cafe","type":"W","mgr":"priya","cert":false,"certRaw":"N","city":"Bend","state":"OR"},{"id":"c100","name":"Steven Ramos","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c101","name":"Ingrid Campbell","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c102","name":"Donald Ramirez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c103","name":"Jonathan Lee","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c104","name":"Sandra Wood","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c105","name":"Mateo Harris","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c106","name":"Amanda Perez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c107","name":"Mark Young","company":"Brick Oven Collective","type":"W","mgr":"carlos","cert":true,"certRaw":"Y","city":"Tacoma","state":"WA"},{"id":"c108","name":"James Patel","company":"Copper Pot Market","type":"W","mgr":"carlos","cert":false,"certRaw":"No","city":"Portland","state":"OR"},{"id":"c109","name":"Margaret Garcia","company":"Little Fern Coffee","type":"W","mgr":"priya","cert":true,"certRaw":"yes","city":"Bend","state":"OR"},{"id":"c110","name":"Joshua Perez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c111","name":"William Jones","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c112","name":"Ingrid Harris","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c113","name":"Sofia Nelson","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c114","name":"Kwame Miller","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c115","name":"Kevin Taylor","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c116","name":"Melissa Tanaka","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c117","name":"Dmitri Young","company":"Ridgeview Senior Living","type":"W","mgr":"jonah","cert":false,"certRaw":"No","city":"Seattle","state":"WA"},{"id":"c118","name":"Patricia Harris","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c119","name":"Sharon Hughes","company":"Sunday Supply Co","type":"W","mgr":"jonah","cert":true,"certRaw":"yes","city":"Eugene","state":"OR"},{"id":"c120","name":"James Reyes","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c121","name":"David Young","company":"Paper Lantern Noodles","type":"W","mgr":"priya","cert":true,"certRaw":"Yes","city":"Spokane","state":"WA"},{"id":"c122","name":"Karen Watson","company":"Wildflower Wellness Spa","type":"W","mgr":"jonah","cert":true,"certRaw":"On file","city":"Spokane","state":"WA"},{"id":"c123","name":"Nancy White","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c124","name":"Kwame Garcia","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c125","name":"Luis Haddad","company":"Blue Door Cafe","type":"W","mgr":"jonah","cert":true,"certRaw":"yes","city":"Tacoma","state":"WA"},{"id":"c126","name":"Hiroshi Anderson","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Tacoma","state":"WA"},{"id":"c127","name":"Patricia Baker","company":"Wanderlust Books","type":"W","mgr":"carlos","cert":true,"certRaw":"On file","city":"Eugene","state":"OR"},{"id":"c128","name":"Chloe Edwards","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Portland","state":"OR"},{"id":"c129","name":"Elizabeth Wright","company":"Cedar Grove Gift Shop","type":"W","mgr":"jonah","cert":false,"certRaw":"Expired","city":"Bend","state":"OR"},{"id":"c130","name":"Omar Thompson","company":"Maple Leaf Diner","type":"W","mgr":"carlos","cert":false,"certRaw":"No","city":"Portland","state":"OR"},{"id":"c131","name":"Dorothy Watson","company":"Violet Hour Bistro","type":"W","mgr":"priya","cert":true,"certRaw":"Yes","city":"Bend","state":"OR"},{"id":"c132","name":"Andrew Ross","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c133","name":"Joseph Moore","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c134","name":"Ronald Morales","company":"Marigold Kitchen","type":"W","mgr":"carlos","cert":true,"certRaw":"Yes","city":"Bend","state":"OR"},{"id":"c135","name":"Kwame Green","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Boise","state":"ID"},{"id":"c136","name":"Maria Lopez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Eugene","state":"OR"},{"id":"c137","name":"Ronald Ward","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c138","name":"Linda Moore","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c139","name":"Marcus Johnson","company":"Quiet Hours Yoga Studio","type":"W","mgr":"jonah","cert":false,"certRaw":"","city":"Seattle","state":"WA"},{"id":"c140","name":"Kathleen Gonzalez","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Bend","state":"OR"},{"id":"c141","name":"Mark Campbell","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"},{"id":"c142","name":"Omar Long","company":"","type":"R","mgr":null,"cert":false,"certRaw":"","city":"Spokane","state":"WA"}],"products":[{"sku":"HRB-ROOIBO-2OZ","name":"Rooibos Vanilla","size":"2 oz tin","retail":1200,"wholesale":720,"stock":41,"raw":41,"locked":false},{"sku":"HRB-HIBISC-2OZ","name":"Hibiscus Berry","size":"2 oz tin","retail":950,"wholesale":570,"stock":108,"raw":108,"locked":false},{"sku":"HRB-CHAMOM-2OZ","name":"Chamomile Blossom","size":"2 oz tin","retail":1600,"wholesale":960,"stock":37,"raw":37,"locked":false},{"sku":"GRN-SENCHA-4OZ","name":"Sencha","size":"4 oz pouch","retail":2500,"wholesale":1500,"stock":20,"raw":20,"locked":false},{"sku":"MAT-CERMON-2OZ","name":"Ceremonial Matcha","size":"2 oz tin","retail":1000,"wholesale":600,"stock":18,"raw":18,"locked":false},{"sku":"MAT-CERMON-4OZ","name":"Ceremonial Matcha","size":"4 oz pouch","retail":1800,"wholesale":1080,"stock":76,"raw":76,"locked":false},{"sku":"BLK-DARJ-4OZ","name":"Darjeeling First Flush","size":"4 oz pouch","retail":1700,"wholesale":1020,"stock":121,"raw":121,"locked":false},{"sku":"GRN-DRAGON-4OZ","name":"Dragonwell","size":"4 oz pouch","retail":2450,"wholesale":1470,"stock":139,"raw":139,"locked":false},{"sku":"GRN-DRAGON-1LB","name":"Dragonwell","size":"1 lb bag","retail":7550,"wholesale":4530,"stock":13,"raw":13,"locked":false},{"sku":"MAT-CERMON-1LB","name":"Ceremonial Matcha","size":"1 lb bag","retail":14800,"wholesale":8880,"stock":35,"raw":35,"locked":false},{"sku":"BLK-YUNNAN-2OZ","name":"Golden Yunnan","size":"2 oz tin","retail":1100,"wholesale":660,"stock":132,"raw":132,"locked":false},{"sku":"BLK-DARJ-2OZ","name":"Darjeeling First Flush","size":"2 oz tin","retail":950,"wholesale":570,"stock":100,"raw":100,"locked":false},{"sku":"HRB-PEPMNT-1LB","name":"Peppermint Leaf","size":"1 lb bag","retail":6150,"wholesale":3690,"stock":33,"raw":33,"locked":false},{"sku":"OOL-DHP-4OZ","name":"Da Hong Pao","size":"4 oz pouch","retail":2900,"wholesale":1740,"stock":72,"raw":72,"locked":false},{"sku":"GRN-DRAGON-2OZ","name":"Dragonwell","size":"2 oz tin","retail":1350,"wholesale":810,"stock":65,"raw":65,"locked":false},{"sku":"BLK-ASSAM-2OZ","name":"Assam Breakfast","size":"2 oz tin","retail":1200,"wholesale":720,"stock":146,"raw":146,"locked":false},{"sku":"GRN-GENMAI-4OZ","name":"Genmaicha","size":"4 oz pouch","retail":2900,"wholesale":1740,"stock":87,"raw":87,"locked":false},{"sku":"WHT-SILVER-4OZ","name":"Silver Needle","size":"4 oz pouch","retail":2000,"wholesale":1200,"stock":46,"raw":46,"locked":false},{"sku":"OOL-MILK-2OZ","name":"Milk Oolong","size":"2 oz tin","retail":1350,"wholesale":810,"stock":26,"raw":26,"locked":false},{"sku":"OOL-TIEGUA-4OZ","name":"Tieguanyin","size":"4 oz pouch","retail":2450,"wholesale":1470,"stock":15,"raw":15,"locked":false},{"sku":"GRN-JASMIN-4OZ","name":"Jasmine Pearls","size":"4 oz pouch","retail":2150,"wholesale":1290,"stock":34,"raw":34,"locked":false},{"sku":"GRN-GENMAI-1LB","name":"Genmaicha","size":"1 lb bag","retail":8950,"wholesale":5370,"stock":35,"raw":35,"locked":false},{"sku":"PUR-SHOU-1LB","name":"Shou Puerh","size":"1 lb bag","retail":6150,"wholesale":3690,"stock":17,"raw":17,"locked":false},{"sku":"BLK-YUNNAN-1LB","name":"Golden Yunnan","size":"1 lb bag","retail":6150,"wholesale":3690,"stock":60,"raw":60,"locked":false},{"sku":"OOL-MILK-1LB","name":"Milk Oolong","size":"1 lb bag","retail":7550,"wholesale":4530,"stock":41,"raw":41,"locked":false},{"sku":"BLK-EARLGR-4OZ","name":"Earl Grey Cream","size":"4 oz pouch","retail":1700,"wholesale":1020,"stock":94,"raw":94,"locked":false},{"sku":"HRB-HIBISC-1LB","name":"Hibiscus Berry","size":"1 lb bag","retail":5300,"wholesale":3180,"stock":41,"raw":41,"locked":false},{"sku":"BLK-DARJ-1LB","name":"Darjeeling First Flush","size":"1 lb bag","retail":5300,"wholesale":3180,"stock":25,"raw":25,"locked":false},{"sku":"PUR-SHOU-4OZ","name":"Shou Puerh","size":"4 oz pouch","retail":2000,"wholesale":1200,"stock":57,"raw":57,"locked":false},{"sku":"HRB-PEPMNT-2OZ","name":"Peppermint Leaf","size":"2 oz tin","retail":1100,"wholesale":660,"stock":0,"raw":-2,"locked":true},{"sku":"OOL-TIEGUA-1LB","name":"Tieguanyin","size":"1 lb bag","retail":5300,"wholesale":3180,"stock":44,"raw":44,"locked":false},{"sku":"GRN-SENCHA-1LB","name":"Sencha","size":"1 lb bag","retail":7850,"wholesale":4710,"stock":21,"raw":21,"locked":false},{"sku":"WHT-PEONY-1LB","name":"White Peony","size":"1 lb bag","retail":8950,"wholesale":5370,"stock":25,"raw":25,"locked":false},{"sku":"OOL-TIEGUA-2OZ","name":"Tieguanyin","size":"2 oz tin","retail":950,"wholesale":570,"stock":112,"raw":112,"locked":false},{"sku":"GRN-JASMIN-1LB","name":"Jasmine Pearls","size":"1 lb bag","retail":6700,"wholesale":4020,"stock":44,"raw":44,"locked":false},{"sku":"BLK-EARLGR-1LB","name":"Earl Grey Cream","size":"1 lb bag","retail":5300,"wholesale":3180,"stock":35,"raw":35,"locked":false},{"sku":"HRB-CHAMOM-4OZ","name":"Chamomile Blossom","size":"4 oz pouch","retail":2900,"wholesale":1740,"stock":87,"raw":87,"locked":false},{"sku":"BLK-ASSAM-4OZ","name":"Assam Breakfast","size":"4 oz pouch","retail":1800,"wholesale":1080,"stock":40,"raw":40,"locked":false},{"sku":"WHT-PEONY-2OZ","name":"White Peony","size":"2 oz tin","retail":1600,"wholesale":960,"stock":33,"raw":33,"locked":false},{"sku":"GRN-GENMAI-2OZ","name":"Genmaicha","size":"2 oz tin","retail":1600,"wholesale":960,"stock":113,"raw":113,"locked":false},{"sku":"OOL-DHP-2OZ","name":"Da Hong Pao","size":"2 oz tin","retail":1600,"wholesale":960,"stock":95,"raw":95,"locked":false},{"sku":"GRN-JASMIN-2OZ","name":"Jasmine Pearls","size":"2 oz tin","retail":1200,"wholesale":720,"stock":45,"raw":45,"locked":false},{"sku":"BLK-CHAI-2OZ","name":"Masala Chai","size":"2 oz tin","retail":1200,"wholesale":720,"stock":25,"raw":25,"locked":false},{"sku":"OOL-DHP-1LB","name":"Da Hong Pao","size":"1 lb bag","retail":8950,"wholesale":5370,"stock":51,"raw":51,"locked":false},{"sku":"WHT-SILVER-2OZ","name":"Silver Needle","size":"2 oz tin","retail":1100,"wholesale":660,"stock":71,"raw":71,"locked":false},{"sku":"PUR-SHOU-2OZ","name":"Shou Puerh","size":"2 oz tin","retail":1100,"wholesale":660,"stock":84,"raw":84,"locked":false},{"sku":"HRB-CHAMOM-1LB","name":"Chamomile Blossom","size":"1 lb bag","retail":8950,"wholesale":5370,"stock":40,"raw":40,"locked":false},{"sku":"WHT-SILVER-1LB","name":"Silver Needle","size":"1 lb bag","retail":9600,"wholesale":5760,"stock":3,"raw":3,"locked":false},{"sku":"HRB-ROOIBO-4OZ","name":"Rooibos Vanilla","size":"4 oz pouch","retail":2150,"wholesale":1290,"stock":150,"raw":150,"locked":false},{"sku":"HRB-PEPMNT-4OZ","name":"Peppermint Leaf","size":"4 oz pouch","retail":2000,"wholesale":1200,"stock":83,"raw":83,"locked":false},{"sku":"BLK-YUNNAN-4OZ","name":"Golden Yunnan","size":"4 oz pouch","retail":2000,"wholesale":1200,"stock":123,"raw":123,"locked":false},{"sku":"OOL-MILK-4OZ","name":"Milk Oolong","size":"4 oz pouch","retail":2450,"wholesale":1470,"stock":58,"raw":58,"locked":false},{"sku":"HRB-ROOIBO-1LB","name":"Rooibos Vanilla","size":"1 lb bag","retail":2100,"wholesale":1250,"stock":200,"raw":200,"locked":false},{"sku":"HRB-HIBISC-4OZ","name":"Hibiscus Berry","size":"4 oz pouch","retail":1700,"wholesale":1020,"stock":91,"raw":91,"locked":false},{"sku":"WHT-PEONY-4OZ","name":"White Peony","size":"4 oz pouch","retail":2900,"wholesale":1740,"stock":30,"raw":30,"locked":false},{"sku":"BLK-CHAI-1LB","name":"Masala Chai","size":"1 lb bag","retail":6700,"wholesale":4020,"stock":5,"raw":5,"locked":false},{"sku":"BLK-CHAI-4OZ","name":"Masala Chai","size":"4 oz pouch","retail":2150,"wholesale":1290,"stock":150,"raw":150,"locked":false},{"sku":"BLK-EARLGR-2OZ","name":"Earl Grey Cream","size":"2 oz tin","retail":950,"wholesale":570,"stock":28,"raw":28,"locked":false},{"sku":"GRN-SENCHA-2OZ","name":"Sencha","size":"2 oz tin","retail":1400,"wholesale":840,"stock":117,"raw":117,"locked":false},{"sku":"BLK-ASSAM-1LB","name":"Assam Breakfast","size":"1 lb bag","retail":6700,"wholesale":4020,"stock":24,"raw":24,"locked":false}],"orders":[{"no":"1001","date":"2026-01-07","c":"c79","s":"SHIPPED","lines":[["WHT-SILVER-4OZ",1,2000],["BLK-EARLGR-2OZ",3,950]],"sh":795,"t":400,"tot":6045,"g":4850},{"no":"1002","date":"2026-01-09","c":"c49","s":"DELIVERED","lines":[["BLK-EARLGR-4OZ",1,1700],["HRB-HIBISC-2OZ",3,950]],"sh":795,"t":375,"tot":5720,"g":4550},{"no":"1003","date":"2026-01-17","c":"c100","s":"DELIVERED","lines":[["GRN-DRAGON-4OZ",1,2450],["GRN-DRAGON-1LB",1,7550]],"sh":0,"t":825,"tot":10825,"g":10000},{"no":"1004","date":"2026-01-22","c":"c69","s":"DELIVERED","lines":[["PUR-SHOU-4OZ",2,2000],["HRB-HIBISC-4OZ",1,1700],["HRB-PEPMNT-4OZ",1,2000]],"sh":0,"t":635,"tot":8335,"g":7700},{"no":"1005","date":"2026-01-24","c":"c101","s":"DELIVERED","lines":[["HRB-ROOIBO-4OZ",2,2150],["GRN-DRAGON-1LB",1,7550]],"sh":0,"t":978,"tot":12828,"g":11850},{"no":"1006","date":"2026-01-26","c":"c134","s":"DELIVERED","lines":[["BLK-DARJ-2OZ",18,570],["WHT-SILVER-1LB",19,5760],["HRB-HIBISC-4OZ",21,1020]],"sh":1500,"t":0,"tot":142620,"g":141120},{"no":"1007","date":"2026-01-26","c":"c129","s":"CANCELLED","lines":[["BLK-EARLGR-1LB",12,3180],["HRB-HIBISC-1LB",13,3180],["GRN-JASMIN-2OZ",15,720],["BLK-ASSAM-1LB",8,4020]],"sh":1500,"t":10103,"tot":134063,"g":122460},{"no":"1008","date":"2026-01-30","c":"c2","s":"DELIVERED","lines":[["BLK-DARJ-2OZ",7,570],["BLK-EARLGR-4OZ",23,1020]],"sh":1500,"t":0,"tot":28950,"g":27450},{"no":"1009","date":"2026-01-31","c":"c42","s":"DELIVERED","lines":[["WHT-PEONY-2OZ",1,1600],["WHT-SILVER-4OZ",1,2000]],"sh":795,"t":297,"tot":4692,"g":3600},{"no":"1010","date":"2026-01-31","c":"c94","s":"DELIVERED","lines":[["BLK-CHAI-2OZ",1,1200]],"sh":795,"t":99,"tot":2094,"g":1200},{"no":"1011","date":"2026-02-04","c":"c131","s":"CANCELLED","lines":[["OOL-DHP-4OZ",7,1740],["BLK-YUNNAN-4OZ",7,1200],["WHT-PEONY-2OZ",12,960],["BLK-CHAI-1LB",22,4020]],"sh":1500,"t":0,"tot":122040,"g":120540},{"no":"1012","date":"2026-02-07","c":"c65","s":"DELIVERED","lines":[["HRB-PEPMNT-4OZ",2,2000]],"sh":795,"t":330,"tot":5125,"g":4000},{"no":"1013","date":"2026-02-08","c":"c4","s":"DELIVERED","lines":[["BLK-CHAI-2OZ",1,1200],["WHT-PEONY-1LB",2,8950]],"sh":0,"t":1576,"tot":20676,"g":19100},{"no":"1014","date":"2026-02-08","c":"c7","s":"DELIVERED","lines":[["GRN-GENMAI-1LB",19,5370],["OOL-DHP-1LB",13,5370],["PUR-SHOU-2OZ",14,660],["WHT-PEONY-1LB",11,5370]],"sh":1500,"t":19812,"tot":261462,"g":240150},{"no":"1015","date":"2026-02-09","c":"c113","s":"SHIPPED","lines":[["HRB-ROOIBO-1LB",3,2100],["HRB-HIBISC-4OZ",1,1700],["BLK-EARLGR-1LB",3,5300]],"sh":0,"t":1972,"tot":25872,"g":23900},{"no":"1016","date":"2026-02-12","c":"c51","s":"DELIVERED","lines":[["GRN-JASMIN-2OZ",1,1200]],"sh":795,"t":99,"tot":2094,"g":1200},{"no":"1017","date":"2026-02-17","c":"c118","s":"SHIPPED","lines":[["BLK-CHAI-2OZ",3,1200],["WHT-PEONY-1LB",1,8950],["OOL-DHP-2OZ",1,1600]],"sh":0,"t":1167,"tot":15317,"g":14150},{"no":"1018","date":"2026-02-26","c":"c29","s":"DELIVERED","lines":[["HRB-HIBISC-1LB",2,5300],["WHT-SILVER-4OZ",1,2000],["BLK-DARJ-4OZ",1,1700]],"sh":0,"t":1180,"tot":15480,"g":14300},{"no":"1019","date":"2026-03-07","c":"c104","s":"DELIVERED","lines":[["WHT-PEONY-2OZ",1,1600]],"sh":795,"t":132,"tot":2527,"g":1600},{"no":"1020","date":"2026-03-08","c":"c90","s":"DELIVERED","lines":[["BLK-YUNNAN-4OZ",1,2000]],"sh":795,"t":165,"tot":2960,"g":2000},{"no":"1021","date":"2026-03-09","c":"c66","s":"DELIVERED","lines":[["OOL-MILK-4OZ",24,1470],["HRB-PEPMNT-4OZ",21,1200],["BLK-EARLGR-2OZ",10,570],["BLK-EARLGR-4OZ",21,1020]],"sh":1500,"t":0,"tot":89100,"g":87600},{"no":"1022","date":"2026-03-15","c":"c8","s":"CANCELLED","lines":[["BLK-EARLGR-1LB",11,3180],["WHT-SILVER-4OZ",18,1200],["OOL-TIEGUA-4OZ",21,1470],["BLK-ASSAM-1LB",9,4020]],"sh":1500,"t":0,"tot":125130,"g":123630},{"no":"1023","date":"2026-03-17","c":"c125","s":"SHIPPED","lines":[["HRB-ROOIBO-4OZ",23,1290],["HRB-ROOIBO-2OZ",7,720],["HRB-CHAMOM-2OZ",16,960],["OOL-MILK-4OZ",7,1470]],"sh":1500,"t":0,"tot":61860,"g":60360},{"no":"1024","date":"2026-03-18","c":"c109","s":"DELIVERED","lines":[["OOL-DHP-1LB",7,5370],["BLK-CHAI-1LB",22,4020]],"sh":1500,"t":0,"tot":127530,"g":126030},{"no":"1025","date":"2026-03-23","c":"c125","s":"CANCELLED","lines":[["BLK-DARJ-1LB",7,3180],["OOL-MILK-2OZ",16,810]],"sh":1500,"t":0,"tot":36720,"g":35220},{"no":"1026","date":"2026-03-25","c":"c57","s":"DELIVERED","lines":[["BLK-DARJ-2OZ",13,570]],"sh":1500,"t":0,"tot":8910,"g":7410},{"no":"1027","date":"2026-03-29","c":"c122","s":"DELIVERED","lines":[["MAT-CERMON-1LB",21,8880]],"sh":1500,"t":0,"tot":187980,"g":186480},{"no":"1028","date":"2026-03-29","c":"c90","s":"DELIVERED","lines":[["BLK-EARLGR-4OZ",1,1700],["HRB-CHAMOM-1LB",1,8950]],"sh":0,"t":879,"tot":11529,"g":10650},{"no":"1029","date":"2026-03-30","c":"c67","s":"DELIVERED","lines":[["BLK-EARLGR-1LB",1,5300],["BLK-ASSAM-1LB",3,6700],["HRB-ROOIBO-1LB",3,2100]],"sh":0,"t":2615,"tot":34315,"g":31700},{"no":"1030","date":"2026-03-31","c":"c40","s":"DELIVERED","lines":[["HRB-HIBISC-1LB",1,5300]],"sh":795,"t":437,"tot":6532,"g":5300},{"no":"1031","date":"2026-04-05","c":"c85","s":"DELIVERED","lines":[["OOL-DHP-1LB",4,8950],["HRB-HIBISC-4OZ",1,1700],["OOL-MILK-4OZ",1,2450]],"sh":0,"t":3296,"tot":43246,"g":39950},{"no":"1032","date":"2026-04-11","c":"c93","s":"DELIVERED","lines":[["BLK-ASSAM-4OZ",1,1800],["HRB-HIBISC-2OZ",1,950],["HRB-PEPMNT-4OZ",3,2000]],"sh":0,"t":722,"tot":9472,"g":8750},{"no":"1033","date":"2026-04-13","c":"c2","s":"DELIVERED","lines":[["HRB-HIBISC-2OZ",15,570],["WHT-PEONY-4OZ",11,1740],["GRN-SENCHA-4OZ",10,1500]],"sh":1500,"t":0,"tot":44190,"g":42690},{"no":"1034","date":"2026-04-14","c":"c56","s":"DELIVERED","lines":[["OOL-TIEGUA-2OZ",12,570],["GRN-JASMIN-4OZ",8,1290]],"sh":1500,"t":0,"tot":18660,"g":17160},{"no":"1035","date":"2026-04-19","c":"c123","s":"DELIVERED","lines":[["HRB-PEPMNT-4OZ",1,2000],["GRN-GENMAI-1LB",2,8950]],"sh":0,"t":1642,"tot":21542,"g":19900},{"no":"1036","date":"2026-04-20","c":"c44","s":"SHIPPED","lines":[["HRB-HIBISC-4OZ",13,1020],["GRN-SENCHA-2OZ",21,840]],"sh":1500,"t":0,"tot":32400,"g":30900},{"no":"1037","date":"2026-04-21","c":"c96","s":"DELIVERED","lines":[["GRN-GENMAI-1LB",1,8950],["MAT-CERMON-4OZ",1,1800],["OOL-TIEGUA-2OZ",2,950]],"sh":0,"t":1044,"tot":13694,"g":12650},{"no":"1038","date":"2026-04-26","c":"c96","s":"SHIPPED","lines":[["HRB-ROOIBO-1LB",1,2100]],"sh":795,"t":173,"tot":3068,"g":2100},{"no":"1039","date":"2026-04-28","c":"c29","s":"DELIVERED","lines":[["BLK-DARJ-4OZ",1,1700]],"sh":795,"t":140,"tot":2635,"g":1700},{"no":"1040","date":"2026-05-02","c":"c16","s":"DELIVERED","lines":[["GRN-SENCHA-2OZ",1,1400],["HRB-ROOIBO-4OZ",1,2150]],"sh":795,"t":293,"tot":4638,"g":3550},{"no":"1041","date":"2026-05-04","c":"c96","s":"DELIVERED","lines":[["GRN-DRAGON-1LB",1,7550],["OOL-DHP-2OZ",2,1600],["GRN-JASMIN-2OZ",1,1200]],"sh":0,"t":986,"tot":12936,"g":11950},{"no":"1042","date":"2026-05-04","c":"c137","s":"DELIVERED","lines":[["BLK-ASSAM-2OZ",3,1200]],"sh":795,"t":297,"tot":4692,"g":3600},{"no":"1043","date":"2026-05-05","c":"c109","s":"DELIVERED","lines":[["HRB-CHAMOM-1LB",6,5370],["BLK-CHAI-4OZ",13,1290]],"sh":1500,"t":0,"tot":50490,"g":48990},{"no":"1044","date":"2026-05-06","c":"c110","s":"SHIPPED","lines":[["WHT-PEONY-1LB",1,8950]],"sh":0,"t":738,"tot":9688,"g":8950},{"no":"1045","date":"2026-05-11","c":"c34","s":"DELIVERED","lines":[["OOL-TIEGUA-1LB",3,5300]],"sh":0,"t":1312,"tot":17212,"g":15900},{"no":"1046","date":"2026-05-15","c":"c107","s":"SHIPPED","lines":[["WHT-SILVER-1LB",8,5760]],"sh":1500,"t":0,"tot":47580,"g":46080},{"no":"1047","date":"2026-05-22","c":"c119","s":"SHIPPED","lines":[["BLK-YUNNAN-1LB",7,3690],["WHT-PEONY-1LB",15,5370],["HRB-PEPMNT-1LB",15,3690],["BLK-EARLGR-2OZ",21,570]],"sh":1500,"t":0,"tot":175200,"g":173700},{"no":"1048","date":"2026-05-24","c":"c84","s":"DELIVERED","lines":[["HRB-CHAMOM-4OZ",3,2900]],"sh":0,"t":718,"tot":9418,"g":8700},{"no":"1049","date":"2026-06-01","c":"c82","s":"DELIVERED","lines":[["BLK-CHAI-2OZ",6,720]],"sh":1500,"t":0,"tot":5820,"g":4320},{"no":"1050","date":"2026-06-07","c":"c141","s":"CANCELLED","lines":[["GRN-JASMIN-2OZ",1,1200],["HRB-ROOIBO-4OZ",2,2150],["MAT-CERMON-4OZ",2,1800]],"sh":0,"t":751,"tot":9851,"g":9100},{"no":"1051","date":"2026-06-08","c":"c91","s":"SHIPPED","lines":[["PUR-SHOU-1LB",3,6150],["BLK-ASSAM-2OZ",1,1200]],"sh":0,"t":1621,"tot":21271,"g":19650},{"no":"1052","date":"2026-06-13","c":"c125","s":"CANCELLED","lines":[["GRN-JASMIN-2OZ",21,720],["BLK-ASSAM-2OZ",17,720],["GRN-JASMIN-4OZ",24,1290]],"sh":1500,"t":0,"tot":59820,"g":58320},{"no":"1053","date":"2026-06-18","c":"c4","s":"CANCELLED","lines":[["PUR-SHOU-1LB",1,6150]],"sh":795,"t":507,"tot":7452,"g":6150},{"no":"1054","date":"2026-06-24","c":"c107","s":"CANCELLED","lines":[["BLK-YUNNAN-4OZ",10,1200],["GRN-DRAGON-4OZ",17,1470],["GRN-SENCHA-2OZ",9,840]],"sh":1500,"t":0,"tot":46050,"g":44550},{"no":"1055","date":"2026-06-26","c":"c21","s":"DELIVERED","lines":[["BLK-YUNNAN-4OZ",1,2000],["PUR-SHOU-4OZ",2,2000]],"sh":795,"t":495,"tot":7290,"g":6000},{"no":"1056","date":"2026-06-28","c":"c12","s":"DELIVERED","lines":[["HRB-CHAMOM-2OZ",17,960],["HRB-HIBISC-4OZ",22,1020],["WHT-PEONY-4OZ",24,1740],["BLK-YUNNAN-1LB",24,3690]],"sh":1500,"t":0,"tot":170580,"g":169080},{"no":"1057","date":"2026-06-29","c":"c77","s":"DELIVERED","lines":[["GRN-DRAGON-1LB",17,4530],["GRN-JASMIN-2OZ",21,720]],"sh":1500,"t":7601,"tot":101231,"g":92130},{"no":"1058","date":"2026-06-29","c":"c100","s":"DELIVERED","lines":[["GRN-DRAGON-2OZ",1,1350],["MAT-CERMON-2OZ",1,1000]],"sh":795,"t":194,"tot":3339,"g":2350},{"no":"1059","date":"2026-07-04","c":"c118","s":"SHIPPED","lines":[["WHT-SILVER-2OZ",1,1100],["GRN-DRAGON-1LB",3,7550]],"sh":0,"t":1959,"tot":25709,"g":23750},{"no":"1060","date":"2026-07-05","c":"c78","s":"DELIVERED","lines":[["HRB-ROOIBO-1LB",3,2100]],"sh":795,"t":520,"tot":7615,"g":6300},{"no":"1061","date":"2026-07-06","c":"c42","s":"DELIVERED","lines":[["GRN-SENCHA-1LB",2,7850]],"sh":0,"t":1295,"tot":16995,"g":15700},{"no":"1062","date":"2026-07-08","c":"c58","s":"CANCELLED","lines":[["BLK-DARJ-1LB",23,3180],["GRN-DRAGON-1LB",19,4530],["WHT-PEONY-2OZ",20,960]],"sh":1500,"t":14719,"tot":194629,"g":178410},{"no":"1063","date":"2026-07-10","c":"c59","s":"DELIVERED","lines":[["OOL-DHP-2OZ",1,1600],["HRB-PEPMNT-1LB",2,6150],["HRB-ROOIBO-4OZ",3,2150]],"sh":0,"t":1679,"tot":22029,"g":20350},{"no":"1064","date":"2026-07-20","c":"c28","s":"DELIVERED","lines":[["BLK-ASSAM-2OZ",6,720],["PUR-SHOU-1LB",21,3690]],"sh":1500,"t":0,"tot":83310,"g":81810},{"no":"1065","date":"2026-07-22","c":"c95","s":"DELIVERED","lines":[["OOL-DHP-1LB",16,5370]],"sh":1500,"t":0,"tot":87420,"g":85920},{"no":"1066","date":"2026-07-22","c":"c86","s":"SHIPPED","lines":[["HRB-HIBISC-2OZ",3,950]],"sh":795,"t":235,"tot":3880,"g":2850},{"no":"1067","date":"2026-07-26","c":"c55","s":"SHIPPED","lines":[["MAT-CERMON-1LB",1,14800]],"sh":0,"t":1221,"tot":16021,"g":14800},{"no":"1068","date":"2026-07-29","c":"c63","s":"CANCELLED","lines":[["BLK-YUNNAN-4OZ",1,2000]],"sh":795,"t":165,"tot":2960,"g":2000},{"no":"1069","date":"2026-07-30","c":"c7","s":"DELIVERED","lines":[["WHT-PEONY-1LB",7,5370],["BLK-DARJ-1LB",21,3180]],"sh":1500,"t":8611,"tot":114481,"g":104370},{"no":"1070","date":"2026-08-03","c":"c135","s":"SHIPPED","lines":[["HRB-PEPMNT-4OZ",1,2000]],"sh":795,"t":165,"tot":2960,"g":2000},{"no":"1071","date":"2026-08-04","c":"c3","s":"DELIVERED","lines":[["MAT-CERMON-4OZ",4,1800]],"sh":795,"t":594,"tot":8589,"g":7200},{"no":"1072","date":"2026-08-06","c":"c11","s":"DELIVERED","lines":[["BLK-CHAI-1LB",1,6700],["HRB-HIBISC-1LB",1,5300]],"sh":0,"t":990,"tot":12990,"g":12000},{"no":"1073","date":"2026-08-08","c":"c29","s":"DELIVERED","lines":[["BLK-CHAI-2OZ",1,1200],["BLK-CHAI-1LB",3,6700]],"sh":0,"t":1757,"tot":23057,"g":21300},{"no":"1074","date":"2026-08-20","c":"c15","s":"NEW","lines":[["BLK-YUNNAN-4OZ",1,2000]],"sh":795,"t":165,"tot":2960,"g":2000},{"no":"1075","date":"2026-08-21","c":"c15","s":"PAID","lines":[["GRN-JASMIN-1LB",1,6700],["OOL-MILK-2OZ",1,1350]],"sh":0,"t":664,"tot":8714,"g":8050},{"no":"1076","date":"2026-08-21","c":"c39","s":"PACKED","lines":[["HRB-PEPMNT-1LB",1,6150],["MAT-CERMON-4OZ",1,1800]],"sh":0,"t":656,"tot":8606,"g":7950},{"no":"1077","date":"2026-08-22","c":"c3","s":"NEW","lines":[["HRB-CHAMOM-2OZ",1,1600],["PUR-SHOU-4OZ",1,2000]],"sh":795,"t":297,"tot":4692,"g":3600},{"no":"1078","date":"2026-08-23","c":"c93","s":"DELIVERED","lines":[["WHT-PEONY-2OZ",1,1600],["WHT-PEONY-1LB",3,8950]],"sh":0,"t":2347,"tot":30797,"g":28450},{"no":"1079","date":"2026-08-24","c":"c55","s":"NEW","lines":[["GRN-JASMIN-4OZ",3,2150]],"sh":795,"t":532,"tot":7777,"g":6450},{"no":"1080","date":"2026-08-24","c":"c34","s":"PAID","lines":[["GRN-DRAGON-4OZ",1,2450]],"sh":795,"t":202,"tot":3447,"g":2450},{"no":"1081","date":"2026-08-24","c":"c3","s":"NEW","lines":[["OOL-DHP-4OZ",3,2900],["HRB-PEPMNT-4OZ",1,2000]],"sh":0,"t":883,"tot":11583,"g":10700},{"no":"1082","date":"2026-08-24","c":"c101","s":"NEW","lines":[["HRB-ROOIBO-4OZ",2,2150]],"sh":795,"t":355,"tot":5450,"g":4300},{"no":"1083","date":"2026-08-25","c":"c115","s":"NEW","lines":[["BLK-YUNNAN-2OZ",1,1100],["WHT-SILVER-4OZ",1,2000]],"sh":795,"t":256,"tot":4151,"g":3100},{"no":"1084","date":"2026-08-25","c":"c41","s":"PAID","lines":[["BLK-ASSAM-2OZ",2,1200],["HRB-CHAMOM-1LB",1,8950]],"sh":0,"t":936,"tot":12286,"g":11350},{"no":"1085","date":"2026-08-26","c":"c95","s":"NEW","lines":[["BLK-ASSAM-1LB",11,4020],["OOL-MILK-2OZ",12,810]],"sh":1500,"t":0,"tot":55440,"g":53940},{"no":"1086","date":"2026-08-26","c":"c127","s":"PAID","lines":[["HRB-HIBISC-1LB",10,3180],["HRB-ROOIBO-2OZ",6,720]],"sh":1500,"t":0,"tot":37620,"g":36120},{"no":"1087","date":"2026-08-26","c":"c124","s":"NEW","lines":[["BLK-ASSAM-2OZ",2,1200]],"sh":795,"t":198,"tot":3393,"g":2400},{"no":"1088","date":"2026-08-27","c":"c34","s":"DELIVERED","lines":[["BLK-YUNNAN-2OZ",3,1100],["MAT-CERMON-4OZ",2,1800]],"sh":795,"t":569,"tot":8264,"g":6900},{"no":"1089","date":"2026-08-28","c":"c61","s":"PACKED","lines":[["OOL-TIEGUA-2OZ",14,570]],"sh":1500,"t":0,"tot":9480,"g":7980},{"no":"1090","date":"2026-08-28","c":"c44","s":"DELIVERED","lines":[["WHT-PEONY-4OZ",21,1740]],"sh":1500,"t":0,"tot":38040,"g":36540},{"no":"1091","date":"2026-08-29","c":"c56","s":"NEW","lines":[["OOL-DHP-2OZ",20,960]],"sh":1500,"t":0,"tot":20700,"g":19200},{"no":"1092","date":"2026-08-29","c":"c113","s":"PAID","lines":[["HRB-PEPMNT-4OZ",1,2000],["OOL-DHP-1LB",1,8950]],"sh":0,"t":903,"tot":11853,"g":10950},{"no":"1093","date":"2026-08-29","c":"c124","s":"PAID","lines":[["BLK-ASSAM-1LB",3,6700]],"sh":0,"t":1658,"tot":21758,"g":20100},{"no":"1094","date":"2026-08-30","c":"c48","s":"PAID","lines":[["HRB-ROOIBO-2OZ",3,1200]],"sh":795,"t":297,"tot":4692,"g":3600},{"no":"1095","date":"2026-08-31","c":"c17","s":"PACKED","lines":[["PUR-SHOU-4OZ",2,2000],["BLK-EARLGR-2OZ",1,950]],"sh":795,"t":408,"tot":6153,"g":4950},{"no":"1096","date":"2026-08-31","c":"c18","s":"NEW","lines":[["GRN-GENMAI-4OZ",2,2900],["GRN-SENCHA-4OZ",1,2500]],"sh":0,"t":685,"tot":8985,"g":8300},{"no":"1097","date":"2026-08-31","c":"c65","s":"PAID","lines":[["OOL-TIEGUA-2OZ",3,950],["GRN-GENMAI-4OZ",3,2900],["HRB-CHAMOM-4OZ",2,2900]],"sh":0,"t":1431,"tot":18781,"g":17350},{"no":"1098","date":"2026-09-01","c":"c124","s":"NEW","lines":[["BLK-CHAI-1LB",3,6700]],"sh":0,"t":1658,"tot":21758,"g":20100},{"no":"1099","date":"2026-09-03","c":"c69","s":"PAID","lines":[["GRN-GENMAI-4OZ",1,2900],["BLK-DARJ-2OZ",3,950],["OOL-MILK-1LB",1,7550]],"sh":0,"t":1097,"tot":14397,"g":13300},{"no":"1100","date":"2026-09-04","c":"c93","s":"NEW","lines":[["OOL-MILK-2OZ",1,1350],["MAT-CERMON-2OZ",1,1000]],"sh":795,"t":194,"tot":3339,"g":2350},{"no":"1101","date":"2026-09-06","c":"c61","s":"PAID","lines":[["BLK-DARJ-2OZ",6,570],["GRN-GENMAI-4OZ",13,1740],["PUR-SHOU-2OZ",15,660]],"sh":1500,"t":0,"tot":37440,"g":35940},{"no":"1102","date":"2026-09-08","c":"c69","s":"NEW","lines":[["HRB-HIBISC-2OZ",2,950]],"sh":795,"t":157,"tot":2852,"g":1900},{"no":"1103","date":"2026-09-08","c":"c118","s":"NEW","lines":[["GRN-JASMIN-4OZ",1,2150],["HRB-ROOIBO-2OZ",2,1200]],"sh":795,"t":375,"tot":5720,"g":4550},{"no":"1104","date":"2026-09-08","c":"c117","s":"PAID","lines":[["WHT-SILVER-2OZ",23,660],["OOL-MILK-4OZ",12,1470]],"sh":1500,"t":2708,"tot":37028,"g":32820},{"no":"1105","date":"2026-09-08","c":"c91","s":"NEW","lines":[["GRN-SENCHA-2OZ",1,1400],["GRN-DRAGON-2OZ",1,1350]],"sh":795,"t":227,"tot":3772,"g":2750},{"no":"1106","date":"2026-09-09","c":"c129","s":"PACKED","lines":[["BLK-EARLGR-2OZ",6,570],["HRB-PEPMNT-1LB",9,3690],["BLK-EARLGR-4OZ",8,1020],["WHT-PEONY-1LB",7,5370]],"sh":1500,"t":6796,"tot":90676,"g":82380},{"no":"1107","date":"2026-09-09","c":"c133","s":"NEW","lines":[["BLK-YUNNAN-1LB",1,6150]],"sh":795,"t":507,"tot":7452,"g":6150},{"no":"1108","date":"2026-09-09","c":"c110","s":"PACKED","lines":[["HRB-HIBISC-4OZ",1,1700]],"sh":795,"t":140,"tot":2635,"g":1700},{"no":"1109","date":"2026-09-09","c":"c97","s":"PACKED","lines":[["GRN-GENMAI-1LB",1,8950],["BLK-DARJ-4OZ",1,1700],["GRN-SENCHA-1LB",2,7850]],"sh":0,"t":2174,"tot":28524,"g":26350},{"no":"1110","date":"2026-09-09","c":"c69","s":"PAID","lines":[["PUR-SHOU-2OZ",3,1100],["WHT-SILVER-2OZ",2,1100]],"sh":795,"t":454,"tot":6749,"g":5500}]}</script>
+<script>
+/* TeaCo 经营驾驶舱 — UI reference (spec §11.1). Shared data, state and business actions; one layout. */
+(() => {
+  'use strict';
+  const DATA = JSON.parse(document.getElementById('teaco-data').textContent);
+  const CUST = Object.fromEntries(DATA.customers.map((c) => [c.id, c]));
+  const custByName = (n) => DATA.customers.find((c) => c.company === n || c.name === n);
+
+  /* ---------- helpers ---------- */
+  const money = (c) => { if (c == null) return '—'; const a = Math.abs(c); return (c < 0 ? '-' : '') + '$' + Math.floor(a / 100).toLocaleString('en-US') + '.' + String(a % 100).padStart(2, '0'); };
+  const rhu = (n, num, den) => Math.floor((n * num * 2 + den) / (den * 2));
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const ICONS = {
+    sparkles: '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    circleCheck: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+    home: '<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    truck: '<path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/>',
+    box: '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+    chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+    shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+    book: '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>',
+    plug: '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+    git: '<circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/>',
+    gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+    send: '<path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/>',
+    lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    pause: '<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+    table: '<path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/>',
+  };
+  const icon = (n, s = 14, cls = '') => `<svg class="ico ${cls}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
+  const pill = (tone, text) => `<span class="pill ${tone || ''}">${esc(text)}</span>`;
+  const fresh = (f) => (S.fresh[f] ? ' ' + pill('new', '新') : '');
+
+  /* ---------- domain vocabulary ---------- */
+  const ACTORS = {
+    owner: { name: '店主', role: '管理员', initial: '店', scope: '全店' },
+    jonah: { name: 'Jonah Whitaker', role: '客户经理', initial: 'J', scope: '你负责的 14 家批发客户' },
+    finance: { name: '财务', role: '只读', initial: '财', scope: '全店（只能看，不能改）' },
+  };
+  const REVS = [
+    { id: 'v1', name: '初版订单系统', checks: 26, adds: [] },
+    { id: 'v2', name: '按月销售报表', checks: 29, feature: 'monthly', adds: ['新页面「月度报表」：每月零售、批发分开看订单数、货款、运费、税和总额', '概览页多了按月销售走势图'] },
+    { id: 'v3', name: '批发满 $1,000 打 95 折', checks: 32, feature: 'discount', adds: ['新规则：批发订单货款满 $1,000（含）打 95 折，税按折后金额算，运费不变；零售不打折', '报价和订单金额多了「折扣」一行；已经下的订单金额不变'] },
+    { id: 'v4', name: '订单挂起', checks: 35, feature: 'hold', adds: ['新状态「挂起中」：客户经理可以挂起自己客户的未发货订单，只有店主能解除', '挂起的订单不能发货，仍算没发货的订单'] },
+  ];
+  const STATUS = { NEW: '新建', PAID: '已付款', PACKED: '已打包', ON_HOLD: '挂起中', SHIPPED: '已发货', DELIVERED: '已送达', CANCELLED: '已取消' };
+  const TONE = { NEW: 'accent', PAID: 'accent', PACKED: 'accent', ON_HOLD: 'progress', SHIPPED: 'done', DELIVERED: 'done', CANCELLED: '' };
+  const OPEN = ['NEW', 'PAID', 'PACKED', 'ON_HOLD'];
+  const DONE = ['SHIPPED', 'DELIVERED'];
+  const QUESTIONS = [
+    { id: 'todo', q: '今天有什么要我处理的？' },
+    { id: 'open', q: '现在还有多少订单没发货？' },
+    { id: 'march', q: '3 月零售和批发各卖了多少？' },
+    { id: 'trend', q: '按月看看销售情况' },
+    { id: 'aug', q: '为什么 8 月销售额比 7 月低这么多？' },
+    { id: 'low', q: '哪些茶快没货了？' },
+  ];
+
+  /* ---------- state ---------- */
+  function initial(prev) {
+    return {
+      revision: 'v1', actor: prev ? prev.actor : 'owner', clock: 0, connection: 'verified',
+      orders: DATA.orders.map((o) => ({ ...o, lines: o.lines.map((l) => l.slice()), d: 0, holdPrev: null })),
+      products: Object.fromEntries(DATA.products.map((p) => [p.sku, { ...p }])),
+      decided: {}, titles: {}, kb: 'open', fresh: {}, repairQty: '',
+      activity: [
+        { at: -95, kind: 'ok', text: '导入了 3 份表格：142 位客户、60 款茶、110 张订单，发现并处理了 9 类数据问题' },
+        { at: -60, kind: 'ok', text: '订单系统 v1 上线，AI 核对了它能查的 5 个数字和能做的 5 类操作' },
+        { at: -5, kind: 'ok', text: 'AI 早上复核了订单系统：数据和昨天一致' },
+      ],
+      a: { page: 'home', order: null, filter: 'OPEN', answer: null },
+    };
+  }
+  let S = initial();
+  const UI = { theme: 'default', mode: 'light', toastTimer: null };
+  try { if (window.matchMedia('(prefers-color-scheme: dark)').matches) UI.mode = 'dark'; } catch (e) { /* keep light */ }
+
+  /* ---------- selectors ---------- */
+  const revIndex = (r) => REVS.findIndex((x) => x.id === r);
+  const has = (f) => revIndex(S.revision) >= revIndex({ monthly: 'v2', discount: 'v3', hold: 'v4' }[f]);
+  const me = () => ACTORS[S.actor];
+  const canSee = (o) => { const c = CUST[o.c]; return S.actor !== 'jonah' || (c.type === 'W' && c.mgr === 'jonah'); };
+  const vis = () => S.orders.filter(canSee);
+  const cname = (c) => c.company || c.name;
+  const pname = (sku) => { const p = S.products[sku]; return p ? `${p.name}（${p.size}）` : '已下架商品'; };
+  const clk = (m) => { const t = 9 * 60 + m; return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(((t % 60) + 60) % 60).padStart(2, '0'); };
+  const need = (o) => { const m = {}; o.lines.forEach(([s, q]) => { m[s] = (m[s] || 0) + q; }); return m; };
+  const shortOf = (o) => { if (!OPEN.includes(o.s)) return []; const n = need(o); return Object.keys(n).filter((s) => { const p = S.products[s]; return p && (p.locked || n[s] > p.stock); }); };
+  function kpis() {
+    const v = vis(), open = v.filter((o) => OPEN.includes(o.s)), done = v.filter((o) => DONE.includes(o.s));
+    const sales = done.reduce((t, o) => t + o.tot, 0), tax = done.reduce((t, o) => t + o.t, 0);
+    return { total: v.length, open: open.length, back: open.filter((o) => shortOf(o).length).length, sales, tax, avg: done.length ? rhu(sales, 1, done.length) : null, shipped: done.length };
+  }
+  const statusCounts = () => vis().reduce((m, o) => { m[o.s] = (m[o.s] || 0) + 1; return m; }, {});
+  function monthly() {
+    const months = ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08'];
+    const blank = () => ({ n: 0, g: 0, d: 0, sh: 0, t: 0, tot: 0 });
+    const rows = months.map((m) => ({ m, R: blank(), W: blank() }));
+    vis().filter((o) => DONE.includes(o.s)).forEach((o) => {
+      const r = rows.find((x) => x.m === o.date.slice(0, 7)); if (!r) return;
+      const b = r[CUST[o.c].type]; b.n += 1; b.g += o.g; b.d += o.d; b.sh += o.sh; b.t += o.t; b.tot += o.tot;
+    });
+    return rows;
+  }
+  function quote(custName, sku, qty) {
+    const c = custByName(custName), p = S.products[sku], W = c.type === 'W';
+    const g = (W ? p.wholesale : p.retail) * qty;
+    const d = W && has('discount') && g >= 100000 ? rhu(g, 5, 100) : 0;
+    const sh = W ? 1500 : g >= 7500 ? 0 : 795;
+    const t = W && c.cert ? 0 : rhu(g - d, 825, 10000);
+    return { c, p, qty, g, d, sh, t, tot: g - d + sh + t };
+  }
+  function rules() {
+    const list = [
+      { t: '价格', d: '零售客户按零售价，批发客户按批发价；下单时把价格记下来，之后调价不影响已经下的单。' },
+      { t: '运费', d: '零售订单货款满 $75 免运费，不满收 $7.95；批发订单一律 $15。' },
+      { t: '税', d: '只对货款收 8.25% 的税，运费不收；有有效免税证书的批发客户不收税（写着“已过期”的不算）。' },
+      { t: '订单流程', d: '新建 → 已付款 → 已打包 → 已发货 → 已送达；发货前可以取消，发货后不能取消，也不能跳过发货直接送达。' },
+      { t: '库存', d: '只在发货那一刻扣库存，而且只扣一次；导入的历史订单不再扣。' },
+      { t: '缺货', d: '库存不够的订单显示「缺货」，不能发货；补货后自动恢复。' },
+      { t: '谁能看什么', d: '客户经理只看得到自己负责的批发客户和他们的订单；财务能看全部但不能改；店主管理用户和设置。' },
+    ];
+    if (has('discount')) list.splice(3, 0, { t: '批发折扣', d: '批发订单货款满 $1,000（含）打 95 折，税按折后金额算，运费不变；零售不打折。', f: 'discount' });
+    if (has('hold')) list.push({ t: '挂起', d: '客户经理可以挂起自己客户的未发货订单，只有店主能解除；挂起的订单不能发货，仍算没发货。', f: 'hold' });
+    return list;
+  }
+  function health() {
+    const pep = S.products['HRB-PEPMNT-2OZ'];
+    return [
+      { ok: true, t: '客户去重：150 行 → 142 位客户', d: '5 行完全重复、3 行只是邮箱大小写不同；两位同名的 Maria Lopez 邮箱不同，是两个人，没有合并。' },
+      { ok: true, t: '客户类型和客户经理写法统一', d: '零售 104 位，批发 38 位；Jonah 14 位、Priya 13 位、Carlos 11 位。' },
+      { ok: true, t: '免税证书识别', d: '27 家批发客户免税；11 家要交税，其中 Cedar Grove Gift Shop 的证书写着“已过期”。' },
+      { ok: true, t: '商品去重：64 行 → 60 款茶', d: '3 行完全重复，还有 1 款茶的编号末尾多了一个空格。' },
+      { ok: true, t: '价格统一成数字', d: `15 个价格写成了“$148.00”这样的文字；最贵的是 ${pname('MAT-CERMON-1LB')}，$148.00。` },
+      { ok: !pep.locked, t: pep.locked ? `${pname('HRB-PEPMNT-2OZ')} 库存是 -2，等你确认实际数量` : `${pname('HRB-PEPMNT-2OZ')} 库存已按盘点改为 ${pep.stock}`, d: pep.locked ? '库存不可能是负数，先按 0 处理并锁住，确认前不能发货；原始数字保留着。' : '原始的 -2 保留在导入记录里，修正另记了一笔库存流水。' },
+      { ok: true, t: '订单明细合并：219 行 → 110 张订单', d: '有 40 行订单号前面没写 #，按同一张订单处理。' },
+      { ok: true, t: '日期和状态写法统一', d: '6 种日期写法都按「月/日/年」读；Canceled、CANCELLED 等统一成「已取消」。' },
+      { ok: true, t: '历史订单不重复扣库存', d: `已发货的历史订单只记金额、不再扣库存，所以 ${pname('HRB-HIBISC-4OZ')} 仍是 91 袋。` },
+    ];
+  }
+  function capabilities() {
+    return {
+      ask: ['没发货的订单', '已发货销售额', '已发货税额', '平均每单金额', '缺货订单'].concat(has('monthly') ? ['月度销售报表'] : []),
+      act: ['下单', '付款、打包、发货、送达', '取消订单', '调整库存', '修复导入问题'].concat(has('hold') ? ['挂起、解除挂起'] : []),
+      hear: ['订单发货了', '库存不够了', '导入发现问题'],
+    };
+  }
+  function knowledge() {
+    const conflict = S.kb === 'open';
+    return [
+      { st: conflict ? 'progress' : S.kb === 'resolved' ? 'done' : '', label: conflict ? '有分歧' : S.kb === 'resolved' ? '现行' : '暂不使用', t: 'Silver Needle 1 lb 进价', v: conflict ? '$41.00 还是 $43.50？' : S.kb === 'resolved' ? '$41.00 / 磅' : '两种说法都先不用', d: '来源：8 月报价单（$41.00）、供应商 8 月 20 日邮件（$43.50）' },
+      { st: '', label: '已被取代', t: 'Silver Needle 1 lb 进价（7 月）', v: '$38.50 / 磅', d: '来源：7 月报价单 · 8 月 1 日起被新报价取代' },
+      { st: '', label: '已退役', t: '旧运费说法：零售满 $60 包邮', v: '不再适用', d: '来源：2025 年运营手册 · 2026 年 1 月起改为满 $75，AI 不再把它当现行规则' },
+      { st: 'done', label: '现行', t: 'Mountain Mist 茶园交货周期', v: '下单后 12 天', d: '来源：供应合同第 4 条 · 2026 年 6 月 1 日起有效' },
+    ];
+  }
+
+  /* ---------- decisions ---------- */
+  function decisions() {
+    const L = [];
+    if (S.actor === 'finance') return L;
+    if (S.connection === 'drifted' && S.actor === 'owner') L.push(dReverify());
+    const o = S.orders.find((x) => x.no === '1106');
+    if (o && o.s === 'PACKED' && canSee(o) && !S.decided['ship-1106']) L.push(dShip(o));
+    if (S.actor === 'owner') {
+      S.orders.filter((x) => x.s === 'ON_HOLD' && !S.decided['release-' + x.no]).forEach((h) => L.push(dRelease(h)));
+      const pep = S.products['HRB-PEPMNT-2OZ']; if (pep.locked && !S.decided.repair) L.push(dRepair());
+      const nx = REVS[revIndex(S.revision) + 1]; if (nx && !S.decided['rev-' + nx.id]) L.push(dRev(nx));
+      if (S.kb === 'open') L.push(dKb());
+    }
+    if (S.actor === 'jonah' && has('hold')) { const h = S.orders.find((x) => x.no === '1104'); if (h && h.s === 'PAID' && !S.decided['hold-1104']) L.push(dHold(h)); }
+    return L;
+  }
+  function dShip(o) {
+    const n = need(o);
+    return { id: 'ship-1106', kind: 'action', kicker: 'AI 代办 · 需要你批准', title: `给 ${cname(CUST[o.c])} 的订单 ${o.no} 发货`,
+      what: `这张单已经付款、打包好了，${Object.keys(n).length} 款茶库存都够。批准后 AI 在订单系统里把它标为已发货，再回头核对结果。`,
+      effects: [`订单 ${o.no}：已打包 → 已发货`].concat(Object.keys(n).map((s) => `${pname(s)}：库存 ${S.products[s].stock} → ${S.products[s].stock - n[s]}`), [`已发货销售额 +${money(o.tot)}`]),
+      more: ['用的是 Jonah Whitaker 的权限（这位客户归 Jonah 负责），AI 不会超出他的权限', '批准只对这一张单、这些数量有效；执行前订单被改动，批准自动作废，要重新确认', '如果 AI 没收到结果，它只会按原请求去查，不会再发一次，避免重复扣库存'],
+      blocked: S.connection === 'drifted' ? '订单系统刚更新，AI 重新核对前不做操作' : null,
+      primary: '批准发货', secondary: '先不发' };
+  }
+  const dRepair = () => ({ id: 'repair', kind: 'data', kicker: '数据问题 · 需要你确认', title: `${pname('HRB-PEPMNT-2OZ')} 导入时库存是 -2`,
+    what: '库存不可能是负数，可能是盘点录错了。确认前这款茶先按 0 处理，不能发货。请填你实际盘点的数量。',
+    input: { label: '实际盘点数量（袋）', value: S.repairQty },
+    effects: ['库存改成你填的数量，解除锁定', '原始的 -2 保留在导入记录里，另记一笔库存流水，谁改的、什么时候改的都有记录'],
+    primary: '按这个数量修正', secondary: '先保持锁定' });
+  const dRelease = (o) => ({ id: 'release-' + o.no, kind: 'action', kicker: 'Jonah 挂起了一张订单', title: `订单 ${o.no}（${cname(CUST[o.c])}）被挂起了`,
+    what: 'Jonah 说这张单付款有问题，先挂起。只有你能解除；挂起期间不能发货。', effects: [`解除后回到「${STATUS[o.holdPrev] || '已付款'}」`, '没发货的订单数不变（挂起也算没发货）'],
+    primary: '解除挂起', secondary: '保持挂起' });
+  function dRev(nx) {
+    const cur = REVS[revIndex(S.revision)];
+    return { id: 'rev-' + nx.id, kind: 'change', kicker: '需求变化 · 需要你确认上线', title: `需求 ${nx.id}：${nx.name}`, what: nx.adds[0],
+      effects: nx.adds.slice(1).concat([`验收：原有 ${cur.checks} 项 + 新增 ${nx.checks - cur.checks} 项，共 ${nx.checks} 项（示意，未实测）`, '上线后 AI 先重新核对订单系统，再继续查数据和代办']),
+      more: ['可以回退到上一个版本；已经发生的订单不会被改写', '改动由开发助手完成，经过测试后才上线'],
+      primary: '确认上线', secondary: '暂缓' };
+  }
+  const dReverify = () => ({ id: 'reverify', kind: 'system', kicker: '订单系统刚更新', title: 'AI 要先重新核对订单系统，才能继续查数据和代办',
+    what: `订单系统升级到 ${S.revision} 后，数据的样子有变化${has('discount') ? '（多了「折扣」）' : ''}。核对完成前 AI 不报数字、不做操作，以免算错。`,
+    effects: ['核对它能查的数字和能做的操作是否还和规则一致', '大约 1 分钟'], primary: '开始核对', secondary: null });
+  const dKb = () => ({ id: 'kb', kind: 'knowledge', kicker: '知识有分歧 · 示例', title: '两份资料对 Silver Needle 1 lb 进价说法不一样',
+    what: '8 月报价单写 $41.00/磅，供应商 8 月 20 日的邮件写 $43.50/磅。AI 不会自己挑一个，等你定。', effects: ['选定后，进货建议按这个价格算', '另一个说法保留下来，标为「已被取代」，以后可查'],
+    more: ['这是扩展场景的示例数据，不在原始的 3 份表格里'], primary: '以 8 月报价单为准', secondary: '两个都先不用' });
+  const dHold = (o) => ({ id: 'hold-1104', kind: 'action', kicker: 'AI 发现 · 建议挂起', title: `订单 ${o.no}（${cname(CUST[o.c])}）付款可能有问题，要先挂起吗？`,
+    what: '这张单显示已付款，但银行的到账确认还没来（示例）。挂起后它不能发货，只有店主能解除。', effects: [`订单 ${o.no}：已付款 → 挂起中`, '店主会收到通知'],
+    primary: '挂起', secondary: '不用' });
+
+  /* ---------- actions ---------- */
+  function log(kind, text) { S.clock += 2; S.activity.push({ at: S.clock, kind, text }); }
+  function approve(id) {
+    const d = decisions().find((x) => x.id === id); if (!d) return;
+    S.titles[id] = d.title;
+    if (id === 'ship-1106') {
+      if (S.connection === 'drifted') { toast('AI 暂停代办', ['订单系统刚更新，请先让 AI 重新核对。'], 'warn'); return; }
+      const o = S.orders.find((x) => x.no === '1106'), n = need(o);
+      Object.keys(n).forEach((s) => { S.products[s].stock -= n[s]; });
+      o.s = 'SHIPPED'; S.decided[id] = 'approved';
+      log('ok', `按你的批准给订单 1106 发了货；回头核对：订单已是「已发货」，${Object.keys(n).length} 款茶库存已扣减`);
+      toast('已发货', [`订单 1106 已发货，回头核对一致`, `已发货销售额 +${money(o.tot)}`], 'ok');
+    } else if (id === 'repair') {
+      const q = Number(S.repairQty);
+      if (S.repairQty === '' || !Number.isInteger(q) || q < 0) { toast('还不能修正', ['请填一个不小于 0 的整数，比如你实际数出来的袋数。'], 'warn'); return; }
+      const p = S.products['HRB-PEPMNT-2OZ']; p.stock = q; p.locked = false; S.decided[id] = 'approved';
+      log('ok', `${pname('HRB-PEPMNT-2OZ')} 库存按你的盘点改为 ${q}，解除锁定；原始的 -2 保留在导入记录里`);
+      toast('数据问题已解决', [`库存 0 → ${q}，可以正常发货了`], 'ok');
+    } else if (id.startsWith('rev-')) {
+      S.decided[id] = 'approved'; setRevision(id.slice(4), true);
+    } else if (id === 'reverify') {
+      S.connection = 'verified'; log('ok', `AI 重新核对了订单系统 ${S.revision}：能查的数字和能做的操作都和规则一致`);
+      toast('核对完成', ['AI 可以继续查数据和代办了'], 'ok');
+    } else if (id === 'kb') {
+      S.kb = 'resolved'; log('ok', 'Silver Needle 1 lb 进价按 8 月报价单定为 $41.00/磅，邮件里的说法标为已被取代');
+    } else if (id === 'hold-1104') {
+      const o = S.orders.find((x) => x.no === '1104'); o.holdPrev = o.s; o.s = 'ON_HOLD'; S.decided[id] = 'approved';
+      log('ok', 'Jonah 挂起了订单 1104，已通知店主'); toast('已挂起', ['订单 1104 现在不能发货，只有店主能解除'], 'ok');
+    } else if (id.startsWith('release-')) {
+      const o = S.orders.find((x) => x.no === id.slice(8)); o.s = o.holdPrev || 'PAID'; o.holdPrev = null;
+      log('ok', `你解除了订单 ${o.no} 的挂起，回到「${STATUS[o.s]}」`);
+    }
+  }
+  function decline(id) {
+    const d = decisions().find((x) => x.id === id); if (!d) return;
+    S.titles[id] = d.title;
+    if (id === 'kb') S.kb = 'skipped'; else S.decided[id] = 'declined';
+    if (id.startsWith('release-')) S.decided[id] = 'declined';
+    log('muted', `你暂缓了：${d.title}`);
+  }
+  function setRevision(r, viaProposal) {
+    const from = revIndex(S.revision), to = revIndex(r);
+    if (from === to) return;
+    S.revision = r; S.fresh = {};
+    if (to > from) {
+      const added = REVS.slice(from + 1, to + 1);
+      added.forEach((x) => { S.fresh[x.feature] = true; });
+      if (viaProposal) { S.connection = 'drifted'; log('ok', `需求 ${r}「${REVS[to].name}」上线；AI 暂停查数和代办，等重新核对`); }
+      toast(`已切换到需求 ${r}：${REVS[to].name}`, added.flatMap((x) => x.adds).concat(viaProposal ? ['AI 会先重新核对订单系统（待办里多了一件）'] : []), 'ok');
+    } else {
+      S.orders.forEach((o) => { if (o.s === 'ON_HOLD' && !has('hold')) { o.s = o.holdPrev || 'PAID'; o.holdPrev = null; } });
+      REVS.slice(to + 1).forEach((x) => { delete S.decided['rev-' + x.id]; });
+      if (S.connection === 'drifted') S.connection = 'verified';
+      toast(`回到需求 ${r}：${REVS[to].name}`, ['之后版本加的页面、规则和状态暂时不显示（原型预览；真实系统回退也要走确认）'], 'ok');
+    }
+  }
+
+  /* ---------- answers ---------- */
+  const basis = (def) => `依据：订单系统 · ${def} · 读取于 ${clk(S.clock)} · 范围：${me().scope}`;
+  function answer(id) {
+    if (id !== 'todo' && S.connection === 'drifted') return { say: '订单系统刚更新，AI 还没重新核对，所以先不报数字，免得算错。请先在待办里点「开始核对」。', tone: 'warn' };
+    const k = kpis();
+    if (id === 'todo') { const ds = decisions(); return { say: ds.length ? `有 ${ds.length} 件事等你决定：` : (S.actor === 'finance' ? '你是只读身份，没有需要你批准的事。' : '没有需要你决定的事。'), decisions: ds.map((d) => d.id) }; }
+    if (id === 'open') { const sc = statusCounts(); return { say: `${me().scope}还有 ${k.open} 张订单没发货：新建 ${sc.NEW || 0}、已付款 ${sc.PAID || 0}、已打包 ${sc.PACKED || 0}${has('hold') ? '、挂起中 ' + (sc.ON_HOLD || 0) : ''}。其中 ${k.back} 张缺货。`, basis: basis('没发货 = 新建、已付款、已打包' + (has('hold') ? '、挂起中' : '') + '的订单') }; }
+    if (id === 'march') {
+      const r = monthly().find((x) => x.m === '2026-03');
+      const rows = [['零售', r.R], ['批发', r.W]].filter(([, b]) => b.n > 0 || S.actor !== 'jonah');
+      return { say: S.actor === 'jonah' ? `3 月你负责的客户已发货 ${r.W.n} 张，合计 ${money(r.W.tot)}（你看不到零售和其他经理的数字）。` : `3 月已发货的订单：零售 ${r.R.n} 张 ${money(r.R.tot)}，批发 ${r.W.n} 张 ${money(r.W.tot)}。取消的 2 张单没算在内。`,
+        table: `<div class="table-region"><table><thead><tr><th></th><th class="r">订单</th><th class="r">货款</th>${has('discount') ? '<th class="r">折扣</th>' : ''}<th class="r">运费</th><th class="r">税</th><th class="r">合计</th></tr></thead><tbody>${rows.map(([l, b]) => `<tr><td>${l}</td><td class="r mono">${b.n}</td><td class="r mono">${money(b.g)}</td>${has('discount') ? `<td class="r mono">${money(b.d)}</td>` : ''}<td class="r mono">${money(b.sh)}</td><td class="r mono">${money(b.t)}</td><td class="r mono"><strong>${money(b.tot)}</strong></td></tr>`).join('')}</tbody></table></div>`,
+        basis: basis('按下单日期算月份，只算已发货和已送达的订单') };
+    }
+    if (id === 'trend') {
+      if (!has('monthly')) return { say: `按月报表是需求 v2「按月销售报表」才有的功能，现在是 ${S.revision}。目前能告诉你的是总数：已发货销售额 ${money(k.sales)}。`, tone: 'muted' };
+      return { say: `1–8 月已发货销售额合计 ${money(k.sales)}；3 月最高，8 月最低（8 月下旬的单很多还没发货）。`, chart: true, basis: basis('按下单日期算月份，只算已发货和已送达的订单') };
+    }
+    if (id === 'aug') {
+      const m = monthly(), sum = (r) => r.R.tot + r.W.tot, jul = sum(m[6]), aug = sum(m[7]);
+      const augOpen = vis().filter((o) => o.date.startsWith('2026-08') && OPEN.includes(o.s));
+      return { say: `8 月已发货 ${money(aug)}，7 月 ${money(jul)}。但这不一定是生意变差了：8 月还有 ${augOpen.length} 张订单没发货，合计 ${money(augOpen.reduce((t, o) => t + o.tot, 0))}，按「已发货」的算法还没算进去。现有数据不足以判断原因；要比较需求，可以按下单金额来看，或者补充当月的促销和缺货情况。`, tone: 'muted', basis: basis('已发货销售额；没发货的订单单独列出') };
+    }
+    if (id === 'low') {
+      const list = Object.values(S.products).filter((p) => p.locked || p.stock <= 5).sort((a, b) => a.stock - b.stock);
+      return { say: list.length ? `有 ${list.length} 款茶库存很少或被锁住：` : '没有快卖完的茶。', list: list.map((p) => `${pname(p.sku)}：${p.locked ? '导入问题，锁住了' : '还剩 ' + p.stock}`), basis: basis('库存 ≤ 5 或被锁住') };
+    }
+    return { say: '原型里先支持下面这几个问题。真实产品里我会先确认你问的是哪个口径，再去订单系统取数。', tone: 'muted' };
+  }
+  /* ---------- shared components ---------- */
+  function header() {
+    const r = REVS[revIndex(S.revision)];
+    const conn = S.connection === 'drifted' ? `<span class="who"><span class="dot warn"></span>AI 等你重新核对</span>` : `<span class="who"><span class="dot"></span>AI 已连接并核对</span>`;
+    return `<header class="topbar"><div class="brand"><span class="brand-mark">茶</span><div><div class="brand-name">TeaCo 茶叶零售</div><div class="brand-sub">订单系统 · 由 Ontology Plus 生成并接入</div></div></div>
+      <div class="row">${pill('accent', `需求 ${r.id} · ${r.name}`)}${conn}<span class="who"><span class="avatar">${esc(me().initial)}</span>${esc(me().name)} · ${esc(me().role)}</span></div></header>`;
+  }
+  function headline() {
+    const k = kpis(), n = decisions().length;
+    const lead = S.actor === 'jonah' ? '你负责的 14 家批发客户' : '全店';
+    const tail = S.actor === 'finance' ? '你是只读身份，可以随便看，改不了数据。' : n ? `有 <em>${n} 件事</em>等你决定。` : '没有需要你决定的事。';
+    return `${lead}还有 <em>${k.open} 张订单</em>没发货${k.back ? `，其中 ${k.back} 张缺货` : '，都有货'}；${tail}`;
+  }
+  function kpiTiles() {
+    const k = kpis();
+    const t = (label, v, h) => `<div class="kpi"><span class="k">${label}</span><span class="v">${v}</span><span class="h">${h}</span></div>`;
+    return `<div class="kpis">${t('没发货的订单', k.open, k.back ? `${k.back} 张缺货` : '都有货')}${t('已发货销售额', money(k.sales), `${k.shipped} 张已发货或送达`)}${t('已发货税额', money(k.tax), '只对货款收税')}${t('平均每单', money(k.avg), '已发货订单的平均总额')}</div>`;
+  }
+  function flowChips(active, act) {
+    const sc = statusCounts();
+    const steps = ['NEW', 'PAID', 'PACKED'].concat(has('hold') ? ['ON_HOLD'] : [], ['SHIPPED', 'DELIVERED']);
+    const cls = (s) => `flow-step${s === 'ON_HOLD' && S.fresh.hold ? ' is-new' : ''}`;
+    const chip = (s) => act
+      ? `<button type="button" class="${cls(s)}" data-act="${act}" data-v="${s}" aria-pressed="${active === s}">${STATUS[s]} <strong>${sc[s] || 0}</strong></button>`
+      : `<span class="${cls(s)}">${STATUS[s]} <strong>${sc[s] || 0}</strong></span>`;
+    return `<div class="flow">${steps.map((s, i) => chip(s) + (i < steps.length - 1 && s !== 'ON_HOLD' && steps[i + 1] !== 'ON_HOLD' ? `<span class="flow-arrow">${icon('arrow', 12)}</span>` : '')).join('')}<span class="flow-arrow">·</span>${chip('CANCELLED')}</div>`;
+  }
+  function monthlyChart() {
+    const m = monthly(), max = Math.max(1, ...m.map((r) => r.R.tot + r.W.tot));
+    const top = Math.ceil(max / 3 / 100000) * 100000 * 3, W = 640, H = 220, L = 52, B = 28, T = 16, bw = 44, gap = (W - L - 16) / m.length;
+    const y = (v) => H - B - (v / top) * (H - B - T);
+    let g = '';
+    for (let i = 0; i <= 3; i++) { const v = (top / 3) * i, yy = y(v); g += `<line class="grid" x1="${L}" x2="${W - 8}" y1="${yy}" y2="${yy}"/><text class="axis" x="${L - 8}" y="${yy + 4}" text-anchor="end">$${Math.round(v / 100000)}k</text>`; }
+    m.forEach((r, i) => {
+      const x = L + i * gap + (gap - bw) / 2, yr = y(r.R.tot), yw = y(r.R.tot + r.W.tot);
+      g += `<rect class="s-r" x="${x}" y="${yr}" width="${bw}" height="${H - B - yr}" rx="2"/><rect class="s-w" x="${x}" y="${yw}" width="${bw}" height="${yr - yw}" rx="2"/>`;
+      g += `<text class="val" x="${x + bw / 2}" y="${yw - 5}" text-anchor="middle">${Math.round((r.R.tot + r.W.tot) / 100).toLocaleString('en-US')}</text><text class="axis" x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${Number(r.m.slice(5))} 月</text>`;
+    });
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="1 到 8 月每月已发货销售额，零售和批发分开">${g}</svg><div class="legend"><span><i class="s-r"></i>零售</span><span><i class="s-w"></i>批发</span></div>`;
+  }
+  function monthTable() {
+    const m = monthly(), dc = has('discount');
+    const row = (label, b) => `<td class="r mono">${b.n}</td><td class="r mono">${money(b.g)}</td>${dc ? `<td class="r mono">${money(b.d)}</td>` : ''}<td class="r mono">${money(b.sh)}</td><td class="r mono">${money(b.t)}</td><td class="r mono"><strong>${money(b.tot)}</strong></td>`;
+    return `<div class="table-region"><table><thead><tr><th>月份</th><th>渠道</th><th class="r">订单</th><th class="r">货款</th>${dc ? `<th class="r">折扣${fresh('discount')}</th>` : ''}<th class="r">运费</th><th class="r">税</th><th class="r">合计</th></tr></thead><tbody>${m.map((r) => (S.actor === 'jonah' ? [['批发', r.W]] : [['零售', r.R], ['批发', r.W]]).map(([l, b], j) => `<tr>${j === 0 ? `<td rowspan="${S.actor === 'jonah' ? 1 : 2}">${Number(r.m.slice(5))} 月</td>` : ''}<td>${l}</td>${row(l, b)}</tr>`).join('')).join('')}</tbody></table></div>`;
+  }
+  function ordersTable(filter, activeNo, limit) {
+    const list = vis().filter((o) => !filter || (filter === 'OPEN' ? OPEN.includes(o.s) : o.s === filter)).sort((a, b) => b.date.localeCompare(a.date) || b.no - a.no);
+    const shown = limit ? list.slice(0, limit) : list;
+    return `<div class="table-region"><table><thead><tr><th>订单</th><th>客户</th><th>下单日期</th><th>状态</th><th class="r">金额</th></tr></thead><tbody>${shown.map((o) => {
+      const c = CUST[o.c], sh = shortOf(o);
+      return `<tr class="clickable${activeNo === o.no ? ' is-active' : ''}" data-act="order" data-v="${o.no}"><td class="mono">${o.no}</td><td>${esc(cname(c))}<div class="cell-sub">${c.type === 'W' ? '批发' : '零售'}</div></td><td class="mono">${o.date.slice(5).replace('-', '/')}</td><td>${pill(TONE[o.s], STATUS[o.s])}${sh.length ? ' ' + pill('error', '缺货') : ''}</td><td class="r mono">${money(o.tot)}</td></tr>`;
+    }).join('') || '<tr><td colspan="5" class="note" style="text-align:center;padding:20px">这个状态下没有订单</td></tr>'}</tbody></table></div>${limit && list.length > limit ? `<div class="card-pad note">还有 ${list.length - limit} 张，见「订单与发货」</div>` : ''}`;
+  }
+  function orderDetail(o) {
+    if (!o) return `<div class="card"><div class="card-pad note">点左边任意一张订单，看它的明细、金额怎么算出来的，以及下一步该做什么。</div></div>`;
+    const c = CUST[o.c], sh = shortOf(o);
+    const next = { NEW: '等客户付款', PAID: '店员打包', PACKED: '可以发货', ON_HOLD: '等店主解除挂起', SHIPPED: '等送达', DELIVERED: '已完成', CANCELLED: '已取消' }[o.s];
+    return `<div class="card"><div class="card-head"><div><div class="card-title">订单 ${o.no} ${pill(TONE[o.s], STATUS[o.s])}</div><div class="card-sub">${esc(cname(c))} · ${c.type === 'W' ? '批发' + (c.cert ? '（免税）' : '（应税）') : '零售'} · ${o.date}</div></div></div>
+      <div class="card-pad"><div class="callout${sh.length ? ' warn' : ''}">${sh.length ? `缺货：${sh.map(pname).join('、')} 库存不够，补货前不能发货。` : `下一步：${next}。`}</div>
+      <div class="table-region"><table><tbody>${o.lines.map(([s, q, u]) => `<tr><td>${esc(pname(s))}</td><td class="r mono">${q} × ${money(u)}</td><td class="r mono">${money(q * u)}</td></tr>`).join('')}
+      <tr><td colspan="2" class="r muted">货款</td><td class="r mono">${money(o.g)}</td></tr>${has('discount') ? `<tr><td colspan="2" class="r muted">折扣${fresh('discount')}</td><td class="r mono">${money(-o.d)}</td></tr>` : ''}
+      <tr><td colspan="2" class="r muted">运费</td><td class="r mono">${money(o.sh)}</td></tr><tr><td colspan="2" class="r muted">税</td><td class="r mono">${money(o.t)}</td></tr><tr><td colspan="2" class="r"><strong>合计</strong></td><td class="r mono"><strong>${money(o.tot)}</strong></td></tr></tbody></table></div>
+      <p class="note">这是导入的历史订单，金额按当时实际收的记录，不按现在的规则重算。</p></div></div>`;
+  }
+  function quoteCard() {
+    const q = quote('Cedar Grove Gift Shop', 'HRB-ROOIBO-1LB', 90);
+    return `<div class="card"><div class="card-head"><div><div class="card-title">报价试算${fresh('discount')}</div><div class="card-sub">用当前规则（需求 ${S.revision}）算一单：Cedar Grove Gift Shop 买 90 袋 ${esc(pname('HRB-ROOIBO-1LB'))}</div></div></div>
+      <div class="card-pad"><div class="table-region"><table><tbody><tr><td>货款</td><td class="r mono">90 × ${money(q.p.wholesale)} = ${money(q.g)}</td></tr>
+      ${has('discount') ? `<tr><td>批发折扣（满 $1,000 打 95 折）</td><td class="r mono">${money(-q.d)}</td></tr>` : ''}<tr><td>运费（批发一律）</td><td class="r mono">${money(q.sh)}</td></tr>
+      <tr><td>税（证书已过期，按${has('discount') ? '折后' : ''}货款 8.25%）</td><td class="r mono">${money(q.t)}</td></tr><tr><td><strong>合计</strong></td><td class="r mono"><strong>${money(q.tot)}</strong></td></tr></tbody></table></div>
+      ${has('discount') ? '' : '<p class="note">需求 v3 上线后，这一单会打 95 折，合计变成 $1,171.92。</p>'}</div></div>`;
+  }
+  function stockList(limit) {
+    const list = Object.values(S.products).sort((a, b) => (a.locked ? -1 : 0) - (b.locked ? -1 : 0) || a.stock - b.stock);
+    const shown = limit ? list.slice(0, limit) : list;
+    return `<ul class="checklist">${shown.map((p) => `<li>${p.locked ? icon('lock', 14, 'bad') : p.stock <= 5 ? icon('alert', 14, 'warn') : icon('box', 14, 'faint')}<div><div class="t1">${esc(pname(p.sku))}</div><div class="bar ${p.stock === 0 ? 'zero' : p.stock <= 5 ? 'low' : ''}" style="margin-top:6px"><span style="width:${Math.min(100, p.stock / 2)}%"></span></div></div><div class="mono">${p.locked ? '锁住' : p.stock}</div></li>`).join('')}</ul>`;
+  }
+  function decisionCard(d, compact) {
+    const answered = !d;
+    if (answered) return '';
+    const effects = d.effects && !compact ? `<ul class="dc-effects">${d.effects.map((e) => `<li>${icon('arrow', 12)}<span>${esc(e)}</span></li>`).join('')}</ul>` : '';
+    const more = d.more && !compact ? `<details class="more"><summary>为什么可以放心批准</summary><ul>${d.more.map((m) => `<li>${esc(m)}</li>`).join('')}</ul></details>` : '';
+    const input = d.input ? `<label class="row note">${esc(d.input.label)} <input class="field" type="number" min="0" step="1" value="${esc(d.input.value)}" data-input="repairQty" placeholder="比如 18"></label>` : '';
+    return `<article class="dc k-${d.kind}${compact ? ' compact' : ''}"><div class="dc-head"><span class="dc-kicker">${icon(d.kind === 'action' ? 'sparkles' : d.kind === 'change' ? 'git' : d.kind === 'knowledge' ? 'book' : 'alert', 13)}${esc(d.kicker)}</span></div>
+      <div class="dc-body"><div class="dc-title">${esc(d.title)}</div><p class="dc-what">${esc(d.what)}</p>${effects}${compact ? '' : input}${more}</div>
+      <div class="dc-foot">${d.blocked ? `<span class="hint">${esc(d.blocked)}</span>` : ''}${d.secondary ? `<button type="button" class="btn xs" data-act="decline" data-v="${d.id}">${esc(d.secondary)}</button>` : ''}<button type="button" class="btn xs accent" data-act="approve" data-v="${d.id}"${d.blocked ? ' disabled' : ''}>${icon('check', 11)}${esc(d.primary)}</button></div></article>`;
+  }
+  function decidedLine(id) {
+    const st = S.decided[id] || (id === 'kb' ? (S.kb === 'resolved' ? 'approved' : S.kb === 'skipped' ? 'declined' : null) : null);
+    const title = S.titles[id];
+    if (!title) return '';
+    return `<div class="callout">${st === 'declined' ? icon('pause', 13, 'faint') + ' 已暂缓：' : icon('circleCheck', 13, 'ok') + ' 已处理：'}${esc(title)}</div>`;
+  }
+  function feed(n) {
+    const items = S.activity.slice().reverse().slice(0, n || 8);
+    return `<ul class="feed">${items.map((a) => `<li><span class="t">${clk(a.at)}</span>${a.kind === 'ok' ? icon('circleCheck', 14, 'ok') : icon('pause', 14, 'faint')}<span>${esc(a.text)}</span></li>`).join('')}</ul>`;
+  }
+  const rulesList = () => `<ul class="checklist">${rules().map((r) => `<li>${icon('check', 14, 'ok')}<div><div class="t1">${esc(r.t)}${r.f ? fresh(r.f) : ''}</div><div class="t2">${esc(r.d)}</div></div><span></span></li>`).join('')}</ul>`;
+  const healthList = () => `<ul class="checklist">${health().map((h) => `<li>${h.ok ? icon('circleCheck', 14, 'ok') : icon('alert', 14, 'warn')}<div><div class="t1">${esc(h.t)}</div><div class="t2">${esc(h.d)}</div></div>${h.ok ? pill('done', '已处理') : pill('progress', '等你确认')}</li>`).join('')}</ul>`;
+  function connectionCard() {
+    const cap = capabilities(), drift = S.connection === 'drifted';
+    const group = (t, list, ic) => `<div class="stack" style="gap:6px"><div class="eyebrow">${icon(ic, 13)} ${t}</div><div class="row">${list.map((x) => `<span class="chip" style="cursor:default">${esc(x)}</span>`).join('')}</div></div>`;
+    return `<div class="card"><div class="card-head"><div><div class="card-title">订单系统 ${S.revision} ${drift ? pill('progress', '等 AI 重新核对') : pill('done', '运行中 · AI 已核对')}</div><div class="card-sub">根据确认的规则自动生成；店员用网页登录使用，AI 通过授权连接</div></div></div>
+      <div class="card-pad">${drift ? '<div class="callout warn">订单系统刚更新。AI 重新核对之前，不查数据、不做操作。</div>' : ''}${group('AI 能查', cap.ask, 'chart')}${group('AI 能做（每次都要你批准）', cap.act, 'sparkles')}${group('有事会通知 AI', cap.hear, 'alert')}
+      <details class="more"><summary>技术详情</summary><ul><li>连接方式、接口清单和权限配置在「能力中心 → 系统配置」</li><li>AI 用的是服务端托管的角色凭据，看不到密码</li><li>规则或数据格式一变，连接会被标为「已漂移」，必须重新核对</li></ul></details></div></div>`;
+  }
+  function revTimeline() {
+    const cur = revIndex(S.revision);
+    return `<ul class="checklist">${REVS.map((r, i) => `<li>${i <= cur ? icon('circleCheck', 14, 'ok') : i === cur + 1 ? icon('git', 14, 'pri') : icon('git', 14, 'faint')}<div><div class="t1">${r.id} · ${esc(r.name)}</div><div class="t2">${i === 0 ? '客户最初的需求：订单、客户、商品和概览' : esc(r.adds[0])}</div></div>${i <= cur ? pill('done', i === cur ? '当前版本' : '已上线') : i === cur + 1 ? pill('progress', '等你确认') : pill('', '还没开始')}</li>`).join('')}</ul>`;
+  }
+  const knowledgeList = () => `<ul class="checklist">${knowledge().map((k) => `<li>${icon('book', 14, 'faint')}<div><div class="t1">${esc(k.t)}：${esc(k.v)}</div><div class="t2">${esc(k.d)}</div></div>${pill(k.st, k.label)}</li>`).join('')}</ul>`;
+  function benchCard() {
+    const tracks = [['从表格里理出业务', 10], ['搭出应用', 10], ['接入数据', 15], ['回答经营问题', 20], ['发现和修数据问题', 10], ['安全地办事', 15], ['记住和更新知识', 10], ['长期经营', 10]];
+    return `<div class="card"><div class="card-head"><div><div class="card-title">AI 能力体检</div><div class="card-sub">每次需求变化后自动跑一遍；只展示真实跑出来的结果</div></div>${pill('', '尚未运行')}</div>
+      <div class="card-pad"><div class="eyebrow">原始验收清单</div><div class="row">${REVS.map((r) => `<span class="chip" style="cursor:default">${r.id}：${r.checks} 项 · 未运行</span>`).join('')}</div>
+      <div class="eyebrow">扩展体检 100 项</div><ul class="checklist">${tracks.map(([t, n]) => `<li>${icon('gauge', 14, 'faint')}<div><div class="t1">${t}</div></div><span class="muted">${n} 项 · 计划中</span></li>`).join('')}</ul>
+      <p class="note">没跑过的显示「尚未运行」，不会显示估算分数。</p></div></div>`;
+  }
+  function answerBlock(a, q) {
+    const tone = a.tone === 'warn' ? 'callout warn' : '';
+    let extra = '';
+    if (a.table) extra += a.table;
+    if (a.chart) extra += monthlyChart();
+    if (a.list) extra += `<ul class="checklist">${a.list.map((x) => `<li>${icon('alert', 14, 'warn')}<div class="t1">${esc(x)}</div><span></span></li>`).join('')}</ul>`;
+    if (a.decisions) extra += a.decisions.map((id) => { const d = decisions().find((x) => x.id === id); return d ? decisionCard(d, true) : decidedLine(id); }).join('');
+    return `<div class="msg-ai">${q ? '' : ''}<span class="who-ai">${icon('sparkles', 13)}AI 助手</span><p class="say ${tone}">${esc(a.say)}</p>${extra}${a.basis ? `<p class="basis">${esc(a.basis)}</p>` : ''}</div>`;
+  }
+  const askChips = (target) => `<div class="row">${QUESTIONS.map((x) => `<button type="button" class="chip" data-act="ask" data-target="${target}" data-v="${x.id}">${esc(x.q)}</button>`).join('')}</div>`;
+
+  /* ---------- Variant A: module workbench ---------- */
+  function variantA() {
+    const st = S.a, ds = decisions();
+    const nav = [
+      ['home', '今日概览', 'home', ds.length ? pill('accent', ds.length) : ''],
+      ['orders', '订单与发货', 'truck', ''],
+      ['stock', '库存', 'box', S.products['HRB-PEPMNT-2OZ'].locked ? pill('progress', 1) : ''],
+      ['report', '月度报表', 'chart', has('monthly') ? fresh('monthly') : '<span class="lock">v2 上线后</span>', !has('monthly')],
+      ['data', '数据体检', 'shield', ''],
+      ['rules', '规则与知识', 'book', S.kb === 'open' && S.actor === 'owner' ? pill('progress', 1) : ''],
+      ['apps', '应用与连接', 'plug', S.connection === 'drifted' ? pill('progress', '待核对') : ''],
+      ['changes', '需求变化', 'git', ''],
+      ['bench', 'AI 能力体检', 'gauge', ''],
+    ];
+    const navHtml = nav.map(([id, label, ic, badge, off]) => `<button type="button" class="nav-item" data-act="nav" data-v="${id}" ${st.page === id ? 'aria-current="page"' : ''}${off ? ' disabled' : ''}>${icon(ic, 15)}<span>${label}</span><span class="n-badge">${badge}</span></button>`).join('');
+    const pages = {
+      home: () => `<div class="stack" style="gap:20px"><div class="stack" style="gap:6px"><span class="eyebrow">今日概览 · 9 月 10 日</span><h1 class="headline">${headline()}</h1></div>${kpiTiles()}
+        <div class="two"><div class="stack"><div class="section-title">等你决定 <span class="count">${ds.length}</span></div>${ds.length ? ds.map((d) => decisionCard(d, true)).join('') : '<div class="callout">都处理完了。有新的事会出现在这里。</div>'}</div>
+        <div class="stack">${has('monthly') ? `<div class="card"><div class="card-head"><div class="card-title">每月已发货销售额${fresh('monthly')}</div></div><div class="card-pad">${monthlyChart()}</div></div>` : `<div class="card"><div class="card-pad"><div class="eyebrow">${icon('lock', 13)} 按月走势</div><p class="note">需求 v2「按月销售报表」上线后，这里显示每月销售走势。现在只有总数：已发货销售额 ${money(kpis().sales)}。</p></div></div>`}
+        <div class="card"><div class="card-head"><div class="card-title">最近发生的事</div></div><div class="card-pad">${feed(5)}</div></div></div></div></div>`,
+      orders: () => { const o = S.orders.find((x) => x.no === st.order && canSee(x)); return `<div class="stack" style="gap:16px"><div class="stack" style="gap:6px"><span class="eyebrow">订单与发货</span><h1 class="headline">${me().scope}共 ${kpis().total} 张订单，<em>${kpis().open} 张</em>还没发货</h1></div>
+        <div class="row"><span class="seg"><button type="button" class="btn" data-act="filter" data-v="OPEN" aria-pressed="${st.filter === 'OPEN'}">没发货</button><button type="button" class="btn" data-act="filter" data-v="ALL" aria-pressed="${st.filter === 'ALL'}">全部</button></span><span class="note">或按状态看：</span></div>${flowChips(st.filter, 'filter')}
+        <div class="two"><div class="card">${ordersTable(st.filter === 'ALL' ? null : st.filter, st.order)}</div><div class="stack">${orderDetail(o)}${S.actor !== 'jonah' ? quoteCard() : ''}</div></div></div>`; },
+      stock: () => `<div class="stack" style="gap:16px"><div class="stack" style="gap:6px"><span class="eyebrow">库存</span><h1 class="headline">60 款茶里，<em>${Object.values(S.products).filter((p) => p.locked || p.stock <= 5).length} 款</em>库存很少或被锁住</h1></div>
+        <div class="two"><div class="card"><div class="card-pad">${stockList(20)}</div></div><div class="stack">${ds.filter((d) => d.id === 'repair').map((d) => decisionCard(d)).join('') || '<div class="callout">没有等你确认的库存问题。</div>'}<p class="note">库存只在发货时扣减。导入的历史订单不再扣库存。</p></div></div></div>`,
+      report: () => `<div class="stack" style="gap:16px"><div class="stack" style="gap:6px"><span class="eyebrow">月度报表${fresh('monthly')}</span><h1 class="headline">1–8 月已发货销售额 <em>${money(kpis().sales)}</em></h1><p class="note">按下单日期算月份，只算已发货和已送达的订单；取消的不算。${S.actor === 'jonah' ? '你只看得到自己客户的批发订单。' : ''}</p></div>
+        <div class="card"><div class="card-pad">${monthlyChart()}</div></div><div class="card">${monthTable()}</div></div>`,
+      data: () => `<div class="stack" style="gap:16px"><div class="stack" style="gap:6px"><span class="eyebrow">数据体检</span><h1 class="headline">导入的 3 份表格里发现 9 类问题，<em>${health().filter((h) => !h.ok).length ? '还有 1 类等你确认' : '都已处理'}</em></h1></div>
+        <div class="two"><div class="card"><div class="card-pad">${healthList()}</div></div><div class="stack">${ds.filter((d) => d.id === 'repair').map((d) => decisionCard(d)).join('')}<p class="note">原始表格一个字都没改。每一处修正都记了来源和原因，随时能查。</p></div></div></div>`,
+      rules: () => `<div class="stack" style="gap:16px"><div class="stack" style="gap:6px"><span class="eyebrow">规则与知识</span><h1 class="headline">订单系统按这 <em>${rules().length} 条规则</em>运行</h1><p class="note">规则来自客户需求原文和之后确认的需求变化。AI 记下的资料（下方）不会自己改规则。</p></div>
+        <div class="two"><div class="card"><div class="card-pad">${rulesList()}</div></div><div class="stack">${quoteCard()}<div class="card"><div class="card-head"><div><div class="card-title">AI 记下的资料</div><div class="card-sub">示例：扩展场景，不在原始的 3 份表格里</div></div></div><div class="card-pad">${knowledgeList()}</div></div>${ds.filter((d) => d.id === 'kb').map((d) => decisionCard(d)).join('')}</div></div></div>`,
+      apps: () => `<div class="stack" style="gap:16px"><div class="stack" style="gap:6px"><span class="eyebrow">应用与连接</span><h1 class="headline">${S.connection === 'drifted' ? '订单系统刚更新，<em>等 AI 重新核对</em>' : '订单系统在运行，<em>AI 已连接并核对</em>'}</h1></div>
+        <div class="two">${connectionCard()}<div class="stack">${ds.filter((d) => d.id === 'reverify').map((d) => decisionCard(d)).join('')}<div class="card"><div class="card-head"><div class="card-title">谁能做什么</div></div><div class="card-pad"><ul class="checklist"><li>${icon('users', 14, 'faint')}<div><div class="t1">店主</div><div class="t2">看全部；管理用户、库存和规则；批准重要操作</div></div><span></span></li><li>${icon('users', 14, 'faint')}<div><div class="t1">客户经理（Jonah、Priya、Carlos）</div><div class="t2">只看自己负责的批发客户和订单${has('hold') ? '；可以挂起，不能解除' : ''}</div></div><span></span></li><li>${icon('users', 14, 'faint')}<div><div class="t1">财务</div><div class="t2">看全部，不能改</div></div><span></span></li><li>${icon('sparkles', 14, 'pri')}<div><div class="t1">AI 助手</div><div class="t2">权限永远不超过正在用它的人；每次改数据都要人批准</div></div><span></span></li></ul></div></div></div></div></div>`,
+      changes: () => `<div class="stack" style="gap:16px"><div class="stack" style="gap:6px"><span class="eyebrow">需求变化</span><h1 class="headline">现在是需求 <em>${S.revision}</em>：${esc(REVS[revIndex(S.revision)].name)}</h1><p class="note">每次需求变化都先改规则，再改系统、跑验收，确认后才上线；可以回退。</p></div>
+        <div class="two"><div class="card"><div class="card-pad">${revTimeline()}</div></div><div class="stack">${ds.filter((d) => d.id.startsWith('rev-')).map((d) => decisionCard(d)).join('') || '<div class="callout">没有等你确认的需求变化。</div>'}</div></div></div>`,
+      bench: () => `<div class="stack" style="gap:16px"><div class="stack" style="gap:6px"><span class="eyebrow">AI 能力体检</span><h1 class="headline">AI 能不能放心用？<em>用固定的考题来量</em></h1><p class="note">这和经营数字分开看：这里量的是 AI，不是生意。</p></div>${benchCard()}</div>`,
+    };
+    const ans = st.answer ? answerBlock(answer(st.answer)) : '<p class="note">问一句，AI 去订单系统里查，并告诉你数字是怎么算出来的。</p>';
+    return `<div class="va"><nav class="va-nav" aria-label="模块" data-scroll="a-nav">${navHtml}</nav><main class="va-main" data-scroll="a-main">${pages[st.page]()}</main>
+      <aside class="va-side stack" data-scroll="a-side"><div class="spread"><span class="section-title">${icon('sparkles', 15, 'pri')} AI 助手</span><span class="muted" style="font-size:12px">以 ${esc(me().name)} 的身份</span></div>${ans}<div class="eyebrow">可以这样问</div>${askChips('a')}</aside></div>`;
+  }
+
+  /* ---------- prototype bar, toast, render ---------- */
+  function protobar() {
+    const seg = (act, opts, cur) => `<span class="pb-group">${opts.map(([v, l]) => `<button type="button" class="pb-btn" data-act="${act}" data-v="${v}" aria-pressed="${v === cur}">${l}</button>`).join('')}</span>`;
+    document.getElementById('protobar').innerHTML =
+      `<span class="pb-label">参考控制（不属于界面）</span>
+      <span class="pb-sep"></span><span class="pb-cap">身份</span><select data-change="actor" aria-label="身份">${Object.entries(ACTORS).map(([id, a]) => `<option value="${id}"${id === S.actor ? ' selected' : ''}>${esc(a.name)}（${esc(a.role)}）</option>`).join('')}</select>
+      <span class="pb-sep"></span><span class="pb-cap">需求</span>${seg('rev', REVS.map((r) => [r.id, r.id]), S.revision)}
+      <span class="pb-sep"></span>${seg('theme', [['default', '默认'], ['warm-paper', '暖纸']], UI.theme)}${seg('mode', [['light', '浅'], ['dark', '深']], UI.mode)}
+      <span class="pb-sep"></span><button type="button" class="pb-btn" data-act="reset">重置</button>`;
+  }
+  function toast(title, lines, tone) {
+    const el = document.getElementById('toast');
+    el.innerHTML = `<div class="spread"><span class="tt">${tone === 'warn' ? icon('alert', 15, 'warn') : icon('circleCheck', 15, 'ok')}${esc(title)}</span><button type="button" class="btn ghost xs" data-act="toast-close" aria-label="关闭">${icon('x', 12)}</button></div>${lines && lines.length ? `<ul>${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}`;
+    el.hidden = false;
+    clearTimeout(UI.toastTimer); UI.toastTimer = setTimeout(() => { el.hidden = true; }, 8000);
+  }
+  function render() {
+    const r = document.documentElement;
+    if (UI.theme === 'warm-paper') r.setAttribute('data-workbench-theme', 'warm-paper'); else r.removeAttribute('data-workbench-theme');
+    r.setAttribute('data-theme', UI.mode);
+    const scroll = {}; document.querySelectorAll('[data-scroll]').forEach((el) => { scroll[el.getAttribute('data-scroll')] = el.scrollTop; });
+    document.getElementById('app').innerHTML = header() + variantA();
+    document.querySelectorAll('[data-scroll]').forEach((el) => { const v = scroll[el.getAttribute('data-scroll')]; if (v) el.scrollTop = v; });
+    protobar();
+  }
+  function ask(target, id) {
+    if (target === 'a') S.a.answer = id;
+  }
+
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+    const act = b.getAttribute('data-act'), v = b.getAttribute('data-v');
+    if (act === 'toast-close') { document.getElementById('toast').hidden = true; return; }
+    if (act === 'theme') UI.theme = v;
+    else if (act === 'mode') UI.mode = v;
+    else if (act === 'rev') setRevision(v, false);
+    else if (act === 'reset') { S = initial(S); document.getElementById('toast').hidden = true; }
+    else if (act === 'nav') S.a.page = v;
+    else if (act === 'filter') S.a.filter = v === 'ALL' || v === 'OPEN' ? v : S.a.filter === v ? 'ALL' : v;
+    else if (act === 'order') { S.a.order = v; }
+    else if (act === 'approve') approve(v);
+    else if (act === 'decline') decline(v);
+    else if (act === 'ask') ask(b.getAttribute('data-target'), v);
+    render();
+  });
+  document.addEventListener('change', (e) => {
+    const k = e.target.getAttribute('data-change'); if (!k) return;
+    if (k === 'actor') { S.actor = e.target.value; S.a.order = null; render(); }
+  });
+  document.addEventListener('input', (e) => { if (e.target.getAttribute('data-input') === 'repairQty') S.repairQty = e.target.value; });
+  render();
+})();
+</script>
+</body>
+</html>
