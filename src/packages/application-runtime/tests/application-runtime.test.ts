@@ -20,7 +20,7 @@ function manifestDoc(overrides: Record<string, unknown> = {}) {
     actors: [{ id: 'owner', name: bi('店主', 'Owner'), role: bi('管理员', 'Admin'), scope: bi('全店', 'Whole shop') }],
     metrics: [{ id: 'open_orders', name: bi('没发货的订单', 'Open orders'), unit: 'count' }],
     objects: [{
-      id: 'orders', name: bi('订单', 'Orders'), modelObject: 'Order', keyField: 'no', titleField: 'customer', statusField: 'status',
+      id: 'orders', name: bi('订单', 'Orders'), modelObject: 'Order', titleField: 'customer', statusField: 'status',
       fields: [
         { key: 'no', label: bi('订单', 'Order'), type: 'text' },
         { key: 'customer', label: bi('客户', 'Customer'), type: 'text' },
@@ -134,8 +134,8 @@ describe('checking a manifest against the confirmed Business Model', () => {
   const parsed = parseConnectionManifest(manifestDoc({
     objects: [
       ...manifestDoc().objects,
-      { id: 'customers', name: bi('客户', 'Customers'), modelObject: 'Client', keyField: 'id', titleField: 'id', fields: [{ key: 'id', label: bi('编号', 'Id') }] },
-      { id: 'notes', name: bi('备注', 'Notes'), keyField: 'id', titleField: 'id', fields: [{ key: 'id', label: bi('编号', 'Id') }] },
+      { id: 'customers', name: bi('客户', 'Customers'), modelObject: 'Client', titleField: 'id', fields: [{ key: 'id', label: bi('编号', 'Id') }] },
+      { id: 'notes', name: bi('备注', 'Notes'), titleField: 'id', fields: [{ key: 'id', label: bi('编号', 'Id') }] },
     ],
   }));
   if (!parsed.ok) throw new Error('fixture');

@@ -77,6 +77,7 @@ export function buildManifest(data: Dataset, revision: Revision) {
       name: bi('TeaCo 茶叶订单系统', 'TeaCo tea orders'),
       version: revision,
       description: bi(`需求 ${revision}：${REVISION_NAMES[revision].zh}`, `Requirement ${revision}: ${REVISION_NAMES[revision].en}`),
+      currency: 'USD',
     },
     model: { revision },
     actors: actors(data).map(({ access: _access, ...a }) => a),

@@ -49,7 +49,6 @@ export const ObjectSchema = z.object({
   name: BilingualSchema,
   /** The confirmed Business Model object this corresponds to (aggregate name, alias or id). */
   modelObject: z.string().optional(),
-  keyField: z.string().min(1),
   titleField: z.string().min(1),
   statusField: z.string().optional(),
   fields: z.array(FieldSchema).min(1),
@@ -71,6 +70,8 @@ export const ManifestSchema = z
       name: BilingualSchema,
       version: z.string().min(1),
       description: BilingualSchema.optional(),
+      /** ISO 4217 currency of every money value (integer minor units). */
+      currency: z.string().regex(/^[A-Z]{3}$/).default('USD'),
     }),
     model: z.object({ fingerprint: z.string().optional(), revision: z.string().optional() }).default({}),
     actors: z.array(ActorSchema).min(1),
@@ -94,7 +95,7 @@ export const ManifestSchema = z
     dupes('report', m.reports.map((a) => a.id));
     for (const o of m.objects) {
       const keys = new Set(o.fields.map((f) => f.key));
-      for (const k of [o.keyField, o.titleField, ...(o.statusField ? [o.statusField] : [])]) {
+      for (const k of [o.titleField, ...(o.statusField ? [o.statusField] : [])]) {
         if (!keys.has(k)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `object "${o.id}" names field "${k}" that it does not list` });
       }
     }
