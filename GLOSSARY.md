@@ -286,3 +286,15 @@ _Avoid_: Fact, memory entry, unverified note, KnowledgeEntry (reserved for human
 **Change Proposal (变更提案)**:
 A reviewable, versioned evolution package backed by Provenance Records and impact analysis that must pass human approval and regression checks before creating a new confirmed Ontology Suite revision or capability release.
 _Avoid_: Auto-patch, silent drift fix, hotfix
+
+**Operations Console (经营驾驶舱)**:
+The workspace in which a project's connected Runnable System is watched and steered in business terms: live overview, business objects, reports, data quality, rules and knowledge, requirement versions, and the approvals the AI Assistant asks for.
+_Avoid_: Admin console, 中台, dashboard (alone), runtime management page
+
+**Connection Manifest (接入清单)**:
+The document a connected application serves at a well-known address, declaring its protocol version, model fingerprint, the identities one may act as, and the business objects, metrics, reports, and actions it offers to Ontology Plus.
+_Avoid_: API spec, OpenAPI file (a manifest may point to one), integration config
+
+**Acting Identity (操作身份)**:
+The application identity, chosen by the user in the Operations Console, that every runtime read and write is performed as; the AI can neither choose nor change it.
+_Avoid_: Login, credential, role switch

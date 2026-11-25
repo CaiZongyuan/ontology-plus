@@ -2,7 +2,7 @@
 
 ## 全生命周期业务环境与 Agentic Data Benchmark 工程规范
 
-**版本：** v0.3.0 · RFC / Implementation Spec（经 `/grill-with-docs` 评审定稿）  
+**版本：** v0.3.1 · RFC / Implementation Spec（经 `/grill-with-docs` 评审定稿；v0.3.1 追加界面、接入与评审决策）  
 **日期：** 2026-11-25  
 **状态：** Accepted RFC（待分阶段实现、验证；非已完成的运行结果）  
 **关联：** [#102](https://github.com/CaiZongyuan/ontology-plus/issues/102)（上位方向，放宽口径随本轮闭环） · [#103](https://github.com/CaiZongyuan/ontology-plus/issues/103)（核心工程，TeaCo 正式替代原奶茶场景） · [#19](https://github.com/CaiZongyuan/ontology-plus/issues/19)（正确性，P0 关闭） · [#21](https://github.com/CaiZongyuan/ontology-plus/issues/21)（已关闭：后续走 Auto Ontology / Semantica） · [#86](https://github.com/CaiZongyuan/ontology-plus/issues/86)（已关闭） · [ADR 0020](./adr/0020-local-first-runtime-and-operational-action-approval.md) · [ADR 0021](./adr/0021-mirage-vfs-operational-env-and-teaco-canonical-benchmark.md) · [GLOSSARY.md](../GLOSSARY.md)  
@@ -17,12 +17,24 @@
 本次修订基于对当前主分支（`a18236b`）、全部 5 个开放 GitHub Issue、既有 ADR（0007/0010/0011/0014）及 `GLOSSARY.md` 的源码交叉核验与三轮架构评审（`/grill-with-docs`），正式锁定以下决策：
 
 1. **全生命周期范围承诺与场景归并**：本次开发保留完整 P0–P5 交付主线（分阶段递进落地），并正式以 **TeaCo（发货扣库存 + v2 月报 / v3 批发折扣 / v4 ON_HOLD 演化）** 替代 `#103` 与 `#102` 原先虚构的奶茶店订单/退款场景；**`#21`（后续如需要走 Auto Ontology + Semantica 实现）与 `#86` 已关闭**，当前剩余全部 3 个开放 Issue（`#19`、`#103`、以及放宽验收口径后的 `#102`）全部纳入本轮解决并闭环。
-2. **本地优先架构（P0–P4）与 P5 Cloudflare Free 可移植性验证（ADR 0020）**：核验确认现有 `workspace-store`（4,579 行）与 `agent-runtime`（8,284 行）为全同步 `node:sqlite`，现有 `src/server/worker.ts` 仅内存 stub + 写后即忘 D1 镜像。因此 P0–P4 双方（Ontology Plus 控制面与 TeaCo）统一在**本地 Node + SQLite 双进程 HTTP 互通**下真实落地，不重写 `WorkspaceStore` 为异步 D1；仍严守 SQLite 方言与零付费依赖，将 Cloudflare Free 真实部署与控制面 SQLite DO 适配调整为 **P5 可移植性验收**，复用现有根 `wrangler.jsonc`（`src/server/worker.ts` + `ONTOLOGY_DB`），清理废弃空目录 `connected-analytics/`。
+2. **本地优先架构（P0–P4）与 P5 Cloudflare Free 可移植性验证（ADR 0020）**：核验确认现有 `workspace-store`（4,579 行）与 `agent-runtime`（8,284 行）为全同步 `node:sqlite`，现有 `src/server/worker.ts` 仅内存 stub + 写后即忘 D1 镜像。因此 P0–P4 双方（Ontology Plus 控制面与 TeaCo）统一在**本地 Node + SQLite 双进程 HTTP 互通**下真实落地，不重写 `WorkspaceStore` 为异步 D1；仍严守 SQLite 方言与零付费依赖，将 Cloudflare Free 真实部署与控制面 SQLite DO 适配调整为 **P5 可移植性验收**，复用现有根 `wrangler.jsonc`（`src/server/worker.ts` + `ONTOLOGY_DB`）。
 3. **三轨执行面与双轨审批（ADR 0007 修订 / ADR 0020 / ADR 0021）**：设计期 4 个 `Project Steps` 保留既有原生工具与 YOLO + `Artifact History` 撤销；运行期/数据/治理/评测会话在 `ExecutionEnvironmentPort` 后集成 **Mirage VFS**（通过可复现包依赖 `@struktoai/mirage-node` + `@struktoai/mirage-pi-durable` 及 `@earendil-works/pi-durable@^1.5.2`，不直接引用被 `.gitignore` 忽略的 `references/mirage/`），且外部业务系统写入强制走 `prepare → 绑定参数/版本/角色的显式人工审批 → invoke → 回读核验`；P3 `#103` `CODING` 会话走隔离在 `.onto-cs/workspaces/<appId>/` 下、带命令白名单且剥离控制面密钥的本地 `BuildRunner`。
 4. **产品 UI 边界与术语对齐（ADR 0014 修订 / `GLOSSARY.md`）**：保留 `数据分析中心 → 指标、场景与报告` 专注业务 KPI；在 `平台治理` 下新增只读的 **`评测基准 (Benchmarks)`** 消费归档 Campaign JSON；其余运行/知识/质量视图收纳于现有 `能力中心` 与 `数据分析中心`，对话统一归口右侧 `Agent Panel` / `AI Assistant`。对齐 `GLOSSARY.md` 新定稿术语：**`Provenance Record`（溯源记录）**、**`Drifted`（已漂移，替代禁用词 `STALE`）**、**`Knowledge Claim`（知识主张）**、**`Change Proposal`（变更提案）**。
 5. **11 模型契约与源码落点修正**：TeaCo 完整跑通现有 4 步流程（含确认 `Interactive Prototype` 提取 `MU`），严格遵守单聚合规则归 `M1`、指标 1-to-1 `M2 QUERY` ↔ `M7` 契约；修正 `#19` 真实代码落点为 `domain-run-tools.ts`（`METRIC_INSIGHT` / `SCENARIO_ATTRIBUTION`）与 `pi-session-engine.ts` / `mcp-server.ts` 残留合同表查询；明确单用户控制面到多角色 TeaCo 的服务端凭据委派、CI 零 LLM 确定性门禁与按需 BYOK 真实评测分层、以及 `.benchmark-private/` 私有真值隔离。
 
 原始 Business Bench 数据、35 项原始验收、100-case 扩展评测目录、整数货币与安全契约保持不变。本文是定稿设计契约，不代表代码已实现或 GitHub Issue 已自动变更。
+
+### v0.3.1 修订说明（2026-11-25，界面、接入与评审决策）
+
+经 UI 原型评审与用户拍板，追加以下决策；与正文冲突处以本节和已改写的正文为准。
+
+1. **经营驾驶舱是独立工作区**（§11.1，参考界面 `docs/ui-reference/teaco-operations-console.html`）：已接入应用的项目各有一个驾驶舱，从项目管理（首页项目列表）和交付步骤的「可运行系统」位进入；不再把运行期功能拆进「更多」下的二级区（修订 ADR 0014）。
+2. **接入由开发包规定，不做权限认证**（§8.1、§11.3）：开发包附带《接入 Ontology Plus》约定；按约定开发好的应用填地址即可接入，Ontology Plus 读取应用的接入清单并与已确认的业务模型逐项核对。控制面与应用之间不做登录、令牌或凭据托管；操作身份由用户在驾驶舱里选择，随请求传给应用，AI 不能选择或修改身份（修订 ADR 0020）。TeaCo 店员自己的登录不受影响。
+3. **应用界面不限来源**：任何按接入约定开发的应用都能接入，应用界面不要求沿用原型步骤的界面原型；驾驶舱由应用的接入清单驱动渲染，Ontology Plus 核心不写入任何 TeaCo 专有规则。
+4. **原始表格属于需求与业务建模过程**：在需求步骤的对话里附带表格文件，不另做设计期体检页；正式导入与数据体检发生在应用里，结果显示在驾驶舱「数据体检」。
+5. **四个业务口径决定**（逻辑原型，分支 `proto/teaco-ops-state`）：缺货逐单判断、不预留；未发货订单可以直接发货，服务端在同一事务里补记付款、打包；管理员与客户经理都可以挂起，只有管理员能解除；运行期所有写操作都需要人工批准（删除 §10.1 的预授权分支）。
+6. **评审修正**：DQ-08 按数据源声明日期格式（本数据的斜杠日期为美式月在前）；删除不存在的 `connected-analytics/` 清理项；Mirage 适配显式关闭网络，并以可写模式挂载 `/workspace`；P0–P4 正文中的 D1、Miniflare、Service Binding、`AgentSessionDO` 指 P5 目标形态，本地对应 SQLite、本地进程、HTTP 与本地 Agent Session；TeaCo 仓储端口一开始就是异步，原子校验用 D1 可移植的条件写入与触发器、在本地单事务里执行，并发测试使用多个连接；BB 结果契约不接受 localhost 地址，P1 用免费隧道提供外网地址，或把第 1、2 项记为 P5 人工验证；网关为每次代办只生成一个幂等键，重试与对账都复用它；`#102` 关单改为交付「11 模型 ↔ 6 核心原语」映射规范与 TeaCo 单域闭环实证，不等待完整 100 × 5 × 3 评测。
+7. **交付顺序改为里程碑纵切**（§19.4）：先做 M1「接入并打开经营驾驶舱」，再依次补齐代办审批、AI 助手、需求演化、数据与知识、开发与评测。
 
 ## 目录
 
@@ -49,12 +61,12 @@
 | 业务案例 | Business Bench 的茶叶零售/批发订单系统（TeaCo） | 已有需求、脏数据、规则、权限、答案和三轮变化；**正式替代 #103/#102 的奶茶店退款场景** |
 | 交付范围 | 完整覆盖 P0–P5（分阶段 P0→P5 递进交付） | 当前 Ontology Plus 已有建模工作台，最缺端到端真实业务案例与可验证闭环 |
 | 产品形态 | 延续现有 Ontology Plus，TeaCo 是冻结参考应用，Benchmark 含产品内只读看板（`平台治理 → 评测基准`）与独立 Runner | 统一业务体验与平台评测可见性；不把业务 KPI（`指标、场景与报告`）与模型评测混淆 |
-| 仓库策略 | 同仓库 `examples/teaco/` + `benchmark/`；清理废弃空目录 `connected-analytics/`；私有盲测真值存于 Git 外 `.benchmark-private/` | 少维护仓库与依赖，同时通过挂载隔离与 Git 外存储杜绝评测污染 |
+| 仓库策略 | 同仓库 `examples/teaco/` + `benchmark/`；私有盲测真值存于 Git 外 `.benchmark-private/` | 少维护仓库与依赖，同时通过挂载隔离与 Git 外存储杜绝评测污染 |
 | Issue 策略 | `#21`（后续走 Auto Ontology + Semantica）与 `#86` 已关闭；当前全部 3 个开放 Issue（`#19`、`#103`、`#102`）随本轮全部解决关闭 | 放宽 `#102` 严苛双领域/重写元模型要求，集中精力在 TeaCo 单域彻底打穿全生命周期闭环 |
 | 建模与交付 | 严格遵守现有 11 模型分工（单聚合规则归 `M1`，指标 1-to-1 `M2 QUERY`↔`M7`）及 4 步原型确认流程；附交付「11 模型 ↔ 6 核心原语」正式映射规范以闭环 `#102` | 用 TeaCo 真实检验既有工作流与 `MU` 提取，平滑承接 `#102` 上位目标而不推翻重造 |
 | 技术与运行 | **P0–P4 本地优先**（双进程 Node + Hono + Drizzle/SQLite HTTP 互通）；P5 验证 Cloudflare Free 可移植性（TeaCo Workers+D1，控制面 SQLite DO） | 避免为异步 D1 重写 1.3 万行同步 `WorkspaceStore`/`agent-runtime`；同时保持零付费依赖与 SQLite 方言一致 |
 | 执行环境三分 | 设计期 4 步保持原生工具 + YOLO；运行期/数据/治理/评测集成 **Mirage VFS**（npm 包 + `pi-durable ^1.5.2`）；P3 `CODING` 走隔离本地 **`BuildRunner`** | 隔离各场景边界：不强用 Mirage 虚拟 shell 跑 `pnpm/vite`，也不让运行期写操作跳过人工审批 |
-| 安全与认证 | 设计期 YOLO + 撤销（ADR 0007）；运行期外部写操作强制版本/参数绑定审批（ADR 0020）；TeaCo 独立鉴权，控制面服务端 Gateway 托管角色凭据 | 不给单用户控制面硬造 IAM，同时严格保证 Agent 无法自报或越权修改 `actor/role/scope` |
+| 安全与认证 | 设计期 YOLO + 撤销（ADR 0007）；运行期写操作一律显式人工批准（ADR 0020）；TeaCo 店员自有登录；控制面与已接入应用之间不做认证，操作身份由用户在经营驾驶舱选择并随请求传递（v0.3.1） | 本地优先阶段不为单用户控制面造认证；AI 不能自报或修改操作身份 |
 | 数据接入 | 原生 Manifest + HTTP Query/Action/Event + 文件 Connector；契约失配标记 `Drifted`（避开禁用词 `STALE`） | 动态连接不需生产 DB 密钥，严格对齐 `GLOSSARY.md` |
 | 知识与溯源 | `data-management` 持久化双时间轴 `Knowledge Claim` + `Provenance Record` + `Change Proposal`，只读投影到 `知识中心` | 与人工 Markdown 文档共存；永不绕过审批改写可执行 `M3` 规则 |
 | 评测与 CI | PR CI 严守**零 LLM 确定性门禁**；真实大模型 Campaign（24 smoke / 消融 / 90 天仿真 / 100×5×3）按需 BYOK + 显式预算触发并归档 JSON | 控制研发成本与 CI 稳定性，保持可复现实验与分组消融 |
@@ -69,7 +81,6 @@ Ontology Plus 已有 11-model Ontology Suite、业务模型校验、不可变 De
 - `src/packages/ontology-core/lib/data-grounding.ts`（`buildDataGrounding`、`findJoinPath`、`checkSqlGrounding`）与 `src/packages/agent-runtime/lib/reasoning-grounding.ts` 已具备本体取数依据能力；
 - `src/packages/workspace-store/lib/store.ts`（4,579 行）及其全部调用方（`src/packages/agent-runtime/lib/pi-session-engine.ts` 8,284 行、`src/server/app.ts` 1,677 行）均为**同步 `node:sqlite` 接口**；现有 `src/server/worker.ts`（由根 `wrangler.jsonc` 指向，绑定 `ONTOLOGY_DB`）在 Workers 上退化为内存 Map stub 加写后即忘 D1 镜像，`architecture-assets` 与 `package-compiler` 亦依赖 `node:fs` / `node:zlib`。因此本规范采用**本地优先（P0–P4）+ P5 Cloudflare Free 可移植性验证（控制面目标为同步 SQLite DO 而非全量异步 D1 重写）**（详见 ADR 0020）；
 - `#19` 原单所述两条独立 HTTP 路由在 `app.ts` 中已不存在，其真实缺陷迁入 `src/packages/agent-runtime/lib/domain-run-tools.ts`（`METRIC_INSIGHT` / `SCENARIO_ATTRIBUTION`，仍含硬编码 `t_contract` 与 `85.0%` / `62.0%` 默认百分比兜底）；同时 `src/packages/package-compiler/lib/mcp-server.ts`（合成示例行与 `t_contract` 查询）及 `pi-session-engine.ts` 仍残留非 fail-closed 逻辑，将在 P0/PR-02 统一清理；
-- 仓库内残留未使用的空目录 `src/packages/connected-analytics/` 与 `examples/connected-analytics/`，纳入清理范围；
 - `src/server/application-delivery.ts` 当前强校验必须完成 `Requirements + Interactive Prototype (Confirmed Revision) + Business Model` 三个上游确认才能导出 `Development Package`，本规范严格遵守该 4 步契约。
 
 业务建模解决的是语义定义；上线后的 Gap 是：如何连接真实业务状态、复用模型理解数据、执行受控操作、发现异常、积累知识并验证每次演化。TeaCo 既是参考应用，也是验证这些 Gap 的实验环境。
@@ -252,7 +263,7 @@ flowchart TD
 | DQ-05 | `$148.00` 等价格字符串 | 严格货币解析；cents 排序 | MAT-CERMON-1LB 最高 $148.00 |
 | DQ-06 | HRB-PEPMNT-2OZ stock=-2 | 保留 raw，规范库存置 0、设 `stock_blocked = true` 并创建 OPEN issue；未确认前不可发货；Admin 审批库存修复时在**同一原子事务**内更新 `stock_qty`、清零 `stock_blocked = false`、写入 `reason = 'IMPORT_REPAIR'` 的 `inventory_movements` 台账，并推进 issue 至 `APPLIED → VERIFIED` | UI 可看到 -2 与处理状态；不静默修正；修复后解锁与台账一致 |
 | DQ-07 | 订单号 `#1006`/`1006`、BOM | BOM-aware CSV；规范 order number | #1006 唯一且 3 lines |
-| DQ-08 | 日期格式不一致 | 仅明确允许格式：ISO、`DD-MMM-YYYY`、英文月日年等；不猜测歧义日期 | ISO local date；异常进入 quarantine |
+| DQ-08 | 日期格式不一致 | 按数据源声明日期格式：本数据的斜杠日期为美式「月/日/年」（`MM/DD/YYYY`、`MM/DD/YY`；上游生成器不产生日在前格式），另允许 ISO、`DD-MMM-YYYY` 与英文月名写法；声明之外的写法进入 quarantine，不逐值猜测 | 110 张订单全部入库（含 8 张月、日都 ≤ 12 的订单）；#1104 为 2026-09-08；ISO local date |
 | DQ-09 | Canceled / CANCELLED 及大小写 | 明确状态字典 | 16/12/6/14/52/10 |
 | DQ-10 | Shipping/Tax/Order Total 每明细重复 | 按订单聚合，仅取一致 header；不重复 sum；冲突隔离 | 正确 shipped sales $24,338.27，非 $62,717.09 |
 | DQ-11 | 历史已发货订单再次扣库存 | 导入使用专用 trusted seed path，不触发发货动作 | HRB-HIBISC-4OZ 91 而非 32 |
@@ -439,7 +450,6 @@ ontology-plus/
   .github/workflows/
 ```
 
-注：清理仓库内未使用的空骨架目录 `src/packages/connected-analytics/` 与 `examples/connected-analytics/`，避免与 `application-runtime` / `data-management` 职责重叠。
 
 正式评测中，禁止将整个 monorepo 挂载给受测 Agent；Build 任务只注入允许的输入、模板、SDK 契约与 `.onto-cs/workspaces/<appId>/` 隔离 Git 工作区（严禁读取或覆盖冻结的 `examples/teaco/`），Operate 只暴露经授权的业务 API、Mirage VFS 挂载和公开任务。公开 `benchmark/verifiers/` 与 `.benchmark-private/` 均不得作为受测 Agent 的工具可见资源。
 
@@ -616,7 +626,7 @@ interface ActionProvider {
 }
 ```
 
-`RuntimeContext` 必须由认证层构造，Agent 仅提供业务参数；禁止自报 tenant、role、scope、credential。**单用户控制面到多角色业务应用的身份委派（ADR 0020）：** Ontology Plus 控制面当前保持单用户本地工作台，不在本 RFC 中自建平台多用户登录系统；TeaCo 独立负责用户密码登录、邀请、撤销与作用域令牌校验。Ontology Plus 服务端 `RuntimeInstallation / Capability Gateway` 托管按 TeaCo 角色绑定的已授权会话/令牌配置（工作台用户通过真实 TeaCo 登录握手绑定或切换受管运行时身份；Benchmark Runner 在 Agent 外部按任务 `actorRef` 注入令牌）。Agent 上下文与浏览器存储永不接触明文凭据，TeaCo 对 `/runtime/*` 每次请求一律仅凭已认证令牌独立裁决行级权限。所有返回包含 `sourceId`, `schemaRevision`, `observedAt`, `provenanceRef`, `traceId`，分页与截断信息明确。连接器不直接开放任意 HTTP、SQL、filesystem；credentials 仅 gateway/runtime 服务端读。支持 `READ_ONLY`/`ACTION_CAPABLE`，后者能力仍逐项注册与核验。
+`RuntimeContext` 由 Ontology Plus 服务端构造，Agent 仅提供业务参数，不能自报或修改 actor、role、scope。**接入不做权限认证（v0.3.1，修订 ADR 0020）：** 本地优先阶段，控制面与已接入应用之间不做登录、令牌或凭据托管；应用在接入清单里声明可选的操作身份（如店主、客户经理 Jonah、财务），用户在经营驾驶舱顶栏选择身份，服务端随每个请求以 `X-Ontology-Plus-Actor` 传给应用，应用按该身份裁决行级范围与写权限。应用的运行期接口默认只监听本机，对外部署（P5）前须重新评估。TeaCo 店员自己的登录、邀请与撤销不受影响。所有返回包含 `sourceId`, `schemaRevision`, `observedAt`, `provenanceRef`, `traceId`，分页与截断信息明确。连接器不直接开放任意 HTTP、SQL、filesystem；credentials 仅 gateway/runtime 服务端读。支持 `READ_ONLY`/`ACTION_CAPABLE`，后者能力仍逐项注册与核验。
 
 ### 8.2 P1 连接器（必须实现）
 
@@ -692,20 +702,20 @@ P0/PR-02 必须一次性清零上述所有路径的硬编码合同领域表名�
 
 ```ts
 // P0–P4 Local-first Node adapter (reproducible npm packages, NOT references/mirage path)
-import { Workspace, RAMVFS } from '@struktoai/mirage-node';
+import { Workspace, RAMVFS, Mount, MountMode } from '@struktoai/mirage-node';
 import { MirageExecutionEnv, mirageExtension } from '@struktoai/mirage-pi-durable';
 // Custom read-only mounts extend BaseVFS from @struktoai/mirage-core and delegate
 // all reads/queries to the authenticated server-side Capability Gateway.
 
 function createOperationalEnv(scope: VerifiedScope, gateway: CapabilityGateway) {
   const ws = new Workspace({
-    '/workspace': createScopedSqliteWorkspaceVfs(scope), // persistent per-session/project writable VFS
+    '/workspace': new Mount(createScopedSqliteWorkspaceVfs(scope), { mode: MountMode.WRITE }), // mounts default to READ
     '/tmp': new RAMVFS(),
     '/ontology': createReadOnlyOntologyVfs(scope, gateway),
     '/sources': createReadOnlySourcesVfs(scope, gateway),
     '/knowledge': createReadOnlyKnowledgeVfs(scope, gateway),
     '/objects': createOnDemandObjectsVfs(scope, gateway),
-  });
+  }, { network: false }); // Mirage defaults to network: true
   // Register `onto` virtual CLI via registerCliSpec backed by the same Capability Gateway.
   const env = new MirageExecutionEnv(ws, {
     cwd: '/workspace', id: scope.workspaceId, sessionId: scope.sessionId,
@@ -768,7 +778,6 @@ stateDiagram-v2
   [*] --> PROPOSED
   PROPOSED --> REJECTED: invalid / unauthorized
   PROPOSED --> PENDING_APPROVAL: required
-  PROPOSED --> AUTHORIZED: preauthorized bounded action
   PENDING_APPROVAL --> AUTHORIZED: explicit approval
   PENDING_APPROVAL --> REJECTED: deny or expire
   AUTHORIZED --> EXECUTING: recheck / bind key
@@ -888,7 +897,7 @@ flowchart LR
 
 严格遵循现有 Ontology Plus 的四步主工作流（`需求 / 原型 / 业务模型 / 交付` 与五条 `Business View` 规则）以及顶栏 `更多 (More)` 下的三大二级区（`能力中心`、`数据分析中心`、`平台治理`），**不新增第四个顶级二级区，不另造与右侧 `Agent Panel` / `AI Assistant` 平行的 `Agent Workbench`**，且**严禁把业务 KPI（`数据分析中心 → 指标、场景与报告`）与模型/Agent 评测看板混淆**。
 
-下表是 ADR 0014 2026-11-25 修订时各功能的放置。接入后的运行期管理界面以 **§11.1 参考界面（经营驾驶舱）** 为准；它把下表中 Ontology Plus 侧的运行期功能收拢到一个界面，放置方式待 §11.2 的 U-05 决定后修订本表与 ADR 0014。
+下表是 ADR 0014 2026-11-25 修订时各功能的放置。接入后的运行期管理界面以 **§11.1 参考界面（经营驾驶舱）** 为准；它把下表中 Ontology Plus 侧的运行期功能收拢到一个独立工作区（v0.3.1，已修订 ADR 0014）；下表中 Ontology Plus 侧各行以 §11.1 的驾驶舱页面为准。
 
 | 归属位置 / 页面 | 必须显示/交互 | 验收 |
 |---|---|---|
@@ -936,34 +945,49 @@ flowchart LR
 5. 身份决定范围：Jonah 只看到自己的 14 家批发客户（3 张未发货）；财务只读，没有审批；AI 的权限不超过当前身份。
 6. AI 能力体检只显示真实跑出的结果，没跑过的显示「尚未运行」。
 
-**待定**：驾驶舱是「每个已接入应用一个工作区」，与 ADR 0014 2026-11-25 修订（运行期功能分散进「更多」下的三个二级区，不新增顶级区）冲突。采用前需修订 ADR 0014 和上表（§11.2 U-05）。
+**已定（v0.3.1）**：经营驾驶舱是独立工作区，每个已接入应用的项目一个，从项目管理和交付步骤的「可运行系统」位进入（修订 ADR 0014）。驾驶舱的页面由应用的接入清单驱动：业务对象、指标、报表和操作身份都来自清单，规则与需求版本来自 Ontology Plus 中已确认的业务模型。
 
-### 11.2 页面清单与待定项
+### 11.2 页面清单与决定
 
-按生命周期列出本 spec 涉及的全部界面。状态分三种：**已有**（现有工作台页面，TeaCo 只是新数据）、**已定**（有参考界面）、**待定**（需要设计或决策）。
+按生命周期列出本 spec 涉及的全部界面及 v0.3.1 的决定。「M」列为 §19.4 的交付里程碑。
 
-| ID | 界面 | 阶段 | 状态 | 待定的问题 |
-|---|---|---|---|---|
-| — | 需求 / 原型 / 业务模型 / 交付（开发包） | 设计期 | 已有 | — |
-| U-01 | 需求步骤里原始表格的上传与体检预览 | 设计期（T1） | 待定 | 3 份原始表格作为需求附件放在哪；确认规则前是否展示体检结果；与 TeaCo 应用里正式导入的区别 |
-| U-02 | 可运行系统「准备中」：开发过程（进度、改动、测试、预览、失败恢复） | 构建（#103-05） | 待定 | 按 ADR 0019 用业务语言呈现开发进度；代码改动放技术详情 |
-| U-03 | 上线确认与回滚 | 构建（#103-06、#103-10） | 待定 | 上线前给谁看什么、版本对比、回滚入口 |
-| U-04 | 接入向导与身份绑定 | 接入（#103-07） | 待定 | 填地址 → 发现能力 → 核对 → 用 TeaCo 账号绑定角色；现有「能力中心 → 系统配置」是存量系统萃取的配置页，语义不同，不宜直接改造 |
-| U-05 | 经营驾驶舱的放置与入口 | 运行 | 版式已定，位置待定 | 独立的「已接入应用」工作区，还是拆进「更多」；需修订 ADR 0014 |
-| U-06 | TeaCo 应用自身界面 | 运行 | 待定 | 界面来源（原型步骤确认的界面原型，还是另行设计；是否沿用工作台主题）；与驾驶舱分工，避免建两套订单页 |
-| U-07 | 审批卡的唯一来源 | 运行（PR-08） | 样式已定，同步待定 | 驾驶舱「等你决定」与右侧 AI 助手里的同一审批如何同步、去重 |
-| U-08 | 正式界面里的身份切换 | 运行（ADR 0020） | 待定 | 参考页用参考控制条模拟；正式的位置和提示方式 |
-| U-09 | 客户 / 对象浏览 | 运行（PR-06） | 待定 | 参考页还没有客户页；§11 要求对象浏览 |
-| U-10 | 数据源管理（供应商文件、供应商接口、字段映射审核、映射漂移修复） | 运行（§8、T3） | 待定 | 参考页未覆盖 |
-| U-11 | 数据问题全流程与持续质量检查 | 运行（§10.4） | 待定 | 参考页只展示导入问题；缺调查 → 方案 → 批准 → 应用 → 核验的详情页 |
-| U-12 | 知识主张详情与审核 | 运行（§10.5） | 待定 | 来源、生效时间与知道时间、冲突、退役；与知识中心人工文档如何共存 |
-| U-13 | 变更提案详情 | 演化（§10.6） | 待定 | 改了哪些规则、界面、接口，影响范围，测试结果，上线与回滚 |
-| U-14 | 事件与自动任务 | 运行（§10.3、T8） | 待定 | 事件触发的调查任务列表；投递失败、待管理员处理的入口 |
-| U-15 | 「指标、场景与报告」与驾驶舱的关系 | 运行（#19） | 待定 | 重复、互相跳转，还是被驾驶舱取代 |
-| U-16 | 评测基准详情 | 评测（§12–§16） | 待定 | BB-35 逐轮、100 项八维成绩单、A–E 对比、失败记录；面向业务方还是研发 |
-| U-17 | 90 天模拟经营结果 | 评测（§15） | 待定 | 倾向只进评测报告，不做业务页面 |
+| ID | 界面 | 决定 | M |
+|---|---|---|---|
+| — | 需求 / 原型 / 业务模型 / 交付（开发包） | 沿用现有四步；开发包新增《接入 Ontology Plus》约定（§11.3） | M1 |
+| U-01 | 原始表格进入需求 | 需求步骤对话框支持附带表格文件，AI 读表头与样本行整理需求和业务模型；不另做设计期体检页 | M5 |
+| U-02 | 可运行系统「准备中」 | 交付步骤的可运行系统位按 ADR 0019 用业务语言列出真实进度：按开发包搭建 → 跑验收 → 上线 → 接入核对；代码改动放技术详情 | M6 |
+| U-03 | 上线确认与回滚 | 放在驾驶舱「需求变化」：每个版本显示验收结果，提供「确认上线」和「回到上一版」 | M4 |
+| U-04 | 接入 | 首页项目行与交付步骤可运行系统位提供「接入应用」：填地址 → 读接入清单 → 逐项核对 → 已接入；不做登录与凭据；清单或模型变化即已漂移，需重新核对 | M1 |
+| U-05 | 经营驾驶舱 | 独立工作区（§11.1），从首页项目行「经营驾驶舱」与可运行系统位进入 | M1 |
+| U-06 | 应用自身界面 | 不限来源，不要求沿用界面原型；驾驶舱只看、决定和批准，录入与日常操作在应用里完成，不建第二套录入页 | — |
+| U-07 | 审批卡 | 驾驶舱「等你决定」是唯一来源；右侧 AI 助手显示同一条（同一编号），在任一处批准两处同步 | M2 |
+| U-08 | 身份切换 | 驾驶舱顶栏下拉选择清单里声明的身份，切换即生效，不登录 | M1 |
+| U-09 | 业务对象浏览 | 按清单的业务对象自动生成列表与详情页（订单、商品、客户…） | M1 |
+| U-10 | 数据来源 | 驾驶舱「应用与连接」下列出应用及附加的文件、接口来源；字段对应审核放技术详情 | M5 |
+| U-11 | 数据问题 | 「数据体检」列出应用报告的问题及状态（待处理 → 调查中 → 已提方案 → 已批准 → 已应用 → 已核验）；需批准的修复进「等你决定」 | M1 列表 / M2 修复 / M5 持续检查 |
+| U-12 | 知识主张 | 「规则与知识」：规则取自已确认的业务模型；知识主张显示来源、生效时间与知道时间、状态，冲突与新增经「等你决定」审核；与知识中心人工文档并列显示 | M1 规则 / M5 知识 |
+| U-13 | 变更提案 | 「需求变化」：版本时间线；每个提案写清改了哪些规则、页面、接口，影响范围与验收结果；差异放技术详情 | M4 |
+| U-14 | 事件与自动任务 | 「最近发生的事」显示事件与 AI 已做的事；事件触发的调查结果进「等你决定」；投递失败作为数据问题提示店主 | M1 列表 / M5 自动任务 |
+| U-15 | 指标、场景与报告 | 保留给未接入应用的数据分析；项目接入应用后，该页提示「去经营驾驶舱看实时数据」；#19 修复照常适用 | M3 |
+| U-16 | 评测基准 | 详情留在「平台治理 → 评测基准」，面向研发与验收；驾驶舱「AI 能力体检」显示本应用摘要并链接过去 | M6 |
+| U-17 | 90 天模拟经营 | 只进评测报告，不做业务页面 | M6 |
 
-**决策顺序**：P1（PR-04/05/06）开工前定 U-01、U-04、U-05、U-06、U-08、U-09、U-15；P2（PR-07–10）前定 U-07、U-11、U-12、U-13（最小提案）、U-14、U-16；P3（PR-11/12）前定 U-02、U-03、U-10；P4 定 U-13（完整演化）与 U-17。
+### 11.3 接入约定 v1（由开发包规定）
+
+开发包附带 `docs/connect.md`（接入 Ontology Plus）与 `contracts/connection.json`。按约定开发的应用提供下列接口（JSON，UTF-8；金额为整数分；显示名为中英双语 `{ "zh": …, "en": … }`）：
+
+| 接口 | 内容 |
+|---|---|
+| `GET /.well-known/ontology-plus.json` | 接入清单：协议版本 `ontology-plus-connect/1`、应用名与版本、对应业务模型的指纹（可选）、可选操作身份 `actors`、业务对象 `objects`（字段与显示名）、指标 `metrics`、报表 `reports`、可代办动作 `actions`（M2 起） |
+| `GET /runtime/metrics` | 当前身份范围内各指标的值 |
+| `GET /runtime/objects/:objectId` | 业务对象列表（筛选、分页） |
+| `GET /runtime/objects/:objectId/:key` | 单个业务对象详情 |
+| `GET /runtime/reports/:reportId` | 报表（列与行） |
+| `GET /runtime/data-issues` | 数据问题及处理状态 |
+| `GET /runtime/activity` | 最近发生的业务事件 |
+| `POST /runtime/actions/:actionId/prepare`、`POST /runtime/actions/:actionId/invoke`、`GET /runtime/invocations/:id` | 代办动作（M2 起，§10.1） |
+
+每个请求带 `X-Ontology-Plus-Actor`，应用按该身份过滤范围、拒绝越权写入；缺省时按清单的第一个身份处理。接入时 Ontology Plus 读取清单并核对：协议版本是否支持、结构是否完整、清单里的业务对象能否在已确认的业务模型里找到同名对象。对不上的项逐条列为提示，不阻止接入。之后每次打开驾驶舱都重新读取清单；清单内容或模型指纹变化即「已漂移」（`Drifted`），重新核对前驾驶舱不显示数字、不做代办。应用不可达时显示「连不上应用」，不显示旧数据。
 
 ## 12. Benchmark Runner：协议、隔离、执行与验证
 
@@ -1534,7 +1558,7 @@ pnpm bench:smoke:remote
 
 | Phase / PR | 交付 | 验收与复用资产 |
 |---|---|---|
-| P0 / PR-00 Source lock + fixture | 固定上游、许可、CSV、`.benchmark-private/` 忽略与 `benchmark/verifiers/` 隔离；清理空目录 `connected-analytics/`；独立 parser/oracle tests | seed0 计数/金额、hash、一致性，generator/negative controls |
+| P0 / PR-00 Source lock + fixture | 固定上游、许可、CSV、`.benchmark-private/` 忽略与 `benchmark/verifiers/` 隔离；独立 parser/oracle tests | seed0 计数/金额、hash、一致性，generator/negative controls |
 | P0 / PR-01 Local dual-process + Mirage spike | 升级 `@earendil-works/pi-durable@^1.5.2`，通过可复现包依赖引入 `@struktoai/mirage-node` + `@struktoai/mirage-pi-durable`；验证 `ExecutionEnvironmentPort`、`BaseVFS` 只读挂载、虚拟 CLI、本地 SQLite 原子事务与双进程 HTTP 通信 | Mirage + pi-durable 集成单测、VFS 逃逸拦截、本地双进程重启恢复与事务并发测试 |
 | P0 / PR-02 Real boundary + #19 | 清除 `domain-run-tools.ts`（`METRIC_INSIGHT` / `SCENARIO_ATTRIBUTION`）、`pi-session-engine.ts` 与 `mcp-server.ts` 全部合同表硬编码、默认百分比与合成示例行；#103-01 模拟成功隔离与 fail-closed | 关闭 `#19`：非合同域（TeaCo）、缺 MM/M7、无数据及双语回归全绿；mock 绝不混入生产路径 |
 | P1 / PR-03 TeaCo domain | 在 `examples/teaco/` 建设冻结参考应用：基础 SQLite schema、`ClockProvider` 端口、auth/邀请/作用域、import/DQ-06 原子解锁、pricing、state machine、原子事务、audit/outbox | BB15–25 核心数据和业务规则单测/并发/集成通过；纯 TS 领域层无 Node 专有 API |
@@ -1588,6 +1612,19 @@ PR-11a～f 是 PR-11 工作包内的建议子批次，与 #103 原任务关联�
 - 每次 phase gate 复核失败原因、成本、待测项和依赖，维护链接至具体 run/PR/测试，按实际证据调整后续优先级；不把 100 个任务拆成 100 个功能 Ticket。原 `#21` 能力后续如确有需要，优先基于 Auto Ontology / Semantica 另建独立工单。
 - PR 描述至少包括 `related issue(s)`、`work package`、`task/check IDs`、`source lock/model revision/app commit`、`test evidence`、`remaining gaps`。评测失败先归因至业务应用、映射、环境、Agent、评测器或基础设施，再决定新增功能还是修复。
 
+### 19.4 里程碑纵切（v0.3.1）
+
+每个里程碑交付一个用户能完整走通的结果，再扩展广度；PR-00～PR-16 的工作内容不变，只是按里程碑重新排序。
+
+| 里程碑 | 用户看到的结果 | 主要工作 | 涉及工作包 |
+|---|---|---|---|
+| M1 接入并打开经营驾驶舱 | 在项目管理里接入 TeaCo，打开驾驶舱看实时的概览、订单、商品、客户、报表、数据体检、规则和连接状态；切换身份看到不同范围 | 接入约定 v1 写进开发包；`application-runtime` 包（清单校验、读接口客户端、接入状态）；TeaCo 参考应用的种子导入与只读接口；服务端接入与转发路由；驾驶舱独立工作区 | PR-00（种子）、PR-03（部分）、PR-05（部分）、PR-06 |
+| M2 AI 代办与审批 | 「等你决定」：发货、负库存修复、挂起与解除；批准后执行并回读核对 | 动作 prepare / invoke、幂等、原子事务、审批卡 | PR-03、PR-08 |
+| M3 AI 助手 | 在驾驶舱右侧问数、请 AI 代办，回答带依据 | 驾驶舱的 AI 助手、运行期工具、#19 取数门禁 | PR-02、PR-06、PR-07 |
+| M4 需求演化 | v2 月报、v3 折扣、v4 挂起作为变更提案确认上线；接入转为已漂移后重新核对；可回到上一版 | 变更提案、版本、回归、回滚 | PR-11、PR-14 |
+| M5 数据与知识 | 数据来源、数据问题全流程、知识主张、事件任务；需求步骤附带表格 | `data-management`、文件与接口连接器、事件 | PR-10、PR-12、PR-13 |
+| M6 开发与评测 | 可运行系统「准备中」显示开发过程；评测基准详情；Mirage 环境 | `BuildRunner`、Benchmark Runner、Mirage | PR-01、PR-09、PR-11、PR-15、PR-16 |
+
 ## 20. 最小端到端验收演示
 
 ### Demo A · Model → Build → Connect
@@ -1616,7 +1653,7 @@ PR-11a～f 是 PR-11 工作包内的建议子批次，与 #103 原任务关联�
 
 ## 21. Definition of Done（总验收）
 
-- [ ] 通用能力在现有 Ontology Plus 仓库持续交付，清理空目录 `connected-analytics/`，复用根 `wrangler.jsonc`（`src/server/worker.ts` + `ONTOLOGY_DB`）；不存在 TeaCo 特定规则或答案渗入核心模块。
+- [ ] 通用能力在现有 Ontology Plus 仓库持续交付，复用根 `wrangler.jsonc`（`src/server/worker.ts` + `ONTOLOGY_DB`）；不存在 TeaCo 特定规则或答案渗入核心模块。
 - [ ] `#19` 在 `domain-run-tools.ts` / `pi-session-engine.ts` / `mcp-server.ts` 中的合同表硬编码与默认百分比/示例行兜底全部清零，TeaCo、缺数据、双语、scope 回归通过并关闭 `#19`。
 - [ ] 完成 `#103` 全部平台内本地 `BuildRunner`（`.onto-cs/workspaces/<appId>/`）、Coding 工具、开发预览 UI、真实部署、自动接入与漂移闭环（以 TeaCo 正式替代奶茶场景），参考应用 `examples/teaco/` 验收与独立 `build-agent-campaign` 成绩分开存档并关闭 `#103`。
 - [ ] 交付「11 模型 ↔ 6 核心原语」正式映射/投影规范及 TeaCo 全生命周期实证报告，满足放宽后的 `#102` 验收口径并**关闭 `#102`**（`#21` 与 `#86` 已关闭）。
@@ -1656,7 +1693,7 @@ PR-11a～f 是 PR-11 工作包内的建议子批次，与 #103 原任务关联�
 
 此处面向负责开发平台及参考应用的**工程 Coding Agent**，而不是受测的 Build/Operate Agent。后者只能接收按 §12 生成的 public payload；不得把本 SPEC 中的公开验收答案、评分细节、`benchmark/verifiers/`、`.benchmark-private/` 或冻结的 `examples/teaco/` 源码注入其上下文。
 
-> 在现有 `CaiZongyuan/ontology-plus` 仓库工作，遵循 `ADR 0020`、`ADR 0021` 与 `GLOSSARY.md` 新术语（`Provenance Record`、`Drifted`、`Knowledge Claim`、`Change Proposal`）。先完成 P0：锁定 `sources.lock.json`、清理空 `connected-analytics/`、升级 `pi-durable@^1.5.2` 并以可复现包方式验证 Mirage VFS（禁止引用 `references/mirage/`）、在 `domain-run-tools.ts` / `pi-session-engine.ts` / `mcp-server.ts` 彻底修复 `#19` 与 `#103-01` 并关闭 `#19`。P0–P4 坚持本地 Node + SQLite 双进程优先，同时保证 TeaCo 领域层纯 TS 无 Node 专有 API、严守 SQLite 方言与零付费依赖。TeaCo 必须走完现有 4 个 `Project Steps`（含确认 `界面原型.html` 提取 `MU`）并严格遵守 `M1`/`M3`/`M7` 分工，同时交付「11 模型 ↔ 6 核心原语」正式映射规范。运行期写操作走右侧 `Agent Panel` 的显式审批卡；`平台治理 → 评测基准` 只读展示归档报告，与 `数据分析中心 → 指标、场景与报告`（业务 KPI）分离。PR CI 严守零 LLM 确定性门禁；先交付冻结参考应用 `examples/teaco/` 与 24-case operate smoke，再交付 P3 本地隔离 `BuildRunner`（`.onto-cs/workspaces/<appId>/`）完成 `#103` 与独立 Build Campaign 并关闭 `#103`，接着推进 P4 90 天仿真与受控演化，最终在 P5 完成 100-case 完整评测、复用根 `wrangler.jsonc` 的 Cloudflare Free 可移植性部署冒烟并关闭 `#102`（`#21` 后续走 Auto Ontology/Semantica 与 `#86` 均已关闭）。
+> 在现有 `CaiZongyuan/ontology-plus` 仓库工作，遵循 `ADR 0020`、`ADR 0021` 与 `GLOSSARY.md` 新术语（`Provenance Record`、`Drifted`、`Knowledge Claim`、`Change Proposal`）。先完成 P0：锁定 `sources.lock.json`、升级 `pi-durable@^1.5.2` 并以可复现包方式验证 Mirage VFS（禁止引用 `references/mirage/`）、在 `domain-run-tools.ts` / `pi-session-engine.ts` / `mcp-server.ts` 彻底修复 `#19` 与 `#103-01` 并关闭 `#19`。P0–P4 坚持本地 Node + SQLite 双进程优先，同时保证 TeaCo 领域层纯 TS 无 Node 专有 API、严守 SQLite 方言与零付费依赖。TeaCo 必须走完现有 4 个 `Project Steps`（含确认 `界面原型.html` 提取 `MU`）并严格遵守 `M1`/`M3`/`M7` 分工，同时交付「11 模型 ↔ 6 核心原语」正式映射规范。运行期写操作走右侧 `Agent Panel` 的显式审批卡；`平台治理 → 评测基准` 只读展示归档报告，与 `数据分析中心 → 指标、场景与报告`（业务 KPI）分离。PR CI 严守零 LLM 确定性门禁；先交付冻结参考应用 `examples/teaco/` 与 24-case operate smoke，再交付 P3 本地隔离 `BuildRunner`（`.onto-cs/workspaces/<appId>/`）完成 `#103` 与独立 Build Campaign 并关闭 `#103`，接着推进 P4 90 天仿真与受控演化，最终在 P5 完成 100-case 完整评测、复用根 `wrangler.jsonc` 的 Cloudflare Free 可移植性部署冒烟并关闭 `#102`（`#21` 后续走 Auto Ontology/Semantica 与 `#86` 均已关闭）。
 
 ### 主要来源索引
 

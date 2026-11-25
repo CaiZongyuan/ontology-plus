@@ -14,3 +14,7 @@ We run both the Ontology Plus control plane and connected reference applications
 - When Ontology Plus later targets Cloudflare Free, control-plane state migrates to a SQLite-backed Durable Object (`ctx.storage.sql` is synchronous) rather than rewriting every store caller to async D1.
 - Runtime approvals automatically invalidate whenever arguments, target entity version, actor authorization, or confirmed `Ontology Suite` revision changes; execution timeouts enter `UNKNOWN` and reconcile by idempotency key instead of blindly retrying.
 - Amends ADR 0007's single-regime autonomous tool policy for connected runtime mutations.
+
+## Amendments
+
+- **2026-11-25: no authentication between the control plane and a connected application (TeaCo spec v0.3.1).** While running local-first, Ontology Plus connects to an application by its address and reads its `Connection Manifest`; there is no login handshake, token, or managed credential. The application declares the identities one may act as; the user picks one in the Operations Console, and the server sends it with every request (`X-Ontology-Plus-Actor`), so the AI can neither choose nor change it. The application enforces scope and write permissions for that identity, and its runtime interface listens on loopback by default; external deployment (P5) must revisit this. The approval regime is unchanged except that the preauthorized path is removed: every runtime write needs explicit approval.
