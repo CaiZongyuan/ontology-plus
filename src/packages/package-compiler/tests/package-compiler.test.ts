@@ -263,7 +263,7 @@ describe('package-compiler deep module', () => {
     const paths = compiled.files.map((f) => f.relativePath);
     expect(paths).toEqual(expect.arrayContaining([
       'README.md', 'AGENTS.md', 'manifest.json',
-      'docs/architecture.md', 'docs/implementation.md', 'docs/acceptance.md',
+      'docs/architecture.md', 'docs/implementation.md', 'docs/acceptance.md', 'docs/connect.md',
       'references/requirements.md', 'references/prototype/index.html',
       'references/ontology/manifest.json', 'references/ontology/M1.yaml',
       'references/ontology/MI.yaml',
@@ -279,6 +279,12 @@ describe('package-compiler deep module', () => {
     for (const scenario of project.suite.M4!.event_scenarios) expect(read('docs/acceptance.md')).toContain(scenario.id);
     for (const contract of project.suite.MI!.interfaces) expect(read('docs/acceptance.md')).toContain(contract.interfaceId);
     expect(read('docs/acceptance.md')).not.toContain('`undefined`');
+    expect(read('AGENTS.md')).toContain('[Connect to Ontology Plus](docs/connect.md)');
+    expect(read('docs/acceptance.md')).toContain('[Connect to Ontology Plus](connect.md)');
+    expect(read('docs/connect.md')).toContain('ontology-plus-connect/1');
+    expect(read('docs/connect.md')).toContain('X-Ontology-Plus-Actor');
+    for (const aggregate of project.suite.M1!.aggregates) expect(read('docs/connect.md')).toContain(`\`${aggregate.name}\``);
+    expect(read('docs/connect.md')).not.toContain('`undefined`');
     expect(read('references/requirements.md')).toBe(reqDoc.content);
     expect(read('references/prototype/index.html')).toBe(proto.htmlContent);
     expect(read('references/ontology/M1.yaml')).toContain('合同');

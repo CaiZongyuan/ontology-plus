@@ -235,6 +235,7 @@ Read [README](README.md) and [the snapshot manifest](manifest.json) to identify 
 1. Read [Architecture](docs/architecture.md) before choosing module boundaries or dependencies. Completion: each selected standard and its authority are accounted for.
 2. Follow [Implementation sequence](docs/implementation.md) in order. Open only the ontology files and references named by the current step. Completion: record evidence for that step before starting its dependent work.
 3. Use [Acceptance criteria](docs/acceptance.md) to verify delivery. Completion: each applicable criterion has a test, command result, or reviewed UI evidence tied to its ontology IDs.
+4. Implement [Connect to Ontology Plus](docs/connect.md) so the finished application can be connected without further work. Completion: the Connection Manifest validates and every listed read answers for each acting identity.
 
 Business semantics come from the disclosed Ontology Suite; UI intent comes from the confirmed prototype. Keep original business labels and messages. Resolve a conflict in the selected inputs explicitly before implementation. Record missing late-stage models as Stage Warnings and seek the specific missing decision before implementing that area.
 `;
@@ -331,6 +332,59 @@ Completion: every applicable criterion has evidence; unresolved Stage Warnings a
 `;
 }
 
+/**
+ * Connection contract v1 (TeaCo spec v0.3.1 §11.3): the Development Package states how the finished
+ * application is connected to Ontology Plus, with a starting point derived from the Ontology Suite.
+ */
+function buildConnectionGuide(project: ProjectDetail): string {
+  const { suite } = project;
+  const objects = suite.M1?.aggregates ?? [];
+  const queries = suite.M7?.query_reports ?? [];
+  const roles = suite.M5?.roles ?? [];
+  const commands = (suite.M2?.behaviors ?? []).filter((behavior) => behavior.behaviorType === 'COMMAND');
+  const list = (items: string[], empty: string) => (items.length ? items.map((item) => `- ${item}`).join('\n') : `- ${empty}`);
+  return `# Connect to Ontology Plus
+
+The finished application is connected to Ontology Plus by its address. Ontology Plus then opens an Operations Console for this project, driven entirely by what the application declares below. There is no login, token, or credential between the two: the application serves these routes on loopback, and the user chooses the acting identity in the console.
+
+## Routes (protocol \`ontology-plus-connect/1\`)
+
+All responses are JSON in UTF-8. Money is integer cents. Every display name is bilingual: \`{ "zh": "…", "en": "…" }\`. Every \`/runtime/*\` request carries the header \`X-Ontology-Plus-Actor\` with one declared actor id; answer only what that identity may see, reject an unknown id with 400, and use the first actor when the header is absent.
+
+| Route | Answer |
+| --- | --- |
+| \`GET /.well-known/ontology-plus.json\` | The Connection Manifest: \`protocol\`, \`application\` (\`name\`, \`version\`, optional \`description\`), optional \`model\` (\`fingerprint\`, \`revision\`), \`actors\` (\`id\`, \`name\`, \`role\`, \`scope\`; at least one), \`metrics\` (\`id\`, \`name\`, \`unit\`: count, money or number, optional \`hint\` and \`headline\` containing \`{value}\`), \`objects\` (\`id\`, \`name\`, \`modelObject\`, \`titleField\`, optional \`statusField\`, \`fields\` with \`key\`, \`label\`, \`type\`: text, number, money, date, status or tag; optional \`filters\`), \`reports\` (\`id\`, \`name\`, optional \`description\`), \`dataIssues\` and \`activity\` (booleans). |
+| \`GET /runtime/metrics\` | \`{ asOf, values: [{ id, value, hint? }] }\` for the declared metrics; \`value\` is null when it cannot be computed. |
+| \`GET /runtime/objects/:objectId?filter=&limit=&offset=\` | \`{ asOf, total, counts: [{ filter, count }], rows: [{ key, values, flags: [{ tone, label }] }] }\`. |
+| \`GET /runtime/objects/:objectId/:key\` | \`{ asOf, key, values, flags, sections: [{ title, columns, rows }], notes }\`; 404 when the identity may not see it. |
+| \`GET /runtime/reports/:reportId\` | \`{ asOf, title, columns, rows, basis }\`, where \`basis\` states the counting rule in one sentence. |
+| \`GET /runtime/data-issues\` | \`{ asOf, issues: [{ id, title, detail, status, needsDecision }] }\` with status OPEN, INVESTIGATING, PROPOSED, APPROVED, APPLIED, VERIFIED or DISMISSED. |
+| \`GET /runtime/activity\` | \`{ asOf, events: [{ at, text, kind }] }\`, newest first. |
+
+Field values are strings, numbers, or bilingual objects. Use business names that people recognise; keep codes and identifiers out of labels.
+
+## Starting point from the Ontology Suite
+
+Business objects (\`objects\`, set \`modelObject\` to the aggregate name so Ontology Plus can check it against the confirmed Business Model):
+${list(objects.map((aggregate) => `\`${aggregate.name}\` (${aggregate.alias})`), 'No aggregates are declared yet; declare the objects people manage.')}
+
+Metrics and reports (\`metrics\` for single figures, \`reports\` for tables):
+${list(queries.map((query) => `\`${query.id}\` ${query.alias} (${query.queryType})`), 'No queries are declared yet.')}
+
+Acting identities (\`actors\`, one per role or per person whose scope differs):
+${list(roles.map((role) => `\`${role.code}\` ${role.name}`), 'No roles are declared yet; declare at least one actor.')}
+
+Actions for approved runtime changes (a later protocol revision adds \`/runtime/actions\`; keep each command's business rules in the application):
+${list(commands.map((behavior) => `\`${behavior.id}\` ${behavior.alias}`), 'No commands are declared yet.')}
+
+## Completion
+
+- [ ] \`GET /.well-known/ontology-plus.json\` returns a manifest that follows this guide, with every \`titleField\` and \`statusField\` listed in its object's \`fields\`.
+- [ ] Each declared metric, object list, object detail, report, data issue list, and activity list answers for every declared actor, and an identity never sees records outside its scope.
+- [ ] The runtime routes listen on loopback by default.
+`;
+}
+
 function buildAcceptanceGuide(project: ProjectDetail): string {
   const { suite } = project;
   const lines = [
@@ -340,6 +394,7 @@ function buildAcceptanceGuide(project: ProjectDetail): string {
     '',
     '- [ ] Local startup, build, verification, migration, and production startup commands succeed using the selected Technology Profile in [Architecture](architecture.md).',
     '- [ ] Delivered scope matches [Requirements](../references/requirements.md), and every declared contract below is accounted for in the delivery record.',
+    '- [ ] The application can be connected to Ontology Plus as described in [Connect to Ontology Plus](connect.md).',
   ];
   const group = (code: ModelCode, criteria: string[]) => {
     if (!suite[code]) return;
@@ -393,6 +448,7 @@ export function compileDevelopmentPackage(input: CompileDevelopmentPackageInput)
 This package is an implementation specification for the target application. Start with [Coding agent instructions](AGENTS.md), then follow [Implementation sequence](docs/implementation.md) and record [Acceptance evidence](docs/acceptance.md).
 
 - [Architecture and selected standards](docs/architecture.md)
+- [Connect to Ontology Plus](docs/connect.md)
 - [Fixed input manifest](manifest.json)
 - [Original requirements](references/requirements.md)
 - [Confirmed prototype](references/prototype/index.html)
@@ -404,6 +460,7 @@ Snapshot \`${snapshotId}\`, generated at \`${compiledAt}\`. Package readiness de
   addFile('docs/architecture.md', 'GUIDE', buildArchitectureGuide(resolvedInput));
   addFile('docs/implementation.md', 'GUIDE', buildImplementationGuide(resolvedInput));
   addFile('docs/acceptance.md', 'GUIDE', buildAcceptanceGuide(project));
+  addFile('docs/connect.md', 'GUIDE', buildConnectionGuide(project));
   addFile('standards/ui.md', 'REFERENCE', uiUeAsset.specMarkdown);
   addFile('standards/foundation.md', 'FOUNDATION', techFoundationAsset.specMarkdown);
   addFile('standards/architecture.md', 'REFERENCE', techArchAsset.specMarkdown);
