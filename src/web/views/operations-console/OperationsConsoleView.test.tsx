@@ -15,6 +15,8 @@ import { PreferencesProvider } from '../../i18n.js';
 import { OverviewSessionsView } from '../application-center/OverviewSessionsView.js';
 import { ConsoleRequestError } from '../../components/runtime/consoleApi.js';
 import { hhmm } from '../../components/runtime/RuntimeApprovals.js';
+import { readFileSync } from 'node:fs';
+import { ProposalPanel } from './ConsoleChanges.js';
 import { prepareInvocation, approveInvocation, declineInvocation } from '../../../packages/runtime-gateway/index.js';
 import {
   ConnectAppPanel,
@@ -248,5 +250,38 @@ describe('Operations Console (TeaCo spec v0.3.1 §11.1)', () => {
       <ConsoleObjectPage manifest={manifest} object={orders} filter="open" list={await client.listObjects('orders', 'finance', { filter: 'open' })} selectedKey="1104" detail={await client.getObject('orders', '1104', 'finance')} detailState="ready" approvals={approvals} />,
     );
     expect(finance).not.toContain('data-testid="console-record-actions"');
+  });
+
+  it('shows a requirement change in business words: what changes, its checks and the figures that stay (spec §10.6)', async () => {
+    const { fetch } = await teaco('v1');
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const api = createApiApp(store, { connectedAppFetch: fetch });
+    const projectId = store.listProjects()[0]!.id;
+    const post = (path: string, body?: unknown) =>
+      Promise.resolve(api.request(path, { method: 'POST', ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}) })).then((r) => r.json() as Promise<any>);
+    await post(`/api/projects/${projectId}/connected-app`, { baseUrl: 'teaco.local' });
+    const v4 = JSON.parse(readFileSync(fileURLToPath(new URL('../../../../examples/teaco/changes/v4.json', import.meta.url)), 'utf8'));
+    await post(`/api/projects/${projectId}/change-proposals`, v4);
+    const proposal = (await post(`/api/projects/${projectId}/console/releases/v4/verify`)).proposal;
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      stubLocale(locale);
+      const html = render(<ProposalPanel version="v4" current="v1" proposal={proposal} busy={null} onVerify={() => undefined} onRelease={() => undefined} />);
+      if (locale === 'zh-CN') {
+        expect(html).toContain('需求是怎么说的');
+        expect(html).toContain('订单新增「挂起中」');
+        expect(html).toContain('验收条件（4/4 通过）');
+        expect(html).toContain('Jonah 不能解除挂起');
+        expect(html).toContain('不变');
+        expect(html).toContain('确认上线');
+      } else {
+        expect(html).toContain('Acceptance checks (4/4 pass)');
+        expect(html).toContain('Put live');
+      }
+      expectBusinessView(html);
+    }
+    stubLocale('zh-CN');
+    const stale = render(<ProposalPanel version="v4" current="v2" proposal={proposal} busy={null} onVerify={() => undefined} onRelease={() => undefined} />);
+    expect(stale).toContain('上次是对照 v1 核对的，现在用的是 v2，请重新核对');
+    expect(stale).not.toContain('确认上线');
   });
 });

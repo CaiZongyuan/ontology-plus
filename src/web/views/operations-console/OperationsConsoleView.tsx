@@ -5,6 +5,7 @@ import {
   BookOpen,
   CheckCircle2,
   Gauge,
+  History,
   Loader2,
   Plug,
   RefreshCw,
@@ -44,6 +45,7 @@ import {
   useInvocationsChanged,
 } from '../../components/runtime/RuntimeApprovals.js';
 import { ConsoleRequestError, consoleApi, type ConsoleOverview } from '../../components/runtime/consoleApi.js';
+import { ConsoleChangesPage } from './ConsoleChanges.js';
 import './operations-console.css';
 
 /**
@@ -114,6 +116,14 @@ function localStamp(iso: string) {
   if (Number.isNaN(d.getTime())) return iso;
   const two = (n: number) => String(n).padStart(2, '0');
   return `${two(d.getMonth() + 1)}-${two(d.getDate())} ${hhmm(iso)}`;
+}
+
+/** What the last re-check found new since the previous version, for 「新」 marks. */
+const NewSinceContext = React.createContext<ConnectedAppRecord['newSince']>(null);
+
+function NewMark() {
+  const { t } = usePreferences();
+  return <span className="oc-new" data-testid="console-new-mark">{t('新', 'New')}</span>;
 }
 
 // ─── Approvals ────────────────────────────────────────────────────────────────
@@ -287,7 +297,7 @@ export function ConsoleOverviewPage({ manifest, actorId, overview, onOpenDataIss
             <IssueDecision key={issue.id} issue={issue} manifest={manifest} approvals={approvals} onOpenDataIssues={onOpenDataIssues} />
           ))}
           {settled.length > 0 ? (
-            <ul className="oc-settled-list" aria-label={t('最近处理过的', 'Recently settled')}>
+            <ul className="rt-settled-list" aria-label={t('最近处理过的', 'Recently settled')}>
               {settled.slice(0, 5).map((inv) => <SettledInvocationLine key={inv.id} invocation={inv} />)}
             </ul>
           ) : null}
@@ -354,6 +364,7 @@ function Cell({ field, value, currency }: { field: ConnectionField; value: unkno
 
 export function ConsoleObjectPage({ manifest, object, filter, list, selectedKey, detail, detailState, onFilter, onSelect, approvals }: ConsoleObjectPageProps) {
   const { t } = usePreferences();
+  const newSince = React.useContext(NewSinceContext);
   const currency = manifest.application.currency;
   const counts = new Map((list?.counts ?? []).map((c) => [c.filter, c.count]));
   const numeric = (f: ConnectionField) => f.type === 'money' || f.type === 'number';
@@ -377,6 +388,7 @@ export function ConsoleObjectPage({ manifest, object, filter, list, selectedKey,
               data-testid={`console-filter-${f.id}`}
             >
               {tb(t, f.label)}
+              {newSince?.filters.includes(`${object.id}:${f.id}`) ? <NewMark /> : null}
               {counts.has(f.id) ? <strong>{counts.get(f.id)}</strong> : null}
             </button>
           ))}
@@ -518,6 +530,7 @@ function RecordActions({ manifest, offered, formFor, busy, refusal, onPick, onSu
   onCancel: () => void;
 }) {
   const { t } = usePreferences();
+  const newSince = React.useContext(NewSinceContext);
   const actions = manifest.actions.filter((a) => offered.includes(a.id) && formFriendly(a));
   if (actions.length === 0) return null;
   const open = actions.find((a) => a.id === formFor);
@@ -533,10 +546,11 @@ function RecordActions({ manifest, offered, formFor, busy, refusal, onPick, onSu
               <Button key={a.id} size="xs" onClick={() => onPick(a)} disabled={busy !== null} data-testid={`console-action-${a.id}`}>
                 {busy === a.id ? <Loader2 size={11} className="pipeline-spin" aria-hidden="true" /> : null}
                 {tb(t, a.name)}
+                {newSince?.actions.includes(a.id) ? <NewMark /> : null}
               </Button>
             ))}
           </div>
-          {refusal ? <p className="oc-approval-outcome warn" role="alert" data-testid="console-action-refusal">{tb(t, refusal)}</p> : null}
+          {refusal ? <p className="rt-approval-outcome warn" role="alert" data-testid="console-action-refusal">{tb(t, refusal)}</p> : null}
         </>
       )}
     </div>
@@ -833,6 +847,7 @@ export function ConnectAppPanel({ projectName, busy, error, initialAddress, onCo
 
 type ConsolePage =
   | { readonly kind: 'overview' }
+  | { readonly kind: 'changes' }
   | { readonly kind: 'object'; readonly id: string }
   | { readonly kind: 'report'; readonly id: string }
   | { readonly kind: 'data' }
@@ -1069,10 +1084,17 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
       label: t('今日概览', 'Today'),
       ...(openCount ? { badge: <Pill tone="bg-primary-soft text-primary" testId="console-open-approvals">{t(`${openCount} 待批准`, `${openCount} to approve`)}</Pill> } : {}),
     },
-    ...manifest.objects.map((o) => ({ page: { kind: 'object', id: o.id } as ConsolePage, icon: <Table2 size={15} />, label: tb(t, o.name) })),
-    ...manifest.reports.map((r) => ({ page: { kind: 'report', id: r.id } as ConsolePage, icon: <BarChart3 size={15} />, label: tb(t, r.name) })),
+    ...manifest.objects.map((o) => ({
+      page: { kind: 'object', id: o.id } as ConsolePage, icon: <Table2 size={15} />, label: tb(t, o.name),
+      ...(record.newSince?.objects.includes(o.id) ? { badge: <NewMark /> } : {}),
+    })),
+    ...manifest.reports.map((r) => ({
+      page: { kind: 'report', id: r.id } as ConsolePage, icon: <BarChart3 size={15} />, label: tb(t, r.name),
+      ...(record.newSince?.reports.includes(r.id) ? { badge: <NewMark /> } : {}),
+    })),
     ...(manifest.dataIssues ? [{ page: { kind: 'data' } as ConsolePage, icon: <ShieldCheck size={15} />, label: t('数据体检', 'Data check') }] : []),
     { page: { kind: 'rules' }, icon: <BookOpen size={15} />, label: t('业务规则', 'Business rules') },
+    ...(manifest.releases ? [{ page: { kind: 'changes' } as ConsolePage, icon: <History size={15} />, label: t('需求变化', 'Requirement changes') }] : []),
     {
       page: { kind: 'connection' },
       icon: <Plug size={15} />,
@@ -1089,6 +1111,8 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
     body = <ConsoleRulesPage suite={suite} />;
   } else if (blocked || currentError) {
     body = null;
+  } else if (page.kind === 'changes') {
+    body = <ConsoleChangesPage projectId={projectId} onConnectionChanged={(r) => setConnectedApp(projectId, r)} />;
   } else if (page.kind === 'overview') {
     body = overview.data ? (
       <ConsoleOverviewPage
@@ -1122,6 +1146,7 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
   }
 
   return (
+    <NewSinceContext.Provider value={record.newSince ?? null}>
     <div className="oc-shell" data-testid="operations-console">
       <header className="oc-header">
         <div className="flex min-w-0 items-center gap-2.5">
@@ -1193,6 +1218,7 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
         testId="console-disconnect-dialog"
       />
     </div>
+    </NewSinceContext.Provider>
   );
 }
 

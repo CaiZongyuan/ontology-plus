@@ -2,6 +2,7 @@ import type { Context, Hono } from 'hono';
 import {
   ConnectionError,
   checkManifestAgainstModel,
+  parseConnectionManifest,
   fingerprintManifest,
   type ConnectionClient,
   type ConnectionManifest,
@@ -11,6 +12,12 @@ import type { ConnectedAppRecord, WorkspaceStore } from '../packages/workspace-s
 import {
   approveInvocation,
   clientFor,
+  listReleases,
+  releaseVersion,
+  rollbackVersion,
+  upsertProposal,
+  verifyRelease,
+  type ProposalInput,
   confirmedModel,
   declineInvocation,
   listInvocations,
@@ -73,7 +80,27 @@ export function registerConnectedAppRoutes(app: Hono, store: WorkspaceStore, opt
       checkedAt: now,
       // Keep the chosen identity while the application still declares it.
       actingIdentity: manifest.actors.some((a) => a.id === previous?.actingIdentity) ? previous!.actingIdentity! : null,
+      newSince: newSince(previous, manifest),
     });
+  }
+
+  /** What a re-check finds new since the version accepted before it (the console's 「新」 marks). */
+  function newSince(previous: ConnectedAppRecord | undefined, manifest: ConnectionManifest): ConnectedAppRecord['newSince'] {
+    if (!previous) return null;
+    const before = parseConnectionManifest(previous.manifest);
+    if (!before.ok) return null;
+    if (before.manifest.application.version === manifest.application.version) return previous.newSince ?? null;
+    const ids = <T extends { id: string }>(xs: readonly T[]) => new Set(xs.map((x) => x.id));
+    const added = <T extends { id: string }>(a: readonly T[], b: readonly T[]) => b.filter((x) => !ids(a).has(x.id)).map((x) => x.id);
+    return {
+      objects: added(before.manifest.objects, manifest.objects),
+      reports: added(before.manifest.reports, manifest.reports),
+      actions: added(before.manifest.actions, manifest.actions),
+      filters: manifest.objects.flatMap((o) => {
+        const was = before.manifest.objects.find((x) => x.id === o.id);
+        return was ? added(was.filters, o.filters).map((f) => `${o.id}:${f}`) : [];
+      }),
+    };
   }
 
   app.get('/api/projects/:id/connected-app', (c) => {
@@ -168,6 +195,37 @@ export function registerConnectedAppRoutes(app: Hono, store: WorkspaceStore, opt
   app.get('/api/projects/:id/console/reports/:reportId', (c) =>
     consoleRead(c, (client, actor) => client.report(c.req.param('reportId'), actor)),
   );
+
+  // ─── Requirement changes as versions (spec §10.6, U-03, U-13) ───
+
+  app.get('/api/projects/:id/console/releases', async (c) => {
+    const result = await listReleases(deps, c.req.param('id'));
+    return result.ok ? c.json(result.value) : failureResponse(c, result);
+  });
+
+  /** Records what a requirement change asks and its acceptance checks (requirement owner, scripts). */
+  app.post('/api/projects/:id/change-proposals', async (c) => {
+    const projectId = c.req.param('id');
+    if (!store.getProject(projectId)) return c.json({ error: 'Project not found' }, 404);
+    const body = await c.req.json<ProposalInput>().catch(() => null);
+    if (!body?.targetVersion) return c.json({ error: { code: 'INVALID_PROPOSAL', message: 'targetVersion is required' } }, 422);
+    return c.json({ proposal: upsertProposal(deps, projectId, body) });
+  });
+
+  app.post('/api/projects/:id/console/releases/rollback', async (c) => {
+    const result = await rollbackVersion(deps, c.req.param('id'));
+    return result.ok ? c.json({ ...result.value, connectedApp: store.getConnectedApp(c.req.param('id')) }) : failureResponse(c, result);
+  });
+
+  app.post('/api/projects/:id/console/releases/:version/verify', async (c) => {
+    const result = await verifyRelease(deps, c.req.param('id'), c.req.param('version'));
+    return result.ok ? c.json({ proposal: result.value }) : failureResponse(c, result);
+  });
+
+  app.post('/api/projects/:id/console/releases/:version/release', async (c) => {
+    const result = await releaseVersion(deps, c.req.param('id'), c.req.param('version'));
+    return result.ok ? c.json({ proposal: result.value, connectedApp: store.getConnectedApp(c.req.param('id')) }) : failureResponse(c, result);
+  });
 
   // ─── Approved runtime changes (spec §10.1, ADR 0020) ───
 

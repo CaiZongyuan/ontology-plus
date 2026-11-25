@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import {
+  REVISIONS,
   planCommand,
   type Bilingual,
   type Change,
@@ -61,8 +62,20 @@ export interface TeacoRepository {
   /** Plans and applies one command in a single transaction: all its writes or none (spec §6.2). */
   execute(input: ExecuteInput): Promise<ExecuteResult>;
   findReceipt(actorId: string, idempotencyKey: string): Promise<CommandReceipt | null>;
+  /** The requirement version in use, once one was activated; null means the process default. */
+  getActiveRevision(): Promise<Revision | null>;
+  /**
+   * Puts another requirement version in use (go-live or roll-back, spec §10.6). Refused while data
+   * exists that the target version cannot represent (orders on hold before v4): it must be resolved
+   * by a business action first, never by rolling code back over committed transactions.
+   */
+  activateRevision(input: { readonly to: Revision; readonly from: Revision; readonly at: string; readonly requestId: string }): Promise<ActivateResult>;
   close(): void;
 }
+
+export type ActivateResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly code: 'ROLLBACK_BLOCKED'; readonly message: Bilingual };
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS account_managers (id TEXT PRIMARY KEY, display_name TEXT NOT NULL);
@@ -107,6 +120,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
   payload_json TEXT NOT NULL, occurred_at TEXT NOT NULL, correlation_id TEXT NOT NULL,
   delivery_state TEXT NOT NULL DEFAULT 'PENDING', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT);
 CREATE INDEX IF NOT EXISTS outbox_delivery ON outbox_events(delivery_state, next_attempt_at);
+CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
 
 /** Columns added after the first schema; applied once to databases created earlier. */
@@ -318,6 +332,41 @@ export function openTeacoRepository(path: string): TeacoRepository {
     },
     async findReceipt(actorId, key) {
       return receiptFor(actorId, key)?.receipt ?? null;
+    },
+    async getActiveRevision() {
+      const row = db.prepare("SELECT value FROM app_state WHERE key = 'active_revision'").get() as { value: string } | undefined;
+      return row && (REVISIONS as readonly string[]).includes(row.value) ? (row.value as Revision) : null;
+    },
+    async activateRevision({ to, from, at, requestId }) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        if (REVISIONS.indexOf(to) < REVISIONS.indexOf('v4')) {
+          const held = (db.prepare("SELECT COUNT(*) AS n FROM orders WHERE status = 'ON_HOLD'").get() as { n: number }).n;
+          if (held > 0) {
+            db.exec('ROLLBACK');
+            return {
+              ok: false,
+              code: 'ROLLBACK_BLOCKED',
+              message: {
+                zh: `有 ${held} 张订单处于「挂起中」，需求 ${to} 没有这个状态。请先解除挂起或取消这些订单，再回到 ${to}。`,
+                en: `${held} order(s) are on hold, which requirement ${to} has no state for. Release or cancel them first, then go back to ${to}.`,
+              },
+            };
+          }
+        }
+        run("INSERT INTO app_state (key, value) VALUES ('active_revision', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", to);
+        run('INSERT INTO audit_log (entity_type, entity_id, action, actor_id, before_json, after_json, request_id, created_at) VALUES (?,?,?,?,?,?,?,?)',
+          'release', 'active_revision', 'ACTIVATE', 'ontology-plus', JSON.stringify({ revision: from }), JSON.stringify({ revision: to }), requestId, at);
+        const back = REVISIONS.indexOf(to) < REVISIONS.indexOf(from);
+        run('INSERT INTO activity (at, kind, text_zh, text_en) VALUES (?,?,?,?)', at, back ? 'warning' : 'ok',
+          back ? `回到需求 ${to}（从 ${from}）` : `需求 ${to} 上线（原为 ${from}）`,
+          back ? `Back to requirement ${to} (from ${from})` : `Requirement ${to} is live (was ${from})`);
+        db.exec('COMMIT');
+        return { ok: true };
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
     },
     close() {
       db.close();

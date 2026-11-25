@@ -30,12 +30,15 @@ import type { TeacoRepository } from './db.js';
  */
 export interface TeacoRuntimeOptions {
   readonly repository: TeacoRepository;
+  /** The requirement version in use until another one is activated (then the database decides). */
   readonly revision: Revision;
   readonly now?: () => Date;
 }
 
 const PROTOCOL = 'ontology-plus-connect/1';
 const ACTOR_HEADER = 'X-Ontology-Plus-Actor';
+/** Reads (and previews of changes) as a staged version, without putting it in use (spec §10.6). */
+const RELEASE_HEADER = 'X-Ontology-Plus-Release';
 const bi = (zh: string, en: string): Bilingual => ({ zh, en });
 const atLeast = (r: Revision, min: Revision) => REVISIONS.indexOf(r) >= REVISIONS.indexOf(min);
 
@@ -47,6 +50,20 @@ const CHANNEL = { RETAIL: bi('零售', 'Retail'), WHOLESALE: bi('批发', 'Whole
 const REVISION_NAMES: Record<Revision, Bilingual> = {
   v1: bi('初版订单系统', 'First order system'), v2: bi('按月销售报表', 'Monthly sales report'),
   v3: bi('批发满 $1,000 打 95 折', '5% off wholesale from $1,000'), v4: bi('订单挂起', 'Orders on hold'),
+};
+
+/** What each version changes, in the shop's words; shown by Ontology Plus as the application's notes. */
+const RELEASE_NOTES: Record<Revision, Bilingual[]> = {
+  v1: [bi('客户、商品、订单和经营概览；发货时扣库存，缺货不能发货', 'Customers, teas, orders and the overview; stock is taken at shipping and backordered orders cannot ship')],
+  v2: [bi('新增「月度销售报表」：按下单月份分零售、批发，看订单数、货款、运费、税和合计；只算已发货和已送达，不含取消的订单', 'Adds the monthly sales report: per order month, retail and wholesale apart — orders, goods, shipping, tax and total; only shipped and delivered orders, not cancelled ones')],
+  v3: [
+    bi('批发订单货款满 $1,000 打 95 折，税按折后货款算，运费不变；零售不参加', 'Wholesale goods of $1,000 or more get 5% off; tax is on the discounted goods; shipping is unchanged; retail is not included'),
+    bi('已有订单不按新规则重算', 'Existing orders are not repriced'),
+  ],
+  v4: [
+    bi('新增订单状态「挂起中」：客户经理可以挂起自己客户还没发货的订单，只有店主能解除', 'Adds the On hold order state: account managers can hold their own customers’ unshipped orders; only the owner can release them'),
+    bi('挂起中的订单不能发货，仍算没发货的订单', 'Orders on hold cannot ship and still count as not shipped'),
+  ],
 };
 
 interface ActorDef {
@@ -75,7 +92,8 @@ function orderFilters(revision: Revision) {
   return [{ id: 'open', label: bi('没发货', 'Not shipped') }, ...statuses.map((s) => ({ id: s.toLowerCase(), label: STATUS_NAMES[s] })), { id: 'all', label: bi('全部', 'All') }];
 }
 
-export function buildManifest(data: Dataset, revision: Revision) {
+export function buildManifest(data: Dataset, revision: Revision, live: Revision = revision) {
+  const at = REVISIONS.indexOf(live);
   return {
     protocol: PROTOCOL,
     application: {
@@ -137,6 +155,11 @@ export function buildManifest(data: Dataset, revision: Revision) {
     actions: manifestActions(revision),
     dataIssues: true,
     activity: true,
+    releases: {
+      current: live,
+      previous: at > 0 ? REVISIONS[at - 1]! : null,
+      available: REVISIONS.map((v) => ({ version: v, name: REVISION_NAMES[v], notes: RELEASE_NOTES[v] })),
+    },
   };
 }
 
@@ -189,17 +212,31 @@ function productState(p: Product) {
 }
 
 export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
-  const { repository, revision } = options;
+  const { repository } = options;
   const now = options.now ?? (() => new Date());
-  const app = new Hono<{ Variables: { data: Dataset; actor: ActorDef } }>();
+  const app = new Hono<{ Variables: { data: Dataset; actor: ActorDef; revision: Revision; preview: boolean } }>();
+  const liveRevision = async () => (await repository.getActiveRevision()) ?? options.revision;
+  /** The version a request reads: the one in use, or a staged one named in the release header. */
+  const requestedRevision = (header: string | undefined): Revision | 'UNKNOWN' | null => {
+    const wanted = header?.trim();
+    if (!wanted) return null;
+    return (REVISIONS as readonly string[]).includes(wanted) ? (wanted as Revision) : 'UNKNOWN';
+  };
+  const unknownRelease = bi('这个应用没有这个版本。', 'This application has no such version.');
 
-  app.get('/', (c) =>
-    c.html(`<!doctype html><meta charset="utf-8"><title>TeaCo</title><body style="font-family:system-ui;padding:32px">
+  app.get('/', async (c) => {
+    const revision = await liveRevision();
+    return c.html(`<!doctype html><meta charset="utf-8"><title>TeaCo</title><body style="font-family:system-ui;padding:32px">
       <h1>TeaCo 茶叶订单系统</h1><p>需求 ${revision}：${REVISION_NAMES[revision].zh}。这是 Ontology Plus 的参考应用；接入清单在
-      <a href="/.well-known/ontology-plus.json">/.well-known/ontology-plus.json</a>。</p></body>`),
-  );
+      <a href="/.well-known/ontology-plus.json">/.well-known/ontology-plus.json</a>。</p></body>`);
+  });
 
-  app.get('/.well-known/ontology-plus.json', async (c) => c.json(buildManifest(await repository.loadDataset(), revision)));
+  app.get('/.well-known/ontology-plus.json', async (c) => {
+    const live = await liveRevision();
+    const wanted = requestedRevision(c.req.header(RELEASE_HEADER));
+    if (wanted === 'UNKNOWN') return c.json({ error: { code: 'UNKNOWN_RELEASE', message: unknownRelease } }, 404);
+    return c.json(buildManifest(await repository.loadDataset(), wanted ?? live, live));
+  });
 
   app.use('/runtime/*', async (c, next) => {
     const data = await repository.loadDataset();
@@ -207,8 +244,12 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
     const wanted = c.req.header(ACTOR_HEADER)?.trim();
     const actor = wanted ? list.find((a) => a.id === wanted) : list[0];
     if (!actor) return c.json({ error: `unknown acting identity "${wanted}"` }, 400);
+    const release = requestedRevision(c.req.header(RELEASE_HEADER));
+    if (release === 'UNKNOWN') return c.json({ error: { code: 'UNKNOWN_RELEASE', message: unknownRelease } }, 404);
     c.set('data', data);
     c.set('actor', actor);
+    c.set('revision', release ?? (await liveRevision()));
+    c.set('preview', release !== null);
     await next();
   });
 
@@ -240,7 +281,7 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
       const rows = scoped.filter((o) => match(o, filter || 'open'));
       return c.json({
         asOf: now().toISOString(), total: rows.length,
-        counts: orderFilters(revision).map((f) => ({ filter: f.id, count: scoped.filter((o) => match(o, f.id)).length })),
+        counts: orderFilters(c.var.revision).map((f) => ({ filter: f.id, count: scoped.filter((o) => match(o, f.id)).length })),
         rows: page(rows).map((o) => orderRow(o, customers, products)),
       });
     }
@@ -293,14 +334,14 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
       const lineCols = [{ key: 'tea', label: bi('茶', 'Tea'), type: 'text' }, { key: 'qty', label: bi('数量', 'Qty'), type: 'number' }, { key: 'unit', label: bi('单价', 'Unit price'), type: 'money' }, { key: 'amount', label: bi('金额', 'Amount'), type: 'money' }];
       const sumCols = [{ key: 'item', label: bi('项目', 'Item'), type: 'text' }, { key: 'amount', label: bi('金额', 'Amount'), type: 'money' }];
       return c.json({
-        asOf, key, values: row.values, flags: row.flags, actions: offeredActions(data, actor, revision, 'orders', key),
+        asOf, key, values: row.values, flags: row.flags, actions: c.var.preview ? [] : offeredActions(data, actor, c.var.revision, 'orders', key),
         sections: [
           { title: bi('明细', 'Lines'), columns: lineCols, rows: o.lines.map((l) => ({ tea: productName(products.get(l.sku), l.sku), qty: l.qty, unit: l.unitCents, amount: l.qty * l.unitCents })) },
           {
             title: bi('金额怎么算出来的', 'How the total adds up'), columns: sumCols,
             rows: [
               { item: bi('货款', 'Goods'), amount: o.goodsCents },
-              ...(atLeast(revision, 'v3') ? [{ item: bi('批发折扣', 'Wholesale discount'), amount: -o.discountCents }] : []),
+              ...(atLeast(c.var.revision, 'v3') ? [{ item: bi('批发折扣', 'Wholesale discount'), amount: -o.discountCents }] : []),
               { item: bi('运费', 'Shipping'), amount: o.shippingCents },
               { item: bi('税', 'Tax'), amount: o.taxCents },
               { item: bi('合计', 'Total'), amount: o.totalCents },
@@ -315,7 +356,7 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
       if (!p) return c.json({ error: 'not found' }, 404);
       const open = data.orders.filter((o) => OPEN_STATUSES.includes(o.status) && o.lines.some((l) => l.sku === key));
       return c.json({
-        asOf, key, actions: offeredActions(data, actor, revision, 'products', key),
+        asOf, key, actions: c.var.preview ? [] : offeredActions(data, actor, c.var.revision, 'products', key),
         values: { name: p.name, size: p.size, sku: p.sku, retail: p.retailCents, wholesale: p.wholesaleCents, stock: p.stock, state: productState(p) },
         sections: [{
           title: bi('等着这款茶的未发货订单', 'Unshipped orders waiting for this tea'),
@@ -348,8 +389,8 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
   });
 
   app.get('/runtime/reports/:reportId', (c) => {
-    if (c.req.param('reportId') !== 'monthly_sales' || !atLeast(revision, 'v2')) return c.json({ error: 'unknown report' }, 404);
-    const withDiscount = atLeast(revision, 'v3');
+    if (c.req.param('reportId') !== 'monthly_sales' || !atLeast(c.var.revision, 'v2')) return c.json({ error: 'unknown report' }, 404);
+    const withDiscount = atLeast(c.var.revision, 'v3');
     return c.json({
       asOf: now().toISOString(),
       title: bi('月度销售报表', 'Monthly sales'),
@@ -383,31 +424,50 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
   app.get('/runtime/activity', async (c) => c.json({ asOf: now().toISOString(), events: await repository.listActivity(20) }));
 
   // ─── Approved runtime changes (spec §10.1): prepare previews, invoke commits, invocations reads back ───
-  const offered = new Set<string>(manifestActions(revision).map((a) => a.id));
+  const offered = (revision: Revision) => new Set<string>(manifestActions(revision).map((a) => a.id));
   const statusFor = (code: string) => (code === 'FORBIDDEN' ? 403 : code === 'NOT_FOUND' ? 404 : code === 'VERSION_CONFLICT' || code === 'IDEMPOTENCY_KEY_REUSED' ? 409 : 422);
   const readBody = async (c: { req: { json: <T>() => Promise<T> } }) =>
     c.req.json<{ target?: string; params?: Record<string, unknown>; idempotencyKey?: string; expectedVersion?: number | null }>().catch(() => ({}) as Record<string, never>);
 
   app.post('/runtime/actions/:actionId/prepare', async (c) => {
     const actionId = c.req.param('actionId');
-    if (!offered.has(actionId)) return c.json({ error: { code: 'UNKNOWN_ACTION', message: bi('这个版本没有这个操作。', 'This version does not offer that action.') } }, 404);
+    if (!offered(c.var.revision).has(actionId)) return c.json({ error: { code: 'UNKNOWN_ACTION', message: bi('这个版本没有这个操作。', 'This version does not offer that action.') } }, 404);
     const body = await readBody(c);
-    const plan = planCommand(c.var.data, c.var.actor, revision, { action: actionId as CommandName, target: body.target, params: body.params });
+    const plan = planCommand(c.var.data, c.var.actor, c.var.revision, { action: actionId as CommandName, target: body.target, params: body.params });
     if (!plan.ok) return c.json({ error: { code: plan.code, message: plan.message } }, statusFor(plan.code));
     return c.json({ asOf: now().toISOString(), preview: { summary: plan.summary, effects: plan.effects, target: { key: plan.target.key, version: plan.target.version } } });
   });
 
   app.post('/runtime/actions/:actionId/invoke', async (c) => {
     const actionId = c.req.param('actionId');
-    if (!offered.has(actionId)) return c.json({ error: { code: 'UNKNOWN_ACTION', message: bi('这个版本没有这个操作。', 'This version does not offer that action.') } }, 404);
+    if (c.var.preview) {
+      return c.json({ error: { code: 'PREVIEW_READ_ONLY', message: bi('还没上线的版本只能预览，不能执行改动。', 'A version that is not live can be previewed, not changed.') } }, 409);
+    }
+    if (!offered(c.var.revision).has(actionId)) return c.json({ error: { code: 'UNKNOWN_ACTION', message: bi('这个版本没有这个操作。', 'This version does not offer that action.') } }, 404);
     const body = await readBody(c);
     if (!body.idempotencyKey) return c.json({ error: { code: 'INVALID_PARAMS', message: bi('缺少请求编号。', 'The request key is missing.') } }, 422);
     const result = await repository.execute({
-      actor: c.var.actor, revision, idempotencyKey: body.idempotencyKey, expectedVersion: body.expectedVersion ?? null, at: now().toISOString(),
+      actor: c.var.actor, revision: c.var.revision, idempotencyKey: body.idempotencyKey, expectedVersion: body.expectedVersion ?? null, at: now().toISOString(),
       request: { action: actionId as CommandName, target: body.target, params: body.params },
     });
     if (!result.ok) return c.json({ error: { code: result.code, message: result.message } }, statusFor(result.code));
     return c.json({ receipt: result.receipt, replayed: result.replayed });
+  });
+
+  // ─── Releases (spec §10.6): Ontology Plus puts a verified version in use, or goes back one ───
+  app.post('/runtime/releases/:version/activate', async (c) => {
+    if (c.var.actor.access.kind !== 'all' || c.var.actor.access.readOnly) {
+      return c.json({ error: { code: 'FORBIDDEN', message: bi('只有店主能让新版本上线或回退。', 'Only the owner can put a version live or go back.') } }, 403);
+    }
+    const to = requestedRevision(c.req.param('version'));
+    if (!to || to === 'UNKNOWN') return c.json({ error: { code: 'UNKNOWN_RELEASE', message: unknownRelease } }, 404);
+    const from = await liveRevision();
+    if (to !== from) {
+      const body = await c.req.json<{ requestId?: string }>().catch(() => ({}) as { requestId?: string });
+      const result = await repository.activateRevision({ to, from, at: now().toISOString(), requestId: body.requestId ?? `release-${to}-${Date.now()}` });
+      if (!result.ok) return c.json({ error: { code: result.code, message: result.message } }, 409);
+    }
+    return c.json({ current: to, previous: from });
   });
 
   app.get('/runtime/invocations/:key', async (c) => {

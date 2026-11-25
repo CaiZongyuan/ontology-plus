@@ -120,6 +120,7 @@ import {
   DesignBrief,
   DevelopmentPackageSnapshot,
   ActionInvocationRecord,
+  ChangeProposalRecord,
   ConnectedAppRecord,
   ExtractionJob,
   FourLayerAsset,
@@ -3996,6 +3997,18 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     saveConnectedApp(record) {
       if (!getProjectSuite(record.projectId)) throw new Error(`Project ${record.projectId} not found`);
       return putItem('connected_apps', record.projectId, record, record.projectId);
+    },
+
+    listChangeProposals(projectId) {
+      return listItems<ChangeProposalRecord>('change_proposals', projectId).sort((x, y) => x.targetVersion.localeCompare(y.targetVersion, undefined, { numeric: true }));
+    },
+
+    getChangeProposal(projectId, targetVersion) {
+      return getItem<ChangeProposalRecord>('change_proposals', `${projectId}::${targetVersion}`);
+    },
+
+    saveChangeProposal(record) {
+      return putItem('change_proposals', `${record.projectId}::${record.targetVersion}`, record, record.projectId);
     },
 
     listActionInvocations(projectId) {

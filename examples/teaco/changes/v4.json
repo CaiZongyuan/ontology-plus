@@ -1,0 +1,14 @@
+{
+  "targetVersion": "v4",
+  "title": { "zh": "订单挂起", "en": "Orders on hold" },
+  "request": {
+    "zh": "客户经理要能把自己客户还没发货的订单「挂起」，只有店主能解除，解除后回到挂起前的状态。挂起中的订单不能发货，仍算没发货的订单。",
+    "en": "Account managers can put their own customers’ unshipped orders on hold; only the owner can release them, back to the state before the hold. Orders on hold cannot ship and still count as not shipped."
+  },
+  "checks": [
+    { "id": "bb33-jonah-hold", "source": "Business Bench #33", "text": { "zh": "Jonah 可以挂起 1104（已付款）", "en": "Jonah can put order 1104 (paid) on hold" }, "kind": "prepare-ok", "actor": "jonah", "actionId": "hold_order", "target": "1104", "expectContains": "订单 1104：已付款 → 挂起中" },
+    { "id": "bb34-jonah-release", "source": "Business Bench #34", "text": { "zh": "Jonah 不能解除挂起", "en": "Jonah cannot release a hold" }, "kind": "prepare-refused", "actor": "jonah", "actionId": "release_order", "target": "1104", "code": "FORBIDDEN" },
+    { "id": "bb35-open-count", "source": "Business Bench #35", "text": { "zh": "挂起的订单仍算没发货：没发货的订单 34", "en": "Held orders still count as not shipped: 34 orders not shipped" }, "kind": "metric", "metricId": "open_orders", "expected": 34 },
+    { "id": "state-on-hold", "source": "Business Bench #33", "text": { "zh": "订单多出「挂起中」这一类", "en": "Orders gain the On hold state" }, "kind": "filter-exists", "objectId": "orders", "filterId": "on_hold" }
+  ]
+}

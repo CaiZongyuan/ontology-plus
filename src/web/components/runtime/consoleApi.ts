@@ -7,7 +7,20 @@ import type {
   ObjectListResponse,
   ReportResponse,
 } from '../../../packages/application-runtime/index.js';
-import type { ActionInvocationRecord, ConnectedAppRecord } from '../../../packages/workspace-store/index.js';
+import type { ActionInvocationRecord, ChangeProposalRecord, ConnectedAppRecord } from '../../../packages/workspace-store/index.js';
+
+/** The application's versions as the console shows them (TeaCo spec §10.6). */
+export interface ReleasesOverview {
+  readonly current: string;
+  readonly previous: string | null;
+  readonly versions: readonly {
+    readonly version: string;
+    readonly name: { readonly zh: string; readonly en: string };
+    readonly notes: readonly { readonly zh: string; readonly en: string }[];
+    readonly state: 'LIVE' | 'STAGED' | 'EARLIER';
+    readonly proposal: ChangeProposalRecord | null;
+  }[];
+}
 
 /** Why a console read could not be shown; the console explains each in business terms. */
 export type ConsoleErrorCode =
@@ -22,6 +35,10 @@ export type ConsoleErrorCode =
   | 'UNKNOWN_ACTOR'
   | 'EXPIRED'
   | 'APP_CHANGED'
+  | 'ROLLBACK_BLOCKED'
+  | 'NOT_VERIFIED'
+  | 'STALE_VERIFICATION'
+  | 'FORBIDDEN'
   | 'UNKNOWN';
 
 export class ConsoleRequestError extends Error {
@@ -97,6 +114,13 @@ export const consoleApi = {
     send<{ connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/connected-app`, json('POST', { baseUrl })).then((r) => r.connectedApp),
   check: (projectId: string) =>
     send<{ connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/connected-app/check`, json('POST')).then((r) => r.connectedApp),
+  releases: (projectId: string) => send<ReleasesOverview>(`/api/projects/${enc(projectId)}/console/releases`),
+  verifyRelease: (projectId: string, version: string) =>
+    send<{ proposal: ChangeProposalRecord }>(`/api/projects/${enc(projectId)}/console/releases/${enc(version)}/verify`, json('POST')).then((r) => r.proposal),
+  releaseVersion: (projectId: string, version: string) =>
+    send<{ proposal: ChangeProposalRecord; connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/console/releases/${enc(version)}/release`, json('POST')),
+  rollback: (projectId: string) =>
+    send<{ current: string; from: string; connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/console/releases/rollback`, json('POST')),
   /** The identity the AI Assistant acts as follows the console's identity switch. */
   setActingIdentity: (projectId: string, actor: string) =>
     send<{ connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/connected-app/acting-identity`, json('POST', { actor })).then((r) => r.connectedApp),

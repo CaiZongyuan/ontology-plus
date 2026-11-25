@@ -1,5 +1,8 @@
 export {
   ACTOR_HEADER,
+  RELEASE_HEADER,
+  ActivateResponseSchema,
+  type ActivateResponse,
   CONNECTION_PROTOCOL,
   MANIFEST_PATH,
   ManifestSchema,

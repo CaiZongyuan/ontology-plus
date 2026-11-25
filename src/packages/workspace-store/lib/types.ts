@@ -1066,6 +1066,8 @@ export interface ConnectedAppRecord {
    * runtime tools act as this identity and can never name another one.
    */
   readonly actingIdentity?: string | null;
+  /** What the last re-check found new compared with the version before it, for 「新」 marks. */
+  readonly newSince?: { readonly objects: readonly string[]; readonly reports: readonly string[]; readonly actions: readonly string[]; readonly filters: readonly string[] } | null;
 }
 
 /**
@@ -1095,6 +1097,72 @@ export interface ActionInvocationRecord {
   readonly approvedAt: string | null;
   readonly receipt: Readonly<Record<string, unknown>> | null;
   readonly failure: { readonly code: string; readonly message: { readonly zh: string; readonly en: string } } | null;
+  readonly log: readonly { readonly at: string; readonly text: { readonly zh: string; readonly en: string } }[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/**
+ * A requirement change as a version of the connected application (TeaCo spec §10.6, U-03, U-13):
+ * what the requirement asks, the checks that accept it, and what Ontology Plus observed when it
+ * previewed that version. It goes live only after it was verified against the version in use.
+ */
+export type ChangeProposalStatus = 'PROPOSED' | 'VERIFIED' | 'NOT_READY' | 'RELEASED' | 'ROLLED_BACK';
+
+export interface AcceptanceCheck {
+  readonly id: string;
+  /** Where the requirement came from, for example `Business Bench #28`. */
+  readonly source?: string;
+  readonly text: { readonly zh: string; readonly en: string };
+  /** Identity the check reads as; the first declared one when absent. */
+  readonly actor?: string;
+  readonly kind: 'metric' | 'report-cell' | 'report-sum' | 'prepare-ok' | 'prepare-refused' | 'filter-exists';
+  readonly metricId?: string;
+  readonly reportId?: string;
+  /** Row match for `report-cell`: column key → value (a bilingual cell matches either language). */
+  readonly where?: Readonly<Record<string, string | number>>;
+  readonly column?: string;
+  readonly expected?: number | string;
+  readonly actionId?: string;
+  readonly target?: string;
+  readonly params?: Readonly<Record<string, unknown>>;
+  /** For `prepare-ok`: text the preview must contain. */
+  readonly expectContains?: string;
+  /** For `prepare-refused`: the refusal code. */
+  readonly code?: string;
+  readonly objectId?: string;
+  readonly filterId?: string;
+}
+
+export interface AcceptanceResult {
+  readonly checkId: string;
+  readonly outcome: 'PASS' | 'FAIL';
+  readonly observed: { readonly zh: string; readonly en: string };
+}
+
+export interface ReleaseVerification {
+  readonly at: string;
+  readonly baseVersion: string;
+  /** Fingerprint of the version in use when verified; a release needs it unchanged. */
+  readonly baseFingerprint: string;
+  readonly changes: readonly { readonly area: 'object' | 'state' | 'report' | 'action' | 'metric' | 'identity'; readonly kind: 'added' | 'removed'; readonly text: { readonly zh: string; readonly en: string } }[];
+  readonly regression: readonly { readonly label: { readonly zh: string; readonly en: string }; readonly before: string; readonly after: string; readonly changed: boolean }[];
+  readonly results: readonly AcceptanceResult[];
+  readonly modelHints: readonly ConnectedAppHint[];
+}
+
+export interface ChangeProposalRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly targetVersion: string;
+  readonly title: { readonly zh: string; readonly en: string };
+  /** The requirement as the business stated it; null when only the application's notes are known. */
+  readonly request: { readonly zh: string; readonly en: string } | null;
+  readonly checks: readonly AcceptanceCheck[];
+  readonly status: ChangeProposalStatus;
+  readonly verification: ReleaseVerification | null;
+  readonly releasedAt: string | null;
+  readonly rolledBackAt: string | null;
   readonly log: readonly { readonly at: string; readonly text: { readonly zh: string; readonly en: string } }[];
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -1684,6 +1752,9 @@ export interface WorkspaceStore {
   listConnectedApps(): ConnectedAppRecord[];
   saveConnectedApp(record: ConnectedAppRecord): ConnectedAppRecord;
   deleteConnectedApp(projectId: string): boolean;
+  listChangeProposals(projectId: string): ChangeProposalRecord[];
+  getChangeProposal(projectId: string, targetVersion: string): ChangeProposalRecord | undefined;
+  saveChangeProposal(record: ChangeProposalRecord): ChangeProposalRecord;
   listActionInvocations(projectId: string): ActionInvocationRecord[];
   getActionInvocation(id: string): ActionInvocationRecord | undefined;
   saveActionInvocation(record: ActionInvocationRecord): ActionInvocationRecord;

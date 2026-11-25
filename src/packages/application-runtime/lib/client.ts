@@ -1,7 +1,10 @@
 import type { z } from 'zod';
 import {
   ACTOR_HEADER,
+  ActivateResponseSchema,
   AppErrorSchema,
+  RELEASE_HEADER,
+  type ActivateResponse,
   InvocationResponseSchema,
   InvokeResponseSchema,
   PrepareResponseSchema,
@@ -50,6 +53,8 @@ export interface ConnectionClientOptions {
   readonly baseUrl: string;
   readonly fetch?: FetchLike;
   readonly timeoutMs?: number;
+  /** Read a staged version instead of the one in use (read-only preview, spec §10.6). */
+  readonly release?: string;
 }
 
 export interface ObjectListQuery {
@@ -71,6 +76,8 @@ export interface ConnectionClient {
   invokeAction(actionId: string, actor: string, input: ActionInput & { idempotencyKey: string; expectedVersion: number | null }): Promise<InvokeResponse>;
   /** Reads back a receipt by request key; null when the application never committed it. */
   invocation(idempotencyKey: string, actor: string): Promise<ActionReceipt | null>;
+  /** Puts a version of the application in use (go-live or roll-back), as an identity allowed to. */
+  activateRelease(version: string, actor: string, requestId: string): Promise<ActivateResponse>;
 }
 
 export interface ActionInput {
@@ -108,6 +115,7 @@ export function createConnectionClient(options: ConnectionClientOptions): Connec
         headers: {
           accept: 'application/json',
           ...(actor ? { [ACTOR_HEADER]: actor } : {}),
+          ...(options.release ? { [RELEASE_HEADER]: options.release } : {}),
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -181,6 +189,8 @@ export function createConnectionClient(options: ConnectionClientOptions): Connec
       readPost(InvokeResponseSchema, `/runtime/actions/${enc(actionId)}/invoke`, actor, {
         target: input.target, params: input.params ?? {}, idempotencyKey: input.idempotencyKey, expectedVersion: input.expectedVersion,
       }),
+    activateRelease: (version, actor, requestId) =>
+      readPost(ActivateResponseSchema, `/runtime/releases/${enc(version)}/activate`, actor, { requestId }),
     async invocation(idempotencyKey, actor) {
       try {
         return (await read(InvocationResponseSchema, `/runtime/invocations/${enc(idempotencyKey)}`, actor)).receipt;

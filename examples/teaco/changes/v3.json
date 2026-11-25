@@ -1,0 +1,15 @@
+{
+  "targetVersion": "v3",
+  "title": { "zh": "批发满 $1,000 打 95 折", "en": "5% off wholesale from $1,000" },
+  "request": {
+    "zh": "批发订单货款满 $1,000 时打 95 折，税按折后货款算，运费不变；零售不参加。已经下的订单不重算。",
+    "en": "Wholesale orders with goods of $1,000 or more get 5% off; tax is charged on the discounted goods; shipping is unchanged; retail is not included. Existing orders are not repriced."
+  },
+  "checks": [
+    { "id": "bb30-cedar-grove", "source": "Business Bench #30", "text": { "zh": "Cedar Grove 买 90 袋 $12.50 的茶：货款 $1,125.00，折扣 $56.25，税 $88.17，合计 $1,171.92", "en": "Cedar Grove, 90 × $12.50: goods $1,125.00, discount $56.25, tax $88.17, total $1,171.92" }, "kind": "prepare-ok", "actionId": "create_order", "params": { "customer": "c129", "lines": [{ "sku": "HRB-ROOIBO-1LB", "qty": 90 }] }, "expectContains": "货款 $1,125.00，折扣 -$56.25，运费 $15.00，税 $88.17，合计 $1,171.92" },
+    { "id": "bb31-at-threshold", "source": "Business Bench #31", "text": { "zh": "正好 $1,000 也打折：折扣 $50.00，合计 $965.00", "en": "Exactly $1,000 is discounted: $50.00 off, total $965.00" }, "kind": "prepare-ok", "actionId": "create_order", "params": { "customer": "c125", "lines": [{ "sku": "HRB-ROOIBO-1LB", "qty": 80 }] }, "expectContains": "货款 $1,000.00，折扣 -$50.00，运费 $15.00，税 $0.00，合计 $965.00" },
+    { "id": "bb31-below-threshold", "source": "Business Bench #31", "text": { "zh": "$987.50 不打折：合计 $1,002.50", "en": "$987.50 is not discounted: total $1,002.50" }, "kind": "prepare-ok", "actionId": "create_order", "params": { "customer": "c125", "lines": [{ "sku": "HRB-ROOIBO-1LB", "qty": 79 }] }, "expectContains": "货款 $987.50，运费 $15.00，税 $0.00，合计 $1,002.50" },
+    { "id": "bb32-retail", "source": "Business Bench #32", "text": { "zh": "零售 $1,008 不打折：税 $83.16，合计 $1,091.16", "en": "Retail $1,008 is not discounted: tax $83.16, total $1,091.16" }, "kind": "prepare-ok", "actionId": "create_order", "params": { "customer": "c64", "lines": [{ "sku": "BLK-ASSAM-2OZ", "qty": 84 }] }, "expectContains": "货款 $1,008.00，运费 $0.00，税 $83.16，合计 $1,091.16" },
+    { "id": "import-not-repriced", "source": "spec §3.2 R-IMPORT-01", "text": { "zh": "已有订单不重算：已发货销售额仍是 $24,338.27", "en": "Existing orders are not repriced: shipped sales stay $24,338.27" }, "kind": "metric", "metricId": "shipped_sales", "expected": 2433827 }
+  ]
+}

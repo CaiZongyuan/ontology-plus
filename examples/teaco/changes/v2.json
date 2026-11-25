@@ -1,0 +1,17 @@
+{
+  "targetVersion": "v2",
+  "title": { "zh": "按月销售报表", "en": "Monthly sales report" },
+  "request": {
+    "zh": "店主想按月看生意：按下单月份，零售和批发分开，看订单数、货款、运费、税和合计；只算已发货和已送达的订单，取消的不算。客户经理只看到自己客户的数字。",
+    "en": "The owner wants to see the business by month: per order month, retail and wholesale apart — orders, goods, shipping, tax and total; only shipped and delivered orders, not cancelled ones. Account managers see only their own customers."
+  },
+  "checks": [
+    { "id": "bb27-retail-orders", "source": "Business Bench #27", "text": { "zh": "3 月零售：5 张订单", "en": "March retail: 5 orders" }, "kind": "report-cell", "reportId": "monthly_sales", "where": { "month": "2026-03", "channel": "零售" }, "column": "orders", "expected": 5 },
+    { "id": "bb27-retail-total", "source": "Business Bench #27", "text": { "zh": "3 月零售合计 $578.63", "en": "March retail total $578.63" }, "kind": "report-cell", "reportId": "monthly_sales", "where": { "month": "2026-03", "channel": "零售" }, "column": "total", "expected": 57863 },
+    { "id": "bb27-wholesale-orders", "source": "Business Bench #27", "text": { "zh": "3 月批发：5 张订单", "en": "March wholesale: 5 orders" }, "kind": "report-cell", "reportId": "monthly_sales", "where": { "month": "2026-03", "channel": "批发" }, "column": "orders", "expected": 5 },
+    { "id": "bb27-wholesale-total", "source": "Business Bench #27", "text": { "zh": "3 月批发合计 $4,753.80", "en": "March wholesale total $4,753.80" }, "kind": "report-cell", "reportId": "monthly_sales", "where": { "month": "2026-03", "channel": "批发" }, "column": "total", "expected": 475380 },
+    { "id": "bb28-year-total", "source": "Business Bench #28", "text": { "zh": "1–8 月合计加起来是 $24,338.27，与已发货销售额一致", "en": "January–August totals add up to $24,338.27, matching shipped sales" }, "kind": "report-sum", "reportId": "monthly_sales", "column": "total", "expected": 2433827 },
+    { "id": "bb29-jonah-orders", "source": "Business Bench #29", "text": { "zh": "Jonah 看 3 月批发：2 张订单", "en": "Jonah, March wholesale: 2 orders" }, "kind": "report-cell", "actor": "jonah", "reportId": "monthly_sales", "where": { "month": "2026-03", "channel": "批发" }, "column": "orders", "expected": 2 },
+    { "id": "bb29-jonah-total", "source": "Business Bench #29", "text": { "zh": "Jonah 看 3 月批发合计 $2,498.40，不含别人的客户", "en": "Jonah, March wholesale total $2,498.40, no other managers’ customers" }, "kind": "report-cell", "actor": "jonah", "reportId": "monthly_sales", "where": { "month": "2026-03", "channel": "批发" }, "column": "total", "expected": 249840 }
+  ]
+}

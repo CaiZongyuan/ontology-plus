@@ -23,3 +23,10 @@ business words without changing anything; `invoke` re-plans it inside one `BEGIN
 transaction, refuses a record that moved past the approved version, and writes the status, stock,
 inventory movement, audit record, outbox event and receipt together; `GET /runtime/invocations/:key`
 answers whether a request key committed. Older databases gain the new columns on start.
+
+Since M4 the four requirement versions are releases of the same application: the manifest declares
+`releases`, any version can be previewed read-only with `X-Ontology-Plus-Release`, and
+`POST /runtime/releases/:version/activate` puts one in use (stored in the database; `TEACO_REVISION`
+only sets the first one). Going back before v4 is refused while orders are on hold. `changes/`
+holds the requirement changes v2–v4 with acceptance checks transcribed from Business Bench #27–35;
+`pnpm teaco:changes -- --project <id>` records them in an Ontology Plus project.
