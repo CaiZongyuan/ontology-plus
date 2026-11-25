@@ -72,6 +72,8 @@ export interface AgentPanelProps {
   /** Oldest first, like a conversation. */
   runs: AgentRunView[];
   width: number;
+  /** Lets the composer attach tables (the requirements conversation, TeaCo spec U-01). */
+  acceptTables?: boolean;
   /** Wide docked mode for conversation-primary surfaces or side-by-side deep review. */
   wideMode?: boolean;
   onToggleWideMode?: () => void;
@@ -164,6 +166,7 @@ export function AgentPanel({
   subtitle,
   runs,
   width,
+  acceptTables = false,
   wideMode = false,
   onToggleWideMode,
   overlay = false,
@@ -640,6 +643,7 @@ export function AgentPanel({
           {...(onRemoveQueuedPrompt ? { onRemoveQueuedPrompt } : {})}
           visionSupported={composerVisionSupported ?? visionSupported ?? true}
           suppressVisionBanner={visionSupported === false}
+          acceptTables={acceptTables}
           {...(visionProviderLabel ? { visionProviderLabel } : {})}
           {...(visionModelLabel ? { visionModelLabel } : {})}
           {...(onOpenPlatformSettings ? { onOpenPlatformSettings } : {})}

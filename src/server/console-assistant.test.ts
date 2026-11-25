@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { serve, type ServerType } from '@hono/node-server';
@@ -114,5 +115,18 @@ describe('the Operations Console assistant', () => {
     expect(reply.content).toContain('重新核对');
     expect(reply.content).not.toContain('$');
     expect(t.store.getConnectedApp(t.projectId)!.status).toBe('DRIFTED');
+  }, 30000);
+
+  it('answers supplier costs from confirmed knowledge with its source row (T7-002)', async () => {
+    const t = await setup();
+    const sheet = readFileSync(fileURLToPath(new URL('../../examples/teaco/sources/leafline-quotes-2026-09.csv', import.meta.url)), 'utf8');
+    const attached = await t.post(`/api/projects/${t.projectId}/data-sources`, { fileName: 'leafline-quotes-2026-09.csv', content: sheet });
+    const none = await t.ask('WHT-SILVER-1LB 的进价是多少？');
+    expect(none.content).toContain('没有已确认的相关知识');
+    await t.post(`/api/projects/${t.projectId}/data-sources/${attached.body.source.id}/decide`, { decision: 'VERIFY' });
+    const reply = await t.ask('WHT-SILVER-1LB 的进价是多少？');
+    expect(reply.toolCalls?.[0]).toMatchObject({ toolName: 'read_knowledge', arguments: { subject: 'WHT-SILVER-1LB', predicate: 'unit_cost' } });
+    expect(reply.content).toContain('Silver Needle 的进价：$32.90');
+    expect(reply.content).toContain('来源「leafline-quotes-2026-09.csv」第 2 行');
   }, 30000);
 });

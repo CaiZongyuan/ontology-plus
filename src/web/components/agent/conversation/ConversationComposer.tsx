@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Clock, ImagePlus, Quote, Send, Square, X } from 'lucide-react';
+import { Clock, ImagePlus, Quote, Send, Sheet, Square, X } from 'lucide-react';
 import type { AgentImageAttachmentRef } from '../../../../packages/workspace-store/index.js';
 import { usePreferences } from '../../../i18n.js';
 import {
@@ -14,6 +14,7 @@ import {
   VisionCapabilityBanner,
   ingestClipboardOrSelectedImages,
 } from '../VisionAttachmentControls.js';
+import { summarizeTable, tableChipLabel } from './tableAttachment.js';
 import type { LocalizedText } from '../agentRun.js';
 import {
   appendUniqueQuote,
@@ -65,6 +66,8 @@ export interface ConversationComposerProps {
   onOpenLlmCenter?: () => void;
   suppressVisionBanner?: boolean;
   enableSelectionQuote?: boolean;
+  /** Lets the person attach a table; its header, column types and first rows go with the message. */
+  acceptTables?: boolean;
 }
 
 export interface SelectionQuotePortalProps {
@@ -183,10 +186,12 @@ export function ConversationComposer({
   onOpenLlmCenter,
   suppressVisionBanner = false,
   enableSelectionQuote = true,
+  acceptTables = false,
 }: ConversationComposerProps) {
-  const { t } = usePreferences();
+  const { t, locale } = usePreferences();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const tableInputRef = useRef<HTMLInputElement>(null);
 
   const [internalQuotes, setInternalQuotes] = useState<string[]>([]);
   const [internalAttachments, setInternalAttachments] = useState<AgentImageAttachmentRef[]>([]);
@@ -405,9 +410,13 @@ export function ConversationComposer({
                     data-testid="composer-quote-chip"
                     title={quote}
                   >
-                    <Quote size={11} className="composer-quote-chip-icon" aria-hidden="true" />
+                    {tableChipLabel(quote) ? (
+                      <Sheet size={11} className="composer-quote-chip-icon" aria-hidden="true" />
+                    ) : (
+                      <Quote size={11} className="composer-quote-chip-icon" aria-hidden="true" />
+                    )}
                     <span className="composer-quote-chip-text">
-                      {summarizeQuoteChipLabel(quote)}
+                      {tableChipLabel(quote) ?? summarizeQuoteChipLabel(quote)}
                     </span>
                     <button
                       type="button"
@@ -492,6 +501,42 @@ export function ConversationComposer({
                 >
                   <ImagePlus size={14} aria-hidden="true" />
                 </button>
+                {acceptTables ? (
+                  <>
+                    <button
+                      type="button"
+                      className="composer-attach-btn"
+                      data-testid="composer-attach-table-btn"
+                      disabled={disabled || busy}
+                      aria-label={t('附带表格', 'Attach a table')}
+                      title={t('附带表格：AI 会读表头、各列类型和前几行', 'Attach a table: the AI reads its header, column types and first rows')}
+                      onClick={() => tableInputRef.current?.click()}
+                    >
+                      <Sheet size={14} aria-hidden="true" />
+                    </button>
+                    <input
+                      ref={tableInputRef}
+                      type="file"
+                      accept=".csv,.tsv,text/csv"
+                      hidden
+                      data-testid="composer-table-input"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file) return;
+                        void file.text().then((content) => {
+                          const summary = summarizeTable(file.name, content, locale === 'en-US' ? 'en-US' : 'zh-CN');
+                          if (!summary) {
+                            setInlineError(t('没读出表头和数据行（只支持逗号分隔的表格，最大 1 MB）。', 'No header and rows could be read (comma-separated tables up to 1 MB only).'));
+                            return;
+                          }
+                          setInlineError(null);
+                          setQuotes([...effectiveQuotes, summary.text]);
+                        });
+                      }}
+                    />
+                  </>
+                ) : null}
                 <span className="agent-panel-composer-hint">
                   {runningCount > 0
                     ? t(

@@ -1,3 +1,4 @@
+import type { KnowledgeClaim, ProvenanceRecord } from '../../data-management/index.js';
 import fs from 'node:fs';
 import nodeModule from 'node:module';
 import os from 'node:os';
@@ -121,6 +122,9 @@ import {
   DevelopmentPackageSnapshot,
   ActionInvocationRecord,
   ChangeProposalRecord,
+  DataSourceRecord,
+  RuntimeEventReceipt,
+  RuntimeTaskRecord,
   ConnectedAppRecord,
   ExtractionJob,
   FourLayerAsset,
@@ -3997,6 +4001,50 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}): Works
     saveConnectedApp(record) {
       if (!getProjectSuite(record.projectId)) throw new Error(`Project ${record.projectId} not found`);
       return putItem('connected_apps', record.projectId, record, record.projectId);
+    },
+
+    getRuntimeEvent(projectId, eventId) {
+      return getItem<RuntimeEventReceipt>('runtime_events', `${projectId}::${eventId}`);
+    },
+
+    saveRuntimeEvent(record) {
+      return putItem('runtime_events', `${record.projectId}::${record.eventId}`, record, record.projectId);
+    },
+
+    listRuntimeTasks(projectId) {
+      return listItems<RuntimeTaskRecord>('runtime_tasks', projectId).sort((x, y) => y.createdAt.localeCompare(x.createdAt));
+    },
+
+    getRuntimeTask(id) {
+      return getItem<RuntimeTaskRecord>('runtime_tasks', id);
+    },
+
+    saveRuntimeTask(record) {
+      return putItem('runtime_tasks', record.id, record, record.projectId);
+    },
+
+    listDataSources(projectId) {
+      return listItems<DataSourceRecord>('data_sources', projectId).sort((x, y) => x.addedAt.localeCompare(y.addedAt));
+    },
+
+    saveDataSource(record) {
+      return putItem('data_sources', record.id, record, record.projectId);
+    },
+
+    listProvenanceRecords(projectId) {
+      return listItems<ProvenanceRecord>('provenance_records', projectId);
+    },
+
+    saveProvenanceRecords(records) {
+      for (const r of records) putItem('provenance_records', r.id, r, r.projectId);
+    },
+
+    listKnowledgeClaims(projectId) {
+      return listItems<KnowledgeClaim>('knowledge_claims', projectId).sort((x, y) => x.recordedAt.localeCompare(y.recordedAt) || x.id.localeCompare(y.id));
+    },
+
+    saveKnowledgeClaims(records) {
+      for (const r of records) putItem('knowledge_claims', r.id, r, r.projectId);
     },
 
     listChangeProposals(projectId) {

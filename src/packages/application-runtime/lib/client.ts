@@ -3,6 +3,8 @@ import {
   ACTOR_HEADER,
   ActivateResponseSchema,
   AppErrorSchema,
+  EventsResponseSchema,
+  type EventsResponse,
   RELEASE_HEADER,
   type ActivateResponse,
   InvocationResponseSchema,
@@ -78,6 +80,8 @@ export interface ConnectionClient {
   invocation(idempotencyKey: string, actor: string): Promise<ActionReceipt | null>;
   /** Puts a version of the application in use (go-live or roll-back), as an identity allowed to. */
   activateRelease(version: string, actor: string, requestId: string): Promise<ActivateResponse>;
+  /** Outbox events after a cursor, oldest first; delivery is at least once. */
+  events(actor: string, after: string, limit?: number): Promise<EventsResponse>;
 }
 
 export interface ActionInput {
@@ -189,6 +193,7 @@ export function createConnectionClient(options: ConnectionClientOptions): Connec
       readPost(InvokeResponseSchema, `/runtime/actions/${enc(actionId)}/invoke`, actor, {
         target: input.target, params: input.params ?? {}, idempotencyKey: input.idempotencyKey, expectedVersion: input.expectedVersion,
       }),
+    events: (actor, after, limit = 20) => read(EventsResponseSchema, `/runtime/events?after=${enc(after)}&limit=${limit}`, actor),
     activateRelease: (version, actor, requestId) =>
       readPost(ActivateResponseSchema, `/runtime/releases/${enc(version)}/activate`, actor, { requestId }),
     async invocation(idempotencyKey, actor) {

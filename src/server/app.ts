@@ -65,6 +65,7 @@ import {
 import { handleInspoProxyRequest, type InspoProxyRequestBody } from './inspo-proxy.js';
 import { registerApplicationDeliveryRoutes } from './application-delivery.js';
 import { registerConnectedAppRoutes } from './connected-apps.js';
+import { registerDataSourceRoutes } from './data-sources.js';
 import type { FetchLike } from '../packages/application-runtime/index.js';
 import { registerArtifactHistoryRoutes } from './artifact-history.js';
 import { registerContextSnapshotRoutes } from './context-snapshots.js';
@@ -1294,6 +1295,7 @@ export function createApiApp(
 
   registerApplicationDeliveryRoutes(app, store);
   registerConnectedAppRoutes(app, store, options?.connectedAppFetch ? { fetch: options.connectedAppFetch } : {});
+  registerDataSourceRoutes(app, store, options?.connectedAppFetch ? { fetch: options.connectedAppFetch } : {});
   registerArtifactHistoryRoutes(app, store);
   registerContextSnapshotRoutes(app, store);
   registerBusinessModelEditRoutes(app, store);

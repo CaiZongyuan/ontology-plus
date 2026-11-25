@@ -44,6 +44,7 @@ import {
 import { TiptapMarkdownEditor } from '../components/markdown/index.js';
 import { usePreferences } from '../i18n.js';
 import { ExtractionJobCard } from './ExtractionJobCard.js';
+import { ConsoleKnowledgeSection } from './operations-console/ConsoleKnowledge.js';
 
 // ─── 1. Capability Center: Legacy System Registry (存量系统接入管理) ──────────
 
@@ -2406,8 +2407,12 @@ export function KnowledgeCenterView() {
     },
   ];
 
+  // Knowledge Claims from a connected project's sources, read-only beside the written documents (spec §10.5).
+  const connected = data.connectedApps?.some((a) => a.projectId === data.activeProject.id) ?? false;
+
   return (
     <div className="flex flex-col gap-3.5">
+      {connected ? <ConsoleKnowledgeSection projectId={data.activeProject.id} /> : null}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-xs">
         <div className="inline-flex items-center gap-1 rounded-md bg-muted p-1">
           <Button

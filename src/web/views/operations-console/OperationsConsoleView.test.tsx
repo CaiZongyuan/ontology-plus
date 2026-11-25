@@ -17,6 +17,7 @@ import { ConsoleRequestError } from '../../components/runtime/consoleApi.js';
 import { hhmm } from '../../components/runtime/RuntimeApprovals.js';
 import { readFileSync } from 'node:fs';
 import { ProposalPanel } from './ConsoleChanges.js';
+import { ConsoleWorkCards, workCount } from './ConsoleKnowledge.js';
 import { prepareInvocation, approveInvocation, declineInvocation } from '../../../packages/runtime-gateway/index.js';
 import {
   ConnectAppPanel,
@@ -29,6 +30,7 @@ import {
   OperationsConsoleView,
   cardsToShow,
   formatConsoleValue,
+  issueStage,
   type ConsoleApprovals,
 } from './OperationsConsoleView.js';
 
@@ -283,5 +285,54 @@ describe('Operations Console (TeaCo spec v0.3.1 §11.1)', () => {
     const stale = render(<ProposalPanel version="v4" current="v2" proposal={proposal} busy={null} onVerify={() => undefined} onRelease={() => undefined} />);
     expect(stale).toContain('上次是对照 v1 核对的，现在用的是 v2，请重新核对');
     expect(stale).not.toContain('确认上线');
+  });
+
+  it('puts a shortage check, a disagreement between sources and new knowledge in 等你确认, in business words', async () => {
+    const { fetch } = await teaco('v1');
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const api = createApiApp(store, { connectedAppFetch: fetch });
+    const projectId = store.listProjects()[0]!.id;
+    const call = (method: string, path: string, body?: unknown) =>
+      Promise.resolve(api.request(path, { method, ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}) })).then((r) => r.json() as Promise<any>);
+    const base = `/api/projects/${projectId}`;
+    await call('POST', `${base}/connected-app`, { baseUrl: 'teaco.local' });
+    const amanda = (await call('GET', `${base}/console/objects/customers?filter=retail&limit=200`)).data.rows.find((r: any) => r.values.name === 'Amanda Bennett').key;
+    const inv = (await call('POST', `${base}/console/actions/create_order/prepare`, { actor: 'owner', params: { customer: amanda, lines: [{ sku: 'WHT-SILVER-1LB', qty: 5 }] } })).invocation;
+    await call('POST', `${base}/console/invocations/${inv.id}/approve`);
+    const src = (name: string) => readFileSync(fileURLToPath(new URL(`../../../../examples/teaco/sources/${name}`, import.meta.url)), 'utf8');
+    const sheet = await call('POST', `${base}/data-sources`, { fileName: 'leafline-quotes-2026-09.csv', content: src('leafline-quotes-2026-09.csv') });
+    await call('POST', `${base}/data-sources/${sheet.source.id}/decide`, { decision: 'VERIFY' });
+    await call('POST', `${base}/data-sources`, { fileName: 'leafline-quotes-2026-08.csv', content: src('leafline-quotes-2026-08.csv') });
+    await call('POST', `${base}/data-sources`, { fileName: 'leafline-email-2026-09.csv', content: src('leafline-email-2026-09.csv') });
+    const tasks = (await call('GET', `${base}/console/tasks`)).tasks;
+    const pending = await call('GET', `${base}/knowledge/pending`);
+    expect(workCount(tasks, pending)).toBe(4);
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      stubLocale(locale);
+      const html = render(<ConsoleWorkCards projectId={projectId} actor="owner" tasks={tasks} pending={pending} onChanged={() => undefined} />);
+      if (locale === 'zh-CN') {
+        expect(html).toContain('订单 1111 缺货，发不了');
+        expect(html).toContain('把Silver Needle（1 lb bag）的库存调到 5');
+        expect(html).toContain('资料说法不一致 · 需要你确认');
+        expect(html).toContain('$30.90');
+        expect(html).toContain('$32.90');
+        expect(html).toContain('「leafline-quotes-2026-08」带来');
+      } else {
+        expect(html).toContain('Order 1111 is short of stock and cannot ship');
+        expect(html).toContain('Use this one');
+      }
+      expectBusinessView(html);
+    }
+  });
+
+  it('moves a data problem through its stages with the approval that fixes it (U-11)', () => {
+    const issue = { id: 'negative-stock-X', title: { zh: 'a', en: 'a' }, detail: { zh: 'b', en: 'b' }, status: 'OPEN' as const, needsDecision: true, action: { actionId: 'repair_stock', target: 'X' } };
+    const inv = (status: string) => [{ actionId: 'repair_stock', target: 'X', status }] as never;
+    expect(issueStage(issue, [])).toBe('OPEN');
+    expect(issueStage(issue, inv('PENDING_APPROVAL'))).toBe('PROPOSED');
+    expect(issueStage(issue, inv('EXECUTING'))).toBe('APPROVED');
+    expect(issueStage(issue, inv('VERIFIED'))).toBe('APPLIED');
+    expect(issueStage(issue, inv('REJECTED'))).toBe('OPEN');
+    expect(issueStage({ ...issue, status: 'VERIFIED' }, inv('VERIFIED'))).toBe('VERIFIED');
   });
 });

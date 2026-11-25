@@ -5,6 +5,7 @@ import {
   type ConnectionManifest,
   type FetchLike,
 } from '../../application-runtime/index.js';
+import { queryClaims } from '../../data-management/index.js';
 import { openConnection, prepareInvocation, type GatewayFailure } from '../../runtime-gateway/index.js';
 import type { AgentSession, AgentToolCallTrace, WorkspaceStore } from '../../workspace-store/index.js';
 import { type AgentLocale, pickLocaleText } from './locale.js';
@@ -29,11 +30,29 @@ export const RUNTIME_TOOL_NAMES = [
   'read_business_record',
   'read_business_report',
   'propose_business_change',
+  'read_knowledge',
 ] as const;
 export type RuntimeToolName = (typeof RUNTIME_TOOL_NAMES)[number];
 export const isRuntimeToolName = (name: string): name is RuntimeToolName => (RUNTIME_TOOL_NAMES as readonly string[]).includes(name);
 
 export const RUNTIME_OPENAI_TOOLS: OpenAiFunctionTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'read_knowledge',
+      description:
+        'Read what is known from attached sources (for example supplier price sheets) about a record: confirmed statements with their source row and validity, disputes shown side by side. Optionally as of a date in the world and as known at a date.',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject: { type: 'string', description: 'A record key, for example a tea’s item code.' },
+          predicate: { type: 'string', description: 'What is asked about, for example unit_cost or lead_time_days.' },
+          asOf: { type: 'string', description: 'ISO date the answer is about; today when absent.' },
+          knownAt: { type: 'string', description: 'Only what was known by this ISO date.' },
+        },
+      },
+    },
+  },
   {
     type: 'function',
     function: {
@@ -181,6 +200,38 @@ export async function executeRuntimeTool(
   // The identity is the person's choice in the console; the model's arguments cannot change it.
   const actingIdentity = record?.actingIdentity ?? undefined;
   const fail = (message: string, code: string) => result(toolCallId, toolName, args, started, message, { error: { code } }, true);
+
+  if (toolName === 'read_knowledge') {
+    const asOf = typeof args.asOf === 'string' && args.asOf ? new Date(args.asOf).toISOString() : new Date().toISOString();
+    const knownAt = typeof args.knownAt === 'string' && args.knownAt ? new Date(args.knownAt).toISOString() : undefined;
+    const subjectRef = typeof args.subject === 'string' && args.subject.trim() ? args.subject.trim() : undefined;
+    const predicate = typeof args.predicate === 'string' && args.predicate.trim() ? args.predicate.trim() : undefined;
+    const claims = queryClaims(store.listKnowledgeClaims(session.projectId), { asOf, ...(knownAt ? { knownAt } : {}), ...(subjectRef ? { subjectRef } : {}), ...(predicate ? { predicate } : {}) });
+    const provenance = new Map(store.listProvenanceRecords(session.projectId).map((p) => [p.id, p]));
+    const files = new Map(store.listDataSources(session.projectId).map((s) => [s.id, s]));
+    if (claims.length === 0) {
+      return result(toolCallId, toolName, args, started, pickLocaleText(locale, '附加的资料里没有已确认的相关知识；不估算。', 'No confirmed knowledge about this in the attached sources; nothing is estimated.'), { claims: [] });
+    }
+    const lines = claims.map((c) => {
+      const p = provenance.get(c.provenanceIds[0] ?? '');
+      const file = p ? files.get(p.sourceId)?.fileName ?? '' : '';
+      const value = c.value.type === 'money' && typeof c.value.value === 'number'
+        ? new Intl.NumberFormat('en-US', { style: 'currency', currency: c.value.unit ?? 'USD' }).format(c.value.value / 100)
+        : String(c.value.value);
+      const span = `${c.validFrom.slice(0, 10)}${c.validTo ? ` → ${c.validTo.slice(0, 10)}` : ''}`;
+      const disputed = c.status === 'DISPUTED' ? pickLocaleText(locale, '（有争议，等你决定）', ' (disputed, waiting for your decision)') : '';
+      return pickLocaleText(
+        locale,
+        `- ${c.subject.label} 的${c.predicateLabel.zh}：${value}${disputed}，有效 ${span}；来源「${file}」${p?.locator.replace('row ', '第 ').concat(' 行') ?? ''}`,
+        `- ${c.subject.label}, ${c.predicateLabel.en}: ${value}${disputed}, valid ${span}; source "${file}" ${p?.locator ?? ''}`,
+      );
+    });
+    const answer = [
+      pickLocaleText(locale, `截至 ${asOf.slice(0, 10)}${knownAt ? `（按 ${knownAt.slice(0, 10)} 时已知的）` : ''}：`, `As of ${asOf.slice(0, 10)}${knownAt ? ` (as known on ${knownAt.slice(0, 10)})` : ''}:`),
+      ...lines,
+    ].join('\n');
+    return result(toolCallId, toolName, args, started, answer, { asOf, claims: claims.map((c) => ({ subject: c.subject, predicate: c.predicate, value: c.value, status: c.status, validFrom: c.validFrom, validTo: c.validTo })) });
+  }
 
   if (toolName === 'propose_business_change') {
     const actionId = typeof args.actionId === 'string' ? args.actionId : '';
@@ -346,6 +397,9 @@ export function renderRuntimeContext(store: WorkspaceStore, session: AgentSessio
       ? '- 想改任何东西，只能调用 propose_business_change：它只生成一张审批卡，用户批准后才执行。不要说已经执行了。'
       : '- To change anything, call propose_business_change: it only creates an approval card, and it runs after the person approves. Never say it already ran.',
     zh ? '- 用业务话回答，不要提接口、代码或内部编号。' : '- Answer in business language; do not mention interfaces, code or internal ids.',
+    zh
+      ? '- 供应商报价、进价、到货天数等来自附加资料，用 read_knowledge 查；有争议的要把两边都说出来，不要自己选。'
+      : '- Supplier quotes, unit costs and lead times come from attached sources: use read_knowledge; when disputed, state both sides and do not pick one.',
     zh ? '可读的业务对象：' : 'Business objects:',
     ...m.objects.map((o) => `- ${o.id}: ${tb(locale, o.name)}${o.filters.length ? ` (${zh ? '筛选' : 'filters'}: ${o.filters.map((f) => `${f.id}=${tb(locale, f.label)}`).join(', ')})` : ''}`),
     m.reports.length ? (zh ? '报表：' : 'Reports:') : '',
@@ -413,6 +467,13 @@ export function planConsoleTurn(manifest: ConnectionManifest | null, prompt: str
   }
 
   if (report) return { kind: 'tool', toolName: 'read_business_report', args: { reportId: report.id } };
+
+  // Supplier costs and lead times live in attached sources, not in the application.
+  if (/(进价|成本|供应商|报价|到货|交货|cost|supplier|quote|lead time)/i.test(prompt)) {
+    const predicate = /(到货|交货|lead time)/i.test(prompt) ? 'lead_time_days' : /(进价|成本|报价|cost|quote)/i.test(prompt) ? 'unit_cost' : undefined;
+    const date = /(\d{4}-\d{2}-\d{2})/.exec(prompt)?.[1];
+    return { kind: 'tool', toolName: 'read_knowledge', args: { ...(key ? { subject: key } : {}), ...(predicate ? { predicate } : {}), ...(date ? { asOf: date } : {}) } };
+  }
 
   if (key) return { kind: 'tool', toolName: 'read_business_record', args: { objectId: (object ?? manifest.objects[0])!.id, key } };
   if (filtered) return { kind: 'tool', toolName: 'list_business_records', args: { objectId: filtered.o.id, filter: filtered.f.id, limit: 10 } };

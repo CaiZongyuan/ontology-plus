@@ -13,7 +13,10 @@ import {
   approveInvocation,
   clientFor,
   listReleases,
+  listTasks,
+  pollEvents,
   releaseVersion,
+  settleTask,
   rollbackVersion,
   upsertProposal,
   verifyRelease,
@@ -164,16 +167,32 @@ export function registerConnectedAppRoutes(app: Hono, store: WorkspaceStore, opt
     }
   }
 
-  app.get('/api/projects/:id/console/overview', (c) =>
-    consoleRead(c, async (client, actor, manifest) => {
+  app.get('/api/projects/:id/console/overview', async (c) => {
+    // New events are read before the overview, so a shortage shows up as soon as the page opens.
+    await pollEvents(deps, c.req.param('id')).catch(() => undefined);
+    return consoleRead(c, async (client, actor, manifest) => {
       const [metrics, dataIssues, activity] = await Promise.all([
         client.metrics(actor),
         manifest.dataIssues ? client.dataIssues(actor) : Promise.resolve(null),
         manifest.activity ? client.activity(actor) : Promise.resolve(null),
       ]);
       return { metrics, dataIssues, activity };
-    }),
-  );
+    });
+  });
+
+  // ─── Work started by events (spec §10.3, U-14) ───
+
+  app.get('/api/projects/:id/console/tasks', async (c) => {
+    const projectId = c.req.param('id');
+    const polled = await pollEvents(deps, projectId);
+    return c.json({ tasks: listTasks(deps, projectId), ...(polled.ok ? { received: polled.value.received, duplicates: polled.value.duplicates } : { pollError: polled.code }) });
+  });
+
+  app.post('/api/projects/:id/console/tasks/:taskId/settle', async (c) => {
+    const body = await c.req.json<{ handedOver?: string; dismiss?: boolean }>().catch(() => ({}) as { handedOver?: string; dismiss?: boolean });
+    const result = settleTask(deps, c.req.param('id'), c.req.param('taskId'), body);
+    return result.ok ? c.json({ task: result.value }) : failureResponse(c, result);
+  });
 
   app.get('/api/projects/:id/console/objects/:objectId', (c) => {
     const limit = c.req.query('limit');

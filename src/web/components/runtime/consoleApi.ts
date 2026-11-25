@@ -7,7 +7,26 @@ import type {
   ObjectListResponse,
   ReportResponse,
 } from '../../../packages/application-runtime/index.js';
-import type { ActionInvocationRecord, ChangeProposalRecord, ConnectedAppRecord } from '../../../packages/workspace-store/index.js';
+import type { KnowledgeClaim, ProvenanceRecord } from '../../../packages/data-management/index.js';
+import type { ActionInvocationRecord, ChangeProposalRecord, ConnectedAppRecord, DataSourceRecord, RuntimeTaskRecord } from '../../../packages/workspace-store/index.js';
+
+export type SourceView = Omit<DataSourceRecord, 'content'>;
+export interface DataSourcesView {
+  readonly application: { readonly name: { readonly zh: string; readonly en: string }; readonly status: string; readonly checkedAt: string } | null;
+  readonly sources: readonly SourceView[];
+}
+export interface KnowledgeView {
+  readonly asOf: string;
+  readonly claims: readonly { readonly claim: KnowledgeClaim; readonly provenance: readonly (ProvenanceRecord & { readonly fileName: string | null; readonly family: string | null })[] }[];
+}
+export interface KnowledgePending {
+  readonly proposed: readonly { readonly source: SourceView; readonly count: number; readonly sample: readonly KnowledgeClaim[] }[];
+  readonly disputes: readonly {
+    readonly subject: KnowledgeClaim['subject'];
+    readonly predicateLabel: { readonly zh: string; readonly en: string };
+    readonly sides: readonly { readonly claim: KnowledgeClaim; readonly family: string | null; readonly fileName: string | null }[];
+  }[];
+}
 
 /** The application's versions as the console shows them (TeaCo spec §10.6). */
 export interface ReleasesOverview {
@@ -121,6 +140,18 @@ export const consoleApi = {
     send<{ proposal: ChangeProposalRecord; connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/console/releases/${enc(version)}/release`, json('POST')),
   rollback: (projectId: string) =>
     send<{ current: string; from: string; connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/console/releases/rollback`, json('POST')),
+  tasks: (projectId: string) => send<{ tasks: RuntimeTaskRecord[] }>(`/api/projects/${enc(projectId)}/console/tasks`).then((r) => r.tasks),
+  settleTask: (projectId: string, taskId: string, outcome: { handedOver?: string; dismiss?: boolean }) =>
+    send<{ task: RuntimeTaskRecord }>(`/api/projects/${enc(projectId)}/console/tasks/${enc(taskId)}/settle`, json('POST', outcome)).then((r) => r.task),
+  dataSources: (projectId: string) => send<DataSourcesView>(`/api/projects/${enc(projectId)}/data-sources`),
+  attachSource: (projectId: string, fileName: string, content: string) =>
+    send<{ source: SourceView; duplicate: boolean }>(`/api/projects/${enc(projectId)}/data-sources`, json('POST', { fileName, content })),
+  decideSource: (projectId: string, sourceId: string, decision: 'VERIFY' | 'REJECT') =>
+    send<{ changed: KnowledgeClaim[] }>(`/api/projects/${enc(projectId)}/data-sources/${enc(sourceId)}/decide`, json('POST', { decision })),
+  knowledge: (projectId: string, all = false) => send<KnowledgeView>(`/api/projects/${enc(projectId)}/knowledge${all ? '?all=1' : ''}`),
+  knowledgePending: (projectId: string) => send<KnowledgePending>(`/api/projects/${enc(projectId)}/knowledge/pending`),
+  decideClaim: (projectId: string, claimId: string, decision: 'VERIFY' | 'REJECT' | 'RETIRE') =>
+    send<{ changed: KnowledgeClaim[] }>(`/api/projects/${enc(projectId)}/knowledge/${enc(claimId)}/decide`, json('POST', { decision })),
   /** The identity the AI Assistant acts as follows the console's identity switch. */
   setActingIdentity: (projectId: string, actor: string) =>
     send<{ connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/connected-app/acting-identity`, json('POST', { actor })).then((r) => r.connectedApp),

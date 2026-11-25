@@ -1138,6 +1138,7 @@ export function ShellAgentPanel({
       <AgentPanel
         title={surface.title}
         {...(surface.subtitle ? { subtitle: surface.subtitle } : {})}
+        acceptTables={surface.sessionKind === 'REQUIREMENT'}
         runs={runs}
         width={width}
         wideMode={wideMode}

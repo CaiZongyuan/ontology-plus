@@ -25,3 +25,5 @@ export {
   type ReleaseView,
   type ReleasesOverview,
 } from './lib/releases.js';
+
+export { listTasks, pollEvents, settleTask, type PollResult } from './lib/events.js';

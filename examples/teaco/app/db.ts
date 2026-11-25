@@ -1,7 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import {
+  OPEN_STATUSES,
   REVISIONS,
   planCommand,
+  shortSkus,
   type Bilingual,
   type Change,
   type CommandActor,
@@ -62,6 +64,8 @@ export interface TeacoRepository {
   /** Plans and applies one command in a single transaction: all its writes or none (spec §6.2). */
   execute(input: ExecuteInput): Promise<ExecuteResult>;
   findReceipt(actorId: string, idempotencyKey: string): Promise<CommandReceipt | null>;
+  /** Outbox events after a position, oldest first (read by Ontology Plus, at least once). */
+  listOutbox(after: number, limit: number): Promise<{ events: OutboxEvent[]; cursor: number }>;
   /** The requirement version in use, once one was activated; null means the process default. */
   getActiveRevision(): Promise<Revision | null>;
   /**
@@ -71,6 +75,17 @@ export interface TeacoRepository {
    */
   activateRevision(input: { readonly to: Revision; readonly from: Revision; readonly at: string; readonly requestId: string }): Promise<ActivateResult>;
   close(): void;
+}
+
+export interface OutboxEvent {
+  readonly position: number;
+  readonly id: string;
+  readonly type: string;
+  readonly subject: string;
+  readonly version: number | null;
+  readonly time: string;
+  readonly correlationId: string;
+  readonly data: unknown;
 }
 
 export type ActivateResult =
@@ -194,6 +209,39 @@ export function openTeacoRepository(path: string): TeacoRepository {
   }
 
   /** Applies planned changes with conditional writes; any write that does not land aborts the transaction. */
+  /** Open orders that cannot ship from current stock (R-STOCK-02). */
+  function backordered(data: Dataset): Set<string> {
+    const products = new Map(data.products.map((p) => [p.sku, p]));
+    return new Set(data.orders.filter((o) => OPEN_STATUSES.includes(o.status) && shortSkus(o, products).length > 0).map((o) => o.number));
+  }
+
+  /**
+   * In the same transaction as the change: one `StockShortage` event per order that became
+   * backordered by it, with what each short tea needs and the demand of all open orders.
+   */
+  function recordShortages(before: ReadonlySet<string>, commandId: string, at: string): void {
+    const data = loadDatasetSync();
+    const products = new Map(data.products.map((p) => [p.sku, p]));
+    const open = data.orders.filter((o) => OPEN_STATUSES.includes(o.status));
+    for (const order of open) {
+      if (before.has(order.number)) continue;
+      const short = shortSkus(order, products);
+      if (!short.length) continue;
+      const items = short.map((sku) => ({
+        sku,
+        name: products.get(sku)
+          ? { zh: `${products.get(sku)!.name}（${products.get(sku)!.size}）`, en: `${products.get(sku)!.name} (${products.get(sku)!.size})` }
+          : { zh: sku, en: sku },
+        need: order.lines.filter((l) => l.sku === sku).reduce((t, l) => t + l.qty, 0),
+        stock: products.get(sku)?.stock ?? 0,
+        locked: products.get(sku)?.stockBlocked ?? false,
+        openDemand: open.flatMap((o) => o.lines).filter((l) => l.sku === sku).reduce((t, l) => t + l.qty, 0),
+      }));
+      run('INSERT INTO outbox_events (event_id, type, aggregate_id, aggregate_version, payload_json, occurred_at, correlation_id) VALUES (?,?,?,?,?,?,?)',
+        `${commandId}:shortage:${order.number}`, 'StockShortage', order.number, order.version, JSON.stringify({ order: order.number, items }), at, commandId);
+    }
+  }
+
   function applyChanges(changes: readonly Change[], actorId: string, commandId: string, at: string): { version: number | null; state: string | null } {
     const guard = (result: { changes: number | bigint }, what: string) => {
       if (Number(result.changes) !== 1) throw new Error(`CONFLICT: ${what}`);
@@ -310,7 +358,9 @@ export function openTeacoRepository(path: string): TeacoRepository {
           };
         }
         const commandId = `cmd-${crypto.randomUUID()}`;
+        const backorderedBefore = backordered(data);
         const after = applyChanges(plan.changes, input.actor.id, commandId, input.at);
+        recordShortages(backorderedBefore, commandId, input.at);
         const created = plan.changes.find((c): c is Extract<Change, { kind: 'create-order' }> => c.kind === 'create-order');
         const key = plan.target.key ?? created?.order.number ?? null;
         const receipt: CommandReceipt = {
@@ -332,6 +382,15 @@ export function openTeacoRepository(path: string): TeacoRepository {
     },
     async findReceipt(actorId, key) {
       return receiptFor(actorId, key)?.receipt ?? null;
+    },
+    async listOutbox(after, limit) {
+      const rows = all('SELECT rowid AS position, event_id, type, aggregate_id, aggregate_version, payload_json, occurred_at, correlation_id FROM outbox_events WHERE rowid > ? ORDER BY rowid LIMIT ?', after, limit);
+      const events = rows.map((r) => ({
+        position: r.position as number, id: r.event_id as string, type: r.type as string, subject: r.aggregate_id as string,
+        version: (r.aggregate_version as number | null) ?? null, time: r.occurred_at as string, correlationId: r.correlation_id as string,
+        data: JSON.parse(r.payload_json as string) as unknown,
+      }));
+      return { events, cursor: events.at(-1)?.position ?? after };
     },
     async getActiveRevision() {
       const row = db.prepare("SELECT value FROM app_state WHERE key = 'active_revision'").get() as { value: string } | undefined;

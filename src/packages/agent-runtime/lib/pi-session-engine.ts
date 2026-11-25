@@ -1331,6 +1331,38 @@ function buildFauxMockModels(
         );
       }
 
+      // A table attached to the requirements conversation (TeaCo spec U-01): answer from its header,
+      // column types and first rows, which is all that travels with the message.
+      if (session.agentKind === 'REQUIREMENT' && !parsedAction) {
+        const attached = [...userPrompt.matchAll(/^>?\s*\[(?:附带表格：(.+?)（(\d+) 行）|Attached table: (.+?) \((\d+) rows\))\]\s*\n>?\s*(?:列：|Columns: )(.+)$/gm)];
+        if (attached.length > 0) {
+          const lines = attached.map((m) => {
+            const name = m[1] ?? m[3] ?? '';
+            const rows = m[2] ?? m[4] ?? '';
+            const columns = (m[5] ?? '').split(/、|, (?=[^)）]*(?:（|\(|$))/).map((c) => c.replace(/（.*$|\(.*$/, '').trim()).filter(Boolean);
+            return pickLocaleText(
+              loc,
+              `- 「${name}」${rows} 行，列：${columns.join('、')}`,
+              `- "${name}": ${rows} rows; columns: ${columns.join(', ')}`,
+            );
+          });
+          return fauxAssistantMessage([
+            fauxText(
+              [
+                pickLocaleText(loc, '读到了你附带的表格（只看了表头、各列类型和前几行）：', 'I read the attached table(s) (header, column types and first rows only):'),
+                ...lines,
+                '',
+                pickLocaleText(
+                  loc,
+                  '接下来请确认：每张表描述的是哪类业务对象；哪一列能唯一认出一条记录；哪些列必须填写；有没有格式不一的格子需要统一规则。确认后我把它们写进需求。',
+                  'Next, please confirm: which kind of business record each table describes; which column identifies a record; which columns are required; and how cells with inconsistent formats should be treated. I will then write them into the requirements.',
+                ),
+              ].join('\n'),
+            ),
+          ]);
+        }
+      }
+
       // 「继续这一屏」 runs one screen helper without the lead: its first call lands here, and
       // the recorded build answers it (this time without the recorded mistake).
       if (session.agentKind === 'PROTOTYPE_CO_DESIGN' && isMockPrototypeSubagentPrompt(userPrompt)) {

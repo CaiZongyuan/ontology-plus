@@ -1,3 +1,4 @@
+import type { KnowledgeClaim, ProvenanceRecord } from '../../data-management/index.js';
 import {
   PROJECT_STEP_IDS,
   type BilingualText,
@@ -1068,6 +1069,46 @@ export interface ConnectedAppRecord {
   readonly actingIdentity?: string | null;
   /** What the last re-check found new compared with the version before it, for 「新」 marks. */
   readonly newSince?: { readonly objects: readonly string[]; readonly reports: readonly string[]; readonly actions: readonly string[]; readonly filters: readonly string[] } | null;
+  /** Position in the application's event outbox up to which events were received. */
+  readonly eventCursor?: string | null;
+}
+
+/** One event received from a connected application; its id makes a repeat harmless (spec §10.3). */
+export interface RuntimeEventReceipt {
+  readonly projectId: string;
+  readonly eventId: string;
+  readonly type: string;
+  readonly subject: string;
+  readonly time: string;
+  readonly receivedAt: string;
+  readonly data: unknown;
+}
+
+/**
+ * Work an event started (spec §10.3, U-14): investigated against the latest state, then put in
+ * front of a person in 等你确认 with what was found and what could be done. One task per event.
+ */
+export type RuntimeTaskStatus = 'OPEN' | 'HANDED_OVER' | 'NO_LONGER_NEEDED' | 'DISMISSED';
+
+export interface RuntimeTaskRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly kind: 'STOCK_SHORTAGE';
+  readonly eventId: string;
+  readonly subject: string;
+  readonly status: RuntimeTaskStatus;
+  readonly title: { readonly zh: string; readonly en: string };
+  readonly findings: readonly { readonly zh: string; readonly en: string }[];
+  readonly suggestions: readonly {
+    readonly actionId: string;
+    readonly target: string;
+    readonly params: Readonly<Record<string, unknown>>;
+    readonly label: { readonly zh: string; readonly en: string };
+  }[];
+  readonly invocationIds: readonly string[];
+  readonly log: readonly { readonly at: string; readonly text: { readonly zh: string; readonly en: string } }[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 
 /**
@@ -1166,6 +1207,29 @@ export interface ChangeProposalRecord {
   readonly log: readonly { readonly at: string; readonly text: { readonly zh: string; readonly en: string } }[];
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/**
+ * A table or document attached to a connected project as a data source (TeaCo spec §8.2, U-10).
+ * Files with the same `family` are versions of one source: a newer one supersedes an older one's
+ * statements from its own start date, while different families can dispute each other.
+ */
+export interface DataSourceRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly family: string;
+  readonly fileName: string;
+  readonly kind: 'TABLE';
+  readonly hash: string;
+  readonly content: string;
+  readonly rowCount: number;
+  readonly columns: readonly { readonly name: string; readonly type: string; readonly problems: readonly { readonly row: number; readonly value: string }[] }[];
+  /** The column holding the application's record keys, and which object they are; null when none matched. */
+  readonly keyColumn: string | null;
+  readonly objectId: string | null;
+  readonly validFromColumn: string | null;
+  readonly addedAt: string;
+  readonly summary: { readonly claims: number; readonly duplicates: number; readonly disputed: number; readonly superseded: number };
 }
 
 export interface ExtractionJob {
@@ -1752,6 +1816,17 @@ export interface WorkspaceStore {
   listConnectedApps(): ConnectedAppRecord[];
   saveConnectedApp(record: ConnectedAppRecord): ConnectedAppRecord;
   deleteConnectedApp(projectId: string): boolean;
+  getRuntimeEvent(projectId: string, eventId: string): RuntimeEventReceipt | undefined;
+  saveRuntimeEvent(record: RuntimeEventReceipt): RuntimeEventReceipt;
+  listRuntimeTasks(projectId: string): RuntimeTaskRecord[];
+  getRuntimeTask(id: string): RuntimeTaskRecord | undefined;
+  saveRuntimeTask(record: RuntimeTaskRecord): RuntimeTaskRecord;
+  listDataSources(projectId: string): DataSourceRecord[];
+  saveDataSource(record: DataSourceRecord): DataSourceRecord;
+  listProvenanceRecords(projectId: string): ProvenanceRecord[];
+  saveProvenanceRecords(records: readonly ProvenanceRecord[]): void;
+  listKnowledgeClaims(projectId: string): KnowledgeClaim[];
+  saveKnowledgeClaims(records: readonly KnowledgeClaim[]): void;
   listChangeProposals(projectId: string): ChangeProposalRecord[];
   getChangeProposal(projectId: string, targetVersion: string): ChangeProposalRecord | undefined;
   saveChangeProposal(record: ChangeProposalRecord): ChangeProposalRecord;

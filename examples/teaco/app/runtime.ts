@@ -155,6 +155,7 @@ export function buildManifest(data: Dataset, revision: Revision, live: Revision 
     actions: manifestActions(revision),
     dataIssues: true,
     activity: true,
+    events: true,
     releases: {
       current: live,
       previous: at > 0 ? REVISIONS[at - 1]! : null,
@@ -468,6 +469,20 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
       if (!result.ok) return c.json({ error: { code: result.code, message: result.message } }, 409);
     }
     return c.json({ current: to, previous: from });
+  });
+
+  // ─── Events (spec §10.3): the transactional outbox, read in order from a position ───
+  app.get('/runtime/events', async (c) => {
+    if (c.var.actor.access.kind !== 'all') {
+      return c.json({ error: { code: 'FORBIDDEN', message: bi('只有看得到全店的身份能读事件。', 'Only a whole-shop identity can read events.') } }, 403);
+    }
+    const after = Math.max(Number(c.req.query('after') ?? 0) || 0, 0);
+    const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 20) || 20, 1), 100);
+    const { events, cursor } = await repository.listOutbox(after, limit);
+    return c.json({
+      cursor: String(cursor),
+      events: events.map((e) => ({ id: e.id, type: e.type, subject: e.subject, version: e.version, time: e.time, correlationId: e.correlationId, data: e.data })),
+    });
   });
 
   app.get('/runtime/invocations/:key', async (c) => {

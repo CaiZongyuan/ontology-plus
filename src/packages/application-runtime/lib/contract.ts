@@ -11,6 +11,20 @@ export const ACTOR_HEADER = 'X-Ontology-Plus-Actor';
 /** Reads a staged version of the application as a read-only preview. */
 export const RELEASE_HEADER = 'X-Ontology-Plus-Release';
 export const ActivateResponseSchema = z.object({ current: z.string(), previous: z.string() });
+export const EventsResponseSchema = z.object({
+  cursor: z.string(),
+  events: z.array(z.object({
+    id: z.string().min(1),
+    type: z.string().min(1),
+    subject: z.string(),
+    version: z.number().nullable().default(null),
+    time: z.string(),
+    correlationId: z.string().optional(),
+    data: z.unknown(),
+  })),
+});
+export type EventsResponse = z.infer<typeof EventsResponseSchema>;
+export type RuntimeEvent = EventsResponse['events'][number];
 export type ActivateResponse = z.infer<typeof ActivateResponseSchema>;
 
 export const BilingualSchema = z.object({ zh: z.string().min(1), en: z.string().min(1) });
@@ -107,6 +121,8 @@ export const ManifestSchema = z
     actions: z.array(ActionSchema).default([]),
     dataIssues: z.boolean().default(false),
     activity: z.boolean().default(false),
+    /** Whether `GET /runtime/events` serves the application's outbox (spec §10.3). */
+    events: z.boolean().default(false),
     /**
      * Versions of the application (spec §10.6). `current` is in use; any other one can be read
      * through `X-Ontology-Plus-Release` as a read-only preview and put in use by activating it.

@@ -221,6 +221,18 @@ const CATALOG_ENTRIES: readonly ToolProgressSpec[] = [
     },
   },
   {
+    toolName: 'read_knowledge',
+    iconKind: 'document',
+    label: {
+      zh: '查看资料里记下的知识',
+      en: 'Read knowledge from attached sources',
+    },
+    activeLabel: {
+      zh: '正在查看资料里记下的知识',
+      en: 'Reading knowledge from attached sources',
+    },
+  },
+  {
     toolName: 'propose_policy_writeback',
     iconKind: 'action',
     label: {

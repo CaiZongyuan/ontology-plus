@@ -29,7 +29,7 @@ import {
   type ReportResponse,
 } from '../../../packages/application-runtime/index.js';
 import type { OntologySuite } from '../../../packages/ontology-core/index.js';
-import type { ActionInvocationRecord, ConnectedAppRecord } from '../../../packages/workspace-store/index.js';
+import type { ActionInvocationRecord, ConnectedAppRecord, RuntimeTaskRecord } from '../../../packages/workspace-store/index.js';
 import { useWorkbenchStore } from '../../api.js';
 import { Button, ConfirmDialog } from '../../components/beautifui/index.js';
 import { usePreferences } from '../../i18n.js';
@@ -44,8 +44,9 @@ import {
   hhmm,
   useInvocationsChanged,
 } from '../../components/runtime/RuntimeApprovals.js';
-import { ConsoleRequestError, consoleApi, type ConsoleOverview } from '../../components/runtime/consoleApi.js';
+import { ConsoleRequestError, consoleApi, type ConsoleOverview, type KnowledgePending } from '../../components/runtime/consoleApi.js';
 import { ConsoleChangesPage } from './ConsoleChanges.js';
+import { ConsoleKnowledgeSection, ConsoleSourcesSection, ConsoleWorkCards, workCount } from './ConsoleKnowledge.js';
 import './operations-console.css';
 
 /**
@@ -74,12 +75,12 @@ export function formatConsoleValue(value: unknown, type: FieldType | 'count', t:
 }
 
 const ISSUE_STATUS: Record<DataIssueStatus, { label: Bilingual; tone: string }> = {
-  OPEN: { label: { zh: '等你确认', en: 'Needs you' }, tone: 'bg-warning-soft text-warning' },
+  OPEN: { label: { zh: '待处理', en: 'To handle' }, tone: 'bg-warning-soft text-warning' },
   INVESTIGATING: { label: { zh: '调查中', en: 'Investigating' }, tone: 'bg-primary-soft text-primary' },
   PROPOSED: { label: { zh: '已提方案', en: 'Fix proposed' }, tone: 'bg-primary-soft text-primary' },
   APPROVED: { label: { zh: '已批准', en: 'Approved' }, tone: 'bg-primary-soft text-primary' },
-  APPLIED: { label: { zh: '已修正', en: 'Applied' }, tone: 'bg-primary-soft text-primary' },
-  VERIFIED: { label: { zh: '已处理', en: 'Handled' }, tone: 'bg-success-soft text-success' },
+  APPLIED: { label: { zh: '已应用', en: 'Applied' }, tone: 'bg-primary-soft text-primary' },
+  VERIFIED: { label: { zh: '已核验', en: 'Verified' }, tone: 'bg-success-soft text-success' },
   DISMISSED: { label: { zh: '已忽略', en: 'Dismissed' }, tone: 'bg-muted text-muted-foreground' },
 };
 const FLAG_TONE = { info: 'bg-primary-soft text-primary', success: 'bg-success-soft text-success', warning: 'bg-warning-soft text-warning', error: 'bg-destructive-soft text-destructive' } as const;
@@ -237,9 +238,12 @@ export interface ConsoleOverviewPageProps {
   readonly onOpenDataIssues?: () => void;
   readonly onOpenReport?: (reportId: string) => void;
   readonly approvals?: ConsoleApprovals;
+  /** Further cards for 等你确认 (event-started work, knowledge to review) and how many they are. */
+  readonly work?: React.ReactNode;
+  readonly workCount?: number;
 }
 
-export function ConsoleOverviewPage({ manifest, actorId, overview, onOpenDataIssues, onOpenReport, approvals }: ConsoleOverviewPageProps) {
+export function ConsoleOverviewPage({ manifest, actorId, overview, onOpenDataIssues, onOpenReport, approvals, work, workCount = 0 }: ConsoleOverviewPageProps) {
   const { t } = usePreferences();
   const currency = manifest.application.currency;
   const actor = manifest.actors.find((a) => a.id === actorId) ?? manifest.actors[0]!;
@@ -250,7 +254,7 @@ export function ConsoleOverviewPage({ manifest, actorId, overview, onOpenDataIss
   const decisions = openDecisions(overview.dataIssues).filter(
     (i) => !cards.some((c) => i.action && c.actionId === i.action.actionId && c.target === i.action.target && c.status !== 'FAILED' && c.status !== 'EXPIRED'),
   );
-  const waiting = cards.length + decisions.length;
+  const waiting = cards.length + decisions.length + workCount;
   const headlineValue = headlineMetric ? formatConsoleValue(values.get(headlineMetric.id)?.value, headlineMetric.unit, t, currency) : null;
   const headline = headlineMetric?.headline && headlineValue
     ? t(headlineMetric.headline.zh.replace('{value}', headlineValue), headlineMetric.headline.en.replace('{value}', headlineValue))
@@ -293,6 +297,7 @@ export function ConsoleOverviewPage({ manifest, actorId, overview, onOpenDataIss
             <p className="oc-callout">{t('都处理完了。有新的事会出现在这里。', 'All clear. New items will appear here.')}</p>
           ) : null}
           {approvals ? cards.map((inv) => approvalCard(inv, manifest, approvals)) : null}
+          {work}
           {decisions.map((issue) => (
             <IssueDecision key={issue.id} issue={issue} manifest={manifest} approvals={approvals} onOpenDataIssues={onOpenDataIssues} />
           ))}
@@ -602,7 +607,27 @@ export function ConsoleReportPage({ manifest, reportId, report }: { manifest: Co
   );
 }
 
-export function ConsoleDataIssuesPage({ issues }: { issues: DataIssuesResponse }) {
+/**
+ * Where a data problem stands (U-11: 待处理 → 已提方案 → 已批准 → 已应用 → 已核验): the
+ * application's own status, moved on by the approval that fixes it until the application confirms.
+ */
+export function issueStage(issue: DataIssuesResponse['issues'][number], invocations: readonly ActionInvocationRecord[]): DataIssueStatus {
+  if (issue.status === 'VERIFIED' || issue.status === 'DISMISSED' || !issue.action) return issue.status;
+  const inv = invocations.find((i) => i.actionId === issue.action!.actionId && i.target === issue.action!.target);
+  switch (inv?.status) {
+    case 'PENDING_APPROVAL':
+      return 'PROPOSED';
+    case 'EXECUTING':
+    case 'UNKNOWN':
+      return 'APPROVED';
+    case 'VERIFIED':
+      return 'APPLIED';
+    default:
+      return issue.status;
+  }
+}
+
+export function ConsoleDataIssuesPage({ issues, invocations = [] }: { issues: DataIssuesResponse; invocations?: readonly ActionInvocationRecord[] }) {
   const { t } = usePreferences();
   const pending = openDecisions(issues).length;
   return (
@@ -619,7 +644,8 @@ export function ConsoleDataIssuesPage({ issues }: { issues: DataIssuesResponse }
       <section className="oc-card">
         <ul className="oc-checklist">
           {issues.issues.map((issue) => {
-            const s = ISSUE_STATUS[issue.status];
+            const stage = issueStage(issue, invocations);
+            const s = stage === 'OPEN' && issue.needsDecision ? { label: { zh: '等你确认', en: 'Needs you' }, tone: ISSUE_STATUS.OPEN.tone } : ISSUE_STATUS[stage];
             return (
               <li key={issue.id} data-testid={`console-issue-${issue.id}`}>
                 {issue.status === 'VERIFIED' ? <CheckCircle2 size={15} className="text-success" aria-hidden="true" /> : <AlertTriangle size={15} className="text-warning" aria-hidden="true" />}
@@ -637,7 +663,7 @@ export function ConsoleDataIssuesPage({ issues }: { issues: DataIssuesResponse }
   );
 }
 
-export function ConsoleRulesPage({ suite }: { suite: OntologySuite | null }) {
+export function ConsoleRulesPage({ suite, extra }: { suite: OntologySuite | null; extra?: React.ReactNode }) {
   const { t } = usePreferences();
   const rules = suite
     ? [
@@ -672,6 +698,7 @@ export function ConsoleRulesPage({ suite }: { suite: OntologySuite | null }) {
           </ul>
         </section>
       ) : null}
+      {extra}
     </div>
   );
 }
@@ -686,7 +713,7 @@ export interface ConsoleConnectionPageProps {
   readonly onDisconnect?: () => void;
 }
 
-export function ConsoleConnectionPage({ record, manifest, busy, onCheck, onDisconnect }: ConsoleConnectionPageProps) {
+export function ConsoleConnectionPage({ record, manifest, busy, onCheck, onDisconnect, extra }: ConsoleConnectionPageProps & { extra?: React.ReactNode }) {
   const { t } = usePreferences();
   const drifted = record.status === 'DRIFTED';
   const chips = (items: string[]) => (
@@ -766,6 +793,7 @@ export function ConsoleConnectionPage({ record, manifest, busy, onCheck, onDisco
           </ul>
         </SectionCard>
       </div>
+      {extra}
     </div>
   );
 }
@@ -982,6 +1010,18 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
   const detail = useConsoleRead(!blocked && object && selectedKey ? () => consoleApi.object(projectId, object.id, selectedKey, actor).then((r) => r.data) : null, [blocked, projectId, object?.id, selectedKey, actor, reload], onError);
   const report = useConsoleRead(!blocked && page.kind === 'report' ? () => consoleApi.report(projectId, page.id, actor).then((r) => r.data) : null, [blocked, projectId, pageKey(page), actor, reload], onError);
   const [invocations, setInvocations] = useState<readonly ActionInvocationRecord[]>([]);
+  // Work started by events and knowledge waiting for review, read alongside the overview.
+  const [work, setWork] = useState<{ tasks: readonly RuntimeTaskRecord[]; pending: KnowledgePending | null }>({ tasks: [], pending: null });
+  useEffect(() => {
+    if (blocked || page.kind !== 'overview') return undefined;
+    let live = true;
+    Promise.all([consoleApi.tasks(projectId).catch(() => []), consoleApi.knowledgePending(projectId).catch(() => null)]).then(([tasks, pending]) => {
+      if (live) setWork({ tasks, pending });
+    });
+    return () => {
+      live = false;
+    };
+  }, [projectId, blocked, page.kind, reload]);
   const [busyInvocation, setBusyInvocation] = useState<string | null>(null);
   const [notices, setNotices] = useState<Record<string, Bilingual>>({});
   useEffect(() => {
@@ -1106,9 +1146,18 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
   let body: React.ReactNode;
   const loading = <p className="oc-callout"><Loader2 size={13} className="pipeline-spin mr-1.5 inline" aria-hidden="true" />{t('正在从应用读取…', 'Reading from the application…')}</p>;
   if (page.kind === 'connection') {
-    body = <ConsoleConnectionPage record={record} manifest={manifest} busy={busy} onCheck={() => void recheck()} onDisconnect={() => setConfirmDisconnect(true)} />;
+    body = (
+      <ConsoleConnectionPage
+        record={record}
+        manifest={manifest}
+        busy={busy}
+        onCheck={() => void recheck()}
+        onDisconnect={() => setConfirmDisconnect(true)}
+        extra={drifted ? null : <ConsoleSourcesSection projectId={projectId} onChanged={() => setReload((x) => x + 1)} />}
+      />
+    );
   } else if (page.kind === 'rules') {
-    body = <ConsoleRulesPage suite={suite} />;
+    body = <ConsoleRulesPage suite={suite} extra={<ConsoleKnowledgeSection projectId={projectId} reload={reload} />} />;
   } else if (blocked || currentError) {
     body = null;
   } else if (page.kind === 'changes') {
@@ -1122,10 +1171,12 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
         onOpenDataIssues={() => setPage({ kind: 'data' })}
         onOpenReport={(id) => setPage({ kind: 'report', id })}
         approvals={blocked ? undefined : approvals}
+        work={<ConsoleWorkCards projectId={projectId} actor={actor} tasks={work.tasks} pending={work.pending} onChanged={() => setReload((x) => x + 1)} />}
+        workCount={workCount(work.tasks, work.pending)}
       />
     ) : loading;
   } else if (page.kind === 'data') {
-    body = overview.data?.dataIssues ? <ConsoleDataIssuesPage issues={overview.data.dataIssues} /> : loading;
+    body = overview.data?.dataIssues ? <ConsoleDataIssuesPage issues={overview.data.dataIssues} invocations={invocations} /> : loading;
   } else if (page.kind === 'report') {
     body = report.data ? <ConsoleReportPage manifest={manifest} reportId={page.id} report={report.data} /> : loading;
   } else if (object) {
