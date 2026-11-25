@@ -886,6 +886,7 @@ export function DataMetricsReportsView() {
     showToast,
     startMetricInsightRun,
     startScenarioAttributionRun,
+    setActiveNav,
   } = useWorkbenchStore();
   const [viewMode, setViewMode] = useState<'DASHBOARD' | 'REPORTS_EDITOR'>('DASHBOARD');
   const [loadingMetricId, setLoadingMetricId] = useState<string | null>(null);
@@ -1149,8 +1150,25 @@ export function DataMetricsReportsView() {
     },
   ];
 
+  const connectedApp = data?.connectedApps?.find((app) => app.projectId === data.activeProject.id);
+  const connectedName = (connectedApp?.manifest as { application?: { name?: { zh?: string; en?: string } } } | undefined)?.application?.name;
+
   return (
     <div className="flex flex-col gap-4">
+      {/* U-15 (TeaCo spec §11.2): once an application is connected, its live figures live in the console. */}
+      {connectedApp ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-primary-soft px-4 py-2.5 text-[12.5px] text-foreground" data-testid="metrics-console-hint">
+          <span>
+            {t(
+              `这个项目已接入「${connectedName?.zh ?? '开发好的应用'}」：实时经营数据请到经营驾驶舱查看；这里保留未接入数据的分析。`,
+              `This project is connected to "${connectedName?.en ?? 'its application'}": see live figures in the Operations Console; this page keeps analysis of other data.`,
+            )}
+          </span>
+          <Button size="xs" variant="accent" onClick={() => setActiveNav('operations-console')} data-testid="metrics-open-console">
+            {t('去经营驾驶舱', 'Open Operations Console')}
+          </Button>
+        </div>
+      ) : null}
       {/* Top Mode Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-window border border-border bg-card px-4 py-2.5 shadow-xs">
         <div className="inline-flex items-center gap-1 rounded-md bg-muted p-1">

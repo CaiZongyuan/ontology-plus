@@ -120,4 +120,34 @@ describe('assistant transcript streaming', () => {
     const active = resolveActiveWorkspaceRuns({ ...data, agentSessions: [{ ...architecture, status: 'RUNNING' }] }, {});
     expect(active[0]?.targetNav).toBe('app-four-layer-assets');
   });
+
+  it('keeps the Operations Console conversations apart, and shows the approval cards a reply prepared', async () => {
+    const store = createWorkspaceStore({ dbPath: ':memory:', enableFileMirror: false });
+    const app = createApiApp(store);
+    const analysis = store.createAgentSession({ projectId: 'proj-contract', agentKind: 'REASONING' });
+    const consoleChat = store.createAgentSession({ projectId: 'proj-contract', agentKind: 'REASONING', targetId: 'operations-console' });
+    const data = await (await app.request('http://localhost/api/bootstrap?projectId=proj-contract')).json();
+    const consoleSurface = agentPanelSurfaceFor('operations-console');
+    expect([consoleSurface.sessionKind, consoleSurface.sessionTargetId]).toEqual(['REASONING', 'operations-console']);
+    expect(resolveSurfaceAgentSession(consoleSurface, data).matchingSessions.map((s) => s.id)).toEqual([consoleChat.id]);
+    const analysisIds = resolveSurfaceAgentSession(agentPanelSurfaceFor('data-reasoning'), data).matchingSessions.map((s) => s.id);
+    expect(analysisIds).toContain(analysis.id);
+    expect(analysisIds).not.toContain(consoleChat.id);
+
+    const session: AgentSession = {
+      ...consoleChat,
+      messages: [
+        { id: 'u1', role: 'user', content: '帮我把订单 1106 发货', timestamp: '2026-09-10T09:00:00.000Z' },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: '已准备好「发货：订单 1106」，等你批准后才会执行。',
+          timestamp: '2026-09-10T09:00:02.000Z',
+          artifacts: [{ kind: 'RUNTIME_APPROVAL', invocationId: 'inv-1', summary: { zh: '发货：订单 1106', en: 'Ship: order 1106' } }],
+        },
+      ],
+    };
+    const run = agentRunsFromSession(session).at(-1)!;
+    expect(run.runtimeApprovalIds).toEqual(['inv-1']);
+  });
 });

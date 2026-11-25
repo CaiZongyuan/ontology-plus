@@ -19,7 +19,7 @@ import {
   reconcileInvocation,
   type GatewayDeps,
   type GatewayFailure,
-} from './runtime-gateway.js';
+} from '../packages/runtime-gateway/index.js';
 
 /**
  * Connecting a project's Runnable System and serving the Operations Console (TeaCo spec v0.3.1
@@ -57,6 +57,7 @@ export function registerConnectedAppRoutes(app: Hono, store: WorkspaceStore, opt
   async function verify(projectId: string, baseUrl: string, connectedAt?: string): Promise<ConnectedAppRecord> {
     const client = clientFor(deps, baseUrl);
     const manifest = await client.readManifest();
+    const previous = store.getConnectedApp(projectId);
     const model = confirmedModel(store, projectId);
     const now = new Date().toISOString();
     return store.saveConnectedApp({
@@ -70,6 +71,8 @@ export function registerConnectedAppRoutes(app: Hono, store: WorkspaceStore, opt
       hints: checkManifestAgainstModel(manifest, model?.objects ?? null),
       connectedAt: connectedAt ?? now,
       checkedAt: now,
+      // Keep the chosen identity while the application still declares it.
+      actingIdentity: manifest.actors.some((a) => a.id === previous?.actingIdentity) ? previous!.actingIdentity! : null,
     });
   }
 
@@ -103,6 +106,19 @@ export function registerConnectedAppRoutes(app: Hono, store: WorkspaceStore, opt
       if (err instanceof ConnectionError) return c.json(errorBody(err), statusFor(err));
       throw err;
     }
+  });
+
+  /** The console's identity switch; the AI Assistant acts as this identity (spec §8.1). */
+  app.post('/api/projects/:id/connected-app/acting-identity', async (c) => {
+    const projectId = c.req.param('id');
+    const record = store.getConnectedApp(projectId);
+    if (!record) return c.json({ error: { code: 'NOT_CONNECTED', message: 'This project has no connected application' } }, 404);
+    const body = await c.req.json<{ actor?: string }>().catch(() => ({}) as { actor?: string });
+    const actors = (record.manifest as { actors?: { id: string }[] }).actors ?? [];
+    if (!body.actor || !actors.some((a) => a.id === body.actor)) {
+      return c.json({ error: { code: 'UNKNOWN_ACTOR', message: `"${body.actor ?? ''}" is not an identity this application declares` } }, 400);
+    }
+    return c.json({ connectedApp: store.saveConnectedApp({ ...record, actingIdentity: body.actor }) });
   });
 
   app.delete('/api/projects/:id/connected-app', (c) => {

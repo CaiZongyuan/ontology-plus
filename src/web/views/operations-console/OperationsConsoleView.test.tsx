@@ -13,9 +13,9 @@ import { createApiApp } from '../../../server/app.js';
 import { useWorkbenchStore, type BootstrapPayload } from '../../api.js';
 import { PreferencesProvider } from '../../i18n.js';
 import { OverviewSessionsView } from '../application-center/OverviewSessionsView.js';
-import { ConsoleRequestError } from './consoleApi.js';
-import { hhmm } from './ConsoleApprovals.js';
-import { prepareInvocation, approveInvocation, declineInvocation } from '../../../server/runtime-gateway.js';
+import { ConsoleRequestError } from '../../components/runtime/consoleApi.js';
+import { hhmm } from '../../components/runtime/RuntimeApprovals.js';
+import { prepareInvocation, approveInvocation, declineInvocation } from '../../../packages/runtime-gateway/index.js';
 import {
   ConnectAppPanel,
   ConsoleConnectionPage,

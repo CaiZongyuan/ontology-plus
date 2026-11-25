@@ -490,9 +490,10 @@ export function WorkbenchShell({
 
   const [deliveryViewMode] = useStepViewMode('DELIVERY');
   const [deliveryTechTab] = useDeliveryTechTab();
-  // The Operations Console gets its own assistant in milestone M3 (TeaCo spec §19.4); none until then.
+  // The Operations Console's assistant appears once an application is connected (TeaCo spec M3).
+  const consoleConnected = Boolean(data?.connectedApps?.some((a) => a.projectId === data.activeProject.id));
   const agentSurface =
-    routeContext.kind === 'console'
+    routeContext.kind === 'console' && !consoleConnected
       ? null
       : resolveWorkspaceAgentSurface(activeView, {
           deliveryViewMode,
@@ -530,7 +531,7 @@ export function WorkbenchShell({
         ? agentSessionScopeKey(
             activeProjectId,
             agentSurface.sessionKind,
-            agentSurface.sessionKind === 'CAPABILITY' ? resolved.activeCapabilityAgentId : undefined,
+            agentSurface.sessionKind === 'CAPABILITY' ? resolved.activeCapabilityAgentId : agentSurface.sessionTargetId,
           )
         : undefined;
       const draftKey = resolved.session?.id ?? scopeKey ?? agentSurface.sessionKind;
@@ -998,13 +999,18 @@ export function WorkbenchShell({
         )}
 
         {routeContext.kind === 'console' && (
-          <main className="wb-console-main" data-testid="console-workspace">
-            {loading || !data ? (
-              <LoadingState />
-            ) : (
-              <WorkbenchViewHost activeView={activeView} onNavigate={setActiveView} />
-            )}
-          </main>
+          <div className="wb-workspace-frame">
+            <div className="wb-workspace">
+              <main className="wb-console-main" data-testid="console-workspace">
+                {loading || !data ? (
+                  <LoadingState />
+                ) : (
+                  <WorkbenchViewHost activeView={activeView} onNavigate={setActiveView} />
+                )}
+              </main>
+              {assistantPanel}
+            </div>
+          </div>
         )}
 
         {routeContext.kind === 'project' && (

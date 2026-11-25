@@ -1,0 +1,16 @@
+export {
+  APPROVAL_TTL_MS,
+  approveInvocation,
+  clientFor,
+  confirmedModel,
+  declineInvocation,
+  listInvocations,
+  openConnection,
+  prepareInvocation,
+  reconcileInvocation,
+  type GatewayDeps,
+  type GatewayFailure,
+  type GatewayResult,
+  type OpenConnection,
+  type PrepareInput,
+} from './lib/gateway.js';

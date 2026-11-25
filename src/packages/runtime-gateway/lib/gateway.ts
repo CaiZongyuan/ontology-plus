@@ -7,12 +7,12 @@ import {
   type ConnectionClient,
   type ConnectionManifest,
   type FetchLike,
-} from '../packages/application-runtime/index.js';
+} from '../../application-runtime/index.js';
 import type {
   ActionInvocationRecord,
   ConnectedAppRecord,
   WorkspaceStore,
-} from '../packages/workspace-store/index.js';
+} from '../../workspace-store/index.js';
 
 /**
  * The runtime gateway between Ontology Plus and a connected application (TeaCo spec §8–§10,

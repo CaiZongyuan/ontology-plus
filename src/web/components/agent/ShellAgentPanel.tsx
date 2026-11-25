@@ -26,6 +26,7 @@ import { usePreferences } from '../../i18n.js';
 import { resolveTurnImagesWithFallback } from '../../lib/localImageStore.js';
 import {
   AGENT_PANEL_SURFACES,
+  OPERATIONS_CONSOLE_SESSION_TARGET,
   agentPanelSurfaceFor,
   defaultNavForSessionKind,
   getDefaultViewForStep,
@@ -283,12 +284,15 @@ export function resolveSurfaceAgentSession(
   const matching = sessions
     .filter((s) => {
       if (s.projectId !== activeProjectId || s.agentKind !== surface.sessionKind) return false;
+      // A view with its own target sees only its conversations; others never see those.
+      if (surface.sessionTargetId) return s.targetId === surface.sessionTargetId;
+      if (s.targetId === OPERATIONS_CONSOLE_SESSION_TARGET) return false;
       if (surface.sessionKind !== 'CODING') return true;
       return !s.targetId || s.targetId === applicationTargetId;
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const rememberedId =
-    opts?.rememberedSessionByScope?.[agentSessionScopeKey(activeProjectId, surface.sessionKind)];
+    opts?.rememberedSessionByScope?.[agentSessionScopeKey(activeProjectId, surface.sessionKind, surface.sessionTargetId)];
   const session =
     matching.find((s) => s.id === opts?.activeSessionId) ??
     matching.find((s) => s.id === rememberedId) ??
@@ -463,7 +467,7 @@ export function ShellAgentPanel({
     ? agentSessionScopeKey(
         activeProjectId,
         surface.sessionKind,
-        surface.sessionKind === 'CAPABILITY' ? activeCapabilityAgentId : undefined,
+        surface.sessionKind === 'CAPABILITY' ? activeCapabilityAgentId : surface.sessionTargetId,
       )
     : null;
 
@@ -712,7 +716,8 @@ export function ShellAgentPanel({
   };
 
   const headerContextSlot = useMemo(() => {
-    if (surface.sessionKind === 'REASONING') {
+    // The console's assistant has no analysis stages: it reads the application and prepares changes.
+    if (surface.sessionKind === 'REASONING' && !surface.sessionTargetId) {
       const modes: Array<{
         id: 'ASK_DATA' | 'ASK_WHY' | 'ASK_POLICY';
         zh: string;
@@ -886,7 +891,7 @@ export function ShellAgentPanel({
     const capability = surface.sessionKind === 'CAPABILITY' ?
       data.capabilityAgents.find((item) => item.id === activeCapabilityAgentId) ?? data.capabilityAgents[0] : undefined;
     const apps = data.assembledApplications.filter((app) => app.projectId === activeProjectId);
-    const targetId = capability?.id ?? (surface.sessionKind === 'CODING' ?
+    const targetId = surface.sessionTargetId ?? capability?.id ?? (surface.sessionKind === 'CODING' ?
       (apps.find((app) => app.id === activeItemId) ?? (apps.length === 1 ? apps[0] : undefined))?.id : undefined);
     return ensureProjectAgentSession(capability?.projectId ?? activeProjectId, surface.sessionKind, {
       ...(targetId ? { targetId } : {}),

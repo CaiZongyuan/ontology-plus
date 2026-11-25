@@ -31,5 +31,6 @@ Avoid giant barrel files that blindly re-export internal helpers; keep entry poi
 | `workbench-theme` | Versioned `Workbench Theme` token contract, built-in `Default` and `Warm Paper` themes (light & dark), CSS/doc compiler, and completeness/contrast/source guards |
 | `business-vocabulary` | Canonical 1-to-1 mapping between `GLOSSARY.md` terms/model codes and bilingual `Business View` names, tool-progress phrasing, and automated Business View vocabulary guard (`checkBusinessViewMarkup`) |
 | `application-runtime` | Connection contract v1 (TeaCo spec §11.3): `Connection Manifest` schema and fingerprint, a typed client for a connected application's runtime reads (sent as the user's `Acting Identity`), and the check of a manifest against the confirmed Business Model |
+| `runtime-gateway` | The one path between Ontology Plus and a connected application (TeaCo spec §8–§10, ADR 0020): every call re-checks the Connection Manifest (Drifted stops it) and uses the person's `Acting Identity`; changes are prepared, approved by a person (bound to arguments, target version, identity and manifest for ten minutes), invoked with one request key and read back, and an unconfirmed result is reconciled by that key. Used by the Operations Console routes and the AI Assistant's runtime tools |
 
 

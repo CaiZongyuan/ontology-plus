@@ -45,6 +45,7 @@ export {
 export {
   AI_ASSISTANT_TITLE,
   AGENT_PANEL_SURFACES,
+  OPERATIONS_CONSOLE_SESSION_TARGET,
   STEP_SPECIALIST_AGENT_KINDS,
   agentPanelSurfaceFor,
   defaultNavForSessionKind,

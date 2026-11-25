@@ -112,6 +112,7 @@ import {
   getDefaultViewForStep,
   getProjectLifecycleState,
   getProjectStepsFromBootstrap,
+  OPERATIONS_CONSOLE_SESSION_TARGET,
   normalizeNavViewAlias,
   readUrlNavState,
   writeStepViewMode,
@@ -1223,7 +1224,7 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
         (s) =>
           s.projectId === projectId &&
           s.agentKind === agentKind &&
-          (!opts?.targetId || s.targetId === opts.targetId),
+          (opts?.targetId ? s.targetId === opts.targetId : s.targetId !== OPERATIONS_CONSOLE_SESSION_TARGET),
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const preferredId = opts?.preferredSessionId ?? get().activeSessionId ?? undefined;
@@ -1250,7 +1251,10 @@ export const useWorkbenchStore = create<WorkbenchStoreState>((set, get) => ({
       CAPABILITY: { zh: '能力中心对话', en: 'Capability conversation' },
       REASONING: { zh: '数据分析对话', en: 'Data analysis conversation' },
     };
-    const fallbackTitle = defaultTitleByKind[agentKind];
+    const fallbackTitle =
+      opts?.targetId === OPERATIONS_CONSOLE_SESSION_TARGET
+        ? { zh: '经营驾驶舱对话', en: 'Operations Console conversation' }
+        : defaultTitleByKind[agentKind];
     const created = await apiCreateAgentSession({
       projectId,
       agentKind,

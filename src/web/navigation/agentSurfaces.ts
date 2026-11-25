@@ -33,6 +33,11 @@ export interface AgentPanelSurface {
   subtitle?: AgentSurfaceLocalizedText;
   /** Specialist AgentSessionKind bound to this view (ADR 0009). */
   sessionKind: AgentSessionKind;
+  /**
+   * Keeps this view's conversations apart from other views of the same kind: only sessions with
+   * this target are shown, and new ones are created with it (the Operations Console's assistant).
+   */
+  sessionTargetId?: string;
   /** Whether this view's specialist uses visual references/uploads and should warn if vision is unsupported. */
   usesVision?: boolean;
   /** Whether conversation is the primary workflow on this page (auto-reveals Wide Mode). */
@@ -42,6 +47,9 @@ export interface AgentPanelSurface {
   /** One-click openers offered while the conversation is still empty. */
   starters?: AgentSurfaceLocalizedText[];
 }
+
+/** The `targetId` that marks the Operations Console's assistant conversations. */
+export const OPERATIONS_CONSOLE_SESSION_TARGET = 'operations-console';
 
 export const STEP_SPECIALIST_AGENT_KINDS: Readonly<Record<ProjectStepId, AgentSessionKind>> = {
   REQUIREMENTS: 'REQUIREMENT',
@@ -87,15 +95,22 @@ export const AGENT_PANEL_SURFACES: Record<NavViewId, AgentPanelSurface> = {
       en: 'Ask about project progress or start the next action…',
     },
   },
-  // The console's own assistant (asking for figures, approved actions) arrives in milestone M3;
-  // until then the console is not given an Agent Panel (App.tsx renders none for it).
+  // The console's own assistant (TeaCo spec M3): reads the connected application as the chosen
+  // identity and prepares changes as approval cards. Its conversations are kept apart from data analysis.
   'operations-console': {
     title: AI_ASSISTANT_TITLE,
-    sessionKind: 'COPILOT',
+    subtitle: { zh: '问经营数据、请我准备改动', en: 'Ask about the business, or have me prepare a change' },
+    sessionKind: 'REASONING',
+    sessionTargetId: OPERATIONS_CONSOLE_SESSION_TARGET,
     placeholder: {
-      zh: '询问经营情况…',
-      en: 'Ask how the business is doing…',
+      zh: '问问经营情况，或说「帮我把订单 1106 发货」（改动会先请你批准）…',
+      en: 'Ask how the business is doing, or say “ship order 1106” (you approve every change)…',
     },
+    starters: [
+      { zh: '今天经营情况怎么样？', en: 'How is the business doing today?' },
+      { zh: '还有哪些订单没发货？', en: 'Which orders are not shipped yet?' },
+      { zh: '有哪些数据问题需要我决定？', en: 'Which data problems need my decision?' },
+    ],
   },
   'app-requirements': REQUIREMENTS_AGENT_SURFACE,
   'app-prototype': {
@@ -364,5 +379,7 @@ export function resolveArtifactNavTarget(artifact: AgentDomainArtifact): Artifac
       return { view: 'cap-extraction', itemId: artifact.jobId };
     case 'REQUIREMENT_HINTS':
       return null;
+    case 'RUNTIME_APPROVAL':
+      return { view: 'operations-console' };
   }
 }

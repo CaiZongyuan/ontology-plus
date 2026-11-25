@@ -85,6 +85,16 @@ import {
 } from './locale.js';
 import { gatherEvidence } from './analytics-evidence.js';
 import {
+  RUNTIME_OPENAI_TOOLS,
+  connectedManifest,
+  consoleAnswerFromToolResult,
+  executeRuntimeTool,
+  planConsoleTurn,
+  isOperationsConsoleSession,
+  isRuntimeToolName,
+  renderRuntimeContext,
+} from './runtime-tools.js';
+import {
   DOMAIN_RUN_OPENAI_TOOLS,
   buildDeterministicSrsMarkdown,
   buildMockMetricInsightToolArgs,
@@ -1303,6 +1313,24 @@ function buildFauxMockModels(
       const lower = userPrompt.toLowerCase();
       const loc = resolveEffectiveLocale(store, explicitLocale, parsedAction?.cleanPrompt || userPrompt);
 
+      // The Operations Console assistant reads the connected application and proposes changes
+      // for approval; it is not a project step, so step hand-offs and step gates do not apply.
+      if (isOperationsConsoleSession(session)) {
+        const plan = planConsoleTurn(connectedManifest(store, session.projectId), userPrompt, loc);
+        if (plan.kind === 'text') return fauxAssistantMessage([fauxText(plan.text)]);
+        return fauxAssistantMessage(
+          [
+            fauxThinking(
+              plan.toolName === 'propose_business_change'
+                ? pickLocaleText(loc, '先让应用预演这项改动，生成审批卡交给你决定。', 'Asking the application to preview the change and putting it in front of you as an approval card.')
+                : pickLocaleText(loc, '以你选的身份向应用读取实时数据。', 'Reading live data from the application as the identity you chose.'),
+            ),
+            fauxToolCall(plan.toolName, plan.args as never),
+          ],
+          { stopReason: 'toolUse' },
+        );
+      }
+
       // 「继续这一屏」 runs one screen helper without the lead: its first call lands here, and
       // the recorded build answers it (this time without the recorded mistake).
       if (session.agentKind === 'PROTOTYPE_CO_DESIGN' && isMockPrototypeSubagentPrompt(userPrompt)) {
@@ -2162,6 +2190,10 @@ function buildFauxMockModels(
           .map((c) => c.text)
           .join('\n') ?? '';
 
+      if (isOperationsConsoleSession(session) && lastResult) {
+        return fauxAssistantMessage([fauxText(consoleAnswerFromToolResult(lastResultText, Boolean(lastResult.isError), loc))]);
+      }
+
       if (lastResult?.toolName === 'propose_step_handoff' && !lastResult.isError) {
         const parsedHandoff = extractJsonObjectFromText<{
           targetStep?: ProjectStepId;
@@ -2704,7 +2736,7 @@ export function buildPiModelsForStore(
 
 export function getToolsForAgentKind(
   kind: AgentSessionKind,
-  options?: { codeMode?: boolean; multiAgentConcurrency?: number },
+  options?: { codeMode?: boolean; multiAgentConcurrency?: number; operationsConsole?: boolean },
 ): Tool[] {
   const toPiTool = (spec: OpenAiFunctionTool): Tool => ({
     name: spec.function.name,
@@ -2761,6 +2793,11 @@ export function getToolsForAgentKind(
           stepHandoffTool,
         ];
       case 'REASONING':
+        // In the Operations Console the assistant reads the connected application and can only
+        // propose changes for approval (TeaCo spec M3); it has no SQL or write-back tools there.
+        if (options?.operationsConsole) {
+          return [...RUNTIME_OPENAI_TOOLS.map(toPiTool), extraByName.get('ask_user')!];
+        }
         return [
           extraByName.get('run_readonly_sql')!,
           extraByName.get('propose_policy_writeback')!,
@@ -2991,6 +3028,9 @@ function buildSystemPromptForSession(
       .filter(Boolean)
       .join('\n');
 
+    if (isOperationsConsoleSession(session)) {
+      return [baseHeaderEn, biz(renderRuntimeContext(store, session, 'en-US'))].join('\n');
+    }
     if (session.agentKind === 'REASONING') {
       return [
         baseHeaderEn,
@@ -3098,6 +3138,9 @@ function buildSystemPromptForSession(
     .filter(Boolean)
     .join('\n');
 
+  if (isOperationsConsoleSession(session)) {
+    return [baseHeader, biz(renderRuntimeContext(store, session, 'zh-CN'))].join('\n');
+  }
   if (session.agentKind === 'REASONING') {
     return [
       baseHeader,
@@ -3344,13 +3387,18 @@ async function executeUnifiedToolCall(
   const started = Date.now();
   const args = (tc.arguments ?? {}) as Record<string, unknown>;
   const ontologyToolSet = new Set<string>(ONTOLOGY_TOOL_NAMES);
-  if (!getToolsForAgentKind(session.agentKind).some((tool) => tool.name === tc.name)) {
+  const consoleSession = isOperationsConsoleSession(session);
+  if (!getToolsForAgentKind(session.agentKind, consoleSession ? { operationsConsole: true } : undefined).some((tool) => tool.name === tc.name)) {
     const message = pickLocaleText(locale, `当前智能体不提供工具 ${tc.name}。`, `Tool ${tc.name} is unavailable to this specialist.`);
     return {
       trace: { id: tc.id, toolName: tc.name, arguments: args, output: message, isError: true, durationMs: Date.now() - started },
       toolResultContent: JSON.stringify({ error: message }),
       isError: true,
     };
+  }
+
+  if (isRuntimeToolName(tc.name)) {
+    return executeRuntimeTool(store, session, tc.id, tc.name, args, locale);
   }
 
   // 1. Scoped HITL ask_user
@@ -5517,9 +5565,11 @@ async function executeUnifiedTurnCore(
       }
     }
 
-    const baseSpecialistTools = getToolsForAgentKind(sessionState.agentKind);
+    const consoleTools = isOperationsConsoleSession(sessionState);
+    const baseSpecialistTools = getToolsForAgentKind(sessionState.agentKind, consoleTools ? { operationsConsole: true } : undefined);
     const tools = getToolsForAgentKind(sessionState.agentKind, {
       multiAgentConcurrency: effectiveConcurrency,
+      ...(consoleTools ? { operationsConsole: true } : {}),
     });
     const resolvedMaxTokens = Math.min(built.selectedModel.maxTokens || 32768, 32768);
     // Live prototype building (spec #87): per-screen deltas, never the whole document. The

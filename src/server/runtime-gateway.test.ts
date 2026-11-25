@@ -14,7 +14,7 @@ import {
   prepareInvocation,
   reconcileInvocation,
   type GatewayDeps,
-} from './runtime-gateway.js';
+} from '../packages/runtime-gateway/index.js';
 
 const seedDir = fileURLToPath(new URL('../../benchmark/datasets/bb-seed0/', import.meta.url));
 

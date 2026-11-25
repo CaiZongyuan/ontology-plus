@@ -34,8 +34,16 @@ import { Button, ConfirmDialog } from '../../components/beautifui/index.js';
 import { usePreferences } from '../../i18n.js';
 import { cn } from '../../lib/utils.js';
 import type { NavViewId } from '../../navigation/index.js';
-import { ActionForm, ApprovalCard, SettledInvocationLine, formFriendly, hhmm } from './ConsoleApprovals.js';
-import { ConsoleRequestError, consoleApi, type ConsoleOverview } from './consoleApi.js';
+import {
+  ActionForm,
+  ApprovalCard,
+  SettledInvocationLine,
+  announceInvocationsChanged,
+  formFriendly,
+  hhmm,
+  useInvocationsChanged,
+} from '../../components/runtime/RuntimeApprovals.js';
+import { ConsoleRequestError, consoleApi, type ConsoleOverview } from '../../components/runtime/consoleApi.js';
 import './operations-console.css';
 
 /**
@@ -968,6 +976,13 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
       live = false;
     };
   }, [projectId, reload]);
+  // A change approved from the AI Assistant's card shows here too, with the application re-read.
+  useInvocationsChanged(projectId, () => setReload((x) => x + 1), 'console');
+  // The assistant acts as the identity chosen here; keep the server's copy in step.
+  useEffect(() => {
+    if (!actor || record.actingIdentity === actor) return;
+    consoleApi.setActingIdentity(projectId, actor).then((saved) => setConnectedApp(projectId, saved), () => undefined);
+  }, [projectId, actor, record.actingIdentity]);
   const upsertInvocation = (inv: ActionInvocationRecord) =>
     setInvocations((list) => [inv, ...list.filter((x) => x.id !== inv.id)].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
   /** Runs one approval step; a settled change re-reads the application so pages show its result. */
@@ -978,6 +993,7 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
       const next = await step(projectId, inv.id);
       upsertInvocation(next);
       if (next.status !== 'PENDING_APPROVAL') setReload((x) => x + 1);
+      announceInvocationsChanged(projectId, 'console');
     } catch (err) {
       if (err instanceof ConsoleRequestError) {
         if (err.invocation) upsertInvocation(err.invocation);
@@ -997,6 +1013,7 @@ function ConsoleWorkspace({ record, projectId, suite }: { record: ConnectedAppRe
   const prepareAs = async (who: string, actionId: string, target: string | undefined, params: Record<string, unknown>): Promise<Bilingual | null> => {
     try {
       upsertInvocation(await consoleApi.prepare(projectId, actionId, who, target, params));
+      announceInvocationsChanged(projectId, 'console');
       return null;
     } catch (err) {
       if (!(err instanceof ConsoleRequestError)) throw err;

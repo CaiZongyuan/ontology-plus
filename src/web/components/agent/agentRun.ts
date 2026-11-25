@@ -145,6 +145,8 @@ export interface AgentRunView {
   askUser?: AgentAskUserPrompt;
   /** Structured cross-step hand-off proposal emitted by `propose_step_handoff` during this run. */
   stepHandoff?: StepHandoffProposal;
+  /** Runtime changes this run prepared; each waits for the person's approval (TeaCo spec §10.1). */
+  runtimeApprovalIds?: string[];
   /** Provenance when this turn's user message was delivered via an accepted Step Hand-off. */
   handoffFrom?: StepHandoffOrigin;
   /** Semantic anchors modified during this run (for canvas highlighting). */
@@ -1197,6 +1199,8 @@ function formatDomainArtifactLabel(artifact: AgentDomainArtifact): LocalizedText
         zh: `查看查询结果 (${artifact.rows.length} 行)`,
         en: `View query results (${artifact.rows.length} rows)`,
       };
+    case 'RUNTIME_APPROVAL':
+      return { zh: '在经营驾驶舱查看', en: 'Open in the Operations Console' };
     case 'EXTRACTION_JOB':
       return {
         zh: `查看萃取候选 (${artifact.systemName} · ${artifact.candidateCount} 项)`,
@@ -1342,6 +1346,11 @@ function buildCompletedSessionRun(
     sourceUserMessageId: uMsg.id,
     sourceAssistantMessageId: aMsg.id,
     retryPrompt: uMsg.content,
+    ...((aMsg.artifacts ?? []).some((a) => a.kind === 'RUNTIME_APPROVAL')
+      ? {
+          runtimeApprovalIds: (aMsg.artifacts ?? []).flatMap((a) => (a.kind === 'RUNTIME_APPROVAL' ? [a.invocationId] : [])),
+        }
+      : {}),
     ...(uMsg.images && uMsg.images.length > 0 ? { images: uMsg.images } : {}),
     ...(uMsg.handoffFrom ? { handoffFrom: uMsg.handoffFrom } : {}),
     ...(aMsg.askUser ? { askUser: aMsg.askUser } : {}),

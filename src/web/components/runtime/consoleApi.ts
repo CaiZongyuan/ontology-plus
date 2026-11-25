@@ -97,6 +97,9 @@ export const consoleApi = {
     send<{ connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/connected-app`, json('POST', { baseUrl })).then((r) => r.connectedApp),
   check: (projectId: string) =>
     send<{ connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/connected-app/check`, json('POST')).then((r) => r.connectedApp),
+  /** The identity the AI Assistant acts as follows the console's identity switch. */
+  setActingIdentity: (projectId: string, actor: string) =>
+    send<{ connectedApp: ConnectedAppRecord }>(`/api/projects/${enc(projectId)}/connected-app/acting-identity`, json('POST', { actor })).then((r) => r.connectedApp),
   disconnect: (projectId: string) => send<{ removed: boolean }>(`/api/projects/${enc(projectId)}/connected-app`, json('DELETE')),
   overview: (projectId: string, actor: string) =>
     send<ConsoleEnvelope<ConsoleOverview>>(`/api/projects/${enc(projectId)}/console/overview${query({ actor })}`),

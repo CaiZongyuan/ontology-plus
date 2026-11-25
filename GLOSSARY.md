@@ -296,5 +296,5 @@ The document a connected application serves at a well-known address, declaring i
 _Avoid_: API spec, OpenAPI file (a manifest may point to one), integration config
 
 **Acting Identity (操作身份)**:
-The application identity, chosen by the user in the Operations Console, that every runtime read and write is performed as; the AI can neither choose nor change it.
+The application identity, chosen by the user in the Operations Console, that every runtime read and write is performed as; the AI can neither choose nor change it. The console's AI Assistant reads and prepares changes as this same identity, which is kept on the connection.
 _Avoid_: Login, credential, role switch

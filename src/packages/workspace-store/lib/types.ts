@@ -392,6 +392,12 @@ export type AgentDomainArtifact =
       }[];
     }
   | {
+      /** A runtime change the AI Assistant prepared; it runs only after a person approves it (spec §10.1). */
+      kind: 'RUNTIME_APPROVAL';
+      invocationId: string;
+      summary: { zh: string; en: string };
+    }
+  | {
       kind: 'REQUIREMENT_HINTS';
       aggregates: string[];
       rules: string[];
@@ -1055,6 +1061,11 @@ export interface ConnectedAppRecord {
   readonly hints: readonly ConnectedAppHint[];
   readonly connectedAt: string;
   readonly checkedAt: string;
+  /**
+   * The Acting Identity the person last chose in the Operations Console. The AI Assistant's
+   * runtime tools act as this identity and can never name another one.
+   */
+  readonly actingIdentity?: string | null;
 }
 
 /**

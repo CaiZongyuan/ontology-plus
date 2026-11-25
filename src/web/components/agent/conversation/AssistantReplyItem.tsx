@@ -12,6 +12,9 @@ import { usePreferences } from '../../../i18n.js';
 import { ApprovalCard, Button } from '../../beautifui/index.js';
 import { ChangeSummaryDisplayVariantContext } from '../../history/index.js';
 import { MarkdownRenderer } from '../../markdown/index.js';
+import { useWorkbenchStore } from '../../../api.js';
+import { parseConnectionManifest } from '../../../../packages/application-runtime/index.js';
+import { RuntimeApprovalCards } from '../../runtime/RuntimeApprovals.js';
 import { StepHandoffCard } from '../StepHandoffCard.js';
 import {
   PLATFORM_UNAVAILABLE_COPY,
@@ -100,6 +103,23 @@ function TuckedDiagnosticsDetails({
         ) : null}
       </div>
     </details>
+  );
+}
+
+/** The approval cards a reply prepared, live against the project's connected application. */
+function ReplyRuntimeApprovals({ ids }: { ids: readonly string[] }) {
+  const projectId = useWorkbenchStore((s) => s.data?.activeProject.id ?? '');
+  const record = useWorkbenchStore((s) => s.data?.connectedApps?.find((a) => a.projectId === projectId) ?? null);
+  const manifest = React.useMemo(() => {
+    if (!record) return null;
+    const parsed = parseConnectionManifest(record.manifest);
+    return parsed.ok ? parsed.manifest : null;
+  }, [record]);
+  if (!projectId) return null;
+  return (
+    <div className="agent-run-hitl">
+      <RuntimeApprovalCards projectId={projectId} invocationIds={ids} manifest={manifest} />
+    </div>
   );
 }
 
@@ -240,6 +260,8 @@ export function AssistantReplyItem({
           />
         </div>
       )}
+
+      {run.runtimeApprovalIds && run.runtimeApprovalIds.length > 0 && <ReplyRuntimeApprovals ids={run.runtimeApprovalIds} />}
 
       {run.stepHandoff && (
         <div className="agent-run-hitl">

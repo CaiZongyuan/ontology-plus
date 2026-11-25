@@ -161,6 +161,66 @@ const CATALOG_ENTRIES: readonly ToolProgressSpec[] = [
     },
   },
   {
+    toolName: 'read_operations_overview',
+    iconKind: 'query',
+    label: {
+      zh: '查看今日经营概况',
+      en: 'Read today’s overview',
+    },
+    activeLabel: {
+      zh: '正在查看今日经营概况',
+      en: 'Reading today’s overview',
+    },
+  },
+  {
+    toolName: 'list_business_records',
+    iconKind: 'query',
+    label: {
+      zh: '查看业务记录',
+      en: 'Look up business records',
+    },
+    activeLabel: {
+      zh: '正在查看业务记录',
+      en: 'Looking up business records',
+    },
+  },
+  {
+    toolName: 'read_business_record',
+    iconKind: 'inspect',
+    label: {
+      zh: '查看一条记录的明细',
+      en: 'Read a record’s details',
+    },
+    activeLabel: {
+      zh: '正在查看记录明细',
+      en: 'Reading a record’s details',
+    },
+  },
+  {
+    toolName: 'read_business_report',
+    iconKind: 'report',
+    label: {
+      zh: '查看报表',
+      en: 'Read a report',
+    },
+    activeLabel: {
+      zh: '正在查看报表',
+      en: 'Reading a report',
+    },
+  },
+  {
+    toolName: 'propose_business_change',
+    iconKind: 'action',
+    label: {
+      zh: '准备一项改动，等你批准',
+      en: 'Prepare a change for your approval',
+    },
+    activeLabel: {
+      zh: '正在准备改动，稍后请你批准',
+      en: 'Preparing a change for your approval',
+    },
+  },
+  {
     toolName: 'propose_policy_writeback',
     iconKind: 'action',
     label: {

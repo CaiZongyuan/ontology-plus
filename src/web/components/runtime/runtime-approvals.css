@@ -1,0 +1,206 @@
+/* Approval cards for runtime changes (TeaCo spec §10.1), shared by the Operations Console and the AI Assistant. */
+
+.rt-approval {
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  font-size: var(--text-sm);
+}
+
+.rt-approval-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.rt-approval.is-pending .rt-approval-head {
+  background: color-mix(in srgb, var(--primary-soft) 70%, transparent);
+  color: var(--primary);
+}
+
+.rt-approval.is-warn .rt-approval-head {
+  background: color-mix(in srgb, var(--warning-soft) 60%, transparent);
+  color: var(--warning);
+}
+
+.rt-approval.is-done .rt-approval-head {
+  background: color-mix(in srgb, var(--success-soft) 60%, transparent);
+  color: var(--success);
+}
+
+.rt-approval-kicker {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.rt-approval-actor {
+  font-weight: 500;
+  color: var(--foreground-soft);
+}
+
+.rt-approval-expiry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+.rt-approval-body {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.rt-approval-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.rt-approval-effects {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+  color: var(--foreground-soft);
+}
+
+.rt-approval-effects li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.rt-approval-effects svg {
+  flex: none;
+  color: var(--primary);
+  transform: translateY(1px);
+}
+
+.rt-approval-why {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+
+.rt-approval-outcome {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--foreground-soft);
+}
+
+.rt-approval-outcome.warn {
+  color: var(--warning);
+}
+
+.rt-approval-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 40%, transparent);
+}
+
+.rt-settled-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rt-settled {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px dashed var(--border);
+  font-size: 12.5px;
+  color: var(--foreground-soft);
+}
+
+.rt-settled-label {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.rt-settled-at {
+  font-size: var(--text-xs);
+  color: var(--faint-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+
+.rt-action-form {
+  display: grid;
+  gap: 8px;
+}
+
+.rt-action-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--foreground-soft);
+}
+
+.rt-eyebrow {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.rt-note {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+
+.rt-input {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+}
+
+.rt-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--focus-ring);
+}
+
+.rt-details > summary {
+  cursor: pointer;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+.rt-reply-cards {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
