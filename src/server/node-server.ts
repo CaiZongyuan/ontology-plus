@@ -4,16 +4,20 @@ import { serve } from '@hono/node-server';
 import { autoResumeInterruptedAgentSessions } from '../packages/agent-runtime/index.js';
 import { createWorkspaceStore } from '../packages/workspace-store/index.js';
 import { createApiApp } from './app.js';
+import { stopBuiltApplications } from './build-runner.js';
 
 const port = Number(process.env.PORT ?? 4310);
 const store = createWorkspaceStore();
-const app = createApiApp(store);
+const app = createApiApp(store, {
+  ...(process.env.ONTOLOGY_BUILD_WORKSPACES?.trim() ? { buildWorkspacesRoot: process.env.ONTOLOGY_BUILD_WORKSPACES.trim() } : {}),
+});
 
 void autoResumeInterruptedAgentSessions(store).catch((err) => {
   console.error('Failed to auto-resume interrupted agent sessions on startup:', err);
 });
 
 const shutdown = () => {
+  stopBuiltApplications();
   store.close();
   process.exit(0);
 };

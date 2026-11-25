@@ -577,7 +577,7 @@
   list-style: none;
 }
 
-.oc-checklist li {
+.oc-checklist > li {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
   gap: 10px;
@@ -586,11 +586,11 @@
   border-top: 1px solid var(--border-subtle);
 }
 
-.oc-checklist li:first-child {
+.oc-checklist > li:first-child {
   border-top: 0;
 }
 
-.oc-checklist li > svg {
+.oc-checklist > li > svg {
   margin-top: 2px;
 }
 
