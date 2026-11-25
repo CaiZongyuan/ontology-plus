@@ -63,6 +63,28 @@ export const ReportSchema = z.object({
 });
 export type ConnectionReport = z.infer<typeof ReportSchema>;
 
+export const ActionParamSchema = z.object({
+  key: z.string().min(1),
+  label: BilingualSchema,
+  type: z.enum(['number', 'text', 'object-ref', 'lines']),
+  /** For object-ref and lines: the business object the value picks from. */
+  objectId: z.string().optional(),
+  required: z.boolean().default(true),
+});
+export type ConnectionActionParam = z.infer<typeof ActionParamSchema>;
+
+/** An approved runtime change the application offers (spec §10.1); it runs only after a person approves it. */
+export const ActionSchema = z.object({
+  id: IdSchema,
+  name: BilingualSchema,
+  objectId: z.string().optional(),
+  /** `record`: acts on one record of `objectId`; `none`: creates or acts without a target. */
+  target: z.enum(['record', 'none']).default('record'),
+  description: BilingualSchema.optional(),
+  params: z.array(ActionParamSchema).default([]),
+});
+export type ConnectionAction = z.infer<typeof ActionSchema>;
+
 export const ManifestSchema = z
   .object({
     protocol: z.string(),
@@ -78,6 +100,7 @@ export const ManifestSchema = z
     metrics: z.array(MetricSchema).default([]),
     objects: z.array(ObjectSchema).default([]),
     reports: z.array(ReportSchema).default([]),
+    actions: z.array(ActionSchema).default([]),
     dataIssues: z.boolean().default(false),
     activity: z.boolean().default(false),
   })
@@ -93,6 +116,11 @@ export const ManifestSchema = z
     dupes('metric', m.metrics.map((a) => a.id));
     dupes('object', m.objects.map((a) => a.id));
     dupes('report', m.reports.map((a) => a.id));
+    dupes('action', m.actions.map((a) => a.id));
+    const objectIds = new Set(m.objects.map((o) => o.id));
+    for (const a of m.actions) {
+      if (a.objectId && !objectIds.has(a.objectId)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `action "${a.id}" names object "${a.objectId}" that the manifest does not declare` });
+    }
     for (const o of m.objects) {
       const keys = new Set(o.fields.map((f) => f.key));
       for (const k of [o.titleField, ...(o.statusField ? [o.statusField] : [])]) {
@@ -139,6 +167,8 @@ export const ObjectDetailResponseSchema = z.object({
   flags: z.array(z.object({ tone: ToneSchema, label: BilingualSchema })).default([]),
   sections: z.array(TableSchema).default([]),
   notes: z.array(BilingualSchema).default([]),
+  /** Ids of declared actions worth offering on this record for the acting identity. */
+  actions: z.array(z.string()).default([]),
 });
 export type ObjectDetailResponse = z.infer<typeof ObjectDetailResponseSchema>;
 
@@ -157,6 +187,8 @@ export const DataIssuesResponseSchema = z.object({
       detail: BilingualSchema,
       status: DataIssueStatusSchema,
       needsDecision: z.boolean().default(false),
+      /** The declared action that resolves it, offered only to whoever may decide. */
+      action: z.object({ actionId: z.string(), target: z.string() }).optional(),
     }),
   ),
 });
@@ -167,6 +199,37 @@ export const ActivityResponseSchema = z.object({
   events: z.array(z.object({ at: z.string(), text: BilingualSchema, kind: z.enum(['ok', 'info', 'warning']).default('info') })),
 });
 export type ActivityResponse = z.infer<typeof ActivityResponseSchema>;
+
+export const PrepareResponseSchema = z.object({
+  asOf: AsOf,
+  preview: z.object({
+    summary: BilingualSchema,
+    effects: z.array(BilingualSchema).default([]),
+    target: z.object({ key: z.string().nullable(), version: z.number().int().nullable() }),
+  }),
+});
+export type PrepareResponse = z.infer<typeof PrepareResponseSchema>;
+
+export const ReceiptSchema = z.object({
+  commandId: z.string(),
+  action: z.string(),
+  actor: z.string(),
+  idempotencyKey: z.string(),
+  target: z.string().nullable(),
+  status: z.literal('COMMITTED'),
+  summary: BilingualSchema,
+  effects: z.array(BilingualSchema).default([]),
+  after: z.object({ key: z.string().nullable(), version: z.number().int().nullable(), state: z.string().nullable() }),
+  committedAt: z.string(),
+});
+export type ActionReceipt = z.infer<typeof ReceiptSchema>;
+
+export const InvokeResponseSchema = z.object({ receipt: ReceiptSchema, replayed: z.boolean().default(false) });
+export type InvokeResponse = z.infer<typeof InvokeResponseSchema>;
+export const InvocationResponseSchema = z.object({ receipt: ReceiptSchema });
+
+/** The body an application sends when it refuses something, in business words. */
+export const AppErrorSchema = z.object({ error: z.object({ code: z.string(), message: BilingualSchema }) });
 
 export interface ManifestProblem {
   readonly path: string;

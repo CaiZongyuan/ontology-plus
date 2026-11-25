@@ -1,6 +1,10 @@
 import type { z } from 'zod';
 import {
   ACTOR_HEADER,
+  AppErrorSchema,
+  InvocationResponseSchema,
+  InvokeResponseSchema,
+  PrepareResponseSchema,
   ActivityResponseSchema,
   DataIssuesResponseSchema,
   MANIFEST_PATH,
@@ -9,7 +13,11 @@ import {
   ObjectListResponseSchema,
   ReportResponseSchema,
   parseConnectionManifest,
+  type ActionReceipt,
   type ActivityResponse,
+  type Bilingual,
+  type InvokeResponse,
+  type PrepareResponse,
   type ConnectionManifest,
   type DataIssuesResponse,
   type ManifestProblem,
@@ -19,7 +27,7 @@ import {
   type ReportResponse,
 } from './contract.js';
 
-export type ConnectionErrorCode = 'INVALID_ADDRESS' | 'UNREACHABLE' | 'NOT_FOUND' | 'REJECTED' | 'BAD_RESPONSE' | 'INVALID_MANIFEST';
+export type ConnectionErrorCode = 'INVALID_ADDRESS' | 'UNREACHABLE' | 'NOT_FOUND' | 'REJECTED' | 'CONFLICT' | 'BAD_RESPONSE' | 'INVALID_MANIFEST';
 
 /** A failed call to a connected application, with a reason the console can explain. */
 export class ConnectionError extends Error {
@@ -28,6 +36,8 @@ export class ConnectionError extends Error {
     message: string,
     readonly status?: number,
     readonly problems: readonly ManifestProblem[] = [],
+    /** The application's own refusal, when it gave one: its code and business-language reason. */
+    readonly appError: { readonly code: string; readonly message: Bilingual } | null = null,
   ) {
     super(message);
     this.name = 'ConnectionError';
@@ -57,6 +67,15 @@ export interface ConnectionClient {
   report(reportId: string, actor: string): Promise<ReportResponse>;
   dataIssues(actor: string): Promise<DataIssuesResponse>;
   activity(actor: string): Promise<ActivityResponse>;
+  prepareAction(actionId: string, actor: string, input: ActionInput): Promise<PrepareResponse>;
+  invokeAction(actionId: string, actor: string, input: ActionInput & { idempotencyKey: string; expectedVersion: number | null }): Promise<InvokeResponse>;
+  /** Reads back a receipt by request key; null when the application never committed it. */
+  invocation(idempotencyKey: string, actor: string): Promise<ActionReceipt | null>;
+}
+
+export interface ActionInput {
+  readonly target?: string | undefined;
+  readonly params?: Readonly<Record<string, unknown>> | undefined;
 }
 
 /** Normalises what a user typed as the application's address; only http(s) is accepted. */
@@ -81,26 +100,47 @@ export function createConnectionClient(options: ConnectionClientOptions): Connec
   const doFetch: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
   const timeoutMs = options.timeoutMs ?? 8000;
 
-  async function getJson(path: string, actor?: string): Promise<unknown> {
+  async function getJson(path: string, actor?: string, body?: unknown): Promise<unknown> {
     let res: Response;
     try {
       res = await doFetch(baseUrl + path, {
-        headers: { accept: 'application/json', ...(actor ? { [ACTOR_HEADER]: actor } : {}) },
+        method: body === undefined ? 'GET' : 'POST',
+        headers: {
+          accept: 'application/json',
+          ...(actor ? { [ACTOR_HEADER]: actor } : {}),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
       throw new ConnectionError('UNREACHABLE', `cannot reach ${baseUrl}: ${err instanceof Error ? err.message : String(err)}`);
     }
-    if (res.status === 404) throw new ConnectionError('NOT_FOUND', `${path} was not found on ${baseUrl}`, 404);
-    if (res.status === 400 || res.status === 403) {
-      throw new ConnectionError('REJECTED', `${baseUrl} refused ${path} (${res.status})`, res.status);
+    if (!res.ok) {
+      const parsed = AppErrorSchema.safeParse(await res.json().catch(() => null));
+      const appError = parsed.success ? parsed.data.error : null;
+      const code: ConnectionErrorCode =
+        res.status === 404 ? 'NOT_FOUND' : res.status === 409 ? 'CONFLICT' : res.status >= 400 && res.status < 500 ? 'REJECTED' : 'BAD_RESPONSE';
+      throw new ConnectionError(code, appError ? `${baseUrl} refused ${path}: ${appError.code}` : `${baseUrl} answered ${path} with ${res.status}`, res.status, [], appError);
     }
-    if (!res.ok) throw new ConnectionError('BAD_RESPONSE', `${baseUrl} answered ${path} with ${res.status}`, res.status);
     try {
       return await res.json();
     } catch {
       throw new ConnectionError('BAD_RESPONSE', `${baseUrl} answered ${path} with something that is not JSON`, res.status);
     }
+  }
+
+  async function readPost<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, path: string, actor: string, payload: unknown): Promise<T> {
+    return parseWith(schema, path, await getJson(path, actor, payload));
+  }
+
+  function parseWith<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, path: string, body: unknown): T {
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ConnectionError('BAD_RESPONSE', `${path} does not follow the connection contract: ${first?.path.join('.') ?? ''} ${first?.message ?? ''}`.trim());
+    }
+    return parsed.data;
   }
 
   async function read<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, path: string, actor: string): Promise<T> {
@@ -135,5 +175,19 @@ export function createConnectionClient(options: ConnectionClientOptions): Connec
     report: (reportId, actor) => read(ReportResponseSchema, `/runtime/reports/${enc(reportId)}`, actor),
     dataIssues: (actor) => read(DataIssuesResponseSchema, '/runtime/data-issues', actor),
     activity: (actor) => read(ActivityResponseSchema, '/runtime/activity', actor),
+    prepareAction: (actionId, actor, input) =>
+      readPost(PrepareResponseSchema, `/runtime/actions/${enc(actionId)}/prepare`, actor, { target: input.target, params: input.params ?? {} }),
+    invokeAction: (actionId, actor, input) =>
+      readPost(InvokeResponseSchema, `/runtime/actions/${enc(actionId)}/invoke`, actor, {
+        target: input.target, params: input.params ?? {}, idempotencyKey: input.idempotencyKey, expectedVersion: input.expectedVersion,
+      }),
+    async invocation(idempotencyKey, actor) {
+      try {
+        return (await read(InvocationResponseSchema, `/runtime/invocations/${enc(idempotencyKey)}`, actor)).receipt;
+      } catch (err) {
+        if (err instanceof ConnectionError && err.code === 'NOT_FOUND') return null;
+        throw err;
+      }
+    },
   };
 }

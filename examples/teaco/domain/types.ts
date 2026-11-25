@@ -33,6 +33,8 @@ export interface Product {
   readonly rawStock: number;
   /** Stock under review; nothing containing this product may ship until it is resolved. */
   readonly stockBlocked: boolean;
+  /** Optimistic-concurrency version; every write bumps it (spec §6.2). */
+  readonly version: number;
 }
 
 export interface OrderLine {
@@ -53,6 +55,9 @@ export interface Order {
   readonly taxCents: number;
   readonly totalCents: number;
   readonly imported: boolean;
+  /** Status the order had before it was put on hold (v4); null otherwise. */
+  readonly holdPrevious: OrderStatus | null;
+  readonly version: number;
 }
 
 export type IssueStatus = 'OPEN' | 'INVESTIGATING' | 'PROPOSED' | 'APPROVED' | 'APPLIED' | 'VERIFIED' | 'DISMISSED';
@@ -68,6 +73,8 @@ export interface DataIssue {
   readonly detail: Bilingual;
   readonly status: IssueStatus;
   readonly needsDecision: boolean;
+  /** The action that resolves this issue, offered to whoever may decide it. */
+  readonly action?: { readonly actionId: string; readonly target: string } | undefined;
 }
 
 export interface Dataset {

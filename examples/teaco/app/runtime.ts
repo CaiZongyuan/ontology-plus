@@ -15,6 +15,11 @@ import {
   type Product,
   type Revision,
   type Scope,
+  COMMAND_NAMES,
+  COMMAND_NAMES_BI,
+  offeredActions,
+  planCommand,
+  type CommandName,
 } from '../domain/index.js';
 import type { TeacoRepository } from './db.js';
 
@@ -129,9 +134,38 @@ export function buildManifest(data: Dataset, revision: Revision) {
     reports: atLeast(revision, 'v2')
       ? [{ id: 'monthly_sales', name: bi('月度销售报表', 'Monthly sales'), description: bi('每月零售、批发分开看订单数、货款、运费、税和总额', 'Orders, goods, shipping, tax and total per month, retail and wholesale apart') }]
       : [],
+    actions: manifestActions(revision),
     dataIssues: true,
     activity: true,
   };
+}
+
+const VERSIONED_ACTIONS: Partial<Record<CommandName, Revision>> = { hold_order: 'v4', release_order: 'v4' };
+
+/** Approved runtime changes TeaCo offers (spec §10.1); each runs only after a person approves it. */
+function manifestActions(revision: Revision) {
+  const quantity = [{ key: 'quantity', label: bi('实际数量', 'Actual quantity'), type: 'number', required: true }];
+  const desc: Partial<Record<CommandName, Bilingual>> = {
+    ship_order: bi('库存够才发得出；还没付款或打包的会同时补记', 'Ships only with enough stock; payment and packing are recorded on the way if missing'),
+    hold_order: bi('客户经理可以挂起自己客户的订单，只有店主能解除', 'Account managers hold their own customers’ orders; only the owner releases them'),
+    repair_stock: bi('导入时库存写错的茶，按实际盘点修正后才能发货', 'For teas imported with impossible stock: set the counted quantity so they can ship'),
+    create_order: bi('价格、运费和税由订单系统按现行规则计算', 'The order system prices it under the current rules'),
+  };
+  return COMMAND_NAMES.filter((id) => !VERSIONED_ACTIONS[id] || atLeast(revision, VERSIONED_ACTIONS[id]!)).map((id) => ({
+    id,
+    name: COMMAND_NAMES_BI[id],
+    objectId: id === 'adjust_stock' || id === 'repair_stock' ? 'products' : 'orders',
+    target: id === 'create_order' ? 'none' : 'record',
+    params: id === 'adjust_stock' || id === 'repair_stock'
+      ? quantity
+      : id === 'create_order'
+        ? [
+            { key: 'customer', label: bi('客户', 'Customer'), type: 'object-ref', objectId: 'customers', required: true },
+            { key: 'lines', label: bi('明细', 'Lines'), type: 'lines', objectId: 'products', required: true },
+          ]
+        : [],
+    ...(desc[id] ? { description: desc[id] } : {}),
+  }));
 }
 
 const customerName = (c: Customer) => c.company || c.name;
@@ -259,7 +293,7 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
       const lineCols = [{ key: 'tea', label: bi('茶', 'Tea'), type: 'text' }, { key: 'qty', label: bi('数量', 'Qty'), type: 'number' }, { key: 'unit', label: bi('单价', 'Unit price'), type: 'money' }, { key: 'amount', label: bi('金额', 'Amount'), type: 'money' }];
       const sumCols = [{ key: 'item', label: bi('项目', 'Item'), type: 'text' }, { key: 'amount', label: bi('金额', 'Amount'), type: 'money' }];
       return c.json({
-        asOf, key, values: row.values, flags: row.flags,
+        asOf, key, values: row.values, flags: row.flags, actions: offeredActions(data, actor, revision, 'orders', key),
         sections: [
           { title: bi('明细', 'Lines'), columns: lineCols, rows: o.lines.map((l) => ({ tea: productName(products.get(l.sku), l.sku), qty: l.qty, unit: l.unitCents, amount: l.qty * l.unitCents })) },
           {
@@ -281,7 +315,7 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
       if (!p) return c.json({ error: 'not found' }, 404);
       const open = data.orders.filter((o) => OPEN_STATUSES.includes(o.status) && o.lines.some((l) => l.sku === key));
       return c.json({
-        asOf, key,
+        asOf, key, actions: offeredActions(data, actor, revision, 'products', key),
         values: { name: p.name, size: p.size, sku: p.sku, retail: p.retailCents, wholesale: p.wholesaleCents, stock: p.stock, state: productState(p) },
         sections: [{
           title: bi('等着这款茶的未发货订单', 'Unshipped orders waiting for this tea'),
@@ -340,10 +374,46 @@ export function createTeacoRuntimeApp(options: TeacoRuntimeOptions) {
   app.get('/runtime/data-issues', (c) => {
     // Everyone may see the data check; only the owner decides repairs (stock and imports are admin work, §3.1).
     const decides = c.var.actor.access.kind === 'all' && !c.var.actor.access.readOnly;
-    return c.json({ asOf: now().toISOString(), issues: c.var.data.issues.map((i) => ({ ...i, needsDecision: i.needsDecision && decides })) });
+    return c.json({
+      asOf: now().toISOString(),
+      issues: c.var.data.issues.map(({ action, ...i }) => ({ ...i, needsDecision: i.needsDecision && decides, ...(decides && action && i.status !== 'VERIFIED' ? { action } : {}) })),
+    });
   });
 
   app.get('/runtime/activity', async (c) => c.json({ asOf: now().toISOString(), events: await repository.listActivity(20) }));
+
+  // ─── Approved runtime changes (spec §10.1): prepare previews, invoke commits, invocations reads back ───
+  const offered = new Set<string>(manifestActions(revision).map((a) => a.id));
+  const statusFor = (code: string) => (code === 'FORBIDDEN' ? 403 : code === 'NOT_FOUND' ? 404 : code === 'VERSION_CONFLICT' || code === 'IDEMPOTENCY_KEY_REUSED' ? 409 : 422);
+  const readBody = async (c: { req: { json: <T>() => Promise<T> } }) =>
+    c.req.json<{ target?: string; params?: Record<string, unknown>; idempotencyKey?: string; expectedVersion?: number | null }>().catch(() => ({}) as Record<string, never>);
+
+  app.post('/runtime/actions/:actionId/prepare', async (c) => {
+    const actionId = c.req.param('actionId');
+    if (!offered.has(actionId)) return c.json({ error: { code: 'UNKNOWN_ACTION', message: bi('这个版本没有这个操作。', 'This version does not offer that action.') } }, 404);
+    const body = await readBody(c);
+    const plan = planCommand(c.var.data, c.var.actor, revision, { action: actionId as CommandName, target: body.target, params: body.params });
+    if (!plan.ok) return c.json({ error: { code: plan.code, message: plan.message } }, statusFor(plan.code));
+    return c.json({ asOf: now().toISOString(), preview: { summary: plan.summary, effects: plan.effects, target: { key: plan.target.key, version: plan.target.version } } });
+  });
+
+  app.post('/runtime/actions/:actionId/invoke', async (c) => {
+    const actionId = c.req.param('actionId');
+    if (!offered.has(actionId)) return c.json({ error: { code: 'UNKNOWN_ACTION', message: bi('这个版本没有这个操作。', 'This version does not offer that action.') } }, 404);
+    const body = await readBody(c);
+    if (!body.idempotencyKey) return c.json({ error: { code: 'INVALID_PARAMS', message: bi('缺少请求编号。', 'The request key is missing.') } }, 422);
+    const result = await repository.execute({
+      actor: c.var.actor, revision, idempotencyKey: body.idempotencyKey, expectedVersion: body.expectedVersion ?? null, at: now().toISOString(),
+      request: { action: actionId as CommandName, target: body.target, params: body.params },
+    });
+    if (!result.ok) return c.json({ error: { code: result.code, message: result.message } }, statusFor(result.code));
+    return c.json({ receipt: result.receipt, replayed: result.replayed });
+  });
+
+  app.get('/runtime/invocations/:key', async (c) => {
+    const receipt = await repository.findReceipt(c.var.actor.id, c.req.param('key'));
+    return receipt ? c.json({ receipt }) : c.json({ error: { code: 'NOT_FOUND', message: bi('没有这个请求编号的记录。', 'No record for that request key.') } }, 404);
+  });
 
   return app;
 }

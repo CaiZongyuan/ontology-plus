@@ -130,7 +130,7 @@ export function normalizeSeed(files: SeedFiles): Dataset {
       issues.push(open(`product-unreadable-${sku}`, { zh: `商品 ${sku} 有读不懂的价格或库存`, en: `Product ${sku} has an unreadable price or stock` }, { zh: '这一行没有导入，等你确认。', en: 'The row was not imported and awaits your review.' }));
       continue;
     }
-    const product: Product = { sku, name: collapse(row['Product']!), size: collapse(row['Size']!), retailCents: retail, wholesaleCents: whole, stock: Math.max(0, rawStock), rawStock, stockBlocked: rawStock < 0 };
+    const product: Product = { sku, name: collapse(row['Product']!), size: collapse(row['Size']!), retailCents: retail, wholesaleCents: whole, stock: Math.max(0, rawStock), rawStock, stockBlocked: rawStock < 0, version: 1 };
     const seen = products.get(sku);
     if (seen) {
       if (JSON.stringify(seen) === JSON.stringify(product)) productDupes++;
@@ -154,7 +154,7 @@ export function normalizeSeed(files: SeedFiles): Dataset {
       issues.push(open(`negative-stock-${p.sku}`,
         { zh: `${p.name}（${p.size}）导入时库存是 ${p.rawStock}`, en: `${p.name} (${p.size}) had stock ${p.rawStock} on import` },
         { zh: '库存不可能是负数，先按 0 处理并锁住，确认实际数量前不能发货；原始数字保留着。', en: 'Stock cannot be negative, so it is held at 0 and locked; nothing with this tea ships until you confirm the real count. The original figure is kept.' },
-        true));
+        true, { actionId: 'repair_stock', target: p.sku }));
     }
   }
 
@@ -192,7 +192,7 @@ export function normalizeSeed(files: SeedFiles): Dataset {
       quarantined.push(no);
       continue;
     }
-    orders.push({ number: no, date: date.date, customerId: customer.id, status, lines, goodsCents: goods, discountCents: 0, shippingCents: shipping, taxCents: tax, totalCents: total, imported: true });
+    orders.push({ number: no, date: date.date, customerId: customer.id, status, lines, goodsCents: goods, discountCents: 0, shippingCents: shipping, taxCents: tax, totalCents: total, imported: true, holdPrevious: null, version: 1 });
   }
   orders.sort((a, b) => Number(a.number) - Number(b.number));
   issues.push(
@@ -218,6 +218,6 @@ export function normalizeSeed(files: SeedFiles): Dataset {
 function verified(id: string, title: DataIssue['title'], detail: DataIssue['detail']): DataIssue {
   return { id, title, detail, status: 'VERIFIED', needsDecision: false };
 }
-function open(id: string, title: DataIssue['title'], detail: DataIssue['detail'], needsDecision = false): DataIssue {
-  return { id, title, detail, status: 'OPEN', needsDecision };
+function open(id: string, title: DataIssue['title'], detail: DataIssue['detail'], needsDecision = false, action?: DataIssue['action']): DataIssue {
+  return { id, title, detail, status: 'OPEN', needsDecision, ...(action ? { action } : {}) };
 }
